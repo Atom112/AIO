@@ -1,0 +1,42 @@
+/* src/index.css */
+
+/* 
+  使用 :root 可以定义全局 CSS 变量，是很好的实践。
+  但为了简单起见，我们直接在 body 上设置。
+*/
+
+html {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  /* 在这里设置颜色可以确保在某些极端情况下，比如 body 高度不足时，背景也是一致的 */
+  background-color: #1a1a1a; 
+  height: 100%; /* 确保html元素的高度占据整个视口 */
+  overflow: hidden; /* 关键：隐藏html的滚动条，并防止其内容溢出产生滚动 */
+}
+
+body {
+  /* 关键：设置你想要的背景颜色 */
+  /* #1a1a1a 是一个很不错的深色背景 */
+  background-color: #1a1a1a; 
+
+  /* 关键：同时设置默认的文字颜色以保证对比度和可读性 */
+  color: rgba(255, 255, 255, 0.87); 
+
+  /* 推荐：移除浏览器默认的 body 边距 */
+  margin: 0;
+
+  /* 推荐：让应用至少占满整个屏幕的高度 */
+  min-height: 100vh;
+   height: 100%; /* 确保body元素的高度占据整个父元素（html），即整个视口 */
+  overflow: hidden; /* 关键：隐藏body的滚动条，并防止其内容溢出产生滚动 */
+
+}
+
+/* 你可能还会看到其他的默认样式，保留它们即可 */
+/* 例如： */
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}

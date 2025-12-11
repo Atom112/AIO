@@ -1,0 +1,10 @@
+.settings-page {
+    position: fixed;
+    top: 65px;
+    left: 0;
+    right: 1px;
+    bottom: 1px;
+    padding: 20px;
+    border: 1px solid #08ddf9;
+    border-radius: 12px;
+}

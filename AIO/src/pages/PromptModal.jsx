@@ -1,7 +1,9 @@
 import { createSignal, onMount, createEffect } from 'solid-js';
 import { Show } from 'solid-js/web';
 import './PromptModal.css';
+
 function PromptModal(props) {
+  
   // 使用 createSignal 来管理 textarea 中的文本
   // 这样可以独立于父组件的状态，只在保存时才更新父组件
   const [promptText, setPromptText] = createSignal('');

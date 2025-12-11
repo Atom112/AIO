@@ -1,13 +1,11 @@
-/* @refresh reload */
-// src/index.jsx
 import { render } from 'solid-js/web';
-// [!code focus]
-import { Router } from '@solidjs/router'; // <-- 已修改
+import { Router } from '@solidjs/router';
 import App from './App.jsx';
 import './index.css';
+
 render(
   () => (
-    
+    // 包裹 Router 组件以启用路由功能
     <Router>
       <App />
     </Router>

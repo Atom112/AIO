@@ -12,9 +12,20 @@
   "app": {
     "windows": [
       {
+        "minHeight": 540,
+        "minWidth": 960,
         "title": "AIO",
         "width": 1600,
-        "height": 900
+        "height": 900,
+        "decorations": false,
+        "transparent": true,
+        "windowEffects":{
+          "effects":[
+            "acrylic"
+          ],
+          "color":[0,0,0,10],
+          "state":"active"
+        }
       }
     ],
     "security": {

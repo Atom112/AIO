@@ -1,10 +1,8 @@
-import NavBar from "../components/NavBar";
-
+import "./Settings.css";
 
 function Settings() {
     return (
-        <div>
-        
+        <div class="settings-page">
             <div>Settings Page</div>
         </div>
     );

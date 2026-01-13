@@ -24,9 +24,15 @@ function NavBar() {
     'You are a helpful AI assistant. Please answer questions accurately and concisely.'
   );
 
+
+
+
   //可选的模型列表，在后期开发中需要从外部导入真实的模型列表
   const allModels = ['GPT-4', 'Claude 3', 'Gemini Pro', 'Llama 3'];
 
+
+
+  
   //当前选中的模型（默认为模型列表中第一个，但后续应替换为用户关闭应用前的最后一次选择，需要外部文件记录跟踪）
   const [selectedModel, setSelectedModel] = createSignal(allModels[0]);
 

@@ -88,6 +88,37 @@
     padding-bottom: 15px; /* 在消息区域底部留出一些空间，与输入框间距 */
 }
 
+.assistant-item{
+    border: 1px solid #08ddf9;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    margin: 4px 0;
+    border-radius: 12px;
+    background-color: transparent;
+}
+
+.assistant-menu-button{
+    background: none;
+    border: 1px solid #08ddf9;
+    color: #08ddf9;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 30px;
+    height: 30px;
+}
+
+.add-assistant-button{
+    margin: 10px 0;
+    padding: 8px 12px;
+    background: none;
+    border: 1px solid #08ddf9;
+    color: #08ddf9;
+    border-radius: 4px;
+    cursor: pointer;
+    width: calc(100% - 24px);
+}
 /* 聊天输入框 */
 .chat-input {
     /* 不再使用绝对定位，而是作为 Flex 容器的子元素 */

@@ -1,7 +1,7 @@
 import { Route,Navigate } from '@solidjs/router'; 
-import Layout from './Layout.jsx';
-import Chat from './pages/Chat.jsx';
-import Settings from './pages/Settings.jsx';
+import Layout from './Layout.tsx';
+import Chat from './pages/Chat.tsx';
+import Settings from './pages/Settings.tsx';
 
 function App() {
   return (

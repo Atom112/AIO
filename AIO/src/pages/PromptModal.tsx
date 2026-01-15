@@ -1,18 +1,24 @@
-import { createSignal, onMount, createEffect } from 'solid-js';
+import { Component, createSignal, createEffect } from 'solid-js';
 import { Show } from 'solid-js/web';
 import './PromptModal.css';
 
-function PromptModal(props) {
-  
+interface PromptModalProps {
+  show: boolean;
+  initialPrompt?: string;
+  onSave?: (text: string) => void;
+  onClose: () => void;
+}
+
+const PromptModal: Component<PromptModalProps> = (props) => {
   // 使用 createSignal 来管理 textarea 中的文本
   // 这样可以独立于父组件的状态，只在保存时才更新父组件
-  const [promptText, setPromptText] = createSignal('');
+  const [promptText, setPromptText] = createSignal<string>('');
 
   // 使用 createEffect 监听 props.show 的变化
   // 当浮窗显示时（props.show 变为 true），用父组件传入的初始值来设置文本域的内容
   createEffect(() => {
     if (props.show) {
-      setPromptText(props.initialPrompt || '');
+      setPromptText(props.initialPrompt ?? '');
     }
   });
 
@@ -25,7 +31,7 @@ function PromptModal(props) {
     props.onClose();
   };
 
-  const handleBackdropClick = (e) => {
+  const handleBackdropClick = (e: Event) => {
     // 确保是点击背景本身，而不是点击浮窗内容区域
     if (e.currentTarget === e.target) {
       props.onClose();
@@ -42,9 +48,9 @@ function PromptModal(props) {
           </div>
           <div class="modal-body">
             <textarea
-              rows="8"
+              rows={8}
               value={promptText()}
-              onInput={(e) => setPromptText(e.currentTarget.value)}
+              onInput={(e) => setPromptText((e.currentTarget as HTMLTextAreaElement).value)}
               placeholder="例如：你是一个乐于助人的 AI 助手。"
             />
           </div>
@@ -56,6 +62,6 @@ function PromptModal(props) {
       </div>
     </Show>
   );
-}
+};
 
 export default PromptModal;

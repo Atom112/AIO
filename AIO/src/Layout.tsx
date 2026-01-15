@@ -1,6 +1,7 @@
 import NavBar from "./components/NavBar";
+import { Component, ParentProps } from "solid-js";
 
-export default function Layout(props) {
+const Layout: Component<ParentProps> = (props) => {
   return (
     <>
       {/* 布局组件，包含导航栏和内容区域，导航栏由多个页面共享 */}
@@ -9,4 +10,6 @@ export default function Layout(props) {
       <main>{props.children}</main>
     </>
   );
-}
+};
+
+export default Layout;

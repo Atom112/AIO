@@ -1,0 +1,20 @@
+{
+    "compilerOptions": {
+        "target": "ES2020",
+        "useDefineForClassFields": true,
+        "module": "ESNext",
+        // 启用 JSX 支持（SolidJS 需要）
+        "jsx": "preserve",
+        "jsxImportSource": "solid-js",
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "resolveJsonModule": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "strict": true,
+        "skipLibCheck": true
+    },
+    "include": [
+        "src"
+    ]
+}

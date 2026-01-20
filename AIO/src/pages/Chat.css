@@ -1,5 +1,6 @@
 .chat-page {
-    display: flex; /* 使用 Flexbox 布局 */
+    display: flex;
+    /* 使用 Flexbox 布局 */
     position: fixed;
     top: 65px;
     left: 0;
@@ -8,108 +9,133 @@
     /*background-color: #1e1e1e;*/
     padding: 20px;
     border: 1px solid #08ddf9;
-    border-radius: 12px;
+    border-radius: 8px;
     gap: 3px;
 }
 
 .assistant-selector,
 .dialog-container {
-    flex-shrink: 0; /* 阻止这些元素在空间不足时收缩，保持其设定的宽度 */
-    position: relative; /* 用于定位内部的拖拽手柄 */
-    /*background-color: #1e1e1e; *//* 背景色 */
-    
-    padding: 15px; /* 内边距 */
-    box-sizing: border-box; /* 边框和内边距包含在宽度内 */
-    overflow-y: auto; /* 如果内容溢出，允许垂直滚动 */
+    flex-shrink: 0;
+    /* 阻止这些元素在空间不足时收缩，保持其设定的宽度 */
+    position: relative;
+    /* 用于定位内部的拖拽手柄 */
+    /*background-color: #1e1e1e; */
+    /* 背景色 */
+
+    padding: 15px;
+    /* 内边距 */
+    box-sizing: border-box;
+    /* 边框和内边距包含在宽度内 */
+    overflow-y: auto;
+    /* 如果内容溢出，允许垂直滚动 */
     overflow-x: hidden;
-    border-radius: 12px;
+    border-radius: 8px;
 }
+
 .assistant-selector {
-    border-right: 4px solid #08ddf9; /* 左侧面板右边框作为分隔线 */
+    border-right: 4px solid #08ddf9;
+    /* 左侧面板右边框作为分隔线 */
     border-bottom: 1px solid #08ddf9;
     border-top: 1px solid #08ddf9;
     border-left: 1px solid #08ddf9;
 }
 
 .dialog-container {
-    border-left: 4px solid #08ddf9; /* 右侧面板左边框作为分隔线 */
+    border-left: 4px solid #08ddf9;
+    /* 右侧面板左边框作为分隔线 */
     border-bottom: 1px solid #08ddf9;
     border-top: 1px solid #08ddf9;
     border-right: 1px solid #08ddf9;
 }
-
 
 /* 面板内部内容区域，确保内容不会被拖拽手柄覆盖，且可滚动 */
 .assistant-content,
 .dialog-content {
     height: 100%;
     width: 100%;
-    overflow-y: auto; /* 允许内容垂直滚动 */
+    overflow-y: auto;
+    /* 允许内容垂直滚动 */
     overflow-x: hidden;
 }
 
 .resize-handle {
-    position: absolute; /* 绝对定位 */
+    position: absolute;
+    /* 绝对定位 */
     top: 0;
     bottom: 0;
-    width: 10px; /* 拖拽手柄的宽度，用户可以在此区域进行拖拽 */
-    cursor: ew-resize; /* 鼠标悬停时显示左右拖拽图标 */
-    z-index: 10; /* 确保拖拽手柄在其他内容之上 */
-   
+    width: 10px;
+    /* 拖拽手柄的宽度，用户可以在此区域进行拖拽 */
+    cursor: ew-resize;
+    /* 鼠标悬停时显示左右拖拽图标 */
+    z-index: 10;
+    /* 确保拖拽手柄在其他内容之上 */
+
 }
 
 /* 左侧面板的拖拽手柄，位于其右边缘 */
 .left-handle {
-    right: -5px; /* 使手柄一半在面板内，一半在面板外，方便拖拽 */
+    right: -5px;
+    /* 使手柄一半在面板内，一半在面板外，方便拖拽 */
 }
 
 /* 右侧面板的拖拽手柄，位于其左边缘 */
 .right-handle {
-    left: -5px; /* 使手柄一半在面板内，一半在面板外，方便拖拽 */
+    left: -5px;
+    /* 使手柄一半在面板内，一半在面板外，方便拖拽 */
 }
 
 /* 中间聊天区域 (chat-input-container) */
 .chat-input-container {
-    flex-grow: 1; /* 占据所有剩余的水平空间，使其宽度随左右两侧元素调整 */
-    display: flex; /* 启用 Flexbox 布局，使其子元素（消息区域和输入框）垂直排列 */
-    flex-direction: column; /* 垂直堆叠子元素 */
+    flex-grow: 1;
+    /* 占据所有剩余的水平空间，使其宽度随左右两侧元素调整 */
+    display: flex;
+    /* 启用 Flexbox 布局，使其子元素（消息区域和输入框）垂直排列 */
+    flex-direction: column;
+    /* 垂直堆叠子元素 */
     /*background-color: #1e1e1e;*/
     border: 1px solid #08ddf9;
     padding: 15px;
     box-sizing: border-box;
-    overflow: hidden; /* 防止 Flex 容器自身溢出 */
-    border-radius: 12px;
+    overflow: hidden;
+    /* 防止 Flex 容器自身溢出 */
+    border-radius: 8px;
 }
 
 /* 聊天消息显示区域 */
 .chat-messages-area {
-    flex-grow: 1; /* 占据 .chat-input-container 中除了输入框之外的所有垂直空间 */
-    overflow-y: auto; /* 允许聊天消息内容垂直滚动 */
-    padding-bottom: 15px; /* 在消息区域底部留出一些空间，与输入框间距 */
+    flex-grow: 1;
+    /* 占据 .chat-input-container 中除了输入框之外的所有垂直空间 */
+    overflow-y: auto;
+    /* 允许聊天消息内容垂直滚动 */
+    padding-bottom: 15px;
+    /* 在消息区域底部留出一些空间，与输入框间距 */
 }
 
-.assistant-item{
+.assistant-item {
     border: 1px solid #08ddf9;
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 8px 12px;
     margin: 4px 0;
-    border-radius: 12px;
+    border-radius: 8px;
     background-color: transparent;
 }
 
-.assistant-menu-button{
-    background: none;
-    border: 1px solid #08ddf9;
-    color: #08ddf9;
+.assistant-menu-button {
+    background-color: #2e2e2e;
+    border: none;
+    color: #FFFFFF;
     border-radius: 4px;
     cursor: pointer;
     width: 30px;
     height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-.add-assistant-button{
+.add-assistant-button {
     margin: 10px 0;
     padding: 8px 12px;
     background: none;
@@ -119,12 +145,16 @@
     cursor: pointer;
     width: calc(100% - 24px);
 }
+
 /* 聊天输入框 */
 .chat-input {
     /* 不再使用绝对定位，而是作为 Flex 容器的子元素 */
-    height: 10%; /* 输入框高度占据 .chat-input-container 总高度的10% */
-    min-height: 40px; /* 最小高度，防止在极端情况下高度过小 */
-    width: 100%; /* 占据父容器的全部宽度 */
+    height: 10%;
+    /* 输入框高度占据 .chat-input-container 总高度的10% */
+    min-height: 40px;
+    /* 最小高度，防止在极端情况下高度过小 */
+    width: 100%;
+    /* 占据父容器的全部宽度 */
     padding: 10px 15px;
     border: 1px solid #08ddf9;
     background-color: #2e2e2e;
@@ -136,6 +166,91 @@
 }
 
 .chat-input:focus {
-    outline: none; /* 去掉默认的焦点边框 */
-    border-color: #fff; /* 聚焦时边框颜色 */
+    outline: none;
+    /* 去掉默认的焦点边框 */
+    border-color: #fff;
+    /* 聚焦时边框颜色 */
+}
+
+
+/* 下拉菜单基础动画类 */
+.assistant-context-menu {
+    /* 
+   * 为了防止动画冲突，这里使用 animation 属性 
+   * 持续时间 0.2s，缓动函数 ease-out 比较自然
+   */
+    animation: menuEnter 0.2s ease-out forwards;
+
+    /* 设定变换原点为左上角，这样缩放效果会从按钮下方展开 */
+    transform-origin: top left;
+
+    /* 把原先的内联视觉样式移到这里 */
+    position: fixed;
+    background-color: #2e2e2e;
+    border: 1px solid #08ddf9;
+    border-radius: 4px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    z-index: 100;
+    min-width: 150px;
+}
+
+/* 定义具体动画关键帧 */
+@keyframes menuEnter {
+    0% {
+        opacity: 0;
+        /* 初始状态：稍微向上偏移 (-8px) 且稍微缩小 (0.95) */
+        transform: translateY(-8px) scale(0.95);
+    }
+
+    100% {
+        opacity: 1;
+        /* 结束状态：回到原位且原始大小 */
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* 菜单退出时的动画 */
+.assistant-context-menu.menu-exiting {
+    animation: menuExit 0.2s ease-in forwards;
+    /* 使用 ease-in，并向前播放以保留最终状态 */
+}
+
+@keyframes menuExit {
+    0% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+
+    100% {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.95);
+        /* 与进入动画相反 */
+    }
+}
+
+/* 菜单内部的按钮样式（替代内联样式 + hover 处理） */
+.context-menu-button {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    color: #FFFFFF;
+    text-align: left;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+
+.context-menu-button:hover {
+    background-color: #3a3a3a;
+}
+
+.context-menu-button.delete {
+    color: #ff4d4d;
+}
+
+/* 保持现有视觉边界的微调（可根据需要调整） */
+.size-6 {
+    width: 24px;
+    height: 24px;
 }

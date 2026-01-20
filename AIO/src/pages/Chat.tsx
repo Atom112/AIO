@@ -103,6 +103,9 @@ const Chat: Component = () => {
     closeMenu();
   };
 
+  const [showMenuDiv, setShowMenuDiv] = createSignal(false); // 控制菜单 Div 是否在 DOM 中渲染
+  const [isMenuAnimatingOut, setIsMenuAnimatingOut] = createSignal(false); // 控制是否应用退出动画类
+
   const [menuState, setMenuState] = createSignal<MenuState>({
     isOpen: false,
     x: 0,
@@ -110,43 +113,77 @@ const Chat: Component = () => {
     targetAssistantId: null, // 记录是哪个助手触发的菜单
   });
 
+  const ANIMATION_DURATION = 200;
+
   // 打开菜单的函数
   const openMenu = (event: MouseEvent, assistantId: string) => {
-    event.stopPropagation(); // 阻止事件冒泡到 document，避免立即触发关闭
+    event.stopPropagation();
 
-    // 获取触发按钮的位置
+    // 如果点击的是当前已打开菜单的按钮，则关闭菜单（实现 Toggle 效果）
+    if (menuState().isOpen && menuState().targetAssistantId === assistantId) {
+      closeMenu();
+      return;
+    }
+
+    // 如果菜单正在退出动画中，但用户点击了另一个按钮，立即清除退出动画并打开新菜单
+    if (isMenuAnimatingOut()) {
+      clearTimeout(menuCloseTimeoutId); // 清除可能存在的延时关闭
+      setIsMenuAnimatingOut(false);
+    }
+
+    setShowMenuDiv(true); // 确保菜单 Div 已经渲染在 DOM 中
+
     const button = event.currentTarget as Element;
     const buttonRect = button.getBoundingClientRect();
-    const pageRect = chatPageRef?.getBoundingClientRect();
 
-    if (!pageRect) return;
-
-    // 计算相对于 .chat-page 的位置
-    const x = buttonRect.left - pageRect.left;
-    const y = buttonRect.top - pageRect.top + buttonRect.height; // 显示在按钮下方
+    const x = buttonRect.left; // 视口坐标
+    const y = buttonRect.top + buttonRect.height; // 在按钮下方
 
     setMenuState({
-      isOpen: true,
-      x: x,
-      y: y,
+      isOpen: true, // 逻辑状态为打开
+      x,
+      y,
       targetAssistantId: assistantId,
     });
   };
 
-  // 关闭菜单的函数
+  let menuCloseTimeoutId: ReturnType<typeof setTimeout> | undefined; // 用于存储 setTimeout 的 ID
+
+  // 修改后的 closeMenu 函数
   const closeMenu = () => {
-    setMenuState((prev) => ({ ...prev, isOpen: false }));
+    // 只有当菜单是逻辑打开状态，或者正在退出动画中时才执行关闭逻辑
+    if (!menuState().isOpen && !showMenuDiv()) return;
+
+    setMenuState((prev) => ({ ...prev, isOpen: false })); // 立即将逻辑状态设为关闭
+    setIsMenuAnimatingOut(true); // 立即应用退出动画类
+
+    // 在动画结束后，将菜单元素从 DOM 中移除
+    // 使用 setTimeout 保证动画播放完毕
+    menuCloseTimeoutId = setTimeout(() => {
+      setShowMenuDiv(false); // 从 DOM 中移除菜单 Div
+      setIsMenuAnimatingOut(false); // 重置退出动画状态
+      setMenuState((prev) => ({ ...prev, targetAssistantId: null })); // 清除目标助手ID
+    }, ANIMATION_DURATION);
   };
 
-  // 点击外部区域关闭菜单的处理器
-  const handleClickOutside = (_event: MouseEvent) => {
-    // 检查点击的目标是否是菜单本身或者菜单的触发按钮
-    // 注意：由于事件委托和 React 渲染机制，直接检查 event.target 可能不够准确。
-    // 更稳妥的方式是利用 menuState.isOpen 状态结合全局点击事件。
+  // 修改后的 handleClickOutside 函数
+  const handleClickOutside = (event: MouseEvent) => {
+    const target = event.target as HTMLElement;
+
+    // 1. 如果点击的是菜单内部（无论动画进出），不关闭。
+    //    这里的条件需要确保即使在退出动画期间点击菜单内容，也不会立即关闭，而是让退出动画完成。
+    if (target.closest('.assistant-context-menu')) {
+      return;
+    }
+
+    // 2. 如果点击的是触发按钮（.assistant-menu-button），忽略该事件。
+    //    因为 openMenu 函数已经处理了点击按钮的逻辑（包括 toggle）。
+    if (target.closest('.assistant-menu-button')) {
+      return;
+    }
+
+    // 只有当菜单是逻辑打开状态，并且点击的是真正的“外部”区域时才关闭
     if (menuState().isOpen) {
-      // 如果菜单是打开的，则关闭它
-      // 因为我们已经在菜单项点击处理函数中调用了 closeMenu，
-      // 这里的逻辑主要是为了点击空白处关闭。
       closeMenu();
     }
   };
@@ -251,7 +288,7 @@ const Chat: Component = () => {
   });
 
   return (
-    <div class="chat-page" ref={chatPageRef}>
+    <div class="chat-page" ref={(el) => (chatPageRef = el as HTMLDivElement)}>
       {/* 左侧选择助手区域 */}
       <div
         class="assistant-selector"
@@ -273,7 +310,10 @@ const Chat: Component = () => {
                       aria-haspopup="true"
                       aria-expanded={menuState().isOpen && menuState().targetAssistantId === assistant.id}
                     >
-                      ...
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="#FFFFFF" viewBox="0 0 24 24" stroke-Width={1.5} class="size-6">
+                        <path stroke-Linecap="round" stroke-Linejoin="round" d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
+                      </svg>
+
                     </button>
                   </div>
                 )}
@@ -291,52 +331,26 @@ const Chat: Component = () => {
           </button>
 
           {/* 下拉菜单 - (保持不变) */}
-          {menuState().isOpen && (
+          {showMenuDiv() && (
             <div
               class="assistant-context-menu"
+              // 根据 isMenuAnimatingOut 状态动态添加/移除 'menu-exiting' 类
+              classList={{ 'menu-exiting': isMenuAnimatingOut() }}
               style={{
-                position: 'absolute',
                 top: `${menuState().y}px`,
                 left: `${menuState().x}px`,
-                'background-color': '#2e2e2e',
-                border: '1px solid #08ddf9',
-                'border-radius': '4px',
-                'box-shadow': '0 2px 5px rgba(0,0,0,0.2)',
-                'z-index': 100,
-                'min-width': '150px',
+                // 位置使用内联绑定（动态 top/left），视觉和动画样式已移入 CSS
               }}
             >
               <button
+                class="context-menu-button"
                 onClick={() => openAssistantSettings(menuState().targetAssistantId)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: '8px 12px',
-                  background: 'none',
-                  border: 'none',
-                  color: '#FFFFFF',
-                  'text-align': 'left',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = '#3a3a3a'}
-                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'}
               >
                 助手设置
               </button>
               <button
+                class="context-menu-button delete"
                 onClick={() => removeAssistant(menuState().targetAssistantId)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: '8px 12px',
-                  background: 'none',
-                  border: 'none',
-                  color: '#ff4d4d',
-                  'text-align': 'left',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = '#3a3a3a'}
-                onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'}
               >
                 删除助手
               </button>

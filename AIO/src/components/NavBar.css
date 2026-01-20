@@ -2,18 +2,18 @@
 
 .logo-container {
   position: absolute;
-  left: 10px;           /* 距离左侧的间距，按需调整 */
+  left: 10px;
   top: 50%;
-  transform: translateY(-50%); /* 垂直居中 */
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1001;        /* 确保在导航栏内容之上 */
+  z-index: 1001;
 }
 
 .logo{
-   width: 40px;       /* 修改为所需宽度，例如 32px / 48px */
-   height: 40px;      /* 修改为所需高度，或使用 auto 保持纵横比 */
+   width: 40px;
+   height: 40px;
    object-fit: contain;
    display: block;
    -webkit-user-drag: none;
@@ -31,6 +31,7 @@
 }
 
 .navbar {
+  pointer-events: none; /* 让父容器不接收事件，子元素通过 pointer-events: auto 覆盖 */
   display: flex;
   justify-content: center;
   align-items: center;
@@ -40,7 +41,7 @@
   height: 60px;
   /*background-color: #1e1e1e;*/
   border-bottom: 1px solid #333;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid #08ddf9;
   margin: 0px 1px auto 0px;
   
@@ -151,16 +152,8 @@
 .window-controls {
   display: flex;
   align-items: center;
-  /* 确保这些按钮在导航栏的最右侧，所以不再需要 margin-left */
-  /* 如果 justify-content: center，那么需要一个占位符或者调整布局 */
-  /* 考虑到您之前用了 justify-content: space-between, 如果希望窗口控制在绝对右侧，可以调整 navbar 的 justify-content */
-  /* 但因为您用了 center 和 gap，这里需要重新考虑布局策略 */
-
-  /* 由于 .navbar 现在是 justify-content: center，这意味着所有内容都在中心 */
-  /* 如果要让窗口控制按钮在右侧，需要调整 .navbar 的布局或使用 absolute 定位 */
-  /* 假设您希望窗口控制按钮浮动在右侧： */
   position: absolute;
-  right: 20px; /* 距离右侧 20px */
+  right: 20px;
 }
 
 .control-button {

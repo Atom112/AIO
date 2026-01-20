@@ -16,6 +16,8 @@
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-opener": "^2",
     "solid-js": "^1.9.3",
+    "solid-motionone": "^1.0.4",
+    "solid-transition-group": "^0.3.0",
     "tauri": "^0.15.0"
   },
   "devDependencies": {

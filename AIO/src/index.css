@@ -20,3 +20,22 @@ body {
   overflow: hidden;                       /* 隐藏body的滚动条，同样防止其内容溢出产生滚动 */
 
 }
+
+.page-fade-enter-active,
+.page-fade-exit-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* 进入时的起始状态：透明，稍微向右偏移 */
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+  z-index: 2; /* 确保新进入的页面浮在上面 */
+}
+
+/* 离开时的结束状态：透明，稍微向左偏移 */
+.page-fade-exit-to {
+  opacity: 0;
+  transform: translateX(-20px);
+  z-index: 1;
+}

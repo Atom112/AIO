@@ -1,388 +1,310 @@
-import { Component, For, Show, createSignal, createEffect, onMount, onCleanup, createResource } from 'solid-js';
+import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import {
+  datas,
+  setDatas,
+  currentAssistantId,
+  setCurrentAssistantId,
+  saveSingleAssistantToBackend,
+  deleteAssistantFile,
+  Assistant,
+  Topic
+} from '../store';
 import './Chat.css';
 
-interface Assistant {
-  id: string;
-  name: string;
-  // 可以在这里添加更多属性，例如配置等
-}
 
-interface MenuState {
-  isOpen: boolean;
-  x: number;
-  y: number;
-  targetAssistantId: string | null;
-}
+const createTopic = (name?: string): Topic => ({
+  id: Date.now().toString(),
+  name: name || `新话题 ${new Date().toLocaleTimeString()}`,
+  history: []
+});
 
-const createAssistant = (name = 'New Assistant', id?: string): Assistant => ({
+const createAssistant = (name?: string, id?: string): Assistant => ({
   id: id ?? Date.now().toString(),
-  name,
-  // 可以在这里添加更多属性，例如配置等
+  name: name || 'New Assistant',
+  prompt: 'You are a helpful assistant.',
+  topics: [createTopic('默认话题')]
 });
 
 const Chat: Component = () => {
-  // 使用 createSignal 定义左右面板的当前宽度（百分比）
-  const [leftPanelWidth, setLeftPanelWidth] = createSignal<number>(15); // 初始左侧面板宽度
-  const [rightPanelWidth, setRightPanelWidth] = createSignal<number>(15); // 初始右侧面板宽度
+  // --- 1. 面板宽度控制 ---
+  const [leftPanelWidth, setLeftPanelWidth] = createSignal<number>(18);
+  const [rightPanelWidth, setRightPanelWidth] = createSignal<number>(18);
+  const [inputMessage, setInputMessage] = createSignal("");
 
-  //---------------------------------------------------------------
+  // --- 2. 菜单状态控制 ---
+  const [showMenuDiv, setShowMenuDiv] = createSignal(false);
+  const [isMenuAnimatingOut, setIsMenuAnimatingOut] = createSignal(false);
+  const [menuState, setMenuState] = createSignal({ isOpen: false, x: 0, y: 0, targetId: null as string | null });
+  const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(null);
+  let menuCloseTimeoutId: any;
 
-  const [assistants, setAssistants] = createSignal<Assistant[]>([]);
-
-  const fetchAssistants = async (): Promise<Assistant[]> => {
-    try {
-      // 调用 Tauri 命令来读取助手数据
-      const data = await invoke<any>('load_assistants');
-      console.log('Loaded assistants:', data);
-      // 确保返回的是数组格式
-      if (Array.isArray(data)) {
-        // 如果数据是从文件加载的，确保 ID 字段存在
-        return data.map((item: any) => createAssistant(item.name, item.id));
-      } else {
-        console.warn('Loaded data is not an array, returning empty array.');
-        return [];
-      }
-    } catch (err) {
-      console.error('Failed to load assistants:', err);
-      // 如果加载失败（比如第一次运行，文件不存在），返回默认助手
-      return [createAssistant('Default Assistant')];
-    }
-  };
-
-  // 使用 createResource 在组件挂载时自动加载数据
-  const [assistantsResource] = createResource<Assistant[]>(fetchAssistants);
-
-  // 初始化助手状态
-  createEffect(() => {
-    const data = assistantsResource();
-    if (data && !assistantsResource.loading) {
-      setAssistants(data);
-    }
-  });
-
-  // 保存助手的函数
-  const saveAssistants = async (assistantsToSave: Assistant[]) => {
-    try {
-      // 调用 Tauri 命令来保存助手数据
-      await invoke('save_assistants', { assistants: assistantsToSave });
-      console.log('Assistants saved successfully.');
-    } catch (err) {
-      console.error('Failed to save assistants:', err);
-      // 可以在这里添加用户提示，比如 toast 消息
-    }
-  };
-
-  // 创建一个包装 setAssistants 的函数，以便在数据改变时自动保存
-  const updateAssistants = (updater: Assistant[] | ((prev: Assistant[]) => Assistant[])) => {
-    setAssistants((prev) => {
-      const updated = typeof updater === 'function' ? (updater as (p: Assistant[]) => Assistant[])(prev) : (updater as Assistant[]);
-      // 在状态更新后，触发保存
-      saveAssistants(updated);
-      return updated;
-    });
-  };
-
-  // 添加助手函数 (使用 updateAssistants)
-  const addAssistant = () => {
-    const newAssistant = createAssistant();
-    updateAssistants((prev) => [...prev, newAssistant]);
-  };
-
-  // 删除助手函数 (使用 updateAssistants)
-  const removeAssistant = (idToRemove: string | null) => {
-    if (!idToRemove) return;
-    updateAssistants((prev) => prev.filter((assistant) => assistant.id !== idToRemove));
-    closeMenu(); // 关闭菜单
-  };
-
-  // 打开助手设置函数（示例）- 不需要修改
-  const openAssistantSettings = (assistantId: string | null) => {
-    console.log(`Opening settings for assistant ID: ${assistantId}`);
-    alert(`Settings for assistant ID: ${assistantId}`);
-    closeMenu();
-  };
-
-  const [showMenuDiv, setShowMenuDiv] = createSignal(false); // 控制菜单 Div 是否在 DOM 中渲染
-  const [isMenuAnimatingOut, setIsMenuAnimatingOut] = createSignal(false); // 控制是否应用退出动画类
-
-  const [menuState, setMenuState] = createSignal<MenuState>({
-    isOpen: false,
-    x: 0,
-    y: 0,
-    targetAssistantId: null, // 记录是哪个助手触发的菜单
-  });
-
-  const ANIMATION_DURATION = 200;
-
-  // 打开菜单的函数
-  const openMenu = (event: MouseEvent, assistantId: string) => {
-    event.stopPropagation();
-
-    // 如果点击的是当前已打开菜单的按钮，则关闭菜单（实现 Toggle 效果）
-    if (menuState().isOpen && menuState().targetAssistantId === assistantId) {
-      closeMenu();
-      return;
-    }
-
-    // 如果菜单正在退出动画中，但用户点击了另一个按钮，立即清除退出动画并打开新菜单
-    if (isMenuAnimatingOut()) {
-      clearTimeout(menuCloseTimeoutId); // 清除可能存在的延时关闭
-      setIsMenuAnimatingOut(false);
-    }
-
-    setShowMenuDiv(true); // 确保菜单 Div 已经渲染在 DOM 中
-
-    const button = event.currentTarget as Element;
-    const buttonRect = button.getBoundingClientRect();
-
-    const x = buttonRect.left; // 视口坐标
-    const y = buttonRect.top + buttonRect.height; // 在按钮下方
-
-    setMenuState({
-      isOpen: true, // 逻辑状态为打开
-      x,
-      y,
-      targetAssistantId: assistantId,
-    });
-  };
-
-  let menuCloseTimeoutId: ReturnType<typeof setTimeout> | undefined; // 用于存储 setTimeout 的 ID
-
-  // 修改后的 closeMenu 函数
-  const closeMenu = () => {
-    // 只有当菜单是逻辑打开状态，或者正在退出动画中时才执行关闭逻辑
-    if (!menuState().isOpen && !showMenuDiv()) return;
-
-    setMenuState((prev) => ({ ...prev, isOpen: false })); // 立即将逻辑状态设为关闭
-    setIsMenuAnimatingOut(true); // 立即应用退出动画类
-
-    // 在动画结束后，将菜单元素从 DOM 中移除
-    // 使用 setTimeout 保证动画播放完毕
-    menuCloseTimeoutId = setTimeout(() => {
-      setShowMenuDiv(false); // 从 DOM 中移除菜单 Div
-      setIsMenuAnimatingOut(false); // 重置退出动画状态
-      setMenuState((prev) => ({ ...prev, targetAssistantId: null })); // 清除目标助手ID
-    }, ANIMATION_DURATION);
-  };
-
-  // 修改后的 handleClickOutside 函数
-  const handleClickOutside = (event: MouseEvent) => {
-    const target = event.target as HTMLElement;
-
-    // 1. 如果点击的是菜单内部（无论动画进出），不关闭。
-    //    这里的条件需要确保即使在退出动画期间点击菜单内容，也不会立即关闭，而是让退出动画完成。
-    if (target.closest('.assistant-context-menu')) {
-      return;
-    }
-
-    // 2. 如果点击的是触发按钮（.assistant-menu-button），忽略该事件。
-    //    因为 openMenu 函数已经处理了点击按钮的逻辑（包括 toggle）。
-    if (target.closest('.assistant-menu-button')) {
-      return;
-    }
-
-    // 只有当菜单是逻辑打开状态，并且点击的是真正的“外部”区域时才关闭
-    if (menuState().isOpen) {
-      closeMenu();
-    }
-  };
-
-  // 监听 document 上的点击事件，用于关闭菜单
-  onMount(() => {
-    document.addEventListener('click', handleClickOutside);
-  });
-
-  onCleanup(() => {
-    document.removeEventListener('click', handleClickOutside);
-  });
-
-  //---------------------------------------------------------------
-
-  let chatPageRef: HTMLDivElement | undefined; // 用于获取最外层容器（.chat-page）的引用
-
-  // 拖拽状态变量
+  // --- 3. 拖拽逻辑变量 ---
+  let chatPageRef: HTMLDivElement | undefined;
   let isResizingLeft = false;
   let isResizingRight = false;
-  let initialMouseX = 0; // 鼠标按下时的X坐标
-  let initialLeftPanelPxWidth = 0; // 鼠标按下时左侧面板的像素宽度
-  let initialRightPanelPxWidth = 0; // 鼠标按下时右侧面板的像素宽度
+  let initialMouseX = 0;
+  let initialLeftW = 0;
+  let initialRightW = 0;
 
-  const MIN_PERCENT = 10; // 最小宽度百分比
-  const MAX_PERCENT = 25; // 最大宽度百分比
+  // --- 4. 逻辑：初始化 & 全局点击监听 ---
+  onMount(async () => {
+    // 加载数据
+    try {
+      const loaded = await invoke<Assistant[]>('load_assistants');
+      if (Array.isArray(loaded) && loaded.length > 0) {
+        setDatas({ assistants: loaded });
+        if (!currentAssistantId()) setCurrentAssistantId(loaded[0].id);
+      } else {
+        const defaultAsst = createAssistant('默认助手');
+        setDatas('assistants', [defaultAsst]);
+        setCurrentAssistantId(defaultAsst.id);
+        saveSingleAssistantToBackend(defaultAsst.id);
+      }
+    } catch (err) { console.error(err); }
 
-  /**
-   * 开始拖拽事件
-   * @param {MouseEvent} e - 鼠标事件对象
-   * @param {'left'|'right'} panelType - 正在拖拽的面板类型
-   */
-  const startResize = (e: MouseEvent, panelType: 'left' | 'right') => {
-    e.preventDefault(); // 阻止默认的文本选择行为
+    // 【修复1：点击空白处收回菜单】
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // 如果点击的不是菜单内部，也不是开启菜单的那个按钮，就关闭
+      if (!target.closest('.assistant-context-menu') && !target.closest('.assistant-menu-button')) {
+        if (showMenuDiv()) closeMenu();
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    onCleanup(() => document.removeEventListener('click', handleClickOutside));
+  });
 
-    isResizingLeft = panelType === 'left';
-    isResizingRight = panelType === 'right';
+  // --- 5. 逻辑：面板拖拽调整大小 (完全修复) ---
+  const startResize = (e: MouseEvent, type: 'left' | 'right') => {
+    e.preventDefault();
     initialMouseX = e.clientX;
+    const leftEl = chatPageRef?.querySelector('.assistant-selector') as HTMLElement;
+    const rightEl = chatPageRef?.querySelector('.dialog-container') as HTMLElement;
 
-    // 获取当前被拖拽面板的像素宽度
-    if (panelType === 'left') {
-      initialLeftPanelPxWidth = chatPageRef?.querySelector('.assistant-selector')?.clientWidth ?? 0;
-    } else {
-      // panelType === 'right'
-      initialRightPanelPxWidth = chatPageRef?.querySelector('.dialog-container')?.clientWidth ?? 0;
-    }
+    initialLeftW = leftEl?.clientWidth || 0;
+    initialRightW = rightEl?.clientWidth || 0;
 
-    // 在文档上添加 mousemove 和 mouseup 事件监听器，以便在鼠标移出拖拽区域时也能捕获事件
-    document.addEventListener('mousemove', handleMouseMove as any);
-    document.addEventListener('mouseup', stopResize as any);
-    document.body.style.userSelect = 'none'; // 拖拽时禁用文本选择
-    document.body.style.cursor = 'ew-resize'; // 改变鼠标图标为左右拖拽样式
+    if (type === 'left') isResizingLeft = true;
+    else isResizingRight = true;
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResize);
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
   };
 
-  /**
-   * 处理鼠标移动事件（拖拽过程中）
-   * @param {MouseEvent} e - 鼠标事件对象
-   */
   const handleMouseMove = (e: MouseEvent) => {
-    if (!isResizingLeft && !isResizingRight) return;
-
-    const deltaX = e.clientX - initialMouseX; // 鼠标水平移动的距离
-    const totalPageWidth = chatPageRef?.offsetWidth ?? 1; // 获取父容器的总宽度
-
-    let newPercent: number;
+    if (!chatPageRef) return;
+    const deltaX = e.clientX - initialMouseX;
+    const totalW = chatPageRef.offsetWidth;
 
     if (isResizingLeft) {
-      const newPixelWidth = initialLeftPanelPxWidth + deltaX;
-      newPercent = (newPixelWidth / totalPageWidth) * 100;
-      // 限制新宽度在最小和最大百分比之间
-      newPercent = Math.min(Math.max(newPercent, MIN_PERCENT), MAX_PERCENT);
-      setLeftPanelWidth(newPercent);
+      const newWidth = ((initialLeftW + deltaX) / totalW) * 100;
+      // 限制 10% - 40%
+      setLeftPanelWidth(Math.min(Math.max(newWidth, 15), 25));
     } else if (isResizingRight) {
-      // 对于右侧面板，鼠标向左移动（deltaX为负）会增加其宽度
-      // 鼠标向右移动（deltaX为正）会减少其宽度
-      const newPixelWidth = initialRightPanelPxWidth - deltaX;
-      newPercent = (newPixelWidth / totalPageWidth) * 100;
-      // 限制新宽度在最小和最大百分比之间
-      newPercent = Math.min(Math.max(newPercent, MIN_PERCENT), MAX_PERCENT);
-      setRightPanelWidth(newPercent);
+      const newWidth = ((initialRightW - deltaX) / totalW) * 100;
+      setRightPanelWidth(Math.min(Math.max(newWidth, 15), 25));
     }
   };
 
-  /**
-   * 停止拖拽事件
-   */
   const stopResize = () => {
     isResizingLeft = false;
     isResizingRight = false;
-
-    // 移除文档上的事件监听器
-    document.removeEventListener('mousemove', handleMouseMove as any);
-    document.removeEventListener('mouseup', stopResize as any);
-    document.body.style.userSelect = ''; // 恢复文本选择
-    document.body.style.cursor = ''; // 恢复默认鼠标图标
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', stopResize);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
   };
 
-  // 在组件卸载时清理事件监听器，防止内存泄漏
-  onCleanup(() => {
-    document.removeEventListener('mousemove', handleMouseMove as any);
-    document.removeEventListener('mouseup', stopResize as any);
+  // --- 6. 逻辑：操作菜单 ---
+  const openMenu = (e: MouseEvent, assistantId: string) => {
+    e.stopPropagation();
+    if (menuState().isOpen && menuState().targetId === assistantId) { closeMenu(); return; }
+
+    setShowMenuDiv(true);
+    setIsMenuAnimatingOut(false);
+    const rect = (e.currentTarget as Element).getBoundingClientRect();
+    setMenuState({ isOpen: true, x: rect.left, y: rect.top + rect.height, targetId: assistantId });
+  };
+
+  const closeMenu = () => {
+    setMenuState(p => ({ ...p, isOpen: false }));
+    setIsMenuAnimatingOut(true);
+    clearTimeout(menuCloseTimeoutId);
+    menuCloseTimeoutId = setTimeout(() => {
+      setShowMenuDiv(false);
+      setIsMenuAnimatingOut(false);
+    }, 200);
+  };
+
+  // --- 7. 逻辑：核心功能 ---
+  const currentAssistant = () => datas.assistants.find(a => a.id === currentAssistantId());
+
+  const activeTopic = () => {
+    const asst = currentAssistant();
+    if (!asst) return null;
+    return asst.topics.find(t => t.id === currentTopicId()) || asst.topics[0];
+  };
+
+  // 监听助手切换，自动切换话题
+  createEffect(() => {
+    const asst = currentAssistant();
+    if (asst && asst.topics.length > 0) {
+      if (!currentTopicId() || !asst.topics.find(t => t.id === currentTopicId())) {
+        setCurrentTopicId(asst.topics[0].id);
+      }
+    } else if (asst && asst.topics.length === 0) {
+      // 如果选中的助手没话题，自动创建一个
+      addTopic();
+    }
   });
 
+  const handleSendMessage = async () => {
+    const text = inputMessage().trim();
+    const asstId = currentAssistantId();
+    const topicId = currentTopicId() || activeTopic()?.id;
+    if (!text || !asstId || !topicId) return;
+
+    // 定位到具体话题的 history：datas.assistants[asstId].topics[topicId].history
+    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [...h, { role: 'user' as const, content: text }]);
+    setInputMessage("");
+
+    // 模拟回复
+    setTimeout(async () => {
+      setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [...h, { role: 'assistant' as const, content: "收到。" }]);
+      await saveSingleAssistantToBackend(asstId);
+    }, 500);
+  };
+
+  const addTopic = async () => {
+    const asstId = currentAssistantId();
+    if (!asstId) return;
+    const newT = createTopic();
+    setDatas('assistants', a => a.id === asstId, 'topics', prev => [...prev, newT]);
+    setCurrentTopicId(newT.id);
+    await saveSingleAssistantToBackend(asstId);
+  };
+
+  const addAssistant = async () => {
+    const newAsst = createAssistant(`新助手 ${datas.assistants.length + 1}`);
+    setDatas('assistants', (prev) => [...prev, newAsst]);
+    setCurrentAssistantId(newAsst.id);
+    await saveSingleAssistantToBackend(newAsst.id);
+  };
+
+  const removeAssistant = async (id: string | null) => {
+    if (!id) return;
+    await deleteAssistantFile(id);
+    if (currentAssistantId() === id) {
+      const idx = datas.assistants.findIndex(a => a.id === id);
+      setCurrentAssistantId(datas.assistants[idx - 1]?.id || datas.assistants[idx + 1]?.id || null);
+    }
+    setDatas('assistants', prev => prev.filter(a => a.id !== id));
+    closeMenu();
+  };
+
   return (
-    <div class="chat-page" ref={(el) => (chatPageRef = el as HTMLDivElement)}>
-      {/* 左侧选择助手区域 */}
-      <div
-        class="assistant-selector"
-        style={{ width: `${leftPanelWidth()}%` }} // 动态绑定宽度
-      >
+    <div class="chat-page" ref={el => chatPageRef = el}>
+
+      {/* 左侧面板 */}
+      <div class="assistant-selector" style={{ width: `${leftPanelWidth()}%` }}>
         <div class="assistant-content">
-          {/* 渲染助手列表 - 添加加载状态判断 */}
-          {assistantsResource.loading ? (
-            <p>Loading assistants...</p> // 或者显示一个加载指示器
-          ) : (
-            <>
-              <For each={assistants()}>
-                {(assistant) => (
-                  <div class="assistant-item">
-                    <span>{assistant.name}</span>
-                    <button
-                      class="assistant-menu-button"
-                      onClick={(e) => openMenu(e as unknown as MouseEvent, assistant.id)}
-                      aria-haspopup="true"
-                      aria-expanded={menuState().isOpen && menuState().targetAssistantId === assistant.id}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="#FFFFFF" viewBox="0 0 24 24" stroke-Width={1.5} class="size-6">
-                        <path stroke-Linecap="round" stroke-Linejoin="round" d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
-                      </svg>
-
-                    </button>
-                  </div>
-                )}
-              </For>
-            </>
-          )}
-
-          {/* 添加助手按钮 - 即使在加载状态下也显示 */}
-          <button
-            class="add-assistant-button"
-            onClick={addAssistant}
-            disabled={assistantsResource.loading} // 加载时禁用
-          >
-            + Add Assistant
-          </button>
-
-          {/* 下拉菜单 - (保持不变) */}
-          {showMenuDiv() && (
-            <div
-              class="assistant-context-menu"
-              // 根据 isMenuAnimatingOut 状态动态添加/移除 'menu-exiting' 类
-              classList={{ 'menu-exiting': isMenuAnimatingOut() }}
-              style={{
-                top: `${menuState().y}px`,
-                left: `${menuState().x}px`,
-                // 位置使用内联绑定（动态 top/left），视觉和动画样式已移入 CSS
-              }}
-            >
-              <button
-                class="context-menu-button"
-                onClick={() => openAssistantSettings(menuState().targetAssistantId)}
+          <For each={datas.assistants}>
+            {(assistant) => (
+              <div
+                classList={{ 'assistant-item': true, 'active': assistant.id === currentAssistantId() }}
+                onClick={() => setCurrentAssistantId(assistant.id)}
               >
-                助手设置
-              </button>
-              <button
-                class="context-menu-button delete"
-                onClick={() => removeAssistant(menuState().targetAssistantId)}
-              >
-                删除助手
-              </button>
-            </div>
-          )}
+                <span>{assistant.name}</span>
+                <button class="assistant-menu-button" onClick={(e) => openMenu(e as MouseEvent, assistant.id)}>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="#FFFFFF" viewBox="0 0 24 24" stroke-Width={1.5} class="size-6"><path stroke-Linecap="round" stroke-Linejoin="round" d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" /></svg>
+                </button>
+              </div>
+            )}
+          </For>
+          <button class="add-assistant-button" onClick={addAssistant}>+ 新增助手</button>
         </div>
-        <div class="resize-handle left-handle" onMouseDown={(e) => startResize(e as unknown as MouseEvent, 'left')}></div>
+        {/* 修复：左侧拖拽手柄 */}
+        <div class="resize-handle left-handle" onMouseDown={(e) => startResize(e as MouseEvent, 'left')}></div>
       </div>
 
       {/* 中间聊天区域 */}
       <div class="chat-input-container">
         <div class="chat-messages-area">
-          {/* 聊天消息内容将在这里显示 */}
-          Chat Messages content goes here...
-          <p>Hello! How can I help you today?</p>
-          <p>I'm fine, thanks for asking!</p>
-          {/* 可以添加更多的聊天消息来模拟滚动 */}
+          <Show when={activeTopic()} fallback={<div class="empty-state">请选择或创建话题</div>}>
+            <For each={activeTopic()?.history}>
+              {(msg) => (
+                <div class={`message ${msg.role}`}>
+                  <div class="message-content">{msg.content}</div>
+                </div>
+              )}
+            </For>
+          </Show>
         </div>
-        <input type="text" class="chat-input" placeholder="Type your message..." />
+
+        <div class="chat-input-wrapper">
+          <input
+            type="text"
+            class="chat-input"
+            placeholder="输入消息..."
+            value={inputMessage()}
+            onInput={(e) => setInputMessage(e.currentTarget.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+          />
+          <button class="send-message-button" onClick={() => handleSendMessage()}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+            </svg>
+            <span>发送</span>
+          </button>
+        </div>
       </div>
 
-      {/* 右侧对话或相关信息区域 */}
-      <div
-        class="dialog-container"
-        style={{ width: `${rightPanelWidth()}%` }} // 动态绑定宽度
-      >
+      {/* 右侧展示区域 */}
+      <div class="dialog-container" style={{ width: `${rightPanelWidth()}%` }}>
+        <div class="resize-handle right-handle" onMouseDown={(e) => startResize(e as MouseEvent, 'right')}></div>
         <div class="dialog-content">
-          Dialog
-          {/* 你可以在这里添加对话历史、用户信息或其他相关信息 */}
+          <Show when={currentAssistant()}>
+            {(asst) => (
+              <>
+                <div class="info-header" style="border-bottom: 1px solid #08ddf9; padding-bottom: 10px; margin-bottom: 15px;">
+                  <h3>{asst().name} 的话题</h3>
+                </div>
+
+                <button class="add-topic-button" onClick={addTopic}>+ 新建话题</button>
+
+                <div class="topics-list">
+                  <For each={asst().topics}>
+                    {(topic) => (
+                      <div
+                        classList={{ 'topic-item': true, 'active': topic.id === currentTopicId() }}
+                        onClick={() => setCurrentTopicId(topic.id)}
+                      >
+                        <span class="topic-name">{topic.name}</span>
+                        {/* 这里你可以根据需要也加一个删除话题的小图标 */}
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </>
+            )}
+          </Show>
         </div>
-        <div class="resize-handle right-handle" onMouseDown={(e) => startResize(e as unknown as MouseEvent, 'right')}></div>
       </div>
+
+      {/* 下拉菜单 */}
+      {showMenuDiv() && (
+        <div
+          class="assistant-context-menu"
+          classList={{ 'menu-exiting': isMenuAnimatingOut() }}
+          style={{ top: `${menuState().y}px`, left: `${menuState().x}px` }}
+        >
+          <button class="context-menu-button" onClick={() => alert('Developing...')}>重命名</button>
+          <button class="context-menu-button delete" onClick={() => removeAssistant(menuState().targetId)}>删除助手</button>
+        </div>
+      )}
     </div>
   );
 };

@@ -33,7 +33,7 @@
 }
 
 .assistant-selector {
-    border-right: 4px solid #08ddf9;
+    border-right: 1px solid #08ddf9;
     /* 左侧面板右边框作为分隔线 */
     border-bottom: 1px solid #08ddf9;
     border-top: 1px solid #08ddf9;
@@ -41,7 +41,7 @@
 }
 
 .dialog-container {
-    border-left: 4px solid #08ddf9;
+    border-left: 1px solid #08ddf9;
     /* 右侧面板左边框作为分隔线 */
     border-bottom: 1px solid #08ddf9;
     border-top: 1px solid #08ddf9;
@@ -123,7 +123,7 @@
 }
 
 .assistant-menu-button {
-    background-color: #2e2e2e;
+    background-color: #367d93;
     border: none;
     color: #FFFFFF;
     border-radius: 4px;
@@ -140,7 +140,7 @@
     padding: 8px 12px;
     background: none;
     border: 1px solid #08ddf9;
-    color: #08ddf9;
+    color: #ffffff;
     border-radius: 4px;
     cursor: pointer;
     width: calc(100% - 24px);
@@ -148,8 +148,9 @@
 
 /* 聊天输入框 */
 .chat-input {
-    /* 不再使用绝对定位，而是作为 Flex 容器的子元素 */
-    height: 10%;
+    flex-grow: 1;       /* 让输入框占据剩余空间 */
+    height: 100% !important; /* 覆盖原有固定 10% 的设置，由父级控制 */
+    margin: 0;
     /* 输入框高度占据 .chat-input-container 总高度的10% */
     min-height: 40px;
     /* 最小高度，防止在极端情况下高度过小 */
@@ -253,4 +254,163 @@
 .size-6 {
     width: 24px;
     height: 24px;
+}
+
+.assistant-item {
+    /* 增加过渡效果 */
+    transition: background-color 0.2s, border-color 0.2s;
+    cursor: pointer; /* 增加手型光标 */
+}
+
+.assistant-item:hover {
+    background-color: #2a2a2a;
+}
+
+.assistant-item.active {
+    background-color: #1f3a40; /* 深青色背景表示选中 */
+    border-color: #08ddf9;     /* 亮色边框 */
+    box-shadow: 0 0 5px rgba(8, 221, 249, 0.3);
+}
+
+.assistant-name {
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-right: 10px;
+    font-size: 0.95rem;
+}
+
+/* 消息气泡样式 */
+.message {
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+}
+
+.message-content {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    line-height: 1.5;
+    word-wrap: break-word;
+}
+
+.message.user {
+    align-items: flex-end; /* 用户消息靠右 */
+}
+
+.message.user .message-content {
+    border: 1px solid #08ddf9;
+    background-color: #08ddf92d;
+    color: #fff;
+    border-top-right-radius: 2px; /* 气泡角样式 */
+}
+
+.message.assistant {
+    align-items: flex-start; /* AI 消息靠左 */
+}
+
+.message.assistant .message-content {
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-top-left-radius: 2px;
+}
+
+.empty-state {
+    text-align: center;
+    color: #666;
+    margin-top: 50px;
+}
+
+/* Chat.css 增加/修改 */
+
+/* 令右侧面板和左侧面板结构对称 */
+.topic-item {
+    border: 1px solid #08ddf9;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    margin: 4px 0;
+    border-radius: 8px;
+    background-color: transparent;
+    transition: background-color 0.2s, border-color 0.2s;
+    cursor: pointer;
+}
+
+.topic-item:hover {
+    background-color: #2a2a2a;
+}
+
+.topic-item.active {
+    background-color: #1f3a40;
+    border-color: #08ddf9;
+    box-shadow: 0 0 5px rgba(8, 221, 249, 0.3);
+}
+
+.topic-name {
+    flex-grow: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.9rem;
+    color: #e0e0e0;
+}
+
+/* 新建话题按钮样式（复用新增助手的风格） */
+.add-topic-button {
+    margin: 10px 0;
+    padding: 8px 12px;
+    background: none;
+    border: 1px solid #08ddf9;
+    color: #ffffff;
+    border-radius: 1px; /* 稍微扁平化一点以区分 */
+    cursor: pointer;
+    width: 100%;
+}
+
+.add-topic-button:hover {
+    background-color: rgba(8, 221, 249, 0.1);
+}
+
+/* 话题区域的滚动容器 */
+.topics-list {
+    margin-top: 15px;
+}
+
+/* 输入框包裹层 */
+.chat-input-wrapper {
+    display: flex;
+    gap: 10px;          /* 输入框与按钮的间距 */
+    height: 10%;        /* 继承原 input 的高度比例 */
+    min-height: 45px;
+    width: 100%;
+    align-items: stretch;
+}
+
+.send-message-button {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background-color: transparent;
+    color: #ffffff;
+    border: 1px solid #08ddf9;
+    border-radius: 8px;
+    padding: 0 15px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.send-message-button:hover {
+    background-color: #08ddf9;
+    color: #000;
+}
+
+.send-message-button svg {
+    width: 20px;
+    height: 20px;
 }

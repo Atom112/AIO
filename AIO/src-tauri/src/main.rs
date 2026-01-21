@@ -1,107 +1,96 @@
 // src-tauri/src/main.rs
-// 在发布（release）构建中防止额外的控制台窗口，切勿移除！！
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
-// 从标准库和外部 crate 导入必要的模块
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::env; // 用于环境变量（作为可选的回退）
 
-// 定义与前端结构匹配的 Assistant 结构体
+#[derive(Serialize, Deserialize, Clone)]
+struct Message {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Topic {
+    id: String,
+    name: String,
+    #[serde(default)]
+    history: Vec<Message>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct Assistant {
     id: String,
     name: String,
-    // 根据需要添加其他字段
+    prompt: String,
+    #[serde(default)]
+    topics: Vec<Topic>, // 修改：将 history 替换为 topics
+}
+
+// 获取存储助手的文件夹路径
+fn get_assistants_dir() -> Result<PathBuf, String> {
+    let mut path = dirs::config_dir().ok_or("无法获取配置目录")?;
+    path.push("YourAppName");
+    path.push("assistants"); // 存储在 assistants 子文件夹下
+    if !path.exists() {
+        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
 }
 
 // --- 命令 ---
 
-/// 从 JSON 文件加载 assistants 的命令。
-/// 在 Tauri v2 中，宏更简单：#[tauri::command]
+// 加载所有助手：遍历文件夹下的所有 .json 文件
 #[tauri::command]
-async fn load_assistants() -> Result<Vec<Assistant>, String> { // 已添加 'async'
-    let file_path = get_data_file_path()?;
+async fn load_assistants() -> Result<Vec<Assistant>, String> {
+    let dir = get_assistants_dir()?;
+    let mut assistants = Vec::new();
 
-    // 检查文件是否存在
-    if !file_path.exists() {
-        println!(
-            "Data file does not exist at {:?}, returning empty list.",
-            file_path
-        );
-        // 如果文件尚不存在则返回空列表。
-        // 前端负责创建初始的 assistant。
-        return Ok(vec![]);
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        
+        // 只读取 .json 文件
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            let contents = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            if let Ok(asst) = serde_json::from_str::<Assistant>(&contents) {
+                assistants.push(asst);
+            }
+        }
     }
-
-    // 读取文件内容
-    let contents = fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read file '{:?}': {}", file_path, e))?;
-
-    // 将 JSON 内容解析为 Vec<Assistant>
-    let assistants: Vec<Assistant> = serde_json::from_str(&contents)
-        .map_err(|e| format!("Failed to parse JSON from '{:?}': {}", file_path, e))?;
-
+    // 按创建时间或 ID 排序（可选）
+    assistants.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(assistants)
 }
 
-/// 将 assistant 列表保存到 JSON 文件的命令。
+// 保存单个助手：文件名使用助手的 ID
 #[tauri::command]
-async fn save_assistants(assistants: Vec<Assistant>) -> Result<(), String> { // 已添加 'async'
-    let file_path = get_data_file_path()?;
+async fn save_assistant(assistant: Assistant) -> Result<(), String> {
+    let mut path = get_assistants_dir()?;
+    path.push(format!("{}.json", assistant.id)); // 文件名如: 1710500123.json
 
-    // 确保父目录存在
-    if let Some(parent) = file_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory '{:?}': {}", parent, e))?;
-    }
-
-    // 将 assistants 向量序列化为格式化的 JSON 字符串
-    let json = serde_json::to_string_pretty(&assistants)
-        .map_err(|e| format!("Failed to serialize assistants to JSON: {}", e))?;
-
-    // 将 JSON 字符串写入文件
-    fs::write(&file_path, json)
-        .map_err(|e| format!("Failed to write file '{:?}': {}", file_path, e))?;
-
-    println!("Assistants successfully saved to {:?}", file_path);
+    let json = serde_json::to_string_pretty(&assistant).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 帮助函数：确定 assistants 数据文件的路径。
-/// 使用 `dirs` crate 提供的系统配置目录。
-fn get_data_file_path() -> Result<PathBuf, String> {
-    // 尝试使用 `dirs` crate 获取配置目录
-    match dirs::config_dir() {
-        Some(mut path) => {
-            // 附加应用的特定文件夹和文件名
-            // TODO: 为你的应用自定义这些标识符
-            path.push("YourCompanyNameOrName"); // 例如 "MyCompany"
-            path.push("YourAppName");          // 例如 "MyAwesomeAIApp"
-            path.push("assistants.json");
-            Ok(path)
-        }
-        None => {
-            // 当 dirs::config_dir 失败时的回退机制（罕见）
-            eprintln!("Warning: Could not determine config directory. Using current working directory.");
-            let mut path = env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e))?;
-            path.push("assistants_fallback.json"); // 使用不同名称以避免混淆
-            Ok(path)
-        }
+// 删除单个助手的对应文件
+#[tauri::command]
+async fn delete_assistant(id: String) -> Result<(), String> {
+    let mut path = get_assistants_dir()?;
+    path.push(format!("{}.json", id));
+    
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
     }
+    Ok(())
 }
-
-// --- 命令结束 ---
 
 fn main() {
     tauri::Builder::default()
-        // 注册自定义命令，以便从前端调用
-        // 注意：在 v2 中直接传入函数名
         .invoke_handler(tauri::generate_handler![
             load_assistants,
-            save_assistants
+            save_assistant,
+            delete_assistant
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

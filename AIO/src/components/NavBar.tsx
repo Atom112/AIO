@@ -2,7 +2,8 @@
 
 //---------------------- imports --------------------------------
 
-import { createSignal, onMount, For } from 'solid-js';
+import { createSignal, onMount, For,createEffect } from 'solid-js';
+import { datas, setDatas, currentAssistantId, saveSingleAssistantToBackend } from '../store'
 import { Window } from '@tauri-apps/api/window'; 
 import { A } from '@solidjs/router';
 import type { JSX } from 'solid-js';
@@ -19,6 +20,8 @@ interface NavBarProps {}  // 目前没有传入属性，可以根据需要添加
 
 function NavBar(props: NavBarProps): JSX.Element {
 
+  //用于存储用户在“设置提示词”弹窗中输入的提示词
+  const [modalPrompt, setModalPrompt] = createSignal('');
   //创建响应式状态："设置提示词"弹窗是否被打开（默认为否）
   const [isModalOpen, setIsModalOpen] = createSignal<boolean>(false);
 
@@ -42,6 +45,32 @@ function NavBar(props: NavBarProps): JSX.Element {
   // 用于存储 setTimeout 的 ID，用来处理下拉菜单的可见性问题
   let hideTimeoutId: ReturnType<typeof setTimeout> | undefined; 
 
+
+  const handleOpenPromptModal = (e: MouseEvent) => {
+    e.preventDefault();
+    const activeId = currentAssistantId();
+    if (!activeId) {
+        alert("请先在聊天界面创建一个助手");
+        return;
+    }
+    // 从 Store 中查找当前助手的 prompt
+    const assistant = datas.assistants.find(a => a.id === activeId);
+    setModalPrompt(assistant?.prompt || '');
+    setIsModalOpen(true);
+  };
+
+  // 保存 Prompt 的逻辑
+  const handleSavePrompt = (newPrompt: string) => {
+    const activeId = currentAssistantId();
+    if (activeId) {
+        // 更新 Store
+        setDatas('assistants', a => a.id === activeId, 'prompt', newPrompt);
+        // 触发后端保存
+        saveSingleAssistantToBackend(activeId);
+        console.log("提示词已更新并保存");
+    }
+    // setIsModalOpen(false) 在 PromptModal 组件内部或由 onClose 触发，这里通常不需要手动调，除非 Modal 设计如此
+  };
 
   // 监听窗口最大化/还原事件，以便即时更新按钮状态
   onMount(async () => {
@@ -70,12 +99,6 @@ function NavBar(props: NavBarProps): JSX.Element {
     hideTimeoutId = setTimeout(() => {
       setDropdownVisible(false);
     }, 200); // 延迟 0.2 秒隐藏
-  };
-
-  // 处理用户设置的新的提示词
-  const handleSavePrompt = (newPrompt: string): void => {
-    setCurrentPrompt(newPrompt);
-    console.log("新的提示词已保存:", newPrompt); 
   };
   
   // 下拉菜单栏点击选择模型后立即隐藏
@@ -172,10 +195,7 @@ function NavBar(props: NavBarProps): JSX.Element {
           href="#" 
           title="设置提示词"
           class="nav-item" 
-          onClick={(e: MouseEvent) => {
-            e.preventDefault();
-            setIsModalOpen(true);
-          }}
+          onClick={handleOpenPromptModal}
         >
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-Width={1.5} stroke="currentColor" class="size-6">
             <path stroke-Linecap="round" stroke-Linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
@@ -216,7 +236,7 @@ function NavBar(props: NavBarProps): JSX.Element {
         show={isModalOpen()} 
         onClose={() => setIsModalOpen(false)}
         onSave={handleSavePrompt}
-        initialPrompt={currentPrompt()}
+        initialPrompt={modalPrompt()}
       />
     </>
   );

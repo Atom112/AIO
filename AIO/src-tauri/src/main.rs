@@ -48,7 +48,7 @@ async fn load_assistants() -> Result<Vec<Assistant>, String> {
     for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
-        
+
         // 只读取 .json 文件
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
             let contents = fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -78,7 +78,7 @@ async fn save_assistant(assistant: Assistant) -> Result<(), String> {
 async fn delete_assistant(id: String) -> Result<(), String> {
     let mut path = get_assistants_dir()?;
     path.push(format!("{}.json", id));
-    
+
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?;
     }

@@ -2,12 +2,12 @@
 
 //---------------------- imports --------------------------------
 
-import { createSignal, onMount, For,createEffect } from 'solid-js';
+import { createSignal, onMount, For, createEffect } from 'solid-js';
 import { datas, setDatas, currentAssistantId, saveSingleAssistantToBackend } from '../store/store'
-import { Window } from '@tauri-apps/api/window'; 
+import { Window } from '@tauri-apps/api/window';
 import { A } from '@solidjs/router';
 import type { JSX } from 'solid-js';
-import PromptModal from '../pages/PromptModal'; 
+import PromptModal from '../pages/PromptModal';
 import './NavBar.css';
 
 
@@ -16,7 +16,7 @@ import './NavBar.css';
 //创建窗口实例（标签为main，在src-tauri/tauri.conf.json中的windows.title字段决定。默认为main）
 const appWindow = new Window('main');
 
-interface NavBarProps {}  // 目前没有传入属性，可以根据需要添加
+interface NavBarProps { }  // 目前没有传入属性，可以根据需要添加
 
 function NavBar(props: NavBarProps): JSX.Element {
 
@@ -38,20 +38,20 @@ function NavBar(props: NavBarProps): JSX.Element {
 
   //模型选择下拉菜单是否可见（默认为否）
   const [isDropdownVisible, setDropdownVisible] = createSignal<boolean>(false);
-  
+
   // 用于跟踪窗口是否最大化，以便更新全屏按钮的图标（例如，最大化/还原。默认为未最大化）
-  const [isMaximized, setIsMaximized] = createSignal<boolean>(false); 
+  const [isMaximized, setIsMaximized] = createSignal<boolean>(false);
 
   // 用于存储 setTimeout 的 ID，用来处理下拉菜单的可见性问题
-  let hideTimeoutId: ReturnType<typeof setTimeout> | undefined; 
+  let hideTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
 
   const handleOpenPromptModal = (e: MouseEvent) => {
     e.preventDefault();
     const activeId = currentAssistantId();
     if (!activeId) {
-        alert("请先在聊天界面创建一个助手");
-        return;
+      alert("请先在聊天界面创建一个助手");
+      return;
     }
     // 从 Store 中查找当前助手的 prompt
     const assistant = datas.assistants.find(a => a.id === activeId);
@@ -63,11 +63,11 @@ function NavBar(props: NavBarProps): JSX.Element {
   const handleSavePrompt = (newPrompt: string) => {
     const activeId = currentAssistantId();
     if (activeId) {
-        // 更新 Store
-        setDatas('assistants', a => a.id === activeId, 'prompt', newPrompt);
-        // 触发后端保存
-        saveSingleAssistantToBackend(activeId);
-        console.log("提示词已更新并保存");
+      // 更新 Store
+      setDatas('assistants', a => a.id === activeId, 'prompt', newPrompt);
+      // 触发后端保存
+      saveSingleAssistantToBackend(activeId);
+      console.log("提示词已更新并保存");
     }
     // setIsModalOpen(false) 在 PromptModal 组件内部或由 onClose 触发，这里通常不需要手动调，除非 Modal 设计如此
   };
@@ -77,16 +77,16 @@ function NavBar(props: NavBarProps): JSX.Element {
     // 在组件挂载时检查窗口的初始最大化状态
     setIsMaximized(await appWindow.isMaximized());
     // onResized 也会在最大化/还原时触发
-    const unlistenMaximized = await appWindow.onResized(async () => { 
-        setIsMaximized(await appWindow.isMaximized());
+    const unlistenMaximized = await appWindow.onResized(async () => {
+      setIsMaximized(await appWindow.isMaximized());
     });
-    
+
     return () => {
       // 组件卸载时取消监听
-      unlistenMaximized(); 
+      unlistenMaximized();
     };
-  });  
-  
+  });
+
 
   // 处理鼠标进入模型选择栏，显示下拉框
   const handleMouseEnter = (): void => {
@@ -100,12 +100,12 @@ function NavBar(props: NavBarProps): JSX.Element {
       setDropdownVisible(false);
     }, 200); // 延迟 0.2 秒隐藏
   };
-  
+
   // 下拉菜单栏点击选择模型后立即隐藏
   const handleModelSelect = (model: string): void => {
     setSelectedModel(model);
     setDropdownVisible(false); // 点击后立即隐藏
-    clearTimeout(hideTimeoutId); 
+    clearTimeout(hideTimeoutId);
     console.log("模型已切换为:", model);
   };
 
@@ -125,14 +125,14 @@ function NavBar(props: NavBarProps): JSX.Element {
   const handleClose = async (): Promise<void> => {
     await appWindow.close();
   };
-  
+
   return (
     <>
       {/* 添加一个可以拖拽的区域，通常用于无边框窗口 */}
       <div data-tauri-drag-region class="navbar-drag-region"></div>
       {/* 阻止navbar自身接收拖拽事件 */}
-      <nav class="navbar"> 
-        
+      <nav class="navbar">
+
         {/* ------------------------------ 左侧项目 ---------------------------------- */}
         {/* logo图标 */}
         <div class="logo-container" id='1'>
@@ -153,17 +153,17 @@ function NavBar(props: NavBarProps): JSX.Element {
             <path stroke-Linecap="round" stroke-Linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
           </svg>
         </A>
-        
+
         {/* --------------------------------中心头像---------------------------------------- */}
-        
-        <img 
-          src="/src/assets/user.png" 
-          alt="User Avatar" class="avatar" 
+
+        <img
+          src="/src/assets/user.png"
+          alt="User Avatar" class="avatar"
         />
 
         {/* --------------------------------右侧项目---------------------------------------- */}
         {/* 模型选择下拉菜单 */}
-        <div 
+        <div
           class="model-selector-wrapper"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
@@ -179,7 +179,7 @@ function NavBar(props: NavBarProps): JSX.Element {
           <div classList={{ 'dropdown-menu': true, 'active': isDropdownVisible() }}>
             <For each={allModels}>
               {(model) => (
-                <div 
+                <div
                   class="dropdown-item"
                   onClick={() => handleModelSelect(model)}
                 >
@@ -192,9 +192,9 @@ function NavBar(props: NavBarProps): JSX.Element {
 
         {/* 设置提示词按钮 */}
         <a
-          href="#" 
+          href="#"
           title="设置提示词"
-          class="nav-item" 
+          class="nav-item"
           onClick={handleOpenPromptModal}
         >
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-Width={1.5} stroke="currentColor" class="size-6">
@@ -209,17 +209,17 @@ function NavBar(props: NavBarProps): JSX.Element {
               <path stroke-Linecap="round" stroke-Linejoin="round" d="M5 12h14" />
             </svg>
           </button>
-          
+
           <button class="control-button maximize" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
             {/* 根据窗口状态切换图标 */}
-            {isMaximized() ? 
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-Width={1.5} stroke="currentColor" class="size-6">
-              <path stroke-Linecap="round" stroke-Linejoin="round" d="M16.5 8.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v8.25A2.25 2.25 0 0 0 6 16.5h2.25m8.25-8.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-7.5A2.25 2.25 0 0 1 8.25 18v-1.5m8.25-8.25h-6a2.25 2.25 0 0 0-2.25 2.25v6" />
-            </svg>
-            : 
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-Width={1.5} stroke="currentColor" class="size-6">
-              <path stroke-Linecap="round" stroke-Linejoin="round" d="M5.25 7.5A2.25 2.25 0 0 1 7.5 5.25h9a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25v-9Z" />
-            </svg>
+            {isMaximized() ?
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-Width={1.5} stroke="currentColor" class="size-6">
+                <path stroke-Linecap="round" stroke-Linejoin="round" d="M16.5 8.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v8.25A2.25 2.25 0 0 0 6 16.5h2.25m8.25-8.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-7.5A2.25 2.25 0 0 1 8.25 18v-1.5m8.25-8.25h-6a2.25 2.25 0 0 0-2.25 2.25v6" />
+              </svg>
+              :
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-Width={1.5} stroke="currentColor" class="size-6">
+                <path stroke-Linecap="round" stroke-Linejoin="round" d="M5.25 7.5A2.25 2.25 0 0 1 7.5 5.25h9a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25v-9Z" />
+              </svg>
             }
           </button>
 
@@ -232,8 +232,8 @@ function NavBar(props: NavBarProps): JSX.Element {
       </nav>
 
       {/* 提示词设置浮窗组件 */}
-      <PromptModal 
-        show={isModalOpen()} 
+      <PromptModal
+        show={isModalOpen()}
         onClose={() => setIsModalOpen(false)}
         onSave={handleSavePrompt}
         initialPrompt={modalPrompt()}

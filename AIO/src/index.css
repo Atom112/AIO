@@ -1,6 +1,6 @@
 /* src/index.css */
 /* 全局属性 */
-:root{
+:root {
   background-color: #1e1e1e;
 }
 
@@ -8,16 +8,23 @@ html {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  height: 100%;     /* 确保html元素的高度占据整个视口 */
-  overflow: hidden; /* 隐藏html的滚动条，主界面不需要滚动条 */
+  height: 100%;
+  /* 确保html元素的高度占据整个视口 */
+  overflow: hidden;
+  /* 隐藏html的滚动条，主界面不需要滚动条 */
 }
 
 body {
-  color: rgba(255, 255, 255, 0.87);     /* 文字颜色 */
-  margin: 0;                              /* 移除默认的 body 边距 */
-  min-height: 100vh;                      /* 让应用至少占满整个屏幕的高度 */
-  height: 100%;                           /* 确保body元素的高度占据整个父元素（html），即整个视口 */
-  overflow: hidden;                       /* 隐藏body的滚动条，同样防止其内容溢出产生滚动 */
+  color: rgba(255, 255, 255, 0.87);
+  /* 文字颜色 */
+  margin: 0;
+  /* 移除默认的 body 边距 */
+  min-height: 100vh;
+  /* 让应用至少占满整个屏幕的高度 */
+  height: 100%;
+  /* 确保body元素的高度占据整个父元素（html），即整个视口 */
+  overflow: hidden;
+  /* 隐藏body的滚动条，同样防止其内容溢出产生滚动 */
 
 }
 
@@ -30,7 +37,8 @@ body {
 .page-fade-enter-from {
   opacity: 0;
   transform: translateX(20px);
-  z-index: 2; /* 确保新进入的页面浮在上面 */
+  z-index: 2;
+  /* 确保新进入的页面浮在上面 */
 }
 
 /* 离开时的结束状态：透明，稍微向左偏移 */

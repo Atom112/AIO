@@ -1,6 +1,7 @@
 import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic } from '../store/store';
+import Markdown from '../components/Markdown';
 import './Chat.css';
 
 // ======================
@@ -65,7 +66,7 @@ const Chat: Component = () => {
   let initialMouseX = 0;
   let initialLeftW = 0;
   let initialRightW = 0;
-
+  let textareaRef: HTMLTextAreaElement | undefined;
   // ======================
   // 3. 函数定义
   // ======================
@@ -351,6 +352,10 @@ const Chat: Component = () => {
 
     // 清空输入框
     setInputMessage("");
+    if (textareaRef) {
+      textareaRef.style.height = '40px';      // 恢复初始高度
+      textareaRef.style.overflowY = 'hidden'; // 发送后隐藏滚动条
+    }
 
     // 模拟AI响应（实际应用中应调用API）
     setTimeout(async () => {
@@ -464,7 +469,9 @@ const Chat: Component = () => {
             <For each={activeTopic()?.history}>
               {(msg) => (
                 <div class={`message ${msg.role}`}>
-                  <div class="message-content">{msg.content}</div>
+                  <div class="message-content">
+                    <Markdown content={msg.content} />
+                  </div>
                 </div>
               )}
             </For>
@@ -472,8 +479,40 @@ const Chat: Component = () => {
         </div>
         {/* 输入区域 */}
         <div class="chat-input-wrapper">
-          <input type="text" class="chat-input" placeholder="输入消息..." value={inputMessage()} onInput={(e) => setInputMessage(e.currentTarget.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} />
+          <textarea
+            ref={textareaRef}
+            class="chat-input"
+            placeholder="输入消息... (Shift + Enter 换行)"
+            value={inputMessage()}
+            onInput={(e) => {
+              const target = e.currentTarget;
+              setInputMessage(target.value);
+
+              // --- 自动高度逻辑 ---
+              target.style.height = 'auto'; // 先重置，以便收缩
+
+              // 计算新高度
+              const newHeight = target.scrollHeight;
+              target.style.height = `${newHeight}px`;
+
+              // 逻辑判定：如果内容高度超过了 clientHeight (即被 max-height 锁定了)
+              // 则显示滚动条，否则隐藏滚动条（视觉更干净）
+              if (newHeight > target.clientHeight) {
+                target.style.overflowY = 'auto';
+              } else {
+                target.style.overflowY = 'hidden';
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            rows={1}
+          />
           <button class="send-message-button" onClick={() => handleSendMessage()}>
+            {/* SVG 图标保持不变 */}
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
             </svg>
@@ -481,6 +520,8 @@ const Chat: Component = () => {
           </button>
         </div>
       </div>
+
+
 
       {/* 右侧展示区域 - 话题列表 */}
       <div class="dialog-container" style={{ width: `${rightPanelWidth()}%` }}>

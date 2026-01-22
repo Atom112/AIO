@@ -170,7 +170,8 @@
 /* 输入框样式 */
 .chat-input {
     flex-grow: 1;
-    height: 100% !important;
+    /* 移除原来的 height: 100% !important; 改为由 JS 动态控制 */
+    height: 40px;
     margin: 0;
     min-height: 40px;
     width: 100%;
@@ -181,8 +182,16 @@
     box-sizing: border-box;
     font-size: 1em;
     caret-color: #FFFFFF;
-    /* 光标颜色 */
     color: #FFFFFF;
+    resize: none;
+    /* 核心修改：允许滚动，限制最高高度 */
+    overflow-y: auto;
+    max-height: 20vh;
+    /* 最高不超过窗口高度的 20% */
+    line-height: 20px;
+    ;
+    font-family: inherit;
+    transition: border-color 0.2s;
 }
 
 .chat-input:focus {
@@ -262,7 +271,7 @@
 
 .message-content {
     max-width: 80%;
-    padding: 10px 14px;
+    padding: 0px 14px;
     border-radius: 10px;
     line-height: 1.5;
     word-wrap: break-word;
@@ -275,7 +284,7 @@
 
 .message.user .message-content {
     border: 1px solid #08ddf9;
-    background-color: #08ddf92d;
+    background-color: #08ddf917;
     /* 轻微蓝色背景 */
     color: #fff;
     border-top-right-radius: 2px;
@@ -357,10 +366,10 @@
 .chat-input-wrapper {
     display: flex;
     gap: 10px;
-    height: 10%;
+    height: auto;
     min-height: 45px;
     width: 100%;
-    align-items: stretch;
+    align-items: flex-end;
 }
 
 .send-message-button {
@@ -376,6 +385,10 @@
     transition: all 0.2s;
     font-weight: bold;
     white-space: nowrap;
+    height: 40px;
+    flex-shrink: 0;
+    margin-bottom: 2px;
+    /* 微调对齐 */
 }
 
 .send-message-button:hover {
@@ -411,4 +424,122 @@
 
 .topic-item:hover .assistant-menu-button {
     opacity: 1;
+}
+
+/* Markdown 基础样式容器 */
+.markdown-body {
+    font-size: 0.95rem;
+    line-height: 1.6;
+    word-wrap: break-word;
+    color: #e0e0e0;
+}
+
+/* 标题 */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    color: #08ddf9;
+}
+
+/* 列表 */
+.markdown-body ul,
+.markdown-body ol {
+    padding-left: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+/* 代码块 */
+.markdown-body pre {
+    background-color: #1a1a1a;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    border: 1px solid #333;
+    margin: 10px 0;
+    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
+}
+
+/* 行内代码 */
+.markdown-body code {
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
+    font-size: 0.9em;
+}
+
+/* 表格 */
+.markdown-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+}
+
+.markdown-body th,
+.markdown-body td {
+    border: 1px solid #444;
+    padding: 8px;
+    text-align: left;
+}
+
+.markdown-body th {
+    background-color: rgba(8, 221, 249, 0.1);
+}
+
+/* 引用块 */
+.markdown-body blockquote {
+    border-left: 4px solid #08ddf9;
+    margin: 0;
+    padding-left: 1rem;
+    color: #999;
+}
+
+.markdown-body pre code {
+    /* 确保代码块内的文字继承字体，且不重复计算字号 */
+    font-size: inherit;
+    font-family: inherit;
+    background-color: transparent;
+    line-height: 1.5;
+}
+
+
+
+/* --- 统一滚动条全局样式 --- */
+
+/* 1. 滚动条整体部分 */
+::-webkit-scrollbar {
+    width: 6px;
+    /* 纵向滚动条宽度 */
+    height: 6px;
+    /* 横向滚动条高度 */
+}
+
+/* 2. 滚动条轨道（背景） */
+::-webkit-scrollbar-track {
+    background: transparent;
+    /* 保持透明，融入背景 */
+}
+
+/* 3. 滚动滑块（滑动的那个条） */
+::-webkit-scrollbar-thumb {
+    background-color: #08ddf9;
+    /* 使用你的主题蓝色 */
+    border-radius: 10px;
+    /* 圆角 */
+    border: 1px solid rgba(0, 0, 0, 0);
+    /* 技巧：增加透明边框可以缩小滑块视觉宽度 */
+}
+
+/* 4. 当滑块悬停时（可选：增加一点交互感） */
+::-webkit-scrollbar-thumb:hover {
+    background-color: #06b8d1;
+    /* 悬停时稍微加深颜色 */
+}
+
+/* 5. 针对 Firefox 浏览器的兼容性写法（可选） */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #08ddf9 transparent;
 }

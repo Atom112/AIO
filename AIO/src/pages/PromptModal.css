@@ -15,8 +15,10 @@
 /* 浮窗内容区域 */
 .modal-content {
   border: 1px solid #08ddf9;
-  background: #2a2a2a; /* 深色背景 */
-  color: #e0e0e0;     /* 浅色文字 */
+  background: #2a2a2a;
+  /* 深色背景 */
+  color: #e0e0e0;
+  /* 浅色文字 */
   padding: 24px;
   border-radius: 8px;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
@@ -50,6 +52,7 @@
   line-height: 1;
   padding: 0;
 }
+
 .close-button:hover {
   color: #fff;
 }
@@ -63,7 +66,8 @@
   border-radius: 4px;
   color: #e0e0e0;
   font-size: 1rem;
-  resize: vertical; /* 允许用户垂直调整大小 */
+  resize: vertical;
+  /* 允许用户垂直调整大小 */
   box-sizing: border-box;
 }
 
@@ -91,6 +95,7 @@
   background-color: #555;
   color: #e0e0e0;
 }
+
 .btn-cancel:hover {
   background-color: #666;
 }
@@ -99,6 +104,7 @@
   background-color: #007bff;
   color: white;
 }
+
 .btn-save:hover {
   background-color: #0056b3;
 }

@@ -4,7 +4,6 @@
 // - 在 Tauri 应用中，Rust 端可以通过 `#[tauri::command]` 导出可被前端调用的函数（命令）。
 // - `run()` 函数负责构建并运行 Tauri 应用（插件注册、命令绑定、上下文注入等）。
 
-
 // `#[tauri::command]` 属性将该函数导出为 Tauri 可调用命令。
 // 这意味着前端（例如 JS/TS / Solid）可以通过 Tauri 的 `invoke` API 调用此函数。
 // 函数签名使用了借用的字符串切片 `&str`，返回一个 `String`。

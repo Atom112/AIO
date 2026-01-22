@@ -9,7 +9,7 @@ const Layout: Component<ParentProps> = (props) => {
       <NavBar />
       {/* props.children 用于渲染嵌套路由的内容，即App.tsx中的路由 */}
       <Transition name="page-fade">
-      {props.children}
+        {props.children}
       </Transition>
     </>
   );

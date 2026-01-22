@@ -11,12 +11,12 @@
   z-index: 1001;
 }
 
-.logo{
-   width: 40px;
-   height: 40px;
-   object-fit: contain;
-   display: block;
-   -webkit-user-drag: none;
+.logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
+  -webkit-user-drag: none;
 }
 
 /* --- 新增：用于Tauri无边框窗口的拖拽区域 --- */
@@ -25,18 +25,22 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 60px; /* 和 navbar 的高度一致 */
-  -webkit-app-region: drag; /* 允许拖拽 */
-  z-index: 999; /* 确保它在导航栏下方，才能拖拽 */
+  height: 60px;
+  /* 和 navbar 的高度一致 */
+  -webkit-app-region: drag;
+  /* 允许拖拽 */
+  z-index: 999;
+  /* 确保它在导航栏下方，才能拖拽 */
 }
 
 .navbar {
-  pointer-events: none; /* 让父容器不接收事件，子元素通过 pointer-events: auto 覆盖 */
+  pointer-events: none;
+  /* 让父容器不接收事件，子元素通过 pointer-events: auto 覆盖 */
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 24px;
-  
+
   padding: 0 20px;
   height: 60px;
   /*background-color: #1e1e1e;*/
@@ -44,27 +48,33 @@
   border-radius: 8px;
   border: 1px solid #08ddf9;
   margin: 0px 1px auto 0px;
-  
 
-  position: relative; /* 确保 z-index 有效 */
-  z-index: 1000; /* 确保导航栏内容在拖拽区域之上 */
+
+  position: relative;
+  /* 确保 z-index 有效 */
+  z-index: 1000;
+  /* 确保导航栏内容在拖拽区域之上 */
 }
 
 /* 默认将所有 nav-item 的 pointer-events 设置为 auto */
 /* 如果在父元素上设置了 pointer-events: none，子元素需要手动重置 */
-.nav-item, 
+.nav-item,
 .avatar,
 .model-selector-wrapper,
 .window-controls {
-  pointer-events: auto; /* 重新启用事件 */
+  pointer-events: auto;
+  /* 重新启用事件 */
 }
 
 /* --- (其他 .nav-item, .avatar, .model-selector-wrapper 等样式保持不变) --- */
 
 .nav-item svg {
-  width: 24px;  /* 设置 SVG 图标的宽度 */
-  height: 24px; /* 设置 SVG 图标的高度 */
-  color: currentColor; /* 继承父元素的颜色 */
+  width: 24px;
+  /* 设置 SVG 图标的宽度 */
+  height: 24px;
+  /* 设置 SVG 图标的高度 */
+  color: currentColor;
+  /* 继承父元素的颜色 */
 }
 
 /* 确保 nav-item 内部的元素垂直居中 */
@@ -76,7 +86,8 @@
   transition: background-color 0.2s, color 0.2s;
   display: flex;
   align-items: center;
-  gap: 8px; /* 如果有其他内容，添加间距 */
+  gap: 8px;
+  /* 如果有其他内容，添加间距 */
 }
 
 .nav-item:hover {
@@ -115,7 +126,7 @@
   left: 50%;
   transform: translateX(-50%);
   margin-top: 8px;
-  
+
   /*background-color: #2a2a2a;*/
   min-width: 160px;
   border: 1px solid #555;
@@ -159,8 +170,10 @@
 .control-button {
   background-color: transparent;
   border: none;
-  color: #a0a0a0; /* 默认颜色 */
-  font-size: 18px; /* 按钮符号大小 */
+  color: #a0a0a0;
+  /* 默认颜色 */
+  font-size: 18px;
+  /* 按钮符号大小 */
   width: 30px;
   height: 30px;
   display: flex;
@@ -169,28 +182,32 @@
   cursor: pointer;
   border-radius: 4px;
   transition: background-color 0.2s, color 0.2s;
-  margin-left: 4px; /* 按钮之间的间距 */
-  -webkit-app-region: no-drag; /* 按钮区域不可拖拽 */
+  margin-left: 4px;
+  /* 按钮之间的间距 */
+  -webkit-app-region: no-drag;
+  /* 按钮区域不可拖拽 */
 }
 
 .control-button:hover {
-  background-color: #333; /* 悬停背景 */
+  background-color: #333;
+  /* 悬停背景 */
   color: #fff;
 }
 
 .control-button.close:hover {
-  background-color: #e81123; /* 关闭按钮通常是红色 */
+  background-color: #e81123;
+  /* 关闭按钮通常是红色 */
   color: #fff;
 }
 
-.minimize{
+.minimize {
   color: #08ddf9;
 }
 
-.maximize{
+.maximize {
   color: #08ddf9;
 }
 
-.close{
+.close {
   color: #08ddf9;
 }

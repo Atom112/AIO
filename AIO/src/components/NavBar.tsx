@@ -3,7 +3,7 @@
 //---------------------- imports --------------------------------
 
 import { createSignal, onMount, For,createEffect } from 'solid-js';
-import { datas, setDatas, currentAssistantId, saveSingleAssistantToBackend } from '../store'
+import { datas, setDatas, currentAssistantId, saveSingleAssistantToBackend } from '../store/store'
 import { Window } from '@tauri-apps/api/window'; 
 import { A } from '@solidjs/router';
 import type { JSX } from 'solid-js';

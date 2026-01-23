@@ -22,6 +22,7 @@ name = "aio"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "futures-util",
  "reqwest",
  "serde",
  "serde_json",

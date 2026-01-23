@@ -96,7 +96,8 @@
     box-sizing: border-box;
     overflow: hidden;
     border-radius: 8px;
-    position: relative; /* 建立基准 */
+    position: relative;
+    /* 建立基准 */
 }
 
 /* 对话消息区域 */
@@ -276,6 +277,8 @@
     border-radius: 10px;
     line-height: 1.5;
     word-wrap: break-word;
+    min-height: 1.5em;
+    transition: height 0.2s ease;
 }
 
 .message.user {
@@ -371,10 +374,14 @@
     min-height: 45px;
     width: 100%;
     align-items: flex-end;
-    position: relative;       /* 开启层级定位 */
-    z-index: 10;              /* 确保高于消息区域的 z-index (5) */
-    background-color: #242424; /* 设置与页面背景一致的颜色，遮层滚动上来的内容 */
-    padding-top: 10px;        /* 增加顶部间距，防止文字贴边 */
+    position: relative;
+    /* 开启层级定位 */
+    z-index: 10;
+    /* 确保高于消息区域的 z-index (5) */
+    background-color: #242424;
+    /* 设置与页面背景一致的颜色，遮层滚动上来的内容 */
+    padding-top: 10px;
+    /* 增加顶部间距，防止文字贴边 */
 }
 
 .send-message-button {
@@ -532,7 +539,8 @@
     font-size: 12px;
     cursor: pointer;
     transition: all 0.2s;
-    opacity: 0.6; /* 默认半透明，减少干扰 */
+    opacity: 0.6;
+    /* 默认半透明，减少干扰 */
 }
 
 .copy-code-button:hover {
@@ -552,10 +560,12 @@
 
 /* 当鼠标移入代码块时才显示按钮 (可选) */
 .code-wrapper .copy-code-button {
-    opacity: 1; 
-    pointer-events: all; /* 确保可以点击 */
+    opacity: 1;
+    pointer-events: all;
+    /* 确保可以点击 */
     opacity: 0;
 }
+
 .code-wrapper:hover .copy-code-button {
     opacity: 0.8;
 }
@@ -596,4 +606,64 @@
 * {
     scrollbar-width: thin;
     scrollbar-color: #08ddf9 transparent;
+}
+
+/* 正在输出时的光标 */
+.typing::after {
+    content: "|";
+    display: inline-block;
+    color: #08ddf9;
+    animation: cursor-blink 0.8s infinite;
+    margin-left: 2px;
+}
+
+@keyframes cursor-blink {
+    50% {
+        opacity: 0;
+    }
+}
+
+/* --- 消息气泡基础样式优化 --- */
+.message {
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+
+    /* 关键 1: 初始状态强制透明且偏移，防止动画启动前的闪现 */
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+
+    /* 运行动画：确保动画结束后留在 100% 的状态 */
+    animation: bubble-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+
+    /* 优化渲染性能 */
+    will-change: transform, opacity;
+}
+
+@keyframes bubble-in {
+
+    /* 0% 状态要和上面的初始状态保持一致 */
+    0% {
+        opacity: 0;
+        transform: translateY(10px) scale(0.98);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* --- 话题切换动画优化 --- */
+
+/* 我们不再对容器使用 animation，改用简单的 opacity transition，
+   这样不会和内部气泡的弹出动画产生干扰 */
+.chat-messages-area {
+    transition: opacity 0.2s ease-out;
+    opacity: 1;
+}
+
+/* 当话题正在切换时，让容器变淡即可，不要带动里面的气泡乱跳 */
+.topic-switching {
+    opacity: 0;
 }

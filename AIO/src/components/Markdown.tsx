@@ -25,7 +25,7 @@ const originalCodeRenderer = renderer.code.bind(renderer);
 renderer.code = (token: Tokens.Code) => {
     // 先获取高亮插件处理后的原始代码块 HTML（包含 <pre><code>...）
     const renderedCode = originalCodeRenderer(token);
-    
+
     // 返回包裹后的结构
     return `
         <div class="code-wrapper">
@@ -40,7 +40,7 @@ renderer.code = (token: Tokens.Code) => {
     `;
 };
 
-marked.use({ renderer }); 
+marked.use({ renderer });
 
 // 3. 配置基础选项
 marked.setOptions({ gfm: true, breaks: true });
@@ -48,14 +48,14 @@ marked.setOptions({ gfm: true, breaks: true });
 const Markdown = (props: { content: string }) => {
     const htmlContent = createMemo(() => {
         const rawHtml = marked.parse(props.content || '') as string;
-        
+
         // 关键修改：DOMPurify 可能删除了 SVG 的内部属性
         return DOMPurify.sanitize(rawHtml, {
             // 允许 SVG 相关的所有标签和常用属性
             ADD_TAGS: ['button', 'svg', 'path', 'span'],
             ADD_ATTR: [
-                'target', 'class', 'title', 'draggable', 
-                'viewBox', 'stroke-width', 'stroke', 'fill', 
+                'target', 'class', 'title', 'draggable',
+                'viewBox', 'stroke-width', 'stroke', 'fill',
                 'd', 'stroke-linecap', 'stroke-linejoin'
             ],
             USE_PROFILES: { html: true, svg: true } // 显式开启 SVG 配置文件

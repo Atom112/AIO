@@ -2,6 +2,7 @@ import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } 
 import { invoke } from '@tauri-apps/api/core';
 import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic } from '../store/store';
 import Markdown from '../components/Markdown';
+import { listen } from '@tauri-apps/api/event';
 import './Chat.css';
 
 // ======================
@@ -50,7 +51,8 @@ const Chat: Component = () => {
   const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
   const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);
   const [isThinking, setIsThinking] = createSignal(false);
-  // 主菜单状态（用于显示助手上下文菜单）
+  const [typingIndex, setTypingIndex] = createSignal<number | null>(null);
+  const [isChangingTopic, setIsChangingTopic] = createSignal(false);  // 主菜单状态（用于显示助手上下文菜单）
   const [showMenuDiv, setShowMenuDiv] = createSignal(false);
   const [isMenuAnimatingOut, setIsMenuAnimatingOut] = createSignal(false);
   const [menuState, setMenuState] = createSignal({ isOpen: false, x: 0, y: 0, targetId: null as string | null });
@@ -161,34 +163,72 @@ const Chat: Component = () => {
 
   // 初始化应用状态
   onMount(async () => {
+    // --- 1. 原有的：加载助手初始数据 ---
     try {
-      // 从后端加载助手数据
       const loaded = await invoke<Assistant[]>('load_assistants');
-
       if (Array.isArray(loaded) && loaded.length > 0) {
-        // 设置本地状态
         setDatas({ assistants: loaded });
-
-        // 如果没有当前助手，设置第一个助手
         if (!currentAssistantId()) setCurrentAssistantId(loaded[0].id);
       } else {
-        // 创建默认助手
         const defaultAsst = createAssistant('默认助手');
         setDatas('assistants', [defaultAsst]);
         setCurrentAssistantId(defaultAsst.id);
-
-        // 保存到后端
         await saveSingleAssistantToBackend(defaultAsst.id);
       }
     } catch (err) {
       console.error("加载助手失败:", err);
     }
 
-    // 处理点击外部关闭菜单
+    // --- 2. 新增的：监听 Rust 侧发来的流式数据 ---
+    const unlisten = await listen<any>('llm-chunk', (event) => {
+      const { assistant_id, topic_id, content, done } = event.payload;
+
+      if (done) {
+        setIsThinking(false);
+        setTypingIndex(null);
+        saveSingleAssistantToBackend(assistant_id);
+        return;
+      }
+
+      // --- 关键修改：细粒度更新 ---
+      // 1. 先找到当前对话历史
+      const asst = datas.assistants.find(a => a.id === assistant_id);
+      const topic = asst?.topics.find(t => t.id === topic_id);
+      if (!topic) return;
+
+      const history = topic.history;
+      const lastIdx = history.length - 1;
+
+      // 2. 只有当最后一条是助手消息时才更新内容
+      if (lastIdx >= 0 && history[lastIdx].role === 'assistant') {
+        // 使用路径式更新：('assistants', 筛选助手, 'topics', 筛选话题, 'history', 索引, '属性', 更新函数)
+        setDatas(
+          'assistants', (a) => a.id === assistant_id,
+          'topics', (t) => t.id === topic_id,
+          'history', lastIdx,
+          'content', (oldContent: string) => oldContent + content // 仅增加文字，不替换对象
+        );
+      }
+
+      // 处理自动滚动
+      const area = document.querySelector('.chat-messages-area');
+      if (area) {
+        requestAnimationFrame(() => {
+          area.scrollTop = area.scrollHeight;
+        });
+      }
+
+      // 如果流结束了
+      if (done) {
+        setIsThinking(false);
+        setTypingIndex(null);
+        saveSingleAssistantToBackend(assistant_id); // 持久化保存
+      }
+    });
+
+    // --- 3. 原有的：全局点击监听（用于关闭菜单） ---
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-
-      // 如果点击不在菜单或按钮上，关闭菜单
       if (!target.closest('.assistant-context-menu') && !target.closest('.assistant-menu-button')) {
         if (showMenuDiv()) closeMenu();
         if (showTopicMenuDiv()) closeTopicMenu();
@@ -196,7 +236,12 @@ const Chat: Component = () => {
     };
 
     document.addEventListener('click', handleClickOutside);
-    onCleanup(() => document.removeEventListener('click', handleClickOutside));
+
+    // 清理函数：组件卸载时取消事件监听
+    onCleanup(() => {
+      unlisten();
+      document.removeEventListener('click', handleClickOutside);
+    });
   });
 
   /**
@@ -325,6 +370,20 @@ const Chat: Component = () => {
   // 监听助手切换，自动切换话题
   createEffect(() => {
     const asst = currentAssistant();
+    const tId = currentTopicId();
+
+    if (asst && tId) {
+      // 逻辑：开启遮罩 -> 延迟一丁点时间(或者不处理) -> 关闭遮罩
+      // 虽然 Solid 更新飞快，但给浏览器一帧时间渲染 opacity: 0 能消除大部分刷屏感
+      setIsChangingTopic(true);
+
+      // 这里的 setTimeout 时间不需要太长，只需确保气泡开始加载即可
+      const timer = setTimeout(() => {
+        setIsChangingTopic(false);
+      }, 50);
+
+      onCleanup(() => clearTimeout(timer));
+    }
     if (asst && asst.topics.length > 0) {
       // 如果当前话题不存在，切换到第一个话题
       if (!currentTopicId() || !asst.topics.find(t => t.id === currentTopicId())) {
@@ -342,23 +401,30 @@ const Chat: Component = () => {
   const handleSendMessage = async () => {
     const text = inputMessage().trim();
     const asstId = currentAssistantId();
+    const topicId = currentTopicId();
     const asst = currentAssistant();
     const topic = activeTopic();
 
     if (!text || !asstId || !asst || !topic || isThinking()) return;
 
-    // 1. 添加用户消息
+    // 1. 立即更新 UI：添加用户消息
     const newUserMsg = { role: 'user' as const, content: text };
-    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topic.id, 'history', h => [...h, newUserMsg]);
 
-    // 重置输入框
+    // 2. 核心：一次性添加用户消息和空的助理消息
+    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
+      ...h,
+      newUserMsg,
+      { role: 'assistant' as const, content: "" } // 预留给流式输出的容器
+    ]);
+
+    // 3. 设置状态
     setInputMessage("");
-    if (textareaRef) {
-      textareaRef.style.height = '40px';
-    }
-
-    // 2. 开始请求
     setIsThinking(true);
+    // 指向刚刚添加的那条空消息 (即最后一条，下标为 length - 1)
+    const newHistory = activeTopic()?.history || [];
+    setTypingIndex(newHistory.length - 1);
+
+    if (textareaRef) textareaRef.style.height = '40px';
 
     try {
       const messagesForAI = [
@@ -367,26 +433,18 @@ const Chat: Component = () => {
         newUserMsg
       ];
 
-      // 调用 Rust
-      const aiResponse = await invoke<string>('call_llm', {
-        // 注意：建议从环境变量或单独的设置页面获取 API Key
-        apiKey: "",
-        model: "gpt-4o", // Aihubmix 支持的模型名，如 gpt-4o, claude-3-5-sonnet 等
+      // 4. 调用 Rust
+      await invoke('call_llm_stream', {
+        apiKey: "sk-KwmAR4Az6SHLAgEr19FbC79531124d449cF18b2aF35f34Ea",
+        model: "gpt-4o",
+        assistantId: asstId,
+        topicId: topicId,
         messages: messagesForAI
       });
-
-      // 3. 写入 AI 回复
-      setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topic.id, 'history',
-        h => [...h, { role: 'assistant' as const, content: aiResponse }]
-      );
-
-      await saveSingleAssistantToBackend(asstId);
     } catch (err: any) {
-      console.error(err);
-      // 报错处理：在大屏幕弹窗或在消息列表中提示
       alert(err.toString());
-    } finally {
       setIsThinking(false);
+      setTypingIndex(null);
     }
   };
 
@@ -489,20 +547,34 @@ const Chat: Component = () => {
 
       {/* 中间聊天区域 */}
       <div class="chat-input-container">
-        <div class="chat-messages-area">
-          {/* 显示对话历史或空状态 */}
-          <Show when={activeTopic()} fallback={<div class="empty-state">请选择或创建话题</div>}>
+        <div
+          class="chat-messages-area"
+          /* 使用简化的透明度切换类 */
+          classList={{ 'topic-switching': isChangingTopic() }}
+        >
+          <Show when={activeTopic()}>
             <For each={activeTopic()?.history}>
-              {(msg) => (
-                <div class={`message ${msg.role}`}>
-                  <div class="message-content">
+              {(msg, index) => (
+                <div
+                  class={`message ${msg.role}`}
+                  /* 关键：如果不是当前正在打字的那条（即历史消息），我们给个错开的延迟 */
+                  /* 只有在初次渲染时会有这个阶梯效果，流式输出时 index 会很大，不影响 */
+                  style={{
+                    "animation-delay": `${Math.min(index() * 0.03, 0.4)}s`,
+                    /* 如果是正在打字的那条，立即显示，不设置延迟 */
+                    "animation-duration": typingIndex() === index() ? "0.1s" : "0.35s"
+                  }}
+                >
+                  <div class="message-content" classList={{ 'typing': typingIndex() === index() }}>
                     <Markdown content={msg.content} />
                   </div>
                 </div>
               )}
             </For>
+
+            {/* 思考状态气泡 */}
             <Show when={isThinking()}>
-              <div class="message assistant">
+              <div class="message assistant" style={{ "animation-delay": "0s" }}>
                 <div class="message-content" style="opacity: 0.6">
                   AI 正在思考中...
                 </div>
@@ -515,7 +587,7 @@ const Chat: Component = () => {
           <textarea
             ref={textareaRef}
             class="chat-input"
-            placeholder="输入消息... (Shift + Enter 换行)"
+            placeholder="输入消息... (Ctrl + Enter 换行)"
             value={inputMessage()}
             onInput={(e) => {
               const target = e.currentTarget;
@@ -539,9 +611,34 @@ const Chat: Component = () => {
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSendMessage();
+              if (e.key === 'Enter') {
+                const target = e.currentTarget;
+
+                if (e.ctrlKey) {
+                  // --- 核心修改：按下 Ctrl + Enter 强制换行 ---
+                  e.preventDefault(); // 阻止默认行为（防止浏览器不响应或乱跳）
+
+                  const start = target.selectionStart;
+                  const end = target.selectionEnd;
+                  const value = target.value;
+
+                  // 在光标位置手动插入换行符
+                  const newValue = value.substring(0, start) + "\n" + value.substring(end);
+                  setInputMessage(newValue);
+
+                  // 使用 setTimeout 确保在 SolidJS 更新输入框内容后，把光标移到新行
+                  setTimeout(() => {
+                    target.selectionStart = target.selectionEnd = start + 1;
+                    // 手动触发一次高度调整，确保增加行后输入框变高
+                    target.dispatchEvent(new Event('input', { bubbles: true }));
+                  }, 0);
+
+                } else if (!e.shiftKey) {
+                  // --- 只有 Enter (不含 Shift) 则发送消息 ---
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+
               }
             }}
             rows={1}

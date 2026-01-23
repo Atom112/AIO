@@ -1,8 +1,19 @@
 // src-tauri/src/main.rs
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
+use tauri::{Emitter, Window}; // 导入 Emitter 用于发送事件 // 用于处理流
 
+// 定义传输给前端的流式增量包
+#[derive(Serialize, Clone)]
+struct StreamPayload {
+    assistant_id: String,
+    topic_id: String,
+    content: String,
+    done: bool,
+}
 #[derive(Serialize, Deserialize, Clone)]
 struct Message {
     role: String,
@@ -86,51 +97,82 @@ async fn delete_assistant(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn call_llm(
+async fn call_llm_stream(
+    window: Window,
     api_key: String,
     model: String,
+    assistant_id: String,
+    topic_id: String,
     messages: Vec<Message>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let client = reqwest::Client::new();
-
-    // --- 修改为 Aihubmix 的标准 API 地址 ---
     let url = "https://aihubmix.com/v1/chat/completions";
 
-    let body = serde_json::json!({
-        "model": model,          // 例如 "gpt-4o" 或 "deepseek-chat"
-        "messages": messages,
-        "stream": false
-    });
+    let body = json!({ "model": model, "messages": messages, "stream": true });
 
     let response = client
         .post(url)
         .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("网络请求失败: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
-    if response.status().is_success() {
-        let res_json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-        let content = res_json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("无返回内容")
-            .to_string();
-        Ok(content)
-    } else {
-        // --- 核心修复：在这里先存一下状态 ---
-        let status = response.status();
+    let mut stream = response.bytes_stream();
+    let mut line_buffer = String::new();
 
-        // .text() 会消耗掉 response
-        let err_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "无法读取错误详情".to_string());
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(|e| e.to_string())?;
+        line_buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-        // 这里使用之前存好的 status 变量
-        Err(format!("Aihubmix 错误 ({}): {}", status, err_text))
+        // 循环处理 buffer 中所有完整的行
+        while let Some(pos) = line_buffer.find('\n') {
+            // 提取第一行并从 buffer 中移除
+            let line = line_buffer[..pos].trim().to_string();
+            line_buffer.drain(..pos + 1);
+
+            if line.is_empty() {
+                continue;
+            }
+            if line == "data: [DONE]" {
+                window
+                    .emit(
+                        "llm-chunk",
+                        StreamPayload {
+                            assistant_id: assistant_id.clone(),
+                            topic_id: topic_id.clone(),
+                            content: "".into(),
+                            done: true,
+                        },
+                    )
+                    .unwrap();
+                return Ok(());
+            }
+
+            if line.starts_with("data: ") {
+                let json_str = &line[6..];
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    // 安全访问：判断 choices 下标是否存在 (对应 Python 的 list index 错误)
+                    if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
+                        // ❌ 绝对不要在这里发送全部累积的内容
+                        // ✅ 只发送本次收到的内容片段
+                        window
+                            .emit(
+                                "llm-chunk",
+                                StreamPayload {
+                                    assistant_id: assistant_id.clone(),
+                                    topic_id: topic_id.clone(),
+                                    content: content.to_string(), // 仅发送当前片段
+                                    done: false,
+                                },
+                            )
+                            .unwrap();
+                    }
+                }
+            }
+        }
     }
+    Ok(())
 }
 
 fn main() {
@@ -139,7 +181,7 @@ fn main() {
             load_assistants,
             save_assistant,
             delete_assistant,
-            call_llm
+            call_llm_stream
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

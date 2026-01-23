@@ -85,12 +85,61 @@ async fn delete_assistant(id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn call_llm(
+    api_key: String,
+    model: String,
+    messages: Vec<Message>,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+
+    // --- 修改为 Aihubmix 的标准 API 地址 ---
+    let url = "https://aihubmix.com/v1/chat/completions";
+
+    let body = serde_json::json!({
+        "model": model,          // 例如 "gpt-4o" 或 "deepseek-chat"
+        "messages": messages,
+        "stream": false
+    });
+
+    let response = client
+        .post(url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("网络请求失败: {}", e))?;
+
+    if response.status().is_success() {
+        let res_json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+        let content = res_json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("无返回内容")
+            .to_string();
+        Ok(content)
+    } else {
+        // --- 核心修复：在这里先存一下状态 ---
+        let status = response.status();
+
+        // .text() 会消耗掉 response
+        let err_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "无法读取错误详情".to_string());
+
+        // 这里使用之前存好的 status 变量
+        Err(format!("Aihubmix 错误 ({}): {}", status, err_text))
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             load_assistants,
             save_assistant,
-            delete_assistant
+            delete_assistant,
+            call_llm
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

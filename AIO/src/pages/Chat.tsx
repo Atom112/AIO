@@ -49,7 +49,7 @@ const Chat: Component = () => {
   const [topicMenuState, setTopicMenuState] = createSignal({ isOpen: false, x: 0, y: 0, targetTopicId: null as string | null });
   const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
   const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);
-
+  const [isThinking, setIsThinking] = createSignal(false);
   // 主菜单状态（用于显示助手上下文菜单）
   const [showMenuDiv, setShowMenuDiv] = createSignal(false);
   const [isMenuAnimatingOut, setIsMenuAnimatingOut] = createSignal(false);
@@ -342,26 +342,52 @@ const Chat: Component = () => {
   const handleSendMessage = async () => {
     const text = inputMessage().trim();
     const asstId = currentAssistantId();
-    const topicId = currentTopicId() || activeTopic()?.id;
+    const asst = currentAssistant();
+    const topic = activeTopic();
 
-    // 验证输入
-    if (!text || !asstId || !topicId) return;
+    if (!text || !asstId || !asst || !topic || isThinking()) return;
 
-    // 添加用户消息到本地状态
-    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [...h, { role: 'user' as const, content: text }]);
+    // 1. 添加用户消息
+    const newUserMsg = { role: 'user' as const, content: text };
+    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topic.id, 'history', h => [...h, newUserMsg]);
 
-    // 清空输入框
+    // 重置输入框
     setInputMessage("");
     if (textareaRef) {
-      textareaRef.style.height = '40px';      // 恢复初始高度
-      textareaRef.style.overflowY = 'hidden'; // 发送后隐藏滚动条
+      textareaRef.style.height = '40px';
     }
 
-    // 模拟AI响应（实际应用中应调用API）
-    setTimeout(async () => {
-      setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [...h, { role: 'assistant' as const, content: "收到。" }]);
+    // 2. 开始请求
+    setIsThinking(true);
+
+    try {
+      const messagesForAI = [
+        { role: 'system', content: asst.prompt },
+        ...topic.history.map(m => ({ role: m.role, content: m.content })),
+        newUserMsg
+      ];
+
+      // 调用 Rust
+      const aiResponse = await invoke<string>('call_llm', {
+        // 注意：建议从环境变量或单独的设置页面获取 API Key
+        apiKey: "",
+        model: "gpt-4o", // Aihubmix 支持的模型名，如 gpt-4o, claude-3-5-sonnet 等
+        messages: messagesForAI
+      });
+
+      // 3. 写入 AI 回复
+      setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topic.id, 'history',
+        h => [...h, { role: 'assistant' as const, content: aiResponse }]
+      );
+
       await saveSingleAssistantToBackend(asstId);
-    }, 500);
+    } catch (err: any) {
+      console.error(err);
+      // 报错处理：在大屏幕弹窗或在消息列表中提示
+      alert(err.toString());
+    } finally {
+      setIsThinking(false);
+    }
   };
 
   /**
@@ -475,6 +501,13 @@ const Chat: Component = () => {
                 </div>
               )}
             </For>
+            <Show when={isThinking()}>
+              <div class="message assistant">
+                <div class="message-content" style="opacity: 0.6">
+                  AI 正在思考中...
+                </div>
+              </div>
+            </Show>
           </Show>
         </div>
         {/* 输入区域 */}
@@ -494,11 +527,13 @@ const Chat: Component = () => {
               // 计算新高度
               const newHeight = target.scrollHeight;
               target.style.height = `${newHeight}px`;
-
+              const computedStyle = window.getComputedStyle(target);
+              const maxHeight = parseFloat(computedStyle.maxHeight);
               // 逻辑判定：如果内容高度超过了 clientHeight (即被 max-height 锁定了)
               // 则显示滚动条，否则隐藏滚动条（视觉更干净）
-              if (newHeight > target.clientHeight) {
+              if (newHeight > maxHeight) {
                 target.style.overflowY = 'auto';
+                target.style.height = `${maxHeight}px`; // 强制锁定高度为最大值
               } else {
                 target.style.overflowY = 'hidden';
               }

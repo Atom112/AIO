@@ -96,6 +96,7 @@
     box-sizing: border-box;
     overflow: hidden;
     border-radius: 8px;
+    position: relative; /* 建立基准 */
 }
 
 /* 对话消息区域 */
@@ -104,6 +105,7 @@
     /* 占据剩余高度 */
     overflow-y: auto;
     padding-bottom: 15px;
+    z-index: 1;
 }
 
 /* 助手列表项 */
@@ -185,11 +187,10 @@
     color: #FFFFFF;
     resize: none;
     /* 核心修改：允许滚动，限制最高高度 */
-    overflow-y: auto;
+    overflow-y: hidden;
     max-height: 20vh;
     /* 最高不超过窗口高度的 20% */
     line-height: 20px;
-    ;
     font-family: inherit;
     transition: border-color 0.2s;
 }
@@ -284,7 +285,7 @@
 
 .message.user .message-content {
     border: 1px solid #08ddf9;
-    background-color: #08ddf917;
+    background-color: #08ddf90e;
     /* 轻微蓝色背景 */
     color: #fff;
     border-top-right-radius: 2px;
@@ -370,6 +371,10 @@
     min-height: 45px;
     width: 100%;
     align-items: flex-end;
+    position: relative;       /* 开启层级定位 */
+    z-index: 10;              /* 确保高于消息区域的 z-index (5) */
+    background-color: #242424; /* 设置与页面背景一致的颜色，遮层滚动上来的内容 */
+    padding-top: 10px;        /* 增加顶部间距，防止文字贴边 */
 }
 
 .send-message-button {
@@ -452,6 +457,7 @@
 
 /* 代码块 */
 .markdown-body pre {
+    position: relative;
     background-color: #1a1a1a;
     padding: 12px;
     border-radius: 6px;
@@ -504,7 +510,55 @@
     line-height: 1.5;
 }
 
+.code-wrapper {
+    position: relative;
+    margin: 10px 0;
+}
 
+/* 复制按钮样式 */
+.copy-code-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(8, 221, 249, 0.3);
+    border-radius: 4px;
+    color: #08ddf9;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    opacity: 0.6; /* 默认半透明，减少干扰 */
+}
+
+.copy-code-button:hover {
+    background-color: rgba(8, 221, 249, 0.1);
+    opacity: 1;
+}
+
+.copy-code-button.copied {
+    border-color: #4af908;
+    color: #4af908;
+}
+
+.copy-code-button svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* 当鼠标移入代码块时才显示按钮 (可选) */
+.code-wrapper .copy-code-button {
+    opacity: 1; 
+    pointer-events: all; /* 确保可以点击 */
+    opacity: 0;
+}
+.code-wrapper:hover .copy-code-button {
+    opacity: 0.8;
+}
 
 /* --- 统一滚动条全局样式 --- */
 

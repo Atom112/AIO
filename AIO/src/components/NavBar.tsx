@@ -136,7 +136,7 @@ function NavBar(props: NavBarProps): JSX.Element {
         {/* ------------------------------ 左侧项目 ---------------------------------- */}
         {/* logo图标 */}
         <div class="logo-container" id='1'>
-          <img src="/src/assets/logo.png" alt="AIO" class="logo" />
+          <img src="/icons/logo.png" alt="AIO" class="logo" />
         </div>
 
         {/* 对话按钮 */}
@@ -157,7 +157,7 @@ function NavBar(props: NavBarProps): JSX.Element {
         {/* --------------------------------中心头像---------------------------------------- */}
 
         <img
-          src="/src/assets/user.png"
+          src="/icons/user.png"
           alt="User Avatar" class="avatar"
         />
 

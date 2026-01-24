@@ -1,4 +1,6 @@
 // src-tauri/src/main.rs
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -96,7 +98,7 @@ fn load_app_config() -> Result<AppConfig, String> {
 // 获取存储助手的文件夹路径
 fn get_assistants_dir() -> Result<PathBuf, String> {
     let mut path = dirs::config_dir().ok_or("无法获取配置目录")?;
-    path.push("YourAppName");
+    path.push("AIO");
     path.push("assistants"); // 存储在 assistants 子文件夹下
     if !path.exists() {
         fs::create_dir_all(&path).map_err(|e| e.to_string())?;

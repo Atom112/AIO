@@ -37,6 +37,62 @@ struct Assistant {
     topics: Vec<Topic>, // 修改：将 history 替换为 topics
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct ModelInfo {
+    id: String,
+    owned_by: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ModelsResponse {
+    data: Vec<ModelInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct AppConfig {
+    #[serde(rename = "apiUrl")]
+    api_url: String,
+    #[serde(rename = "apiKey")]
+    api_key: String,
+    #[serde(rename = "defaultModel")]
+    default_model: String,
+}
+
+// 获取配置文件路径 (和 assistants 文件夹同级)
+fn get_config_path() -> PathBuf {
+    let mut path = dirs::config_dir().unwrap();
+    path.push("YourAppName"); // 换成你的应用名
+    if !path.exists() {
+        std::fs::create_dir_all(&path).unwrap();
+    }
+    path.push("config.json");
+    path
+}
+
+#[tauri::command]
+fn save_app_config(config: AppConfig) -> Result<(), String> {
+    let path = get_config_path();
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_app_config() -> Result<AppConfig, String> {
+    let path = get_config_path();
+    if !path.exists() {
+        // 如果文件不存在，返回默认配置
+        return Ok(AppConfig {
+            api_url: "".into(),
+            api_key: "".into(),
+            default_model: "".into(),
+        });
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let config: AppConfig = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    Ok(config)
+}
+
 // 获取存储助手的文件夹路径
 fn get_assistants_dir() -> Result<PathBuf, String> {
     let mut path = dirs::config_dir().ok_or("无法获取配置目录")?;
@@ -99,19 +155,28 @@ async fn delete_assistant(id: String) -> Result<(), String> {
 #[tauri::command]
 async fn call_llm_stream(
     window: Window,
+    mut api_url: String,  // 新增参数
     api_key: String,
     model: String,
     assistant_id: String,
     topic_id: String,
     messages: Vec<Message>,
 ) -> Result<(), String> {
+
+    api_url = api_url.trim_end_matches('/').to_string();
+    let final_url = if !api_url.ends_with("/chat/completions") {
+        format!("{}/chat/completions", api_url)
+    } else {
+        api_url
+    };
+
     let client = reqwest::Client::new();
-    let url = "https://aihubmix.com/v1/chat/completions";
+    
 
     let body = json!({ "model": model, "messages": messages, "stream": true });
 
     let response = client
-        .post(url)
+        .post(&final_url) // 使用动态 URL
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&body)
         .send()
@@ -175,13 +240,42 @@ async fn call_llm_stream(
     Ok(())
 }
 
+#[tauri::command]
+async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelInfo>, String> {
+    // 自动处理 URL：去掉末尾斜杠，并确保指向 /models
+    let mut base_url = api_url.trim_end_matches('/').to_string();
+    if base_url.ends_with("/chat/completions") {
+        base_url = base_url.replace("/chat/completions", "");
+    }
+    let final_url = format!("{}/models", base_url);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&final_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("服务器返回错误: {}", response.status()));
+    }
+
+    let res_data: ModelsResponse = response.json().await.map_err(|e| format!("解析失败 (请确认接口支持/v1/models): {}", e))?;
+    Ok(res_data.data)
+}
+
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             load_assistants,
             save_assistant,
             delete_assistant,
-            call_llm_stream
+            call_llm_stream,
+            fetch_models,
+            save_app_config,
+            load_app_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

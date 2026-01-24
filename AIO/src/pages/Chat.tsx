@@ -1,6 +1,6 @@
 import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic } from '../store/store';
+import { config,datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic } from '../store/store';
 import Markdown from '../components/Markdown';
 import { listen } from '@tauri-apps/api/event';
 import './Chat.css';
@@ -426,6 +426,11 @@ const Chat: Component = () => {
 
     if (textareaRef) textareaRef.style.height = '40px';
 
+    if (!config().apiKey) {
+      alert("请先在设置页面配置 API Key");
+      return;
+    }
+
     try {
       const messagesForAI = [
         { role: 'system', content: asst.prompt },
@@ -435,8 +440,9 @@ const Chat: Component = () => {
 
       // 4. 调用 Rust
       await invoke('call_llm_stream', {
-        apiKey: "",
-        model: "gpt-4o",
+        apiUrl: config().apiUrl,       // 来自 Settings 页面配置
+        apiKey: config().apiKey,       // 来自 Settings 页面配置
+        model: config().defaultModel,  // 来自 Settings 页面配置
         assistantId: asstId,
         topicId: topicId,
         messages: messagesForAI

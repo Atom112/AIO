@@ -435,7 +435,7 @@ const Chat: Component = () => {
 
       // 4. 调用 Rust
       await invoke('call_llm_stream', {
-        apiKey: "sk-KwmAR4Az6SHLAgEr19FbC79531124d449cF18b2aF35f34Ea",
+        apiKey: "",
         model: "gpt-4o",
         assistantId: asstId,
         topicId: topicId,

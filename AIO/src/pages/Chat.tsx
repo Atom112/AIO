@@ -1,6 +1,6 @@
 import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { config,datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic } from '../store/store';
+import { config, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic } from '../store/store';
 import Markdown from '../components/Markdown';
 import { listen } from '@tauri-apps/api/event';
 import './Chat.css';
@@ -56,6 +56,8 @@ const Chat: Component = () => {
   const [showMenuDiv, setShowMenuDiv] = createSignal(false);
   const [isMenuAnimatingOut, setIsMenuAnimatingOut] = createSignal(false);
   const [menuState, setMenuState] = createSignal({ isOpen: false, x: 0, y: 0, targetId: null as string | null });
+  const [pendingFiles, setPendingFiles] = createSignal<{ name: string, content: string }[]>([]);
+  const [isProcessing, setIsProcessing] = createSignal(false);
 
   // 当前激活的话题ID
   const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(null);
@@ -179,6 +181,25 @@ const Chat: Component = () => {
       console.error("加载助手失败:", err);
     }
 
+
+    const unlistenDrop = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+      setIsProcessing(true);
+      const paths = event.payload.paths;
+
+      for (const path of paths) {
+        try {
+          // 调用刚才写的 Rust 解析命令
+          const content = await invoke<string>('process_file_content', { path });
+          const fileName = path.split(/[\\/]/).pop() || '未知文件';
+
+          setPendingFiles(prev => [...prev, { name: fileName, content }]);
+        } catch (err) {
+          alert(`处理文件失败: ${err}`);
+        }
+      }
+      setIsProcessing(false);
+    });
+
     // --- 2. 新增的：监听 Rust 侧发来的流式数据 ---
     const unlisten = await listen<any>('llm-chunk', (event) => {
       const { assistant_id, topic_id, content, done } = event.payload;
@@ -240,6 +261,7 @@ const Chat: Component = () => {
     // 清理函数：组件卸载时取消事件监听
     onCleanup(() => {
       unlisten();
+      unlistenDrop();
       document.removeEventListener('click', handleClickOutside);
     });
   });
@@ -399,25 +421,50 @@ const Chat: Component = () => {
    * 发送消息到聊天
    */
   const handleSendMessage = async () => {
-    const text = inputMessage().trim();
+    let userInputText = inputMessage().trim();
+    const files = pendingFiles();
+    
+    // 如果没有输入也没有文件，直接返回
+    if (!userInputText && files.length === 0) return;
+    if (isThinking()) return;
+
+    // --- 构造发送给 AI 的完整 Context ---
+    let fullContext = userInputText;
+    if (files.length > 0) {
+      let fileContext = "以下是参考文件内容：\n";
+      for (const file of files) {
+        const safeContent = file.content.length > 10000
+          ? file.content.substring(0, 10000) + "...(内容过长已截断)"
+          : file.content;
+        fileContext += `\n[文件名: ${file.name}]\n${safeContent}\n`;
+      }
+      fullContext = `${fileContext}\n---\n用户问题：${userInputText}`;
+    }
+
     const asstId = currentAssistantId();
     const topicId = currentTopicId();
     const asst = currentAssistant();
     const topic = activeTopic();
+    if (!asstId || !topicId || !asst || !topic) return;
+    
+    // --- 构造 UI 展示用的消息对象 ---
+    // 我们给消息对象多塞一个附件信息数组，用于渲染图标
+    const newUserMsg = { 
+        role: 'user' as const, 
+        content: fullContext,
+        displayFiles: files.map(f => ({ name: f.name })), // 仅存储文件名用于渲染
+        displayText: userInputText // 仅存储用户输入的文字
+    };
 
-    if (!text || !asstId || !asst || !topic || isThinking()) return;
-
-    // 1. 立即更新 UI：添加用户消息
-    const newUserMsg = { role: 'user' as const, content: text };
-
-    // 2. 核心：一次性添加用户消息和空的助理消息
+    // 更新状态
     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
       ...h,
       newUserMsg,
-      { role: 'assistant' as const, content: "" } // 预留给流式输出的容器
+      { role: 'assistant' as const, content: "" }
     ]);
 
-    // 3. 设置状态
+    // 重置输入
+    setPendingFiles([]);
     setInputMessage("");
     setIsThinking(true);
     // 指向刚刚添加的那条空消息 (即最后一条，下标为 length - 1)
@@ -560,23 +607,44 @@ const Chat: Component = () => {
         >
           <Show when={activeTopic()}>
             <For each={activeTopic()?.history}>
-              {(msg, index) => (
-                <div
-                  class={`message ${msg.role}`}
-                  /* 关键：如果不是当前正在打字的那条（即历史消息），我们给个错开的延迟 */
-                  /* 只有在初次渲染时会有这个阶梯效果，流式输出时 index 会很大，不影响 */
-                  style={{
-                    "animation-delay": `${Math.min(index() * 0.03, 0.4)}s`,
-                    /* 如果是正在打字的那条，立即显示，不设置延迟 */
-                    "animation-duration": typingIndex() === index() ? "0.1s" : "0.35s"
-                  }}
-                >
-                  <div class="message-content" classList={{ 'typing': typingIndex() === index() }}>
-                    <Markdown content={msg.content} />
-                  </div>
+  {(msg: any, index) => ( // 使用 any 规避类型检查，或者定义专门的接口
+    <div
+      class={`message ${msg.role}`}
+      style={{
+        "animation-delay": `${Math.min(index() * 0.03, 0.4)}s`,
+        "animation-duration": typingIndex() === index() ? "0.1s" : "0.35s"
+      }}
+    >
+      <div class="message-content" classList={{ 'typing': typingIndex() === index() }}>
+        
+        {/* --- 新增：如果消息包含附件，渲染文件卡片 --- */}
+        <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
+          <For each={msg.displayFiles}>
+            {(file: any) => (
+              <div class="file-attachment-card">
+                <div class="file-icon-wrapper">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
                 </div>
-              )}
-            </For>
+                <div class="file-info">
+                  <div class="file-name">{file.name}</div>
+                  <div class="file-meta">已读取文本内容</div>
+                </div>
+              </div>
+            )}
+          </For>
+        </Show>
+
+        {/* --- 消息文本内容 --- */}
+        <div class="message-text-part">
+           {/* 如果是带附件的消息，渲染专门的 displayText，否则渲染普通的 content */}
+           <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+        </div>
+      </div>
+    </div>
+  )}
+</For>
 
             {/* 思考状态气泡 */}
             <Show when={isThinking()}>
@@ -588,6 +656,24 @@ const Chat: Component = () => {
             </Show>
           </Show>
         </div>
+
+        <Show when={isProcessing()}>
+          <div class="loading-overlay">正在解析文件内容...</div>
+        </Show>
+
+        {/* 文件预览区域 */}
+        <div class="file-tags-container">
+          <For each={pendingFiles()}>
+            {(file, i) => (
+              <div class="file-tag">
+                <span class="file-icon">📄</span>
+                {file.name}
+                <button onClick={() => setPendingFiles(p => p.filter((_, idx) => idx !== i()))}>×</button>
+              </div>
+            )}
+          </For>
+        </div>
+        
         {/* 输入区域 */}
         <div class="chat-input-wrapper">
           <textarea

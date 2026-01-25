@@ -371,17 +371,16 @@
     display: flex;
     gap: 10px;
     height: auto;
-    min-height: 45px;
     width: 100%;
     align-items: flex-end;
     position: relative;
     /* 开启层级定位 */
     z-index: 10;
-    /* 确保高于消息区域的 z-index (5) */
-    background-color: #242424;
-    /* 设置与页面背景一致的颜色，遮层滚动上来的内容 */
-    padding-top: 10px;
-    /* 增加顶部间距，防止文字贴边 */
+
+    background-color: transparent; 
+    
+    /* 2. 把这个顶部间距改为 0 */
+    padding-top: 0; 
 }
 
 .send-message-button {
@@ -666,4 +665,146 @@
 /* 当话题正在切换时，让容器变淡即可，不要带动里面的气泡乱跳 */
 .topic-switching {
     opacity: 0;
+}
+
+/* --- 文件预览预览区域（优化后）--- */
+.file-tags-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    position: relative;
+    /* 移除背景色，改为透明 */
+    background: transparent; 
+    /* 调整边距，使其与输入框左对齐 */
+    padding-top: 5px;
+    padding-bottom: 3px;
+    z-index: 0;
+    /* 甚至可以加一个淡淡的顶部装饰线，可选 */
+    /* border-top: 1px solid rgba(8, 221, 249, 0.1); */
+}
+
+.file-tag {
+    /* 使用微弱的半透明背景，产生“磨砂玻璃”或悬浮感 */
+    background: rgba(8, 221, 249, 0.1);
+    border: 1px solid rgba(8, 221, 249, 0.3);
+    color: #08ddf9;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 16px; /* 变成圆角药丸状更美观 */
+    display: flex;
+    align-items: center;
+    backdrop-filter: blur(4px); /* 背景模糊，增加质感 */
+    transition: all 0.2s ease;
+    animation: tagFadeIn 0.3s ease-out; /* 增加出现动画 */
+}
+
+.file-tag:hover {
+    background: rgba(8, 221, 249, 0.2);
+    border-color: #08ddf9;
+}
+
+.file-icon {
+    margin-right: 6px;
+    font-size: 14px;
+}
+
+.file-tag button {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.5); /* 叉号平时不显眼 */
+    margin-left: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    transition: color 0.2s;
+}
+
+.file-tag button:hover {
+    color: #ff4d4d; /* 悬停变为红色 */
+}
+
+/* 标签出现的平滑动画 */
+@keyframes tagFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 文件附件卡片样式 */
+.file-attachment-card {
+    display: flex;
+    align-items: center;
+    background: rgba(8, 221, 249, 0.05);
+    border: 1px solid rgba(8, 221, 249, 0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    max-width: 300px;
+    transition: all 0.2s;
+    cursor: default;
+}
+
+.file-attachment-card:hover {
+    background: rgba(8, 221, 249, 0.1);
+    border-color: #08ddf9;
+}
+
+.file-icon-wrapper {
+    width: 40px;
+    height: 40px;
+    background: rgba(8, 221, 249, 0.1);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+    flex-shrink: 0;
+}
+
+.file-icon-wrapper svg {
+    width: 24px;
+    height: 24px;
+    color: #08ddf9;
+}
+
+.file-info {
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.file-name {
+    font-size: 0.9rem;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+}
+
+.file-meta {
+    font-size: 0.75rem;
+    color: rgba(8, 221, 249, 0.6);
+    margin-top: 2px;
+}
+
+/* 消息内容中的文字与卡片间距 */
+.message-text-part {
+    margin-top: 4px;
+}
+
+/* 为消息气泡中的第一个文件卡片留出上边距 */
+.message-content .file-attachment-card:first-child {
+    margin-top: 12px;
+}
+
+/* 调整卡片之间的间距，确保视觉垂直居中感 */
+.file-attachment-card {
+    margin-bottom: 8px;
 }

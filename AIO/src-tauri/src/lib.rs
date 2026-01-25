@@ -1,42 +1,283 @@
 // src-tauri/src/lib.rs
-// 关于此文件：
-// 该文件为 Tauri 应用在 Rust 侧的入口/初始化逻辑以及示例命令定义处。
-// - 在 Tauri 应用中，Rust 端可以通过 `#[tauri::command]` 导出可被前端调用的函数（命令）。
-// - `run()` 函数负责构建并运行 Tauri 应用（插件注册、命令绑定、上下文注入等）。
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::fs::{self, File};
+use std::io::{Read}; // 必须导入 Seek 才能处理 Zip
+use std::path::{Path};
+use tauri::{Emitter, Window};
+use zip::ZipArchive;
 
-// `#[tauri::command]` 属性将该函数导出为 Tauri 可调用命令。
-// 这意味着前端（例如 JS/TS / Solid）可以通过 Tauri 的 `invoke` API 调用此函数。
-// 函数签名使用了借用的字符串切片 `&str`，返回一个 `String`。
-// 函数的实现为演示用途，将接收到的 `name` 格式化为一个问候字符串并返回。
-#[tauri::command]
-fn greet(name: &str) -> String {
-    // `format!` 返回一个堆分配的 `String`，适合通过 FFI/JSON 返回给前端。
-    format!("Hello, {}! You've been greeted from Rust!", name)
+// --- 基础数据结构 ---
+#[derive(Serialize, Clone)]
+struct StreamPayload {
+    assistant_id: String,
+    topic_id: String,
+    content: String,
+    done: bool,
 }
 
-// `#[cfg_attr(mobile, tauri::mobile_entry_point)]`：
-// - 在启用 `mobile` 配置时，将 `run` 标记为移动平台的入口点（适用于 Tauri 的移动目标）。
-// - 在桌面环境下这行宏不会改变函数签名，`run` 照常作为构建和运行应用的函数。
-// `pub fn run()`：公开的运行函数，通常由 `main.rs` 或移动入口调用以启动 Tauri 应用。
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Message {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Topic {
+    id: String,
+    name: String,
+    #[serde(default)]
+    history: Vec<Message>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Assistant {
+    id: String,
+    name: String,
+    prompt: String,
+    #[serde(default)]
+    topics: Vec<Topic>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ModelInfo {
+    id: String,
+    owned_by: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ModelsResponse {
+    data: Vec<ModelInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AppConfig {
+    #[serde(rename = "apiUrl")]
+    api_url: String,
+    #[serde(rename = "apiKey")]
+    api_key: String,
+    #[serde(rename = "defaultModel")]
+    default_model: String,
+}
+
+// --- 文件解析辅助函数 ---
+
+fn extract_text_from_xml(xml: &str) -> String {
+    let reader = xml::EventReader::new(xml.as_bytes());
+    let mut out = String::new();
+    let mut in_text_tag = false;
+
+    for e in reader {
+        match e {
+            Ok(xml::reader::XmlEvent::StartElement { name, .. }) => {
+                // docx 文字在 w:t, pptx 文字在 a:t
+                if name.local_name == "t" {
+                    in_text_tag = true;
+                }
+            }
+            Ok(xml::reader::XmlEvent::Characters(content)) => {
+                if in_text_tag {
+                    out.push_str(&content);
+                }
+            }
+            Ok(xml::reader::XmlEvent::EndElement { name, .. }) => {
+                if name.local_name == "t" {
+                    in_text_tag = false;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut full_text = String::new();
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = file.name().to_string();
+
+        let is_target = if file_type == "docx" {
+            name == "word/document.xml"
+        } else {
+            // 注意：Rust 官方方法是 ends_with (下划线)
+            name.starts_with("ppt/slides/slide") && name.ends_with(".xml")
+        };
+
+        if is_target {
+            let mut content = String::new();
+            file.read_to_string(&mut content).map_err(|e| e.to_string())?;
+            full_text.push_str(&extract_text_from_xml(&content));
+            full_text.push('\n');
+        }
+    }
+    Ok(full_text)
+}
+
+// --- Tauri Commands (核心功能) ---
+
+#[tauri::command]
+async fn process_file_content(path: String) -> Result<String, String> {
+    let path_obj = Path::new(&path);
+    let extension = path_obj
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match extension.as_str() {
+        "pdf" => {
+            // pdf_extract 会返回自己的 Error 类型，需要 map_err 转为 String
+            pdf_extract::extract_text(&path).map_err(|e| format!("PDF解析失败: {}", e))
+        }
+        "docx" | "pptx" => read_office_file(&path, &extension),
+        _ => {
+            // 默认按文本/代码读取
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
+            Ok(res.into_owned())
+        }
+    }
+}
+
+// ... 这里保留你之前的 save_app_config, load_app_config, load_assistants 等所有命令 ...
+// (为了篇幅，这里缩略，请务必保留你原来的业务命令函数)
+
+#[tauri::command]
+fn save_app_config(config: AppConfig) -> Result<(), String> {
+    let mut path = dirs::config_dir().unwrap();
+    path.push("AIO");
+    if !path.exists() { std::fs::create_dir_all(&path).unwrap(); }
+    path.push("config.json");
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_app_config() -> Result<AppConfig, String> {
+    let mut path = dirs::config_dir().unwrap();
+    path.push("AIO");
+    path.push("config.json");
+    if !path.exists() {
+        return Ok(AppConfig { api_url: "".into(), api_key: "".into(), default_model: "".into() });
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let config: AppConfig = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    Ok(config)
+}
+
+#[tauri::command]
+async fn load_assistants() -> Result<Vec<Assistant>, String> {
+    let mut path = dirs::config_dir().ok_or("无法获取配置目录")?;
+    path.push("AIO"); path.push("assistants");
+    if !path.exists() { fs::create_dir_all(&path).map_err(|e| e.to_string())?; }
+    let mut assistants = Vec::new();
+    for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) == Some("json") {
+            let contents = fs::read_to_string(&p).map_err(|e| e.to_string())?;
+            if let Ok(asst) = serde_json::from_str::<Assistant>(&contents) { assistants.push(asst); }
+        }
+    }
+    assistants.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(assistants)
+}
+
+#[tauri::command]
+async fn save_assistant(assistant: Assistant) -> Result<(), String> {
+    let mut path = dirs::config_dir().ok_or("无法获取目录")?;
+    path.push("AIO"); path.push("assistants");
+    path.push(format!("{}.json", assistant.id));
+    let json = serde_json::to_string_pretty(&assistant).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_assistant(id: String) -> Result<(), String> {
+    let mut path = dirs::config_dir().ok_or("无法获取目录")?;
+    path.push("AIO"); path.push("assistants");
+    path.push(format!("{}.json", id));
+    if path.exists() { fs::remove_file(path).map_err(|e| e.to_string())?; }
+    Ok(())
+}
+
+#[tauri::command]
+async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelInfo>, String> {
+    let mut base_url = api_url.trim_end_matches('/').to_string();
+    if base_url.ends_with("/chat/completions") {
+        base_url = base_url.replace("/chat/completions", "");
+    }
+    let final_url = format!("{}/models", base_url);
+    let client = reqwest::Client::new();
+    let response = client.get(&final_url).header("Authorization", format!("Bearer {}", api_key)).send().await.map_err(|e| e.to_string())?;
+    let res_data: ModelsResponse = response.json().await.map_err(|e| e.to_string())?;
+    Ok(res_data.data)
+}
+
+#[tauri::command]
+async fn call_llm_stream(
+    window: Window,
+    mut api_url: String,
+    api_key: String,
+    model: String,
+    assistant_id: String,
+    topic_id: String,
+    messages: Vec<Message>,
+) -> Result<(), String> {
+    api_url = api_url.trim_end_matches('/').to_string();
+    let final_url = if !api_url.ends_with("/chat/completions") { format!("{}/chat/completions", api_url) } else { api_url };
+    let client = reqwest::Client::new();
+    let body = json!({ "model": model, "messages": messages, "stream": true });
+    let response = client.post(&final_url).header("Authorization", format!("Bearer {}", api_key)).json(&body).send().await.map_err(|e| e.to_string())?;
+    let mut stream = response.bytes_stream();
+    let mut line_buffer = String::new();
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(|e| e.to_string())?;
+        line_buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(pos) = line_buffer.find('\n') {
+            let line = line_buffer[..pos].trim().to_string();
+            line_buffer.drain(..pos + 1);
+            if line.is_empty() { continue; }
+            if line == "data: [DONE]" {
+                window.emit("llm-chunk", StreamPayload { assistant_id: assistant_id.clone(), topic_id: topic_id.clone(), content: "".into(), done: true }).unwrap();
+                return Ok(());
+            }
+            if line.starts_with("data: ") {
+                let json_str = &line[6..];
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
+                        window.emit("llm-chunk", StreamPayload { assistant_id: assistant_id.clone(), topic_id: topic_id.clone(), content: content.to_string(), done: false }).unwrap();
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// --- 应用程序入口 ---
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 创建 Tauri 应用构建器并按需进行配置：
-    // - `tauri::Builder::default()`：获取默认的 Builder 实例。
-    // - `.plugin(...)`：注册插件（此处示例为 `tauri_plugin_opener`，用于打开 URL / 外部资源等）。
-    // - `.invoke_handler(tauri::generate_handler![greet])`：注册可被前端调用的命令列表。
-    //    - `tauri::generate_handler!` 宏会为列出的函数生成一个 invoke handler，
-    //      使得这些函数可以在前端通过 `invoke('greet', { name: '...' })` 调用。
-    // - `.run(tauri::generate_context!())`：读取应用运行时上下文并启动事件循环。
-    //    - `tauri::generate_context!()` 宏会从 `tauri.conf.json`（或相应环境）生成上下文信息，
-    //      包括 windows 配置、打包信息等。
-    // - `.expect(...)`：若启动过程中发生错误则触发 panic 并输出错误信息（便于调试）。
     tauri::Builder::default()
-        // 注册 `tauri_plugin_opener` 插件（如果你使用该插件来打开外部链接或处理 opener 事件）
         .plugin(tauri_plugin_opener::init())
-        // 将 `greet` 命令暴露给前端；可以在这里添加更多命令：tauri::generate_handler![greet, other_cmd, ...]
-        .invoke_handler(tauri::generate_handler![greet])
-        // 读取运行时上下文并运行应用（会阻塞直到应用退出或出错）
+        .invoke_handler(tauri::generate_handler![
+            load_assistants,
+            save_assistant,
+            delete_assistant,
+            call_llm_stream,
+            fetch_models,
+            save_app_config,
+            load_app_config,
+            process_file_content // <--- 关键：确保新命令被注册
+        ])
         .run(tauri::generate_context!())
-        // 如果运行出错，打印错误并 panic（可根据需要改为更优雅的错误处理）
         .expect("error while running tauri application");
 }

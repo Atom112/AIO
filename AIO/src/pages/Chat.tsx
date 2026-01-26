@@ -164,44 +164,45 @@ const Chat: Component = () => {
   };
 
   // 初始化应用状态
-  onMount(async () => {
-    // --- 1. 原有的：加载助手初始数据 ---
-    try {
-      const loaded = await invoke<Assistant[]>('load_assistants');
-      if (Array.isArray(loaded) && loaded.length > 0) {
-        setDatas({ assistants: loaded });
-        if (!currentAssistantId()) setCurrentAssistantId(loaded[0].id);
-      } else {
-        const defaultAsst = createAssistant('默认助手');
-        setDatas('assistants', [defaultAsst]);
-        setCurrentAssistantId(defaultAsst.id);
-        await saveSingleAssistantToBackend(defaultAsst.id);
-      }
-    } catch (err) {
-      console.error("加载助手失败:", err);
-    }
+  // 初始化应用状态
+  onMount(() => {
+    // 1. 定义用于存放取消监听函数的变量
+    let unlistenLLM: (() => void) | undefined;
+    let unlistenDrop: (() => void) | undefined;
 
+    // 2. 原有的：加载助手初始数据 (使用 .then 代替 await)
+    invoke<Assistant[]>('load_assistants')
+      .then((loaded) => {
+        if (Array.isArray(loaded) && loaded.length > 0) {
+          setDatas({ assistants: loaded });
+          if (!currentAssistantId()) setCurrentAssistantId(loaded[0].id);
+        } else {
+          const defaultAsst = createAssistant('默认助手');
+          setDatas('assistants', [defaultAsst]);
+          setCurrentAssistantId(defaultAsst.id);
+          saveSingleAssistantToBackend(defaultAsst.id);
+        }
+      })
+      .catch((err) => console.error("加载助手失败:", err));
 
-    const unlistenDrop = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+    // 3. 监听 Rust 侧发来的文件拖拽事件
+    listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
       setIsProcessing(true);
       const paths = event.payload.paths;
-
       for (const path of paths) {
         try {
-          // 调用刚才写的 Rust 解析命令
           const content = await invoke<string>('process_file_content', { path });
           const fileName = path.split(/[\\/]/).pop() || '未知文件';
-
           setPendingFiles(prev => [...prev, { name: fileName, content }]);
         } catch (err) {
           alert(`处理文件失败: ${err}`);
         }
       }
       setIsProcessing(false);
-    });
+    }).then(un => unlistenDrop = un);
 
-    // --- 2. 新增的：监听 Rust 侧发来的流式数据 ---
-    const unlisten = await listen<any>('llm-chunk', (event) => {
+    // 4. 核心修复：监听 Rust 侧发来的流式数据
+    listen<any>('llm-chunk', (event) => {
       const { assistant_id, topic_id, content, done } = event.payload;
 
       if (done) {
@@ -211,23 +212,20 @@ const Chat: Component = () => {
         return;
       }
 
-      // --- 关键修改：细粒度更新 ---
-      // 1. 先找到当前对话历史
+      // 细粒度更新本地状态
       const asst = datas.assistants.find(a => a.id === assistant_id);
       const topic = asst?.topics.find(t => t.id === topic_id);
       if (!topic) return;
 
-      const history = topic.history;
-      const lastIdx = history.length - 1;
+      const lastIdx = topic.history.length - 1;
 
-      // 2. 只有当最后一条是助手消息时才更新内容
-      if (lastIdx >= 0 && history[lastIdx].role === 'assistant') {
-        // 使用路径式更新：('assistants', 筛选助手, 'topics', 筛选话题, 'history', 索引, '属性', 更新函数)
+      // 只有当最后一条是助手消息时才更新内容
+      if (lastIdx >= 0 && topic.history[lastIdx].role === 'assistant') {
         setDatas(
           'assistants', (a) => a.id === assistant_id,
           'topics', (t) => t.id === topic_id,
           'history', lastIdx,
-          'content', (oldContent: string) => oldContent + content // 仅增加文字，不替换对象
+          'content', (oldContent: string) => oldContent + content
         );
       }
 
@@ -238,16 +236,9 @@ const Chat: Component = () => {
           area.scrollTop = area.scrollHeight;
         });
       }
+    }).then(un => unlistenLLM = un);
 
-      // 如果流结束了
-      if (done) {
-        setIsThinking(false);
-        setTypingIndex(null);
-        saveSingleAssistantToBackend(assistant_id); // 持久化保存
-      }
-    });
-
-    // --- 3. 原有的：全局点击监听（用于关闭菜单） ---
+    // 5. 全局点击监听（用于关闭菜单）
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (!target.closest('.assistant-context-menu') && !target.closest('.assistant-menu-button')) {
@@ -255,13 +246,13 @@ const Chat: Component = () => {
         if (showTopicMenuDiv()) closeTopicMenu();
       }
     };
-
     document.addEventListener('click', handleClickOutside);
 
-    // 清理函数：组件卸载时取消事件监听
+    // 6. 关键：同步注册清理函数
+    // 这样当组件卸载（如跳到设置页面）时，所有的监听器都会被正确关闭
     onCleanup(() => {
-      unlisten();
-      unlistenDrop();
+      if (unlistenLLM) unlistenLLM();
+      if (unlistenDrop) unlistenDrop();
       document.removeEventListener('click', handleClickOutside);
     });
   });
@@ -421,12 +412,13 @@ const Chat: Component = () => {
    * 发送消息到聊天
    */
   const handleSendMessage = async () => {
+    if (isThinking()) return;
     let userInputText = inputMessage().trim();
     const files = pendingFiles();
     
     // 如果没有输入也没有文件，直接返回
     if (!userInputText && files.length === 0) return;
-    if (isThinking()) return;
+    
 
     // --- 构造发送给 AI 的完整 Context ---
     let fullContext = userInputText;

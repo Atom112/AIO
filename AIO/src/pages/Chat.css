@@ -637,6 +637,7 @@
 
     /* 优化渲染性能 */
     will-change: transform, opacity;
+    pointer-events: auto;
 }
 
 @keyframes bubble-in {
@@ -917,4 +918,59 @@
 
 .drag-icon-card.side:last-child {
     transform: rotate(12deg) scale(0.85) translateX(-15px);
+}
+
+/* --- 气泡复制按钮样式 --- */
+.message-actions {
+    display: flex;
+    margin-top: 4px;
+    /* 默认透明度为0，悬停显示（可选，如果想一直显示则删掉 opacity） */
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    padding: 0 10px;
+    z-index: 5; 
+}
+
+/* 鼠标悬停在消息条目上时显示操作栏 */
+.message:hover .message-actions {
+    opacity: 1;
+}
+
+/* 用户消息的操作栏右对齐 */
+.message.user .message-actions {
+    justify-content: flex-end;
+}
+
+/* 助手消息的操作栏左对齐 */
+.message.assistant .message-actions {
+    justify-content: flex-start;
+}
+
+.copy-bubble-button {
+    background: transparent;
+    border: 1px solid rgba(8, 221, 249, 0.2);
+    color: #08ddf9;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 12px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s;
+}
+
+.copy-bubble-button:hover {
+    background: rgba(8, 221, 249, 0.1);
+    border-color: #08ddf9;
+}
+
+.copy-bubble-button svg {
+    width: 12px;
+    height: 12px;
+}
+
+.copy-bubble-button.copied {
+    color: #4af908;
+    border-color: #4af908;
 }

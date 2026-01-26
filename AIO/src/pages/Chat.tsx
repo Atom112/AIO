@@ -650,6 +650,51 @@ const Chat: Component = () => {
                       <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
                     </div>
                   </div>
+
+                  <div class="message-actions">
+                    <button
+                      class="copy-bubble-button"
+                      onClick={(e) => {
+                        // 1. 关键：阻止事件冒泡，防止触发父元素的点击逻辑
+                        e.stopPropagation();
+
+                        // 2. 确定要复制的内容
+                        const textToCopy = msg.role === 'user' && msg.displayText !== undefined
+                          ? msg.displayText
+                          : msg.content;
+
+                        if (!textToCopy) return;
+
+                        // 3. 执行复制
+                        navigator.clipboard.writeText(textToCopy).then(() => {
+                          const btn = e.currentTarget;
+                          // 仅寻找按钮内的 span 标签修改文字，不破坏 SVG
+                          const label = btn.querySelector('span');
+
+                          if (label) {
+                            const originalText = label.innerText;
+                            btn.classList.add('copied');
+                            label.innerText = '已复制';
+
+                            setTimeout(() => {
+                              btn.classList.remove('copied');
+                              label.innerText = originalText;
+                            }, 2000);
+                          }
+                        }).catch(err => {
+                          console.error('复制失败:', err);
+                        });
+                      }}
+                    >
+                      {/* 图标保持不变 */}
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 14px; height: 14px;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                      </svg>
+                      {/* 4. 关键：文字用 span 包裹起来以便精准修改 */}
+                      <span>复制</span>
+                    </button>
+                  </div>
+
                 </div>
               )}
             </For>

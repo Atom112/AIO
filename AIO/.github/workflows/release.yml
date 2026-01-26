@@ -1,9 +1,9 @@
-name: "Publish Release"
+name: "Release"
 
 on:
   push:
     tags:
-      - 'v*' # 当你推送到以 v 开头的标签时触发，如 v1.0.0
+      - 'v*' # 只要你推送以 v 开头的标签（如 v1.0.0），就会触发打包
 
 jobs:
   publish-tauri:
@@ -12,7 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest, macos-latest, ubuntu-24.04] # 后续可以添加 macos-latest, ubuntu-22.04
+        include:
+          - platform: 'macos-latest' # 自动打包 Mac (Intel & Apple Silicon)
+            args: '--target aarch64-apple-darwin,x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04' # 自动打包 Linux (.deb & .AppImage)
+            args: ''
+          - platform: 'windows-latest' # 自动打包 Windows (.msi & .exe)
+            args: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -21,26 +27,31 @@ jobs:
       - name: setup node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: lts/*
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # 针对 Mac 同时打包两种芯片
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: install frontend dependencies
-        run: npm install # 或者 yarn install
+        run: npm install
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: build and release
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__ # 会自动使用当前版本号
+          tagName: v__VERSION__ # 使用程序自身的版本号作为 Tag
           releaseName: "App v__VERSION__"
-          releaseBody: "See the assets below to download."
-          releaseDraft: true
+          releaseBody: "感谢使用！此版本包含全平台安装包。"
+          releaseDraft: true # 打包完先存为草稿，你可以手动检查后再正式发布
           prerelease: false
+          args: ${{ matrix.args }}

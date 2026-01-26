@@ -1,6 +1,6 @@
 import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { config, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic } from '../store/store';
+import { Message,config, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic ,selectedModel} from '../store/store';
 import Markdown from '../components/Markdown';
 import { listen } from '@tauri-apps/api/event';
 import './Chat.css';
@@ -152,7 +152,10 @@ const Chat: Component = () => {
     }
 
     // 更新本地状态
-    setDatas('assistants', a => a.id === asstId, 'topics', topics => topics.filter(t => t.id !== topicId));
+    setDatas('assistants', 
+    (a: Assistant) => a.id === asstId, 
+    'topics', 
+    (topics: Topic[]) => topics.filter((t: Topic) => t.id !== topicId));
 
     // 如果删除的是当前话题，切换到第一个话题
     if (currentTopicId() === topicId) {
@@ -228,7 +231,7 @@ const Chat: Component = () => {
 
       // 细粒度更新本地状态
       const asst = datas.assistants.find(a => a.id === assistant_id);
-      const topic = asst?.topics.find(t => t.id === topic_id);
+      const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (!topic) return;
 
       const lastIdx = topic.history.length - 1;
@@ -393,7 +396,7 @@ const Chat: Component = () => {
 
     // 如果当前话题ID有效，返回对应话题
     // 否则返回第一个话题
-    return asst.topics.find(t => t.id === currentTopicId()) || asst.topics[0];
+    return asst.topics.find((t: Topic) => t.id === currentTopicId()) || asst.topics[0];
   };
 
   // 监听助手切换，自动切换话题
@@ -415,7 +418,7 @@ const Chat: Component = () => {
     }
     if (asst && asst.topics.length > 0) {
       // 如果当前话题不存在，切换到第一个话题
-      if (!currentTopicId() || !asst.topics.find(t => t.id === currentTopicId())) {
+      if (!currentTopicId() || !asst.topics.find((t: Topic) => t.id === currentTopicId())) {
         setCurrentTopicId(asst.topics[0].id);
       }
     } else if (asst && asst.topics.length === 0) {
@@ -429,6 +432,13 @@ const Chat: Component = () => {
    */
   const handleSendMessage = async () => {
     if (isThinking()) return;
+
+  const currentMdl = selectedModel();
+    if (!currentMdl) {
+      alert("请先选择一个模型！");
+      return;
+    }
+
     let userInputText = inputMessage().trim();
     const files = pendingFiles();
 
@@ -489,21 +499,41 @@ const Chat: Component = () => {
     try {
       const messagesForAI = [
         { role: 'system', content: asst.prompt },
-        ...topic.history.map(m => ({ role: m.role, content: m.content })),
+        ...topic.history.map((m:Message) => ({ role: m.role, content: m.content })),
         newUserMsg
       ];
 
       // 4. 调用 Rust
       await invoke('call_llm_stream', {
-        apiUrl: config().apiUrl,       // 来自 Settings 页面配置
-        apiKey: config().apiKey,       // 来自 Settings 页面配置
-        model: config().defaultModel,  // 来自 Settings 页面配置
+        apiUrl: currentMdl.api_url,   
+        apiKey: currentMdl.api_key,   
+        model: currentMdl.model_id,   
         assistantId: asstId,
         topicId: topicId,
         messages: messagesForAI
       });
     } catch (err: any) {
       alert(err.toString());
+      setIsThinking(false);
+      setTypingIndex(null);
+    }
+  };
+
+  /**
+ * 停止生成
+ */
+  const handleStopGeneration = async () => {
+    const asstId = currentAssistantId();
+    const topicId = currentTopicId();
+    if (!asstId || !topicId) return;
+
+    try {
+      // 调用后端停止接口
+      await invoke('stop_llm_stream', { assistantId: asstId, topicId: topicId });
+    } catch (err) {
+      console.error("停止失败:", err);
+    } finally {
+      // 强制重置前端状态
       setIsThinking(false);
       setTypingIndex(null);
     }
@@ -788,12 +818,25 @@ const Chat: Component = () => {
             }}
             rows={1}
           />
-          <button class="send-message-button" onClick={() => handleSendMessage()}>
-            {/* SVG 图标保持不变 */}
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-            </svg>
-            <span>发送</span>
+          <button
+            classList={{
+              'send-message-button': true,
+              'stop-button': isThinking()  // 当正在思考时添加 stop-button 类
+            }}
+            onClick={() => isThinking() ? handleStopGeneration() : handleSendMessage()}
+          >
+            <Show when={isThinking()} fallback={
+              // 发送图标 (飞机)
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+              </svg>
+            }>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
+                <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+              </svg>
+            </Show>
+            <span>{isThinking() ? "停止" : "发送"}</span>
           </button>
         </div>
       </div>

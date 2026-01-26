@@ -1,3 +1,17 @@
+/* 左侧面板（助手列表） */
+.assistant-selector {
+    flex-shrink: 0;
+    /* 禁止收缩 */
+    position: relative;
+    padding: 15px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    /* 滚动条 */
+    overflow-x: hidden;
+    border-radius: 8px;
+    border: 1px solid #08ddf9;
+}
+
 /* 整个聊天页面容器 */
 .chat-page {
     display: flex;
@@ -15,26 +29,7 @@
     /* 面板之间的间距 */
 }
 
-/* 左侧面板（助手列表） */
-.assistant-selector {
-    flex-shrink: 0;
-    /* 禁止收缩 */
-    position: relative;
-    padding: 15px;
-    box-sizing: border-box;
-    overflow-y: auto;
-    /* 滚动条 */
-    overflow-x: hidden;
-    border-radius: 8px;
-    border-right: 1px solid #08ddf9;
-    /* 右边框 */
-    border-bottom: 1px solid #08ddf9;
-    /* 底边框 */
-    border-top: 1px solid #08ddf9;
-    /* 顶边框 */
-    border-left: 1px solid #08ddf9;
-    /* 左边框 */
-}
+
 
 /* 右侧面板（话题列表） */
 .dialog-container {
@@ -45,14 +40,7 @@
     overflow-y: auto;
     overflow-x: hidden;
     border-radius: 8px;
-    border-left: 1px solid #08ddf9;
-    /* 左边框 */
-    border-bottom: 1px solid #08ddf9;
-    /* 底边框 */
-    border-top: 1px solid #08ddf9;
-    /* 顶边框 */
-    border-right: 1px solid #08ddf9;
-    /* 右边框 */
+    border: 1px solid #08ddf9;
 }
 
 /* 内容区域（助手/话题列表） */
@@ -383,6 +371,17 @@
     padding-top: 0; 
 }
 
+.send-message-button.stop-button {
+    border-color: #ff4d4d;
+    color: #ff4d4d;
+}
+
+.send-message-button.stop-button:hover {
+    background-color: #ff4d4d;
+    color: #fff;
+}
+
+
 .send-message-button {
     display: flex;
     align-items: center;
@@ -412,6 +411,7 @@
 .send-message-button svg {
     width: 20px;
     height: 20px;
+    transition: transform 0.2s;
 }
 
 .rename-input {

@@ -126,15 +126,19 @@
   left: 50%;
   transform: translateX(-50%);
   margin-top: 8px;
-
+  background-color: #333;
   /*background-color: #2a2a2a;*/
-  min-width: 160px;
+  min-width: 220px;
   border: 1px solid #555;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   z-index: 1000;
   transition: opacity 0.2s ease-in-out, visibility 0.2s ease-in-out;
-  padding: 4px 0;
+  padding: 8px 4px;
+  max-height: 300px;        /* 设置最大高度，超过此高度将出现滚动条 */
+  overflow-y: auto;         /* 开启垂直滚动 */
+  overflow-x: hidden;       /* 隐藏水平滚动 */
+  scrollbar-gutter: stable; /* 避免滚动条出现时挤压内容导致抖动 */
 }
 
 .dropdown-menu.active {
@@ -144,7 +148,10 @@
 }
 
 .dropdown-item {
-  padding: 10px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 15px;
   color: #a0a0a0;
   text-align: center;
   font-size: 14px;
@@ -157,6 +164,23 @@
 .dropdown-item:hover {
   background-color: #383838;
   color: #ffffff;
+}
+
+
+.dropdown-item.selected {
+    background: rgba(8, 221, 249, 0.15);
+    border-left: 3px solid #08ddf9;
+}
+
+.model-id-text {
+    font-size: 13px;
+    color: #fff;
+}
+
+.model-provider-text {
+    font-size: 10px;
+    color: #08ddf9;
+    opacity: 0.7;
 }
 
 /* --- 窗口控制按钮样式 --- */

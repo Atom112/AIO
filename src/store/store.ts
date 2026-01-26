@@ -24,14 +24,24 @@ export interface Assistant {
 export interface AppConfig {
     apiUrl: string;
     apiKey: string;
-    defaultModel: string;
 }
 
-// 创建全局 Store 存储助手列表
-// 使用 SolidJS 的 Store 可以方便地修改嵌套对象（比如修改某个助手的 prompt）
-export const [datas, setDatas] = createStore<{ assistants: Assistant[] }>({
-    assistants: []
+export interface ActivatedModel {
+    api_url: string;
+    api_key: string;
+    model_id: string;
+    owned_by: string;
+}
+
+// 在 datas 中增加 activatedModels
+export const [datas, setDatas] = createStore({
+    assistants: [] as any[],
+    activatedModels: [] as ActivatedModel[], // 新增：全局同步的激活模型列表
 });
+
+// 新增：全局当前选中的模型（供 Chat 页面直接使用）
+export const [selectedModel, setSelectedModel] = createSignal<ActivatedModel | null>(null);
+
 
 // 创建全局 Signal 存储当前选中的助手 ID
 export const [currentAssistantId, setCurrentAssistantId] = createSignal<string | null>(null);

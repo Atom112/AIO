@@ -3,11 +3,12 @@
 //---------------------- imports --------------------------------
 
 import { createSignal, onMount, For, createEffect } from 'solid-js';
-import { datas, setDatas, currentAssistantId, saveSingleAssistantToBackend } from '../store/store'
+import { datas, setDatas, currentAssistantId, saveSingleAssistantToBackend, selectedModel, setSelectedModel, ActivatedModel } from '../store/store'
 import { Window } from '@tauri-apps/api/window';
 import { A } from '@solidjs/router';
 import type { JSX } from 'solid-js';
 import PromptModal from '../pages/PromptModal';
+import { invoke } from '@tauri-apps/api/core';
 import './NavBar.css';
 
 
@@ -25,16 +26,12 @@ function NavBar(props: NavBarProps): JSX.Element {
   //创建响应式状态："设置提示词"弹窗是否被打开（默认为否）
   const [isModalOpen, setIsModalOpen] = createSignal<boolean>(false);
 
-  //当前模型提示词（默认为下面的prompt）
-  const [currentPrompt, setCurrentPrompt] = createSignal<string>(
-    'e.g.: You are a helpful AI assistant. Please answer questions accurately and concisely.'
-  );
 
   //可选的模型列表，在后期开发中需要从外部导入真实的模型列表
   const allModels: string[] = ['GPT-4', 'Claude 3', 'Gemini Pro', 'Llama 3'];
 
-  //当前选中的模型（默认为模型列表中第一个，但后续应替换为用户关闭应用前的最后一次选择，需要外部文件记录跟踪）
-  const [selectedModel, setSelectedModel] = createSignal<string>(allModels[0]);
+  // 使用从 ../store/store 导入的 selectedModel 与 setSelectedModel（避免与全局 store 重名）
+  // selectedModel / setSelectedModel 已在文件顶部导入
 
   //模型选择下拉菜单是否可见（默认为否）
   const [isDropdownVisible, setDropdownVisible] = createSignal<boolean>(false);
@@ -74,6 +71,18 @@ function NavBar(props: NavBarProps): JSX.Element {
 
   // 监听窗口最大化/还原事件，以便即时更新按钮状态
   onMount(async () => {
+
+    try {
+      const models = await invoke<ActivatedModel[]>('load_activated_models');
+      setDatas('activatedModels', models);
+      // 如果还没选过模型，默认选第一个
+      if (models.length > 0 && !selectedModel()) {
+        setSelectedModel(models[0]);
+      }
+    } catch (e) {
+      console.error("加载已激活模型失败", e);
+    }
+
     // 在组件挂载时检查窗口的初始最大化状态
     setIsMaximized(await appWindow.isMaximized());
     // onResized 也会在最大化/还原时触发
@@ -102,11 +111,9 @@ function NavBar(props: NavBarProps): JSX.Element {
   };
 
   // 下拉菜单栏点击选择模型后立即隐藏
-  const handleModelSelect = (model: string): void => {
+  const handleModelSelect = (model: ActivatedModel): void => {
     setSelectedModel(model);
-    setDropdownVisible(false); // 点击后立即隐藏
-    clearTimeout(hideTimeoutId);
-    console.log("模型已切换为:", model);
+    setDropdownVisible(false);
   };
 
   // --------------- Tauri 窗口控制功能 ----------------------
@@ -140,11 +147,13 @@ function NavBar(props: NavBarProps): JSX.Element {
         </div>
 
         {/* 对话按钮 */}
+
         <A href="/chat" class="nav-item" title="对话" activeClass="active">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-Width={1.5} stroke="currentColor" class="size-6">
             <path stroke-Linecap="round" stroke-Linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
           </svg>
         </A>
+
 
         {/* 设置按钮 */}
         <A href="/settings" class="nav-item" title="设置" activeClass="active">
@@ -165,8 +174,8 @@ function NavBar(props: NavBarProps): JSX.Element {
         {/* 模型选择下拉菜单 */}
         <div
           class="model-selector-wrapper"
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
+          onMouseEnter={() => setDropdownVisible(true)}
+          onMouseLeave={() => setDropdownVisible(false)}
         >
           {/* 选择模型按钮 */}
           <div class="nav-item model-selector" title="选择模型">
@@ -177,16 +186,17 @@ function NavBar(props: NavBarProps): JSX.Element {
 
           {/* 控制下拉菜单 */}
           <div classList={{ 'dropdown-menu': true, 'active': isDropdownVisible() }}>
-            <For each={allModels}>
+            <For each={datas.activatedModels}>
               {(model) => (
-                <div
-                  class="dropdown-item"
-                  onClick={() => handleModelSelect(model)}
-                >
-                  {model}
+                <div class="dropdown-item"
+                  classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
+                  onClick={() => handleModelSelect(model)}>
+                  <div class="model-id-text">{model.model_id}</div>
+                  <div class="model-provider-text">{model.owned_by}</div>
                 </div>
               )}
             </For>
+            {datas.activatedModels.length === 0 && <div class="dropdown-item">无激活模型</div>}
           </div>
         </div>
 

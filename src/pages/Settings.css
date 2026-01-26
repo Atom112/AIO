@@ -2,20 +2,18 @@
     display: flex;
     position: fixed;
     top: 65px;
-    /* 顶部留出空间给导航栏 */
     left: 0;
     right: 1px;
     bottom: 1px;
     padding: 20px;
     border: 1px solid #08ddf9;
-    /* 蓝色边框 */
     border-radius: 8px;
-    gap: 20px;
-    /* 面板之间的间距 */
+    gap: 15px;
+    padding: 15px;
 }
 
 .settings-container {
-    width: 25%;
+    width: 22%;
     padding: 30px;
     border: 1px solid #08ddf9;
     border-radius: 12px;
@@ -36,7 +34,6 @@
 }
 
 .setting-item label {
-    color: #08ddf9;
     font-size: 14px;
     font-weight: bold;
 }
@@ -84,13 +81,13 @@
     background: rgba(8, 221, 249, 0.02);
     display: flex;
     flex-direction: column;
+    min-width: 0;
     overflow: hidden;
 }
 
 .models-header {
     padding: 15px 20px;
     border-bottom: 1px solid rgba(8, 221, 249, 0.3);
-    color: #08ddf9;
 }
 
 .models-scroll-area {
@@ -118,6 +115,10 @@
     background: rgba(8, 221, 249, 0.05);
 }
 
+.model-card.activated {
+    border-left: 3px solid #00ff88;
+}
+
 .model-info {
     display: flex;
     flex-direction: column;
@@ -140,12 +141,12 @@
 .query-models-button {
     margin-top: 10px;
     background: transparent;
-    color: #08ddf9;
     border: 1px solid #08ddf9;
     padding: 10px;
     font-weight: bold;
     border-radius: 6px;
     cursor: pointer;
+    color: #eee;
 }
 
 .query-models-button:hover {
@@ -154,7 +155,6 @@
 
 .copy-btn {
     background: #333;
-    color: #08ddf9;
     border: none;
     padding: 5px 10px;
     border-radius: 4px;
@@ -179,7 +179,6 @@
 
 .models-title-row h4 {
     margin: 0;
-    color: #08ddf9;
     letter-spacing: 1px;
 }
 
@@ -213,7 +212,6 @@
     flex: 1;
     background-color: #1a1a1d;
     border: 1px solid #333;
-    color: #08ddf9;
     padding: 8px 32px 8px 12px; /* 右侧留出空间给自定义箭头 */
     border-radius: 6px;
     outline: none;
@@ -309,7 +307,7 @@
 .custom-select-trigger {
     background: #1a1a1d;
     border: 1px solid #333;
-    color: #08ddf9;
+
     padding: 8px 12px;
     border-radius: 6px;
     cursor: pointer;
@@ -384,4 +382,68 @@
 }
 .custom-select-dropdown::-webkit-scrollbar-track {
     background: #1a1a1d;
+}
+
+
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #333;
+    transition: .4s;
+    border-radius: 20px;
+    border: 1px solid #555;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: #08ddf9;
+    border-color: #08ddf9;
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+/* 移除按钮样式 */
+.remove-act-btn {
+    background: transparent;
+    border: 1px solid #ff4444;
+    color: #ff4444;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+}
+.remove-act-btn:hover {
+    background: #ff4444;
+    color: white;
 }

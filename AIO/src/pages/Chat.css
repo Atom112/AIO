@@ -808,3 +808,113 @@
 .file-attachment-card {
     margin-bottom: 8px;
 }
+
+/* --- 拖拽浮层容器：增加背景模糊 --- */
+.drag-drop-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7); /* 更深色的遮罩 */
+    backdrop-filter: blur(4px);    /* 增加磨砂玻璃感 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    pointer-events: none;
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* --- 内容框：改用深色背景 + 青色发光边框 --- */
+.drag-drop-content {
+    position: relative;
+    width: 420px;
+    height: 280px;
+    background: #1a1a1a;          /* 匹配你界面的背景色 */
+    border: 2px solid #08ddf9;    /* 使用你的主题青色 */
+    border-radius: 12px;          /* 略微减小圆角，匹配界面风格 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    text-align: center;
+    padding: 20px;
+    box-shadow: 0 0 30px rgba(8, 221, 249, 0.2); /* 增加青色呼吸感阴影 */
+}
+
+/* --- 内部虚线框：改为青色半透明 --- */
+.dashed-border {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    border: 1px dashed rgba(8, 221, 249, 0.4);
+    border-radius: 8px;
+    pointer-events: none;
+}
+
+.drag-drop-content h2 {
+    margin: 15px 0 10px 0;
+    font-size: 22px;
+    color: #08ddf9;               /* 标题使用主题色 */
+    z-index: 2;
+    letter-spacing: 1px;
+}
+
+.drag-drop-content p {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.7);
+    max-width: 80%;
+    line-height: 1.6;
+    z-index: 2;
+}
+
+/* --- 图标卡片：改为深色质感 + 青色轮廓 --- */
+.drag-icons {
+    display: flex;
+    align-items: flex-end;
+    gap: -12px;
+    margin-top: -30px;
+    margin-bottom: 25px;
+}
+
+.drag-icon-card {
+    width: 60px;
+    height: 80px;
+    background: #2a2a2a;         /* 深灰色背景 */
+    border: 1px solid #08ddf9;   /* 青色边框 */
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+}
+
+.drag-icon-card.side {
+    transform: scale(0.85) translateY(10px);
+    z-index: 1;
+    opacity: 0.6;
+    border-color: rgba(8, 221, 249, 0.5);
+}
+
+.drag-icon-card.center {
+    width: 70px;
+    height: 90px;
+    z-index: 3;
+    font-size: 32px;
+    background: #333;
+    color: #08ddf9;             /* 中心图标高亮 */
+    box-shadow: 0 0 20px rgba(8, 221, 249, 0.3);
+}
+
+.drag-icon-card.side:first-child {
+    transform: rotate(-12deg) scale(0.85) translateX(15px);
+}
+
+.drag-icon-card.side:last-child {
+    transform: rotate(12deg) scale(0.85) translateX(-15px);
+}

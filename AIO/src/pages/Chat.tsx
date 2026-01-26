@@ -58,6 +58,7 @@ const Chat: Component = () => {
   const [menuState, setMenuState] = createSignal({ isOpen: false, x: 0, y: 0, targetId: null as string | null });
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string, content: string }[]>([]);
   const [isProcessing, setIsProcessing] = createSignal(false);
+  const [isDragging, setIsDragging] = createSignal(false);
 
   // 当前激活的话题ID
   const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(null);
@@ -169,6 +170,8 @@ const Chat: Component = () => {
     // 1. 定义用于存放取消监听函数的变量
     let unlistenLLM: (() => void) | undefined;
     let unlistenDrop: (() => void) | undefined;
+    let unlistenDragEnter: (() => void) | undefined;
+    let unlistenDragLeave: (() => void) | undefined;
 
     // 2. 原有的：加载助手初始数据 (使用 .then 代替 await)
     invoke<Assistant[]>('load_assistants')
@@ -185,8 +188,19 @@ const Chat: Component = () => {
       })
       .catch((err) => console.error("加载助手失败:", err));
 
+    listen('tauri://drag-enter', () => {
+      setIsDragging(true);
+    }).then(un => unlistenDragEnter = un);
+
+    // 监听拖拽离开
+    listen('tauri://drag-leave', () => {
+      setIsDragging(false);
+    }).then(un => unlistenDragLeave = un);
+
+
     // 3. 监听 Rust 侧发来的文件拖拽事件
     listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+      setIsDragging(false);
       setIsProcessing(true);
       const paths = event.payload.paths;
       for (const path of paths) {
@@ -253,6 +267,8 @@ const Chat: Component = () => {
     onCleanup(() => {
       if (unlistenLLM) unlistenLLM();
       if (unlistenDrop) unlistenDrop();
+      if (unlistenDragEnter) unlistenDragEnter(); // 清理
+      if (unlistenDragLeave) unlistenDragLeave(); // 清理
       document.removeEventListener('click', handleClickOutside);
     });
   });
@@ -415,10 +431,10 @@ const Chat: Component = () => {
     if (isThinking()) return;
     let userInputText = inputMessage().trim();
     const files = pendingFiles();
-    
+
     // 如果没有输入也没有文件，直接返回
     if (!userInputText && files.length === 0) return;
-    
+
 
     // --- 构造发送给 AI 的完整 Context ---
     let fullContext = userInputText;
@@ -438,14 +454,14 @@ const Chat: Component = () => {
     const asst = currentAssistant();
     const topic = activeTopic();
     if (!asstId || !topicId || !asst || !topic) return;
-    
+
     // --- 构造 UI 展示用的消息对象 ---
     // 我们给消息对象多塞一个附件信息数组，用于渲染图标
-    const newUserMsg = { 
-        role: 'user' as const, 
-        content: fullContext,
-        displayFiles: files.map(f => ({ name: f.name })), // 仅存储文件名用于渲染
-        displayText: userInputText // 仅存储用户输入的文字
+    const newUserMsg = {
+      role: 'user' as const,
+      content: fullContext,
+      displayFiles: files.map(f => ({ name: f.name })), // 仅存储文件名用于渲染
+      displayText: userInputText // 仅存储用户输入的文字
     };
 
     // 更新状态
@@ -599,44 +615,44 @@ const Chat: Component = () => {
         >
           <Show when={activeTopic()}>
             <For each={activeTopic()?.history}>
-  {(msg: any, index) => ( // 使用 any 规避类型检查，或者定义专门的接口
-    <div
-      class={`message ${msg.role}`}
-      style={{
-        "animation-delay": `${Math.min(index() * 0.03, 0.4)}s`,
-        "animation-duration": typingIndex() === index() ? "0.1s" : "0.35s"
-      }}
-    >
-      <div class="message-content" classList={{ 'typing': typingIndex() === index() }}>
-        
-        {/* --- 新增：如果消息包含附件，渲染文件卡片 --- */}
-        <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
-          <For each={msg.displayFiles}>
-            {(file: any) => (
-              <div class="file-attachment-card">
-                <div class="file-icon-wrapper">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </div>
-                <div class="file-info">
-                  <div class="file-name">{file.name}</div>
-                  <div class="file-meta">已读取文本内容</div>
-                </div>
-              </div>
-            )}
-          </For>
-        </Show>
+              {(msg: any, index) => ( // 使用 any 规避类型检查，或者定义专门的接口
+                <div
+                  class={`message ${msg.role}`}
+                  style={{
+                    "animation-delay": `${Math.min(index() * 0.03, 0.4)}s`,
+                    "animation-duration": typingIndex() === index() ? "0.1s" : "0.35s"
+                  }}
+                >
+                  <div class="message-content" classList={{ 'typing': typingIndex() === index() }}>
 
-        {/* --- 消息文本内容 --- */}
-        <div class="message-text-part">
-           {/* 如果是带附件的消息，渲染专门的 displayText，否则渲染普通的 content */}
-           <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
-        </div>
-      </div>
-    </div>
-  )}
-</For>
+                    {/* --- 新增：如果消息包含附件，渲染文件卡片 --- */}
+                    <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
+                      <For each={msg.displayFiles}>
+                        {(file: any) => (
+                          <div class="file-attachment-card">
+                            <div class="file-icon-wrapper">
+                              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </div>
+                            <div class="file-info">
+                              <div class="file-name">{file.name}</div>
+                              <div class="file-meta">已读取文本内容</div>
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </Show>
+
+                    {/* --- 消息文本内容 --- */}
+                    <div class="message-text-part">
+                      {/* 如果是带附件的消息，渲染专门的 displayText，否则渲染普通的 content */}
+                      <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </For>
 
             {/* 思考状态气泡 */}
             <Show when={isThinking()}>
@@ -665,7 +681,7 @@ const Chat: Component = () => {
             )}
           </For>
         </div>
-        
+
         {/* 输入区域 */}
         <div class="chat-input-wrapper">
           <textarea
@@ -791,6 +807,28 @@ const Chat: Component = () => {
           <button class="context-menu-button delete" onClick={() => deleteTopic(currentAssistantId(), topicMenuState().targetTopicId)}>删除话题</button>
         </div>
       )}
+
+      <Show when={isDragging()}>
+        <div class="drag-drop-overlay">
+          <div class="drag-drop-content">
+            <div class="drag-icons">
+              <div class="drag-icon-card side">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+              </div>
+              <div class="drag-icon-card center">
+                <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 16V8m0 0l-3 3m3-3l3 3m-9 8h12"></path></svg>
+              </div>
+              <div class="drag-icon-card side">
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+              </div>
+            </div>
+            <h2>上传文件</h2>
+            <p>拖拽文件到这里，支持解析 PDF、Docx、pptx 和文本代码文件</p>
+            <div class="dashed-border"></div>
+          </div>
+        </div>
+      </Show>
+
     </div>
   );
 };

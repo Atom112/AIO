@@ -14,7 +14,7 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest' # 自动打包 Mac (Intel & Apple Silicon)
-            args: '--target aarch64-apple-darwin,x86_64-apple-darwin'
+            args: ''
           - platform: 'ubuntu-22.04' # 自动打包 Linux (.deb & .AppImage)
             args: ''
           - platform: 'windows-latest' # 自动打包 Windows (.msi & .exe)

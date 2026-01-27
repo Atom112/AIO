@@ -1,5 +1,5 @@
 import { Component, createSignal, For, createMemo, onCleanup, onMount } from 'solid-js';
-import { config, saveConfig,setDatas } from '../store/store';
+import { config, saveConfig,setDatas,selectedModel } from '../store/store';
 import { invoke } from '@tauri-apps/api/core';
 import './Settings.css';
 
@@ -40,9 +40,18 @@ const Settings: Component = () => {
     // 初始化加载
     onMount(async () => {
         try {
-            const list = await invoke<ActivatedModel[]>('load_activated_models');
-            setActivatedModels(list);
-        } catch (e) { console.error(e); }
+            // 加载已激活的模型 (原有逻辑)
+            const listAct = await invoke<ActivatedModel[]>('load_activated_models');
+            setActivatedModels(listAct);
+
+            // 【新增】：加载之前搜索过的可用模型列表
+            const cachedModels = await invoke<ModelItem[]>('load_fetched_models');
+            if (cachedModels && cachedModels.length > 0) {
+                setModels(cachedModels);
+            }
+        } catch (e) { 
+            console.error("加载缓存数据失败:", e); 
+        }
 
         const handleClickOutside = (e: MouseEvent) => {
             if (dropdownRef && !dropdownRef.contains(e.target as Node)) setIsDropdownOpen(false);
@@ -87,7 +96,7 @@ const Settings: Component = () => {
 };
 
 const handleSave = async () => {
-    const newConfig = { apiUrl: apiUrl(), apiKey: apiKey() }; // 删除了 defaultModel
+    const newConfig = { apiUrl: apiUrl(), apiKey: apiKey(),defaultModel: selectedModel()?.model_id || "" };
     await invoke('save_app_config', { config: newConfig });
     saveConfig(newConfig as any);
     setSaveStatus("配置已成功保存！");
@@ -97,10 +106,21 @@ const handleSave = async () => {
     const handleQueryModels = async () => {
         setIsLoading(true);
         try {
-            const list: ModelItem[] = await invoke('fetch_models', { apiUrl: apiUrl(), apiKey: apiKey() });
+            const list: ModelItem[] = await invoke('fetch_models', { 
+                apiUrl: apiUrl(), 
+                apiKey: apiKey() 
+            });
             setModels(list);
-        } catch (err) { alert(`查询失败: ${err}`); }
-        finally { setIsLoading(false); }
+            
+            // 【新增】：搜索成功后立即进行持久化保存
+            await invoke('save_fetched_models', { models: list });
+            
+        } catch (err) { 
+            alert(`查询失败: ${err}`); 
+        }
+        finally { 
+            setIsLoading(false); 
+        }
     };
 
     return (

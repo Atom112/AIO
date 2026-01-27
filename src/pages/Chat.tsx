@@ -1,6 +1,6 @@
 import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { Message,config, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic ,selectedModel} from '../store/store';
+import { Message, config, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic, selectedModel } from '../store/store';
 import Markdown from '../components/Markdown';
 import { listen } from '@tauri-apps/api/event';
 import './Chat.css';
@@ -152,10 +152,10 @@ const Chat: Component = () => {
     }
 
     // 更新本地状态
-    setDatas('assistants', 
-    (a: Assistant) => a.id === asstId, 
-    'topics', 
-    (topics: Topic[]) => topics.filter((t: Topic) => t.id !== topicId));
+    setDatas('assistants',
+      (a: Assistant) => a.id === asstId,
+      'topics',
+      (topics: Topic[]) => topics.filter((t: Topic) => t.id !== topicId));
 
     // 如果删除的是当前话题，切换到第一个话题
     if (currentTopicId() === topicId) {
@@ -177,20 +177,27 @@ const Chat: Component = () => {
     let unlistenDragLeave: (() => void) | undefined;
 
     // 2. 原有的：加载助手初始数据 (使用 .then 代替 await)
-    invoke<Assistant[]>('load_assistants')
-      .then((loaded) => {
-        if (Array.isArray(loaded) && loaded.length > 0) {
-          setDatas({ assistants: loaded });
-          if (!currentAssistantId()) setCurrentAssistantId(loaded[0].id);
-        } else {
-          const defaultAsst = createAssistant('默认助手');
-          setDatas('assistants', [defaultAsst]);
-          setCurrentAssistantId(defaultAsst.id);
-          saveSingleAssistantToBackend(defaultAsst.id);
-        }
-      })
-      .catch((err) => console.error("加载助手失败:", err));
-
+    if (datas.assistants.length === 0) {
+      invoke<Assistant[]>('load_assistants')
+        .then((loaded) => {
+          if (Array.isArray(loaded) && loaded.length > 0) {
+            setDatas({ assistants: loaded });
+            if (!currentAssistantId()) setCurrentAssistantId(loaded[0].id);
+          } else {
+            const defaultAsst = createAssistant('默认助手');
+            setDatas('assistants', [defaultAsst]);
+            setCurrentAssistantId(defaultAsst.id);
+            saveSingleAssistantToBackend(defaultAsst.id);
+          }
+        })
+        .catch((err) => console.error("加载助手失败:", err));
+    } else {
+      // 如果已经有数据了，确保 currentTopicId 被正确初始化
+      const asst = datas.assistants.find(a => a.id === currentAssistantId());
+      if (asst && !currentTopicId()) {
+        setCurrentTopicId(asst.topics[0]?.id || null);
+      }
+    }
     listen('tauri://drag-enter', () => {
       setIsDragging(true);
     }).then(un => unlistenDragEnter = un);
@@ -433,7 +440,7 @@ const Chat: Component = () => {
   const handleSendMessage = async () => {
     if (isThinking()) return;
 
-  const currentMdl = selectedModel();
+    const currentMdl = selectedModel();
     if (!currentMdl) {
       alert("请先选择一个模型！");
       return;
@@ -499,15 +506,15 @@ const Chat: Component = () => {
     try {
       const messagesForAI = [
         { role: 'system', content: asst.prompt },
-        ...topic.history.map((m:Message) => ({ role: m.role, content: m.content })),
+        ...topic.history.map((m: Message) => ({ role: m.role, content: m.content })),
         newUserMsg
       ];
 
       // 4. 调用 Rust
       await invoke('call_llm_stream', {
-        apiUrl: currentMdl.api_url,   
-        apiKey: currentMdl.api_key,   
-        model: currentMdl.model_id,   
+        apiUrl: currentMdl.api_url,
+        apiKey: currentMdl.api_key,
+        model: currentMdl.model_id,
         assistantId: asstId,
         topicId: topicId,
         messages: messagesForAI

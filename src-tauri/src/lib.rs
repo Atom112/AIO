@@ -30,10 +30,19 @@ struct StreamPayload {
     done: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FileMeta {
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Message {
     role: String,
     content: String,
+    #[serde(rename = "displayFiles", skip_serializing_if = "Option::is_none")]
+    pub display_files: Option<Vec<FileMeta>>,
+    #[serde(rename = "displayText", skip_serializing_if = "Option::is_none")]
+    pub display_text: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -160,6 +169,32 @@ async fn process_file_content(path: String) -> Result<String, String> {
 
 // ... 这里保留你之前的 save_app_config, load_app_config, load_assistants 等所有命令 ...
 // (为了篇幅，这里缩略，请务必保留你原来的业务命令函数)
+
+#[tauri::command]
+fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
+    let mut path = dirs::config_dir().unwrap();
+    path.push("AIO");
+    if !path.exists() {
+        std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    }
+    path.push("fetched_models.json");
+    let json = serde_json::to_string_pretty(&models).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_fetched_models() -> Result<Vec<ModelInfo>, String> {
+    let mut path = dirs::config_dir().unwrap();
+    path.push("AIO");
+    path.push("fetched_models.json");
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let models: Vec<ModelInfo> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    Ok(models)
+}
 
 #[tauri::command]
 fn save_app_config(config: AppConfig) -> Result<(), String> {
@@ -291,9 +326,18 @@ async fn call_llm_stream(
             };
 
             let client = reqwest::Client::new();
+            let messages_for_api: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|m| {
+                    json!({
+                        "role": m.role,
+                        "content": m.content
+                    })
+                })
+                .collect();
             let body = json!({
                 "model": model,
-                "messages": messages,
+                "messages": messages_for_api,
                 "stream": true
             });
 
@@ -424,13 +468,12 @@ fn load_activated_models() -> Result<Vec<ActivatedModel>, String> {
     Ok(models)
 }
 
-
 // --- 应用程序入口 ---
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(StreamManager(Arc::new(DashMap::new()))) 
+        .manage(StreamManager(Arc::new(DashMap::new())))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             load_assistants,
@@ -443,7 +486,9 @@ pub fn run() {
             process_file_content,
             stop_llm_stream,
             save_activated_models,
-            load_activated_models
+            load_activated_models,
+            save_fetched_models,
+            load_fetched_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -3,7 +3,7 @@ name: "Release"
 on:
   push:
     tags:
-      - 'v*' # 只要你推送以 v 开头的标签（如 v1.0.0），就会触发打包
+      - 'v*'
 
 jobs:
   publish-tauri:
@@ -13,11 +13,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest' # 自动打包 Mac (Intel & Apple Silicon)
+          - platform: 'macos-13' # 使用 Intel Runner 避免兼容性问题
             args: ''
-          - platform: 'ubuntu-22.04' # 自动打包 Linux (.deb & .AppImage)
+          - platform: 'ubuntu-22.04'
             args: ''
-          - platform: 'windows-latest' # 自动打包 Windows (.msi & .exe)
+          - platform: 'windows-latest'
             args: ''
 
     runs-on: ${{ matrix.platform }}
@@ -27,19 +27,20 @@ jobs:
       - name: setup node
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 20 # 锁定稳定的 Node 版本
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # 针对 Mac 同时打包两种芯片
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          # 虽然在 Intel 下运行，依然可以交叉编译 ARM 版本的 Rust 二进制
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
       - name: install frontend dependencies
         run: npm install
 
@@ -48,9 +49,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__ # 使用程序自身的版本号作为 Tag
-          releaseName: "App v__VERSION__"
+          tagName: v__VERSION__
+          releaseName: "AIO v__VERSION__-Beta"
           releaseBody: "感谢使用！此版本包含全平台安装包。"
-          releaseDraft: true # 打包完先存为草稿，你可以手动检查后再正式发布
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

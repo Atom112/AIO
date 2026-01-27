@@ -98,8 +98,8 @@
 
 /* 模型项卡片样式 */
 .model-card {
+    border-left: 3px solid #08ddf9;
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid #333;
     border-radius: 8px;
     padding: 12px 15px;
     margin-bottom: 10px;
@@ -107,12 +107,11 @@
     justify-content: space-between;
     align-items: center;
     transition: all 0.2s;
-    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;;
+    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
 }
 
 .model-card:hover {
-    border-color: #08ddf9;
-    background: rgba(8, 221, 249, 0.05);
+    background: rgba(8, 221, 249, 0.2);
 }
 
 .model-card.activated {

@@ -73,14 +73,28 @@ function NavBar(props: NavBarProps): JSX.Element {
   onMount(async () => {
 
     try {
-      const models = await invoke<ActivatedModel[]>('load_activated_models');
+      // 1. 并行加载：模型列表 和 应用配置
+      const [models, config] = await Promise.all([
+        invoke<ActivatedModel[]>('load_activated_models'),
+        invoke<any>('load_app_config') // 这里类型设为 any 方便读取字段，或定义 AppConfig 接口
+      ]);
+
       setDatas('activatedModels', models);
-      // 如果还没选过模型，默认选第一个
-      if (models.length > 0 && !selectedModel()) {
-        setSelectedModel(models[0]);
+
+      if (models.length > 0) {
+        // 2. 寻找匹配上次保存的模型 ID
+        const lastSelectedId = config.defaultModel; // 注意这是 Rust 序列化回来的驼峰名
+        const lastUsedModel = models.find(m => m.model_id === lastSelectedId);
+
+        if (lastUsedModel) {
+          setSelectedModel(lastUsedModel);
+        } else {
+          // 如果没找到（比如模型被删了），默认选第一个
+          setSelectedModel(models[0]);
+        }
       }
     } catch (e) {
-      console.error("加载已激活模型失败", e);
+      console.error("初始化加载失败", e);
     }
 
     // 在组件挂载时检查窗口的初始最大化状态
@@ -111,9 +125,25 @@ function NavBar(props: NavBarProps): JSX.Element {
   };
 
   // 下拉菜单栏点击选择模型后立即隐藏
-  const handleModelSelect = (model: ActivatedModel): void => {
+  const handleModelSelect = async(model: ActivatedModel) => {
     setSelectedModel(model);
     setDropdownVisible(false);
+
+    try {
+        // 1. 先获取当前完整配置（防止覆盖 API Key 或 API URL）
+        const currentConfig = await invoke<any>('load_app_config');
+        
+        // 2. 更新模型 ID 并保存
+        const newConfig = {
+            ...currentConfig,
+            defaultModel: model.model_id
+        };
+        
+        await invoke('save_app_config', { config: newConfig });
+        console.log("已记住模型选择:", model.model_id);
+    } catch (e) {
+        console.error("保存模型偏好失败", e);
+    }
   };
 
   // --------------- Tauri 窗口控制功能 ----------------------

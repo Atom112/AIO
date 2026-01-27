@@ -59,6 +59,7 @@ const Chat: Component = () => {
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string, content: string }[]>([]);
   const [isProcessing, setIsProcessing] = createSignal(false);
   const [isDragging, setIsDragging] = createSignal(false);
+  const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);
 
   // 当前激活的话题ID
   const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(null);
@@ -75,6 +76,50 @@ const Chat: Component = () => {
   // ======================
   // 3. 函数定义
   // ======================
+
+
+  const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
+    if (!newName.trim()) return setEditingTopicId(null);
+
+    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'name', newName);
+    await saveSingleAssistantToBackend(asstId);
+    setEditingTopicId(null);
+  };
+
+  // 话题总结功能
+  const summarizeTopic = async (asstId: string, topicId: string, userMsg: string, aiMsg: string) => {
+    const currentMdl = selectedModel();
+    if (!currentMdl) return;
+
+    // 构造总结用的 Prompt
+    const prompt = `请简要总结以下对话的主题，作为一个简短的标题（不超过10个字）。直接返回标题，不要包含任何标点或多余文字。\n用户：${userMsg}\n助手：${aiMsg}`;
+
+    try {
+      // 这里使用 fetch 直接调用，避免干扰主流式接口，或者也可以封装一个非流式的 invoke
+      const response = await fetch(currentMdl.api_url.replace(/\/+$/, "") + (currentMdl.api_url.endsWith("/chat/completions") ? "" : "/chat/completions"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${currentMdl.api_key}`
+        },
+        body: JSON.stringify({
+          model: currentMdl.model_id,
+          messages: [{ role: "user", content: prompt }],
+          stream: false
+        })
+      });
+
+      const data = await response.json();
+      const summary = data.choices?.[0]?.message?.content?.trim();
+      if (summary) {
+        // 执行重命名更新
+        setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'name', summary);
+        saveSingleAssistantToBackend(asstId);
+      }
+    } catch (err) {
+      console.error("话题总结请求失败:", err);
+    }
+  };
 
   /**
    * 保存重命名的助手名称
@@ -233,6 +278,18 @@ const Chat: Component = () => {
         setIsThinking(false);
         setTypingIndex(null);
         saveSingleAssistantToBackend(assistant_id);
+
+        // --- 新增：自动化话题命名逻辑 ---
+        const asst = datas.assistants.find(a => a.id === assistant_id);
+        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
+
+        // 如果话题只有 2 条消息（1问1答）且目前是默认名称，则启动总结
+        if (topic && topic.history.length === 2 &&
+          (topic.name.startsWith("新话题") || topic.name.startsWith("默认话题"))) {
+          const userText = topic.history[0].displayText || topic.history[0].content;
+          const aiText = topic.history[1].content;
+          summarizeTopic(assistant_id, topic_id, userText, aiText);
+        }
         return;
       }
 
@@ -868,7 +925,22 @@ const Chat: Component = () => {
                   <For each={asst().topics}>
                     {(topic) => (
                       <div classList={{ 'topic-item': true, 'active': topic.id === currentTopicId() }} onClick={() => setCurrentTopicId(topic.id)}>
-                        <span class="topic-name">{topic.name}</span>
+                        <Show when={editingTopicId() === topic.id} fallback={
+                          <span class="topic-name">{topic.name}</span>
+                        }>
+                          <input
+                            class="rename-input"
+                            style="width: 70%;"
+                            value={topic.name}
+                            ref={(el) => {
+                              setTimeout(() => { el.focus(); el.select(); }, 0);
+                            }}
+                            onBlur={(e) => saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Show>
+
                         {/* 话题菜单按钮 */}
                         <button class="assistant-menu-button" style="width: 24px; height: 24px;" onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}>
                           <svg xmlns="http://www.w3.org/2000/svg" fill="#FFFFFF" viewBox="0 0 24 24" stroke-width={1.5} style="width: 18px; height: 18px;">
@@ -899,6 +971,10 @@ const Chat: Component = () => {
       {/* 话题上下文菜单 */}
       {showTopicMenuDiv() && (
         <div class="assistant-context-menu" classList={{ 'menu-exiting': isTopicMenuAnimatingOut() }} style={{ top: `${topicMenuState().y}px`, left: `${topicMenuState().x}px` }}>
+          <button class="context-menu-button" onClick={() => {
+            setEditingTopicId(topicMenuState().targetTopicId);
+            closeTopicMenu();
+          }}>重命名</button>
           <button class="context-menu-button delete" onClick={() => deleteTopic(currentAssistantId(), topicMenuState().targetTopicId)}>删除话题</button>
         </div>
       )}

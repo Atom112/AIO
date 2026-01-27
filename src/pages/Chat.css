@@ -425,6 +425,15 @@
     outline: none;
 }
 
+.topic-item .rename-input {
+    background: #1a1a1a;
+    border: 1px solid #08ddf9;
+    color: #fff;
+    padding: 2px 5px;
+    height: 20px;
+    font-size: 0.85rem;
+}
+
 /* 话题项的菜单按钮 */
 .topic-item .assistant-menu-button {
     flex-shrink: 0;

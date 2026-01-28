@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-15' # 使用 Intel Runner 避免兼容性问题
+          - platform: 'macos-15' # ARM64 (Apple Silicon)
             args: ''
           - platform: 'ubuntu-22.04'
             args: ''
@@ -27,12 +27,11 @@ jobs:
       - name: setup node
         uses: actions/setup-node@v4
         with:
-          node-version: 20 # 锁定稳定的 Node 版本
+          node-version: 20
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # 虽然在 Intel 下运行，依然可以交叉编译 ARM 版本的 Rust 二进制
           targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install dependencies (ubuntu only)
@@ -40,6 +39,55 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # ==========================================
+      # 关键步骤：下载 llama.cpp 二进制文件 (仅 Windows)
+      # ==========================================
+      - name: Download llama.cpp binaries (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $backendDir = "src-tauri/resources/llama-backend"
+          
+          # 创建目录
+          New-Item -ItemType Directory -Force -Path $backendDir
+          
+          Write-Host "正在下载 llama.cpp CUDA 二进制文件..."
+          
+          # 从 Assets Release 下载
+          # 注意：请将下面的 URL 替换为你的实际仓库地址
+          $downloadUrl = "https://github.com/Atom112/AIO/releases/download/llama-binaries/llama-backend-windows-cuda.zip"
+          
+          try {
+            Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-backend.zip" -MaximumRetryCount 3 -RetryIntervalSec 5
+            Write-Host "下载完成，正在解压..."
+            
+            Expand-Archive -Path "llama-backend.zip" -DestinationPath $backendDir -Force
+            Remove-Item "llama-backend.zip"
+            
+            # 验证文件是否存在
+            if (Test-Path "$backendDir/llama-server.exe") {
+              Write-Host "✅ llama-server.exe 验证成功"
+            } else {
+              throw "llama-server.exe 未找到，解压可能失败"
+            }
+            
+            # 列出下载的文件（调试用，可删除）
+            Get-ChildItem $backendDir | ForEach-Object { Write-Host "   - $($_.Name) ($([math]::Round($_.Length/1MB, 2)) MB)" }
+            
+          } catch {
+            Write-Error "下载或解压失败: $_"
+            exit 1
+          }
+
+      # 可选：如果其他平台也需要本地模型支持，可以添加类似步骤
+      # - name: Download llama.cpp binaries (macOS)
+      #   if: startsWith(matrix.platform, 'macos')
+      #   run: |
+      #     mkdir -p src-tauri/resources/llama-backend
+      #     curl -L -o llama-backend.zip "https://github.com/${{ github.repository }}/releases/download/v0.0.0-assets/llama-backend-macos-metal.zip"
+      #     unzip llama-backend.zip -d src-tauri/resources/llama-backend/
+      #     rm llama-backend.zip
 
       - name: install frontend dependencies
         run: npm install

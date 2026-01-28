@@ -122,4 +122,4 @@
   <p><em>Give a ⭐️ if this project helped you!</em></p>
 </div>
 
-Copyright © 2025 [Loch][profile-link].
+Copyright © 2025 [Loch](https://github.com/Atom112).

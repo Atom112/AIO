@@ -93,19 +93,21 @@ jobs:
         run: npm install  
   
       # Tauri 构建和发布  
-      - name: Build and Release  
-        uses: tauri-apps/tauri-action@v0  
-        env:  
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
-          # 核心修复
-          APPIMAGE_EXTRACT_AND_RUN: 1  
-          NO_STRIP: 1  
-          # 增加这一行，有时能绕过 linuxdeploy 的一些库校验错误
-          LD_LIBRARY_PATH: /usr/local/lib
-        with:  
-          tagName: v__VERSION__  
-          releaseName: "AIO v__VERSION__"  
-          releaseDraft: true  
-          prerelease: false  
-          # 确保 verbose 开启以追踪后续错误
-          args: ${{ matrix.target != '' && format('--target {0} --verbose', matrix.target) || '--verbose' }}
+      - name: Build and Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "AIO v__VERSION__"
+          releaseDraft: true
+          prerelease: false
+          # 修改 args 逻辑：
+          # 如果是 Ubuntu，强制指定只打包 deb 和 rpm
+          # 如果是其他系统（macOS/Windows），按原逻辑处理
+          args: >-
+            ${{ 
+              matrix.platform == 'ubuntu-22.04' 
+              && '--bundles deb,rpm --verbose' 
+              || (matrix.target != '' && format('--target {0} --verbose', matrix.target) || '--verbose') 
+            }}

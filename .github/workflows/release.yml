@@ -13,93 +13,121 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-15' # ARM64 (Apple Silicon)
-            args: ''
-          - platform: 'ubuntu-22.04'
-            args: ''
+          # Windows - NVIDIA CUDA
           - platform: 'windows-latest'
-            args: ''
+            target: ''
+            asset_name: 'llama-backend-windows-cuda.zip'
+            
+          # Linux - CPU/GPU (通用)
+          - platform: 'ubuntu-24.04'
+            target: ''
+            asset_name: 'llama-backend-ubuntu.zip'
+            
+          # macOS - Intel (x86_64)
+          - platform: 'macos-15'
+            target: 'x86_64-apple-darwin'
+            asset_name: 'llama-backend-macos-intel.zip'
+            
+          # macOS - Apple Silicon (ARM64)
+          - platform: 'macos-15'
+            target: 'aarch64-apple-darwin'
+            asset_name: 'llama-backend-macos-applesilicon.zip'
 
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: setup node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: install Rust stable
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.target }}
 
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+      # Ubuntu 24.04 依赖
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      # ==========================================
-      # 关键步骤：下载 llama.cpp 二进制文件 (仅 Windows)
-      # ==========================================
-      - name: Download llama.cpp binaries (Windows)
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
+      # 下载各平台对应的 llama.cpp 二进制文件
+      - name: Download llama.cpp binaries
+        shell: bash
         run: |
-          $backendDir = "src-tauri/resources/llama-backend"
+          BACKEND_DIR="src-tauri/resources/llama-backend"
+          mkdir -p "$BACKEND_DIR"
           
-          # 创建目录
-          New-Item -ItemType Directory -Force -Path $backendDir
-          
-          Write-Host "正在下载 llama.cpp CUDA 二进制文件..."
-          
-          # 从 Assets Release 下载
-          # 注意：请将下面的 URL 替换为你的实际仓库地址
-          $downloadUrl = "https://github.com/Atom112/AIO/releases/download/llama-binaries/llama-backend-windows-cuda.zip"
-          
-          try {
-            Invoke-WebRequest -Uri $downloadUrl -OutFile "llama-backend.zip" -MaximumRetryCount 3 -RetryIntervalSec 5
-            Write-Host "下载完成，正在解压..."
-            
-            Expand-Archive -Path "llama-backend.zip" -DestinationPath $backendDir -Force
-            Remove-Item "llama-backend.zip"
-            
-            # 验证文件是否存在
-            if (Test-Path "$backendDir/llama-server.exe") {
-              Write-Host "✅ llama-server.exe 验证成功"
-            } else {
-              throw "llama-server.exe 未找到，解压可能失败"
-            }
-            
-            # 列出下载的文件（调试用，可删除）
-            Get-ChildItem $backendDir | ForEach-Object { Write-Host "   - $($_.Name) ($([math]::Round($_.Length/1MB, 2)) MB)" }
-            
-          } catch {
-            Write-Error "下载或解压失败: $_"
-            exit 1
-          }
+          ASSET_URL="https://github.com/Atom112/AIO/releases/download/llama-binaries/${{ matrix.asset_name }}"
 
-      # 可选：如果其他平台也需要本地模型支持，可以添加类似步骤
-      # - name: Download llama.cpp binaries (macOS)
-      #   if: startsWith(matrix.platform, 'macos')
-      #   run: |
-      #     mkdir -p src-tauri/resources/llama-backend
-      #     curl -L -o llama-backend.zip "https://github.com/${{ github.repository }}/releases/download/v0.0.0-assets/llama-backend-macos-metal.zip"
-      #     unzip llama-backend.zip -d src-tauri/resources/llama-backend/
-      #     rm llama-backend.zip
+          echo "Downloading ${{ matrix.asset_name }} for ${{ matrix.platform }}..."
+          echo "URL: $ASSET_URL"
+          
+          # 下载并解压
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            curl -L -o backend.zip "$ASSET_URL"
+            unzip backend.zip -d "$BACKEND_DIR"
+            rm backend.zip
+          else
+            curl -L -o backend.zip "$ASSET_URL"
+            unzip backend.zip -d "$BACKEND_DIR"
+            rm backend.zip
+            
+            # Linux/macOS: 设置可执行权限
+            chmod +x "$BACKEND_DIR"/llama-server* 2>/dev/null || true
+            chmod +x "$BACKEND_DIR"/llama-cli* 2>/dev/null || true
+            
+            # 显示下载的文件（调试用）
+            echo "Downloaded files:"
+            ls -lah "$BACKEND_DIR/"
+          fi
 
-      - name: install frontend dependencies
+      # 验证关键文件是否存在
+      - name: Verify binaries
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            if [ ! -f "src-tauri/resources/llama-backend/llama-server.exe" ]; then
+              echo "❌ llama-server.exe not found!"
+              exit 1
+            fi
+            echo "✅ Windows binaries verified"
+          else
+            if [ ! -f "src-tauri/resources/llama-backend/llama-server" ]; then
+              # 有些压缩包可能包含 .exe 后缀即使对于 Linux，检查两种可能
+              if [ ! -f "src-tauri/resources/llama-backend/llama-server.exe" ]; then
+                echo "❌ llama-server binary not found!"
+                ls -la src-tauri/resources/llama-backend/
+                exit 1
+              fi
+            fi
+            echo "✅ Unix binaries verified"
+          fi
+
+      - name: Install frontend dependencies
         run: npm install
 
-      - name: build and release
+      # Tauri 构建和发布
+      - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
-          releaseName: "AIO v__VERSION__-Beta"
-          releaseBody: "感谢使用！此版本包含全平台安装包。"
+          releaseName: "AIO v__VERSION__"
+          releaseBody: |
+            ## 安装包说明
+            
+            - **Windows**: 内含 CUDA 支持，需要 NVIDIA 显卡和驱动
+            - **Linux (Ubuntu 24.04+)**: CPU 模式运行，兼容性好
+            - **macOS Intel**: 适用于 Intel 芯片的 Mac
+            - **macOS Apple Silicon**: 适用于 M1/M2/M3 芯片的 Mac
+            
+            首次启动本地模型前，请确保已下载 GGUF 模型文件。
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          # macOS 需要指定 target 以构建对应架构
+          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

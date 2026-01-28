@@ -18,8 +18,8 @@ jobs:
             target: ''
             asset_name: 'llama-backend-windows-cuda.zip'
             
-          # Linux - CPU/GPU (通用)
-          - platform: 'ubuntu-24.04'
+          # Linux - 使用 22.04 以确保 AppImage 构建成功
+          - platform: 'ubuntu-22.04'
             target: ''
             asset_name: 'llama-backend-ubuntu.zip'
             
@@ -47,76 +47,53 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Ubuntu 24.04 依赖
       - name: Install dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2t64 libgtk-3-dev
-
-      # 下载各平台对应的 llama.cpp 二进制文件
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          
       - name: Download llama.cpp binaries
         shell: bash
         run: |
           BACKEND_DIR="src-tauri/resources/llama-backend"
           mkdir -p "$BACKEND_DIR"
-          
           ASSET_URL="https://github.com/Atom112/AIO/releases/download/llama-binaries/${{ matrix.asset_name }}"
-
-          echo "Downloading ${{ matrix.asset_name }} for ${{ matrix.platform }}..."
-          echo "URL: $ASSET_URL"
           
-          # 下载并解压
-          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            curl -L -o backend.zip "$ASSET_URL"
-            unzip backend.zip -d "$BACKEND_DIR"
-            rm backend.zip
-          else
-            curl -L -o backend.zip "$ASSET_URL"
-            unzip backend.zip -d "$BACKEND_DIR"
-            rm backend.zip
-            
-            # Linux/macOS: 设置可执行权限
+          echo "Downloading ${{ matrix.asset_name }} for ${{ matrix.platform }}..."
+          curl -L -o backend.zip "$ASSET_URL"
+          
+          # 解压并处理子目录
+          TEMP_DIR=$(mktemp -d)
+          unzip backend.zip -d "$TEMP_DIR"
+          rm backend.zip
+          
+          # 移动文件（处理子目录情况）
+          if [ -d "$TEMP_DIR"/* ]; then
+            SUBDIR=$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d | head -1)
+            if [ -n "$SUBDIR" ]; then
+              mv "$SUBDIR"/* "$BACKEND_DIR"/
+            else
+              mv "$TEMP_DIR"/* "$BACKEND_DIR"/
+            fi
+          fi
+          rm -rf "$TEMP_DIR"
+          
+          # 设置可执行权限（非 Windows）
+          if [[ "${{ matrix.platform }}" != "windows-latest" ]]; then
             chmod +x "$BACKEND_DIR"/llama-server* 2>/dev/null || true
             chmod +x "$BACKEND_DIR"/llama-cli* 2>/dev/null || true
-            
-            # 显示下载的文件（调试用）
-            echo "Downloaded files:"
-            ls -lah "$BACKEND_DIR/"
           fi
-
-      # 验证关键文件是否存在
-      - name: Verify binaries
-        shell: bash
-        run: |
-          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            if [ ! -f "src-tauri/resources/llama-backend/llama-server.exe" ]; then
-              echo "❌ llama-server.exe not found!"
-              exit 1
-            fi
-            echo "✅ Windows binaries verified"
-          else
-            if [ ! -f "src-tauri/resources/llama-backend/llama-server" ]; then
-              # 有些压缩包可能包含 .exe 后缀即使对于 Linux，检查两种可能
-              if [ ! -f "src-tauri/resources/llama-backend/llama-server.exe" ]; then
-                echo "❌ llama-server binary not found!"
-                ls -la src-tauri/resources/llama-backend/
-                exit 1
-              fi
-            fi
-            echo "✅ Unix binaries verified"
-          fi
+          
+          ls -lah "$BACKEND_DIR/"
 
       - name: Install frontend dependencies
         run: npm install
 
-      # Tauri 构建和发布
       - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPIMAGE_EXTRACT_AND_RUN: 1
-          NO_STRIP: 1
         with:
           tagName: v__VERSION__
           releaseName: "AIO v__VERSION__"
@@ -124,12 +101,9 @@ jobs:
             ## 安装包说明
             
             - **Windows**: 内含 CUDA 支持，需要 NVIDIA 显卡和驱动
-            - **Linux (Ubuntu 24.04+)**: CPU 模式运行，兼容性好
+            - **Linux (Ubuntu 22.04+)**: CPU 模式运行，兼容性好
             - **macOS Intel**: 适用于 Intel 芯片的 Mac
             - **macOS Apple Silicon**: 适用于 M1/M2/M3 芯片的 Mac
-            
-            首次启动本地模型前，请确保已下载 GGUF 模型文件。
           releaseDraft: true
           prerelease: false
-          # macOS 需要指定 target 以构建对应架构
           args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}

@@ -1,24 +1,29 @@
 // src-tauri/src/lib.rs
+// ========== 基础数据结构 & 序列化 ==========
 use dashmap::DashMap;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+// ========== 标准库 IO 和文件系统 ==========
 use std::fs::{self, File};
-use std::io::Read; // 必须导入 Seek 才能处理 Zip
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::sync::Arc;
-use tauri::{Emitter, Window};
-use tokio::task::JoinHandle;
-use zip::ZipArchive;
+use std::sync::{Arc, Mutex};
 
-use std::os::windows::process::CommandExt; // 仅 Windows 需要，用于隐藏窗口
-//use std::process::Command;
-use std::sync::Mutex;
-use tauri::{path::BaseDirectory, Manager};
-use std::io::{BufRead, BufReader};
+// ========== 异步运行时 ==========
+use tokio::task::{self, JoinHandle};
 use tokio::time::{sleep, Duration};
-use tokio::task;
 
+// ========== Tauri 相关 ==========
+use tauri::{path::BaseDirectory,  Emitter, Manager,  Window};
+
+// ========== 压缩文件处理（如果你不需要处理 office 文件可以移除） ==========
+use zip::ZipArchive; // 用于 read_office_file 函数
+
+// ========== Windows 特有（条件编译） ==========
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt; // 用于 creation_flags(0x08000000)
 // --- 基础数据结构 ---
 pub struct StreamManager(pub Arc<DashMap<String, JoinHandle<()>>>);
 pub struct LocalLlamaState {

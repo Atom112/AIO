@@ -115,6 +115,7 @@ jobs:
         env:  
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
           APPIMAGE_EXTRACT_AND_RUN: 1  
+          NO_STRIP: 1
         with:  
           tagName: v__VERSION__  
           releaseName: "AIO v__VERSION__"  
@@ -130,4 +131,4 @@ jobs:
           releaseDraft: true  
           prerelease: false  
           # macOS 需要指定 target 以构建对应架构  
-          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '--verbose' }}

@@ -52,7 +52,7 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2t64
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2t64 libgtk-3-dev
 
       # 下载各平台对应的 llama.cpp 二进制文件
       - name: Download llama.cpp binaries
@@ -116,6 +116,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: 1
+          NO_STRIP: 1
         with:
           tagName: v__VERSION__
           releaseName: "AIO v__VERSION__"

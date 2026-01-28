@@ -11,15 +11,27 @@ use tauri::{Emitter, Window};
 use tokio::task::JoinHandle;
 use zip::ZipArchive;
 
+use std::os::windows::process::CommandExt; // 仅 Windows 需要，用于隐藏窗口
+//use std::process::Command;
+use std::sync::Mutex;
+use tauri::{path::BaseDirectory, Manager};
+use std::io::{BufRead, BufReader};
+use tokio::time::{sleep, Duration};
+use tokio::task;
+
 // --- 基础数据结构 ---
 pub struct StreamManager(pub Arc<DashMap<String, JoinHandle<()>>>);
-
+pub struct LocalLlamaState {
+    pub child_process: Mutex<Option<std::process::Child>>, // 修改类型为 std child
+}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ActivatedModel {
     pub api_url: String,
     pub api_key: String,
     pub model_id: String,
     pub owned_by: String,
+    #[serde(skip_serializing_if = "Option::is_none")] // 只是为了 JSON 好看，可选
+    pub local_path: Option<String>, 
 }
 
 #[derive(Serialize, Clone)]
@@ -81,6 +93,25 @@ pub struct AppConfig {
     api_key: String,
     #[serde(rename = "defaultModel")]
     default_model: String,
+    #[serde(rename = "localModelPath", default)] // 新增字段
+    local_model_path: String,
+}
+
+#[tauri::command]
+fn is_local_server_running(state: tauri::State<'_, LocalLlamaState>) -> bool {
+    let mut lock = state.child_process.lock().unwrap();
+    // 检查子进程是否存在且没有退出
+    if let Some(child) = lock.as_mut() {
+        // 3. try_wait 会返回 Result<Option<ExitStatus>>
+        // Ok(None) 表示进程还在运行
+        // Ok(Some(_)) 表示进程已经退出
+        // Err(_) 表示查询出错（通常认为进程已失效）
+        match child.try_wait() {
+            Ok(None) => return true,
+            _ => return false,
+        }
+    }
+    false
 }
 
 // --- 文件解析辅助函数 ---
@@ -219,6 +250,7 @@ fn load_app_config() -> Result<AppConfig, String> {
             api_url: "".into(),
             api_key: "".into(),
             default_model: "".into(),
+            local_model_path: "".into(),
         });
     }
     let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -468,13 +500,139 @@ fn load_activated_models() -> Result<Vec<ActivatedModel>, String> {
     Ok(models)
 }
 
+#[tauri::command]
+async fn start_local_server(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, LocalLlamaState>,
+    model_path: String,
+    port: u16,
+    gpu_layers: i32,
+) -> Result<String, String> {
+    // 🔍 关键验证：确保前端传来的参数正确
+    println!("[DEBUG] 启动参数 - 模型: {}, 端口: {}, GPU层数: {}", model_path, port, gpu_layers);
+    
+    if gpu_layers <= 0 {
+        return Err("GPU 层数必须大于 0，建议设置为 99 或 999".to_string());
+    }
+
+    // 1. 停止旧服务
+    stop_local_server(state.clone()).await?;
+    
+    // 短暂延迟确保端口释放
+    sleep(Duration::from_millis(500)).await;
+
+    // 2. 获取资源目录
+    let resource_dir = app
+        .path()
+        .resolve("resources/llama-backend", BaseDirectory::Resource)
+        .map_err(|e| format!("无法解析资源路径: {}", e))?;
+
+    let exe_path = resource_dir.join("llama-server.exe");
+
+    if !exe_path.exists() {
+        return Err(format!("找不到执行文件: {:?}", exe_path));
+    }
+
+    // 📁 检查模型路径是否存在（llama-server 报错不明显，提前检查）
+    if !std::path::Path::new(&model_path).exists() {
+        return Err(format!("模型文件不存在: {}", model_path));
+    }
+
+    // 3. 构造命令
+    let mut cmd = std::process::Command::new(&exe_path);
+    cmd.current_dir(&resource_dir) // 关键：确保 DLL 能被找到
+        .args([
+            "-m", &model_path,
+            "--port", &port.to_string(),
+            "-ngl", &gpu_layers.to_string(),
+            "-c", "4096",
+            "--host", "127.0.0.1",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    // 4. 启动进程
+    let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
+
+    // 5. 🎯 关键：启动日志监控线程（用于查看 GPU 卸载状态）
+    let stderr = child.stderr.take().expect("无法获取 stderr");
+    task::spawn_blocking(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(line) = line {
+                println!("[llama-server] {}", line);
+                
+                // 关键日志检测
+                if line.contains("offloaded") {
+                    println!("🎯 GPU 卸载状态: {}", line);
+                }
+                if line.contains("CUDA") {
+                    println!("🎯 CUDA 信息: {}", line);
+                }
+                if line.contains("error") || line.contains("Error") || line.contains("failed") {
+                    println!("❌ LLAMA 错误: {}", line);
+                }
+            }
+        }
+    });
+
+    // 6. 等待服务初始化（使用 tokio sleep 而非 thread sleep）
+    sleep(Duration::from_millis(2000)).await;
+    
+    // 检查进程是否还在运行
+    match child.try_wait() {
+        Ok(None) => println!("✅ 进程正常运行中"),
+        Ok(Some(status)) => {
+            return Err(format!("进程启动后立即退出，退出码: {}", status));
+        }
+        Err(e) => return Err(format!("无法检查进程状态: {}", e)),
+    }
+
+    // 7. 健康检查：尝试访问 /health 或 /v1/models
+    let client = reqwest::Client::new();
+    let health_url = format!("http://127.0.0.1:{}/health", port);
+    
+    match client.get(&health_url).timeout(Duration::from_secs(5)).send().await {
+        Ok(_) => println!("✅ 健康检查通过"),
+        Err(_) => {
+            let _ = child.kill();
+            return Err("服务未响应健康检查，可能启动失败".to_string());
+        }
+    }
+
+    // 8. 保存句柄
+    {
+        let mut lock = state.child_process.lock().unwrap();
+        *lock = Some(child);
+    }
+
+    Ok(format!("http://127.0.0.1:{}/v1", port))
+}
+
+#[tauri::command]
+async fn stop_local_server(state: tauri::State<'_, LocalLlamaState>) -> Result<(), String> {
+    let mut lock = state.child_process.lock().unwrap();
+    if let Some(mut child) = lock.take() {
+        // 尝试优雅关闭，如果不行就强制杀死
+        let _ = child.kill();
+    }
+    Ok(())
+}
+
 // --- 应用程序入口 ---
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(StreamManager(Arc::new(DashMap::new())))
+        .manage(LocalLlamaState {
+            child_process: Mutex::new(None),
+        })
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_assistants,
             save_assistant,
@@ -488,8 +646,21 @@ pub fn run() {
             save_activated_models,
             load_activated_models,
             save_fetched_models,
-            load_fetched_models
+            load_fetched_models,
+            start_local_server,
+            stop_local_server,
+            is_local_server_running
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                let state = window.state::<LocalLlamaState>();
+                let mut lock = state.child_process.lock().unwrap();
+                if let Some(mut child) = lock.take() {
+                    let _ = child.kill(); // 彻底杀死进程
+                    println!("Llama server terminated due to window close.");
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

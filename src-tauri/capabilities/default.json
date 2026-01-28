@@ -13,7 +13,9 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-destroy",
     "core:window:allow-hide",
-    "core:window:allow-show"
+    "core:window:allow-show",
+    "dialog:default",
+    "dialog:allow-open"
 
   ]
 }

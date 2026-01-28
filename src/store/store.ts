@@ -31,6 +31,7 @@ export interface ActivatedModel {
     api_key: string;
     model_id: string;
     owned_by: string;
+    local_path?: string;
 }
 
 // 在 datas 中增加 activatedModels

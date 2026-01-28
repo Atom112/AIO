@@ -42,6 +42,25 @@ function NavBar(props: NavBarProps): JSX.Element {
   // 用于存储 setTimeout 的 ID，用来处理下拉菜单的可见性问题
   let hideTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
+const startLocalModel = async (model: ActivatedModel) => {
+    if (model.owned_by === "Local-Llama.cpp" && model.local_path) {
+      const isRunning = await invoke<boolean>('is_local_server_running');
+      if (!isRunning) {
+        // 这里可以使用你原本 handleModelSelect 中的启动逻辑
+        // 或者简单地静默启动（不发聊天消息），取决于你的需求
+        try {
+            await invoke('start_local_server', {
+              modelPath: model.local_path,
+              port: 8080,
+              gpuLayers: 99
+            });
+            console.log("本地模型自动启动成功");
+        } catch(e) {
+            console.error("自动启动本地模型失败", e);
+        }
+      }
+    }
+};
 
   const handleOpenPromptModal = (e: MouseEvent) => {
     e.preventDefault();
@@ -88,6 +107,11 @@ function NavBar(props: NavBarProps): JSX.Element {
 
         if (lastUsedModel) {
           setSelectedModel(lastUsedModel);
+          if (lastUsedModel.owned_by === "Local-Llama.cpp") {
+             // 注意：这里建议做一个简单的启动，不要像点击那样在这个阶段给聊天框发“正在启动”的消息，
+             // 因为这时候聊天界面可能还未完全准备好数据。
+            startLocalModel(lastUsedModel); 
+          }
         } else {
           // 如果没找到（比如模型被删了），默认选第一个
           setSelectedModel(models[0]);
@@ -111,38 +135,141 @@ function NavBar(props: NavBarProps): JSX.Element {
   });
 
 
-  // 处理鼠标进入模型选择栏，显示下拉框
-  const handleMouseEnter = (): void => {
-    clearTimeout(hideTimeoutId);
-    setDropdownVisible(true);
-  };
+  // // 处理鼠标进入模型选择栏，显示下拉框
+  // const handleMouseEnter = (): void => {
+  //   clearTimeout(hideTimeoutId);
+  //   setDropdownVisible(true);
+  // };
 
-  // 鼠标离开下拉菜单栏 0.2 秒后隐藏下拉菜单栏
-  const handleMouseLeave = (): void => {
-    hideTimeoutId = setTimeout(() => {
-      setDropdownVisible(false);
-    }, 200); // 延迟 0.2 秒隐藏
+  // // 鼠标离开下拉菜单栏 0.2 秒后隐藏下拉菜单栏
+  // const handleMouseLeave = (): void => {
+  //   hideTimeoutId = setTimeout(() => {
+  //     setDropdownVisible(false);
+  //   }, 200); // 延迟 0.2 秒隐藏
+  // };
+
+  // 修改 NavBar.tsx 中的 checkServerHealth
+  const checkServerHealth = async (baseUrl: string): Promise<boolean> => {
+    try {
+      const controller = new AbortController();
+      // 适当放宽超时时间，因为服务器在高载入模型时响应可能慢
+      const id = setTimeout(() => controller.abort(), 2000);
+
+      // 使用原生的 health 接口（注意：llama-server 默认在根路径提供 /health）
+      // 如果你的 baseUrl 是 http://127.0.0.1:8080/v1，需要处理一下
+      const rootUrl = baseUrl.replace('/v1', '');
+      const resp = await fetch(`${rootUrl}/health`, { signal: controller.signal });
+
+      clearTimeout(id);
+      // llama-server 就绪时通常返回 {"status": "ok"}
+      return resp.ok;
+    } catch {
+      return false;
+    }
   };
 
   // 下拉菜单栏点击选择模型后立即隐藏
-  const handleModelSelect = async(model: ActivatedModel) => {
+  const handleModelSelect = async (model: ActivatedModel) => {
     setSelectedModel(model);
     setDropdownVisible(false);
 
-    try {
-        // 1. 先获取当前完整配置（防止覆盖 API Key 或 API URL）
-        const currentConfig = await invoke<any>('load_app_config');
-        
-        // 2. 更新模型 ID 并保存
-        const newConfig = {
-            ...currentConfig,
-            defaultModel: model.model_id
-        };
-        
-        await invoke('save_app_config', { config: newConfig });
-        console.log("已记住模型选择:", model.model_id);
-    } catch (e) {
-        console.error("保存模型偏好失败", e);
+    // 保存选择偏好
+    const currentConfig = await invoke<any>('load_app_config');
+    await invoke('save_app_config', {
+      config: { ...currentConfig, defaultModel: model.model_id }
+    });
+
+    // --- 本地模型自动启动逻辑 ---
+    if (model.owned_by === "Local-Llama.cpp" && model.local_path) {
+      const isRunning = await invoke<boolean>('is_local_server_running');
+
+      if (!isRunning) {
+        if (datas.assistants.length === 0) {
+          try {
+            const loaded = await invoke<any[]>('load_assistants');
+            if (loaded && loaded.length > 0) {
+              setDatas('assistants', loaded);
+            }
+          } catch (e) {
+            console.error("加载助手失败:", e);
+          }
+        }
+
+        let asstId = currentAssistantId();
+
+        // 如果仍然没有 ID（说明是在新装设备或首次启动），尝试获取第一个
+        if (!asstId && datas.assistants.length > 0) {
+          asstId = datas.assistants[0].id;
+        }
+
+        const assistant = datas.assistants.find(a => a.id === asstId);
+
+        if (assistant) {
+          const topicId = assistant.topics[0]?.id; // 简单起见取当前第一个话题
+
+          // 1. 在聊天框显示“启动中”
+          const loadingText = "🚀 **正在启动本地 Llama 服务器...**";
+          if (topicId) {
+            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+              'history', h => [...h, { role: 'assistant', content: loadingText }]
+            );
+          }
+
+          try {
+            // 2. 调用后端启动
+            await invoke('start_local_server', {
+              modelPath: model.local_path,
+              port: 8080,
+              gpuLayers: 99
+            });
+
+            // 3. 循环探测服务器直到就绪 (心跳检测)
+            let attempts = 0;
+            const maxAttempts = 60; // 最多等 60 秒
+
+            const poll = setInterval(async () => {
+              attempts++;
+              const ready = await checkServerHealth("http://127.0.0.1:8080/v1");
+
+              if (ready) {
+                clearInterval(poll);
+                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+                  'history', h => {
+                    return h.map((msg: any) =>
+                      msg.content === loadingText
+                        ? { ...msg, content: "✅ **本地服务器启动成功，可以开始对话了！**" }
+                        : msg
+                    );
+                  }
+                );
+              } else if (attempts >= maxAttempts) {
+                clearInterval(poll);
+                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+                  'history', h => [...h, { role: 'assistant', content: "❌ **服务器启动超时，请检查显存空间或模型文件。**" }]
+                );
+              }
+            }, 1500); // 每秒探测一次
+
+          } catch (err) {
+            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+              'history', h => [...h, { role: 'assistant', content: `❌ **启动失败: ${err}**` }]
+            );
+          }
+        } else {
+
+          try {
+            await invoke('start_local_server', {
+              modelPath: model.local_path,
+              port: 8080,
+              gpuLayers: 99
+            });
+            console.log("无助手环境下，本地服务已后台启动");
+          } catch (err) {
+            alert("本地服务启动失败: " + err);
+          }
+
+        }
+      }
     }
   };
 

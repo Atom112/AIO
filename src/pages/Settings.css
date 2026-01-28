@@ -446,3 +446,13 @@ input:checked + .slider:before {
     background: #ff4444;
     color: white;
 }
+.select-file-button {
+    background: #08ddf9;
+    color: black;
+    border: none;
+    padding: 8px 12px;
+    font-weight: bold;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}

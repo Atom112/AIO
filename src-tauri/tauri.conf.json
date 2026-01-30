@@ -19,13 +19,7 @@
         "height": 900,
         "decorations": false,
         "transparent": true,
-        "windowEffects":{
-          "effects":[
-            "acrylic"
-          ],
-          "color":[0,0,0,10],
-          "state":"active"
-        }
+        "shadow": false
       }
     ],
     "security": {

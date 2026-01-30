@@ -14,6 +14,7 @@
 
 /* 整个聊天页面容器 */
 .chat-page {
+    background-color: #1e1e1e;
     display: flex;
     position: fixed;
     top: 65px;

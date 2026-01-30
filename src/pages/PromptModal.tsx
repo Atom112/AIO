@@ -2,37 +2,61 @@ import { Component, createSignal, createEffect } from 'solid-js';
 import { Show } from 'solid-js/web';
 import './PromptModal.css';
 
+/**
+ * PromptModal 组件属性接口定义
+ */
 interface PromptModalProps {
+  /** 是否显示模态框 */
   show: boolean;
+  /** 初始显示的提示词文本 */
   initialPrompt?: string;
+  /** 点击保存时的回调函数，返回当前文本域内容 */
   onSave?: (text: string) => void;
+  /** 关闭模态框的回调函数（取消或保存后触发） */
   onClose: () => void;
 }
 
+/**
+ * 系统提示词设置模态框组件
+ * 用于编辑助手的 System Prompt，通过浮窗形式呈现
+ * 
+ * @param props PromptModalProps
+ */
 const PromptModal: Component<PromptModalProps> = (props) => {
-  // 使用 createSignal 来管理 textarea 中的文本
-  // 这样可以独立于父组件的状态，只在保存时才更新父组件
+  /** 
+   * 管理 TextArea 内部的文本状态
+   * 独立于父组件状态，仅在执行保存操作时才同步回父组件
+   */
   const [promptText, setPromptText] = createSignal<string>('');
 
-  // 使用 createEffect 监听 props.show 的变化
-  // 当浮窗显示时（props.show 变为 true），用父组件传入的初始值来设置文本域的内容
+  /**
+   * 监听模态框显示状态
+   * 每当浮窗打开（props.show 变为 true）时，同步父组件传入的初始提示词
+   */
   createEffect(() => {
     if (props.show) {
       setPromptText(props.initialPrompt ?? '');
     }
   });
 
+  /**
+   * 处理保存逻辑
+   * 触发 onSave 回调并关闭模态框
+   */
   const handleSave = () => {
-    // 调用父组件传来的 onSave 函数，并把当前文本作为参数
     if (props.onSave) {
       props.onSave(promptText());
     }
-    // 调用父组件传来的 onClose 函数来关闭浮窗
     props.onClose();
   };
 
+  /**
+   * 处理点击遮罩层逻辑
+   * 仅当直接点击背景（非内容区域）时关闭窗口
+   * 
+   * @param e 事件对象
+   */
   const handleBackdropClick = (e: Event) => {
-    // 确保是点击背景本身，而不是点击浮窗内容区域
     if (e.currentTarget === e.target) {
       props.onClose();
     }
@@ -40,24 +64,34 @@ const PromptModal: Component<PromptModalProps> = (props) => {
 
   return (
     <Show when={props.show}>
+      {/* 遮罩背景 */}
       <div class="modal-backdrop" onClick={handleBackdropClick}>
+        
+        {/* 模态框主体内容 */}
         <div class="modal-content">
+          
+          {/* 头部：标题与关闭按钮 */}
           <div class="modal-header">
             <h2>设置当前模型提示词</h2>
             <button onClick={props.onClose} class="close-button">&times;</button>
           </div>
+
+          {/* 内容区：文本输入域 */}
           <div class="modal-body">
             <textarea
               rows={8}
               value={promptText()}
-              onInput={(e) => setPromptText((e.currentTarget as HTMLTextAreaElement).value)}
+              onInput={(e) => setPromptText(e.currentTarget.value)}
               placeholder="例如：你是一个乐于助人的 AI 助手。"
             />
           </div>
+
+          {/* 底部：操作按钮 */}
           <div class="modal-footer">
             <button onClick={props.onClose} class="btn-cancel">取消</button>
             <button onClick={handleSave} class="btn-save">保存</button>
           </div>
+
         </div>
       </div>
     </Show>

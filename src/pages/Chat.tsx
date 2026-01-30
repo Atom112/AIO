@@ -78,6 +78,19 @@ const Chat: Component = () => {
   let initialLeftW = 0;
   let initialRightW = 0;
 
+
+  const getModelLogo = (modelName: string) => {
+    const name = modelName.toLowerCase();
+    if (name.includes('gpt')) return '/icons/openai.svg';
+    if (name.includes('claude')) return '/icons/claude-color.svg';
+    if (name.includes('grok')) return '/icons/grok.svg';
+    if (name.includes('gemini')) return '/icons/gemini-color.svg';
+    if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
+    if (name.includes('qwen')||name.includes('qwq')) return '/icons/qwen-color.svg';
+
+    // 默认或本地模型的图标
+    return '/icons/ollama.svg';
+  };
   // =============================================================================
   // III. 业务逻辑函数
   // =============================================================================
@@ -414,7 +427,7 @@ const Chat: Component = () => {
     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
       ...h,
       newUserMsg,
-      { role: 'assistant' as const, content: "" }
+      { role: 'assistant' as const, content: "", modelId: currentMdl.model_id }
     ]);
 
     setPendingFiles([]); setInputMessage(""); setIsThinking(true);
@@ -491,7 +504,7 @@ const Chat: Component = () => {
 
   return (
     <div class="chat-page" ref={el => chatPageRef = el}>
-      
+
       {/* 1. 左侧面板：助手列表选择器 */}
       <div class="assistant-selector" style={{ width: `${leftPanelWidth()}%` }}>
         <div class="assistant-content">
@@ -518,53 +531,90 @@ const Chat: Component = () => {
 
       {/* 2. 中间区域：核心聊天对话展示与输入 */}
       <div class="chat-input-container">
-        
+
         {/* 对话消息滚动流 */}
         <div class="chat-messages-area" classList={{ 'topic-switching': isChangingTopic() }}>
           <Show when={activeTopic()}>
             <For each={activeTopic()?.history}>
               {(msg: any, index) => (
                 <div class={`message ${msg.role}`} style={{ "animation-delay": `${Math.min(index() * 0.03, 0.4)}s`, "animation-duration": typingIndex() === index() ? "0.1s" : "0.35s" }}>
-                  <div class="message-content" classList={{ 'typing': typingIndex() === index() }}>
-                    {/* 文件附件卡片 */}
-                    <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
-                      <For each={msg.displayFiles}>
-                        {(file: any) => (
-                          <div class="file-attachment-card">
-                            <div class="file-icon-wrapper"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></div>
-                            <div class="file-info"><div class="file-name">{file.name}</div><div class="file-meta">已读取文本内容</div></div>
-                          </div>
-                        )}
-                      </For>
+
+                  <div class="message-wrapper">
+
+                    {/* 如果是助手，头像在左侧 */}
+                    <Show when={msg.role === 'assistant'}>
+                      <div class="chat-avatar-container ai">
+                        <img src={getModelLogo(msg.modelId || selectedModel()?.model_id || "")} alt="AI" class="chat-avatar-img" />
+                      </div>
                     </Show>
-                    {/* 消息文本渲染 */}
-                    <div class="message-text-part">
-                      <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+
+                    <div class="message-body">
+
+                      <div class="message-content" classList={{ 'typing': typingIndex() === index() }}>
+                        {/* 文件附件卡片 */}
+                        <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
+                          <For each={msg.displayFiles}>
+                            {(file: any) => (
+                              <div class="file-attachment-card">
+                                <div class="file-icon-wrapper"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></div>
+                                <div class="file-info"><div class="file-name">{file.name}</div><div class="file-meta">已读取文本内容</div></div>
+                              </div>
+                            )}
+                          </For>
+                        </Show>
+                        {/* 消息文本渲染 */}
+                        <div class="message-text-part">
+                          <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                        </div>
+                      </div>
+
+                      
+                      <Show when={msg.role === 'assistant' && (msg.modelId || selectedModel()?.model_id)}>
+                        <div class="message-model-info">
+                          {msg.modelId || selectedModel()?.model_id}
+                        </div>
+                      </Show>
+                      {/* 消息气泡快捷操作 */}
+                      <div class="message-actions">
+                        <button class="copy-bubble-button" onClick={(e) => {
+                          e.stopPropagation();
+                          const text = msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content;
+                          if (!text) return;
+                          navigator.clipboard.writeText(text).then(() => {
+                            const btn = e.currentTarget; const label = btn.querySelector('span');
+                            if (label) {
+                              const originalText = label.innerText; btn.classList.add('copied'); label.innerText = '已复制';
+                              setTimeout(() => { btn.classList.remove('copied'); label.innerText = originalText; }, 2000);
+                            }
+                          });
+                        }}>
+                          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 14px; height: 14px;"><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+                          <span>复制</span>
+                        </button>
+                      </div>
+
+
                     </div>
-                  </div>
-                  {/* 消息气泡快捷操作 */}
-                  <div class="message-actions">
-                    <button class="copy-bubble-button" onClick={(e) => {
-                      e.stopPropagation();
-                      const text = msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content;
-                      if (!text) return;
-                      navigator.clipboard.writeText(text).then(() => {
-                        const btn = e.currentTarget; const label = btn.querySelector('span');
-                        if (label) {
-                          const originalText = label.innerText; btn.classList.add('copied'); label.innerText = '已复制';
-                          setTimeout(() => { btn.classList.remove('copied'); label.innerText = originalText; }, 2000);
-                        }
-                      });
-                    }}>
-                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 14px; height: 14px;"><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
-                      <span>复制</span>
-                    </button>
+                    <Show when={msg.role === 'user'}>
+                      <div class="chat-avatar-container user">
+                        <img src="/icons/user.svg" alt="User" class="chat-avatar-img" />
+                      </div>
+                    </Show>
                   </div>
                 </div>
               )}
             </For>
             <Show when={isThinking()}>
-              <div class="message assistant" style={{ "animation-delay": "0s" }}><div class="message-content" style="opacity: 0.6">AI 正在思考中...</div></div>
+              <div class="message assistant">
+                <div class="message-wrapper">
+                  <div class="chat-avatar-container ai">
+                    <img src={getModelLogo(selectedModel()?.model_id || "")} alt="AI" class="chat-avatar-img" />
+                  </div>
+                  <div class="message-body">
+                    <div class="message-content" style="opacity: 0.6">AI 正在思考中...</div>
+                  </div>
+                </div>
+              </div>
             </Show>
           </Show>
         </div>

@@ -45,6 +45,7 @@ pub struct LocalLlamaState {
 pub fn run() {
     tauri::Builder::default()
         // 注入全局状态，前端命令可以通过 State<'_, T> 获取
+        .plugin(tauri_plugin_dialog::init()) 
         .manage(StreamManager(Arc::new(DashMap::new())))
         .manage(LocalLlamaState {
             child_process: Mutex::new(None),

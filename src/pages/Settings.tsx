@@ -25,7 +25,7 @@ interface ActivatedModel {
     /** 该模型关联的 API 密钥 */
     api_key: string;
     /** 模型 ID（对应 ModelItem 的 id） */
-    model_id: string; 
+    model_id: string;
     /** 若为本地模型，则存储其在磁盘上的 absolute path */
     local_path?: string;
 }
@@ -64,6 +64,24 @@ const Settings: Component = () => {
     let dropdownRef: HTMLDivElement | undefined;
     let dropdownRefAct: HTMLDivElement | undefined;
 
+
+    // 根据模型名称返回对应的 SVG 路径
+    const getModelLogo = (modelName: string) => {
+        const name = modelName.toLowerCase();
+
+        // --- 在此处配置你的路径匹配逻辑 ---
+        if (name.includes('gpt')) return '/icons/openai.svg';
+        if (name.includes('claude')) return '/icons/claude-color.svg';
+        if (name.includes('grok')) return '/icons/grok.svg';
+        if (name.includes('gemini')) return '/icons/gemini-color.svg';
+        if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
+        if (name.includes('qwen')) return '/icons/qwen-color.svg';
+
+        // 默认或本地模型的图标
+        return '/icons/ollama.svg';
+    };
+
+
     // ==========================================
     // 4. 业务逻辑函数
     // ==========================================
@@ -90,7 +108,7 @@ const Settings: Component = () => {
                 owned_by: "Local-Llama.cpp",
                 api_url: "http://127.0.0.1:8080/v1", // 默认本地端口
                 api_key: "local-no-key",
-                local_path: file 
+                local_path: file
             };
 
             // 更新列表并持久化保存
@@ -133,7 +151,7 @@ const Settings: Component = () => {
 
                 setIsLocalRunning(true);
                 setSaveStatus("本地引擎已就绪");
-                
+
                 const fullPath = localModelPath();
                 const fileNameWithExt = fullPath.split(/[\\/]/).pop() || "local-model";
                 const modelName = fileNameWithExt.replace(/\.[^/.]+$/, "");
@@ -215,7 +233,7 @@ const Settings: Component = () => {
 
     /** 右侧可用模型的厂商过滤选项 */
     const providers = createMemo(() => ["All", ...Array.from(new Set(models().map(m => m.owned_by || "unknown")))]);
-    
+
     /** 右侧过滤后的可用模型列表 */
     const filteredModels = createMemo(() => models().filter(m =>
         m.id.toLowerCase().includes(searchQuery().toLowerCase()) &&
@@ -224,7 +242,7 @@ const Settings: Component = () => {
 
     /** 中间已激活模型的厂商过滤选项 */
     const providersAct = createMemo(() => ["All", ...Array.from(new Set(activatedModels().map(m => m.owned_by || "unknown")))]);
-    
+
     /** 中间过滤后的已激活模型列表 */
     const filteredActivatedModels = createMemo(() => activatedModels().filter(m =>
         m.model_id.toLowerCase().includes(searchQueryAct().toLowerCase()) &&
@@ -311,7 +329,7 @@ const Settings: Component = () => {
                     </div>
                     <button class="save-settings-button" onClick={handleSave}>保存当前配置</button>
                     <button class="query-models-button" onClick={handleQueryModels} disabled={isLoading()}>{isLoading() ? "查询中..." : "获取可用模型列表"}</button>
-                    
+
                     <div class="setting-item">
                         <label>本地模型管理 (.gguf)</label>
                         <div style="display:flex; flex-direction: column; gap: 10px;">
@@ -363,6 +381,11 @@ const Settings: Component = () => {
                 <div class="models-scroll-area">
                     <For each={filteredActivatedModels()}>{(m) => (
                         <div class="model-card activated">
+                            {/* 1. 在这里插入 Logo */}
+                            <div class="model-logo-container">
+                                <img src={getModelLogo(m.model_id)} alt="logo" class="model-item-logo" />
+                            </div>
+
                             <div class="model-info">
                                 <span class="model-id">{m.model_id}</span>
                                 <span class="model-provider" style="color: #08ddf9;">
@@ -407,6 +430,11 @@ const Settings: Component = () => {
                     )}
                     <For each={filteredModels()}>{(m) => (
                         <div class="model-card">
+                            {/* 2. 在这里插入 Logo */}
+                            <div class="model-logo-container">
+                                <img src={getModelLogo(m.id)} alt="logo" class="model-item-logo" />
+                            </div>
+
                             <div class="model-info">
                                 <span class="model-id">{m.id}</span>
                                 <span class="model-provider">Provider: {m.owned_by}</span>

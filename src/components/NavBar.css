@@ -149,11 +149,12 @@
 
 .dropdown-item {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;      /* 关键修改：从 column 改为 row */
+  align-items: center;      /* 垂直居中对齐 logo 和文字 */
+  gap: 12px;                /* Logo 与文字之间的间距 */
   padding: 10px 15px;
   color: #a0a0a0;
-  text-align: center;
+  text-align: left;         /* 关键修改：从 center 改为 left */
   font-size: 14px;
   cursor: pointer;
   -webkit-user-select: none;
@@ -162,7 +163,7 @@
 }
 
 .dropdown-item:hover {
-  background-color: #383838;
+  background-color: #484848;
   color: #ffffff;
 }
 
@@ -234,4 +235,68 @@
 
 .close {
   color: #08ddf9;
+}
+
+/* 导航栏专用的模型 Logo 圆形背景 */
+.nav-model-logo-container {
+    width: 28px;               /* 稍微比设置页小一点 */
+    height: 28px;
+    background-color: #ffffff; /* 浅色背景 */
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;            /* 防止压缩 */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* 导航栏专用图标尺寸 */
+.nav-model-logo {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
+}
+
+/* 调整文字组布局 */
+.model-text-group {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* 防止溢出 */
+}
+
+.model-id-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e0e0e0; /* 根据你的深色模式调整 */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: left; 
+}
+
+.model-provider-text {
+    font-size: 11px;
+    color: #888;
+    text-align: left; 
+}
+
+.dropdown-item{
+    border-radius: 8px;
+}
+
+/* 选中状态的微调 */
+.dropdown-item.selected {
+    background-color: rgba(8, 221, 249, 0.15);
+}
+
+.dropdown-item.selected .nav-model-logo-container {
+    border: 1px solid #08ddf9; /* 选中时 Logo 容器加个边框 */
+}
+.model-text-group {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start; /* 强制文字内容靠左 */
+    overflow: hidden;
+    flex: 1;                 /* 占据剩余空间 */
 }

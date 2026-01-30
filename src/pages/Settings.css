@@ -457,3 +457,41 @@ input:checked + .slider:before {
     cursor: pointer;
     transition: opacity 0.2s;
 }
+
+.model-card {
+    display: flex;
+    align-items: center; /* 垂直居中 */
+    gap: 12px;           /* 图标与文字的间距 */
+    padding: 10px;
+        display: flex;
+    align-items: center;
+    gap: 15px;                 /* 增加 Logo 和文字之间的间距 */
+    padding: 12px;
+}
+
+.model-item-logo {
+        width: 20px;               /* 图标比容器小一点，留下边距 */
+    height: 20px;
+    object-fit: contain;  
+}
+
+.model-info {
+    flex-grow: 1;        /* 让文字占据剩余空间 */
+    display: flex;
+    flex-direction: column;
+}
+
+/* Logo 外层的圆形容器 */
+.model-logo-container {
+    width: 32px;               /* 容器大小 */
+    height: 32px;
+    background-color: rgba(230, 230, 230, 1); /* 纯白背景，确保深色图标可见 */
+    border-radius: 50%;        /* 完美圆形 */
+    display: flex;
+    align-items: center;       /* 垂直居中 */
+    justify-content: center;   /* 水平居中 */
+    flex-shrink: 0;            /* 防止在窄屏下被挤压 */
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.2); /* 增加一点立体感 */
+    overflow: hidden;          /* 如果图片超出则隐藏 */
+    border: 1px solid rgba(8, 221, 249, 0.2); /* 可选：带一点你主题色的边框 */
+}

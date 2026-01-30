@@ -275,6 +275,17 @@
     /* 用户消息右对齐 */
 }
 
+.message.user .message-wrapper {
+    justify-content: flex-end;
+    /* 用户靠右 */
+}
+
+.message.assistant .message-wrapper {
+    justify-content: flex-start;
+    /* 助手靠左 */
+}
+
+
 .message.user .message-content {
     border: 1px solid #08ddf9;
     background-color: #08ddf90e;
@@ -366,10 +377,10 @@
     /* 开启层级定位 */
     z-index: 10;
 
-    background-color: transparent; 
-    
+    background-color: transparent;
+
     /* 2. 把这个顶部间距改为 0 */
-    padding-top: 0; 
+    padding-top: 0;
 }
 
 .send-message-button.stop-button {
@@ -650,6 +661,14 @@
     pointer-events: auto;
 }
 
+.message-wrapper {
+    display: flex;
+    align-items: flex-start;
+    /* 顶部对齐 */
+    gap: 12px;
+    width: 100%;
+}
+
 @keyframes bubble-in {
 
     /* 0% 状态要和上面的初始状态保持一致 */
@@ -685,7 +704,7 @@
     gap: 8px;
     position: relative;
     /* 移除背景色，改为透明 */
-    background: transparent; 
+    background: transparent;
     /* 调整边距，使其与输入框左对齐 */
     padding-top: 5px;
     padding-bottom: 3px;
@@ -701,12 +720,15 @@
     color: #08ddf9;
     font-size: 12px;
     padding: 4px 10px;
-    border-radius: 16px; /* 变成圆角药丸状更美观 */
+    border-radius: 16px;
+    /* 变成圆角药丸状更美观 */
     display: flex;
     align-items: center;
-    backdrop-filter: blur(4px); /* 背景模糊，增加质感 */
+    backdrop-filter: blur(4px);
+    /* 背景模糊，增加质感 */
     transition: all 0.2s ease;
-    animation: tagFadeIn 0.3s ease-out; /* 增加出现动画 */
+    animation: tagFadeIn 0.3s ease-out;
+    /* 增加出现动画 */
 }
 
 .file-tag:hover {
@@ -722,7 +744,8 @@
 .file-tag button {
     background: none;
     border: none;
-    color: rgba(255, 255, 255, 0.5); /* 叉号平时不显眼 */
+    color: rgba(255, 255, 255, 0.5);
+    /* 叉号平时不显眼 */
     margin-left: 8px;
     cursor: pointer;
     font-size: 16px;
@@ -733,7 +756,8 @@
 }
 
 .file-tag button:hover {
-    color: #ff4d4d; /* 悬停变为红色 */
+    color: #ff4d4d;
+    /* 悬停变为红色 */
 }
 
 /* 标签出现的平滑动画 */
@@ -742,6 +766,7 @@
         opacity: 0;
         transform: translateY(5px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -827,8 +852,10 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.7); /* 更深色的遮罩 */
-    backdrop-filter: blur(4px);    /* 增加磨砂玻璃感 */
+    background: rgba(0, 0, 0, 0.7);
+    /* 更深色的遮罩 */
+    backdrop-filter: blur(4px);
+    /* 增加磨砂玻璃感 */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -842,9 +869,12 @@
     position: relative;
     width: 420px;
     height: 280px;
-    background: #1a1a1a;          /* 匹配你界面的背景色 */
-    border: 2px solid #08ddf9;    /* 使用你的主题青色 */
-    border-radius: 12px;          /* 略微减小圆角，匹配界面风格 */
+    background: #1a1a1a;
+    /* 匹配你界面的背景色 */
+    border: 2px solid #08ddf9;
+    /* 使用你的主题青色 */
+    border-radius: 12px;
+    /* 略微减小圆角，匹配界面风格 */
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -852,7 +882,8 @@
     color: white;
     text-align: center;
     padding: 20px;
-    box-shadow: 0 0 30px rgba(8, 221, 249, 0.2); /* 增加青色呼吸感阴影 */
+    box-shadow: 0 0 30px rgba(8, 221, 249, 0.2);
+    /* 增加青色呼吸感阴影 */
 }
 
 /* --- 内部虚线框：改为青色半透明 --- */
@@ -870,7 +901,8 @@
 .drag-drop-content h2 {
     margin: 15px 0 10px 0;
     font-size: 22px;
-    color: #08ddf9;               /* 标题使用主题色 */
+    color: #08ddf9;
+    /* 标题使用主题色 */
     z-index: 2;
     letter-spacing: 1px;
 }
@@ -895,8 +927,10 @@
 .drag-icon-card {
     width: 60px;
     height: 80px;
-    background: #2a2a2a;         /* 深灰色背景 */
-    border: 1px solid #08ddf9;   /* 青色边框 */
+    background: #2a2a2a;
+    /* 深灰色背景 */
+    border: 1px solid #08ddf9;
+    /* 青色边框 */
     border-radius: 6px;
     display: flex;
     align-items: center;
@@ -918,7 +952,8 @@
     z-index: 3;
     font-size: 32px;
     background: #333;
-    color: #08ddf9;             /* 中心图标高亮 */
+    color: #08ddf9;
+    /* 中心图标高亮 */
     box-shadow: 0 0 20px rgba(8, 221, 249, 0.3);
 }
 
@@ -938,7 +973,7 @@
     opacity: 0;
     transition: opacity 0.2s ease;
     padding: 0 10px;
-    z-index: 5; 
+    z-index: 5;
 }
 
 /* 鼠标悬停在消息条目上时显示操作栏 */
@@ -983,4 +1018,98 @@
 .copy-bubble-button.copied {
     color: #4af908;
     border-color: #4af908;
+}
+
+/* --- 头像容器样式 --- */
+.chat-avatar-container {
+    width: 36px;
+    height: 36px;
+    background-color: #dfdfdf;
+    /* 浅色背景确保深色模式下 logo 可见 */
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(8, 221, 249, 0.2);
+    overflow: hidden;
+}
+
+.chat-avatar-img {
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+}
+
+/* 针对用户头像的特殊处理，如果 user.svg 是全边框的 */
+.chat-avatar-container.user {
+    background-color: #333;
+    /* 用户可以稍微深色一点 */
+    border: 1px solid #555;
+}
+
+.chat-avatar-container.user .chat-avatar-img {
+    width: 100%;
+    /* 用户头像填充 */
+    height: 100%;
+}
+
+/* --- 消息主体（气泡+操作） --- */
+.message-body {
+    display: flex;
+    flex-direction: column;
+    max-width: 75%;
+    /* 稍微收窄一点给头像留空间 */
+}
+
+/* 用户气泡内部文字右对齐 */
+.message.user .message-body {
+    align-items: flex-end;
+}
+
+.message.assistant .message-body {
+    align-items: flex-start;
+}
+
+/* 修正原有的 content 边距 */
+.message-content {
+    max-width: 100% !important;
+    /* 解除原本的限制，由 message-body 控制 */
+
+}
+
+/* 消息操作栏对齐微调 */
+.message-actions {
+    opacity: 0;
+    transition: opacity 0.2s;
+    margin-top: 4px;
+}
+
+.message:hover .message-actions {
+    opacity: 1;
+}
+
+/* 模型信息标签样式 */
+.message-model-info {
+    font-size: 11px;
+    color: #888888;
+    margin-top: 4px;
+    margin-left: 4px;
+    opacity: 0.7;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    /* 防止文字被选中 */
+    user-select: none;
+    pointer-events: none;
+}
+
+/* 如果是用户消息（虽然上面的 Show 限制了 assistant），
+   但如果你以后想给用户也加标签，可以控制对齐 */
+.message.assistant .message-model-info {
+    text-align: left;
+}
+
+.message.user .message-model-info {
+    text-align: right;
+    margin-right: 4px;
 }

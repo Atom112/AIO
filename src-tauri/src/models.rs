@@ -51,6 +51,8 @@ pub struct Message {
     pub role: String,
     /// 消息的正文内容。
     pub content: String,
+    #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
     /// 在 UI 上显示的附件文件列表。
     /// 映射自前端的 `displayFiles` 字段。
     #[serde(rename = "displayFiles", skip_serializing_if = "Option::is_none")]

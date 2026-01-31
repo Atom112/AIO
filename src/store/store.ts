@@ -2,7 +2,7 @@
 import { createStore } from "solid-js/store";
 import { createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
-
+import { readFile } from '@tauri-apps/plugin-fs';
 // =============================================================================
 // I. 接口定义 (Interfaces)
 // =============================================================================
@@ -73,6 +73,21 @@ export interface ActivatedModel {
 // =============================================================================
 // II. 全局响应式状态 (Global State)
 // =============================================================================
+
+export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/user.svg');
+
+export const loadAvatarFromPath = async (path: string): Promise<string> => {
+    try {
+        const contents = await readFile(path);
+        const ext = path.split('.').pop()?.toLowerCase();
+        const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+        const blob = new Blob([contents], { type: mime });
+        return URL.createObjectURL(blob);
+    } catch (e) {
+        console.error("加载头像失败:", e);
+        return '/icons/user.svg';
+    }
+};
 
 /**
  * 全局核心数据 Store

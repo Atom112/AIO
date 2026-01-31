@@ -1,6 +1,6 @@
 import { Component, For, Show, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { Message, config, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic, selectedModel } from '../store/store';
+import { loadAvatarFromPath, setGlobalUserAvatar, globalUserAvatar, Message, config, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, Assistant, Topic, selectedModel } from '../store/store';
 import Markdown from '../components/Markdown';
 import { listen } from '@tauri-apps/api/event';
 import './Chat.css';
@@ -86,7 +86,7 @@ const Chat: Component = () => {
     if (name.includes('grok')) return '/icons/grok.svg';
     if (name.includes('gemini')) return '/icons/gemini-color.svg';
     if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
-    if (name.includes('qwen')||name.includes('qwq')) return '/icons/qwen-color.svg';
+    if (name.includes('qwen') || name.includes('qwq')) return '/icons/qwen-color.svg';
 
     // 默认或本地模型的图标
     return '/icons/ollama.svg';
@@ -222,7 +222,10 @@ const Chat: Component = () => {
       const asst = datas.assistants.find(a => a.id === currentAssistantId());
       if (asst && !currentTopicId()) setCurrentTopicId(asst.topics[0]?.id || null);
     }
-
+    const savedPath = localStorage.getItem('user-avatar-path');
+    if (savedPath && globalUserAvatar() === '/icons/user.svg') {
+      loadAvatarFromPath(savedPath).then(url => setGlobalUserAvatar(url));
+    }
     // 2. 拖拽状态监听
     listen('tauri://drag-enter', () => setIsDragging(true)).then(un => unlistenDragEnter = un);
     listen('tauri://drag-leave', () => setIsDragging(false)).then(un => unlistenDragLeave = un);
@@ -568,7 +571,7 @@ const Chat: Component = () => {
                         </div>
                       </div>
 
-                      
+
                       <Show when={msg.role === 'assistant' && (msg.modelId || selectedModel()?.model_id)}>
                         <div class="message-model-info">
                           {msg.modelId || selectedModel()?.model_id}
@@ -597,7 +600,7 @@ const Chat: Component = () => {
                     </div>
                     <Show when={msg.role === 'user'}>
                       <div class="chat-avatar-container user">
-                        <img src="/icons/user.svg" alt="User" class="chat-avatar-img" />
+                        <img src={globalUserAvatar()} alt="User" class="chat-avatar-img" />
                       </div>
                     </Show>
                   </div>

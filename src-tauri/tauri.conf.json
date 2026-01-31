@@ -27,6 +27,8 @@
     }
   },
   "bundle": {
+    "license": "Apache-2.0",
+    "licenseFile": "../LICENSE",
     "active": true,
     "targets": ["deb", "rpm", "nsis", "msi", "app", "dmg"],
     "icon": [

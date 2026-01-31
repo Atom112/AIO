@@ -9,11 +9,13 @@
  * 5. 窗口拖拽区域实现
  */
 
-import { createSignal, onMount, For, JSX, Component } from 'solid-js';
+import { createSignal, onMount, For, Component, Show } from 'solid-js';
 import { Window } from '@tauri-apps/api/window';
 import { A } from '@solidjs/router';
 import { invoke } from '@tauri-apps/api/core';
-
+import { open } from '@tauri-apps/plugin-dialog';
+import { readFile } from '@tauri-apps/plugin-fs';
+import AvatarCropModal from './AvatarCropModel';
 // 导入状态管理与组件
 import {
   datas,
@@ -22,7 +24,7 @@ import {
   saveSingleAssistantToBackend,
   selectedModel,
   setSelectedModel,
-  ActivatedModel
+  ActivatedModel, globalUserAvatar, setGlobalUserAvatar, loadAvatarFromPath
 } from '../store/store';
 import PromptModal from '../pages/PromptModal';
 import './NavBar.css';
@@ -49,20 +51,73 @@ const NavBar: Component<NavBarProps> = () => {
   const [isDropdownVisible, setDropdownVisible] = createSignal<boolean>(false);
   /** 跟踪窗口是否处于最大化状态，用于切换图标 */
   const [isMaximized, setIsMaximized] = createSignal<boolean>(false);
+  const [userAvatar, setUserAvatar] = createSignal('/icons/user.svg');
+  const [isUserMenuVisible, setUserMenuVisible] = createSignal(false);
+  const [tempImage, setTempImage] = createSignal<string | null>(null);
 
+  // 根据后缀判断 MIME 类型（简单版）
+  const getMimeType = (path: string) => {
+    const ext = path.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'png': return 'image/png';
+      case 'jpg':
+      case 'jpeg': return 'image/jpeg';
+      case 'webp': return 'image/webp';
+      case 'svg': return 'image/svg+xml';
+      default: return 'application/octet-stream';
+    }
+  };
 
+  const handleEditAvatar = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+      });
+
+      if (selected && typeof selected === 'string') {
+        // 先读取文件并设为临时预览图，触发弹窗
+        const contents = await readFile(selected);
+        const blob = new Blob([contents], { type: 'image/png' });
+        const blobUrl = URL.createObjectURL(blob);
+        setTempImage(blobUrl); // 开启裁剪流程
+      }
+    } catch (err) {
+      console.error("选择头像失败:", err);
+    }
+  };
+
+  const onCropSave = async (croppedDataUrl: string) => {
+    try {
+      // 1. 调用 Rust 保存裁剪后的 Base64 数据
+      const savedPath = await invoke<string>('upload_avatar', {
+        dataUrl: croppedDataUrl
+      });
+
+      // 2. 刷新全局 UI
+      const blobUrl = await loadAvatarFromPath(savedPath);
+      setGlobalUserAvatar(blobUrl);
+
+      // 3. 持久化并重置状态
+      localStorage.setItem('user-avatar-path', savedPath);
+      setTempImage(null);
+      setUserMenuVisible(false);
+    } catch (err) {
+      alert("保存裁剪头像失败: " + err);
+    }
+  };
   // 根据模型名称返回对应的 SVG 路径 (建议与 Settings.tsx 保持一致)
   const getModelLogo = (modelName: string) => {
     const name = modelName.toLowerCase();
     if (name.includes('gpt')) return '/icons/openai.svg';
-        if (name.includes('claude')) return '/icons/claude-color.svg';
-        if (name.includes('grok')) return '/icons/grok.svg';
-        if (name.includes('gemini')) return '/icons/gemini-color.svg';
-        if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
-        if (name.includes('qwen')) return '/icons/qwen-color.svg';
+    if (name.includes('claude')) return '/icons/claude-color.svg';
+    if (name.includes('grok')) return '/icons/grok.svg';
+    if (name.includes('gemini')) return '/icons/gemini-color.svg';
+    if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
+    if (name.includes('qwen')) return '/icons/qwen-color.svg';
 
-        // 默认或本地模型的图标
-        return '/icons/ollama.svg';
+    // 默认或本地模型的图标
+    return '/icons/ollama.svg';
   };
   /**
    * 静默启动本地模型服务
@@ -244,32 +299,35 @@ const NavBar: Component<NavBarProps> = () => {
 
   /** --- 生命周期钩子 --- */
   onMount(async () => {
+    // A. 处理头像恢复
+    const savedPath = localStorage.getItem('user-avatar-path');
+    if (savedPath) {
+      const url = await loadAvatarFromPath(savedPath);
+      setGlobalUserAvatar(url);
+    }
+
+    // B. 处理模型和窗口逻辑 (移出 if(savedPath) 分支，确保模型总能加载)
     try {
-      // 并行初始化：加载已激活模型列表和全局应用配置
       const [models, config] = await Promise.all([
         invoke<ActivatedModel[]>('load_activated_models'),
         invoke<any>('load_app_config')
       ]);
-
       setDatas('activatedModels', models);
 
-      // 根据配置还原上次选择的模型
       if (models.length > 0) {
         const lastSelectedId = config.defaultModel;
         const found = models.find(m => m.model_id === lastSelectedId);
         const targetModel = found || models[0];
-
         setSelectedModel(targetModel);
-        // 如果是本地模型，尝试静默预启动
         if (targetModel.owned_by === "Local-Llama.cpp") {
           startLocalModel(targetModel);
         }
       }
     } catch (e) {
-      console.error("初始化 NavBar 数据失败:", e);
+      console.error("初始化数据失败:", e);
     }
 
-    // 监听窗体调整事件，同步最大化状态（用于图标切换）
+    // C. 窗口控制逻辑
     setIsMaximized(await appWindow.isMaximized());
     const unlistenResized = await appWindow.onResized(async () => {
       setIsMaximized(await appWindow.isMaximized());
@@ -305,7 +363,38 @@ const NavBar: Component<NavBarProps> = () => {
         </A>
 
         {/* --- 中间区域：用户信息 --- */}
-        <img src="/icons/user.svg" alt="User Avatar" class="avatar" />
+
+        <div
+          class="user-avatar-wrapper"
+          onMouseEnter={() => setUserMenuVisible(true)}
+          onMouseLeave={() => setUserMenuVisible(false)}
+        >
+          <img
+            src={globalUserAvatar()}
+            alt="User Avatar"
+            class="avatar"
+            // 当图片加载失败（路径不存在）时触发
+            onError={(e) => {
+              e.currentTarget.src = "/icons/user.svg"; // 切回默认图标
+            }}
+          />
+          {/* 用户下拉菜单 */}
+          <div classList={{ 'user-dropdown-menu': true, 'active': isUserMenuVisible() }}>
+            <div class="user-dropdown-item" onClick={handleEditAvatar}>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
+              </svg>
+              更换头像
+            </div>
+            <div class="user-dropdown-item login-disabled" title="暂未开放">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+              </svg>
+              登录账号
+            </div>
+          </div>
+        </div>
 
         {/* --- 右侧区域：工具与控制 --- */}
         <div
@@ -378,7 +467,13 @@ const NavBar: Component<NavBarProps> = () => {
           </button>
         </div>
       </nav>
-
+      <Show when={tempImage()}>
+        <AvatarCropModal
+          imageSrc={tempImage()!}
+          onCancel={() => setTempImage(null)}
+          onSave={onCropSave}
+        />
+      </Show>
       {/* 提示词设置模态框 */}
       <PromptModal
         show={isModalOpen()}

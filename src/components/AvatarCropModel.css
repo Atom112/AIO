@@ -1,0 +1,144 @@
+/* src/components/AvatarCropModal.css */
+.crop-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+    backdrop-filter: blur(4px);
+}
+
+.crop-modal-container {
+    background: #1a1a1a;
+    width: 600px;
+    border: 1px solid #08ddf9;
+    border-radius: 12px;
+    box-shadow: 0 0 20px rgba(8, 221, 249, 0.2);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.crop-modal-header {
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+    color: #08ddf9;
+    font-weight: bold;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 18px;
+}
+
+.close-btn:hover {
+    color: #fff;
+}
+
+.crop-main-area {
+    display: flex;
+    padding: 20px;
+    gap: 20px;
+    height: 350px;
+}
+
+.cropper-wrapper {
+    flex: 1;
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #333;
+}
+
+.crop-preview-side {
+    width: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.preview-label {
+    color: #888;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.avatar-preview-circle {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    /* 圆形预览核心 */
+    overflow: hidden;
+    border: 2px solid #08ddf9;
+    background: #000;
+}
+
+/* 覆盖 CropperJS 默认预览样式 */
+.avatar-preview-circle img {
+    max-width: none !important;
+}
+
+.crop-controls {
+    padding: 20px;
+    background: #222;
+}
+
+.zoom-slider-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.zoom-icon {
+    width: 18px;
+    color: #08ddf9;
+}
+
+input[type="range"] {
+    flex: 1;
+    accent-color: #08ddf9;
+    cursor: pointer;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.btn-cancel {
+    padding: 8px 20px;
+    background: #333;
+    border: none;
+    color: #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-save {
+    padding: 8px 30px;
+    background: #08ddf9;
+    border: none;
+    color: #000;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.btn-save:hover {
+    transform: scale(1.05);
+}

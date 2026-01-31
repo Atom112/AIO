@@ -15,7 +15,30 @@
     "core:window:allow-hide",
     "core:window:allow-show",
     "dialog:default",
-    "dialog:allow-open"
-
+    "dialog:allow-open",
+    "core:path:default",
+    "fs:allow-mkdir",
+    "fs:allow-copy-file",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-exists",
+    {
+      "identifier": "core:default",
+      "allow": [
+        { "protocol": "asset", "path": "**" }
+      ]
+    },
+    {
+      "identifier": "fs:scope-appdata-recursive",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "*" }]
+    }
   ]
 }

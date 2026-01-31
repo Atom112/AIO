@@ -33,3 +33,6 @@ encoding_rs = "0.8"
 dashmap = "6.0"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-shell = "2.0.0"
+tauri-plugin-fs = "2.4.5"
+uuid = { version = "1", features = ["v4", "fast-rng", "serde"] }
+base64 = "0.22.1"

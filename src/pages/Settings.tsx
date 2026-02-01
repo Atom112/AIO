@@ -76,7 +76,9 @@ const Settings: Component = () => {
         if (name.includes('gemini')) return '/icons/gemini-color.svg';
         if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
         if (name.includes('qwen')) return '/icons/qwen-color.svg';
-
+        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/moonshot.svg';
+        if (name.includes('doubao')) return '/icons/doubao-color.svg';
+        if (name.includes('glm')) return '/icons/zhipu-color.svg';
         // 默认或本地模型的图标
         return '/icons/ollama.svg';
     };

@@ -50,7 +50,7 @@ pub struct Message {
     /// 消息发送者的角色（如 "user"、"assistant" 或 "system"）。
     pub role: String,
     /// 消息的正文内容。
-    pub content: String,
+    pub content: serde_json::Value, 
     #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     /// 在 UI 上显示的附件文件列表。

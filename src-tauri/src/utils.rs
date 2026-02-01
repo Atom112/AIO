@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
-
+use base64::{engine::general_purpose, Engine as _};
 /// 从 XML 字符串中提取位于 `<t>` 标签内的文本。
 ///
 /// 在 Office Open XML 格式（如 .docx 和 .pptx）中，文本内容通常封装在 `<t>` (text) 标签内。
@@ -98,20 +98,21 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
 #[tauri::command]
 pub async fn process_file_content(path: String) -> Result<String, String> {
     let path_obj = Path::new(&path);
-    // 获取小写的扩展名
     let extension = path_obj.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 
     match extension.as_str() {
-        // 处理 PDF
+        // --- 新增图片处理逻辑 ---
+    "png" | "jpg" | "jpeg" | "webp" => {
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let b64 = general_purpose::STANDARD.encode(bytes);
+        Ok(format!("data:image/{};base64,{}", extension, b64))
+    }
+        
+        // 原有的 PDF/Office/Text 处理保持不变...
         "pdf" => pdf_extract::extract_text(&path).map_err(|e| format!("PDF解析失败: {}", e)),
-        
-        // 处理 Office 文档
         "docx" | "pptx" => read_office_file(&path, &extension),
-        
-        // 处理默认纯文本（带字符集解码支持）
         _ => {
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            // 尝试以 UTF-8 解码，如果不是 UTF-8 也会通过 encoding_rs 进行宽容度较高的处理
             let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
             Ok(res.into_owned())
         }

@@ -1,247 +1,109 @@
-/* 左侧面板（助手列表） */
-.assistant-selector {
-    flex-shrink: 0;
-    /* 禁止收缩 */
-    position: relative;
-    padding: 15px;
-    box-sizing: border-box;
-    overflow-y: auto;
-    /* 滚动条 */
-    overflow-x: hidden;
-    border-radius: 8px;
-    border: 1px solid #08ddf9;
+/* --- Global & Scrollbar --- */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #08ddf9 transparent;
 }
 
-/* 整个聊天页面容器 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #08ddf9;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: #06b8d1;
+}
+
+/* --- Page Container --- */
 .chat-page {
     background-color: #1e1e1e;
-    display: flex;
-    position: fixed;
-    top: 65px;
-    /* 顶部留出空间给导航栏 */
-    left: 0;
-    right: 1px;
     bottom: 1px;
-    padding: 20px;
-    border: 1px solid #08ddf9;
-    /* 蓝色边框 */
-    border-radius: 8px;
+    display: flex;
     gap: 3px;
-    /* 面板之间的间距 */
-}
-
-
-
-/* 右侧面板（话题列表） */
-.dialog-container {
-    flex-shrink: 0;
-    position: relative;
-    padding: 15px;
-    box-sizing: border-box;
-    overflow-y: auto;
-    overflow-x: hidden;
-    border-radius: 8px;
+    left: 0;
+    padding: 20px;
+    position: fixed;
+    right: 1px;
+    top: 65px;
     border: 1px solid #08ddf9;
+    border-radius: 8px;
 }
 
-/* 内容区域（助手/话题列表） */
-.assistant-content,
-.dialog-content {
-    height: 100%;
-    width: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
+/* --- Shared Components (Used by both Sidebars) --- */
 
-/* 调整面板大小的手柄 */
+/* Resize Handle Base */
 .resize-handle {
+    bottom: 0;
+    cursor: ew-resize;
     position: absolute;
     top: 0;
-    bottom: 0;
     width: 10px;
-    cursor: ew-resize;
-    /* 水平调整光标 */
     z-index: 10;
 }
 
 .left-handle {
     right: -5px;
-    /* 位置在左侧面板外 */
 }
 
 .right-handle {
     left: -5px;
-    /* 位置在右侧面板外 */
 }
 
-/* 中间聊天区域 */
-.chat-input-container {
-    flex-grow: 1;
-    /* 占据剩余空间 */
-    display: flex;
-    flex-direction: column;
+/* Rename Input (Assistant & Topic) */
+.rename-input {
+    background: #1e1e1e;
     border: 1px solid #08ddf9;
-    padding: 15px;
-    box-sizing: border-box;
-    overflow: hidden;
-    border-radius: 8px;
-    position: relative;
-    /* 建立基准 */
-}
-
-/* 对话消息区域 */
-.chat-messages-area {
-    flex-grow: 1;
-    /* 占据剩余高度 */
-    overflow-y: auto;
-    padding-bottom: 15px;
-    z-index: 1;
-}
-
-/* 助手列表项 */
-.assistant-item {
-    border: 1px solid #08ddf9;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 12px;
-    margin: 4px 0;
-    border-radius: 8px;
-    background-color: transparent;
-    transition: background-color 0.2s, border-color 0.2s;
-    cursor: pointer;
-}
-
-.assistant-item:hover {
-    background-color: #2a2a2a;
-    /* 悬停背景 */
-}
-
-.assistant-item.active {
-    background-color: #1f3a40;
-    /* 活动项背景 */
-    border-color: #08ddf9;
-    box-shadow: 0 0 5px rgba(8, 221, 249, 0.3);
-    /* 活动项阴影 */
-}
-
-.assistant-name {
-    flex-grow: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding-right: 10px;
+    border-radius: 4px;
+    color: white;
     font-size: 0.95rem;
-}
-
-.assistant-menu-button {
-    background-color: #367d93;
-    border: none;
-    color: #FFFFFF;
-    border-radius: 4px;
-    cursor: pointer;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.add-assistant-button {
-    margin: 10px 0;
-    padding: 8px 12px;
-    background: none;
-    border: 1px solid #08ddf9;
-    color: #ffffff;
-    border-radius: 4px;
-    cursor: pointer;
-    width: calc(100% - 24px);
-    /* 留出边框空间 */
-}
-
-/* 输入框样式 */
-.chat-input {
-    flex-grow: 1;
-    /* 移除原来的 height: 100% !important; 改为由 JS 动态控制 */
-    height: 40px;
-    margin: 0;
-    min-height: 40px;
-    width: 100%;
-    padding: 10px 15px;
-    border: 1px solid #08ddf9;
-    background-color: #2e2e2e;
-    border-radius: 8px;
-    box-sizing: border-box;
-    font-size: 1em;
-    caret-color: #FFFFFF;
-    color: #FFFFFF;
-    resize: none;
-    /* 核心修改：允许滚动，限制最高高度 */
-    overflow-y: hidden;
-    max-height: 20vh;
-    /* 最高不超过窗口高度的 20% */
-    line-height: 20px;
-    font-family: inherit;
-    transition: border-color 0.2s;
-}
-
-.chat-input:focus {
     outline: none;
-    border-color: #fff;
-    /* 聚焦时边框颜色 */
+    padding: 2px 4px;
+    width: 80%;
 }
 
-/* 上下文菜单 */
+.topic-item .rename-input {
+    background: #1a1a1a;
+    font-size: 0.85rem;
+    height: 20px;
+    padding: 2px 5px;
+}
+
+/* Context Menu (Assistant & Topic) */
 .assistant-context-menu {
     animation: menuEnter 0.2s ease-out forwards;
-    transform-origin: top left;
-    position: fixed;
     background-color: #2e2e2e;
     border: 1px solid #08ddf9;
     border-radius: 4px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    z-index: 100;
     min-width: 150px;
-}
-
-@keyframes menuEnter {
-    0% {
-        opacity: 0;
-        transform: translateY(-8px) scale(0.95);
-    }
-
-    100% {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-    }
+    position: fixed;
+    transform-origin: top left;
+    z-index: 100;
 }
 
 .assistant-context-menu.menu-exiting {
     animation: menuExit 0.2s ease-in forwards;
 }
 
-@keyframes menuExit {
-    0% {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-    }
-
-    100% {
-        opacity: 0;
-        transform: translateY(-8px) scale(0.95);
-    }
-}
-
 .context-menu-button {
-    display: block;
-    width: 100%;
-    padding: 8px 12px;
     background: none;
     border: none;
-    color: #FFFFFF;
-    text-align: left;
-    cursor: pointer;
     box-sizing: border-box;
+    color: #FFFFFF;
+    cursor: pointer;
+    display: block;
+    padding: 8px 12px;
+    text-align: left;
+    width: 100%;
 }
 
 .context-menu-button:hover {
@@ -250,866 +112,41 @@
 
 .context-menu-button.delete {
     color: #ff4d4d;
-    /* 删除按钮红色 */
 }
 
-/* 消息样式 */
-.message {
-    margin-bottom: 12px;
-    display: flex;
-    flex-direction: column;
-}
-
-.message-content {
-    max-width: 80%;
-    padding: 0px 14px;
-    border-radius: 10px;
-    line-height: 1.5;
-    word-wrap: break-word;
-    min-height: 1.5em;
-    transition: height 0.2s ease;
-}
-
-.message.user {
-    align-items: flex-end;
-    /* 用户消息右对齐 */
-}
-
-.message.user .message-wrapper {
-    justify-content: flex-end;
-    /* 用户靠右 */
-}
-
-.message.assistant .message-wrapper {
-    justify-content: flex-start;
-    /* 助手靠左 */
-}
-
-
-.message.user .message-content {
-    border: 1px solid #08ddf9;
-    background-color: #08ddf90e;
-    /* 轻微蓝色背景 */
-    color: #fff;
-    border-top-right-radius: 2px;
-}
-
-.message.assistant {
-    align-items: flex-start;
-    /* 助手消息左对齐 */
-}
-
-.message.assistant .message-content {
-    background-color: #333;
-    color: #fff;
-    border: 1px solid #555;
-    border-top-left-radius: 2px;
-}
-
-.empty-state {
-    text-align: center;
-    color: #666;
-    margin-top: 50px;
-}
-
-/* 话题列表项 */
-.topic-item {
-    border: 1px solid #08ddf9;
-    display: flex;
-    justify-content: space-between;
+/* Menu Button (Three dots) - Used by both sidebars */
+.assistant-menu-button {
     align-items: center;
-    padding: 8px 12px;
-    margin: 4px 0;
-    border-radius: 8px;
-    background-color: transparent;
-    transition: background-color 0.2s, border-color 0.2s;
-    cursor: pointer;
-}
-
-.topic-item:hover {
-    background-color: #2a2a2a;
-}
-
-.topic-item.active {
-    background-color: #1f3a40;
-    border-color: #08ddf9;
-    box-shadow: 0 0 5px rgba(8, 221, 249, 0.3);
-}
-
-.topic-name {
-    flex-grow: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 0.9rem;
-    color: #e0e0e0;
-    /* 淡灰色 */
-}
-
-.add-topic-button {
-    margin: 10px 0;
-    padding: 8px 12px;
-    background: none;
-    border: 1px solid #08ddf9;
-    color: #ffffff;
-    border-radius: 1px;
-    cursor: pointer;
-    width: 100%;
-}
-
-.add-topic-button:hover {
-    background-color: rgba(8, 221, 249, 0.1);
-    /* 悬停背景 */
-}
-
-.topics-list {
-    margin-top: 15px;
-}
-
-/* 输入区域样式 */
-.chat-input-wrapper {
-    display: flex;
-    gap: 10px;
-    height: auto;
-    width: 100%;
-    align-items: flex-end;
-    position: relative;
-    /* 开启层级定位 */
-    z-index: 10;
-
-    background-color: transparent;
-
-    /* 2. 把这个顶部间距改为 0 */
-    padding-top: 0;
-}
-
-.send-message-button.stop-button {
-    border-color: #ff4d4d;
-    color: #ff4d4d;
-}
-
-.send-message-button.stop-button:hover {
-    background-color: #ff4d4d;
-    color: #fff;
-}
-
-
-.send-message-button {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    background-color: transparent;
-    color: #ffffff;
-    border: 1px solid #08ddf9;
-    border-radius: 8px;
-    padding: 0 15px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-weight: bold;
-    white-space: nowrap;
-    height: 40px;
-    flex-shrink: 0;
-    margin-bottom: 2px;
-    /* 微调对齐 */
-}
-
-.send-message-button:hover {
-    background-color: #08ddf9;
-    /* 悬停背景 */
-    color: #000;
-    /* 文字颜色 */
-}
-
-.send-message-button svg {
-    width: 20px;
-    height: 20px;
-    transition: transform 0.2s;
-}
-
-.rename-input {
-    background: #1e1e1e;
-    border: 1px solid #08ddf9;
-    color: white;
-    font-size: 0.95rem;
-    padding: 2px 4px;
+    background-color: #367d93;
+    border: none;
     border-radius: 4px;
-    width: 80%;
-    outline: none;
-}
-
-.topic-item .rename-input {
-    background: #1a1a1a;
-    border: 1px solid #08ddf9;
-    color: #fff;
-    padding: 2px 5px;
-    height: 20px;
-    font-size: 0.85rem;
-}
-
-/* 话题项的菜单按钮 */
-.topic-item .assistant-menu-button {
-    flex-shrink: 0;
-    margin-left: 8px;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-}
-
-.topic-item:hover .assistant-menu-button {
-    opacity: 1;
-}
-
-/* Markdown 基础样式容器 */
-.markdown-body {
-    font-size: 0.95rem;
-    line-height: 1.6;
-    word-wrap: break-word;
-    color: #e0e0e0;
-}
-
-/* 标题 */
-.markdown-body h1,
-.markdown-body h2,
-.markdown-body h3 {
-    margin-top: 1rem;
-    margin-bottom: 0.5rem;
-    color: #08ddf9;
-}
-
-/* 列表 */
-.markdown-body ul,
-.markdown-body ol {
-    padding-left: 1.5rem;
-    margin-bottom: 0.5rem;
-}
-
-/* 代码块 */
-.markdown-body pre {
-    position: relative;
-    background-color: #1a1a1a;
-    padding: 12px;
-    border-radius: 6px;
-    overflow-x: auto;
-    border: 1px solid #333;
-    margin: 10px 0;
-    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
-}
-
-/* 行内代码 */
-.markdown-body code {
-    background-color: rgba(255, 255, 255, 0.1);
-    padding: 2px 4px;
-    border-radius: 4px;
-    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
-    font-size: 0.9em;
-}
-
-/* 表格 */
-.markdown-body table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 1rem 0;
-}
-
-.markdown-body th,
-.markdown-body td {
-    border: 1px solid #444;
-    padding: 8px;
-    text-align: left;
-}
-
-.markdown-body th {
-    background-color: rgba(8, 221, 249, 0.1);
-}
-
-/* 引用块 */
-.markdown-body blockquote {
-    border-left: 4px solid #08ddf9;
-    margin: 0;
-    padding-left: 1rem;
-    color: #999;
-}
-
-.markdown-body pre code {
-    /* 确保代码块内的文字继承字体，且不重复计算字号 */
-    font-size: inherit;
-    font-family: inherit;
-    background-color: transparent;
-    line-height: 1.5;
-}
-
-.code-wrapper {
-    position: relative;
-    margin: 10px 0;
-}
-
-/* 复制按钮样式 */
-.copy-code-button {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    background-color: rgba(125, 125, 125, 0.8);
-    border: 1px solid rgba(8, 221, 249, 0.3);
-    border-radius: 4px;
-    color: #08ddf9;
-    font-size: 12px;
+    color: #FFFFFF;
     cursor: pointer;
-    transition: all 0.2s;
-    opacity: 0.6;
-    /* 默认半透明，减少干扰 */
-}
-
-.copy-code-button:hover {
-    background-color: rgba(8, 221, 249, 0.1);
-    opacity: 1;
-}
-
-.copy-code-button.copied {
-    border-color: #4af908;
-    color: #4af908;
-}
-
-.copy-code-button svg {
-    width: 14px;
-    height: 14px;
-}
-
-/* 当鼠标移入代码块时才显示按钮 (可选) */
-.code-wrapper .copy-code-button {
-    opacity: 1;
-    pointer-events: all;
-    /* 确保可以点击 */
-    opacity: 0;
-}
-
-.code-wrapper:hover .copy-code-button {
-    opacity: 0.8;
-}
-
-/* --- 统一滚动条全局样式 --- */
-
-/* 1. 滚动条整体部分 */
-::-webkit-scrollbar {
-    width: 6px;
-    /* 纵向滚动条宽度 */
-    height: 6px;
-    /* 横向滚动条高度 */
-}
-
-/* 2. 滚动条轨道（背景） */
-::-webkit-scrollbar-track {
-    background: transparent;
-    /* 保持透明，融入背景 */
-}
-
-/* 3. 滚动滑块（滑动的那个条） */
-::-webkit-scrollbar-thumb {
-    background-color: #08ddf9;
-    /* 使用你的主题蓝色 */
-    border-radius: 10px;
-    /* 圆角 */
-    border: 1px solid rgba(0, 0, 0, 0);
-    /* 技巧：增加透明边框可以缩小滑块视觉宽度 */
-}
-
-/* 4. 当滑块悬停时（可选：增加一点交互感） */
-::-webkit-scrollbar-thumb:hover {
-    background-color: #06b8d1;
-    /* 悬停时稍微加深颜色 */
-}
-
-/* 5. 针对 Firefox 浏览器的兼容性写法（可选） */
-* {
-    scrollbar-width: thin;
-    scrollbar-color: #08ddf9 transparent;
-}
-
-/* 正在输出时的光标 */
-.typing::after {
-    content: "|";
-    display: inline-block;
-    color: #08ddf9;
-    animation: cursor-blink 0.8s infinite;
-    margin-left: 2px;
-}
-
-@keyframes cursor-blink {
-    50% {
-        opacity: 0;
-    }
-}
-
-/* --- 消息气泡基础样式优化 --- */
-.message {
-    margin-bottom: 12px;
     display: flex;
-    flex-direction: column;
-
-    /* 关键 1: 初始状态强制透明且偏移，防止动画启动前的闪现 */
-    opacity: 0;
-    transform: translateY(10px) scale(0.98);
-
-    /* 运行动画：确保动画结束后留在 100% 的状态 */
-    animation: bubble-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-
-    /* 优化渲染性能 */
-    will-change: transform, opacity;
-    pointer-events: auto;
+    height: 30px;
+    justify-content: center;
+    width: 30px;
 }
 
-.message-wrapper {
-    display: flex;
-    align-items: flex-start;
-    /* 顶部对齐 */
-    gap: 12px;
-    width: 100%;
-}
-
-@keyframes bubble-in {
-
-    /* 0% 状态要和上面的初始状态保持一致 */
+/* Shared Animations */
+@keyframes menuEnter {
     0% {
         opacity: 0;
-        transform: translateY(10px) scale(0.98);
+        transform: translateY(-8px) scale(0.95);
     }
-
     100% {
         opacity: 1;
         transform: translateY(0) scale(1);
     }
 }
 
-/* --- 话题切换动画优化 --- */
-
-/* 我们不再对容器使用 animation，改用简单的 opacity transition，
-   这样不会和内部气泡的弹出动画产生干扰 */
-.chat-messages-area {
-    transition: opacity 0.2s ease-out;
-    opacity: 1;
-}
-
-/* 当话题正在切换时，让容器变淡即可，不要带动里面的气泡乱跳 */
-.topic-switching {
-    opacity: 0;
-}
-
-/* --- 文件预览预览区域（优化后）--- */
-.file-tags-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    position: relative;
-    /* 移除背景色，改为透明 */
-    background: transparent;
-    /* 调整边距，使其与输入框左对齐 */
-    padding-top: 5px;
-    padding-bottom: 3px;
-    z-index: 0;
-    /* 甚至可以加一个淡淡的顶部装饰线，可选 */
-    /* border-top: 1px solid rgba(8, 221, 249, 0.1); */
-}
-
-.file-tag {
-    /* 使用微弱的半透明背景，产生“磨砂玻璃”或悬浮感 */
-    background: rgba(8, 221, 249, 0.1);
-    border: 1px solid rgba(8, 221, 249, 0.3);
-    color: #08ddf9;
-    font-size: 12px;
-    padding: 4px 10px;
-    border-radius: 16px;
-    /* 变成圆角药丸状更美观 */
-    display: flex;
-    align-items: center;
-    backdrop-filter: blur(4px);
-    /* 背景模糊，增加质感 */
-    transition: all 0.2s ease;
-    animation: tagFadeIn 0.3s ease-out;
-    /* 增加出现动画 */
-}
-
-.file-tag:hover {
-    background: rgba(8, 221, 249, 0.2);
-    border-color: #08ddf9;
-}
-
-.file-icon {
-    margin-right: 6px;
-    font-size: 14px;
-}
-
-.file-tag button {
-    background: none;
-    border: none;
-    color: rgba(255, 255, 255, 0.5);
-    /* 叉号平时不显眼 */
-    margin-left: 8px;
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    transition: color 0.2s;
-}
-
-.file-tag button:hover {
-    color: #ff4d4d;
-    /* 悬停变为红色 */
-}
-
-/* 标签出现的平滑动画 */
-@keyframes tagFadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(5px);
-    }
-
-    to {
+@keyframes menuExit {
+    0% {
         opacity: 1;
-        transform: translateY(0);
+        transform: translateY(0) scale(1);
     }
-}
-
-/* 文件附件卡片样式 */
-.file-attachment-card {
-    display: flex;
-    align-items: center;
-    background: rgba(8, 221, 249, 0.05);
-    border: 1px solid rgba(8, 221, 249, 0.3);
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-bottom: 8px;
-    max-width: 300px;
-    transition: all 0.2s;
-    cursor: default;
-}
-
-.file-attachment-card:hover {
-    background: rgba(8, 221, 249, 0.1);
-    border-color: #08ddf9;
-}
-
-.file-icon-wrapper {
-    width: 40px;
-    height: 40px;
-    background: rgba(8, 221, 249, 0.1);
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-right: 12px;
-    flex-shrink: 0;
-}
-
-.file-icon-wrapper svg {
-    width: 24px;
-    height: 24px;
-    color: #08ddf9;
-}
-
-.file-info {
-    flex-grow: 1;
-    overflow: hidden;
-}
-
-.file-name {
-    font-size: 0.9rem;
-    color: #fff;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-weight: 500;
-}
-
-.file-meta {
-    font-size: 0.75rem;
-    color: rgba(8, 221, 249, 0.6);
-    margin-top: 2px;
-}
-
-/* 消息内容中的文字与卡片间距 */
-.message-text-part {
-    margin-top: 4px;
-}
-
-/* 为消息气泡中的第一个文件卡片留出上边距 */
-.message-content .file-attachment-card:first-child {
-    margin-top: 12px;
-}
-
-/* 调整卡片之间的间距，确保视觉垂直居中感 */
-.file-attachment-card {
-    margin-bottom: 8px;
-}
-
-/* --- 拖拽浮层容器：增加背景模糊 --- */
-.drag-drop-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    /* 更深色的遮罩 */
-    backdrop-filter: blur(4px);
-    /* 增加磨砂玻璃感 */
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-    pointer-events: none;
-    animation: fadeIn 0.3s ease-out;
-}
-
-/* --- 内容框：改用深色背景 + 青色发光边框 --- */
-.drag-drop-content {
-    position: relative;
-    width: 420px;
-    height: 280px;
-    background: #1a1a1a;
-    /* 匹配你界面的背景色 */
-    border: 2px solid #08ddf9;
-    /* 使用你的主题青色 */
-    border-radius: 12px;
-    /* 略微减小圆角，匹配界面风格 */
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    text-align: center;
-    padding: 20px;
-    box-shadow: 0 0 30px rgba(8, 221, 249, 0.2);
-    /* 增加青色呼吸感阴影 */
-}
-
-/* --- 内部虚线框：改为青色半透明 --- */
-.dashed-border {
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-    border: 1px dashed rgba(8, 221, 249, 0.4);
-    border-radius: 8px;
-    pointer-events: none;
-}
-
-.drag-drop-content h2 {
-    margin: 15px 0 10px 0;
-    font-size: 22px;
-    color: #08ddf9;
-    /* 标题使用主题色 */
-    z-index: 2;
-    letter-spacing: 1px;
-}
-
-.drag-drop-content p {
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.7);
-    max-width: 80%;
-    line-height: 1.6;
-    z-index: 2;
-}
-
-/* --- 图标卡片：改为深色质感 + 青色轮廓 --- */
-.drag-icons {
-    display: flex;
-    align-items: flex-end;
-    gap: -12px;
-    margin-top: -30px;
-    margin-bottom: 25px;
-}
-
-.drag-icon-card {
-    width: 60px;
-    height: 80px;
-    background: #2a2a2a;
-    /* 深灰色背景 */
-    border: 1px solid #08ddf9;
-    /* 青色边框 */
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
-}
-
-.drag-icon-card.side {
-    transform: scale(0.85) translateY(10px);
-    z-index: 1;
-    opacity: 0.6;
-    border-color: rgba(8, 221, 249, 0.5);
-}
-
-.drag-icon-card.center {
-    width: 70px;
-    height: 90px;
-    z-index: 3;
-    font-size: 32px;
-    background: #333;
-    color: #08ddf9;
-    /* 中心图标高亮 */
-    box-shadow: 0 0 20px rgba(8, 221, 249, 0.3);
-}
-
-.drag-icon-card.side:first-child {
-    transform: rotate(-12deg) scale(0.85) translateX(15px);
-}
-
-.drag-icon-card.side:last-child {
-    transform: rotate(12deg) scale(0.85) translateX(-15px);
-}
-
-/* --- 气泡复制按钮样式 --- */
-.message-actions {
-    display: flex;
-    margin-top: 4px;
-    /* 默认透明度为0，悬停显示（可选，如果想一直显示则删掉 opacity） */
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    padding: 0 10px;
-    z-index: 5;
-}
-
-/* 鼠标悬停在消息条目上时显示操作栏 */
-.message:hover .message-actions {
-    opacity: 1;
-}
-
-/* 用户消息的操作栏右对齐 */
-.message.user .message-actions {
-    justify-content: flex-end;
-}
-
-/* 助手消息的操作栏左对齐 */
-.message.assistant .message-actions {
-    justify-content: flex-start;
-}
-
-.copy-bubble-button {
-    background: transparent;
-    border: 1px solid rgba(8, 221, 249, 0.2);
-    color: #08ddf9;
-    font-size: 13px;
-    cursor: pointer;
-    padding: 4px 12px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    transition: all 0.2s;
-}
-
-.copy-bubble-button:hover {
-    background: rgba(8, 221, 249, 0.1);
-    border-color: #08ddf9;
-}
-
-.copy-bubble-button svg {
-    width: 12px;
-    height: 12px;
-}
-
-.copy-bubble-button.copied {
-    color: #4af908;
-    border-color: #4af908;
-}
-
-/* --- 头像容器样式 --- */
-.chat-avatar-container {
-    width: 36px;
-    height: 36px;
-    background-color: #dfdfdf;
-    /* 浅色背景确保深色模式下 logo 可见 */
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-    border: 1px solid rgba(8, 221, 249, 0.2);
-    overflow: hidden;
-}
-
-.chat-avatar-img {
-    width: 25px;
-    height: 25px;
-    border-radius: 50%;
-}
-
-/* 针对用户头像的特殊处理，如果 user.svg 是全边框的 */
-.chat-avatar-container.user {
-    background-color: #333;
-    /* 用户可以稍微深色一点 */
-    border: 1px solid #555;
-}
-
-.chat-avatar-container.user .chat-avatar-img {
-    width: 100%;
-    /* 用户头像填充 */
-    height: 100%;
-}
-
-/* --- 消息主体（气泡+操作） --- */
-.message-body {
-    display: flex;
-    flex-direction: column;
-    max-width: 75%;
-    /* 稍微收窄一点给头像留空间 */
-}
-
-/* 用户气泡内部文字右对齐 */
-.message.user .message-body {
-    align-items: flex-end;
-}
-
-.message.assistant .message-body {
-    align-items: flex-start;
-}
-
-/* 修正原有的 content 边距 */
-.message-content {
-    max-width: 100% !important;
-    /* 解除原本的限制，由 message-body 控制 */
-
-}
-
-/* 消息操作栏对齐微调 */
-.message-actions {
-    opacity: 0;
-    transition: opacity 0.2s;
-    margin-top: 4px;
-}
-
-.message:hover .message-actions {
-    opacity: 1;
-}
-
-/* 模型信息标签样式 */
-.message-model-info {
-    font-size: 11px;
-    color: #888888;
-    margin-top: 4px;
-    margin-left: 4px;
-    opacity: 0.7;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    /* 防止文字被选中 */
-    user-select: none;
-    pointer-events: none;
-}
-
-/* 如果是用户消息（虽然上面的 Show 限制了 assistant），
-   但如果你以后想给用户也加标签，可以控制对齐 */
-.message.assistant .message-model-info {
-    text-align: left;
-}
-
-.message.user .message-model-info {
-    text-align: right;
-    margin-right: 4px;
+    100% {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.95);
+    }
 }

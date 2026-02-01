@@ -54,7 +54,8 @@ const NavBar: Component<NavBarProps> = () => {
   const [userAvatar, setUserAvatar] = createSignal('/icons/user.svg');
   const [isUserMenuVisible, setUserMenuVisible] = createSignal(false);
   const [tempImage, setTempImage] = createSignal<string | null>(null);
-
+  const onlineModels = () => datas.activatedModels.filter(m => m.owned_by !== "Local-Llama.cpp");
+  const localModels = () => datas.activatedModels.filter(m => m.owned_by === "Local-Llama.cpp");
   // 根据后缀判断 MIME 类型（简单版）
   const getMimeType = (path: string) => {
     const ext = path.split('.').pop()?.toLowerCase();
@@ -115,6 +116,9 @@ const NavBar: Component<NavBarProps> = () => {
     if (name.includes('gemini')) return '/icons/gemini-color.svg';
     if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
     if (name.includes('qwen')) return '/icons/qwen-color.svg';
+    if (name.includes('kimi') || name.includes('moonshot')) return '/icons/moonshot.svg';
+    if (name.includes('doubao')) return '/icons/doubao-color.svg';
+    if (name.includes('glm')) return '/icons/zhipu-color.svg';
 
     // 默认或本地模型的图标
     return '/icons/ollama.svg';
@@ -410,27 +414,61 @@ const NavBar: Component<NavBarProps> = () => {
 
           {/* 下拉模型列表内容 */}
           <div classList={{ 'dropdown-menu': true, 'active': isDropdownVisible() }}>
-            <For each={datas.activatedModels}>
-              {(model) => (
-                <div
-                  class="dropdown-item"
-                  classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
-                  onClick={() => handleModelSelect(model)}
-                >
-                  {/* --- 新增：Logo 圆形背景容器 --- */}
-                  <div class="nav-model-logo-container">
-                    <img src={getModelLogo(model.model_id)} alt="logo" class="nav-model-logo" />
-                  </div>
+            <div class="dropdown-columns-container">
 
-                  {/* 将原来的文字包在一个容器里方便对齐 */}
-                  <div class="model-text-group">
-                    <div class="model-id-text">{model.model_id}</div>
-                    <div class="model-provider-text">{model.owned_by}</div>
-                  </div>
+              {/* 左列：线上模型 */}
+              <div class="dropdown-column">
+                <div class="column-header">线上模型</div>
+                <div class="column-content">
+                  <For each={onlineModels()}>
+                    {(model) => (
+                      <div
+                        class="dropdown-item"
+                        classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
+                        onClick={() => handleModelSelect(model)}
+                      >
+                        <div class="nav-model-logo-container">
+                          <img src={getModelLogo(model.model_id)} alt="logo" class="nav-model-logo" />
+                        </div>
+                        <div class="model-text-group">
+                          <div class="model-id-text">{model.model_id}</div>
+                          <div class="model-provider-text">{model.owned_by}</div>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                  {onlineModels().length === 0 && <div class="no-model-tip">无线上模型</div>}
                 </div>
-              )}
-            </For>
-            {datas.activatedModels.length === 0 && <div class="dropdown-item">无激活模型</div>}
+              </div>
+
+              {/* 中间分割线 */}
+              <div class="column-divider"></div>
+
+              {/* 右列：本地模型 */}
+              <div class="dropdown-column">
+                <div class="column-header">本地模型</div>
+                <div class="column-content">
+                  <For each={localModels()}>
+                    {(model) => (
+                      <div
+                        class="dropdown-item"
+                        classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
+                        onClick={() => handleModelSelect(model)}
+                      >
+                        <div class="nav-model-logo-container">
+                          <img src={getModelLogo(model.model_id)} alt="logo" class="nav-model-logo" />
+                        </div>
+                        <div class="model-text-group">
+                          <div class="model-id-text">{model.model_id}</div>
+                          <div class="model-provider-text">Local</div>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                  {localModels().length === 0 && <div class="no-model-tip">无本地模型</div>}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

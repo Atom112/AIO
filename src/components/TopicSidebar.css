@@ -1,0 +1,81 @@
+/* --- Topic Sidebar Specific --- */
+
+.dialog-container {
+    border: 1px solid #08ddf9;
+    border-radius: 8px;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 15px;
+    position: relative;
+}
+
+.dialog-content {
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    width: 100%;
+}
+
+.add-topic-button {
+    background: none;
+    border: 1px solid #08ddf9;
+    border-radius: 8px;
+    color: #ffffff;
+    cursor: pointer;
+    margin: 10px 0;
+    padding: 8px 12px;
+    width: 100%;
+}
+
+.add-topic-button:hover {
+    background-color: rgba(8, 221, 249, 0.1);
+}
+
+.topics-list {
+    margin-top: 15px;
+}
+
+.topic-item {
+    align-items: center;
+    background-color: transparent;
+    border: 1px solid #08ddf9;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    margin: 4px 0;
+    padding: 8px 12px;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.topic-item:hover {
+    background-color: #2a2a2a;
+}
+
+.topic-item.active {
+    background-color: #1f3a40;
+    border-color: #08ddf9;
+    box-shadow: 0 0 5px rgba(8, 221, 249, 0.3);
+}
+
+.topic-name {
+    color: #e0e0e0;
+    flex-grow: 1;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.topic-item .assistant-menu-button {
+    flex-shrink: 0;
+    margin-left: 8px;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+
+.topic-item:hover .assistant-menu-button {
+    opacity: 1;
+}

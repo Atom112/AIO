@@ -119,36 +119,80 @@
 }
 
 .dropdown-menu {
-  visibility: hidden;
+visibility: hidden;
   opacity: 0;
   position: absolute;
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
   margin-top: 8px;
-  background-color: #333;
-  /*background-color: #2a2a2a;*/
-  min-width: 220px;
-  border: 1px solid #555;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  background-color: #1e1e1e; /* 统一背景色 */
+  min-width: 480px; /* 宽度增加以容纳两列 */
+  border: 1px solid #333;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
   z-index: 1000;
-  transition: opacity 0.2s ease-in-out, visibility 0.2s ease-in-out;
-  padding: 8px 4px;
-  max-height: 300px;
-  /* 设置最大高度，超过此高度将出现滚动条 */
-  overflow-y: auto;
-  /* 开启垂直滚动 */
-  overflow-x: hidden;
-  /* 隐藏水平滚动 */
-  scrollbar-gutter: stable;
-  /* 避免滚动条出现时挤压内容导致抖动 */
+  transition: all 0.2s ease-in-out;
+  padding: 0; /* 内部由列容器控制内边距 */
+  overflow: hidden; /* 裁剪圆角 */
 }
+
+.dropdown-columns-container {
+  display: flex;
+  flex-direction: row;
+  height: 400px; /* 给一个固定或最大高度 */
+}
+
+.dropdown-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+}
+
+.column-header {
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  background-color: #252525;
+  border-bottom: 1px solid #333;
+}
+.column-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.column-content::-webkit-scrollbar {
+  width: 4px;
+}
+.column-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 2px;
+}
+
+.column-divider {
+  width: 1px;
+  background-color: #333;
+  align-self: stretch;
+}
+
+.no-model-tip {
+  padding: 20px;
+  text-align: center;
+  color: #555;
+  font-size: 13px;
+}
+
+
 
 .dropdown-menu.active {
   visibility: visible;
   opacity: 1;
   border: #08ddf9 1px solid;
+  transform: translateX(-50%) translateY(0);
 }
 
 .dropdown-item {
@@ -157,9 +201,9 @@
   /* 关键修改：从 column 改为 row */
   align-items: center;
   /* 垂直居中对齐 logo 和文字 */
-  gap: 12px;
+  gap: 10px;
   /* Logo 与文字之间的间距 */
-  padding: 10px 15px;
+  padding: 8px 12px;
   color: #a0a0a0;
   text-align: left;
   /* 关键修改：从 center 改为 left */
@@ -169,6 +213,10 @@
   user-select: none;
   transition: background-color 0.2s, color 0.2s;
 }
+.model-id-text {
+  max-width: 160px; /* 限制宽度防止溢出 */
+}
+
 
 .dropdown-item:hover {
   background-color: #484848;
@@ -410,3 +458,4 @@
   border-left: 1px solid #08ddf9;
   border-top: 1px solid #08ddf9;
 }
+

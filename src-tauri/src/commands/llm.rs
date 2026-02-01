@@ -1,8 +1,8 @@
 use crate::models::*;
 use crate::StreamManager;
-use tauri::{Window, Emitter}; // Emitter 用于从后端向前端推送事件
-use futures_util::StreamExt;  // 用于处理流式数据
+use futures_util::StreamExt; // 用于处理流式数据
 use serde_json::json;
+use tauri::{Emitter, Window}; // Emitter 用于从后端向前端推送事件
 
 /// 核心函数：调用 LLM 并分块回传结果（流式输出）
 /// #[tauri::command] 允许前端通过 invoke 调用
@@ -43,14 +43,14 @@ pub async fn call_llm_stream(
             };
 
             let client = reqwest::Client::new();
-            
+
             // 构造符合 OpenAI API 标准的消息格式
             let messages_for_api: Vec<serde_json::Value> = messages
                 .iter()
                 .map(|m| {
                     json!({
                         "role": m.role,
-                        "content": m.content
+                        "content": m.content // 这里现在可以直接是字符串或数组对象
                     })
                 })
                 .collect();
@@ -85,16 +85,23 @@ pub async fn call_llm_stream(
                     let line = line_buffer[..pos].trim().to_string();
                     line_buffer.drain(..pos + 1); // 从缓冲区移除已处理的行
 
-                    if line.is_empty() { continue; }
+                    if line.is_empty() {
+                        continue;
+                    }
 
                     // 检查是否流传输结束
                     if line == "data: [DONE]" {
-                        window.emit("llm-chunk", StreamPayload {
-                            assistant_id: assistant_id_c.clone(),
-                            topic_id: topic_id_c.clone(),
-                            content: "".into(),
-                            done: true,
-                        }).unwrap();
+                        window
+                            .emit(
+                                "llm-chunk",
+                                StreamPayload {
+                                    assistant_id: assistant_id_c.clone(),
+                                    topic_id: topic_id_c.clone(),
+                                    content: "".into(),
+                                    done: true,
+                                },
+                            )
+                            .unwrap();
                         return Ok(());
                     }
 
@@ -104,12 +111,17 @@ pub async fn call_llm_stream(
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                             if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                                 // 将解析出的片段实时推送到前端
-                                window.emit("llm-chunk", StreamPayload {
-                                    assistant_id: assistant_id_c.clone(),
-                                    topic_id: topic_id_c.clone(),
-                                    content: content.to_string(),
-                                    done: false,
-                                }).unwrap();
+                                window
+                                    .emit(
+                                        "llm-chunk",
+                                        StreamPayload {
+                                            assistant_id: assistant_id_c.clone(),
+                                            topic_id: topic_id_c.clone(),
+                                            content: content.to_string(),
+                                            done: false,
+                                        },
+                                    )
+                                    .unwrap();
                             }
                         }
                     }
@@ -122,12 +134,17 @@ pub async fn call_llm_stream(
         // 6. 错误处理：如果请求失败，发送错误信息给前端
         if let Err(e) = result {
             println!("Stream Error: {}", e);
-            window.emit("llm-chunk", StreamPayload {
-                assistant_id: assistant_id_c,
-                topic_id: topic_id_c,
-                content: format!("\n[Error: {}]", e),
-                done: true,
-            }).unwrap();
+            window
+                .emit(
+                    "llm-chunk",
+                    StreamPayload {
+                        assistant_id: assistant_id_c,
+                        topic_id: topic_id_c,
+                        content: format!("\n[Error: {}]", e),
+                        done: true,
+                    },
+                )
+                .unwrap();
         }
 
         // 任务完成后，从全局状态中移除 handle
@@ -170,10 +187,10 @@ pub async fn stop_llm_stream(
     topic_id: String,
 ) -> Result<(), String> {
     let task_key = format!("{}-{}", assistant_id, topic_id);
-    
+
     // 从状态中取出对应的任务句柄并执行 abort() 强制停止任务
     if let Some((_, handle)) = state.0.remove(&task_key) {
-        handle.abort(); 
+        handle.abort();
     }
     Ok(())
 }

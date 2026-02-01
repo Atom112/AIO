@@ -113,7 +113,7 @@
 
 ## 📄 开源协议 | License
 
-[MIT License](LICENSE) - © 2024 Atom112
+[Apache-2.0 License](LICENSE) - © 2024 Atom112
 
 ---
 

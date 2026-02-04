@@ -39,12 +39,6 @@
 
 ---
 
-## 📸 预览 | Scans & Screenshots
-
-*(建议在此处放置项目的运行截图 / Add your project screenshots here)*
-
----
-
 ## 🛠️ 技术栈 | Tech Stack
 
 - **Frontend**: [SolidJS](https://www.solidjs.com/) + CSS 霓虹主题 (Cyberpunk Aesthetic)

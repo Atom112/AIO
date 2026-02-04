@@ -1,0 +1,67 @@
+
+[changelog]
+
+header = """
+<div id="top"></div>
+
+# Changelog
+
+本项目的所有显著更新将记录在此文件中。
+
+---
+"""
+
+
+body = """
+{% if version %}\
+    ## [{{ version }}]
+{% else %}\
+    ## [Unreleased]
+{% endif %}\
+<sup>Released on **{{ timestamp | date(format="%Y-%m-%d") }}**</sup>
+
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group }}
+    {% for commit in commits %}
+        - {{ commit.message | upper_first }}\
+        {% if commit.github.pr_number %} (#[{{ commit.github.pr_number }}](https://github.com/Atom112/AIO/pull/{{ commit.github.pr_number }})){% endif %}\
+        {% if commit.links %} {% for link in commit.links %}[{{ link.text }}]({{ link.url }}) {% endfor %}{% endif %}
+    {% endfor %}
+{% endfor %}
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+{% if version %}\
+    [{{ version }}]: https://github.com/Atom112/AIO/releases/tag/{{ version | replace(from="-Beta", to="") }}
+{% endif %}\
+"""
+
+# 文件的页脚
+footer = """\"\"\"
+"""
+
+# 移除消息中的前后空格
+trim = true
+
+[git]
+# 解析提交信息：将 conventional commits 类型映射到你的中文分类
+commit_parsers = [
+    { message = "^feat", group = "✨ Added（新增）" },
+    { message = "^fix", group = "🐛 Fixed（修复）" },
+    { message = "^doc", group = "📝 Documentation（文档）" },
+    { message = "^perf", group = "⚡️ Changed（变更）" },
+    { message = "^refactor", group = "⚡️ Changed（变更）" },
+    { message = "^style", group = "⚡️ Changed（变更）" },
+    { message = "^revert", group = "⏪️ Revert（回滚）" },
+    { message = "^chore\\(deps\\)", group = "📦 Deps（依赖更新）" },
+    { message = "^chore", group = "🔧 Maintenance（维护）" },
+    { message = "^test", group = "🧪 Tests（测试）" },
+]
+
+filter_commits = false
+
+ignore_commits = "^chore\\(release\\):"
+
+topo_order = false
+
+sort_commits = "oldest"

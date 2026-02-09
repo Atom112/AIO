@@ -1,5 +1,6 @@
 import { createSignal, Component, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { setDatas } from '../store/store';
 import './LoginModal.css';
 
 interface LoginModalProps {
@@ -16,6 +17,8 @@ const LoginModal: Component<LoginModalProps> = (props) => {
     const [loading, setLoading] = createSignal(false);
     const [error, setError] = createSignal('');
     const [confirmPassword, setConfirmPassword] = createSignal('');
+    const [isSuccess, setIsSuccess] = createSignal(false);
+    const [isLeaving, setIsLeaving] = createSignal(false); // 新增：控制退出动画
 
     const toggleMode = () => {
         setIsRegister(!isRegister());
@@ -40,16 +43,34 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                     password: password(), 
                     confirmPassword: confirmPassword() 
                 });
-                alert("注册成功，请登录！");
-                setIsRegister(false); // 注册成功后跳回登录
+                setIsSuccess(true);
+                setTimeout(() => {
+                    setIsLeaving(true); // 开启淡出动画
+                    setTimeout(() => {
+                        setIsSuccess(false);
+                        setIsLeaving(false); // 重置状态
+                        setIsRegister(false); 
+                        setPassword('');
+                        setConfirmPassword('');
+                    }, 300); // 这里的 500ms 对应 CSS 动画时长
+                }, 800);
             } else {
                 // 登录逻辑
                 const result: any = await invoke('login_to_backend', { 
                     username: email(), 
                     password: password() 
                 });
-                props.onSuccess(result);
-                props.onClose();
+                // 登录成功视觉反馈
+                setIsSuccess(true);
+                setTimeout(() => {
+                    setIsLeaving(true); // 开启淡出动画
+                    setTimeout(() => {
+                        props.onSuccess(result);
+                        setIsSuccess(false);
+                        setIsLeaving(false);
+                        props.onClose();
+                    }, 300); // 这里的 500ms 对应 CSS 动画时长
+                }, 600);
             }
         } catch (err: any) {
             setError(err.toString());
@@ -62,6 +83,23 @@ const LoginModal: Component<LoginModalProps> = (props) => {
         <Show when={props.show}>
             <div class="modal-overlay" onClick={props.onClose}>
                 <div class="login-modal-content" onClick={(e) => e.stopPropagation()}>
+                    
+                    {/* --- 新增：视觉反馈层 --- */}
+                    <Show when={isSuccess()}>
+                        <div classList={{ 
+                            'success-overlay': true, 
+                            'leaving': isLeaving() // 当正在离开时应用该类
+                        }}>
+                            <div class="success-circle">
+                                <svg viewBox="0 0 52 52" class="checkmark">
+                                    <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none"/>
+                                    <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
+                                </svg>
+                            </div>
+                            <span class="success-text">{isRegister() ? '注册成功' : '欢迎回来'}</span>
+                        </div>
+                    </Show>
+                    
                     <div class="modal-header">
                         <h3>{isRegister() ? '新用户注册' : '账号登录'}</h3>
                         <button class="close-btn" onClick={props.onClose}>×</button>

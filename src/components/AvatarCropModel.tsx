@@ -1,11 +1,12 @@
-// src/components/AvatarCropModal.tsx
+// src/components/AvatarCropModel.tsx
+
 import { Component, onMount, createSignal, onCleanup } from 'solid-js';
 import Cropper from 'cropperjs';
 import 'cropperjs/dist/cropper.css';
 import './AvatarCropModel.css';
 
 interface AvatarCropModalProps {
-    imageSrc: string; // 选中的原始图片路径（Blob URL）
+    imageSrc: string; 
     onSave: (croppedDataUrl: string) => void;
     onCancel: () => void;
 }
@@ -16,26 +17,32 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
     let cropper: Cropper | null = null;
     const [zoomValue, setZoomValue] = createSignal(1);
 
-    onMount(() => {
-        if (imageElement) {
-            cropper = new Cropper(imageElement, {
-                aspectRatio: 1, // 强制正方形裁剪
-                viewMode: 1,
-                dragMode: 'move',
-                guides: false,
-                center: true,
-                highlight: false,
-                cropBoxMovable: true,
-                cropBoxResizable: true,
-                toggleDragModeOnDblclick: false,
-                preview: previewElement, // 绑定预览框
-                ready() {
-                    // 初始化缩放
-                    setZoomValue(1);
-                }
-            });
+    // --- 核心修复：定义初始化函数 ---
+    const initCropper = () => {
+        if (!imageElement) return;
+
+        // 如果已经存在之前的实例，先销毁（防止重复初始化）
+        if (cropper) {
+            cropper.destroy();
         }
-    });
+
+        // 确保图片加载完成后再初始化，Cropper 需要图片的真实宽高
+        cropper = new Cropper(imageElement, {
+            aspectRatio: 1,
+            viewMode: 1,
+            dragMode: 'move',
+            guides: false,
+            center: true,
+            highlight: false,
+            cropBoxMovable: true,
+            cropBoxResizable: true,
+            toggleDragModeOnDblclick: false,
+            preview: previewElement,
+            ready() {
+                setZoomValue(1);
+            }
+        });
+    };
 
     onCleanup(() => {
         cropper?.destroy();
@@ -43,7 +50,6 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
     const handleSave = () => {
         if (cropper) {
-            // 获取输出的 Canvas，设定最终头像分辨率 256x256
             const canvas = cropper.getCroppedCanvas({
                 width: 256,
                 height: 256,
@@ -64,7 +70,19 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
                 <div class="crop-main-area">
                     <div class="cropper-wrapper">
-                        <img ref={imageElement} src={props.imageSrc} style={{ "max-width": "100%" }} />
+                        {/* 
+                          关键：
+                          1. 增加 onLoad 事件，确保图片加载后再初始化 Cropper
+                          2. 增加 crossOrigin 属性，避免 Canvas 跨域污染
+                          3. 加入 display: block 确保 Cropper 工作正常
+                        */}
+                        <img 
+                            ref={imageElement} 
+                            src={props.imageSrc} 
+                            onLoad={initCropper}
+                            crossOrigin="anonymous"
+                            style={{ "display": "block", "max-width": "100%" }} 
+                        />
                     </div>
 
                     <div class="crop-preview-side">
@@ -75,7 +93,6 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
                 <div class="crop-controls">
                     <div class="zoom-slider-container">
-                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" class="zoom-icon"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" /></svg>
                         <input
                             type="range"
                             min="0.1"
@@ -88,7 +105,6 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                                 setZoomValue(val);
                             }}
                         />
-                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" class="zoom-icon"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" /></svg>
                     </div>
 
                     <div class="modal-actions">

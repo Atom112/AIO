@@ -70,6 +70,13 @@ export interface ActivatedModel {
     local_path?: string;
 }
 
+export interface User {
+    id: string;
+    username: string;
+    nickname?: string;
+    token: string;
+}
+
 // =============================================================================
 // II. 全局响应式状态 (Global State)
 // =============================================================================
@@ -98,6 +105,8 @@ export const loadAvatarFromPath = async (path: string): Promise<string> => {
 export const [datas, setDatas] = createStore({
     assistants: [] as any[],
     activatedModels: [] as ActivatedModel[],
+    user: null as User | null, 
+    isLoggedIn: false
 });
 
 /**
@@ -179,4 +188,19 @@ export const deleteAssistantFile = async (id: string) => {
     } catch (err) {
         console.error('物理删除失败:', err);
     }
+};
+
+// 新增：清除登录状态的方法（供切换账号或退出使用）
+export const clearUserStatus = () => {
+    setDatas('user', null);
+    setDatas('isLoggedIn', false);
+    localStorage.removeItem('auth-token');
+};
+
+export const logout = () => {
+    setDatas('user', null);
+    setDatas('isLoggedIn', false);
+    localStorage.removeItem('auth-token');
+    // 可选：重置头像到默认
+    setGlobalUserAvatar('/icons/user.svg'); 
 };

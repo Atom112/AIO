@@ -24,7 +24,8 @@ import {
   saveSingleAssistantToBackend,
   selectedModel,
   setSelectedModel,
-  ActivatedModel, globalUserAvatar, setGlobalUserAvatar, loadAvatarFromPath
+  ActivatedModel, globalUserAvatar, setGlobalUserAvatar, loadAvatarFromPath,
+  logout
 } from '../store/store';
 import PromptModal from '../pages/PromptModal';
 import LoginModal from './LoginModal';
@@ -58,22 +59,25 @@ const NavBar: Component<NavBarProps> = () => {
   const onlineModels = () => datas.activatedModels.filter(m => m.owned_by !== "Local-Llama.cpp");
   const localModels = () => datas.activatedModels.filter(m => m.owned_by === "Local-Llama.cpp");
   const [isLoginModalOpen, setIsLoginModalOpen] = createSignal(false);
-  // 根据后缀判断 MIME 类型（简单版）
-  const getMimeType = (path: string) => {
-    const ext = path.split('.').pop()?.toLowerCase();
-    switch (ext) {
-      case 'png': return 'image/png';
-      case 'jpg':
-      case 'jpeg': return 'image/jpeg';
-      case 'webp': return 'image/webp';
-      case 'svg': return 'image/svg+xml';
-      default: return 'application/octet-stream';
+
+  const handleLoginSuccess = async (user: any) => {
+    console.log("登录成功:", user);
+    // 更新全局 Store
+    setDatas('user', user);
+    setDatas('isLoggedIn', true);
+    if (user.token) {
+      localStorage.setItem('auth-token', user.token);
+    }
+    if (user.avatar) {
+      const url = await loadAvatarFromPath(user.avatar);
+      setGlobalUserAvatar(url);
+      localStorage.setItem('user-avatar-path', user.avatar);
     }
   };
 
-  const handleLoginSuccess = (user: any) => {
-    console.log("登录成功:", user);
-    // 这里可以更新全局状态存储用户 Token
+  const handleLogout = () => {
+    logout(); // 执行清除逻辑
+    setUserMenuVisible(false); // 关闭菜单
   };
 
   const handleEditAvatar = async () => {
@@ -95,18 +99,33 @@ const NavBar: Component<NavBarProps> = () => {
     }
   };
 
+  // NavBar.tsx 
+
   const onCropSave = async (croppedDataUrl: string) => {
     try {
-      // 1. 调用 Rust 保存裁剪后的 Base64 数据
+      // 1. 调用 Rust 保存裁剪后的图片到本地应用文件夹
       const savedPath = await invoke<string>('upload_avatar', {
         dataUrl: croppedDataUrl
       });
 
-      // 2. 刷新全局 UI
+      // 2. 刷新全局 UI 显示
       const blobUrl = await loadAvatarFromPath(savedPath);
       setGlobalUserAvatar(blobUrl);
 
-      // 3. 持久化并重置状态
+      // 3. --- 新增：如果已登录，同步该路径到后端数据库 ---
+      if (datas.isLoggedIn && datas.user?.token) {
+        try {
+          await invoke('sync_avatar_to_backend', {
+            token: datas.user.token,
+            avatarUrl: savedPath // 发送的是持久化的本地绝对路径
+          });
+          console.log("头像路径同步至后端成功");
+        } catch (err) {
+          console.error("同步后端失败:", err);
+        }
+      }
+
+      // 4. 持久化本地缓存
       localStorage.setItem('user-avatar-path', savedPath);
       setTempImage(null);
       setUserMenuVisible(false);
@@ -205,6 +224,8 @@ const NavBar: Component<NavBarProps> = () => {
       return false;
     }
   };
+
+
 
   /**
    * 处理模型切换
@@ -310,6 +331,37 @@ const NavBar: Component<NavBarProps> = () => {
 
   /** --- 生命周期钩子 --- */
   onMount(async () => {
+
+    // --- A. 自动恢复登录状态 ---
+    const savedToken = localStorage.getItem('auth-token');
+    if (savedToken) {
+      try {
+        const userData = await invoke<any>('validate_token', { token: savedToken });
+        setDatas('user', userData);
+        setDatas('isLoggedIn', true);
+
+        // --- 核心：如果后端存了头像路径，优先使用后端的 ---
+        if (userData.avatar) {
+          const url = await loadAvatarFromPath(userData.avatar);
+          setGlobalUserAvatar(url);
+          // 同步更新本地缓存，确保离线时也能用最新的
+          localStorage.setItem('user-avatar-path', userData.avatar);
+        }
+      } catch (err) {
+        console.warn("身份过期:", err);
+        localStorage.removeItem('auth-token');
+        setDatas('isLoggedIn', false);
+      }
+    }
+
+    // --- B. 处理物理路径恢复 (兜底逻辑) ---
+    // 如果没登录或者后端没头像，再尝试读取本地上次存的路径
+    const localSavedPath = localStorage.getItem('user-avatar-path');
+    if (localSavedPath && !globalUserAvatar().includes('blob:')) {
+      const url = await loadAvatarFromPath(localSavedPath);
+      setGlobalUserAvatar(url);
+    }
+
     // A. 处理头像恢复
     const savedPath = localStorage.getItem('user-avatar-path');
     if (savedPath) {
@@ -398,16 +450,53 @@ const NavBar: Component<NavBarProps> = () => {
               </svg>
               更换头像
             </div>
-            <div class="user-dropdown-item"
-              onClick={() => {
-                setIsLoginModalOpen(true);
-                setUserMenuVisible(false);
-              }}>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-              </svg>
-              登录账号
-            </div>
+
+
+            <Show
+              when={datas.isLoggedIn}
+              fallback={
+                /* 情况 A: 未登录，显示登录选项 */
+                <div class="user-dropdown-item"
+                  onClick={() => {
+                    setIsLoginModalOpen(true);
+                    setUserMenuVisible(false);
+                  }}>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                  </svg>
+                  登录账号
+                </div>
+              }
+            >
+              {/* 情况 B: 已登录，显示账号信息和切换账号 */}
+              <div class="user-dropdown-divider"></div>
+              <div class="user-dropdown-item" style="color: #08ddf9; font-weight: 500;">
+                <svg /* 账号信息图标 */ xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+                账号信息
+              </div>
+              <div class="user-dropdown-item"
+                onClick={() => {
+                  // 切换账号逻辑：其实就是直接再次弹出登录框，成功后覆盖原有 user
+                  setIsLoginModalOpen(true);
+                  setUserMenuVisible(false);
+                }}>
+                <svg /* 切换图标 */ xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                切换账号
+              </div>
+
+              {/* --- 新增：退出登录 --- */}
+              <div class="user-dropdown-item logout-item" onClick={handleLogout}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+                </svg>
+                退出登录
+              </div>
+
+            </Show>
           </div>
         </div>
 
@@ -531,8 +620,8 @@ const NavBar: Component<NavBarProps> = () => {
         initialPrompt={modalPrompt()}
       />
       {/* 登录模态框 */}
-      <LoginModal 
-        show={isLoginModalOpen()} 
+      <LoginModal
+        show={isLoginModalOpen()}
         onClose={() => setIsLoginModalOpen(false)}
         onSuccess={handleLoginSuccess}
       />

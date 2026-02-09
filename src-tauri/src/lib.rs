@@ -76,7 +76,9 @@ pub fn run() {
             commands::config::upload_avatar,
             commands::llm::summarize_history,
             commands::auth::login_to_backend,
-            commands::auth::register_to_backend
+            commands::auth::register_to_backend,
+            commands::auth::validate_token,
+            commands::auth::sync_avatar_to_backend,
         ])
         // 注册窗口事件回调
         .on_window_event(|window, event| {

@@ -459,3 +459,23 @@ visibility: hidden;
   border-top: 1px solid #08ddf9;
 }
 
+/* 修改或添加在 NavBar.css 中 */
+
+/* 退出登录项的特殊样式 */
+.user-dropdown-item.logout-item {
+    color: #ff4d4f; /* 浅红色，暗示警告/退出操作 */
+    opacity: 0.9;
+}
+
+.user-dropdown-item.logout-item:hover {
+    background-color: rgba(255, 77, 79, 0.15); /* 红色半透明背景 */
+    color: #ff7875;
+}
+
+/* 确保间隔线足够清晰 */
+.user-dropdown-divider {
+    height: 1px;
+    background: #333; /* 或者使用带有青色透明度的背景 */
+    margin: 6px 8px;
+    opacity: 0.6;
+}

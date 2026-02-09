@@ -134,3 +134,117 @@
     transition: all 0.3s ease;
     min-height: 400px; /* 注册时高度会稍微撑开 */
 }
+
+/* --- 成功覆盖层样式 --- */
+.success-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(30, 30, 30, 0.95);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    border-radius: 12px;
+    animation: fadeIn 0.5s ease-out forwards;
+}
+
+.success-text {
+    margin-top: 15px;
+    color: #08ddf9;
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 2px;
+}
+
+/* --- 勾选框动画 --- */
+.checkmark {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: block;
+    stroke-width: 3;
+    stroke: #08ddf9;
+    stroke-miterlimit: 10;
+    box-shadow: inset 0px 0px 0px #08ddf9;
+    animation: fill .2s ease-in-out .2s forwards, scale .2s ease-in-out .5s both;
+}
+
+.checkmark__circle {
+    stroke-dasharray: 166;
+    stroke-dashoffset: 166;
+    stroke-width: 2;
+    stroke-miterlimit: 10;
+    stroke: #08ddf9;
+    fill: none;
+    animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+}
+
+.checkmark__check {
+    transform-origin: 50% 50%;
+    stroke-dasharray: 48;
+    stroke-dashoffset: 48;
+    animation: stroke 0.2s cubic-bezier(0.65, 0, 0.45, 1) 0.4s forwards;
+}
+
+@keyframes stroke { 100% { stroke-dashoffset: 0; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* 分割线 */
+.user-dropdown-divider {
+    height: 1px;
+    background: #333;
+    margin: 4px 8px;
+}
+
+/* 成功覆盖层：基础样式 */
+.success-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(30, 30, 30, 0.98);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    border-radius: 12px;
+    /* 进场动画 */
+    animation: fadeIn 0.2s ease-out forwards;
+    transition: all 0.3s ease-in-out;
+}
+
+/* 当处于离开状态时执行淡出 */
+.success-overlay.leaving {
+    animation: fadeOut 0.3s ease-in forwards;
+    /* 增加一个轻微缩放，让退出更灵动 */
+    transform: scale(1.05);
+    filter: blur(10px);
+}
+
+/* 进场：从 0 到 1 */
+@keyframes fadeIn {
+    from { 
+        opacity: 0; 
+        backdrop-filter: blur(0px);
+    }
+    to { 
+        opacity: 1; 
+        backdrop-filter: blur(4px);
+    }
+}
+
+/* 出场：从 1 到 0 (新增项目) */
+@keyframes fadeOut {
+    from { 
+        opacity: 1; 
+    }
+    to { 
+        opacity: 0; 
+    }
+}
+
+/* 也可以让勾选图标在淡出时缩小 */
+.success-overlay.leaving .checkmark {
+    transition: transform 0.3s ease;
+    transform: scale(0.8);
+}

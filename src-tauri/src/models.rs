@@ -21,7 +21,7 @@ pub struct ActivatedModel {
     /// 本地模型路径（仅针对本地运行的模型）。
     /// 如果为 `None`，在序列化时将跳过此字段。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_path: Option<String>, 
+    pub local_path: Option<String>,
 }
 
 /// 流式输出时发送给前端的数据负载。
@@ -50,7 +50,7 @@ pub struct Message {
     /// 消息发送者的角色（如 "user"、"assistant" 或 "system"）。
     pub role: String,
     /// 消息的正文内容。
-    pub content: serde_json::Value, 
+    pub content: serde_json::Value,
     #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     /// 在 UI 上显示的附件文件列表。
@@ -71,8 +71,9 @@ pub struct Topic {
     /// 会话的标题或名称。
     pub name: String,
     /// 属于该主题的历史消息列表。
-    #[serde(default)]
     pub history: Vec<Message>,
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 /// 代表一个 AI 助手预设。

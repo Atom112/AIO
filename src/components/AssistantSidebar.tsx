@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal } from 'solid-js';
+import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
 import { Assistant, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile } from '../store/store';
 import './AssistantSidebar.css';
 
@@ -16,6 +16,16 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
     const [menuState, setMenuState] = createSignal({ isOpen: false, x: 0, y: 0, targetId: null as string | null });
 
     let menuCloseTimeoutId: any;
+
+    onMount(() => {
+        const handleClickOutside = () => {
+            if (menuState().isOpen) {
+                closeMenu();
+            }
+        };
+        window.addEventListener('click', handleClickOutside);
+        onCleanup(() => window.removeEventListener('click', handleClickOutside));
+    });
 
     const saveRename = async (id: string, newName: string) => {
         if (!newName.trim()) return props.setEditingAsstId(null);

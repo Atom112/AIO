@@ -82,7 +82,7 @@
     animation: menuEnter 0.2s ease-out forwards;
     background-color: #2e2e2e;
     border: 1px solid #08ddf9;
-    border-radius: 4px;
+    border-radius: 8px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
     min-width: 150px;
     position: fixed;
@@ -96,6 +96,7 @@
 
 .context-menu-button {
     background: none;
+    border-radius: 8px;
     border: none;
     box-sizing: border-box;
     color: #FFFFFF;
@@ -104,10 +105,12 @@
     padding: 8px 12px;
     text-align: left;
     width: 100%;
+    transition: all 0.2s;
 }
 
 .context-menu-button:hover {
-    background-color: #3a3a3a;
+    background-color: #08ddf910;
+
 }
 
 .context-menu-button.delete {
@@ -117,7 +120,7 @@
 /* Menu Button (Three dots) - Used by both sidebars */
 .assistant-menu-button {
     align-items: center;
-    background-color: #367d93;
+    background-color: #1e1e1e;
     border: none;
     border-radius: 4px;
     color: #FFFFFF;
@@ -126,6 +129,17 @@
     height: 30px;
     justify-content: center;
     width: 30px;
+    transition: background-color 0.2s, transform 0.2s;
+}
+
+.assistant-menu-button:hover {
+    background-color: #46a0bc;
+}
+
+/* 添加 Active 效果：颜色变深且轻微缩小 */
+.assistant-menu-button:active {
+    background-color: #2a5d6d;
+    transform: scale(0.92);
 }
 
 /* Shared Animations */

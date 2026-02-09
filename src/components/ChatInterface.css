@@ -361,7 +361,7 @@
     align-items: center;
     background: transparent;
     border: 1px solid rgba(8, 221, 249, 0.2);
-    border-radius: 4px;
+    border-radius: 8px;
     color: #08ddf9;
     cursor: pointer;
     display: flex;

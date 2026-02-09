@@ -73,7 +73,10 @@ pub fn run() {
             commands::server::is_local_server_running,
             // 文件解析工具命令
             process_file_content,
-            commands::config::upload_avatar
+            commands::config::upload_avatar,
+            commands::llm::summarize_history,
+            commands::auth::login_to_backend,
+            commands::auth::register_to_backend
         ])
         // 注册窗口事件回调
         .on_window_event(|window, event| {

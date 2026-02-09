@@ -194,3 +194,55 @@ pub async fn stop_llm_stream(
     }
     Ok(())
 }
+
+#[tauri::command]
+pub async fn summarize_history(
+    api_url: String,
+    api_key: String,
+    model: String,
+    messages: Vec<Message>,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    
+    let mut messages_for_api: Vec<serde_json::Value> = messages
+        .iter()
+        .map(|m| json!({ "role": m.role, "content": m.content }))
+        .collect();
+
+    messages_for_api.push(json!({
+        "role": "system",
+        "content": "请简要总结以上对话的核心内容和用户需求，作为后续交流的长期记忆（500字以内）。"
+    }));
+
+    let body = json!({
+        "model": model,
+        "messages": messages_for_api,
+        "stream": false
+    });
+
+    // --- 修复后的 URL 拼接逻辑 ---
+    let base_url = api_url.trim_end_matches('/').replace("/chat/completions", "");
+    let endpoint = format!("{}/chat/completions", base_url);
+
+    let res = client
+        .post(endpoint)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    
+    // 增加一个简单的错误检查
+    if let Some(err) = val.get("error") {
+        return Err(err.get("message").and_then(|m| m.as_str()).unwrap_or("API Error").to_string());
+    }
+
+    let summary = val["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("无法生成总结")
+        .to_string();
+
+    Ok(summary)
+}

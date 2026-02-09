@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal } from 'solid-js';
+import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
 import { Assistant, Topic, datas, setDatas, currentTopicId, setCurrentTopicId, saveSingleAssistantToBackend } from '../store/store';
 import './TopicSidebar.css';
 
@@ -16,6 +16,17 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);
     const [topicMenuState, setTopicMenuState] = createSignal({ isOpen: false, x: 0, y: 0, targetTopicId: null as string | null });
 
+
+    onMount(() => {
+        const handleTopicClickOutside = () => {
+            if (topicMenuState().isOpen) {
+                closeTopicMenu();
+            }
+        };
+        window.addEventListener('click', handleTopicClickOutside);
+        onCleanup(() => window.removeEventListener('click', handleTopicClickOutside));
+    });
+    
     const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
         if (!newName.trim()) return props.setEditingTopicId(null);
         setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'name', newName);

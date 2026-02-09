@@ -27,6 +27,7 @@ import {
   ActivatedModel, globalUserAvatar, setGlobalUserAvatar, loadAvatarFromPath
 } from '../store/store';
 import PromptModal from '../pages/PromptModal';
+import LoginModal from './LoginModal';
 import './NavBar.css';
 
 /** 
@@ -56,6 +57,7 @@ const NavBar: Component<NavBarProps> = () => {
   const [tempImage, setTempImage] = createSignal<string | null>(null);
   const onlineModels = () => datas.activatedModels.filter(m => m.owned_by !== "Local-Llama.cpp");
   const localModels = () => datas.activatedModels.filter(m => m.owned_by === "Local-Llama.cpp");
+  const [isLoginModalOpen, setIsLoginModalOpen] = createSignal(false);
   // 根据后缀判断 MIME 类型（简单版）
   const getMimeType = (path: string) => {
     const ext = path.split('.').pop()?.toLowerCase();
@@ -67,6 +69,11 @@ const NavBar: Component<NavBarProps> = () => {
       case 'svg': return 'image/svg+xml';
       default: return 'application/octet-stream';
     }
+  };
+
+  const handleLoginSuccess = (user: any) => {
+    console.log("登录成功:", user);
+    // 这里可以更新全局状态存储用户 Token
   };
 
   const handleEditAvatar = async () => {
@@ -391,7 +398,11 @@ const NavBar: Component<NavBarProps> = () => {
               </svg>
               更换头像
             </div>
-            <div class="user-dropdown-item login-disabled" title="暂未开放">
+            <div class="user-dropdown-item"
+              onClick={() => {
+                setIsLoginModalOpen(true);
+                setUserMenuVisible(false);
+              }}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
               </svg>
@@ -518,6 +529,12 @@ const NavBar: Component<NavBarProps> = () => {
         onClose={() => setIsModalOpen(false)}
         onSave={handleSavePrompt}
         initialPrompt={modalPrompt()}
+      />
+      {/* 登录模态框 */}
+      <LoginModal 
+        show={isLoginModalOpen()} 
+        onClose={() => setIsLoginModalOpen(false)}
+        onSuccess={handleLoginSuccess}
       />
     </>
   );

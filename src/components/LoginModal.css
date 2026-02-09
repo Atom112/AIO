@@ -1,0 +1,136 @@
+/* 遮罩层 */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+    backdrop-filter: blur(4px);
+}
+
+/* 弹窗主体 */
+.login-modal-content {
+    background-color: #1e1e1e;
+    width: 360px;
+    border: 1px solid #08ddf9;
+    /* 统一的青色边框 */
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 0 20px rgba(8, 221, 249, 0.2);
+    color: #e0e0e0;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #08ddf9;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 24px;
+    cursor: pointer;
+}
+
+.login-form .input-group {
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.input-group label {
+    font-size: 13px;
+    color: #888;
+}
+
+.input-group input {
+    background-color: #252525;
+    border: 1px solid #333;
+    padding: 10px;
+    border-radius: 6px;
+    color: white;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.input-group input:focus {
+    border-color: #08ddf9;
+}
+
+.login-submit-btn {
+    width: 100%;
+    padding: 12px;
+    background-color: rgba(8, 221, 249, 0.15);
+    border: 1px solid #08ddf9;
+    color: #08ddf9;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+    margin-top: 10px;
+    transition: all 0.2s;
+}
+
+.login-submit-btn:hover {
+    background-color: #08ddf9;
+    color: #1e1e1e;
+}
+
+.modal-footer {
+    margin-top: 20px;
+    text-align: center;
+    font-size: 12px;
+    color: #888;
+}
+
+.modal-footer a {
+    color: #08ddf9;
+    text-decoration: none;
+}
+
+.error-msg {
+    color: #ff4d4f;
+    font-size: 12px;
+    margin-bottom: 12px;
+    background: #fff2f0;
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid #ffccc7;
+}
+
+.modal-footer {
+    margin-top: 20px;
+    text-align: center;
+    font-size: 13px;
+    color: #666;
+}
+
+.modal-footer a {
+    color: #1890ff;
+    text-decoration: none;
+    margin-left: 5px;
+}
+
+.modal-footer a:hover {
+    text-decoration: underline;
+}
+
+/* 简单的过渡效果 */
+.login-modal-content {
+    transition: all 0.3s ease;
+    min-height: 400px; /* 注册时高度会稍微撑开 */
+}

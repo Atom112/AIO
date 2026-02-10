@@ -5,6 +5,24 @@
 本项目的所有显著更新将记录在此文件中。
 
 ---
+## [v0.3.0-Beta]
+<sup>Released on **2026-02-10**</sup>
+
+### 🐛 Fixed（修复）
+- 修复了首次打开应用时话题未选中的问题
+
+### ✨ Added（新增）
+- 初步实现了登录相关功能，但所有涉及后端与登录相关内容都处于试验状态
+
+### ⚡️ Changed（变更）
+- 优化了聊天上下文处理逻辑，重构了设置界面
+
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.3.0-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.3.0
+
+---
 
 ## [v0.2.13-Beta]
 <sup>Released on **2026-02-01**</sup>

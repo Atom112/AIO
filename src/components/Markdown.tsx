@@ -128,7 +128,7 @@ const Markdown: Component<MarkdownProps> = (props) => {
         const codeElement = btn.parentElement?.querySelector('pre code');
         if (codeElement) {
             const textToCopy = (codeElement as HTMLElement).innerText;
-            
+
             // 使用现代剪贴板 API
             navigator.clipboard.writeText(textToCopy).then(() => {
                 const span = btn.querySelector('span');
@@ -137,7 +137,7 @@ const Markdown: Component<MarkdownProps> = (props) => {
                     // 反馈状态 UI
                     span.innerText = '已复制!';
                     btn.classList.add('copied');
-                    
+
                     // 2秒后恢复原始状态
                     setTimeout(() => {
                         span.innerText = oldText;
@@ -151,10 +151,10 @@ const Markdown: Component<MarkdownProps> = (props) => {
     };
 
     return (
-        <div 
-            class="markdown-body" 
-            innerHTML={htmlContent()} 
-            onClick={handleCopy} 
+        <div
+            class="markdown-body"
+            innerHTML={htmlContent()}
+            onClick={handleCopy}
         />
     );
 };

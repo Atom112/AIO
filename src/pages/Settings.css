@@ -76,7 +76,8 @@
 }
 
 .models-list-panel {
-    flex: 1; /* 占据剩余空间 */
+    flex: 1;
+    /* 占据剩余空间 */
     border: 1px solid #08ddf9;
     border-radius: 12px;
     background: rgba(8, 221, 249, 0.02);
@@ -123,13 +124,15 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;;
+    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
+    ;
 }
 
 .model-id {
     color: #eee;
     font-weight: 500;
-    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;;
+    font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
+    ;
 }
 
 .model-provider {
@@ -198,7 +201,8 @@
     border: 1px solid #333;
     color: white;
     padding: 8px 12px;
-    border-radius: 6px; /* 统一圆角 */
+    border-radius: 6px;
+    /* 统一圆角 */
     outline: none;
     font-size: 13px;
     transition: all 0.3s;
@@ -213,13 +217,14 @@
     flex: 1;
     background-color: #1a1a1d;
     border: 1px solid #333;
-    padding: 8px 32px 8px 12px; /* 右侧留出空间给自定义箭头 */
+    padding: 8px 32px 8px 12px;
+    /* 右侧留出空间给自定义箭头 */
     border-radius: 6px;
     outline: none;
     cursor: pointer;
     font-size: 13px;
     transition: all 0.3s ease;
-    
+
     /* 核心：重置原生外观 */
     -webkit-appearance: none;
     -moz-appearance: none;
@@ -286,13 +291,16 @@
 .models-scroll-area::-webkit-scrollbar {
     width: 6px;
 }
+
 .models-scroll-area::-webkit-scrollbar-track {
     background: transparent;
 }
+
 .models-scroll-area::-webkit-scrollbar-thumb {
     background: #333;
     border-radius: 10px;
 }
+
 .models-scroll-area::-webkit-scrollbar-thumb:hover {
     background: #08ddf9;
 }
@@ -319,7 +327,8 @@
     transition: all 0.3s;
 }
 
-.custom-select-trigger:hover, .custom-select-trigger.open {
+.custom-select-trigger:hover,
+.custom-select-trigger.open {
     border-color: #08ddf9;
     box-shadow: 0 0 10px rgba(8, 221, 249, 0.1);
 }
@@ -328,6 +337,7 @@
     font-size: 10px;
     transition: transform 0.3s;
 }
+
 .custom-select-trigger.open .arrow-icon {
     transform: rotate(180deg);
 }
@@ -339,18 +349,26 @@
     left: 0;
     right: 0;
     background: #1a1a1d;
-    border: 1px solid #08ddf9; /* 霓虹边框 */
+    border: 1px solid #08ddf9;
+    /* 霓虹边框 */
     border-radius: 8px;
     z-index: 100;
     max-height: 250px;
     overflow-y: auto;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
     animation: fadeIn 0.2s ease-out;
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 /* 列表单项 */
@@ -377,10 +395,12 @@
 .custom-select-dropdown::-webkit-scrollbar {
     width: 5px;
 }
+
 .custom-select-dropdown::-webkit-scrollbar-thumb {
     background: #08ddf9;
     border-radius: 10px;
 }
+
 .custom-select-dropdown::-webkit-scrollbar-track {
     background: #1a1a1d;
 }
@@ -425,12 +445,12 @@
     border-radius: 50%;
 }
 
-input:checked + .slider {
+input:checked+.slider {
     background-color: #08ddf9;
     border-color: #08ddf9;
 }
 
-input:checked + .slider:before {
+input:checked+.slider:before {
     transform: translateX(20px);
 }
 
@@ -444,10 +464,12 @@ input:checked + .slider:before {
     cursor: pointer;
     font-size: 11px;
 }
+
 .remove-act-btn:hover {
     background: #ff4444;
     color: white;
 }
+
 .select-file-button {
     background: #08ddf9;
     color: black;
@@ -459,44 +481,58 @@ input:checked + .slider:before {
     transition: opacity 0.2s;
 }
 
-.select-file-button:hover{
+.select-file-button:hover {
     opacity: 0.8;
 }
 
 .model-card {
     display: flex;
-    align-items: center; /* 垂直居中 */
-    gap: 12px;           /* 图标与文字的间距 */
-    padding: 10px;
-        display: flex;
     align-items: center;
-    gap: 15px;                 /* 增加 Logo 和文字之间的间距 */
+    /* 垂直居中 */
+    gap: 12px;
+    /* 图标与文字的间距 */
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    /* 增加 Logo 和文字之间的间距 */
     padding: 12px;
 }
 
 .model-item-logo {
-        width: 20px;               /* 图标比容器小一点，留下边距 */
+    width: 20px;
+    /* 图标比容器小一点，留下边距 */
     height: 20px;
-    object-fit: contain;  
+    object-fit: contain;
 }
 
 .model-info {
-    flex-grow: 1;        /* 让文字占据剩余空间 */
+    flex-grow: 1;
+    /* 让文字占据剩余空间 */
     display: flex;
     flex-direction: column;
 }
 
 /* Logo 外层的圆形容器 */
 .model-logo-container {
-    width: 32px;               /* 容器大小 */
+    width: 32px;
+    /* 容器大小 */
     height: 32px;
-    background-color: rgba(230, 230, 230, 1); /* 纯白背景，确保深色图标可见 */
-    border-radius: 50%;        /* 完美圆形 */
+    background-color: rgba(230, 230, 230, 1);
+    /* 纯白背景，确保深色图标可见 */
+    border-radius: 50%;
+    /* 完美圆形 */
     display: flex;
-    align-items: center;       /* 垂直居中 */
-    justify-content: center;   /* 水平居中 */
-    flex-shrink: 0;            /* 防止在窄屏下被挤压 */
-    box-shadow: 0 0 8px rgba(0, 0, 0, 0.2); /* 增加一点立体感 */
-    overflow: hidden;          /* 如果图片超出则隐藏 */
-    border: 1px solid rgba(8, 221, 249, 0.2); /* 可选：带一点你主题色的边框 */
+    align-items: center;
+    /* 垂直居中 */
+    justify-content: center;
+    /* 水平居中 */
+    flex-shrink: 0;
+    /* 防止在窄屏下被挤压 */
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
+    /* 增加一点立体感 */
+    overflow: hidden;
+    /* 如果图片超出则隐藏 */
+    border: 1px solid rgba(8, 221, 249, 0.2);
+    /* 可选：带一点你主题色的边框 */
 }

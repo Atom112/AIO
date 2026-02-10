@@ -1,5 +1,5 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
-import { Assistant, datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile } from '../store/store';
+import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile } from '../store/store';
 import './AssistantSidebar.css';
 
 interface AssistantSidebarProps {

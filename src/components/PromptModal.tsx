@@ -29,6 +29,15 @@ const PromptModal: Component<PromptModalProps> = (props) => {
    */
   const [promptText, setPromptText] = createSignal<string>('');
 
+  const [isExiting, setIsExiting] = createSignal(false);
+
+  const handleClose = () => {
+    setIsExiting(true);
+    setTimeout(() => {
+      setIsExiting(false);
+      props.onClose();
+    }, 200);
+  };
   /**
    * 监听模态框显示状态
    * 每当浮窗打开（props.show 变为 true）时，同步父组件传入的初始提示词
@@ -47,33 +56,27 @@ const PromptModal: Component<PromptModalProps> = (props) => {
     if (props.onSave) {
       props.onSave(promptText());
     }
-    props.onClose();
+    handleClose();
   };
 
-  /**
-   * 处理点击遮罩层逻辑
-   * 仅当直接点击背景（非内容区域）时关闭窗口
-   * 
-   * @param e 事件对象
-   */
-  const handleBackdropClick = (e: Event) => {
-    if (e.currentTarget === e.target) {
-      props.onClose();
-    }
-  };
 
   return (
     <Show when={props.show}>
       {/* 遮罩背景 */}
-      <div class="modal-backdrop" onClick={handleBackdropClick}>
-        
-        {/* 模态框主体内容 */}
-        <div class="modal-content">
-          
+      <div
+        classList={{ "modal-backdrop": true, "overlay-out": isExiting() }}
+        class="overlay-in"
+        onClick={(e) => e.target === e.currentTarget && handleClose()}
+      >
+        <div
+          classList={{ "modal-content": true, "animate-out": isExiting() }}
+          class="animate-in"
+        >
+
           {/* 头部：标题与关闭按钮 */}
           <div class="modal-header">
             <h2>设置当前模型提示词</h2>
-            <button onClick={props.onClose} class="close-button">&times;</button>
+            <button onClick={handleClose} class="close-button">&times;</button>
           </div>
 
           {/* 内容区：文本输入域 */}
@@ -88,11 +91,12 @@ const PromptModal: Component<PromptModalProps> = (props) => {
 
           {/* 底部：操作按钮 */}
           <div class="modal-footer">
-            <button onClick={props.onClose} class="btn-cancel">取消</button>
+            <button onClick={handleClose} class="btn-cancel">取消</button>
             <button onClick={handleSave} class="btn-save">保存</button>
           </div>
 
         </div>
+
       </div>
     </Show>
   );

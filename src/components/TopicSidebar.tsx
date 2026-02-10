@@ -26,7 +26,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         window.addEventListener('click', handleTopicClickOutside);
         onCleanup(() => window.removeEventListener('click', handleTopicClickOutside));
     });
-    
+
     const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
         if (!newName.trim()) return props.setEditingTopicId(null);
         setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'name', newName);

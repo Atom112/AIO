@@ -77,7 +77,8 @@
   /* 允许用户垂直调整大小 */
   box-sizing: border-box;
 
-  font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;;
+  font-family: "JetBrains Mono", "Consolas", "Monaco", "Courier New", monospace !important;
+  ;
 }
 
 .modal-body textarea:focus {

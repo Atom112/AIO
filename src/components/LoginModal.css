@@ -7,6 +7,7 @@
     bottom: 0;
     background-color: rgba(0, 0, 0, 0.7);
     display: flex;
+    border-radius: 8px;
     justify-content: center;
     align-items: center;
     z-index: 2000;
@@ -19,7 +20,7 @@
     width: 360px;
     border: 1px solid #08ddf9;
     /* 统一的青色边框 */
-    border-radius: 12px;
+    border-radius: 8px;
     padding: 24px;
     box-shadow: 0 0 20px rgba(8, 221, 249, 0.2);
     color: #e0e0e0;
@@ -132,13 +133,17 @@
 /* 简单的过渡效果 */
 .login-modal-content {
     transition: all 0.3s ease;
-    min-height: 400px; /* 注册时高度会稍微撑开 */
+    min-height: 400px;
+    /* 注册时高度会稍微撑开 */
 }
 
 /* --- 成功覆盖层样式 --- */
 .success-overlay {
     position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     background: rgba(30, 30, 30, 0.95);
     display: flex;
     flex-direction: column;
@@ -187,8 +192,21 @@
     animation: stroke 0.2s cubic-bezier(0.65, 0, 0.45, 1) 0.4s forwards;
 }
 
-@keyframes stroke { 100% { stroke-dashoffset: 0; } }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes stroke {
+    100% {
+        stroke-dashoffset: 0;
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
 
 /* 分割线 */
 .user-dropdown-divider {
@@ -200,7 +218,10 @@
 /* 成功覆盖层：基础样式 */
 .success-overlay {
     position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     background: rgba(30, 30, 30, 0.98);
     display: flex;
     flex-direction: column;
@@ -223,23 +244,25 @@
 
 /* 进场：从 0 到 1 */
 @keyframes fadeIn {
-    from { 
-        opacity: 0; 
+    from {
+        opacity: 0;
         backdrop-filter: blur(0px);
     }
-    to { 
-        opacity: 1; 
+
+    to {
+        opacity: 1;
         backdrop-filter: blur(4px);
     }
 }
 
 /* 出场：从 1 到 0 (新增项目) */
 @keyframes fadeOut {
-    from { 
-        opacity: 1; 
+    from {
+        opacity: 1;
     }
-    to { 
-        opacity: 0; 
+
+    to {
+        opacity: 0;
     }
 }
 

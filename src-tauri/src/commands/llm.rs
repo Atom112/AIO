@@ -203,7 +203,7 @@ pub async fn summarize_history(
     messages: Vec<Message>,
 ) -> Result<String, String> {
     let client = reqwest::Client::new();
-    
+
     let mut messages_for_api: Vec<serde_json::Value> = messages
         .iter()
         .map(|m| json!({ "role": m.role, "content": m.content }))
@@ -221,7 +221,9 @@ pub async fn summarize_history(
     });
 
     // --- 修复后的 URL 拼接逻辑 ---
-    let base_url = api_url.trim_end_matches('/').replace("/chat/completions", "");
+    let base_url = api_url
+        .trim_end_matches('/')
+        .replace("/chat/completions", "");
     let endpoint = format!("{}/chat/completions", base_url);
 
     let res = client
@@ -233,10 +235,14 @@ pub async fn summarize_history(
         .map_err(|e| e.to_string())?;
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    
+
     // 增加一个简单的错误检查
     if let Some(err) = val.get("error") {
-        return Err(err.get("message").and_then(|m| m.as_str()).unwrap_or("API Error").to_string());
+        return Err(err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("API Error")
+            .to_string());
     }
 
     let summary = val["choices"][0]["message"]["content"]

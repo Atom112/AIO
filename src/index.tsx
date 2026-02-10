@@ -21,25 +21,25 @@ render(
   () => (
     // 当 lazy 加载组件时，显示 fallback 内容
     <Suspense fallback={<div class="loading-container">Loading...</div>}>
-      
+
       {/* 
           Router 容器 
           root={Layout} 表示所有子路由都会被包裹在 Layout 组件内渲染
       */}
       <Router root={Layout}>
-        
+
         {/* 根路径重定向：访问 "/" 时自动跳转到 "/chat" */}
         <Route path="/" component={() => <Navigate href="/chat" />} />
-        
+
         {/* 
             聊天页面路由
             使用 lazy 进行代码分割，只有进入该路径时才会加载对应的 JS 文件
         */}
         <Route path="/chat" component={lazy(() => import("./pages/Chat.tsx"))} />
-        
+
         {/* 设置页面路由 */}
         <Route path="/settings" component={lazy(() => import("./pages/Settings.tsx"))} />
-        
+
       </Router>
     </Suspense>
   ),

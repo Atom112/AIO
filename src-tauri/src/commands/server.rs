@@ -1,9 +1,9 @@
 use crate::LocalLlamaState;
-use tokio::time::{sleep, Duration};
 use std::io::{BufRead, BufReader};
 use tauri::path::BaseDirectory;
 use tauri::Manager;
 use tokio::task;
+use tokio::time::{sleep, Duration};
 
 // 仅在 Windows 系统下导入，用于隐藏控制台窗口
 #[cfg(target_os = "windows")]
@@ -21,8 +21,11 @@ pub async fn start_local_server(
     port: u16,
     gpu_layers: i32,
 ) -> Result<String, String> {
-    println!("[DEBUG] 启动参数 - 模型: {}, 端口: {}, GPU层数: {}", model_path, port, gpu_layers);
-    
+    println!(
+        "[DEBUG] 启动参数 - 模型: {}, 端口: {}, GPU层数: {}",
+        model_path, port, gpu_layers
+    );
+
     // 1. 参数验证
     if gpu_layers <= 0 {
         return Err("GPU 层数必须大于 0，建议设置为 99 或 999".to_string());
@@ -30,7 +33,7 @@ pub async fn start_local_server(
 
     // 2. 启动前清理：如果已经有一个正在运行的服务器，先关闭它
     stop_local_server(state.clone()).await?;
-    
+
     // 给操作系统一点时间释放端口
     sleep(Duration::from_millis(500)).await;
 
@@ -56,13 +59,18 @@ pub async fn start_local_server(
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.current_dir(&resource_dir) // 设置执行目录
         .args([
-            "-m", &model_path,                // 模型路径
-            "--port", &port.to_string(),      // 监听端口
-            "-ngl", &gpu_layers.to_string(),  // GPU 层数
-            "-c", "4096",                     // 上下文窗口大小
-            "--host", "127.0.0.1",            // 仅监听本地地址
+            "-m",
+            &model_path, // 模型路径
+            "--port",
+            &port.to_string(), // 监听端口
+            "-ngl",
+            &gpu_layers.to_string(), // GPU 层数
+            "-c",
+            "4096", // 上下文窗口大小
+            "--host",
+            "127.0.0.1", // 仅监听本地地址
         ])
-        .stdout(std::process::Stdio::piped())  // 捕获标准输出
+        .stdout(std::process::Stdio::piped()) // 捕获标准输出
         .stderr(std::process::Stdio::piped()); // 捕获标准错误（llama.cpp 默认将日志输出到 stderr）
 
     // 5. Windows 平台特殊处理：隐藏黑色控制台窗口
@@ -80,7 +88,7 @@ pub async fn start_local_server(
             if let Ok(line) = line {
                 // 将本地模型的日志打印到后端控制台，方便调试
                 println!("[llama-server] {}", line);
-                
+
                 // 关键词监控：可以根据日志输出判断 GPU 是否挂载成功
                 if line.contains("offloaded") {
                     println!("GPU 卸载状态: {}", line);
@@ -108,8 +116,13 @@ pub async fn start_local_server(
     // 9. 健康检查：通过 HTTP 请求确认服务真正可用
     let client = reqwest::Client::new();
     let health_url = format!("http://127.0.0.1:{}/health", port);
-    
-    match client.get(&health_url).timeout(Duration::from_secs(5)).send().await {
+
+    match client
+        .get(&health_url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
         Ok(_) => println!("健康检查通过"),
         Err(_) => {
             let _ = child.kill(); // 如果访问不到健康接口，杀掉进程

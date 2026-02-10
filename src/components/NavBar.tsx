@@ -27,7 +27,7 @@ import {
   ActivatedModel, globalUserAvatar, setGlobalUserAvatar, loadAvatarFromPath,
   logout
 } from '../store/store';
-import PromptModal from '../pages/PromptModal';
+import PromptModal from './PromptModal';
 import LoginModal from './LoginModal';
 import './NavBar.css';
 
@@ -103,29 +103,28 @@ const NavBar: Component<NavBarProps> = () => {
 
   const onCropSave = async (croppedDataUrl: string) => {
     try {
-      // 1. 调用 Rust 保存裁剪后的图片到本地应用文件夹
+      // A. 依然在本地保存一份文件，用于离线显示或 Rust 后端引用
       const savedPath = await invoke<string>('upload_avatar', {
         dataUrl: croppedDataUrl
       });
 
-      // 2. 刷新全局 UI 显示
-      const blobUrl = await loadAvatarFromPath(savedPath);
-      setGlobalUserAvatar(blobUrl);
+      // B. 更新全局 UI 显示（Base64 可以直接预览）
+      setGlobalUserAvatar(croppedDataUrl);
 
-      // 3. --- 新增：如果已登录，同步该路径到后端数据库 ---
+      // C. 如果已登录，同步 Base64 字符串到后端数据库
       if (datas.isLoggedIn && datas.user?.token) {
         try {
           await invoke('sync_avatar_to_backend', {
             token: datas.user.token,
-            avatarUrl: savedPath // 发送的是持久化的本地绝对路径
+            avatarData: croppedDataUrl //  croppedDataUrl (Base64)
           });
-          console.log("头像路径同步至后端成功");
+          console.log("头像 Base64 同步至后端成功");
         } catch (err) {
           console.error("同步后端失败:", err);
         }
       }
 
-      // 4. 持久化本地缓存
+      // D. 持久化本地路径缓存（作为兜底）
       localStorage.setItem('user-avatar-path', savedPath);
       setTempImage(null);
       setUserMenuVisible(false);
@@ -340,12 +339,16 @@ const NavBar: Component<NavBarProps> = () => {
         setDatas('user', userData);
         setDatas('isLoggedIn', true);
 
-        // --- 核心：如果后端存了头像路径，优先使用后端的 ---
+        // --- 核心：处理后端传回的头像数据 ---
         if (userData.avatar) {
-          const url = await loadAvatarFromPath(userData.avatar);
-          setGlobalUserAvatar(url);
-          // 同步更新本地缓存，确保离线时也能用最新的
-          localStorage.setItem('user-avatar-path', userData.avatar);
+          // 如果是以 data:image 开头的，说明是 Base64，直接展示
+          if (userData.avatar.startsWith('data:image')) {
+            setGlobalUserAvatar(userData.avatar);
+          } else {
+            // 否则视为老版本的本地路径，进行转换
+            const url = await loadAvatarFromPath(userData.avatar);
+            setGlobalUserAvatar(url);
+          }
         }
       } catch (err) {
         console.warn("身份过期:", err);

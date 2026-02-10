@@ -119,28 +119,33 @@
 }
 
 .dropdown-menu {
-visibility: hidden;
+  visibility: hidden;
   opacity: 0;
   position: absolute;
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
   margin-top: 8px;
-  background-color: #1e1e1e; /* 统一背景色 */
-  min-width: 480px; /* 宽度增加以容纳两列 */
+  background-color: #1e1e1e;
+  /* 统一背景色 */
+  min-width: 480px;
+  /* 宽度增加以容纳两列 */
   border: 1px solid #333;
   border-radius: 12px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
   z-index: 1000;
   transition: all 0.2s ease-in-out;
-  padding: 0; /* 内部由列容器控制内边距 */
-  overflow: hidden; /* 裁剪圆角 */
+  padding: 0;
+  /* 内部由列容器控制内边距 */
+  overflow: hidden;
+  /* 裁剪圆角 */
 }
 
 .dropdown-columns-container {
   display: flex;
   flex-direction: row;
-  height: 400px; /* 给一个固定或最大高度 */
+  height: 400px;
+  /* 给一个固定或最大高度 */
 }
 
 .dropdown-column {
@@ -160,14 +165,17 @@ visibility: hidden;
   background-color: #252525;
   border-bottom: 1px solid #333;
 }
+
 .column-content {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
 }
+
 .column-content::-webkit-scrollbar {
   width: 4px;
 }
+
 .column-content::-webkit-scrollbar-thumb {
   background: #444;
   border-radius: 2px;
@@ -213,8 +221,10 @@ visibility: hidden;
   user-select: none;
   transition: background-color 0.2s, color 0.2s;
 }
+
 .model-id-text {
-  max-width: 160px; /* 限制宽度防止溢出 */
+  max-width: 160px;
+  /* 限制宽度防止溢出 */
 }
 
 
@@ -463,19 +473,22 @@ visibility: hidden;
 
 /* 退出登录项的特殊样式 */
 .user-dropdown-item.logout-item {
-    color: #ff4d4f; /* 浅红色，暗示警告/退出操作 */
-    opacity: 0.9;
+  color: #ff4d4f;
+  /* 浅红色，暗示警告/退出操作 */
+  opacity: 0.9;
 }
 
 .user-dropdown-item.logout-item:hover {
-    background-color: rgba(255, 77, 79, 0.15); /* 红色半透明背景 */
-    color: #ff7875;
+  background-color: rgba(255, 77, 79, 0.15);
+  /* 红色半透明背景 */
+  color: #ff7875;
 }
 
 /* 确保间隔线足够清晰 */
 .user-dropdown-divider {
-    height: 1px;
-    background: #333; /* 或者使用带有青色透明度的背景 */
-    margin: 6px 8px;
-    opacity: 0.6;
+  height: 1px;
+  background: #333;
+  /* 或者使用带有青色透明度的背景 */
+  margin: 6px 8px;
+  opacity: 0.6;
 }

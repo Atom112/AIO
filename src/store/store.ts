@@ -83,15 +83,27 @@ export interface User {
 
 export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/user.svg');
 
-export const loadAvatarFromPath = async (path: string): Promise<string> => {
+/**
+ * 智能加载头像：支持 Base64 或 物理路径
+ * @param input 可能是 Base64 字符串，也可能是文件路径
+ */
+export const loadAvatarFromPath = async (input: string): Promise<string> => {
+    if (!input) return '/icons/user.svg';
+
+    // 1. 如果输入本身就是 Base64 (data:image/...)，直接返回用于 <img> 标签
+    if (input.startsWith('data:image')) {
+        return input;
+    }
+
+    // 2. 否则视为本地绝对路径，尝试从磁盘读取 (兼容旧数据/本地存储)
     try {
-        const contents = await readFile(path);
-        const ext = path.split('.').pop()?.toLowerCase();
+        const contents = await readFile(input);
+        const ext = input.split('.').pop()?.toLowerCase();
         const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
         const blob = new Blob([contents], { type: mime });
         return URL.createObjectURL(blob);
     } catch (e) {
-        console.error("加载头像失败:", e);
+        console.error("从物理路径加载头像失败:", e, "路径:", input);
         return '/icons/user.svg';
     }
 };
@@ -105,7 +117,7 @@ export const loadAvatarFromPath = async (path: string): Promise<string> => {
 export const [datas, setDatas] = createStore({
     assistants: [] as any[],
     activatedModels: [] as ActivatedModel[],
-    user: null as User | null, 
+    user: null as User | null,
     isLoggedIn: false
 });
 
@@ -202,5 +214,5 @@ export const logout = () => {
     setDatas('isLoggedIn', false);
     localStorage.removeItem('auth-token');
     // 可选：重置头像到默认
-    setGlobalUserAvatar('/icons/user.svg'); 
+    setGlobalUserAvatar('/icons/user.svg');
 };

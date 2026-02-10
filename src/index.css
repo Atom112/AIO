@@ -47,3 +47,68 @@ body {
   transform: translateX(-20px);
   z-index: 1;
 }
+
+/* 进入效果：从小到大并淡入 */
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 退出效果：从大到小并淡出 */
+@keyframes modal-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+}
+
+/* 遮罩层淡入 */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* 遮罩层淡出 */
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+/* 应用类 */
+.animate-in {
+  animation: modal-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-out {
+  animation: modal-out 0.25s ease-in forwards;
+}
+
+.overlay-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+.overlay-out {
+  animation: fade-out 0.25s ease-in forwards;
+}

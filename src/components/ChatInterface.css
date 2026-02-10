@@ -275,7 +275,6 @@
     margin-top: 4px;
 }
 
-/* Typing Indicator */
 .typing::after {
     animation: cursor-blink 0.8s infinite;
     color: #08ddf9;
@@ -284,7 +283,6 @@
     margin-left: 2px;
 }
 
-/* Avatar */
 .chat-avatar-container {
     align-items: center;
     background-color: #dfdfdf;

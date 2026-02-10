@@ -1,6 +1,5 @@
 import { createSignal, Component, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { setDatas } from '../store/store';
 import './LoginModal.css';
 
 interface LoginModalProps {

@@ -1,0 +1,21 @@
+/* 账号页专用样式 */
+.tab-content-simple .placeholder-card h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* 如果有针对退出登录按钮的特殊颜色 */
+.tab-content-simple button.save-settings-button {
+    background-color: rgba(255, 68, 68, 0.1);
+    border: 1px solid #ff4444;
+    color: #ff4444;
+}
+
+.tab-content-simple button.save-settings-button:hover {
+    background-color: #ff4444;
+    color: white;
+}

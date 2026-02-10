@@ -1,6 +1,6 @@
 // src/components/AvatarCropModel.tsx
 
-import { Component, onMount, createSignal, onCleanup } from 'solid-js';
+import { Component, createSignal, onCleanup } from 'solid-js';
 import Cropper from 'cropperjs';
 import 'cropperjs/dist/cropper.css';
 import './AvatarCropModel.css';
@@ -12,33 +12,34 @@ interface AvatarCropModalProps {
 }
 
 const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
+
     let imageElement: HTMLImageElement | undefined;
     let previewElement: HTMLDivElement | undefined;
     let cropper: Cropper | null = null;
+
     const [zoomValue, setZoomValue] = createSignal(1);
-
-
     const [isExiting, setIsExiting] = createSignal(false);
 
-    const handleClose = () => {
+    const triggerExit = (callback: () => void) => {
         setIsExiting(true);
         setTimeout(() => {
             setIsExiting(false);
-            props.onCancel();
-        }, 250);
+            callback(); // 动画结束后执行业务逻辑
+        }, 250); // 这里的 250ms 应与 CSS 中的动画时间一致
     };
 
 
-    // --- 核心修复：定义初始化函数 ---
+    const handleClose = () => {
+        triggerExit(props.onCancel);
+    };
+
     const initCropper = () => {
         if (!imageElement) return;
 
-        // 如果已经存在之前的实例，先销毁（防止重复初始化）
         if (cropper) {
             cropper.destroy();
         }
 
-        // 确保图片加载完成后再初始化，Cropper 需要图片的真实宽高
         cropper = new Cropper(imageElement, {
             aspectRatio: 1,
             viewMode: 1,
@@ -68,9 +69,12 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                 imageSmoothingEnabled: true,
                 imageSmoothingQuality: 'high',
             });
-            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
 
-            props.onSave(compressedBase64);
+            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
+            triggerExit(() => {
+                props.onSave(compressedBase64);
+            });
+
         }
     };
 
@@ -87,12 +91,6 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
                 <div class="crop-main-area">
                     <div class="cropper-wrapper">
-                        {/* 
-                            关键：
-                            1. 增加 onLoad 事件，确保图片加载后再初始化 Cropper
-                            2. 增加 crossOrigin 属性，避免 Canvas 跨域污染
-                            3. 加入 display: block 确保 Cropper 工作正常
-                        */}
                         <img
                             ref={imageElement}
                             src={props.imageSrc}

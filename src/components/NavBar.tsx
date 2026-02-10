@@ -53,7 +53,6 @@ const NavBar: Component<NavBarProps> = () => {
   const [isDropdownVisible, setDropdownVisible] = createSignal<boolean>(false);
   /** 跟踪窗口是否处于最大化状态，用于切换图标 */
   const [isMaximized, setIsMaximized] = createSignal<boolean>(false);
-  const [userAvatar, setUserAvatar] = createSignal('/icons/user.svg');
   const [isUserMenuVisible, setUserMenuVisible] = createSignal(false);
   const [tempImage, setTempImage] = createSignal<string | null>(null);
   const onlineModels = () => datas.activatedModels.filter(m => m.owned_by !== "Local-Llama.cpp");

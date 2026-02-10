@@ -1,0 +1,181 @@
+.tab-content-provider {
+    display: flex;
+    gap: 15px;
+    height: 100%;
+}
+
+.settings-container {
+    width: 22%;
+    padding: 20px;
+    border: 1px solid #08ddf9;
+    border-radius: 12px;
+    background: rgba(8, 221, 249, 0.05);
+}
+
+.settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* 模型列表面板 */
+.models-list-panel {
+    flex: 1;
+    border: 1px solid #08ddf9;
+    border-radius: 12px;
+    background: rgba(8, 221, 249, 0.02);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.models-header-complex {
+    padding: 20px;
+    border-bottom: 1px solid rgba(8, 221, 249, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    background: rgba(8, 221, 249, 0.03);
+}
+
+.models-tools-row {
+    display: flex;
+    gap: 12px;
+}
+
+.models-search-input {
+    flex: 2;
+    background: #1a1a1d;
+    border: 1px solid #333;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    outline: none;
+    font-size: 13px;
+}
+
+.models-search-input:focus { border-color: #08ddf9; }
+
+/* 模型卡片样式 */
+.model-card {
+    border-left: 3px solid #08ddf9;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    transition: all 0.2s;
+
+}
+
+.model-card:hover { background: rgba(8, 221, 249, 0.2); }
+
+.model-card.activated { border-left: 3px solid #00ff88; }
+
+.model-logo-container {
+    width: 32px;
+    height: 32px;
+    background-color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: 1px solid rgba(8, 221, 249, 0.2);
+}
+
+.model-item-logo { width: 20px; height: 20px; object-fit: contain; }
+
+.model-info {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    font-family: "JetBrains Mono", monospace;
+}
+
+.model-id { color: #eee; font-weight: 500; }
+.model-provider { color: #666; font-size: 12px; }
+
+/* 自定义下拉框 */
+.custom-select-container { position: relative; flex: 1; min-width: 140px; }
+.custom-select-trigger {
+    background: #1a1a1d;
+    border: 1px solid #333;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.custom-select-dropdown {
+    position: absolute;
+    top: calc(100% + 5px);
+    left: 0; right: 0;
+    background: #1a1a1d;
+    border: 1px solid #08ddf9;
+    border-radius: 8px;
+    z-index: 100;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.custom-select-item { padding: 10px; color: #eee; cursor: pointer; font-size: 13px; }
+.custom-select-item:hover { background: rgba(8, 221, 249, 0.15); color: #08ddf9; }
+
+/* 按钮与状态 */
+.query-models-button {
+    background: transparent;
+    border: 1px solid #08ddf9;
+    padding: 10px;
+    border-radius: 6px;
+    color: #eee;
+    cursor: pointer;
+}
+
+.remove-act-btn {
+    border: 1px solid #ff4444;
+    background: transparent;
+    color: #ff4444;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;    /* 强制文字在一行显示，不换行 */
+    flex-shrink: 0;    
+}
+
+.select-file-button {
+    background: #08ddf9;
+    color: black;
+    border: none;
+    padding: 8px 12px;
+    font-weight: bold;
+    border-radius: 6px;
+}
+
+.models-scroll-area { flex: 1; overflow-y: auto; padding: 15px; }
+.models-scroll-area::-webkit-scrollbar { width: 6px; }
+.models-scroll-area::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+
+@keyframes cardEnter {
+    from {
+        opacity: 0;
+        transform: translateX(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* 利用 nth-child 实现交错感觉 (前10个卡片) */
+.model-card:nth-child(1) { animation-delay: 0.05s; }
+.model-card:nth-child(2) { animation-delay: 0.10s; }
+.model-card:nth-child(3) { animation-delay: 0.15s; }
+.model-card:nth-child(4) { animation-delay: 0.20s; }
+.model-card:nth-child(5) { animation-delay: 0.25s; }

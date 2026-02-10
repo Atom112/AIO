@@ -3,8 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
-  saveSingleAssistantToBackend, Assistant, Topic, Message, selectedModel, config, loadAvatarFromPath,
-  setGlobalUserAvatar, globalUserAvatar
+  saveSingleAssistantToBackend, Assistant, Topic, selectedModel,
 } from '../store/store';
 
 import AssistantSidebar from '../components/AssistantSidebar';

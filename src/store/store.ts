@@ -1,6 +1,6 @@
 // src/store.ts  
 import { createStore } from "solid-js/store";
-import { createSignal } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
 import { readFile } from '@tauri-apps/plugin-fs';
 // =============================================================================
@@ -101,12 +101,12 @@ export const loadAvatarFromPath = async (input: string): Promise<string> => {
         const ext = input.split('.').pop()?.toLowerCase();
         const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
         const blob = new Blob([contents], { type: mime });
-        
+
         // --- 优化：释放之前的内存引用 ---
         if (lastBlobUrl) {
             URL.revokeObjectURL(lastBlobUrl);
         }
-        
+
         lastBlobUrl = URL.createObjectURL(blob);
         return lastBlobUrl;
     } catch (e) {
@@ -223,3 +223,12 @@ export const logout = () => {
     // 可选：重置头像到默认
     setGlobalUserAvatar('/icons/user.svg');
 };
+
+export const [themeColor, setThemeColor] = createSignal(localStorage.getItem('theme-color') || '#08ddf9');
+
+// 监听变化并同步到 CSS 变量
+createEffect(() => {
+    const color = themeColor();
+    document.documentElement.style.setProperty('--primary-color', color);
+    localStorage.setItem('theme-color', color);
+});

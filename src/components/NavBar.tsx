@@ -467,7 +467,7 @@ const NavBar: Component<NavBarProps> = () => {
             >
               {/* 情况 B: 已登录，显示账号信息和切换账号 */}
               <div class="user-dropdown-divider"></div>
-              <div class="user-dropdown-item" style="color: #08ddf9; font-weight: 500;">
+              <div class="user-dropdown-item" style="font-weight: 500;">
                 <svg /* 账号信息图标 */ xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                 </svg>

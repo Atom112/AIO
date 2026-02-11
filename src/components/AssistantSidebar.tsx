@@ -1,5 +1,5 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
-import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile } from '../store/store';
+import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId } from '../store/store';
 import './AssistantSidebar.css';
 
 interface AssistantSidebarProps {
@@ -61,7 +61,19 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
         await deleteAssistantFile(id);
         if (currentAssistantId() === id) {
             const idx = datas.assistants.findIndex(a => a.id === id);
-            setCurrentAssistantId(datas.assistants[idx - 1]?.id || datas.assistants[idx + 1]?.id || null);
+            // 获取下一个或上一个助手
+            const targetAsst = datas.assistants[idx - 1] || datas.assistants[idx + 1];
+
+            if (targetAsst) {
+                setCurrentAssistantId(targetAsst.id);
+                // --- 增加同步切换话题的逻辑 ---
+                if (targetAsst.topics && targetAsst.topics.length > 0) {
+                    setCurrentTopicId(targetAsst.topics[0].id);
+                }
+            } else {
+                setCurrentAssistantId(null);
+                setCurrentTopicId(null);
+            }
         }
         setDatas('assistants', prev => prev.filter(a => a.id !== id));
         closeMenu();
@@ -74,7 +86,12 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                     {(assistant) => (
                         <div
                             classList={{ 'assistant-item': true, 'active': assistant.id === currentAssistantId() }}
-                            onClick={() => setCurrentAssistantId(assistant.id)}
+                            onClick={() => {
+                                setCurrentAssistantId(assistant.id);
+                                if (assistant.topics && assistant.topics.length > 0) {
+                                    setCurrentTopicId(assistant.topics[0].id);
+                                }
+                            }}
                         >
                             <Show when={props.editingAsstId === assistant.id} fallback={<span class="assistant-name">{assistant.name}</span>}>
                                 <input
@@ -95,7 +112,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                     )}
                 </For>
                 <button class="add-assistant-button" onClick={props.addAssistant}>+ 新增助手</button>
-            </div>
+            </div >
 
             {showMenuDiv() && (
                 <div class="assistant-context-menu" classList={{ 'menu-exiting': isMenuAnimatingOut() }} style={{ top: `${menuState().y}px`, left: `${menuState().x}px` }}>
@@ -105,7 +122,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
             )}
 
             <div class="resize-handle left-handle" onMouseDown={(e) => props.onResize(e as MouseEvent)}></div>
-        </div>
+        </div >
     );
 };
 

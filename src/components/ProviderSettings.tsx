@@ -233,7 +233,7 @@ const ProviderSettings: Component = () => {
     return (
         <div class="tab-content-provider">
             <div class="settings-container">
-                <div class="info-header" style="border-bottom: 1px solid #08ddf9; padding-bottom: 10px; margin-bottom: 30px;">
+                <div class="info-header" style="border-bottom: 1px solid; padding-bottom: 10px; margin-bottom: 30px;">
                     <h3>API 服务配置</h3>
                 </div>
                 <div class="settings-form">
@@ -258,7 +258,7 @@ const ProviderSettings: Component = () => {
                             <button
                                 class="save-settings-button"
                                 style={{
-                                    "background-color": isLocalRunning() ? "#ff4444" : "#08ddf9",
+                                    "background-color": isLocalRunning() ? "#ff4444" : "var(--primary-color)",
                                     "margin-top": "10px"
                                 }}
                                 onClick={toggleLocalEngine}
@@ -306,7 +306,7 @@ const ProviderSettings: Component = () => {
 
                             <div class="model-info">
                                 <span class="model-id">{m.model_id}</span>
-                                <span class="model-provider" style="color: #08ddf9;">
+                                <span class="model-provider">
                                     {m.api_url.includes('127.0.0.1') ? '本地服务' : m.api_url.replace('https://', '').split('/')[0]}
                                 </span>
                             </div>

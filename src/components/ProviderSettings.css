@@ -7,9 +7,9 @@
 .settings-container {
     width: 22%;
     padding: 20px;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 12px;
-    background: rgba(8, 221, 249, 0.05);
+    background: var(--primary-5)
 }
 
 .settings-form {
@@ -21,9 +21,9 @@
 /* 模型列表面板 */
 .models-list-panel {
     flex: 1;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 12px;
-    background: rgba(8, 221, 249, 0.02);
+    background: var(--primary-5);
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -32,11 +32,11 @@
 
 .models-header-complex {
     padding: 20px;
-    border-bottom: 1px solid rgba(8, 221, 249, 0.2);
+    border-bottom: 1px solid var(--primary-20);
     display: flex;
     flex-direction: column;
     gap: 15px;
-    background: rgba(8, 221, 249, 0.03);
+    background: var(--primary-5)
 }
 
 .models-tools-row {
@@ -55,11 +55,11 @@
     font-size: 13px;
 }
 
-.models-search-input:focus { border-color: #08ddf9; }
+.models-search-input:focus { border-color: var(--primary-color); }
 
 /* 模型卡片样式 */
 .model-card {
-    border-left: 3px solid #08ddf9;
+    border-left: 3px solid var(--primary-color);
     background: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
     padding: 12px;
@@ -71,7 +71,7 @@
 
 }
 
-.model-card:hover { background: rgba(8, 221, 249, 0.2); }
+.model-card:hover { background: var(--primary-20); }
 
 .model-card.activated { border-left: 3px solid #00ff88; }
 
@@ -84,7 +84,7 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    border: 1px solid rgba(8, 221, 249, 0.2);
+    border: 1px solid var(--primary-20);
 }
 
 .model-item-logo { width: 20px; height: 20px; object-fit: contain; }
@@ -118,7 +118,7 @@
     top: calc(100% + 5px);
     left: 0; right: 0;
     background: #1a1a1d;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 8px;
     z-index: 100;
     max-height: 250px;
@@ -126,12 +126,12 @@
 }
 
 .custom-select-item { padding: 10px; color: #eee; cursor: pointer; font-size: 13px; }
-.custom-select-item:hover { background: rgba(8, 221, 249, 0.15); color: #08ddf9; }
+.custom-select-item:hover { background: var(--primary-20); color: var(--primary-color); }
 
 /* 按钮与状态 */
 .query-models-button {
     background: transparent;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     padding: 10px;
     border-radius: 6px;
     color: #eee;
@@ -150,7 +150,7 @@
 }
 
 .select-file-button {
-    background: #08ddf9;
+    background: var(--primary-color);
     color: black;
     border: none;
     padding: 8px 12px;

@@ -1,20 +1,281 @@
-/* 应用设置专用样式 */
-.app-settings-row {
+/* 容器 */
+.app-settings-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    box-sizing: border-box;
+}
+
+/* 基础卡片 */
+.settings-card {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--primary-color);
+    border-radius: 12px;
+    padding: 24px;
+    transition: background 0.3s;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.card-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #fff;
+}
+
+.version-wrapper {
     display: flex;
     align-items: center;
-    gap: 15px;
+    gap: 8px; /* 文字和徽章之间的间距 */
+}
+
+.version-label {
+    font-size: 12px;
+    color: #888; /* 较浅的灰色，不至于抢走徽章视线 */
+    font-weight: 500;
+}
+
+.version-badge {
+    background: var(--primary-color, #08ddf9);
+    color: #000;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+}
+
+/* 设置项行 */
+.setting-item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.item-label span {
+    display: block;
     color: #eee;
     font-size: 14px;
-    margin-top: 5px;
 }
 
-.update-log-area {
-    line-height: 1.6;
+.item-desc {
     font-size: 12px;
-    color: #999;
+    color: #777;
+    margin: 4px 0 0 0;
 }
 
-/* 针对应用页的卡片标题微调 */
-.tab-content-simple .placeholder-card h3 {
-    margin-bottom: 25px;
+/* GitHub 按钮 */
+.github-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--primary-5);
+    color: #ccc;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid var(--primary-color);
 }
+
+.github-link:hover {
+    background: var(--primary-50);
+    color: #000;
+}
+
+/* 主题选择器布局 */
+.cool-picker-layout {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 24px;
+}
+
+.picker-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.main-preview {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.hex-display {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 800;
+    color: #fff;
+    background: rgba(0,0,0,0.3);
+    padding: 4px 8px;
+    border-radius: 6px;
+    backdrop-filter: blur(4px);
+}
+
+.rgb-inputs {
+    display: flex;
+    gap: 4px;
+}
+
+.rgb-field {
+    background: rgba(255,255,255,0.03);
+    padding: 6px 2px;
+    border-radius: 6px;
+    text-align: center;
+    flex: 1;
+    font-size: 11px;
+    color: #fff;
+}
+
+.rgb-field span {
+    display: block;
+    color: #555;
+    font-size: 9px;
+    margin-bottom: 2px;
+}
+
+/* 控制台区 */
+.picker-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.picker-controls label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.theme-strip {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.strip-item {
+    flex: 1;
+    height: 30px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.strip-item:hover {
+    transform: scale(1.05);
+}
+
+/* 核心滑块修复 */
+.slider-container {
+    height: 40px;
+    display: flex;
+    align-items: center;
+}
+
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none; /* 标准属性支持 */
+    width: 100%;
+    height: 14px;
+    border-radius: 7px;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+/* 滑动条轨道 - 色相 */
+.hue-slider {
+    background: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+}
+
+/* 滑动条轨道 - 饱和度 */
+.sat-slider {
+    background: linear-gradient(to right, hsl(var(--h), 0%, 50%), hsl(var(--h), 100%, 50%));
+}
+
+/* 滑块圆点样式 */
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    
+    /* 形状设定：长方形圆角方块 */
+    width: 16px;
+    height: 26px; 
+    border-radius: 6px; /* 圆角方块 */
+    
+    /* 玻璃质感核心 */
+    background: rgba(255, 255, 255, 0.15); /* 透明底色 */
+    backdrop-filter: blur(6px); /* 毛玻璃模糊 */
+    -webkit-backdrop-filter: blur(6px);
+    
+    /* 中空感：强烈的白色边框 + 内部阴影 */
+    border: 2.5px solid rgba(255, 255, 255, 0.85); 
+    box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.4),          /* 外部立体阴影 */
+        inset 0 0 4px rgba(255, 255, 255, 0.5); /* 内部发光感，增强中空视觉现象 */
+    
+    transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s;
+    margin-top: 0px; /* 根据需要微调垂直对齐 */
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+    transform: scale(1.15); /* 点击时微放大的交互感 */
+    border-color: #fff;
+    background: rgba(255, 255, 255, 0.25);
+}
+
+
+/* 更新日志 */
+.update-log-content {
+    font-size: 13px;
+    color: #888;
+    line-height: 2;
+}
+
+/* 开关样式（自启用） */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+}
+
+.switch input { opacity: 0; width: 0; height: 0; }
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background-color: #333;
+    transition: .4s;
+    border-radius: 20px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .slider { background-color: var(--primary-color, #08ddf9); }
+input:checked + .slider:before { transform: translateX(20px); }

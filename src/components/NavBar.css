@@ -46,7 +46,7 @@
   background-color: #1e1e1e;
   border-bottom: 1px solid #333;
   border-radius: 8px;
-  border: 1px solid #08ddf9;
+  border: 1px solid var(--primary-color);
   margin: 0px 1px auto 0px;
 
 
@@ -96,7 +96,7 @@
 }
 
 .nav-item.active {
-  color: #08ddf9;
+  color: var(--primary-color);
   font-weight: bold;
   /*background-color: #333;*/
 }
@@ -199,7 +199,7 @@
 .dropdown-menu.active {
   visibility: visible;
   opacity: 1;
-  border: #08ddf9 1px solid;
+  border: var(--primary-color) 1px solid;
   transform: translateX(-50%) translateY(0);
 }
 
@@ -235,8 +235,8 @@
 
 
 .dropdown-item.selected {
-  background: rgba(8, 221, 249, 0.15);
-  border-left: 3px solid #08ddf9;
+  background: var(--primary-20);
+  border-left: 3px solid var(--primary-color);
 }
 
 .model-id-text {
@@ -246,7 +246,7 @@
 
 .model-provider-text {
   font-size: 10px;
-  color: #08ddf9;
+  color: var(--primary-color);
   opacity: 0.7;
 }
 
@@ -292,15 +292,15 @@
 }
 
 .minimize {
-  color: #08ddf9;
+  color: var(--primary-color);
 }
 
 .maximize {
-  color: #08ddf9;
+  color: var(--primary-color);
 }
 
 .close {
-  color: #08ddf9;
+  color: var(--primary-color);
 }
 
 /* 导航栏专用的模型 Logo 圆形背景 */
@@ -357,11 +357,11 @@
 
 /* 选中状态的微调 */
 .dropdown-item.selected {
-  background-color: rgba(8, 221, 249, 0.15);
+  background-color: var(--primary-20);
 }
 
 .dropdown-item.selected .nav-model-logo-container {
-  border: 1px solid #08ddf9;
+  border: 1px solid var(--primary-color);
   /* 选中时 Logo 容器加个边框 */
 }
 
@@ -398,7 +398,7 @@
 }
 
 .user-avatar-wrapper:hover .avatar {
-  border-color: #08ddf9;
+  border-color: var(--primary-color);
   /* 悬停时显示青色边框 */
 }
 
@@ -413,7 +413,7 @@
   margin-top: 12px;
   background-color: #1e1e1e;
   min-width: 140px;
-  border: 1px solid #08ddf9;
+  border: 1px solid var(--primary-color);
   /* 保持一致的青色边框 */
   border-radius: 8px;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
@@ -440,8 +440,8 @@
 }
 
 .user-dropdown-item:hover {
-  background-color: rgba(8, 221, 249, 0.15);
-  color: #08ddf9;
+  background-color: var(--primary-20);
+  color: var(--primary-color);
 }
 
 /* 特殊样式：未开放的按钮 */
@@ -465,8 +465,8 @@
   width: 10px;
   height: 10px;
   background-color: #1e1e1e;
-  border-left: 1px solid #08ddf9;
-  border-top: 1px solid #08ddf9;
+  border-left: 1px solid var(--primary-color);
+  border-top: 1px solid var(--primary-color);
 }
 
 /* 修改或添加在 NavBar.css 中 */

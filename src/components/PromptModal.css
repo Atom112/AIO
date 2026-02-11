@@ -15,7 +15,7 @@
 
 /* 浮窗内容区域 */
 .modal-content {
-  border: 1px solid #08ddf9;
+  border: 1px solid var(--primary-color);
   background: #2a2a2a;
   /* 深色背景 */
   color: #e0e0e0;
@@ -113,11 +113,11 @@
 }
 
 .btn-save {
-  background-color: #08ddf9;
+  background-color: var(--primary-color);
   color: black;
   border-radius: 8px;
 }
 
 .btn-save:hover {
-  background-color: #08ddf9;
+  background-color: var(--primary-color);
 }

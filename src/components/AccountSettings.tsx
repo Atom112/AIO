@@ -15,7 +15,7 @@ const AccountSettings: Component = () => {
                 </div>
                 <div class="setting-item">
                     <label>订阅方案</label>
-                    <div class="static-value" style="color: #08ddf9;">专业版 (按年订阅)</div>
+                    <div class="static-value">专业版 (按年订阅)</div>
                 </div>
                 <button class="save-settings-button" style="width: 150px; margin-top: 20px;">退出登录</button>
             </div>

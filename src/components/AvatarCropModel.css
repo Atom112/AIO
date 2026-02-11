@@ -16,9 +16,9 @@
 .crop-modal-container {
     background: #1a1a1a;
     width: 600px;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 12px;
-    box-shadow: 0 0 20px rgba(8, 221, 249, 0.2);
+    box-shadow: 0 0 20px var(--primary-20);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -30,7 +30,7 @@
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid #333;
-    color: #08ddf9;
+    color: var(--primary-color);
     font-weight: bold;
 }
 
@@ -81,7 +81,7 @@
     border-radius: 50%;
     /* 圆形预览核心 */
     overflow: hidden;
-    border: 2px solid #08ddf9;
+    border: 2px solid var(--primary-color);
     background: #000;
 }
 
@@ -104,12 +104,12 @@
 
 .zoom-icon {
     width: 18px;
-    color: #08ddf9;
+    color: var(--primary-color);
 }
 
 input[type="range"] {
     flex: 1;
-    accent-color: #08ddf9;
+    accent-color: var(--primary-color);
     cursor: pointer;
 }
 
@@ -130,7 +130,7 @@ input[type="range"] {
 
 .btn-save {
     padding: 8px 30px;
-    background: #08ddf9;
+    background: var(--primary-color);
     border: none;
     color: #000;
     font-weight: bold;

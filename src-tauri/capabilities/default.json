@@ -22,6 +22,7 @@
     "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-exists",
+    "shell:allow-open",
     {
       "identifier": "core:default",
       "allow": [

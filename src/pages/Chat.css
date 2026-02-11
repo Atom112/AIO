@@ -1,7 +1,7 @@
 /* --- Global & Scrollbar --- */
 * {
     scrollbar-width: thin;
-    scrollbar-color: #08ddf9 transparent;
+    scrollbar-color: var(--primary-color) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -14,7 +14,7 @@
 }
 
 ::-webkit-scrollbar-thumb {
-    background-color: #08ddf9;
+    background-color: var(--primary-color);
     border-radius: 10px;
     border: 1px solid rgba(0, 0, 0, 0);
 }
@@ -34,7 +34,7 @@
     position: fixed;
     right: 1px;
     top: 65px;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 8px;
 }
 
@@ -61,7 +61,7 @@
 /* Rename Input (Assistant & Topic) */
 .rename-input {
     background: #1e1e1e;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 4px;
     color: white;
     font-size: 0.95rem;
@@ -81,7 +81,7 @@
 .assistant-context-menu {
     animation: menuEnter 0.2s ease-out forwards;
     background-color: #2e2e2e;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 8px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
     min-width: 150px;
@@ -109,7 +109,7 @@
 }
 
 .context-menu-button:hover {
-    background-color: #08ddf910;
+    background-color: var(--primary-color)10;
 
 }
 
@@ -133,12 +133,12 @@
 }
 
 .assistant-menu-button:hover {
-    background-color: #46a0bc;
+    background-color: var(--primary-5);
 }
 
 /* 添加 Active 效果：颜色变深且轻微缩小 */
 .assistant-menu-button:active {
-    background-color: #2a5d6d;
+    background-color: var(--primary-10);
     transform: scale(0.92);
 }
 

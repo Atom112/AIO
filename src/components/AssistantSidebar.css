@@ -1,6 +1,6 @@
 
 .assistant-selector {
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 8px;
     box-sizing: border-box;
     flex-shrink: 0;
@@ -20,7 +20,7 @@
 .assistant-item {
     align-items: center;
     background-color: transparent;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 8px;
     cursor: pointer;
     display: flex;
@@ -35,8 +35,8 @@
 }
 
 .assistant-item.active {
-    background-color: #1f3a40;
-    border-color: #08ddf9;
+    background-color: var(--primary-10);
+    border-color: var(--primary-color);
     box-shadow: 0 0 5px rgba(8, 221, 249, 0.3);
 }
 
@@ -51,16 +51,16 @@
 
 .add-assistant-button {
     background: none;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 8px;
     color: #ffffff;
     cursor: pointer;
     margin: 10px 0;
-    padding: 8px;
+    padding: 8px 12px;
     width: 100%;
+    transition: all 0.3s;
 }
 
-.add-assistant-button :hover {
-    background-color: rgba(8, 221, 249, 0.1);
-
+.add-assistant-button:hover {
+    background-color: var(--primary-10);
 }

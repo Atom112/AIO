@@ -2,7 +2,7 @@
 
 .chat-input-container {
     align-items: stretch;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 8px;
     box-sizing: border-box;
     display: flex;
@@ -52,8 +52,8 @@
 }
 
 .chat-input-unified:focus-within {
-    border-color: #08ddf9;
-    box-shadow: 0 0 10px rgba(8, 221, 249, 0.1);
+    border-color: var(--primary-color);
+    box-shadow: 0 0 10px var(--primary-10);
 }
 
 .unified-textarea {
@@ -106,7 +106,7 @@
 
 .toolbar-icon-btn:hover {
     background-color: rgba(255, 255, 255, 0.1);
-    color: #08ddf9;
+    color: var(--primary-color);
 }
 
 .toolbar-icon-btn svg {
@@ -116,7 +116,7 @@
 
 .unified-send-btn {
     align-items: center;
-    background-color: #08ddf9;
+    background-color: var(--primary-color);
     border: none;
     border-radius: 8px;
     color: #000;
@@ -162,10 +162,10 @@
     align-items: center;
     animation: tagFadeIn 0.3s ease-out;
     backdrop-filter: blur(4px);
-    background: rgba(8, 221, 249, 0.1);
+    background: var(--primary-10);
     border: 1px solid rgba(8, 221, 249, 0.3);
     border-radius: 16px;
-    color: #08ddf9;
+    color: var(--primary-color);
     display: flex;
     font-size: 12px;
     padding: 4px 10px;
@@ -173,8 +173,8 @@
 }
 
 .file-tag:hover {
-    background: rgba(8, 221, 249, 0.2);
-    border-color: #08ddf9;
+    background: var(--primary-20);
+    border-color: var(--primary-color);
 }
 
 .file-tag button {
@@ -261,8 +261,8 @@
 }
 
 .message.user .message-content {
-    background-color: #08ddf90e;
-    border: 1px solid #08ddf9;
+    background-color: var(--primary-5);
+    border: 1px solid var(--primary-color);
     border-top-right-radius: 2px;
     color: #fff;
 }
@@ -277,7 +277,7 @@
 
 .typing::after {
     animation: cursor-blink 0.8s infinite;
-    color: #08ddf9;
+    color: var(--primary-color);
     content: "|";
     display: inline-block;
     margin-left: 2px;
@@ -286,7 +286,7 @@
 .chat-avatar-container {
     align-items: center;
     background-color: #dfdfdf;
-    border: 1px solid rgba(8, 221, 249, 0.2);
+    border: 1px solid var(--primary-20);
     border-radius: 50%;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
     display: flex;
@@ -358,9 +358,9 @@
 .copy-bubble-button {
     align-items: center;
     background: transparent;
-    border: 1px solid rgba(8, 221, 249, 0.2);
+    border: 1px solid var(--primary-20);
     border-radius: 8px;
-    color: #08ddf9;
+    color: var(--primary-color);
     cursor: pointer;
     display: flex;
     gap: 4px;
@@ -370,8 +370,8 @@
 }
 
 .copy-bubble-button:hover {
-    background: rgba(8, 221, 249, 0.1);
-    border-color: #08ddf9;
+    background: var(--primary-10);
+    border-color: var(--primary-color);
 }
 
 .copy-bubble-button svg {
@@ -387,7 +387,7 @@
 /* File Cards in Messages */
 .file-attachment-card {
     align-items: center;
-    background: rgba(8, 221, 249, 0.05);
+    background: var(--primary-10);
     border: 1px solid rgba(8, 221, 249, 0.3);
     border-radius: 8px;
     cursor: default;
@@ -399,13 +399,13 @@
 }
 
 .file-attachment-card:hover {
-    background: rgba(8, 221, 249, 0.1);
-    border-color: #08ddf9;
+    background: var(--primary-10);
+    border-color: var(--primary-color);
 }
 
 .file-icon-wrapper {
     align-items: center;
-    background: rgba(8, 221, 249, 0.1);
+    background: var(--primary-10);
     border-radius: 6px;
     display: flex;
     flex-shrink: 0;
@@ -416,7 +416,7 @@
 }
 
 .file-icon-wrapper svg {
-    color: #08ddf9;
+    color: var(--primary-color);
     height: 24px;
     width: 24px;
 }
@@ -450,7 +450,7 @@
 }
 
 .markdown-body blockquote {
-    border-left: 4px solid #08ddf9;
+    border-left: 4px solid var(--primary-color);
     color: #999;
     margin: 0;
     padding-left: 1rem;
@@ -467,7 +467,7 @@
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3 {
-    color: #08ddf9;
+    color: var(--primary-color);
     margin-bottom: 0.5rem;
     margin-top: 1rem;
 }
@@ -510,7 +510,7 @@
 }
 
 .markdown-body th {
-    background-color: rgba(8, 221, 249, 0.1);
+    background-color: var(--primary-10);
 }
 
 /* Code Blocks */
@@ -528,7 +528,7 @@
     background-color: rgba(125, 125, 125, 0.9);
     border: 1px solid rgba(8, 221, 249, 0.3);
     border-radius: 4px;
-    color: #08ddf9;
+    color: var(--primary-color);
     cursor: pointer;
     display: flex;
     gap: 4px;
@@ -579,9 +579,9 @@
 .drag-drop-content {
     align-items: center;
     background: #1a1a1a;
-    border: 2px solid #08ddf9;
+    border: 2px solid var(--primary-color);
     border-radius: 12px;
-    box-shadow: 0 0 30px rgba(8, 221, 249, 0.2);
+    box-shadow: 0 0 30px var(--primary-20);
     color: white;
     display: flex;
     flex-direction: column;
@@ -594,7 +594,7 @@
 }
 
 .drag-drop-content h2 {
-    color: #08ddf9;
+    color: var(--primary-color);
     font-size: 22px;
     letter-spacing: 1px;
     margin: 15px 0 10px 0;
@@ -620,7 +620,7 @@
 .drag-icon-card {
     align-items: center;
     background: #2a2a2a;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     border-radius: 6px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
     display: flex;
@@ -633,7 +633,7 @@
 .drag-icon-card.center {
     background: #333;
     box-shadow: 0 0 20px rgba(8, 221, 249, 0.3);
-    color: #08ddf9;
+    color: var(--primary-color);
     font-size: 32px;
     height: 90px;
     width: 70px;
@@ -684,7 +684,7 @@
     right: 0;
     top: 0;
     z-index: 100;
-    color: #08ddf9;
+    color: var(--primary-color);
     font-size: 14px;
 }
 

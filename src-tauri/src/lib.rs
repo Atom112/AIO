@@ -47,6 +47,7 @@ pub fn run() {
         // 注入全局状态，前端命令可以通过 State<'_, T> 获取
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(StreamManager(Arc::new(DashMap::new())))
         .manage(LocalLlamaState {
             child_process: Mutex::new(None),

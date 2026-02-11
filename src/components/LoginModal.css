@@ -18,11 +18,11 @@
 .login-modal-content {
     background-color: #1e1e1e;
     width: 360px;
-    border: 1px solid #08ddf9;
+    border: 1px solid var(--primary-color);
     /* 统一的青色边框 */
     border-radius: 8px;
     padding: 24px;
-    box-shadow: 0 0 20px rgba(8, 221, 249, 0.2);
+    box-shadow: 0 0 20px var(--primary-20);
     color: #e0e0e0;
 }
 
@@ -36,7 +36,7 @@
 .modal-header h3 {
     margin: 0;
     font-size: 18px;
-    color: #08ddf9;
+    color: var(--primary-color);
 }
 
 .close-btn {
@@ -70,15 +70,15 @@
 }
 
 .input-group input:focus {
-    border-color: #08ddf9;
+    border-color: var(--primary-color);
 }
 
 .login-submit-btn {
     width: 100%;
     padding: 12px;
-    background-color: rgba(8, 221, 249, 0.15);
-    border: 1px solid #08ddf9;
-    color: #08ddf9;
+    background-color: var(--primary-20);
+    border: 1px solid var(--primary-color);
+    color: var(--primary-color);
     border-radius: 6px;
     cursor: pointer;
     font-weight: bold;
@@ -87,7 +87,7 @@
 }
 
 .login-submit-btn:hover {
-    background-color: #08ddf9;
+    background-color: var(--primary-color);
     color: #1e1e1e;
 }
 
@@ -99,7 +99,7 @@
 }
 
 .modal-footer a {
-    color: #08ddf9;
+    color: var(--primary-color);
     text-decoration: none;
 }
 
@@ -156,7 +156,7 @@
 
 .success-text {
     margin-top: 15px;
-    color: #08ddf9;
+    color: var(--primary-color);
     font-size: 18px;
     font-weight: bold;
     letter-spacing: 2px;
@@ -169,9 +169,9 @@
     border-radius: 50%;
     display: block;
     stroke-width: 3;
-    stroke: #08ddf9;
+    stroke: var(--primary-color);
     stroke-miterlimit: 10;
-    box-shadow: inset 0px 0px 0px #08ddf9;
+    box-shadow: inset 0px 0px 0px var(--primary-color);
     animation: fill .2s ease-in-out .2s forwards, scale .2s ease-in-out .5s both;
 }
 
@@ -180,7 +180,7 @@
     stroke-dashoffset: 166;
     stroke-width: 2;
     stroke-miterlimit: 10;
-    stroke: #08ddf9;
+    stroke: var(--primary-color);
     fill: none;
     animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) forwards;
 }

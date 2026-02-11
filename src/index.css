@@ -2,6 +2,22 @@
 /* 全局属性 */
 :root {
   background-color: transparent;
+
+  --primary-color: #08ddf9;
+  /* 核心主色 */
+
+  /* 自动生成的透明度色系 (基于主色推导) */
+  --primary-5: color-mix(in srgb, var(--primary-color), transparent 95%);
+  --primary-10: color-mix(in srgb, var(--primary-color), transparent 90%);
+  --primary-20: color-mix(in srgb, var(--primary-color), transparent 80%);
+  --primary-30: color-mix(in srgb, var(--primary-color), transparent 70%);
+  --primary-50: color-mix(in srgb, var(--primary-color), transparent 50%);
+  
+  /* 语义化映射 (方便后续维护) */
+  --theme-border: var(--primary-color);
+  --theme-bg-soft: var(--primary-10);
+  --theme-hover: var(--primary-20);
+  --theme-shadow: 0 0 15px var(--primary-20);
 }
 
 html {

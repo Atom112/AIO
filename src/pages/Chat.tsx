@@ -161,6 +161,7 @@ const ChatPage: Component = () => {
     const newAsst = createAssistant(`新助手 ${datas.assistants.length + 1}`);
     setDatas('assistants', prev => [...prev, newAsst]);
     setCurrentAssistantId(newAsst.id);
+    setCurrentTopicId(newAsst.topics[0].id); 
     await saveSingleAssistantToBackend(newAsst.id);
   };
 

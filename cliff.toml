@@ -34,6 +34,9 @@ body = """
 {% if version %}\
     [{{ version }}]: https://github.com/Atom112/AIO/releases/tag/{{ version | replace(from="-Beta", to="") }}
 {% endif %}\
+
+---
+
 """
 
 # 文件的页脚

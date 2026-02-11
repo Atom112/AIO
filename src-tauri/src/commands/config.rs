@@ -180,20 +180,52 @@ pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<St
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let avatars_dir = app_dir.join("avatars");
 
+    // 1. 确保目录存在
     if !avatars_dir.exists() {
         std::fs::create_dir_all(&avatars_dir).map_err(|e| e.to_string())?;
+    } else {
+        // --- 核心修复：删除所有旧的 user_avatar 缓存 ---
+        // 我们只删除以此前缀开头的文件，避免误删目录下可能存在的其它资源
+        if let Ok(entries) = std::fs::read_dir(&avatars_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                        if file_name.starts_with("user_avatar_") {
+                            let _ = std::fs::remove_file(path);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // 解析 Base64 (data:image/png;base64,xxxx)
+    // 2. 解析 Base64 数据
     let base64_str = data_url.split(',').nth(1).ok_or("无效的图像数据")?;
     let bytes = general_purpose::STANDARD
         .decode(base64_str)
         .map_err(|e| e.to_string())?;
 
+    // 3. 生成新文件名 (保留 UUID 依然是必要的，可以让前端识别到路径变化从而刷新图片)
     let file_name = format!("user_avatar_{}.png", uuid::Uuid::new_v4());
     let dest_path = avatars_dir.join(&file_name);
 
     std::fs::write(&dest_path, bytes).map_err(|e| e.to_string())?;
 
+    // 返回新路径供前端更新 localStorage
     Ok(dest_path.to_string_lossy().to_string())
+}
+
+
+#[tauri::command]
+pub async fn clear_local_avatar_cache(app: tauri::AppHandle) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let avatars_dir = app_dir.join("avatars");
+
+    if avatars_dir.exists() {
+        // 直接删除整个文件夹并重建，或者遍历删除
+        let _ = std::fs::remove_dir_all(&avatars_dir);
+        std::fs::create_dir_all(&avatars_dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

@@ -87,21 +87,28 @@ export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/user
  * 智能加载头像：支持 Base64 或 物理路径
  * @param input 可能是 Base64 字符串，也可能是文件路径
  */
+let lastBlobUrl: string | null = null;
+
 export const loadAvatarFromPath = async (input: string): Promise<string> => {
     if (!input) return '/icons/user.svg';
 
-    // 1. 如果输入本身就是 Base64 (data:image/...)，直接返回用于 <img> 标签
     if (input.startsWith('data:image')) {
         return input;
     }
 
-    // 2. 否则视为本地绝对路径，尝试从磁盘读取 (兼容旧数据/本地存储)
     try {
         const contents = await readFile(input);
         const ext = input.split('.').pop()?.toLowerCase();
         const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
         const blob = new Blob([contents], { type: mime });
-        return URL.createObjectURL(blob);
+        
+        // --- 优化：释放之前的内存引用 ---
+        if (lastBlobUrl) {
+            URL.revokeObjectURL(lastBlobUrl);
+        }
+        
+        lastBlobUrl = URL.createObjectURL(blob);
+        return lastBlobUrl;
     } catch (e) {
         console.error("从物理路径加载头像失败:", e, "路径:", input);
         return '/icons/user.svg';

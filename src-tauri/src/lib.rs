@@ -79,6 +79,7 @@ pub fn run() {
             commands::auth::register_to_backend,
             commands::auth::validate_token,
             commands::auth::sync_avatar_to_backend,
+            commands::config::clear_local_avatar_cache,
         ])
         // 注册窗口事件回调
         .on_window_event(|window, event| {

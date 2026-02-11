@@ -68,9 +68,9 @@ const NavBar: Component<NavBarProps> = () => {
       localStorage.setItem('auth-token', user.token);
     }
     if (user.avatar) {
-      const url = await loadAvatarFromPath(user.avatar);
-      setGlobalUserAvatar(url);
-      localStorage.setItem('user-avatar-path', user.avatar);
+      setGlobalUserAvatar(user.avatar);
+      await invoke('clear_local_avatar_cache');
+      localStorage.removeItem('user-avatar-path');
     }
   };
 
@@ -102,33 +102,33 @@ const NavBar: Component<NavBarProps> = () => {
 
   const onCropSave = async (croppedDataUrl: string) => {
     try {
-      // A. 依然在本地保存一份文件，用于离线显示或 Rust 后端引用
-      const savedPath = await invoke<string>('upload_avatar', {
-        dataUrl: croppedDataUrl
-      });
-
-      // B. 更新全局 UI 显示（Base64 可以直接预览）
-      setGlobalUserAvatar(croppedDataUrl);
-
-      // C. 如果已登录，同步 Base64 字符串到后端数据库
+      // 1. 同步到云端 (Base64)
       if (datas.isLoggedIn && datas.user?.token) {
-        try {
-          await invoke('sync_avatar_to_backend', {
-            token: datas.user.token,
-            avatarData: croppedDataUrl //  croppedDataUrl (Base64)
-          });
-          console.log("头像 Base64 同步至后端成功");
-        } catch (err) {
-          console.error("同步后端失败:", err);
-        }
+        await invoke('sync_avatar_to_backend', {
+          token: datas.user.token,
+          avatarData: croppedDataUrl
+        });
+
+        // 既然同步到了云端，后续启动都会走云端，本地这个物理文件逻辑上也不再需要了
+        // 我们直接更新 UI，然后清理一下本地，不保存物理路径
+        setGlobalUserAvatar(croppedDataUrl);
+        await invoke('clear_local_avatar_cache');
+        localStorage.removeItem('user-avatar-path');
+
+        console.log("头像已存入云端，本地文件已释放空间");
+      } else {
+        // 如果未登录，则必须保存在本地，否则刷新页面就没了
+        const savedPath = await invoke<string>('upload_avatar', {
+          dataUrl: croppedDataUrl
+        });
+        setGlobalUserAvatar(croppedDataUrl);
+        localStorage.setItem('user-avatar-path', savedPath);
       }
 
-      // D. 持久化本地路径缓存（作为兜底）
-      localStorage.setItem('user-avatar-path', savedPath);
       setTempImage(null);
       setUserMenuVisible(false);
     } catch (err) {
-      alert("保存裁剪头像失败: " + err);
+      alert("头像同步失败: " + err);
     }
   };
   // 根据模型名称返回对应的 SVG 路径 (建议与 Settings.tsx 保持一致)
@@ -329,45 +329,40 @@ const NavBar: Component<NavBarProps> = () => {
 
   /** --- 生命周期钩子 --- */
   onMount(async () => {
-
-    // --- A. 自动恢复登录状态 ---
     const savedToken = localStorage.getItem('auth-token');
+
     if (savedToken) {
       try {
+        // 1. 尝试从云端校验并获取最新用户信息
         const userData = await invoke<any>('validate_token', { token: savedToken });
         setDatas('user', userData);
         setDatas('isLoggedIn', true);
 
-        // --- 核心：处理后端传回的头像数据 ---
         if (userData.avatar) {
-          // 如果是以 data:image 开头的，说明是 Base64，直接展示
-          if (userData.avatar.startsWith('data:image')) {
-            setGlobalUserAvatar(userData.avatar);
-          } else {
-            // 否则视为老版本的本地路径，进行转换
-            const url = await loadAvatarFromPath(userData.avatar);
-            setGlobalUserAvatar(url);
-          }
+          // --- 核心同步修复逻辑 ---
+
+          // A. 只要云端有头像，优先展示云端 Base64
+          setGlobalUserAvatar(userData.avatar);
+
+          // B. 既然有了云端头像，本地残留的物理文件统统删除，腾出空间
+          await invoke('clear_local_avatar_cache');
+
+          // C. 清除 localStorage 里的本地路径，防止逻辑混淆
+          localStorage.removeItem('user-avatar-path');
+
+          console.log("检测到云端头像，已清理本地陈旧缓存空间");
         }
       } catch (err) {
-        console.warn("身份过期:", err);
-        localStorage.removeItem('auth-token');
-        setDatas('isLoggedIn', false);
+        console.warn("身份过期或云端获取失败:", err);
+        // 若云端获取失败，则进入下方的“本地路径恢复”兜底逻辑
       }
     }
 
-    // --- B. 处理物理路径恢复 (兜底逻辑) ---
-    // 如果没登录或者后端没头像，再尝试读取本地上次存的路径
+    // 2. 兜底逻辑：如果没登录，或者登录成功但云端没头像，才去寻找本地路径
     const localSavedPath = localStorage.getItem('user-avatar-path');
-    if (localSavedPath && !globalUserAvatar().includes('blob:')) {
+    // 注意：如果 globalUserAvatar 已经被云端赋值，则不进入此判断
+    if (localSavedPath && globalUserAvatar() === '/icons/user.svg') {
       const url = await loadAvatarFromPath(localSavedPath);
-      setGlobalUserAvatar(url);
-    }
-
-    // A. 处理头像恢复
-    const savedPath = localStorage.getItem('user-avatar-path');
-    if (savedPath) {
-      const url = await loadAvatarFromPath(savedPath);
       setGlobalUserAvatar(url);
     }
 

@@ -158,22 +158,22 @@ const LoginModal: Component<LoginModalProps> = (props) => {
         try {
             if (isRegister()) {
                 // ==================== 注册逻辑 ====================
-                
+
                 // 前端验证：密码一致性检查
                 if (password() !== confirmPassword()) {
                     throw new Error("两次输入的密码不一致");
                 }
-                
+
                 // 调用 Tauri 后端命令：register_to_backend
                 await invoke('register_to_backend', {
                     email: email(),
                     password: password(),
                     confirmPassword: confirmPassword()
                 });
-                
+
                 // 注册成功：显示成功动画
                 setIsSuccess(true);
-                
+
                 // 延时处理：先显示成功状态 800ms，再播放离开动画
                 setTimeout(() => {
                     setIsLeaving(true); // 触发离开动画
@@ -189,17 +189,17 @@ const LoginModal: Component<LoginModalProps> = (props) => {
 
             } else {
                 // ==================== 登录逻辑 ====================
-                
+
                 // 调用 Tauri 后端命令：login_to_backend
                 // 注意：后端使用 username 字段接收邮箱
                 const result: any = await invoke('login_to_backend', {
                     username: email(),
                     password: password()
                 });
-                
+
                 // 登录成功：显示欢迎动画
                 setIsSuccess(true);
-                
+
                 // 延时处理：先显示成功状态 600ms，再播放离开动画
                 setTimeout(() => {
                     setIsLeaving(true);
@@ -228,8 +228,8 @@ const LoginModal: Component<LoginModalProps> = (props) => {
         <Show when={props.show}>
             {/* 遮罩层：全屏半透明背景，点击关闭，控制进入/退出动画 */}
             <div
-                classList={{ 
-                    "modal-overlay": true, 
+                classList={{
+                    "modal-overlay": true,
                     "overlay-out": isExiting()  // 退出动画类
                 }}
                 class="overlay-in"  // 进入动画类
@@ -237,105 +237,101 @@ const LoginModal: Component<LoginModalProps> = (props) => {
             >
                 {/* 模态框内容容器：阻止冒泡防止点击关闭 */}
                 <div
-                    classList={{ 
-                        "login-modal-content": true, 
+                    classList={{
+                        "login-modal-content": true,
                         "animate-out": isExiting()  // 退出动画类
                     }}
                     class="animate-in"  // 进入动画类
                     onClick={(e) => e.stopPropagation()}
                 >
-                    {/* 嵌套结构：外层遮罩 + 内容（注：此处存在嵌套冗余，实际应优化） */}
-                    <div class="modal-overlay" onClick={props.onClose}>
-                        <div class="login-modal-content" onClick={(e) => e.stopPropagation()}>
 
-                            {/* ==================== 成功状态覆盖层 ==================== */}
-                            <Show when={isSuccess()}>
-                                <div classList={{
-                                    'success-overlay': true,
-                                    'leaving': isLeaving()  // 离开动画类
-                                }}>
-                                    {/* SVG 成功动画：圆形勾选图标 */}
-                                    <div class="success-circle">
-                                        <svg viewBox="0 0 52 52" class="checkmark">
-                                            <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none" />
-                                            <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
-                                        </svg>
-                                    </div>
-                                    {/* 动态文本：注册成功/欢迎回来 */}
-                                    <span class="success-text">
-                                        {isRegister() ? '注册成功' : '欢迎回来'}
-                                    </span>
-                                </div>
-                            </Show>
-
-                            {/* ==================== 头部区域 ==================== */}
-                            <div class="modal-header">
-                                {/* 动态标题：根据模式切换 */}
-                                <h3>{isRegister() ? '新用户注册' : '账号登录'}</h3>
-                                {/* 关闭按钮：触发带动画的关闭 */}
-                                <button class="close-btn" onClick={handleClose}>×</button>
+                    {/* ==================== 成功状态覆盖层 ==================== */}
+                    <Show when={isSuccess()}>
+                        <div classList={{
+                            'success-overlay': true,
+                            'leaving': isLeaving()  // 离开动画类
+                        }}>
+                            {/* SVG 成功动画：圆形勾选图标 */}
+                            <div class="success-circle">
+                                <svg viewBox="0 0 52 52" class="checkmark">
+                                    <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none" />
+                                    <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
+                                </svg>
                             </div>
-
-                            {/* ==================== 表单区域 ==================== */}
-                            <form class="login-form" onSubmit={handleSubmit}>
-                                {/* 邮箱输入组 */}
-                                <div class="input-group">
-                                    <label>电子邮箱</label>
-                                    <input
-                                        type="email"
-                                        value={email()}
-                                        onInput={(e) => setEmail(e.currentTarget.value)}
-                                        placeholder="example@mail.com"
-                                        required  // HTML5 原生验证
-                                    />
-                                </div>
-                                
-                                {/* 密码输入组 */}
-                                <div class="input-group">
-                                    <label>密码</label>
-                                    <input
-                                        type="password"
-                                        value={password()}
-                                        onInput={(e) => setPassword(e.currentTarget.value)}
-                                        placeholder="请输入密码"
-                                        required
-                                    />
-                                </div>
-
-                                {/* 条件渲染：确认密码（仅注册模式显示） */}
-                                <Show when={isRegister()}>
-                                    <div class="input-group">
-                                        <label>确认密码</label>
-                                        <input
-                                            type="password"
-                                            value={confirmPassword()}
-                                            onInput={(e) => setConfirmPassword(e.currentTarget.value)}
-                                            placeholder="请再次输入密码"
-                                            required
-                                        />
-                                    </div>
-                                </Show>
-
-                                {/* 错误提示：仅当 error 非空时显示 */}
-                                {error() && <div class="error-msg">{error()}</div>}
-
-                                {/* 提交按钮：禁用状态由 loading 控制 */}
-                                <button type="submit" class="login-submit-btn" disabled={loading()}>
-                                    {loading() ? '请稍候...' : (isRegister() ? '跳转注册' : '立即登录')}
-                                </button>
-                            </form>
-
-                            {/* ==================== 底部切换链接 ==================== */}
-                            <div class="modal-footer">
-                                <span>
-                                    {isRegister() ? '已有账号？' : '没有账号？'}
-                                    <a href="javascript:void(0)" onClick={toggleMode}>
-                                        {isRegister() ? '立即登录' : '注册'}
-                                    </a>
-                                </span>
-                            </div>
+                            {/* 动态文本：注册成功/欢迎回来 */}
+                            <span class="success-text">
+                                {isRegister() ? '注册成功' : '欢迎回来'}
+                            </span>
                         </div>
+                    </Show>
+
+                    {/* ==================== 头部区域 ==================== */}
+                    <div class="modal-header">
+                        {/* 动态标题：根据模式切换 */}
+                        <h3>{isRegister() ? '新用户注册' : '账号登录'}</h3>
+                        {/* 关闭按钮：触发带动画的关闭 */}
+                        <button class="close-btn" onClick={handleClose}>×</button>
                     </div>
+
+                    {/* ==================== 表单区域 ==================== */}
+                    <form class="login-form" onSubmit={handleSubmit}>
+                        {/* 邮箱输入组 */}
+                        <div class="input-group">
+                            <label>电子邮箱</label>
+                            <input
+                                type="email"
+                                value={email()}
+                                onInput={(e) => setEmail(e.currentTarget.value)}
+                                placeholder="example@mail.com"
+                                required  // HTML5 原生验证
+                            />
+                        </div>
+
+                        {/* 密码输入组 */}
+                        <div class="input-group">
+                            <label>密码</label>
+                            <input
+                                type="password"
+                                value={password()}
+                                onInput={(e) => setPassword(e.currentTarget.value)}
+                                placeholder="请输入密码"
+                                required
+                            />
+                        </div>
+
+                        {/* 条件渲染：确认密码（仅注册模式显示） */}
+                        <Show when={isRegister()}>
+                            <div class="input-group">
+                                <label>确认密码</label>
+                                <input
+                                    type="password"
+                                    value={confirmPassword()}
+                                    onInput={(e) => setConfirmPassword(e.currentTarget.value)}
+                                    placeholder="请再次输入密码"
+                                    required
+                                />
+                            </div>
+                        </Show>
+
+                        {/* 错误提示：仅当 error 非空时显示 */}
+                        {error() && <div class="error-msg">{error()}</div>}
+
+                        {/* 提交按钮：禁用状态由 loading 控制 */}
+                        <button type="submit" class="login-submit-btn" disabled={loading()}>
+                            {loading() ? '请稍候...' : (isRegister() ? '注册' : '立即登录')}
+                        </button>
+                    </form>
+
+                    {/* ==================== 底部切换链接 ==================== */}
+                    <div class="modal-footer">
+                        <span>
+                            {isRegister() ? '已有账号？' : '没有账号？'}
+                            <a href="javascript:void(0)" onClick={toggleMode}>
+                                {isRegister() ? '立即登录' : '注册'}
+                            </a>
+                        </span>
+                    </div>
+
                 </div>
             </div>
         </Show>

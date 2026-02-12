@@ -40,6 +40,8 @@ pub struct FileMeta {
 /// 单条聊天消息模型。
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Message {
+    #[serde(default = "default_id")]
+    pub id: String,
     pub role: String,
     pub content: serde_json::Value,
     #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
@@ -48,7 +50,14 @@ pub struct Message {
     pub display_files: Option<Vec<FileMeta>>,
     #[serde(rename = "displayText", skip_serializing_if = "Option::is_none")]
     pub display_text: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: Option<String>,
 }
+
+fn default_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 
 /// 包含历史记录的对话主题模型。
 #[derive(Serialize, Deserialize, Clone)]
@@ -58,6 +67,10 @@ pub struct Topic {
     pub history: Vec<Message>,
     #[serde(default)]
     pub summary: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: Option<String>,
+    #[serde(rename = "isDeleted", default)]
+    pub is_deleted: bool,
 }
 
 /// AI 助手预设模型，包含系统提示词和相关的对话列表。
@@ -94,4 +107,48 @@ pub struct AppConfig {
     pub default_model: String,
     #[serde(rename = "localModelPath", default)]
     pub local_model_path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncAssistant {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+    pub updated_at: String,
+    pub is_deleted: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncTopic {
+    pub id: String,
+    pub assistant_id: String,
+    pub name: String,
+    pub summary: Option<String>,
+    pub updated_at: String,
+    pub is_deleted: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncMessage {
+    pub id: String,
+    pub topic_id: String,
+    pub role: String,
+    pub content: String,
+    pub model_id: Option<String>,
+    pub display_files: Option<String>,
+    pub display_text: Option<String>,
+    pub timestamp: String,
+    pub updated_at: String,
+    pub is_deleted: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SyncBundle {
+    pub assistants: Vec<SyncAssistant>,
+    pub topics: Vec<SyncTopic>,
+    pub messages: Vec<SyncMessage>,
+    pub last_sync_time: String, // 标识客户端本地最后同步时间
 }

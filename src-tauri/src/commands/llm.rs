@@ -1,3 +1,5 @@
+use crate::DbState;
+use rusqlite::params;
 use crate::models::*;
 use crate::StreamManager;
 use futures_util::StreamExt; // 用于处理流式数据
@@ -251,4 +253,21 @@ pub async fn summarize_history(
         .to_string();
 
     Ok(summary)
+}
+
+#[tauri::command]
+pub async fn append_message(
+    state: tauri::State<'_, DbState>,
+    topic_id: String,
+    message: Message
+) -> Result<(), String> {
+    let conn = (*state).0.lock().unwrap();
+    let files_json = serde_json::to_string(&message.display_files).ok();
+    let content_json = serde_json::to_string(&message.content).unwrap_or_default();
+    
+    conn.execute(
+        "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![topic_id, message.role, content_json, message.model_id, files_json, message.display_text],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
 }

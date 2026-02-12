@@ -1,17 +1,35 @@
-// 在 lib.rs 或单独的 auth.rs 中
+//! # 身份验证模块 (Authentication Module)
+//!
+//! ## 功能描述
+//! 该文件负责处理与后端 Java 服务的身份验证交互，包括登录、注册、Token 验证以及头像同步。
+//!
+//! ## 数据流向
+//! 1. **前端 -> 本地后端**: 前端通过 Tauri `invoke` 调用此模块的异步函数。
+//! 2. **本地后端 -> 远程后端**: 模块使用 `reqwest` 库向 `http://localhost:8080` 发起网络请求 (JSON/HTTP)。
+//! 3. **结果回传**: 获取响应并反序列化为 `LoginResponse` 或错误信息，最终返回给前端。
+
 use serde::{Deserialize, Serialize};
 
+/// 登录成功后的响应结构体
 #[derive(Serialize, Deserialize)]
 pub struct LoginResponse {
-    // 关键修改：将 id 从 Option<u64> 改为 Option<String>
-    // 因为你的数据库现在使用的是 VARCHAR(100) 存储 UUID 字符串
+    /// 用户唯一标识（对应数据库中的 UUID 字符串）
     pub id: Option<String>,
+    /// 用户名
     pub username: String,
+    /// 用户昵称
     pub nickname: Option<String>,
+    /// 用户头像 URL 或路径
     pub avatar: Option<String>,
+    /// 用于后续请求的 JWT 令牌
     pub token: String,
 }
 
+/// 将用户头像同步至远程后端
+/// 
+/// # Arguments
+/// * `token` - JWT 身份令牌
+/// * `avatar_data` - 处理后的头像数据（通常为 Base64 字符串）
 #[tauri::command]
 pub async fn sync_avatar_to_backend(token: String, avatar_data: String) -> Result<(), String> {
     let client = reqwest::Client::new();
@@ -30,11 +48,11 @@ pub async fn sync_avatar_to_backend(token: String, avatar_data: String) -> Resul
     }
 }
 
+/// 调用后端登录接口
 #[tauri::command]
 pub async fn login_to_backend(username: String, password: String) -> Result<LoginResponse, String> {
     let client = reqwest::Client::new();
 
-    // 注意：这里的 URL 要和你的 Java 后端对应
     let res = client
         .post("http://localhost:8080/api/auth/login")
         .json(&serde_json::json!({
@@ -57,6 +75,7 @@ pub async fn login_to_backend(username: String, password: String) -> Result<Logi
     }
 }
 
+/// 用户注册功能
 #[tauri::command]
 pub async fn register_to_backend(
     email: String,
@@ -83,15 +102,15 @@ pub async fn register_to_backend(
         Err(err_msg)
     }
 }
-// 在 auth.rs 中添加此函数
+
+/// 验证现有 Token 的有效性并获取用户信息
 #[tauri::command]
 pub async fn validate_token(token: String) -> Result<LoginResponse, String> {
     let client = reqwest::Client::new();
 
-    // 假设你的 Java 后端有一个 /api/auth/me 或者类似的验证接口
     let res = client
         .get("http://localhost:8080/api/auth/validate")
-        .header("Authorization", format!("Bearer {}", token)) // 常见的 Bearer Token 格式
+        .header("Authorization", format!("Bearer {}", token))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -103,7 +122,6 @@ pub async fn validate_token(token: String) -> Result<LoginResponse, String> {
             .map_err(|e| e.to_string())?;
         Ok(user_data)
     } else {
-        // 如果后端返回 401 或其他错误码，说明 Token 失效
         Err("Token 已过期".to_string())
     }
 }

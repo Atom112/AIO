@@ -8,6 +8,7 @@
 mod commands;
 mod models;
 mod utils;
+mod db;
 
 use crate::utils::process_file_content;
 use dashmap::DashMap;
@@ -23,7 +24,7 @@ use tokio::task::JoinHandle;
 /// 使用 `DashMap` (分段加锁的哈希表) 以支持跨线程并发安全地访问任务句柄。
 /// 键通常是对话的 ID，值是对应的异步任务句柄 `JoinHandle`。
 pub struct StreamManager(pub Arc<DashMap<String, JoinHandle<()>>>);
-
+pub struct DbState(pub std::sync::Mutex<rusqlite::Connection>);
 /// 本地 Llama 服务状态
 ///
 /// 存储本地运行的模型服务进程信息。
@@ -45,6 +46,11 @@ pub struct LocalLlamaState {
 pub fn run() {
     tauri::Builder::default()
         // 注入全局状态，前端命令可以通过 State<'_, T> 获取
+        .setup(|app| {
+            let conn = db::init_db(app.handle())?;
+            app.manage(DbState(std::sync::Mutex::new(conn)));
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -76,11 +82,13 @@ pub fn run() {
             process_file_content,
             commands::config::upload_avatar,
             commands::llm::summarize_history,
+            commands::llm::append_message,
             commands::auth::login_to_backend,
             commands::auth::register_to_backend,
             commands::auth::validate_token,
             commands::auth::sync_avatar_to_backend,
             commands::config::clear_local_avatar_cache,
+
         ])
         // 注册窗口事件回调
         .on_window_event(|window, event| {

@@ -83,7 +83,7 @@
 
 .modal-body textarea:focus {
   outline: none;
-  border-color: #007bff;
+  border-color: var(--primary-50);
 }
 
 /* 底部按钮区域 */

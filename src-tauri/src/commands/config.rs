@@ -2,7 +2,8 @@ use crate::models::*; // 导入模型定义，如 AppConfig, Assistant, Activate
 use base64::{engine::general_purpose, Engine as _};
 use std::fs; // 导入标准库文件系统模块
 use tauri::Manager;
-
+use crate::DbState;
+use rusqlite::params;
 /// 保存应用程序通用配置
 /// #[tauri::command] 标记允许此函数从前端通过 invoke 调用
 #[tauri::command]
@@ -11,7 +12,7 @@ pub fn save_app_config(config: AppConfig) -> Result<(), String> {
     let mut path = dirs::config_dir().expect("无法获取系统配置目录");
 
     // 2. 在配置目录下创建 "AIO" 文件夹
-    path.push("AIO");
+    path.push("com.loch.aio");
     if !path.exists() {
         fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     }
@@ -31,7 +32,7 @@ pub fn save_app_config(config: AppConfig) -> Result<(), String> {
 #[tauri::command]
 pub fn load_app_config() -> Result<AppConfig, String> {
     let mut path = dirs::config_dir().ok_or("无法获取配置目录")?;
-    path.push("AIO/config.json");
+    path.push("com.loch.aio/config.json");
 
     // 如果配置文件不存在，返回一个默认的空白配置
     if !path.exists() {
@@ -50,70 +51,105 @@ pub fn load_app_config() -> Result<AppConfig, String> {
 
 /// 异步加载所有已保存的 AI 助手配置
 #[tauri::command]
-pub async fn load_assistants() -> Result<Vec<Assistant>, String> {
-    let mut path = dirs::config_dir().ok_or("无法获取配置目录")?;
-    path.push("AIO");
-    path.push("assistants"); // 助手信息存储在 AIO/assistants/ 目录下
-
-    // 如果目录不存在则创建
-    if !path.exists() {
-        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    }
+pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Assistant>, String> {
+    let conn = state.0.lock().unwrap();
+    
+    // 1. 加载助手
+    let mut stmt = conn.prepare("SELECT id, name, prompt FROM assistants ORDER BY id").map_err(|e| e.to_string())?;
+    let assistant_iter = stmt.query_map([], |row| {
+        Ok(Assistant {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            prompt: row.get(2)?,
+            topics: vec![], // 后续填充
+        })
+    }).map_err(|e| e.to_string())?;
 
     let mut assistants = Vec::new();
+    for asst in assistant_iter {
+        let mut asst = asst.map_err(|e| e.to_string())?;
+        
+        // 2. 为每个助手加载话题
+        let mut t_stmt = conn.prepare("SELECT id, name, summary FROM topics WHERE assistant_id = ?").map_err(|e| e.to_string())?;
+        let topic_iter = t_stmt.query_map([&asst.id], |row| {
+            Ok(Topic {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                summary: row.get(2)?,
+                history: vec![], // 大数据量下建议按需加载，此处暂时全量加载以兼容原有前端
+            })
+        }).map_err(|e| e.to_string())?;
 
-    // 遍历 assistants 目录下的所有文件
-    for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let p = entry.path();
+        for topic in topic_iter {
+            let mut topic = topic.map_err(|e| e.to_string())?;
+            
+            // 3. 加载历史消息
+            let mut m_stmt = conn.prepare("SELECT role, content, model_id, display_files, display_text FROM messages WHERE topic_id = ? ORDER BY id ASC")
+                .map_err(|e| e.to_string())?;
+            let msg_iter = m_stmt.query_map([&topic.id], |row| {
+                let display_files_json: Option<String> = row.get(3)?;
+                let display_files = display_files_json.and_then(|s| serde_json::from_str(&s).ok());
+                
+                Ok(Message {
+                    role: row.get(0)?,
+                    content: serde_json::from_str(&row.get::<_, String>(1)?).unwrap_or(serde_json::Value::String("".into())),
+                    model_id: row.get(2)?,
+                    display_files,
+                    display_text: row.get(4)?,
+                })
+            }).map_err(|e| e.to_string())?;
 
-        // 只处理后缀名为 .json 的文件
-        if p.extension().and_then(|s| s.to_str()) == Some("json") {
-            let contents = fs::read_to_string(&p).map_err(|e| e.to_string())?;
-            // 如果解析成功，则加入列表
-            if let Ok(asst) = serde_json::from_str::<Assistant>(&contents) {
-                assistants.push(asst);
+            for msg in msg_iter {
+                topic.history.push(msg.map_err(|e| e.to_string())?);
             }
+            asst.topics.push(topic);
         }
+        assistants.push(asst);
     }
-
-    // 根据 ID 对助手列表进行排序，确保前端显示顺序一致
-    assistants.sort_by(|a, b| a.id.cmp(&b.id));
+    
     Ok(assistants)
 }
 
-/// 保存单个 AI 助手信息
 #[tauri::command]
-pub async fn save_assistant(assistant: Assistant) -> Result<(), String> {
-    let mut path = dirs::config_dir().ok_or("无法获取目录")?;
-    path.push("AIO");
-    path.push("assistants");
+pub async fn save_assistant(state: tauri::State<'_, DbState>, assistant: Assistant) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
 
-    // 自动创建文件夹
-    if !path.exists() {
-        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    // 使用事务保证原子性
+    // 注意：这里的逻辑改为：如果已存在则更新，如果不存在则插入
+    conn.execute(
+        "INSERT INTO assistants (id, name, prompt) VALUES (?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3",
+        params![assistant.id, assistant.name, assistant.prompt],
+    ).map_err(|e| e.to_string())?;
+
+    for topic in assistant.topics {
+        conn.execute(
+            "INSERT INTO topics (id, assistant_id, name, summary) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4",
+            params![topic.id, assistant.id, topic.name, topic.summary],
+        ).map_err(|e| e.to_string())?;
+
+        // 消息保存建议在消息产生的瞬间单独进行(见下文)，此处为兼容现有全量保存逻辑：
+        // 先删除旧消息再插入新消息（效率较低，但兼容旧前端逻辑）
+        conn.execute("DELETE FROM messages WHERE topic_id = ?", params![topic.id]).map_err(|e| e.to_string())?;
+        for msg in topic.history {
+            let files_json = serde_json::to_string(&msg.display_files).ok();
+            let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
+            conn.execute(
+                "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text],
+            ).map_err(|e| e.to_string())?;
+        }
     }
-
-    // 文件名使用助手的 ID (例如: assistant_id_1.json)
-    path.push(format!("{}.json", assistant.id));
-
-    let json = serde_json::to_string_pretty(&assistant).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())?;
+    
     Ok(())
 }
 
-/// 删除指定的 AI 助手文件
 #[tauri::command]
-pub async fn delete_assistant(id: String) -> Result<(), String> {
-    let mut path = dirs::config_dir().ok_or("无法获取目录")?;
-    path.push("AIO");
-    path.push("assistants");
-    path.push(format!("{}.json", id));
-
-    // 如果文件存在，则执行删除操作
-    if path.exists() {
-        fs::remove_file(path).map_err(|e| e.to_string())?;
-    }
+pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    // 由于设置了 ON DELETE CASCADE，会自动删除关联的话题和消息
+    conn.execute("DELETE FROM assistants WHERE id = ?", params![id]).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -121,7 +157,7 @@ pub async fn delete_assistant(id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn save_activated_models(models: Vec<ActivatedModel>) -> Result<(), String> {
     let mut path = dirs::config_dir().unwrap();
-    path.push("AIO");
+    path.push("com.loch.aio");
     if !path.exists() {
         std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     }
@@ -135,7 +171,7 @@ pub fn save_activated_models(models: Vec<ActivatedModel>) -> Result<(), String> 
 #[tauri::command]
 pub fn load_activated_models() -> Result<Vec<ActivatedModel>, String> {
     let mut path = dirs::config_dir().unwrap();
-    path.push("AIO");
+    path.push("com.loch.aio");
     path.push("activated_models.json");
 
     if !path.exists() {
@@ -150,7 +186,7 @@ pub fn load_activated_models() -> Result<Vec<ActivatedModel>, String> {
 #[tauri::command]
 pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
     let mut path = dirs::config_dir().unwrap();
-    path.push("AIO");
+    path.push("com.loch.aio");
     if !path.exists() {
         std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     }
@@ -164,7 +200,7 @@ pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
 #[tauri::command]
 pub fn load_fetched_models() -> Result<Vec<ModelInfo>, String> {
     let mut path = dirs::config_dir().unwrap();
-    path.push("AIO");
+    path.push("com.loch.aio");
     path.push("fetched_models.json");
 
     if !path.exists() {

@@ -356,6 +356,7 @@
 }
 
 .copy-bubble-button {
+    position: relative;
     align-items: center;
     background: transparent;
     border: 1px solid var(--primary-20);
@@ -388,7 +389,7 @@
 .file-attachment-card {
     align-items: center;
     background: var(--primary-10);
-    border: 1px solid rgba(8, 221, 249, 0.3);
+    border: 1px solid var(--primary-5);
     border-radius: 8px;
     cursor: default;
     display: flex;
@@ -436,7 +437,7 @@
 }
 
 .file-meta {
-    color: rgba(8, 221, 249, 0.6);
+    color: var(--primary-50);
     font-size: 0.75rem;
     margin-top: 2px;
 }

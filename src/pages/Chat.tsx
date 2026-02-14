@@ -27,9 +27,7 @@
  *    消息数 > 25 条 → checkAndSummarize() → invoke('summarize_history') → 
  *    LLM 生成摘要 → 更新 topic.summary → SQLite 持久化 → 后续对话携带摘要上下文
  * 
- * 6. 自动命名数据流:
- *    首次对话完成 → generateAutoTitle() → invoke('summarize_history') → 
- *    LLM 生成标题 → 更新 topic.name → SQLite 持久化
+ * 
  * 
  * 【依赖】
  * - SolidJS: 响应式 UI 框架
@@ -365,53 +363,6 @@ const ChatPage: Component = () => {
     document.addEventListener('mouseup', stopResize);
   };
 
-  /**
-   * 自动生成话题标题
-   * 在首次对话完成后，根据对话内容让 LLM 生成简短标题
-   * @param asstId - 助手 ID
-   * @param topicId - 话题 ID
-   * @param history - 当前对话历史
-   */
-  const generateAutoTitle = async (asstId: string, topicId: string, history: any[]) => {
-    const currentMdl = selectedModel();
-    if (!currentMdl) return;
-
-    console.log("正在自动生成话题名称...");
-
-    try {
-      // 构造专门用于生成标题的消息：完整历史 + 系统指令
-      const messagesForNaming = [
-        ...history.map((m: any) => ({ role: m.role, content: m.content })),
-        {
-          role: 'system',
-          content: '请根据上述对话内容，总结一个非常简短的话题标题。要求：不超过10个字，不要包含标点符号，直接输出标题文字。'
-        }
-      ];
-
-      // 复用 summarize_history 接口生成标题
-      const newTitle = await invoke<string>('summarize_history', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        messages: messagesForNaming
-      });
-
-      if (newTitle) {
-        // 清理可能的引号和空格
-        const cleanedTitle = newTitle.replace(/["'""]/g, '').trim();
-
-        // 更新本地 Store 中的话题名称
-        setDatas('assistants', a => a.id === asstId,
-          'topics', t => t.id === topicId,
-          'name', cleanedTitle);
-
-        // 同步到 SQLite 数据库
-        await saveSingleAssistantToBackend(asstId);
-      }
-    } catch (e) {
-      console.error("生成话题名称失败:", e);
-    }
-  };
 
   // ==================== 生命周期与事件监听 ====================
   
@@ -455,22 +406,6 @@ const ChatPage: Component = () => {
         if (done) {
           setIsThinking(false);
           setTypingIndex(null);
-
-          // 获取当前话题信息
-          const currentAsst = datas.assistants.find(a => a.id === assistant_id);
-          const currentTopic = currentAsst?.topics.find((t: any) => t.id === topic_id);
-
-          if (currentTopic) {
-            // 检测是否为首次对话（2 条消息：1 用户 + 1 AI）
-            const isFirstInteraction = currentTopic.history.length === 2;
-            // 检测标题是否为默认生成的（避免覆盖用户手动修改的标题）
-            const isDefaultName = currentTopic.name.startsWith("新话题") || currentTopic.name === "默认话题";
-
-            // 首次对话且标题为默认时，触发自动生成标题
-            if (isFirstInteraction && isDefaultName) {
-              generateAutoTitle(assistant_id, topic_id, currentTopic.history);
-            }
-          }
 
           // 保存当前状态到 SQLite
           saveSingleAssistantToBackend(assistant_id);

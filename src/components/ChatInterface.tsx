@@ -57,12 +57,11 @@ import { Component, For, Show, Setter } from 'solid-js';
 // Markdown 渲染子组件
 import Markdown from './Markdown';
 // 全局状态：话题类型、用户头像、选中模型
-import { Topic, globalUserAvatar, selectedModel, setDatas } from '../store/store';
+import { Topic, globalUserAvatar, selectedModel } from '../store/store';
 // Tauri 对话框插件：调用系统原生文件选择器
 import { open } from '@tauri-apps/plugin-dialog';
 // 本地样式文件
 import './ChatInterface.css';
-import { invoke } from '@tauri-apps/api/core';
 
 /**
  * 组件 Props 接口定义
@@ -146,37 +145,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         return '/icons/ollama.svg';
     };
 
-
-
-    const handleManualSync = async (pushOnly: boolean) => {
-        const token = localStorage.getItem('auth-token');
-        if (!token) {
-            alert("未登录，无法同步。请先登录账号。");
-            return;
-        }
-
-        try {
-            console.log(`[测试] 开始手动同步: ${pushOnly ? '仅推送' : '双向交换'}`);
-            // 调用 Rust 命令
-            const result = await invoke<string>("perform_sync", { token, pushOnly });
-            console.log("[测试] 同步返回:", result);
-
-            // 如果是全量同步，同步完后刷新本地 Store 数据
-            if (!pushOnly) {
-                const syncedData = await invoke<any>("load_assistants");
-                if (syncedData) {
-                    setDatas("assistants", syncedData);
-                }
-            }
-            alert(pushOnly ? "本地数据已成功推送到后端" : "同步完成：已交换云端和本地数据");
-        } catch (err) {
-            console.error("[测试] 同步报错:", err);
-            alert("同步失败: " + err);
-        }
-    };
-
-
-    
     return (
         // 主容器：聊天界面根元素
         <div class="chat-input-container">
@@ -388,31 +356,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     {/* 工具栏：上传按钮和发送按钮 */}
                     <div class="input-toolbar">
                         <div class="toolbar-left">
-
-
-<button
-        class="toolbar-icon-btn"
-        title="测试：仅推送本地变更"
-        style={{ color: '#3b82f6' }} // 蓝色区分
-        onClick={() => handleManualSync(true)}
-    >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px;">
-            <path d="M12 16V8m0 0l-3 3m3-3l3 3M4 17v1a2 2 0 002 2h12a2 2 0 002-2v-1" />
-        </svg>
-    </button>
-
-    {/* 测试按钮 2: 双向同步 */}
-    <button
-        class="toolbar-icon-btn"
-        title="测试：全量双向同步"
-        style={{ color: '#10b981' }} // 绿色区分
-        onClick={() => handleManualSync(false)}
-    >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px;">
-            <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-    </button>
-
                             {/* 上传文件按钮：支持多选 */}
                             <button
                                 class="toolbar-icon-btn"

@@ -43,7 +43,6 @@ import { listen } from '@tauri-apps/api/event';
 import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
   saveSingleAssistantToBackend, Assistant, Topic, selectedModel,
-  AppConfig,
 } from '../store/store';
 
 import AssistantSidebar from '../components/AssistantSidebar';
@@ -57,12 +56,10 @@ import './Chat.css';
  * @returns Topic 对象，包含唯一 ID、名称、空历史记录和空摘要
  */
 const createTopic = (name?: string): Topic => ({
-  id: crypto.randomUUID(), // 使用当前时间戳作为唯一标识符
+  id: Date.now().toString(), // 使用当前时间戳作为唯一标识符
   name: name || `新话题 ${new Date().toLocaleTimeString()}`, // 默认名称包含创建时间
   history: [], // 消息历史记录数组
-  summary: "", // SQLite 存储方案新增：长期记忆摘要，用于压缩历史上下文
-  isDeleted: false,               // 必须添加此字段
-  updatedAt: new Date().toISOString() // 建议也加上，保持数据完整
+  summary: "" // SQLite 存储方案新增：长期记忆摘要，用于压缩历史上下文
 });
 
 /**
@@ -72,7 +69,7 @@ const createTopic = (name?: string): Topic => ({
  * @returns Assistant 对象，包含 ID、名称、系统提示词和默认话题
  */
 const createAssistant = (name?: string, id?: string): Assistant => ({
-  id: crypto.randomUUID(), // 若未提供 ID 则生成新的时间戳 ID
+  id: id ?? Date.now().toString(), // 若未提供 ID 则生成新的时间戳 ID
   name: name || '新助手', // 默认助手名称
   prompt: '你是一个乐于助人的 AI 助手。', // 默认系统提示词
   topics: [createTopic('默认话题')] // 每个助手默认创建一个"默认话题"
@@ -84,7 +81,7 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
  */
 const ChatPage: Component = () => {
   // ==================== 布局与 UI 状态 ====================
-
+  
   /** 左侧面板宽度百分比（助手列表），默认 18%，范围 15%-30% */
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(18);
   /** 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30% */
@@ -112,7 +109,7 @@ const ChatPage: Component = () => {
   let chatPageRef: HTMLDivElement | undefined;
 
   // ==================== 派生状态 (Computed) ====================
-
+  
   /**
    * 当前选中的助手对象
    * 根据 currentAssistantId 从 datas.assistants 数组中查找
@@ -133,7 +130,7 @@ const ChatPage: Component = () => {
   };
 
   // ==================== 业务逻辑函数 ====================
-
+  
   /**
    * 处理文件上传和解析
    * 调用 Tauri 后端读取本地文件内容，支持文本文件和图片
@@ -151,9 +148,9 @@ const ChatPage: Component = () => {
       const isImg = fileType === 'image' || ['png', 'jpg', 'jpeg'].includes(fileName.split('.').pop()?.toLowerCase() || '');
       // 添加到待发送文件列表
       setPendingFiles(prev => [...prev, { name: fileName, content, type: isImg ? 'image' : 'text' }]);
-    } catch (err) {
+    } catch (err) { 
       alert(err); // 解析失败时提示错误
-    } finally {
+    } finally { 
       setIsProcessing(false); // 无论成功与否，结束加载状态
     }
   };
@@ -232,8 +229,8 @@ const ChatPage: Component = () => {
     const documents = files.filter(f => f.type === 'text');
     const images = files.filter(f => f.type === 'image');
     // 构造文件上下文文本：列出所有文本文件的内容
-    let textContext = documents.length > 0
-      ? "参考文件内容：\n" + documents.map(d => `[${d.name}]\n${d.content}`).join('\n') + "\n---\n"
+    let textContext = documents.length > 0 
+      ? "参考文件内容：\n" + documents.map(d => `[${d.name}]\n${d.content}`).join('\n') + "\n---\n" 
       : "";
 
     // 最终发送给 AI 的文本内容（文件上下文 + 用户输入）
@@ -251,7 +248,6 @@ const ChatPage: Component = () => {
 
     // 构造 UI 消息对象（用于本地显示，与 API 格式可能不同）
     const newUserMsg = {
-      id: crypto.randomUUID(),
       role: 'user' as const,
       content: apiContent, // API 格式的内容（可能是字符串或数组）
       displayFiles: files.map(f => ({ name: f.name })), // UI 显示用的文件列表
@@ -262,12 +258,12 @@ const ChatPage: Component = () => {
     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
       ...h,
       newUserMsg,
-      { id: crypto.randomUUID(), role: 'assistant' as const, content: "", modelId: currentMdl.model_id } // 空的 AI 回复占位
+      { role: 'assistant' as const, content: "", modelId: currentMdl.model_id } // 空的 AI 回复占位
     ]);
 
     // 清空输入状态和文件列表，设置生成中状态
-    setInputMessage("");
-    setPendingFiles([]);
+    setInputMessage(""); 
+    setPendingFiles([]); 
     setIsThinking(true);
     // 设置打字机效果索引为刚添加的 AI 消息位置
     setTypingIndex(activeTopic()?.history.length! - 1);
@@ -275,12 +271,12 @@ const ChatPage: Component = () => {
     try {
       // 构造发送给 AI 的完整消息数组
       const messagesForAI = [
-        { id: crypto.randomUUID(), role: 'system', content: asstObj.prompt }, // 系统提示词
+        { role: 'system', content: asstObj.prompt }, // 系统提示词
         ...(topicObj.summary ? [{ // 若有历史摘要则作为系统消息插入
           role: 'system',
           content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${topicObj.summary}`
         }] : []),
-        ...topicObj.history.map((m: any) => ({ id: m.id || crypto.randomUUID(), role: m.role, content: m.content })) // 完整历史记录
+        ...topicObj.history.map((m: any) => ({ role: m.role, content: m.content })) // 完整历史记录
       ];
 
       // 调用 Tauri 后端流式接口（非阻塞，通过事件监听接收数据）
@@ -304,16 +300,16 @@ const ChatPage: Component = () => {
    * 调用后端中断当前流式请求
    */
   const handleStopGeneration = async () => {
-    await invoke('stop_llm_stream', {
-      assistantId: currentAssistantId(),
-      topicId: currentTopicId()
+    await invoke('stop_llm_stream', { 
+      assistantId: currentAssistantId(), 
+      topicId: currentTopicId() 
     });
     setIsThinking(false);
     setTypingIndex(null);
   };
 
   // ==================== 助手与话题管理 ====================
-
+  
   /**
    * 添加新助手
    * 创建助手对象 → 更新状态 → 选中新助手 → 持久化到 SQLite
@@ -340,7 +336,7 @@ const ChatPage: Component = () => {
   };
 
   // ==================== UI/UX 交互逻辑 ====================
-
+  
   /**
    * 拖拽调整面板宽度
    * @param e - MouseEvent 鼠标事件
@@ -418,143 +414,85 @@ const ChatPage: Component = () => {
   };
 
   // ==================== 生命周期与事件监听 ====================
-
+  
   /**
    * 组件挂载时初始化
    * 1. 从 SQLite 加载助手数据
    * 2. 设置 Tauri 拖拽事件监听（文件拖入）
    * 3. 设置 LLM 流式响应监听
    */
-
   onMount(() => {
-    // 1. 获取 Token
-    const token = localStorage.getItem('auth-token');
-    
-    // 用于存放所有 Tauri 监听器的取消函数
-    let unlistens: Array<() => void> = [];
-
-    // 2. 【核心修复】同步注册清理函数
-    // 只要 onCleanup 是在 onMount 的同步流程中执行的，它就能正确监听到组件卸载
-    onCleanup(() => {
-      console.log("[Cleanup] 正在卸载组件，清理监听器...");
-      // 取消所有 Tauri 事件监听
-      unlistens.forEach(unlistenFn => {
-        if (typeof unlistenFn === 'function') unlistenFn();
-      });
-      // 移除浏览器窗口关闭监听
-      window.removeEventListener("beforeunload", handleBeforeUnload);
+    // 首次进入：从 SQLite 加载所有助手数据
+    invoke<Assistant[]>('load_assistants').then(loaded => {
+      if (loaded.length > 0) {
+        setDatas('assistants', loaded);
+        const firstAsst = loaded[0];
+        setCurrentAssistantId(firstAsst.id);
+        if (firstAsst.topics && firstAsst.topics.length > 0) {
+          setCurrentTopicId(firstAsst.topics[0].id);
+        }
+      } else {
+        addAssistant(); // 数据库为空时自动创建首个助手
+      }
     });
 
-    // 3. 浏览器环境下的同步调用（保险方案）
-    const handleBeforeUnload = () => {
-      if (token) {
-        invoke("perform_sync", { token, pushOnly: true }).catch(() => { });
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
+    // 设置多个事件监听器，存储 unlisten 函数用于清理
+    const unlistens = [
+      // 拖拽进入窗口：显示拖拽状态样式
+      listen('tauri://drag-enter', () => setIsDragging(true)),
+      // 拖拽离开窗口：取消拖拽状态
+      listen('tauri://drag-leave', () => setIsDragging(false)),
+      // 拖拽释放文件：逐个处理上传的文件
+      listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
+        setIsDragging(false);
+        for (const p of e.payload.paths) await handleFileUpload(p, 'file');
+      }),
+      // 流式输出监听：接收 LLM 生成的文本块
+      listen<any>('llm-chunk', (e) => {
+        const { assistant_id, topic_id, content, done } = e.payload;
 
-    // 4. 将所有异步初始化逻辑封装在一个内部函数中
-    const initialize = async () => {
-      try {
-        // --- 注册 Tauri 事件监听并收集取消函数 ---
-        
-        // 拖拽相关
-        unlistens.push(await listen('tauri://drag-enter', () => setIsDragging(true)));
-        unlistens.push(await listen('tauri://drag-leave', () => setIsDragging(false)));
-        unlistens.push(await listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
-          setIsDragging(false);
-          for (const p of e.payload.paths) await handleFileUpload(p, 'file');
-        }));
+        // 生成完成处理
+        if (done) {
+          setIsThinking(false);
+          setTypingIndex(null);
 
-        // 【最关键】流式消息监听器
-        unlistens.push(await listen<any>('llm-chunk', (e) => {
-          const { assistant_id, topic_id, content, done } = e.payload;
+          // 获取当前话题信息
+          const currentAsst = datas.assistants.find(a => a.id === assistant_id);
+          const currentTopic = currentAsst?.topics.find((t: any) => t.id === topic_id);
 
-          if (done) {
-            setIsThinking(false);
-            setTypingIndex(null);
+          if (currentTopic) {
+            // 检测是否为首次对话（2 条消息：1 用户 + 1 AI）
+            const isFirstInteraction = currentTopic.history.length === 2;
+            // 检测标题是否为默认生成的（避免覆盖用户手动修改的标题）
+            const isDefaultName = currentTopic.name.startsWith("新话题") || currentTopic.name === "默认话题";
 
-            const currentAsst = datas.assistants.find(a => a.id === assistant_id);
-            const currentTopic = currentAsst?.topics.find((t: any) => t.id === topic_id);
-
-            if (currentTopic) {
-              const isFirstInteraction = currentTopic.history.length === 2;
-              const isDefaultName = currentTopic.name.startsWith("新话题") || currentTopic.name === "默认话题";
-              if (isFirstInteraction && isDefaultName) {
-                generateAutoTitle(assistant_id, topic_id, currentTopic.history);
-              }
+            // 首次对话且标题为默认时，触发自动生成标题
+            if (isFirstInteraction && isDefaultName) {
+              generateAutoTitle(assistant_id, topic_id, currentTopic.history);
             }
-
-            saveSingleAssistantToBackend(assistant_id);
-            setTimeout(() => checkAndSummarize(), 500);
-            return;
           }
 
-          // 找到当前对应的历史记录索引并更新
-          const topic = datas.assistants
-            .find(a => a.id === assistant_id)?.topics
-            .find((t: any) => t.id === topic_id);
-          
-          if (topic) {
-            const lastIdx = topic.history.length - 1;
-            setDatas('assistants', a => a.id === assistant_id,
-              'topics', t => t.id === topic_id,
-              'history', lastIdx, 'content', (old: string) => old + content);
-          }
-        }));
-
-        // 窗口关闭请求监听
-        unlistens.push(await listen("tauri://close-requested", async () => {
-          if (token) {
-            await invoke("perform_sync", { token, pushOnly: true }).catch(console.error);
-          }
-          await invoke("exit_app");
-        }));
-
-        // 自定义同步退出监听
-        unlistens.push(await listen("start-close-sync", async () => {
-          console.log("收到关闭前同步请求...");
-          if (token) {
-            await invoke("perform_sync", { token, pushOnly: true }).catch(console.error);
-          }
-          await invoke("exit_app");
-        }));
-
-        // --- 数据初始加载 ---
-        const loaded = await invoke<Assistant[]>('load_assistants');
-        if (loaded && loaded.length > 0) {
-          setDatas('assistants', loaded);
-          // 尽量恢复上次选中的 ID，如果没有则选第一个
-          const firstAsst = loaded[0];
-          if (!currentAssistantId()) {
-             setCurrentAssistantId(firstAsst.id);
-             if (firstAsst.topics?.length > 0) {
-               setCurrentTopicId(firstAsst.topics[0].id);
-             }
-          }
-        } else {
-          // 如果是全新环境，创建一个
-          addAssistant();
+          // 保存当前状态到 SQLite
+          saveSingleAssistantToBackend(assistant_id);
+          // 延迟检查是否需要历史摘要（避免立即触发影响性能）
+          setTimeout(() => checkAndSummarize(), 500);
+          return;
         }
 
-        // --- 后台双向同步 ---
-        if (token) {
-          console.log("执行启动后台同步...");
-          invoke("perform_sync", { token, pushOnly: false })
-            .then(async () => {
-              const syncedData = await invoke<Assistant[]>("load_assistants");
-              if (syncedData) setDatas("assistants", syncedData);
-            })
-            .catch(e => console.error("同步失败:", e));
+        // 流式数据追加：查找对应消息并追加内容
+        const asst = datas.assistants.find(a => a.id === assistant_id);
+        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
+        if (topic) {
+          const lastIdx = topic.history.length - 1; // 最后一条消息（AI 回复）
+          setDatas('assistants', a => a.id === assistant_id,
+            'topics', t => t.id === topic_id,
+            'history', lastIdx, 'content', (old: string) => old + content);
         }
+      })
+    ];
 
-      } catch (err) {
-        console.error("初始化过程中出错:", err);
-      }
-    };
-
-    // 5. 执行初始化
-    initialize();
+    // 组件卸载时清理所有事件监听
+    onCleanup(() => unlistens.forEach(u => u.then(fn => fn())));
   });
 
   /**
@@ -571,7 +509,7 @@ const ChatPage: Component = () => {
   });
 
   // ==================== 渲染 ====================
-
+  
   return (
     <div class="chat-page" ref={chatPageRef}>
       {/* 左侧助手侧边栏 */}

@@ -4,7 +4,6 @@ use std::fs; // 导入标准库文件系统模块
 use tauri::Manager;
 use crate::DbState;
 use rusqlite::params;
-
 /// 保存应用程序通用配置
 /// #[tauri::command] 标记允许此函数从前端通过 invoke 调用
 #[tauri::command]
@@ -51,13 +50,12 @@ pub fn load_app_config() -> Result<AppConfig, String> {
 }
 
 /// 异步加载所有已保存的 AI 助手配置
-/// 注意：此处增加了对 updated_at 和 is_deleted 字段的处理，以配合增量同步
 #[tauri::command]
 pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Assistant>, String> {
     let conn = state.0.lock().unwrap();
     
-    // 1. 加载助手：只加载未删除的助手
-    let mut stmt = conn.prepare("SELECT id, name, prompt FROM assistants WHERE is_deleted = 0 ORDER BY id").map_err(|e| e.to_string())?;
+    // 1. 加载助手
+    let mut stmt = conn.prepare("SELECT id, name, prompt FROM assistants ORDER BY id").map_err(|e| e.to_string())?;
     let assistant_iter = stmt.query_map([], |row| {
         Ok(Assistant {
             id: row.get(0)?,
@@ -71,37 +69,33 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
     for asst in assistant_iter {
         let mut asst = asst.map_err(|e| e.to_string())?;
         
-        // 2. 为每个助手加载话题：增加 updated_at 和 is_deleted 的查询
-        let mut t_stmt = conn.prepare("SELECT id, name, summary, updated_at, is_deleted FROM topics WHERE assistant_id = ? AND is_deleted = 0").map_err(|e| e.to_string())?;
+        // 2. 为每个助手加载话题
+        let mut t_stmt = conn.prepare("SELECT id, name, summary FROM topics WHERE assistant_id = ?").map_err(|e| e.to_string())?;
         let topic_iter = t_stmt.query_map([&asst.id], |row| {
             Ok(Topic {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 summary: row.get(2)?,
-                updated_at: row.get(3)?,
-                is_deleted: row.get::<_, i32>(4)? == 1,
-                history: vec![], 
+                history: vec![], // 大数据量下建议按需加载，此处暂时全量加载以兼容原有前端
             })
         }).map_err(|e| e.to_string())?;
 
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
             
-            // 3. 加载历史消息：增加 id 和 updated_at 的查询
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, updated_at FROM messages WHERE topic_id = ? AND is_deleted = 0 ORDER BY timestamp ASC")
+            // 3. 加载历史消息
+            let mut m_stmt = conn.prepare("SELECT role, content, model_id, display_files, display_text FROM messages WHERE topic_id = ? ORDER BY id ASC")
                 .map_err(|e| e.to_string())?;
             let msg_iter = m_stmt.query_map([&topic.id], |row| {
-                let display_files_json: Option<String> = row.get(4)?;
+                let display_files_json: Option<String> = row.get(3)?;
                 let display_files = display_files_json.and_then(|s| serde_json::from_str(&s).ok());
                 
                 Ok(Message {
-                    id: row.get(0)?,
-                    role: row.get(1)?,
-                    content: serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or(serde_json::Value::String("".into())),
-                    model_id: row.get(3)?,
+                    role: row.get(0)?,
+                    content: serde_json::from_str(&row.get::<_, String>(1)?).unwrap_or(serde_json::Value::String("".into())),
+                    model_id: row.get(2)?,
                     display_files,
-                    display_text: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    display_text: row.get(4)?,
                 })
             }).map_err(|e| e.to_string())?;
 
@@ -120,40 +114,30 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 pub async fn save_assistant(state: tauri::State<'_, DbState>, assistant: Assistant) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
 
-    // 注意：SQLite 触发器会自动维护 updated_at，此处手动插入字段以防冲突
+    // 使用事务保证原子性
+    // 注意：这里的逻辑改为：如果已存在则更新，如果不存在则插入
     conn.execute(
-        "INSERT INTO assistants (id, name, prompt, is_deleted) VALUES (?1, ?2, ?3, 0)
-         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, is_deleted=0, updated_at=CURRENT_TIMESTAMP",
+        "INSERT INTO assistants (id, name, prompt) VALUES (?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3",
         params![assistant.id, assistant.name, assistant.prompt],
     ).map_err(|e| e.to_string())?;
 
     for topic in assistant.topics {
         conn.execute(
-            "INSERT INTO topics (id, assistant_id, name, summary, is_deleted) VALUES (?1, ?2, ?3, ?4, 0)
-             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, is_deleted=0, updated_at=CURRENT_TIMESTAMP",
+            "INSERT INTO topics (id, assistant_id, name, summary) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4",
             params![topic.id, assistant.id, topic.name, topic.summary],
         ).map_err(|e| e.to_string())?;
 
-        // 消息保存：全量更新逻辑。
-        // 为了支持增量同步，不建议 DELETE 物理删除，这里改为将该话题下所有不在当前列表中的消息设为逻辑删除
-        let message_ids: Vec<String> = topic.history.iter().map(|m| m.id.clone()).collect();
-        let id_list = message_ids.iter().map(|id| format!("'{}'", id)).collect::<Vec<_>>().join(",");
-        
-        let delete_sql = if id_list.is_empty() {
-            format!("UPDATE messages SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE topic_id = '{}'", topic.id)
-        } else {
-            format!("UPDATE messages SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE topic_id = '{}' AND id NOT IN ({})", topic.id, id_list)
-        };
-        conn.execute(&delete_sql, []).map_err(|e| e.to_string())?;
-
+        // 消息保存建议在消息产生的瞬间单独进行(见下文)，此处为兼容现有全量保存逻辑：
+        // 先删除旧消息再插入新消息（效率较低，但兼容旧前端逻辑）
+        conn.execute("DELETE FROM messages WHERE topic_id = ?", params![topic.id]).map_err(|e| e.to_string())?;
         for msg in topic.history {
             let files_json = serde_json::to_string(&msg.display_files).ok();
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, is_deleted) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)
-                 ON CONFLICT(id) DO UPDATE SET content=?4, model_id=?5, display_files=?6, display_text=?7, is_deleted=0, updated_at=CURRENT_TIMESTAMP",
-                params![msg.id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text],
+                "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text],
             ).map_err(|e| e.to_string())?;
         }
     }
@@ -164,24 +148,8 @@ pub async fn save_assistant(state: tauri::State<'_, DbState>, assistant: Assista
 #[tauri::command]
 pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
-    // 逻辑删除主助手
-    conn.execute(
-        "UPDATE assistants SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", 
-        params![id]
-    ).map_err(|e| e.to_string())?;
-    
-    // 逻辑删除关联的话题
-    conn.execute(
-        "UPDATE topics SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE assistant_id = ?", 
-        params![id]
-    ).map_err(|e| e.to_string())?;
-
-    // 逻辑删除关联的消息
-    conn.execute(
-        "UPDATE messages SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE topic_id IN (SELECT id FROM topics WHERE assistant_id = ?)", 
-        params![id]
-    ).map_err(|e| e.to_string())?;
-
+    // 由于设置了 ON DELETE CASCADE，会自动删除关联的话题和消息
+    conn.execute("DELETE FROM assistants WHERE id = ?", params![id]).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -252,6 +220,8 @@ pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<St
     if !avatars_dir.exists() {
         std::fs::create_dir_all(&avatars_dir).map_err(|e| e.to_string())?;
     } else {
+        // --- 核心修复：删除所有旧的 user_avatar 缓存 ---
+        // 我们只删除以此前缀开头的文件，避免误删目录下可能存在的其它资源
         if let Ok(entries) = std::fs::read_dir(&avatars_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -272,14 +242,16 @@ pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<St
         .decode(base64_str)
         .map_err(|e| e.to_string())?;
 
-    // 3. 生成新文件名
+    // 3. 生成新文件名 (保留 UUID 依然是必要的，可以让前端识别到路径变化从而刷新图片)
     let file_name = format!("user_avatar_{}.png", uuid::Uuid::new_v4());
     let dest_path = avatars_dir.join(&file_name);
 
     std::fs::write(&dest_path, bytes).map_err(|e| e.to_string())?;
 
+    // 返回新路径供前端更新 localStorage
     Ok(dest_path.to_string_lossy().to_string())
 }
+
 
 #[tauri::command]
 pub async fn clear_local_avatar_cache(app: tauri::AppHandle) -> Result<(), String> {
@@ -287,6 +259,7 @@ pub async fn clear_local_avatar_cache(app: tauri::AppHandle) -> Result<(), Strin
     let avatars_dir = app_dir.join("avatars");
 
     if avatars_dir.exists() {
+        // 直接删除整个文件夹并重建，或者遍历删除
         let _ = std::fs::remove_dir_all(&avatars_dir);
         std::fs::create_dir_all(&avatars_dir).map_err(|e| e.to_string())?;
     }

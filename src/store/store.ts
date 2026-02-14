@@ -36,8 +36,6 @@ export interface Topic {
     history: Message[];  
     /** 话题的长期记忆摘要，对应数据库存储的 summary 字段 */
     summary: string; 
-    isDeleted?: boolean; // 标记话题是否已删除（逻辑删除标志）
-    updatedAt?: string; // 话题最后更新时间（ISO 字符串格式）
 }  
 
 /**

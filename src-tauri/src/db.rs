@@ -20,29 +20,24 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     "CREATE TABLE IF NOT EXISTS assistants (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        prompt TEXT,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- 新增
-        is_deleted BOOLEAN DEFAULT 0                   -- 新增：逻辑删除
+        prompt TEXT
     );
     CREATE TABLE IF NOT EXISTS topics (
         id TEXT PRIMARY KEY,
         assistant_id TEXT NOT NULL,
         name TEXT NOT NULL,
         summary TEXT,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- 新增
-        is_deleted BOOLEAN DEFAULT 0,                  -- 新增
         FOREIGN KEY(assistant_id) REFERENCES assistants(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,                           -- 必须改为 TEXT (UUID)
+        id TEXT PRIMARY KEY, 
         topic_id TEXT NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         model_id TEXT,
         display_files TEXT, 
         display_text TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,  -- 消息创建时间
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,  -- 同步参考时间
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
     );"
 ).map_err(|e| e.to_string())?;

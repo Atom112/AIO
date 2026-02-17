@@ -47,7 +47,8 @@ import AssistantSidebar from '../components/AssistantSidebar';
 import ChatInterface from '../components/ChatInterface';
 import TopicSidebar from '../components/TopicSidebar';
 import './Chat.css';
-
+let isFirstAppLaunch = true;
+const DEFAULT_ASST_ID = "default-assistant-id";
 /**
  * 辅助函数：创建新话题对象
  * @param name - 可选的话题名称，默认生成带时间戳的名称
@@ -79,11 +80,19 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
  */
 const ChatPage: Component = () => {
   // ==================== 布局与 UI 状态 ====================
-  
+
   /** 左侧面板宽度百分比（助手列表），默认 18%，范围 15%-30% */
-  const [leftPanelWidth, setLeftPanelWidth] = createSignal(18);
+  const [leftPanelWidth, setLeftPanelWidth] = createSignal(
+    Number(localStorage.getItem('chat-left-panel-width')) || 18
+  );
   /** 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30% */
-  const [rightPanelWidth, setRightPanelWidth] = createSignal(18);
+  const [rightPanelWidth, setRightPanelWidth] = createSignal(
+    Number(localStorage.getItem('chat-right-panel-width')) || 18
+  );
+  const [isResizing, setIsResizing] = createSignal(false);
+  /** 左右两侧面板宽度调整逻辑 **/
+  const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(localStorage.getItem('left-collapsed') === 'true');
+  const [isRightCollapsed, setIsRightCollapsed] = createSignal(localStorage.getItem('right-collapsed') === 'true');
   /** 当前输入框中的消息文本 */
   const [inputMessage, setInputMessage] = createSignal("");
   /** 待发送的文件列表（用户上传但尚未发送的文件） */
@@ -105,9 +114,32 @@ const ChatPage: Component = () => {
 
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
-
+  const displayLeftWidth = () => isLeftCollapsed() ? 0 : leftPanelWidth();
+  const displayRightWidth = () => isRightCollapsed() ? 0 : rightPanelWidth();
   // ==================== 派生状态 (Computed) ====================
-  
+
+  const toggleLeft = (e: MouseEvent) => {
+    e.stopPropagation(); // 防止触发拖拽
+    const newState = !isLeftCollapsed();
+    setIsLeftCollapsed(newState);
+    localStorage.setItem('left-collapsed', String(newState));
+    if (!newState && leftPanelWidth() < 5) {
+      setLeftPanelWidth(18);
+    }
+  };
+
+  const toggleRight = (e: MouseEvent) => {
+    e.stopPropagation();
+    const newState = !isRightCollapsed();
+    setIsRightCollapsed(newState);
+    localStorage.setItem('right-collapsed', String(newState));
+    if (!newState && rightPanelWidth() < 5) {
+      setRightPanelWidth(18);
+    }
+  };
+
+
+
   /**
    * 当前选中的助手对象
    * 根据 currentAssistantId 从 datas.assistants 数组中查找
@@ -128,7 +160,14 @@ const ChatPage: Component = () => {
   };
 
   // ==================== 业务逻辑函数 ====================
-  
+
+
+  const createDefaultAssistant = (): Assistant => ({
+    id: DEFAULT_ASST_ID,
+    name: '默认助手',
+    prompt: '你是一个乐于助人的 AI 助手。',
+    topics: [createTopic('默认话题')]
+  });
   /**
    * 处理文件上传和解析
    * 调用 Tauri 后端读取本地文件内容，支持文本文件和图片
@@ -146,9 +185,9 @@ const ChatPage: Component = () => {
       const isImg = fileType === 'image' || ['png', 'jpg', 'jpeg'].includes(fileName.split('.').pop()?.toLowerCase() || '');
       // 添加到待发送文件列表
       setPendingFiles(prev => [...prev, { name: fileName, content, type: isImg ? 'image' : 'text' }]);
-    } catch (err) { 
+    } catch (err) {
       alert(err); // 解析失败时提示错误
-    } finally { 
+    } finally {
       setIsProcessing(false); // 无论成功与否，结束加载状态
     }
   };
@@ -227,8 +266,8 @@ const ChatPage: Component = () => {
     const documents = files.filter(f => f.type === 'text');
     const images = files.filter(f => f.type === 'image');
     // 构造文件上下文文本：列出所有文本文件的内容
-    let textContext = documents.length > 0 
-      ? "参考文件内容：\n" + documents.map(d => `[${d.name}]\n${d.content}`).join('\n') + "\n---\n" 
+    let textContext = documents.length > 0
+      ? "参考文件内容：\n" + documents.map(d => `[${d.name}]\n${d.content}`).join('\n') + "\n---\n"
       : "";
 
     // 最终发送给 AI 的文本内容（文件上下文 + 用户输入）
@@ -246,22 +285,23 @@ const ChatPage: Component = () => {
 
     // 构造 UI 消息对象（用于本地显示，与 API 格式可能不同）
     const newUserMsg = {
+      id: crypto.randomUUID(),
       role: 'user' as const,
       content: apiContent, // API 格式的内容（可能是字符串或数组）
       displayFiles: files.map(f => ({ name: f.name })), // UI 显示用的文件列表
       displayText: userInput // UI 显示用的纯文本（不含文件上下文）
     };
-
+    const aiMsgId = crypto.randomUUID();
     // 更新本地 Store：添加用户消息和空的 AI 占位消息
     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
       ...h,
       newUserMsg,
-      { role: 'assistant' as const, content: "", modelId: currentMdl.model_id } // 空的 AI 回复占位
+      { id: aiMsgId, role: 'assistant' as const, content: "", modelId: currentMdl.model_id }
     ]);
 
     // 清空输入状态和文件列表，设置生成中状态
-    setInputMessage(""); 
-    setPendingFiles([]); 
+    setInputMessage("");
+    setPendingFiles([]);
     setIsThinking(true);
     // 设置打字机效果索引为刚添加的 AI 消息位置
     setTypingIndex(activeTopic()?.history.length! - 1);
@@ -298,16 +338,16 @@ const ChatPage: Component = () => {
    * 调用后端中断当前流式请求
    */
   const handleStopGeneration = async () => {
-    await invoke('stop_llm_stream', { 
-      assistantId: currentAssistantId(), 
-      topicId: currentTopicId() 
+    await invoke('stop_llm_stream', {
+      assistantId: currentAssistantId(),
+      topicId: currentTopicId()
     });
     setIsThinking(false);
     setTypingIndex(null);
   };
 
   // ==================== 助手与话题管理 ====================
-  
+
   /**
    * 添加新助手
    * 创建助手对象 → 更新状态 → 选中新助手 → 持久化到 SQLite
@@ -334,38 +374,40 @@ const ChatPage: Component = () => {
   };
 
   // ==================== UI/UX 交互逻辑 ====================
-  
+
   /**
    * 拖拽调整面板宽度
    * @param e - MouseEvent 鼠标事件
    * @param type - 'left' 调整左面板，'right' 调整右面板
    */
   const startResize = (e: MouseEvent, type: 'left' | 'right') => {
-    e.preventDefault(); // 阻止默认拖拽行为
-    // 鼠标移动处理：根据鼠标位置计算新的宽度百分比
+    e.preventDefault();
+    // 2. 开始拖拽时，设为 true
+    setIsResizing(true);
+
     const handleMove = (moveEvent: MouseEvent) => {
-      const totalW = chatPageRef!.offsetWidth; // 获取容器总宽度
+      const totalW = chatPageRef!.offsetWidth;
       if (type === 'left') {
-        // 左面板：根据鼠标 X 坐标计算百分比，限制在 15%-30%
         setLeftPanelWidth(Math.min(Math.max((moveEvent.clientX / totalW) * 100, 15), 30));
       } else {
-        // 右面板：根据右侧剩余空间计算，限制在 15%-30%
         setRightPanelWidth(Math.min(Math.max(((totalW - moveEvent.clientX) / totalW) * 100, 15), 30));
       }
     };
-    // 鼠标释放处理：移除事件监听
+
     const stopResize = () => {
+      // 3. 停止拖拽时，设为 false
+      setIsResizing(false);
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', stopResize);
     };
-    // 绑定全局鼠标事件
+
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', stopResize);
   };
 
 
   // ==================== 生命周期与事件监听 ====================
-  
+
   /**
    * 组件挂载时初始化
    * 1. 从 SQLite 加载助手数据
@@ -374,18 +416,47 @@ const ChatPage: Component = () => {
    */
   onMount(() => {
     // 首次进入：从 SQLite 加载所有助手数据
-    invoke<Assistant[]>('load_assistants').then(loaded => {
-      if (loaded.length > 0) {
-        setDatas('assistants', loaded);
-        const firstAsst = loaded[0];
-        setCurrentAssistantId(firstAsst.id);
-        if (firstAsst.topics && firstAsst.topics.length > 0) {
-          setCurrentTopicId(firstAsst.topics[0].id);
-        }
+    invoke<Assistant[]>('load_assistants').then(async (loaded) => {
+      let finalAssistants = [...loaded];
+
+      // 1. 确保默认助手存在
+      let defaultAsst = finalAssistants.find(a => a.id === DEFAULT_ASST_ID);
+      if (!defaultAsst) {
+        // createAssistant 内部已经带了一个“默认话题”
+        defaultAsst = createAssistant('默认助手', DEFAULT_ASST_ID);
+        finalAssistants = [defaultAsst, ...finalAssistants];
+        setDatas('assistants', finalAssistants);
+        await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
       } else {
-        addAssistant(); // 数据库为空时自动创建首个助手
+        setDatas('assistants', finalAssistants);
       }
-    });
+
+      // 2. 处理应用启动时的默认选中（仅冷启动触发）
+      if (isFirstAppLaunch) {
+        // 默认选中
+        setCurrentAssistantId(DEFAULT_ASST_ID);
+
+        const asst = datas.assistants.find(a => a.id === DEFAULT_ASST_ID);
+        if (asst && asst.topics.length > 0) {
+          // 如果已有话题，选中第一个，不再新建
+          setCurrentTopicId(asst.topics[0].id);
+        } else if (asst) {
+          // 如果万一没话题（极端情况），补充一个
+          const newDefaultTopic = createTopic('默认话题');
+          setDatas('assistants', a => a.id === DEFAULT_ASST_ID, 'topics', [newDefaultTopic]);
+          setCurrentTopicId(newDefaultTopic.id);
+          await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
+        }
+
+        isFirstAppLaunch = false;
+      }
+      console.log("成功加载数据");
+    })
+      .catch((err) => {
+        // 如果后端报错，这里会打印出来
+        console.error("加载助手列表失败:", err);
+        alert("数据库加载失败: " + err);
+      });
 
     // 设置多个事件监听器，存储 unlisten 函数用于清理
     const unlistens = [
@@ -443,14 +514,31 @@ const ChatPage: Component = () => {
     }
   });
 
+  createEffect(() => {
+    const tId = currentTopicId();
+    // 只有在非初次静默加载且 tId 真正存在时触发
+    if (tId && !isFirstAppLaunch) {
+      setIsChangingTopic(true);
+      setTimeout(() => setIsChangingTopic(false), 50);
+    }
+  });
+  createEffect(() => {
+    localStorage.setItem('chat-left-panel-width', leftPanelWidth().toString());
+  });
+  createEffect(() => {
+    localStorage.setItem('chat-right-panel-width', rightPanelWidth().toString());
+  });
+
   // ==================== 渲染 ====================
-  
+
   return (
-    <div class="chat-page" ref={chatPageRef}>
+    <div class="chat-page" classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
       {/* 左侧助手侧边栏 */}
       <AssistantSidebar
-        width={leftPanelWidth()}
-        onResize={(e) => startResize(e, 'left')}
+        width={displayLeftWidth()}
+        isCollapsed={isLeftCollapsed()}
+        onToggle={toggleLeft}
+        onResize={(e) => !isLeftCollapsed() && startResize(e, 'left')}
         editingAsstId={editingAsstId()}
         setEditingAsstId={setEditingAsstId}
         addAssistant={addAssistant}
@@ -475,8 +563,10 @@ const ChatPage: Component = () => {
 
       {/* 右侧话题侧边栏 */}
       <TopicSidebar
-        width={rightPanelWidth()}
-        onResize={(e) => startResize(e, 'right')}
+        width={displayRightWidth()}
+        isCollapsed={isRightCollapsed()}
+        onToggle={toggleRight}
+        onResize={(e) => !isRightCollapsed() && startResize(e, 'right')}
         currentAssistant={currentAssistant()}
         editingTopicId={editingTopicId()}
         setEditingTopicId={setEditingTopicId}

@@ -166,8 +166,6 @@ const NavBar: Component<NavBarProps> = () => {
     
     if (user.avatar) {
       setGlobalUserAvatar(user.avatar);
-      await invoke('clear_local_avatar_cache');
-      localStorage.removeItem('user-avatar-path');
     }
   };
 
@@ -176,9 +174,21 @@ const NavBar: Component<NavBarProps> = () => {
    * 
    * 调用全局 logout 清理状态，关闭用户菜单
    */
-  const handleLogout = () => {
+  const handleLogout = async () => {
     logout();
     setUserMenuVisible(false);
+    const localSavedPath = localStorage.getItem('user-avatar-path');
+    if (localSavedPath) {
+        try {
+            // 调用 store 中定义的加载函数将本地存储的路径转为 Base64/ObjectURL
+            const url = await loadAvatarFromPath(localSavedPath);
+            setGlobalUserAvatar(url);
+            console.log("退出成功，已恢复本地头像");
+        } catch (err) {
+            console.error("恢复本地头像失败:", err);
+            setGlobalUserAvatar('/icons/user.svg'); // 失败则回退默认
+        }
+    }
   };
 
   // ==================== 头像管理 ====================
@@ -228,8 +238,6 @@ const NavBar: Component<NavBarProps> = () => {
           avatarData: croppedDataUrl
         });
         setGlobalUserAvatar(croppedDataUrl);
-        await invoke('clear_local_avatar_cache');
-        localStorage.removeItem('user-avatar-path');
         console.log("头像已存入云端，本地文件已释放空间");
       } else {
         // 本地保存分支
@@ -481,9 +489,6 @@ const NavBar: Component<NavBarProps> = () => {
 
         if (userData.avatar) {
           setGlobalUserAvatar(userData.avatar);
-          await invoke('clear_local_avatar_cache');
-          localStorage.removeItem('user-avatar-path');
-          console.log("检测到云端头像，已清理本地陈旧缓存空间");
         }
       } catch (err) {
         console.warn("身份过期或云端获取失败:", err);
@@ -543,14 +548,14 @@ const NavBar: Component<NavBarProps> = () => {
         </div>
 
         {/* 对话页面链接 */}
-        <A href="/chat" class="nav-item" title="对话" activeClass="active">
+        <A href="/chat" class="nav-item" title="对话" activeClass="active" data-tauri-drag-region="false">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
           </svg>
         </A>
 
         {/* 设置页面链接 */}
-        <A href="/settings" class="nav-item" title="设置" activeClass="active">
+        <A href="/settings" class="nav-item" title="设置" activeClass="active" data-tauri-drag-region="false">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
@@ -699,7 +704,7 @@ const NavBar: Component<NavBarProps> = () => {
         </div>
 
         {/* 提示词设置按钮 */}
-        <a href="#" title="设置提示词" class="nav-item" onClick={handleOpenPromptModal}>
+        <a href="#" title="设置提示词" class="nav-item" onClick={handleOpenPromptModal} data-tauri-drag-region="false">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
           </svg>

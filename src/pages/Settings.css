@@ -8,6 +8,7 @@
     bottom: 1px;
     padding: 15px;
     border: 1px solid var(--primary-color);
+    box-shadow:inset 0 0 20px 1px var(--primary-30);
     border-radius: 8px;
     gap: 15px;
     background-color: #1e1e1e;
@@ -18,6 +19,7 @@
     width: 200px;
     background: rgba(0, 0, 0, 0.3);
     border: 1px solid var(--primary-color);
+    box-shadow:inset 0 0 20px 1px var(--primary-30);
     display: flex;
     flex-direction: column;
     border-radius: 8px;
@@ -170,6 +172,7 @@
     width: auto;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--primary-color);
+    box-shadow: inset 0 0 20px 1px var(--primary-30);
     border-radius: 12px;
     padding: 30px;
     flex: 1;

@@ -48,7 +48,7 @@
  */
 
 // SolidJS 核心 API
-import { 
+import {
     Component,      // 组件类型定义
     For,            // 列表循环渲染
     Show,           // 条件渲染组件
@@ -58,7 +58,7 @@ import {
 } from 'solid-js';
 
 // 全局状态管理：助手数据、当前选中状态、后端交互方法
-import { 
+import {
     datas,                          // 全局数据对象（含 assistants 数组）
     setDatas,                       // 修改全局数据的 Setter
     currentAssistantId,             // 当前选中助手 ID（Signal）
@@ -85,6 +85,8 @@ interface AssistantSidebarProps {
     setEditingAsstId: (id: string | null) => void;
     /** 新增助手的回调函数 */
     addAssistant: () => void;
+    isCollapsed: boolean;
+    onToggle: (e: MouseEvent) => void;
 }
 
 /**
@@ -105,21 +107,21 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
      * 与 menuState.isOpen 配合实现退出动画：先 isOpen=false 触发动画，再 showMenuDiv=false 移除 DOM
      */
     const [showMenuDiv, setShowMenuDiv] = createSignal(false);
-    
+
     /** 菜单是否正在执行退出动画，用于添加 CSS 退出动画类名 */
     const [isMenuAnimatingOut, setIsMenuAnimatingOut] = createSignal(false);
-    
+
     /**
      * 菜单完整状态对象
      * @property isOpen - 是否展开（控制动画状态）
      * @property x, y - 菜单显示位置（视口坐标）
      * @property targetId - 当前菜单操作的助手 ID
      */
-    const [menuState, setMenuState] = createSignal({ 
-        isOpen: false, 
-        x: 0, 
-        y: 0, 
-        targetId: null as string | null 
+    const [menuState, setMenuState] = createSignal({
+        isOpen: false,
+        x: 0,
+        y: 0,
+        targetId: null as string | null
     });
 
     /** 菜单关闭延迟定时器 ID，用于清理和防止内存泄漏 */
@@ -141,10 +143,10 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                 closeMenu();
             }
         };
-        
+
         // 注册全局点击监听（捕获阶段确保优先执行）
         window.addEventListener('click', handleClickOutside);
-        
+
         // 组件卸载时清理事件监听
         onCleanup(() => window.removeEventListener('click', handleClickOutside));
     });
@@ -166,13 +168,13 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
     const saveRename = async (id: string, newName: string) => {
         // 输入验证：空值则取消编辑
         if (!newName.trim()) return props.setEditingAsstId(null);
-        
+
         // 乐观更新：立即修改本地状态，UI 即时响应
         setDatas('assistants', a => a.id === id, 'name', newName);
-        
+
         // 异步持久化：保存到后端
         await saveSingleAssistantToBackend(id);
-        
+
         // 退出编辑模式
         props.setEditingAsstId(null);
     };
@@ -189,24 +191,24 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
      */
     const openMenu = (e: MouseEvent, assistantId: string) => {
         e.stopPropagation(); // 阻止冒泡，防止触发全局点击关闭
-        
+
         // 切换行为：点击同一助手按钮时关闭菜单
         if (menuState().isOpen && menuState().targetId === assistantId) {
             closeMenu();
             return;
         }
-        
+
         // 显示菜单 DOM
         setShowMenuDiv(true);
         setIsMenuAnimatingOut(false);
-        
+
         // 计算菜单位置：基于按钮的视口坐标
         const rect = (e.currentTarget as Element).getBoundingClientRect();
-        setMenuState({ 
-            isOpen: true, 
-            x: rect.left, 
+        setMenuState({
+            isOpen: true,
+            x: rect.left,
             y: rect.top + rect.height, // 按钮下方显示
-            targetId: assistantId 
+            targetId: assistantId
         });
     };
 
@@ -221,10 +223,10 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
     const closeMenu = () => {
         setMenuState(p => ({ ...p, isOpen: false }));
         setIsMenuAnimatingOut(true);
-        
+
         // 清理可能存在的旧定时器
         clearTimeout(menuCloseTimeoutId);
-        
+
         // 延迟移除 DOM，等待动画完成
         menuCloseTimeoutId = setTimeout(() => {
             setShowMenuDiv(false);
@@ -244,22 +246,25 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
      * @param {string | null} id - 要删除的助手 ID
      */
     const removeAssistant = async (id: string | null) => {
-        if (!id) return;
-        
+        if (!id || id === "default-assistant-id") {
+            alert("默认助手无法删除");
+            return;
+        }
+
         // 异步删除后端文件
         await deleteAssistantFile(id);
-        
+
         // 如果被删的是当前选中助手，需要切换选中状态
         if (currentAssistantId() === id) {
             const idx = datas.assistants.findIndex(a => a.id === id);
-            
+
             // 查找相邻助手（优先上一个，否则下一个）
             const targetAsst = datas.assistants[idx - 1] || datas.assistants[idx + 1];
 
             if (targetAsst) {
                 // 切换到相邻助手
                 setCurrentAssistantId(targetAsst.id);
-                
+
                 // 同步切换话题：选中目标助手的第一个话题
                 if (targetAsst.topics && targetAsst.topics.length > 0) {
                     setCurrentTopicId(targetAsst.topics[0].id);
@@ -270,10 +275,10 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                 setCurrentTopicId(null);
             }
         }
-        
+
         // 从本地列表移除（乐观更新）
         setDatas('assistants', prev => prev.filter(a => a.id !== id));
-        
+
         // 关闭菜单
         closeMenu();
     };
@@ -282,107 +287,118 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
 
     return (
         // 主容器：宽度由父组件 props 控制
-        <div class="assistant-selector" style={{ width: `${props.width}%` }}>
-            
-            {/* 内容区：助手列表和新增按钮 */}
-            <div class="assistant-content">
-                {/* 循环渲染助手列表 */}
-                <For each={datas.assistants}>
-                    {(assistant) => (
-                        <div
-                            // 动态类名：active 状态高亮当前选中助手
-                            classList={{ 
-                                'assistant-item': true, 
-                                'active': assistant.id === currentAssistantId() 
-                            }}
-                            // 点击切换当前助手，并同步切换其首个话题
-                            onClick={() => {
-                                setCurrentAssistantId(assistant.id);
-                                if (assistant.topics && assistant.topics.length > 0) {
-                                    setCurrentTopicId(assistant.topics[0].id);
-                                }
-                            }}
-                        >
-                            {/* 条件渲染：重命名输入框或助手名称 */}
-                            <Show 
-                                when={props.editingAsstId === assistant.id} 
-                                fallback={<span class="assistant-name">{assistant.name}</span>}
+        <div classList={{
+            'assistant-selector': true,
+            'is-collapsed': props.isCollapsed
+        }}
+            style={{
+                width: props.isCollapsed ? '0%' : `${props.width}%`,
+                padding: props.isCollapsed ? '0' : '15px',
+                "border": props.isCollapsed ? 'none' : `1px solid var(--primary-color)`,
+                "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`
+            }}>
+            <div class={props.isCollapsed ? "collapsed-content-hide" : "assistant-content"}>
+                {/* 内容区：助手列表和新增按钮 */}
+                <div class="assistant-content">
+                    {/* 循环渲染助手列表 */}
+                    <For each={datas.assistants}>
+                        {(assistant) => (
+                            <div
+                                // 动态类名：active 状态高亮当前选中助手
+                                classList={{
+                                    'assistant-item': true,
+                                    'active': assistant.id === currentAssistantId()
+                                }}
+                                // 点击切换当前助手，并同步切换其首个话题
+                                onClick={() => {
+                                    setCurrentAssistantId(assistant.id);
+                                    if (assistant.topics && assistant.topics.length > 0) {
+                                        setCurrentTopicId(assistant.topics[0].id);
+                                    }
+                                }}
                             >
-                                <input
-                                    class="rename-input"
-                                    value={assistant.name}
-                                    // 自动聚焦并选中文字：使用 setTimeout 确保 DOM 已挂载
-                                    ref={(el) => { 
-                                        setTimeout(() => { 
-                                            el.focus(); 
-                                            el.select(); 
-                                        }, 0); 
-                                    }}
-                                    // 失焦保存
-                                    onBlur={(e) => saveRename(assistant.id, e.currentTarget.value)}
-                                    // 回车键保存
-                                    onKeyDown={(e) => e.key === 'Enter' && saveRename(assistant.id, e.currentTarget.value)}
-                                    // 阻止冒泡，防止触发助手项的点击切换
-                                    onClick={(e) => e.stopPropagation()}
-                                />
-                            </Show>
-                            
-                            {/* 菜单按钮：点击打开上下文菜单 */}
-                            <button 
-                                class="assistant-menu-button" 
-                                onClick={(e) => openMenu(e as MouseEvent, assistant.id)}
-                            >
-                                {/* 三点菜单图标 SVG */}
-                                <svg 
-                                    xmlns="http://www.w3.org/2000/svg" 
-                                    fill="#FFFFFF" 
-                                    viewBox="0 0 24 24" 
-                                    stroke-width={1.5} 
-                                    class="size-6"
+                                {/* 条件渲染：重命名输入框或助手名称 */}
+                                <Show
+                                    when={props.editingAsstId === assistant.id&&assistant.id !== "default-assistant-id"}
+                                    fallback={<span class="assistant-name">{assistant.name}</span>}
                                 >
-                                    <path 
-                                        stroke-linecap="round" 
-                                        stroke-linejoin="round" 
-                                        d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" 
+                                    <input
+                                        class="rename-input"
+                                        value={assistant.name}
+                                        // 自动聚焦并选中文字：使用 setTimeout 确保 DOM 已挂载
+                                        ref={(el) => {
+                                            setTimeout(() => {
+                                                el.focus();
+                                                el.select();
+                                            }, 0);
+                                        }}
+                                        // 失焦保存
+                                        onBlur={(e) => saveRename(assistant.id, e.currentTarget.value)}
+                                        // 回车键保存
+                                        onKeyDown={(e) => e.key === 'Enter' && saveRename(assistant.id, e.currentTarget.value)}
+                                        // 阻止冒泡，防止触发助手项的点击切换
+                                        onClick={(e) => e.stopPropagation()}
                                     />
-                                </svg>
-                            </button>
-                        </div>
-                    )}
-                </For>
-                
-                {/* 新增助手按钮：调用父组件传入的回调 */}
-                <button class="add-assistant-button" onClick={props.addAssistant}>
-                    + 新增助手
-                </button>
-            </div>
+                                </Show>
 
+                                {/* 菜单按钮：点击打开上下文菜单 */}
+                                <button
+                                    class="assistant-menu-button"
+                                    onClick={(e) => openMenu(e as MouseEvent, assistant.id)}
+                                >
+                                    {/* 三点菜单图标 SVG */}
+                                    <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="#FFFFFF"
+                                        viewBox="0 0 24 24"
+                                        stroke-width={1.5}
+                                        class="size-6"
+                                    >
+                                        <path
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z"
+                                        />
+                                    </svg>
+                                </button>
+                            </div>
+                        )}
+                    </For>
+
+                    {/* 新增助手按钮：调用父组件传入的回调 */}
+                    <button class="add-assistant-button" onClick={props.addAssistant}>
+                        + 新增助手
+                    </button>
+                </div>
+            </div>
             {/* 上下文菜单：条件渲染，使用 Portal 方式渲染在 body 层级 */}
             {showMenuDiv() && (
-                <div 
-                    class="assistant-context-menu" 
+                <div
+                    class="assistant-context-menu"
                     // 动态添加退出动画类
                     classList={{ 'menu-exiting': isMenuAnimatingOut() }}
                     // 绝对定位：基于触发按钮的坐标
-                    style={{ 
-                        top: `${menuState().y}px`, 
-                        left: `${menuState().x}px` 
+                    style={{
+                        top: `${menuState().y}px`,
+                        left: `${menuState().x}px`
                     }}
                 >
                     {/* 重命名按钮：设置编辑状态并关闭菜单 */}
-                    <button 
-                        class="context-menu-button" 
-                        onClick={() => { 
-                            props.setEditingAsstId(menuState().targetId); 
-                            closeMenu(); 
+                    <button
+                        class="context-menu-button"
+                        disabled={menuState().targetId === "default-assistant-id"}
+                        onClick={() => {
+                            props.setEditingAsstId(menuState().targetId);
+                            closeMenu();
                         }}
                     >
                         重命名
                     </button>
-                    
+
                     {/* 删除按钮：红色警示样式 */}
-                    <button 
-                        class="context-menu-button delete" 
+                    <button
+                        class="context-menu-button delete"
+                        disabled={menuState().targetId === "default-assistant-id"}
                         onClick={() => removeAssistant(menuState().targetId)}
                     >
                         删除助手
@@ -391,10 +407,11 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
             )}
 
             {/* 拖拽调整宽度的手柄：位于左侧 */}
-            <div 
-                class="resize-handle left-handle" 
-                onMouseDown={(e) => props.onResize(e as MouseEvent)}
-            />
+            <div class="resize-handle left-handle" onMouseDown={(e) => props.onResize(e as MouseEvent)}>
+                <div class="collapse-indicator" title={props.isCollapsed ? "展开助手栏" : "折叠助手栏"} onClick={(e) => props.onToggle(e)}>
+                    {props.isCollapsed ? '〉' : '〈'}
+                </div>
+            </div>
         </div>
     );
 };

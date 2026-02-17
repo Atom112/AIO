@@ -1,9 +1,9 @@
 use crate::models::*; // 导入模型定义，如 AppConfig, Assistant, ActivatedModel 等
+use crate::DbState;
 use base64::{engine::general_purpose, Engine as _};
+use rusqlite::params;
 use std::fs; // 导入标准库文件系统模块
 use tauri::Manager;
-use crate::DbState;
-use rusqlite::params;
 /// 保存应用程序通用配置
 /// #[tauri::command] 标记允许此函数从前端通过 invoke 调用
 #[tauri::command]
@@ -53,51 +53,70 @@ pub fn load_app_config() -> Result<AppConfig, String> {
 #[tauri::command]
 pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Assistant>, String> {
     let conn = state.0.lock().unwrap();
-    
+
     // 1. 加载助手
-    let mut stmt = conn.prepare("SELECT id, name, prompt FROM assistants ORDER BY id").map_err(|e| e.to_string())?;
-    let assistant_iter = stmt.query_map([], |row| {
-        Ok(Assistant {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            prompt: row.get(2)?,
-            topics: vec![], // 后续填充
+    let mut stmt = conn
+        .prepare("SELECT id, name, prompt FROM assistants ORDER BY id")
+        .map_err(|e| e.to_string())?;
+    let assistant_iter = stmt
+        .query_map([], |row| {
+            Ok(Assistant {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                prompt: row.get(2)?,
+                topics: vec![], // 后续填充
+            })
         })
-    }).map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
 
     let mut assistants = Vec::new();
     for asst in assistant_iter {
         let mut asst = asst.map_err(|e| e.to_string())?;
-        
+
         // 2. 为每个助手加载话题
-        let mut t_stmt = conn.prepare("SELECT id, name, summary FROM topics WHERE assistant_id = ?").map_err(|e| e.to_string())?;
-        let topic_iter = t_stmt.query_map([&asst.id], |row| {
-            Ok(Topic {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                summary: row.get(2)?,
-                history: vec![], // 大数据量下建议按需加载，此处暂时全量加载以兼容原有前端
+        let mut t_stmt = conn
+            .prepare("SELECT id, name, summary FROM topics WHERE assistant_id = ?")
+            .map_err(|e| e.to_string())?;
+        let topic_iter = t_stmt
+            .query_map([&asst.id], |row| {
+                Ok(Topic {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    summary: row.get(2)?,
+                    history: vec![], // 大数据量下建议按需加载，此处暂时全量加载以兼容原有前端
+                })
             })
-        }).map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
 
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
-            
+
             // 3. 加载历史消息
-            let mut m_stmt = conn.prepare("SELECT role, content, model_id, display_files, display_text FROM messages WHERE topic_id = ? ORDER BY id ASC")
-                .map_err(|e| e.to_string())?;
-            let msg_iter = m_stmt.query_map([&topic.id], |row| {
-                let display_files_json: Option<String> = row.get(3)?;
-                let display_files = display_files_json.and_then(|s| serde_json::from_str(&s).ok());
-                
-                Ok(Message {
-                    role: row.get(0)?,
-                    content: serde_json::from_str(&row.get::<_, String>(1)?).unwrap_or(serde_json::Value::String("".into())),
-                    model_id: row.get(2)?,
-                    display_files,
-                    display_text: row.get(4)?,
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+    .map_err(|e| e.to_string())?;
+
+            let msg_iter = m_stmt
+                .query_map([&topic.id], |row| {
+                    // 提取 display_files (在 index 4)
+                    let display_files_json: Option<String> = row.get(4)?;
+                    let display_files =
+                        display_files_json.and_then(|s| serde_json::from_str(&s).ok());
+
+                    // 提取 content (在 index 2)
+                    let content_json: String = row.get(2)?;
+                    let content_value = serde_json::from_str(&content_json)
+                        .unwrap_or(serde_json::Value::String(content_json));
+
+                    Ok(Message {
+                        id: row.get(0)?,           // index 0: id
+                        role: row.get(1)?,         // index 1: role
+                        content: content_value,    // index 2: content (JSON)
+                        model_id: row.get(3)?,     // index 3: model_id
+                        display_files,             // 已经解析好的 files
+                        display_text: row.get(5)?, // index 5: display_text
+                    })
                 })
-            }).map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?;
 
             for msg in msg_iter {
                 topic.history.push(msg.map_err(|e| e.to_string())?);
@@ -106,42 +125,72 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         }
         assistants.push(asst);
     }
-    
+
     Ok(assistants)
 }
 
 #[tauri::command]
-pub async fn save_assistant(state: tauri::State<'_, DbState>, assistant: Assistant) -> Result<(), String> {
+pub async fn save_assistant(
+    state: tauri::State<'_, DbState>,
+    assistant: Assistant,
+) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
 
-    // 使用事务保证原子性
-    // 注意：这里的逻辑改为：如果已存在则更新，如果不存在则插入
+    // 1. 保存/更新助手基本信息
     conn.execute(
         "INSERT INTO assistants (id, name, prompt) VALUES (?1, ?2, ?3)
          ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3",
         params![assistant.id, assistant.name, assistant.prompt],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
+    // 2. 【核心修复】清理已被前端删除的话题 (解决死而复生问题)
+    let current_topic_ids: Vec<String> = assistant.topics.iter().map(|t| t.id.clone()).collect();
+    let mut stmt = conn
+        .prepare("SELECT id FROM topics WHERE assistant_id = ?")
+        .map_err(|e| e.to_string())?;
+    let db_topic_ids: Vec<String> = stmt
+        .query_map([&assistant.id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    for db_id in db_topic_ids {
+        if !current_topic_ids.contains(&db_id) {
+            conn.execute("DELETE FROM topics WHERE id = ?", params![db_id])
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // 3. 遍历话题执行增量同步
     for topic in assistant.topics {
         conn.execute(
             "INSERT INTO topics (id, assistant_id, name, summary) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4",
             params![topic.id, assistant.id, topic.name, topic.summary],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
 
-        // 消息保存建议在消息产生的瞬间单独进行(见下文)，此处为兼容现有全量保存逻辑：
-        // 先删除旧消息再插入新消息（效率较低，但兼容旧前端逻辑）
-        conn.execute("DELETE FROM messages WHERE topic_id = ?", params![topic.id]).map_err(|e| e.to_string())?;
+        // 4. 【性能优化重点】增量同步消息
+        // 不再 DELETE ALL，而是使用 ON CONFLICT DO NOTHING (如果 ID 存在则跳过，不存在则插入)
         for msg in topic.history {
+            // 假设 Message 结构体现在也有了 id 字段
+            let msg_id = msg
+                .id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let files_json = serde_json::to_string(&msg.display_files).ok();
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
+
             conn.execute(
-                "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text],
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO NOTHING", // 关键：已存在的 ID 不再重复写入
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text],
             ).map_err(|e| e.to_string())?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -149,7 +198,8 @@ pub async fn save_assistant(state: tauri::State<'_, DbState>, assistant: Assista
 pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
     // 由于设置了 ON DELETE CASCADE，会自动删除关联的话题和消息
-    conn.execute("DELETE FROM assistants WHERE id = ?", params![id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM assistants WHERE id = ?", params![id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -251,7 +301,6 @@ pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<St
     // 返回新路径供前端更新 localStorage
     Ok(dest_path.to_string_lossy().to_string())
 }
-
 
 #[tauri::command]
 pub async fn clear_local_avatar_cache(app: tauri::AppHandle) -> Result<(), String> {

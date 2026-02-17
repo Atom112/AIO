@@ -29,18 +29,16 @@
   /* 和 navbar 的高度一致 */
   -webkit-app-region: drag;
   /* 允许拖拽 */
-  z-index: 999;
-  /* 确保它在导航栏下方，才能拖拽 */
+  z-index: 1; /* 降低层级到最底层 */
+  pointer-events: auto; /* 必须为 auto 才能拖拽背景 */
 }
 
 .navbar {
-  pointer-events: none;
-  /* 让父容器不接收事件，子元素通过 pointer-events: auto 覆盖 */
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 24px;
-
+  box-shadow: inset 0 0 20px 1px var(--primary-30);
   padding: 0 20px;
   height: 60px;
   background-color: #1e1e1e;
@@ -61,8 +59,11 @@
 .nav-item,
 .avatar,
 .model-selector-wrapper,
+.user-avatar-wrapper,
 .window-controls {
   pointer-events: auto;
+  -webkit-app-region: no-drag;
+  cursor: pointer;
   /* 重新启用事件 */
 }
 
@@ -286,7 +287,7 @@
 }
 
 .control-button.close:hover {
-  background-color: #e81123;
+  background-color: #E08090;
   /* 关闭按钮通常是红色 */
   color: #fff;
 }

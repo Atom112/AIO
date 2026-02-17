@@ -40,6 +40,7 @@ pub struct FileMeta {
 /// 单条聊天消息模型。
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Message {
+    pub id: Option<String>,
     pub role: String,
     pub content: serde_json::Value,
     #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]

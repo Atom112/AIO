@@ -34,17 +34,7 @@
     font-weight: bold;
 }
 
-.close-btn {
-    background: none;
-    border: none;
-    color: #666;
-    cursor: pointer;
-    font-size: 18px;
-}
 
-.close-btn:hover {
-    color: #fff;
-}
 
 .crop-main-area {
     display: flex;
@@ -111,6 +101,13 @@ input[type="range"] {
     flex: 1;
     accent-color: var(--primary-color);
     cursor: pointer;
+}
+
+.cropslider {
+    background: var(--primary-color);
+    border-radius: 4px;
+    height: 6px;
+    transition: background 0.3s;
 }
 
 .modal-actions {

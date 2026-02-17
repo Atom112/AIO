@@ -1,6 +1,6 @@
 
 .assistant-selector {
-    border: 1px solid var(--primary-color);
+
     border-radius: 8px;
     box-sizing: border-box;
     flex-shrink: 0;
@@ -21,6 +21,7 @@
     align-items: center;
     background-color: transparent;
     border: 1px solid var(--primary-color);
+    box-shadow:inset 0 0 20px 1px var(--primary-30);
     border-radius: 8px;
     cursor: pointer;
     display: flex;
@@ -35,9 +36,9 @@
 }
 
 .assistant-item.active {
-    background-color: var(--primary-10);
+    background-color: var(--primary-20);
     border-color: var(--primary-color);
-    box-shadow: 0 0 5px rgba(8, 221, 249, 0.3);
+    box-shadow:inset 0 0 20px 1px var(--primary-30);
 }
 
 .assistant-name {
@@ -53,6 +54,7 @@
     background: none;
     border: 1px solid var(--primary-color);
     border-radius: 8px;
+    box-shadow: inset 0 0 20px 1px var(--primary-30);
     color: #ffffff;
     cursor: pointer;
     margin: 10px 0;

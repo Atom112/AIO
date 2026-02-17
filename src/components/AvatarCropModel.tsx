@@ -229,7 +229,9 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                 {/* 头部：标题 + 关闭按钮 */}
                 <div class="crop-modal-header">
                     <span>裁剪图片</span>
-                    <button class="close-btn" onClick={handleClose}>✕</button>
+                    <button onClick={handleClose} class="close-button">
+                        &times;  {/* HTML 实体：乘号，作为 X 图标 */}
+                    </button>
                 </div>
 
                 {/* 主区域：裁剪区 + 预览区 */}
@@ -265,6 +267,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                             min="0.1"    // 最小缩放：10%
                             max="3"      // 最大缩放：300%
                             step="0.05"  // 步进：5%
+                            class='cropslider'
                             value={zoomValue()}  // 双向绑定缩放值
                             onInput={(e) => {
                                 const val = parseFloat(e.currentTarget.value);

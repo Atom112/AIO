@@ -11,11 +11,12 @@
 /* 如果有针对退出登录按钮的特殊颜色 */
 .tab-content-simple button.save-settings-button {
     background-color: rgba(255, 68, 68, 0.1);
-    border: 1px solid #ff4444;
-    color: #ff4444;
+    border: 1px solid #E08090;
+    color: #E08090;
+    transition: all 0.3s;
 }
 
 .tab-content-simple button.save-settings-button:hover {
-    background-color: #ff4444;
+    background-color: #E08090;
     color: white;
 }

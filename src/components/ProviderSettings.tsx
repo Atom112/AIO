@@ -488,7 +488,7 @@ const ProviderSettings: Component = () => {
                             <button
                                 class="save-settings-button"
                                 style={{
-                                    "background-color": isLocalRunning() ? "#ff4444" : "var(--primary-color)",
+                                    "background-color": isLocalRunning() ? "#E08090" : "var(--primary-color)",
                                     "margin-top": "10px"
                                 }}
                                 onClick={toggleLocalEngine}

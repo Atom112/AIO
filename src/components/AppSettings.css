@@ -6,11 +6,17 @@
     box-sizing: border-box;
 }
 
+.control-group {
+    margin-bottom: 8px;
+}
+
+
 /* 基础卡片 */
 .settings-card {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--primary-color);
     border-radius: 12px;
+    box-shadow: inset 0 0 20px 1px var(--primary-30);
     padding: 24px;
     transition: background 0.3s;
 }
@@ -91,11 +97,14 @@
     color: #000;
 }
 
-/* 主题选择器布局 */
+/* 容器布局：左(RGB) - 中(圆环) - 右(预设) */
 .cool-picker-layout {
     display: grid;
-    grid-template-columns: 120px 1fr;
-    gap: 24px;
+    grid-template-columns: 100px 240px 100px;
+    gap: 30px;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 0;
 }
 
 .picker-main {
@@ -130,21 +139,36 @@
     gap: 4px;
 }
 
-.rgb-field {
-    background: rgba(255,255,255,0.03);
-    padding: 6px 2px;
-    border-radius: 6px;
-    text-align: center;
-    flex: 1;
-    font-size: 11px;
+.rgb-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
     color: #fff;
+    font-weight: bold;
+}
+
+/* --- 中间：色相环 --- */
+.hue-ring-container {
+    position: relative;
+    width: 220px;
+    height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.rgb-field {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 10px;
+    border-radius: 10px;
+    text-align: center;
 }
 
 .rgb-field span {
     display: block;
-    color: #555;
-    font-size: 9px;
-    margin-bottom: 2px;
+    font-size: 10px;
+    color: #888;
+    margin-bottom: 4px;
 }
 
 /* 控制台区 */
@@ -167,17 +191,14 @@
     margin-bottom: 10px;
 }
 
-.strip-item {
-    flex: 1;
-    height: 30px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: transform 0.2s;
+/* --- 左侧：RGB 展示 --- */
+.rgb-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
 }
 
-.strip-item:hover {
-    transform: scale(1.05);
-}
+
 
 /* 核心滑块修复 */
 .slider-container {
@@ -197,15 +218,97 @@ input[type="range"] {
     transition: all 0.3s ease;
 }
 
-/* 滑动条轨道 - 色相 */
-.hue-slider {
-    background: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+/* 色相环本体 */
+.hue-ring {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    /* 使用锥形渐变绘制色轮 */
+    background: conic-gradient(
+        hsl(0, var(--s), var(--l)), 
+        hsl(60, var(--s), var(--l)), 
+        hsl(120, var(--s), var(--l)), 
+        hsl(180, var(--s), var(--l)), 
+        hsl(240, var(--s), var(--l)), 
+        hsl(300, var(--s), var(--l)), 
+        hsl(360, var(--s), var(--l))
+    );
+    cursor: pointer;
+    /* 遮罩，把中间掏空成环 */
+    mask: radial-gradient(transparent 59.5%, black 60.5%);
+    -webkit-mask: radial-gradient(transparent 59.5%, black 60.5%);
+    transition: filter 0.3s;
 }
 
-/* 滑动条轨道 - 饱和度 */
-.sat-slider {
-    background: linear-gradient(to right, hsl(var(--h), 0%, 50%), hsl(var(--h), 100%, 50%));
+/* 环中心预览区 */
+.center-preview {
+    position: absolute;
+    width: 110px;
+    height: 110px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 20px var(--primary-color);
+    border: 2px solid rgba(255,255,255,0.2);
+    z-index: 2;
 }
+
+.center-preview .hex-text {
+    font-size: 14px;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+}
+
+/* 环上的指示点 */
+.hue-pointer {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border: 3px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 5px #fff , inset 0 0 10px #fff;
+    pointer-events: none; /* 不干扰点击事件 */
+    z-index: 3;
+    /* 通过 transform 定位 */
+    top: 50%;
+    left: 50%;
+}
+
+/* --- 右侧：预设颜色 --- */
+.preset-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.strip-item {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%; /* 改成圆形配套 */
+    cursor: pointer;
+    transition: transform 0.2s, border 0.2s;
+    border: 2px solid transparent;
+}
+
+.strip-item:hover { transform: scale(1.1); }
+
+/* --- 下方：饱和度条 --- */
+.bottom-controls {
+    margin-top: 25px;
+    padding: 0 20px;
+}
+
+.bottom-controls label {
+    display: block;
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
 
 /* 滑块圆点样式 */
 input[type="range"]::-webkit-slider-thumb {

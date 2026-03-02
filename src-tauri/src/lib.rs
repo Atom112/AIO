@@ -1,10 +1,3 @@
-//! # 核心库模块
-//!
-//! 本模块是整个 Tauri 应用程序后端的入口点。主要负责：
-//! 1. 初始化并管理全局共享状态（如流式会话和本地进程）。
-//! 2. 注册暴露给前端调用的 Rust 命令（Commands）。
-//! 3. 监听程序窗口事件以执行清理任务（如关闭本地服务器进程）。
-
 mod commands;
 mod models;
 mod utils;
@@ -38,10 +31,10 @@ pub struct LocalLlamaState {
 ///
 /// 该函数由 `main.rs` 调用，配置并运行 Tauri 运行时环境。
 ///
-/// # 功能包括：
-/// * **状态管理**: 注入 `StreamManager` 和 `LocalLlamaState` 供后端各处使用。
-/// * **命令注册**: 将 `commands` 模块中定义的所有异步函数注册到前端。
-/// * **事件监听**: 监听窗口销毁事件，确保在应用关闭时强行杀死残留的本地模型服务进程。
+/// 功能包括：
+/// 状态管理: 注入 `StreamManager` 和 `LocalLlamaState` 供后端各处使用。
+/// 命令注册: 将 `commands` 模块中定义的所有异步函数注册到前端。
+/// 事件监听: 监听窗口销毁事件，确保在应用关闭时强行杀死残留的本地模型服务进程。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -70,25 +63,21 @@ pub fn run() {
             commands::config::load_activated_models,
             commands::config::save_fetched_models,
             commands::config::load_fetched_models,
-            // LLM 交互相关命令
+            commands::config::upload_avatar,
+            commands::config::clear_local_avatar_cache,
             commands::llm::call_llm_stream,
             commands::llm::stop_llm_stream,
             commands::llm::fetch_models,
-            // 本地服务器控制相关命令
+            commands::llm::summarize_history,
+            commands::llm::append_message,
             commands::server::start_local_server,
             commands::server::stop_local_server,
             commands::server::is_local_server_running,
-            // 文件解析工具命令
-            process_file_content,
-            commands::config::upload_avatar,
-            commands::llm::summarize_history,
-            commands::llm::append_message,
             commands::auth::login_to_backend,
             commands::auth::register_to_backend,
             commands::auth::validate_token,
             commands::auth::sync_avatar_to_backend,
-            commands::config::clear_local_avatar_cache,
-
+            process_file_content,
         ])
         // 注册窗口事件回调
         .on_window_event(|window, event| {

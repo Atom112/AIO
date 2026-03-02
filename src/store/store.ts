@@ -1,12 +1,9 @@
-// src/store.ts  
 import { createStore } from "solid-js/store";
 import { createEffect, createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
 import { readFile } from '@tauri-apps/plugin-fs';
 
-// =============================================================================
 // I. 接口定义 (Interfaces)
-// =============================================================================
 
 /**
  * 消息项接口，定义聊天消息的数据结构
@@ -93,9 +90,7 @@ export interface User {
     token: string;
 }
 
-// =============================================================================
 // II. 全局响应式状态 (Global State)
-// =============================================================================
 
 /** 全局用户头像状态信号，默认使用系统默认头像 */
 export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/user.svg');
@@ -160,9 +155,7 @@ export const [currentAssistantId, setCurrentAssistantId] = createSignal<string |
 /** 当前选中的话题 ID 信号，用于 Chat 页面跟踪当前对话 */
 export const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(null);
 
-// =============================================================================
 // III. 配置初始化与管理 (Configuration)
-// =============================================================================
 
 /**
  * 从本地存储加载应用初始配置
@@ -185,9 +178,7 @@ export const saveConfig = (newConfig: AppConfig) => {
     localStorage.setItem('app_config', JSON.stringify(newConfig));
 };
 
-// =============================================================================
 // IV. 后端持久化逻辑 (Backend Persistence)
-// =============================================================================
 
 /**
  * 将指定助手数据持久化保存到后端

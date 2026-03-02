@@ -1,4 +1,3 @@
-/* --- Global & Scrollbar --- */
 * {
     scrollbar-width: thin;
     scrollbar-color: var(--primary-color) transparent;
@@ -16,39 +15,31 @@
 ::-webkit-scrollbar-thumb {
     background-color: var(--primary-color);
     border-radius: 10px;
-    border: 1px solid rgba(0, 0, 0, 0);
+    border: 1px solid rgb(0 0 0 / 0%);
 }
 
 ::-webkit-scrollbar-thumb:hover {
     background-color: #06b8d1;
 }
 
-/* --- Page Container --- */
 .chat-page {
     background-color: #1e1e1e;
     box-shadow:inset 0 0 20px 1px var(--primary-30);
-    bottom: 1px;
+    inset: 65px 1px 1px 0;
     display: flex;
     gap: 3px;
-    left: 0;
     padding: 20px;
     position: fixed;
-    right: 1px;
-    top: 65px;
     border: 1px solid var(--primary-color);
     border-radius: 8px;
 }
 
-/* --- Shared Components (Used by both Sidebars) --- */
-
-/* Resize Handle Base */
 .resize-handle {
     bottom: 0;
     cursor: ew-resize;
     position: absolute;
     top: 0;
     width: 4px;
-    z-index: 10;
     transition: background-color 0.2s;
     background-color: transparent !important;
     display: flex;
@@ -60,8 +51,7 @@
 .resize-handle::after {
     content: "";
     width: 4px;
-    height: 100%;
-    background-color: var(--primary-10); /* 平常几乎看不见的细线 */
+    background-color: var(--primary-10);
     transition: all 0.3s ease;
     height: calc(100% - 30px);
     border-radius: 2px;
@@ -72,7 +62,6 @@
     background-color: var(--primary-color);
     height: calc(100% - 20px);
     box-shadow: 0 0 10px var(--primary-color), 0 0 20px var(--primary-color);
-
 }
 
 .resize-handle:hover {
@@ -95,13 +84,9 @@
     font-weight: bold;
     font-size: 10px;
     box-shadow: 0 0 10px var(--primary-color);
-    opacity: 0.4;
+    opacity: 0;
     transition: opacity 0.2s, transform 0.2s;
     position: absolute;
-}
-
-.resize-handle:hover .collapse-indicator {
-    opacity: 1;
 }
 
 .collapse-indicator:hover {
@@ -109,25 +94,32 @@
     opacity: 1;
 }
 
-/* 侧边栏基础样式调整，增加平滑过渡 */
+.is-collapsed .collapse-indicator {
+    opacity: 0.4;
+    background-color: var(--primary-color);
+    box-shadow: 0 0 15px var(--primary-color);
+}
+
+.resize-handle:hover .collapse-indicator {
+    opacity: 1;
+}
+
 .assistant-selector, .dialog-container {
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s, border-width 0.3s;
     position: relative;
     overflow: visible !important; 
-    min-width: 0; /* 允许压缩到0 */
+    min-width: 0; 
 }
 
-/* 关键补充：当处于拖拽状态时，立即切断动画 */
 .chat-page.is-resizing .assistant-selector,
 .chat-page.is-resizing .dialog-container {
     transition: none !important;
 }
 
 .chat-page.is-resizing .resize-handle {
-    background-color: var(--primary-10); /* 拖拽时分界线亮起 */
+    background-color: var(--primary-10); 
 }
 
-/* 当折叠时隐藏内部内容 */
 .collapsed-content-hide {
     opacity: 0;
     pointer-events: none;
@@ -142,22 +134,12 @@
     left: -4px;
 }
 
-/* 指示器在侧边栏收起时的特殊样式 */
-.is-collapsed .collapse-indicator {
-    opacity: 0.4;
-    background-color: var(--primary-color);
-    box-shadow: 0 0 15px var(--primary-color);
-}
-
-/* 内部真正需要滚动的内容区单独控制溢出 */
 .assistant-content, .dialog-content {
     height: 100%;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden auto;
     width: 100%;
 }
 
-/* Rename Input (Assistant & Topic) */
 .rename-input {
     background: #1e1e1e;
     border: 1px solid var(--primary-color);
@@ -176,13 +158,12 @@
     padding: 2px 5px;
 }
 
-/* Context Menu (Assistant & Topic) */
 .assistant-context-menu {
     animation: menuEnter 0.2s ease-out forwards;
     background-color: #2e2e2e;
     border: 1px solid var(--primary-color);
     border-radius: 8px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 5px rgb(0 0 0 / 20%);
     min-width: 150px;
     position: fixed;
     transform-origin: top left;
@@ -198,7 +179,7 @@
     border-radius: 8px;
     border: none;
     box-sizing: border-box;
-    color: #FFFFFF;
+    color: #FFF;
     cursor: pointer;
     display: block;
     padding: 8px 12px;
@@ -209,20 +190,18 @@
 
 .context-menu-button:hover {
     background-color: var(--primary-10);
-
 }
 
 .context-menu-button.delete {
     color: #ff4d4d;
 }
 
-/* Menu Button (Three dots) - Used by both sidebars */
 .assistant-menu-button {
     align-items: center;
     background-color: #1e1e1e;
     border: none;
     border-radius: 4px;
-    color: #FFFFFF;
+    color: #FFF;
     cursor: pointer;
     display: flex;
     height: 30px;
@@ -235,13 +214,11 @@
     background-color: var(--primary-5);
 }
 
-/* 添加 Active 效果：颜色变深且轻微缩小 */
 .assistant-menu-button:active {
     background-color: var(--primary-10);
     transform: scale(0.92);
 }
 
-/* Shared Animations */
 @keyframes menuEnter {
     0% {
         opacity: 0;

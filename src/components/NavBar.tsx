@@ -1,90 +1,12 @@
-/**
- * ============================================================================
- * 文件功能摘要
- * ============================================================================
- * 
- * @file NavBar.tsx
- * @description 应用程序顶部导航栏组件，集成路由导航、模型管理、用户系统、窗口控制于一体。
- * 
- * 【核心功能】
- * 1. 路由导航：对话页面与设置页面的切换
- * 2. 模型选择器：线上/本地模型分类展示，支持 Local-Llama.cpp 自动启动与健康检查
- * 3. 用户系统：头像上传（支持裁剪）、登录/登出、账号信息展示
- * 4. 助手提示词管理：快速编辑当前助手的 System Prompt
- * 5. 窗口控制：基于 Tauri API 的自定义标题栏（最小化、最大化、关闭）
- * 6. 拖拽区域：实现无边框窗口的拖拽移动
- * 
- * 【数据流流向】
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  全局状态流入                                                            │
- * │  ├── datas.activatedModels ← 已激活的模型列表                            │
- * │  ├── datas.assistants ← 助手列表                                         │
- * │  ├── datas.user ← 当前登录用户信息                                       │
- * │  ├── datas.isLoggedIn ← 登录状态                                         │
- * │  ├── currentAssistantId ← 当前选中助手 ID                                │
- * │  ├── selectedModel ← 当前选中模型                                        │
- * │  └── globalUserAvatar ← 用户头像 URL                                     │
- * │                                                                          │
- * │  全局状态流出                                                            │
- * │  ├── setSelectedModel() → 切换当前模型                                   │
- * │  ├── setDatas() → 更新助手提示词、模型列表、用户信息                     │
- * │  ├── setGlobalUserAvatar() → 更新用户头像                                │
- * │  └── saveSingleAssistantToBackend() → 持久化助手数据                     │
- * │                                                                          │
- * │  Tauri 后端命令调用                                                      │
- * │  ├── invoke('load_activated_models') → 加载已激活模型                    │
- * │  ├── invoke('load_app_config') → 加载应用配置                            │
- * │  ├── invoke('save_app_config') → 保存模型偏好                            │
- * │  ├── invoke('start_local_server') → 启动 Llama.cpp 本地服务              │
- * │  ├── invoke('is_local_server_running') → 检查本地服务状态                │
- * │  ├── invoke('validate_token') → 验证登录 Token                           │
- * │  ├── invoke('sync_avatar_to_backend') → 同步头像到云端                   │
- * │  ├── invoke('upload_avatar') → 保存头像到本地                            │
- * │  ├── invoke('clear_local_avatar_cache') → 清理本地头像缓存               │
- * │  ├── appWindow.minimize/maximize/close → 窗口控制                        │
- * │  └── open/readFile (plugin) → 文件选择器与读取                           │
- * │                                                                          │
- * │  网络请求                                                                │
- * │  └── fetch(/health) → 本地 Llama 服务健康检查                            │
- * │                                                                          │
- * │  本地存储                                                                │
- * │  ├── localStorage.getItem('auth-token') → 读取登录凭证                   │
- * │  ├── localStorage.setItem('auth-token') → 保存登录凭证                   │
- * │  ├── localStorage.getItem('user-avatar-path') → 读取本地头像路径         │
- * │  └── localStorage.removeItem('user-avatar-path') → 清理本地头像路径      │
- * └─────────────────────────────────────────────────────────────────────────┘
- * 
- * 【组件层级】
- * NavBar (本组件)
- * ├── 拖拽区域 (data-tauri-drag-region)
- * ├── 导航栏主体
- * │   ├── 左侧：Logo + 路由链接（对话/设置）
- * │   ├── 中间：用户头像 + 下拉菜单（登录/头像/登出）
- * │   ├── 右侧：模型选择器 + 提示词按钮 + 窗口控制
- * │   └── 子组件
- * │       ├── AvatarCropModal (头像裁剪弹窗)
- * │       ├── PromptModal (提示词编辑弹窗)
- * │       └── LoginModal (登录弹窗)
- * ============================================================================
- */
-
-// SolidJS 核心 API
 import { createSignal, onMount, For, Component, Show } from 'solid-js';
-// Tauri 窗口 API：自定义标题栏控制
 import { Window } from '@tauri-apps/api/window';
-// SolidJS 路由组件
 import { A } from '@solidjs/router';
-// Tauri 核心 API：调用 Rust 命令
 import { invoke } from '@tauri-apps/api/core';
-// Tauri 对话框插件：系统文件选择器
 import { open } from '@tauri-apps/plugin-dialog';
-// Tauri 文件系统插件：读取文件
 import { readFile } from '@tauri-apps/plugin-fs';
-// 子组件导入
 import AvatarCropModal from './AvatarCropModel';
 import PromptModal from './PromptModal';
 import LoginModal from './LoginModal';
-// 全局状态管理
 import {
   datas,
   setDatas,
@@ -98,7 +20,6 @@ import {
   loadAvatarFromPath,
   logout
 } from '../store/store';
-// 本地样式
 import './NavBar.css';
 
 /**
@@ -119,7 +40,6 @@ interface NavBarProps { }
  * @returns {JSX.Element} 导航栏 JSX 元素
  */
 const NavBar: Component<NavBarProps> = () => {
-  // ==================== 状态声明 ====================
 
   /** 提示词弹窗中临时编辑的提示词内容 */
   const [modalPrompt, setModalPrompt] = createSignal('');
@@ -136,14 +56,10 @@ const NavBar: Component<NavBarProps> = () => {
   /** 控制登录弹窗的显示/隐藏 */
   const [isLoginModalOpen, setIsLoginModalOpen] = createSignal(false);
 
-  // ==================== 派生状态 ====================
-
   /** 线上模型列表：过滤出 owned_by 不为 Local-Llama.cpp 的模型 */
   const onlineModels = () => datas.activatedModels.filter(m => m.owned_by !== "Local-Llama.cpp");
   /** 本地模型列表：过滤出 owned_by 为 Local-Llama.cpp 的模型 */
   const localModels = () => datas.activatedModels.filter(m => m.owned_by === "Local-Llama.cpp");
-
-  // ==================== 用户认证处理 ====================
 
   /**
    * 登录成功回调处理
@@ -190,8 +106,6 @@ const NavBar: Component<NavBarProps> = () => {
         }
     }
   };
-
-  // ==================== 头像管理 ====================
 
   /**
    * 处理编辑头像：打开文件选择器并触发裁剪流程
@@ -254,8 +168,6 @@ const NavBar: Component<NavBarProps> = () => {
       alert("头像同步失败: " + err);
     }
   };
-
-  // ==================== 模型管理 ====================
 
   /**
    * 根据模型名称获取对应的品牌 Logo 路径
@@ -400,7 +312,7 @@ const NavBar: Component<NavBarProps> = () => {
 
         if (assistant) {
           const topicId = assistant.topics[0]?.id;
-          const loadingText = "🚀 **正在启动本地 Llama 服务器...**";
+          const loadingText = "**正在启动本地 Llama 服务器...**";
 
           // UI 注入启动反馈
           if (topicId) {
@@ -429,21 +341,21 @@ const NavBar: Component<NavBarProps> = () => {
                 setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
                   'history', h => h.map((msg: any) =>
                     msg.content === loadingText
-                      ? { ...msg, content: "✅ **本地服务器启动成功，可以开始对话了！**" }
+                      ? { ...msg, content: "**本地服务器启动成功，可以开始对话了！**" }
                       : msg
                   )
                 );
               } else if (attempts >= maxAttempts) {
                 clearInterval(poll);
                 setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-                  'history', h => [...h, { role: 'assistant', content: "❌ **服务器启动超时，请检查显存空间或模型文件。**" }]
+                  'history', h => [...h, { role: 'assistant', content: "**服务器启动超时，请检查显存空间或模型文件。**" }]
                 );
               }
             }, 1500);
 
           } catch (err) {
             setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-              'history', h => [...h, { role: 'assistant', content: `❌ **启动失败: ${err}**` }]
+              'history', h => [...h, { role: 'assistant', content: `**启动失败: ${err}**` }]
             );
           }
         } else {
@@ -453,8 +365,6 @@ const NavBar: Component<NavBarProps> = () => {
       }
     }
   };
-
-  // ==================== 窗口控制 ====================
 
   /** 最小化窗口 */
   const handleMinimize = async () => await appWindow.minimize();
@@ -467,8 +377,6 @@ const NavBar: Component<NavBarProps> = () => {
   
   /** 关闭窗口 */
   const handleClose = async () => await appWindow.close();
-
-  // ==================== 生命周期钩子 ====================
 
   /**
    * 组件挂载时初始化：
@@ -534,27 +442,21 @@ const NavBar: Component<NavBarProps> = () => {
     };
   });
 
-  // ==================== 渲染逻辑 ====================
-
   return (
     <>
-      {/* 窗口拖拽响应区：实现无边框窗口拖拽 */}
       <div data-tauri-drag-region class="navbar-drag-region"></div>
 
       <nav class="navbar">
-        {/* --- 左侧区域：Logo 与主导航 --- */}
         <div class="logo-container">
           <img src="/icons/logo.png" alt="AIO" class="logo" />
         </div>
 
-        {/* 对话页面链接 */}
         <A href="/chat" class="nav-item" title="对话" activeClass="active" data-tauri-drag-region="false">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
           </svg>
         </A>
 
-        {/* 设置页面链接 */}
         <A href="/settings" class="nav-item" title="设置" activeClass="active" data-tauri-drag-region="false">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
@@ -562,7 +464,6 @@ const NavBar: Component<NavBarProps> = () => {
           </svg>
         </A>
 
-        {/* --- 中间区域：用户头像与下拉菜单 --- */}
         <div
           class="user-avatar-wrapper"
           onMouseEnter={() => setUserMenuVisible(true)}
@@ -573,13 +474,11 @@ const NavBar: Component<NavBarProps> = () => {
             alt="User Avatar"
             class="avatar"
             onError={(e) => {
-              e.currentTarget.src = "/icons/user.svg"; // 加载失败回退默认图标
+              e.currentTarget.src = "/icons/user.svg";
             }}
           />
           
-          {/* 用户下拉菜单 */}
           <div classList={{ 'user-dropdown-menu': true, 'active': isUserMenuVisible() }}>
-            {/* 更换头像选项 */}
             <div class="user-dropdown-item" onClick={handleEditAvatar}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
@@ -588,11 +487,9 @@ const NavBar: Component<NavBarProps> = () => {
               更换头像
             </div>
 
-            {/* 条件渲染：登录状态决定菜单内容 */}
             <Show
               when={datas.isLoggedIn}
               fallback={
-                // 未登录：显示登录选项
                 <div class="user-dropdown-item"
                   onClick={() => {
                     setIsLoginModalOpen(true);
@@ -605,7 +502,6 @@ const NavBar: Component<NavBarProps> = () => {
                 </div>
               }
             >
-              {/* 已登录：显示账号信息、切换账号、退出登录 */}
               <div class="user-dropdown-divider"></div>
               <div class="user-dropdown-item" style="font-weight: 500;">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
@@ -633,7 +529,6 @@ const NavBar: Component<NavBarProps> = () => {
           </div>
         </div>
 
-        {/* --- 右侧区域：模型选择器 --- */}
         <div
           class="model-selector-wrapper"
           onMouseEnter={() => setDropdownVisible(true)}
@@ -645,7 +540,6 @@ const NavBar: Component<NavBarProps> = () => {
             </svg>
           </div>
 
-          {/* 模型下拉菜单：双列布局（线上/本地） */}
           <div classList={{ 'dropdown-menu': true, 'active': isDropdownVisible() }}>
             <div class="dropdown-columns-container">
               {/* 左列：线上模型 */}
@@ -675,7 +569,6 @@ const NavBar: Component<NavBarProps> = () => {
 
               <div class="column-divider"></div>
 
-              {/* 右列：本地模型 */}
               <div class="dropdown-column">
                 <div class="column-header">本地模型</div>
                 <div class="column-content">
@@ -703,14 +596,12 @@ const NavBar: Component<NavBarProps> = () => {
           </div>
         </div>
 
-        {/* 提示词设置按钮 */}
         <a href="#" title="设置提示词" class="nav-item" onClick={handleOpenPromptModal} data-tauri-drag-region="false">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
           </svg>
         </a>
 
-        {/* --- 窗口控制按钮组 --- */}
         <div class="window-controls">
           <button class="control-button minimize" onClick={handleMinimize} title="最小化">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
@@ -738,7 +629,6 @@ const NavBar: Component<NavBarProps> = () => {
         </div>
       </nav>
 
-      {/* 子组件渲染 */}
       <Show when={tempImage()}>
         <AvatarCropModal
           imageSrc={tempImage()!}

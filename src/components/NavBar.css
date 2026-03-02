@@ -1,5 +1,3 @@
-/* src/components/NavBar.css */
-
 .logo-container {
   position: absolute;
   left: 10px;
@@ -19,18 +17,15 @@
   -webkit-user-drag: none;
 }
 
-/* --- 新增：用于Tauri无边框窗口的拖拽区域 --- */
 .navbar-drag-region {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   height: 60px;
-  /* 和 navbar 的高度一致 */
   -webkit-app-region: drag;
-  /* 允许拖拽 */
-  z-index: 1; /* 降低层级到最底层 */
-  pointer-events: auto; /* 必须为 auto 才能拖拽背景 */
+  z-index: 1; 
+  pointer-events: auto; 
 }
 
 .navbar {
@@ -45,17 +40,11 @@
   border-bottom: 1px solid #333;
   border-radius: 8px;
   border: 1px solid var(--primary-color);
-  margin: 0px 1px auto 0px;
-
-
+  margin: 0 1px auto 0;
   position: relative;
-  /* 确保 z-index 有效 */
   z-index: 1000;
-  /* 确保导航栏内容在拖拽区域之上 */
 }
 
-/* 默认将所有 nav-item 的 pointer-events 设置为 auto */
-/* 如果在父元素上设置了 pointer-events: none，子元素需要手动重置 */
 .nav-item,
 .avatar,
 .model-selector-wrapper,
@@ -64,21 +53,14 @@
   pointer-events: auto;
   -webkit-app-region: no-drag;
   cursor: pointer;
-  /* 重新启用事件 */
 }
-
-/* --- (其他 .nav-item, .avatar, .model-selector-wrapper 等样式保持不变) --- */
 
 .nav-item svg {
   width: 24px;
-  /* 设置 SVG 图标的宽度 */
   height: 24px;
-  /* 设置 SVG 图标的高度 */
-  color: currentColor;
-  /* 继承父元素的颜色 */
+  color: currentcolor;
 }
 
-/* 确保 nav-item 内部的元素垂直居中 */
 .nav-item {
   color: #a0a0a0;
   text-decoration: none;
@@ -88,25 +70,24 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 如果有其他内容，添加间距 */
 }
 
 .nav-item:hover {
-  /*background-color: #333;*/
   color: #fff;
 }
 
 .nav-item.active {
   color: var(--primary-color);
   font-weight: bold;
-  /*background-color: #333;*/
 }
 
 .avatar {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 2px solid #555;
+  border: 2px solid #333;
+  transition: border-color 0.2s;
+  object-fit: cover;
 }
 
 .model-selector-wrapper {
@@ -128,25 +109,20 @@
   transform: translateX(-50%);
   margin-top: 8px;
   background-color: #1e1e1e;
-  /* 统一背景色 */
   min-width: 480px;
-  /* 宽度增加以容纳两列 */
   border: 1px solid #333;
   border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 10px 25px rgb(0 0 0 / 50%);
   z-index: 1000;
   transition: all 0.2s ease-in-out;
   padding: 0;
-  /* 内部由列容器控制内边距 */
   overflow: hidden;
-  /* 裁剪圆角 */
 }
 
 .dropdown-columns-container {
   display: flex;
   flex-direction: row;
   height: 400px;
-  /* 给一个固定或最大高度 */
 }
 
 .dropdown-column {
@@ -195,8 +171,6 @@
   font-size: 13px;
 }
 
-
-
 .dropdown-menu.active {
   visibility: visible;
   opacity: 1;
@@ -206,42 +180,37 @@
 
 .dropdown-item {
   display: flex;
+  border-radius: 8px;
   flex-direction: row;
-  /* 关键修改：从 column 改为 row */
   align-items: center;
-  /* 垂直居中对齐 logo 和文字 */
   gap: 10px;
-  /* Logo 与文字之间的间距 */
   padding: 8px 12px;
   color: #a0a0a0;
   text-align: left;
-  /* 关键修改：从 center 改为 left */
   font-size: 14px;
   cursor: pointer;
-  -webkit-user-select: none;
   user-select: none;
   transition: background-color 0.2s, color 0.2s;
 }
 
 .model-id-text {
   max-width: 160px;
-  /* 限制宽度防止溢出 */
+  font-size: 13px;
+  color: #fff;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
 }
-
-
-.dropdown-item:hover {
-  background-color: #484848;
-  color: #ffffff;
-}
-
 
 .dropdown-item.selected {
   background: var(--primary-20);
   border-left: 3px solid var(--primary-color);
 }
 
-.model-id-text {
-  font-size: 13px;
+.dropdown-item:hover {
+  background-color: #484848;
   color: #fff;
 }
 
@@ -249,9 +218,9 @@
   font-size: 10px;
   color: var(--primary-color);
   opacity: 0.7;
+  text-align: left;
 }
 
-/* --- 窗口控制按钮样式 --- */
 .window-controls {
   display: flex;
   align-items: center;
@@ -263,9 +232,7 @@
   background-color: transparent;
   border: none;
   color: #a0a0a0;
-  /* 默认颜色 */
   font-size: 18px;
-  /* 按钮符号大小 */
   width: 30px;
   height: 30px;
   display: flex;
@@ -275,20 +242,16 @@
   border-radius: 4px;
   transition: background-color 0.2s, color 0.2s;
   margin-left: 4px;
-  /* 按钮之间的间距 */
   -webkit-app-region: no-drag;
-  /* 按钮区域不可拖拽 */
 }
 
 .control-button:hover {
   background-color: #333;
-  /* 悬停背景 */
   color: #fff;
 }
 
 .control-button.close:hover {
   background-color: #E08090;
-  /* 关闭按钮通常是红色 */
   color: #fff;
 }
 
@@ -304,106 +267,49 @@
   color: var(--primary-color);
 }
 
-/* 导航栏专用的模型 Logo 圆形背景 */
 .nav-model-logo-container {
   width: 28px;
-  /* 稍微比设置页小一点 */
   height: 28px;
-  background-color: #ffffff;
-  /* 浅色背景 */
+  background-color: #fff;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  /* 防止压缩 */
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 4px rgb(0 0 0 / 10%);
 }
 
-/* 导航栏专用图标尺寸 */
 .nav-model-logo {
   width: 18px;
   height: 18px;
   object-fit: contain;
 }
 
-/* 调整文字组布局 */
 .model-text-group {
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
-  /* 防止溢出 */
-}
-
-.model-id-text {
-  font-size: 13px;
-  font-weight: 500;
-  color: #e0e0e0;
-  /* 根据你的深色模式调整 */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: left;
-}
-
-.model-provider-text {
-  font-size: 11px;
-  color: #888;
-  text-align: left;
-}
-
-.dropdown-item {
-  border-radius: 8px;
-}
-
-/* 选中状态的微调 */
-.dropdown-item.selected {
-  background-color: var(--primary-20);
-}
-
-.dropdown-item.selected .nav-model-logo-container {
-  border: 1px solid var(--primary-color);
-  /* 选中时 Logo 容器加个边框 */
-}
-
-.model-text-group {
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: flex-start;
-  /* 强制文字内容靠左 */
-  overflow: hidden;
   flex: 1;
-  /* 占据剩余空间 */
 }
 
-/* 用户菜单包裹容器 */
+.dropdown-item.selected .nav-model-logo-container {
+  border: 1px solid var(--primary-color);
+}
+
 .user-avatar-wrapper {
   position: relative;
   display: flex;
   align-items: center;
   cursor: pointer;
   pointer-events: auto;
-  /* 确保能响应事件 */
-}
-
-/* 头像微调 */
-.avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 2px solid #333;
-  transition: border-color 0.2s;
-  object-fit: cover;
-  /* 保证选择长方形图片时不会变形 */
 }
 
 .user-avatar-wrapper:hover .avatar {
   border-color: var(--primary-color);
-  /* 悬停时显示青色边框 */
 }
 
-/* 用户下拉菜单的基础样式 */
 .user-dropdown-menu {
   visibility: hidden;
   opacity: 0;
@@ -415,9 +321,8 @@
   background-color: #1e1e1e;
   min-width: 140px;
   border: 1px solid var(--primary-color);
-  /* 保持一致的青色边框 */
   border-radius: 8px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 15px rgb(0 0 0 / 40%);
   z-index: 1000;
   transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.2s;
   padding: 6px;
@@ -428,7 +333,6 @@
   opacity: 1;
 }
 
-/* 菜单项样式 */
 .user-dropdown-item {
   display: flex;
   align-items: center;
@@ -445,7 +349,6 @@
   color: var(--primary-color);
 }
 
-/* 特殊样式：未开放的按钮 */
 .user-dropdown-item.login-disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -456,7 +359,6 @@
   color: #e0e0e0;
 }
 
-/* 小尖角装饰 (可选，保持精致感) */
 .user-dropdown-menu::before {
   content: '';
   position: absolute;
@@ -470,26 +372,19 @@
   border-top: 1px solid var(--primary-color);
 }
 
-/* 修改或添加在 NavBar.css 中 */
-
-/* 退出登录项的特殊样式 */
 .user-dropdown-item.logout-item {
-  color: #ff4d4f;
-  /* 浅红色，暗示警告/退出操作 */
+  color: #E08090;
   opacity: 0.9;
 }
 
 .user-dropdown-item.logout-item:hover {
-  background-color: rgba(255, 77, 79, 0.15);
-  /* 红色半透明背景 */
-  color: #ff7875;
+  background-color: rgb(255 77 79 / 15%);
+  color: #E08090;
 }
 
-/* 确保间隔线足够清晰 */
 .user-dropdown-divider {
   height: 1px;
   background: #333;
-  /* 或者使用带有青色透明度的背景 */
   margin: 6px 8px;
   opacity: 0.6;
 }

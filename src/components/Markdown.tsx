@@ -13,8 +13,6 @@ import { markedHighlight } from "marked-highlight";
 import DOMPurify from 'dompurify';
 import { createMemo, Component } from 'solid-js';
 import hljs from 'highlight.js';
-
-// 导入代码高亮样式
 import 'highlight.js/styles/github-dark.css';
 
 /** ---------------------------------------------------------

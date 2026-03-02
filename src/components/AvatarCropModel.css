@@ -1,11 +1,7 @@
-/* src/components/AvatarCropModal.css */
 .crop-modal-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.85);
+    inset: 0;
+    background: rgb(0 0 0 / 85%);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -33,8 +29,6 @@
     color: var(--primary-color);
     font-weight: bold;
 }
-
-
 
 .crop-main-area {
     display: flex;
@@ -69,13 +63,11 @@
     width: 120px;
     height: 120px;
     border-radius: 50%;
-    /* 圆形预览核心 */
     overflow: hidden;
     border: 2px solid var(--primary-color);
     background: #000;
 }
 
-/* 覆盖 CropperJS 默认预览样式 */
 .avatar-preview-circle img {
     max-width: none !important;
 }

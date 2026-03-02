@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vite build",
     "serve": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "lint:stylelint": "stylelint \"src/**/*.{css,scss,vue}\" --fix",
+    "lint": "pnpm lint:stylelint && eslint ."
   },
   "license": "Apache-2.0",
   "dependencies": {
@@ -33,6 +35,8 @@
     "@types/marked": "^5.0.2",
     "@types/node": "^25.0.8",
     "baseline-browser-mapping": "^2.9.17",
+    "stylelint": "^17.4.0",
+    "stylelint-config-standard": "^40.0.0",
     "typescript": "^5.9.3",
     "vite": "^6.0.3",
     "vite-plugin-solid": "^2.11.0"

@@ -1,43 +1,3 @@
-/**
- * Settings.tsx - 应用设置中心页面组件
- * 
- * 【功能概述】
- * 本文件实现了一个三标签页的设置中心界面，基于 SolidJS 框架构建。
- * 采用经典的左右布局：左侧为导航菜单，右侧为对应设置内容。
- * 包含三个设置模块：
- *   1. 供应商设置 - 配置 AI 模型提供商（API 地址、密钥、模型列表等）
- *   2. 账号信息   - 用户账户相关设置
- *   3. 应用信息   - 应用程序通用配置
- * 
- * 【数据流流向】
- * 
- * 1. 路由/导航数据流:
- *    应用路由 → 渲染 Settings 组件 → 默认显示 'provider' 标签页
- * 
- * 2. 标签切换数据流（内部状态）:
- *    用户点击菜单项 → setActiveTab(tabId) → activeTab 信号更新 → 
- *    Switch/Match 条件渲染 → 对应设置组件挂载显示
- * 
- * 3. 各标签页独立数据流:
- *    - ProviderSettings: 可能涉及本地存储读写（API 配置持久化）
- *    - AccountSettings: 可能涉及用户信息加载/保存
- *    - AppSettings: 可能涉及应用配置读写
- *    （具体数据流见各子组件实现）
- * 
- * 【组件架构】
- * Settings (容器组件)
- * ├── 左侧 Sidebar (导航菜单)
- * └── 右侧 Content (动态渲染)
- *     ├── ProviderSettings (供应商配置)
- *     ├── AccountSettings (账号管理)
- *     └── AppSettings (应用配置)
- * 
- * 【依赖】
- * - SolidJS: 响应式 UI 框架（createSignal, Switch, Match, Component）
- * - 本地组件: ProviderSettings, AccountSettings, AppSettings
- * - 样式: Settings.css
- */
-
 import { Component, createSignal, Switch, Match, JSX } from 'solid-js';
 import ProviderSettings from '../components/ProviderSettings';
 import AccountSettings from '../components/AccountSettings';
@@ -114,52 +74,36 @@ const Settings: Component = () => {
 
     return (
         <div class="settings-page">
-            {/* 左侧侧边栏导航 */}
             <div class="settings-sidebar">
-                {/* 侧边栏标题 */}
                 <div class="sidebar-header">设置中心</div>
-                
-                {/* 导航菜单列表 */}
+
                 <div class="sidebar-menu">
                     {menuItems.map(item => (
                         <div
-                            // 动态类名：当前激活项添加 'active' 类用于高亮样式
                             class={`sidebar-item ${activeTab() === item.id ? 'active' : ''}`}
-                            // 点击切换激活标签页
                             onClick={() => setActiveTab(item.id)}
                         >
-                            {/* 菜单项图标 */}
                             <span class="sidebar-icon">{item.icon}</span>
-                            {/* 菜单项文本标签 */}
                             <span class="sidebar-label">{item.label}</span>
                         </div>
                     ))}
                 </div>
             </div>
 
-            {/* 右侧主内容区域 */}
             <div class="settings-main-content">
-                {/* 
-                  Switch/Match: SolidJS 的条件渲染组件
-                  根据 activeTab() 的值匹配对应的设置组件
-                  相比多个 Show 组件或三元表达式，Switch 在互斥条件时性能更好且更清晰
-                */}
                 <Switch>
-                    {/* 供应商设置标签页 */}
                     <Match when={activeTab() === 'provider'}>
                         <div class="tab-content-wrapper">
                             <ProviderSettings />
                         </div>
                     </Match>
                     
-                    {/* 账号信息标签页 */}
                     <Match when={activeTab() === 'account'}>
                         <div class="tab-content-wrapper">
                             <AccountSettings />
                         </div>
                     </Match>
                     
-                    {/* 应用信息标签页 */}
                     <Match when={activeTab() === 'app'}>
                         <div class="tab-content-wrapper">
                             <AppSettings />

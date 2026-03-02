@@ -1,65 +1,7 @@
-/**
- * ============================================================================
- * 文件功能摘要
- * ============================================================================
- * 
- * 【核心功能】
- * AI 模型提供商管理设置页面，提供 API 配置管理、模型列表获取、本地模型管理三大功能模块。
- * 支持云端 API 模型（OpenAI 格式）的激活/停用，以及本地 Llama.cpp 模型的启动/停止控制。
- * 
- * 【数据流流向】
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  全局状态流入                                                            │
- * │  ├── config() ← 当前 API 配置（url/key）                                 │
- * │  ├── selectedModel() ← 当前选中的模型                                    │
- * │  └── setDatas('activatedModels') → 更新全局已激活模型列表                │
- * │                                                                          │
- * │  Tauri 后端命令调用                                                      │
- * │  ├── invoke('load_app_config') → 加载应用配置                            │
- * │  ├── invoke('save_app_config') → 保存 API 配置                           │
- * │  ├── invoke('load_activated_models') → 加载已激活模型                      │
- * │  ├── invoke('save_activated_models') → 持久化激活模型列表                │
- * │  ├── invoke('load_fetched_models') → 加载缓存的可用模型                    │
- * │  ├── invoke('save_fetched_models') → 缓存可用模型列表                      │
- * │  ├── invoke('fetch_models') → 从 API 端点获取模型列表                      │
- * │  ├── invoke('start_local_server') → 启动本地 Llama 服务                    │
- * │  ├── invoke('stop_local_server') → 停止本地 Llama 服务                   │
- * │  ├── invoke('is_local_server_running') → 检查本地服务状态                  │
- * │  └── open() (dialog plugin) → 选择本地 .gguf 模型文件                      │
- * │                                                                          │
- * │  本地状态                                                                │
- * │  ├── apiUrl/apiKey: 表单输入的 API 配置                                    │
- * │  ├── localModelPath: 选中的本地模型文件路径                                │
- * │  ├── isLocalRunning: 本地服务运行状态                                      │
- * │  ├── models: 从 API 获取的可用模型列表                                     │
- * │  ├── activatedModels: 已激活的模型配置列表                                 │
- * │  ├── searchQuery/searchQueryAct: 搜索关键词                                │
- * │  ├── selectedProvider/selectedProviderAct: 厂商筛选条件                  │
- * │  └── isDropdownOpen/isDropdownOpenAct: 下拉菜单展开状态                    │
- * └─────────────────────────────────────────────────────────────────────────┘
- * 
- * 【组件层级】
- * ProviderSettings (本组件)
- * ├── 左侧：API 配置面板
- * │   ├── API URL 输入
- * │   ├── API Key 输入
- * │   ├── 保存配置按钮
- * │   ├── 获取模型列表按钮
- * │   └── 本地模型管理区（选择文件 + 启动/停止服务）
- * ├── 中间：已激活模型列表面板（可搜索筛选、移除）
- * └── 右侧：可用模型列表面板（从 API 获取，可勾选激活）
- * ============================================================================
- */
-
-// SolidJS 核心 API
 import { Component, createSignal, For, createMemo, onCleanup, onMount } from 'solid-js';
-// 全局状态管理
 import { config, saveConfig, setDatas, selectedModel } from '../store/store';
-// Tauri 核心 API
 import { invoke } from '@tauri-apps/api/core';
-// Tauri 对话框插件
 import { open } from '@tauri-apps/plugin-dialog';
-// 本地样式
 import './ProviderSettings.css';
 
 /** 从 API 获取的原始模型信息 */
@@ -86,7 +28,6 @@ interface ActivatedModel {
  * @returns {JSX.Element} 设置页面 JSX 元素
  */
 const ProviderSettings: Component = () => {
-    // ==================== 表单状态 ====================
 
     /** API 供应商网址输入值 */
     const [apiUrl, setApiUrl] = createSignal(config().apiUrl);
@@ -95,14 +36,10 @@ const ProviderSettings: Component = () => {
     /** 保存状态提示文本（如"配置已保存"） */
     const [saveStatus, setSaveStatus] = createSignal("");
 
-    // ==================== 本地模型状态 ====================
-
     /** 选中的本地 .gguf 模型文件路径 */
     const [localModelPath, setLocalModelPath] = createSignal("");
     /** 本地 Llama 服务是否正在运行 */
     const [isLocalRunning, setIsLocalRunning] = createSignal(false);
-
-    // ==================== 模型列表状态 ====================
 
     /** 从 API 获取的可用模型列表 */
     const [models, setModels] = createSignal<ModelItem[]>([]);
@@ -111,8 +48,6 @@ const ProviderSettings: Component = () => {
     /** 已激活的模型配置列表（持久化到本地） */
     const [activatedModels, setActivatedModels] = createSignal<ActivatedModel[]>([]);
 
-    // ==================== 搜索筛选状态（可用模型）====================
-
     /** 可用模型搜索关键词 */
     const [searchQuery, setSearchQuery] = createSignal("");
     /** 可用模型厂商筛选条件 */
@@ -120,16 +55,12 @@ const ProviderSettings: Component = () => {
     /** 可用模型厂商下拉菜单展开状态 */
     const [isDropdownOpen, setIsDropdownOpen] = createSignal(false);
 
-    // ==================== 搜索筛选状态（已激活模型）====================
-
     /** 已激活模型搜索关键词 */
     const [searchQueryAct, setSearchQueryAct] = createSignal("");
     /** 已激活模型厂商筛选条件 */
     const [selectedProviderAct, setSelectedProviderAct] = createSignal("All");
     /** 已激活模型厂商下拉菜单展开状态 */
     const [isDropdownOpenAct, setIsDropdownOpenAct] = createSignal(false);
-
-    // ==================== DOM 引用 ====================
 
     /** 可用模型厂商下拉容器引用（用于点击外部关闭） */
     let dropdownRef: HTMLDivElement | undefined;
@@ -155,8 +86,6 @@ const ProviderSettings: Component = () => {
         if (name.includes('glm')) return '/icons/zhipu-color.svg';
         return '/icons/ollama.svg';
     };
-
-    // ==================== 本地模型管理 ====================
 
     /**
      * 打开文件对话框选择本地 .gguf 模型文件
@@ -288,8 +217,6 @@ const ProviderSettings: Component = () => {
         await invoke('save_activated_models', { models: newList });
     };
 
-    // ==================== 生命周期钩子 ====================
-
     /**
      * 组件挂载时初始化数据
      * 
@@ -323,8 +250,6 @@ const ProviderSettings: Component = () => {
         onCleanup(() => window.removeEventListener('click', handleClickOutside));
     });
 
-    // ==================== 派生状态（Memo）====================
-
     /** 可用模型的厂商列表（去重，用于筛选下拉） */
     const providers = createMemo(() => ["All", ...Array.from(new Set(models().map(m => m.owned_by || "unknown")))]);
     
@@ -346,8 +271,6 @@ const ProviderSettings: Component = () => {
             (selectedProviderAct() === "All" || m.owned_by === selectedProviderAct())
         )
     );
-
-    // ==================== 核心操作交互 ====================
 
     /**
      * 切换模型的激活状态（勾选/取消勾选）
@@ -428,18 +351,14 @@ const ProviderSettings: Component = () => {
         }
     };
 
-    // ==================== 渲染逻辑 ====================
-
     return (
         <div class="tab-content-provider">
             <div class="settings-container">
-                {/* API 配置区域 */}
                 <div class="info-header" style="border-bottom: 1px solid; padding-bottom: 10px; margin-bottom: 30px;">
                     <h3>API 服务配置</h3>
                 </div>
                 
                 <div class="settings-form">
-                    {/* API URL 输入 */}
                     <div class="setting-item">
                         <label>API 供应商网址</label>
                         <input 
@@ -450,7 +369,6 @@ const ProviderSettings: Component = () => {
                         />
                     </div>
                     
-                    {/* API Key 输入 */}
                     <div class="setting-item">
                         <label>API Key</label>
                         <input 
@@ -461,7 +379,6 @@ const ProviderSettings: Component = () => {
                         />
                     </div>
                     
-                    {/* 操作按钮组 */}
                     <button class="save-settings-button" onClick={handleSave}>
                         保存当前配置
                     </button>
@@ -473,7 +390,6 @@ const ProviderSettings: Component = () => {
                         {isLoading() ? "查询中..." : "获取可用模型列表"}
                     </button>
 
-                    {/* 本地模型管理区 */}
                     <div class="setting-item">
                         <label>本地模型管理 (.gguf)</label>
                         <div style="display:flex; flex-direction: column; gap: 10px;">
@@ -498,17 +414,14 @@ const ProviderSettings: Component = () => {
                         </div>
                     </div>
                     
-                    {/* 状态提示 */}
                     {saveStatus() && <div class="save-hint">{saveStatus()}</div>}
                 </div>
             </div>
 
-            {/* 中间：已激活模型列表面板 */}
             <div class="models-list-panel activated-panel">
                 <div class="models-header-complex">
                     <h4>已激活模型 ({filteredActivatedModels().length})</h4>
                     <div class="models-tools-row">
-                        {/* 搜索输入 */}
                         <input 
                             type="text" 
                             placeholder="搜索已激活..." 
@@ -516,7 +429,6 @@ const ProviderSettings: Component = () => {
                             onInput={(e) => setSearchQueryAct(e.currentTarget.value)} 
                         />
                         
-                        {/* 厂商筛选下拉框 */}
                         <div class="custom-select-container" ref={dropdownRefAct}>
                             <div 
                                 class={`custom-select-trigger ${isDropdownOpenAct() ? 'open' : ''}`} 
@@ -543,12 +455,10 @@ const ProviderSettings: Component = () => {
                     </div>
                 </div>
                 
-                {/* 已激活模型列表 */}
                 <div class="models-scroll-area">
                     <For each={filteredActivatedModels()}>
                         {(m) => (
                             <div class="model-card activated">
-                                {/* 模型 Logo */}
                                 <div class="model-logo-container">
                                     <img src={getModelLogo(m.model_id)} alt="logo" class="model-item-logo" />
                                 </div>
@@ -568,7 +478,6 @@ const ProviderSettings: Component = () => {
                 </div>
             </div>
 
-            {/* 右侧：可用模型列表面板 */}
             <div class="models-list-panel">
                 <div class="models-header-complex">
                     <h4>可用模型列表 ({filteredModels().length})</h4>
@@ -605,9 +514,7 @@ const ProviderSettings: Component = () => {
                     </div>
                 </div>
                 
-                {/* 可用模型列表 */}
                 <div class="models-scroll-area">
-                    {/* 空状态提示 */}
                     {models().length === 0 && (
                         <div style="color: #444; text-align: center; margin-top: 50px;">
                             点击左侧“查询模型”按钮获取列表
@@ -617,7 +524,6 @@ const ProviderSettings: Component = () => {
                     <For each={filteredModels()}>
                         {(m) => (
                             <div class="model-card">
-                                {/* 模型 Logo */}
                                 <div class="model-logo-container">
                                     <img src={getModelLogo(m.id)} alt="logo" class="model-item-logo" />
                                 </div>
@@ -627,7 +533,6 @@ const ProviderSettings: Component = () => {
                                     <span class="model-provider">Provider: {m.owned_by}</span>
                                 </div>
                                 
-                                {/* 激活开关 */}
                                 <div class="switch-container">
                                     <label class="switch">
                                         <input 
@@ -649,5 +554,4 @@ const ProviderSettings: Component = () => {
     );
 };
 
-// 默认导出组件
 export default ProviderSettings;

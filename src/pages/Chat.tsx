@@ -1,40 +1,3 @@
-/**
- * Chat.tsx - AI 聊天应用主页面组件
- * 
- * 【功能概述】
- * 本文件是 Tauri 桌面 AI 聊天应用的核心页面组件，基于 SolidJS 框架构建。
- * 提供三栏式布局：左侧助手列表、中间聊天区域、右侧话题列表。
- * 支持多助手管理、多话题管理、文件上传（文本/图片）、流式 AI 对话、
- * 自动话题命名、历史消息摘要压缩等功能。
- * 
- * 【数据流流向】
- * 
- * 1. 初始化数据流（SQLite → UI）:
- *    Tauri 后端 SQLite → invoke('load_assistants') → store/datas → 组件状态
- * 
- * 2. 用户操作数据流（UI → SQLite）:
- *    用户操作 → setDatas() 更新状态 → saveSingleAssistantToBackend() → Tauri 后端 → SQLite
- * 
- * 3. AI 对话数据流:
- *    用户输入 → handleSendMessage() → invoke('call_llm_stream') → Tauri 后端 → LLM API
- *    LLM 流式响应 → listen('llm-chunk') → 更新 topic.history → UI 渲染
- * 
- * 4. 文件处理数据流:
- *    拖拽/选择文件 → handleFileUpload() → invoke('process_file_content') → 
- *    Tauri 后端读取本地文件 → 返回内容 → pendingFiles 状态 → 随消息发送
- * 
- * 5. 历史摘要数据流（自动触发）:
- *    消息数 > 25 条 → checkAndSummarize() → invoke('summarize_history') → 
- *    LLM 生成摘要 → 更新 topic.summary → SQLite 持久化 → 后续对话携带摘要上下文
- * 
- * 
- * 
- * 【依赖】
- * - SolidJS: 响应式 UI 框架
- * - @tauri-apps/api: Tauri 桌面应用 API（invoke 调用 Rust 后端，listen 监听事件）
- * - 本地 store: 全局状态管理（助手、话题、当前选中状态）
- */
-
 import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -42,13 +5,15 @@ import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
   saveSingleAssistantToBackend, Assistant, Topic, selectedModel,
 } from '../store/store';
-
 import AssistantSidebar from '../components/AssistantSidebar';
 import ChatInterface from '../components/ChatInterface';
 import TopicSidebar from '../components/TopicSidebar';
 import './Chat.css';
+
+
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = "default-assistant-id";
+
 /**
  * 辅助函数：创建新话题对象
  * @param name - 可选的话题名称，默认生成带时间戳的名称
@@ -79,7 +44,6 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
  * 管理三栏布局、所有业务逻辑和状态流转
  */
 const ChatPage: Component = () => {
-  // ==================== 布局与 UI 状态 ====================
 
   /** 左侧面板宽度百分比（助手列表），默认 18%，范围 15%-30% */
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
@@ -116,7 +80,6 @@ const ChatPage: Component = () => {
   let chatPageRef: HTMLDivElement | undefined;
   const displayLeftWidth = () => isLeftCollapsed() ? 0 : leftPanelWidth();
   const displayRightWidth = () => isRightCollapsed() ? 0 : rightPanelWidth();
-  // ==================== 派生状态 (Computed) ====================
 
   const toggleLeft = (e: MouseEvent) => {
     e.stopPropagation(); // 防止触发拖拽
@@ -138,8 +101,6 @@ const ChatPage: Component = () => {
     }
   };
 
-
-
   /**
    * 当前选中的助手对象
    * 根据 currentAssistantId 从 datas.assistants 数组中查找
@@ -159,15 +120,6 @@ const ChatPage: Component = () => {
     return asst.topics.find((t: Topic) => t.id === currentTopicId()) || asst.topics[0] || null;
   };
 
-  // ==================== 业务逻辑函数 ====================
-
-
-  const createDefaultAssistant = (): Assistant => ({
-    id: DEFAULT_ASST_ID,
-    name: '默认助手',
-    prompt: '你是一个乐于助人的 AI 助手。',
-    topics: [createTopic('默认话题')]
-  });
   /**
    * 处理文件上传和解析
    * 调用 Tauri 后端读取本地文件内容，支持文本文件和图片
@@ -346,8 +298,6 @@ const ChatPage: Component = () => {
     setTypingIndex(null);
   };
 
-  // ==================== 助手与话题管理 ====================
-
   /**
    * 添加新助手
    * 创建助手对象 → 更新状态 → 选中新助手 → 持久化到 SQLite
@@ -372,8 +322,6 @@ const ChatPage: Component = () => {
     setCurrentTopicId(newT.id);
     await saveSingleAssistantToBackend(asstId);
   };
-
-  // ==================== UI/UX 交互逻辑 ====================
 
   /**
    * 拖拽调整面板宽度
@@ -404,9 +352,6 @@ const ChatPage: Component = () => {
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', stopResize);
   };
-
-
-  // ==================== 生命周期与事件监听 ====================
 
   /**
    * 组件挂载时初始化
@@ -529,11 +474,8 @@ const ChatPage: Component = () => {
     localStorage.setItem('chat-right-panel-width', rightPanelWidth().toString());
   });
 
-  // ==================== 渲染 ====================
-
   return (
     <div class="chat-page" classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
-      {/* 左侧助手侧边栏 */}
       <AssistantSidebar
         width={displayLeftWidth()}
         isCollapsed={isLeftCollapsed()}
@@ -544,7 +486,6 @@ const ChatPage: Component = () => {
         addAssistant={addAssistant}
       />
 
-      {/* 中间聊天主区域 */}
       <ChatInterface
         activeTopic={activeTopic()}
         isChangingTopic={isChangingTopic()}
@@ -561,7 +502,6 @@ const ChatPage: Component = () => {
         handleFileUpload={handleFileUpload}
       />
 
-      {/* 右侧话题侧边栏 */}
       <TopicSidebar
         width={displayRightWidth()}
         isCollapsed={isRightCollapsed()}

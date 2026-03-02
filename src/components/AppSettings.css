@@ -1,4 +1,3 @@
-/* 容器 */
 .app-settings-container {
     display: flex;
     flex-direction: column;
@@ -10,10 +9,8 @@
     margin-bottom: 8px;
 }
 
-
-/* 基础卡片 */
 .settings-card {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgb(255 255 255 / 4%);
     border: 1px solid var(--primary-color);
     border-radius: 12px;
     box-shadow: inset 0 0 20px 1px var(--primary-30);
@@ -37,12 +34,12 @@
 .version-wrapper {
     display: flex;
     align-items: center;
-    gap: 8px; /* 文字和徽章之间的间距 */
+    gap: 8px;
 }
 
 .version-label {
     font-size: 12px;
-    color: #888; /* 较浅的灰色，不至于抢走徽章视线 */
+    color: #888;
     font-weight: 500;
 }
 
@@ -57,13 +54,12 @@
     white-space: nowrap;
 }
 
-/* 设置项行 */
 .setting-item-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 12px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgb(255 255 255 / 5%);
 }
 
 .item-label span {
@@ -75,10 +71,9 @@
 .item-desc {
     font-size: 12px;
     color: #777;
-    margin: 4px 0 0 0;
+    margin: 4px 0 0;
 }
 
-/* GitHub 按钮 */
 .github-link {
     display: flex;
     align-items: center;
@@ -97,7 +92,6 @@
     color: #000;
 }
 
-/* 容器布局：左(RGB) - 中(圆环) - 右(预设) */
 .cool-picker-layout {
     display: grid;
     grid-template-columns: 100px 240px 100px;
@@ -120,7 +114,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(255,255,255,0.1);
+    border: 1px solid rgb(255 255 255 / 10%);
 }
 
 .hex-display {
@@ -128,7 +122,7 @@
     font-size: 13px;
     font-weight: 800;
     color: #fff;
-    background: rgba(0,0,0,0.3);
+    background: rgb(0 0 0 / 30%);
     padding: 4px 8px;
     border-radius: 6px;
     backdrop-filter: blur(4px);
@@ -146,7 +140,6 @@
     font-weight: bold;
 }
 
-/* --- 中间：色相环 --- */
 .hue-ring-container {
     position: relative;
     width: 220px;
@@ -157,8 +150,8 @@
 }
 
 .rgb-field {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgb(255 255 255 / 5%);
+    border: 1px solid rgb(255 255 255 / 10%);
     padding: 10px;
     border-radius: 10px;
     text-align: center;
@@ -171,7 +164,6 @@
     margin-bottom: 4px;
 }
 
-/* 控制台区 */
 .picker-controls {
     display: flex;
     flex-direction: column;
@@ -191,16 +183,12 @@
     margin-bottom: 10px;
 }
 
-/* --- 左侧：RGB 展示 --- */
 .rgb-sidebar {
     display: flex;
     flex-direction: column;
     gap: 15px;
 }
 
-
-
-/* 核心滑块修复 */
 .slider-container {
     height: 40px;
     display: flex;
@@ -208,8 +196,7 @@
 }
 
 input[type="range"] {
-    -webkit-appearance: none;
-    appearance: none; /* 标准属性支持 */
+    appearance: none;
     width: 100%;
     height: 14px;
     border-radius: 7px;
@@ -218,29 +205,22 @@ input[type="range"] {
     transition: all 0.3s ease;
 }
 
-/* 色相环本体 */
 .hue-ring {
     width: 100%;
     height: 100%;
     border-radius: 50%;
-    /* 使用锥形渐变绘制色轮 */
-    background: conic-gradient(
-        hsl(0, var(--s), var(--l)), 
-        hsl(60, var(--s), var(--l)), 
-        hsl(120, var(--s), var(--l)), 
-        hsl(180, var(--s), var(--l)), 
-        hsl(240, var(--s), var(--l)), 
-        hsl(300, var(--s), var(--l)), 
-        hsl(360, var(--s), var(--l))
-    );
+    background: conic-gradient(hsl(0deg var(--s) var(--l)),
+            hsl(60deg var(--s) var(--l)),
+            hsl(120deg var(--s) var(--l)),
+            hsl(180deg var(--s) var(--l)),
+            hsl(240deg var(--s) var(--l)),
+            hsl(300deg var(--s) var(--l)),
+            hsl(360deg var(--s) var(--l)));
     cursor: pointer;
-    /* 遮罩，把中间掏空成环 */
     mask: radial-gradient(transparent 59.5%, black 60.5%);
-    -webkit-mask: radial-gradient(transparent 59.5%, black 60.5%);
     transition: filter 0.3s;
 }
 
-/* 环中心预览区 */
 .center-preview {
     position: absolute;
     width: 110px;
@@ -251,7 +231,7 @@ input[type="range"] {
     align-items: center;
     justify-content: center;
     box-shadow: 0 0 20px var(--primary-color);
-    border: 2px solid rgba(255,255,255,0.2);
+    border: 2px solid rgb(255 255 255 / 20%);
     z-index: 2;
 }
 
@@ -259,25 +239,22 @@ input[type="range"] {
     font-size: 14px;
     font-weight: 800;
     color: #fff;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    text-shadow: 0 2px 4px rgb(0 0 0 / 50%);
 }
 
-/* 环上的指示点 */
 .hue-pointer {
     position: absolute;
     width: 18px;
     height: 18px;
     border: 3px solid #fff;
     border-radius: 50%;
-    box-shadow: 0 0 5px #fff , inset 0 0 10px #fff;
-    pointer-events: none; /* 不干扰点击事件 */
+    box-shadow: 0 0 5px #fff, inset 0 0 10px #fff;
+    pointer-events: none;
     z-index: 3;
-    /* 通过 transform 定位 */
     top: 50%;
     left: 50%;
 }
 
-/* --- 右侧：预设颜色 --- */
 .preset-sidebar {
     display: flex;
     flex-direction: column;
@@ -287,15 +264,16 @@ input[type="range"] {
 .strip-item {
     width: 40px;
     height: 40px;
-    border-radius: 50%; /* 改成圆形配套 */
+    border-radius: 50%;
     cursor: pointer;
     transition: transform 0.2s, border 0.2s;
     border: 2px solid transparent;
 }
 
-.strip-item:hover { transform: scale(1.1); }
+.strip-item:hover {
+    transform: scale(1.1);
+}
 
-/* --- 下方：饱和度条 --- */
 .bottom-controls {
     margin-top: 25px;
     padding: 0 20px;
@@ -309,47 +287,33 @@ input[type="range"] {
     text-align: center;
 }
 
-
-/* 滑块圆点样式 */
 input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
     appearance: none;
-    
-    /* 形状设定：长方形圆角方块 */
     width: 16px;
-    height: 26px; 
-    border-radius: 6px; /* 圆角方块 */
-    
-    /* 玻璃质感核心 */
-    background: rgba(255, 255, 255, 0.15); /* 透明底色 */
-    backdrop-filter: blur(6px); /* 毛玻璃模糊 */
-    -webkit-backdrop-filter: blur(6px);
-    
-    /* 中空感：强烈的白色边框 + 内部阴影 */
-    border: 2.5px solid rgba(255, 255, 255, 0.85); 
-    box-shadow: 
-        0 4px 12px rgba(0, 0, 0, 0.4),          /* 外部立体阴影 */
-        inset 0 0 4px rgba(255, 255, 255, 0.5); /* 内部发光感，增强中空视觉现象 */
-    
+    height: 26px;
+    border-radius: 6px;
+    background: rgb(255 255 255 / 15%);
+    backdrop-filter: blur(6px);
+    border: 2.5px solid rgb(255 255 255 / 85%);
+    box-shadow:
+        0 4px 12px rgb(0 0 0 / 40%),
+        inset 0 0 4px rgb(255 255 255 / 50%);
     transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s;
-    margin-top: 0px; /* 根据需要微调垂直对齐 */
+    margin-top: 0;
 }
 
 input[type="range"]::-webkit-slider-thumb:active {
-    transform: scale(1.15); /* 点击时微放大的交互感 */
+    transform: scale(1.15);
     border-color: #fff;
-    background: rgba(255, 255, 255, 0.25);
+    background: rgb(255 255 255 / 25%);
 }
 
-
-/* 更新日志 */
 .update-log-content {
     font-size: 13px;
     color: #888;
     line-height: 2;
 }
 
-/* 开关样式（自启用） */
 .switch {
     position: relative;
     display: inline-block;
@@ -357,7 +321,11 @@ input[type="range"]::-webkit-slider-thumb:active {
     height: 20px;
 }
 
-.switch input { opacity: 0; width: 0; height: 0; }
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
 
 .slider {
     position: absolute;
@@ -368,7 +336,7 @@ input[type="range"]::-webkit-slider-thumb:active {
     border-radius: 20px;
 }
 
-.slider:before {
+.slider::before {
     position: absolute;
     content: "";
     height: 14px;
@@ -380,5 +348,10 @@ input[type="range"]::-webkit-slider-thumb:active {
     border-radius: 50%;
 }
 
-input:checked + .slider { background-color: var(--primary-color, #08ddf9); }
-input:checked + .slider:before { transform: translateX(20px); }
+input:checked+.slider {
+    background-color: var(--primary-color, #08ddf9);
+}
+
+input:checked+.slider::before {
+    transform: translateX(20px);
+}

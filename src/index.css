@@ -1,19 +1,12 @@
-/* src/index.css */
-/* 全局属性 */
 :root {
   background-color: transparent;
 
   --primary-color: #08ddf9;
-  /* 核心主色 */
-
-  /* 自动生成的透明度色系 (基于主色推导) */
   --primary-5: color-mix(in srgb, var(--primary-color), transparent 95%);
   --primary-10: color-mix(in srgb, var(--primary-color), transparent 90%);
   --primary-20: color-mix(in srgb, var(--primary-color), transparent 80%);
   --primary-30: color-mix(in srgb, var(--primary-color), transparent 70%);
   --primary-50: color-mix(in srgb, var(--primary-color), transparent 50%);
-  
-  /* 语义化映射 (方便后续维护) */
   --theme-border: var(--primary-color);
   --theme-bg-soft: var(--primary-10);
   --theme-hover: var(--primary-20);
@@ -25,23 +18,15 @@ html {
   line-height: 1.5;
   font-weight: 400;
   height: 100%;
-  /* 确保html元素的高度占据整个视口 */
   overflow: hidden;
-  /* 隐藏html的滚动条，主界面不需要滚动条 */
 }
 
 body {
-  color: rgba(255, 255, 255, 0.87);
-  /* 文字颜色 */
+  color: rgb(255 255 255 / 87%);
   margin: 0;
-  /* 移除默认的 body 边距 */
   min-height: 100vh;
-  /* 让应用至少占满整个屏幕的高度 */
   height: 100%;
-  /* 确保body元素的高度占据整个父元素（html），即整个视口 */
   overflow: hidden;
-  /* 隐藏body的滚动条，同样防止其内容溢出产生滚动 */
-
 }
 
 .page-fade-enter-active,
@@ -49,22 +34,18 @@ body {
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
-/* 进入时的起始状态：透明，稍微向右偏移 */
 .page-fade-enter-from {
   opacity: 0;
   transform: translateX(20px);
   z-index: 2;
-  /* 确保新进入的页面浮在上面 */
 }
 
-/* 离开时的结束状态：透明，稍微向左偏移 */
 .page-fade-exit-to {
   opacity: 0;
   transform: translateX(-20px);
   z-index: 1;
 }
 
-/* 进入效果：从小到大并淡入 */
 @keyframes modal-in {
   from {
     opacity: 0;
@@ -77,7 +58,6 @@ body {
   }
 }
 
-/* 退出效果：从大到小并淡出 */
 @keyframes modal-out {
   from {
     opacity: 1;
@@ -90,7 +70,6 @@ body {
   }
 }
 
-/* 遮罩层淡入 */
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -101,7 +80,6 @@ body {
   }
 }
 
-/* 遮罩层淡出 */
 @keyframes fade-out {
   from {
     opacity: 1;
@@ -112,7 +90,6 @@ body {
   }
 }
 
-/* 应用类 */
 .animate-in {
   animation: modal-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }

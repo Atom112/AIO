@@ -1,6 +1,5 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
 import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId } from '../store/store';
-import './AssistantSidebar.css';
 
 /**
  * 组件 Props 接口定义
@@ -209,91 +208,91 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
         closeMenu();
     };
 
-    return (
-        <div classList={{
-            'assistant-selector': true,
-            'is-collapsed': props.isCollapsed
-        }}
+return (
+        <div
+            // 基础容器：对应 .assistant-selector
+            class="assistant-selector relative flex flex-col flex-shrink-0 transition-all duration-300 cubic-bezier[0.4,0,0.2,1] min-w-0"
             style={{
                 width: props.isCollapsed ? '0%' : `${props.width}%`,
                 padding: props.isCollapsed ? '0' : '15px',
                 "border": props.isCollapsed ? 'none' : `1px solid var(--primary-color)`,
-                "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`
-            }}>
-            <div class={props.isCollapsed ? "collapsed-content-hide" : "assistant-content"}>
-                <div class="assistant-content">
-                    <For each={datas.assistants}>
-                        {(assistant) => (
-                            <div
-                                classList={{
-                                    'assistant-item': true,
-                                    'active': assistant.id === currentAssistantId()
-                                }}
-                                onClick={() => {
-                                    setCurrentAssistantId(assistant.id);
-                                    if (assistant.topics && assistant.topics.length > 0) {
-                                        setCurrentTopicId(assistant.topics[0].id);
-                                    }
-                                }}
+                "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`,
+                "border-radius": "8px"
+            }}
+        >
+            {/* 内容遮罩层：对应 .collapsed-content-hide */}
+            <div 
+                class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
+                classList={{ "opacity-0 pointer-events-none overflow-hidden": props.isCollapsed }}
+            >
+                <For each={datas.assistants}>
+                    {(assistant) => (
+                        <div
+                            class="group flex items-center justify-between my-1 px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
+                            classList={{
+                                'active bg-[var(--primary-20)] !border-[var(--primary-color)]': assistant.id === currentAssistantId()
+                            }}
+                            onClick={() => {
+                                setCurrentAssistantId(assistant.id);
+                                if (assistant.topics && assistant.topics.length > 0) {
+                                    setCurrentTopicId(assistant.topics[0].id);
+                                }
+                            }}
+                        >
+                            <Show
+                                when={props.editingAsstId === assistant.id && assistant.id !== "default-assistant-id"}
+                                fallback={<span class="assistant-name flex-grow text-[0.95rem] overflow-hidden pr-[10px] text-ellipsis whitespace-nowrap text-white">{assistant.name}</span>}
                             >
-                                <Show
-                                    when={props.editingAsstId === assistant.id&&assistant.id !== "default-assistant-id"}
-                                    fallback={<span class="assistant-name">{assistant.name}</span>}
-                                >
-                                    <input
-                                        class="rename-input"
-                                        value={assistant.name}
-                                        ref={(el) => {
-                                            setTimeout(() => {
-                                                el.focus();
-                                                el.select();
-                                            }, 0);
-                                        }}
-                                        onBlur={(e) => saveRename(assistant.id, e.currentTarget.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && saveRename(assistant.id, e.currentTarget.value)}
-                                        onClick={(e) => e.stopPropagation()}
-                                    />
-                                </Show>
+                                <input
+                                    class="rename-input bg-[#1e1e1e] border border-[var(--primary-color)] rounded px-1 py-0.5 text-white text-[0.95rem] outline-none w-[80%]"
+                                    value={assistant.name}
+                                    ref={(el) => {
+                                        setTimeout(() => {
+                                            el.focus();
+                                            el.select();
+                                        }, 0);
+                                    }}
+                                    onBlur={(e) => saveRename(assistant.id, e.currentTarget.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && saveRename(assistant.id, e.currentTarget.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            </Show>
 
-                                <button
-                                    class="assistant-menu-button"
-                                    onClick={(e) => openMenu(e as MouseEvent, assistant.id)}
-                                >
-                                    <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        fill="#FFFFFF"
-                                        viewBox="0 0 24 24"
-                                        stroke-width={1.5}
-                                        class="size-6"
-                                    >
-                                        <path
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                            d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z"
-                                        />
-                                    </svg>
-                                </button>
-                            </div>
-                        )}
-                    </For>
+                            <button
+                                class="assistant-menu-button flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)]"
+                                onClick={(e) => openMenu(e as MouseEvent, assistant.id)}
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="#FFFFFF" viewBox="0 0 24 24" class="w-6 h-6">
+                                    <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
+                                </svg>
+                            </button>
+                        </div>
+                    )}
+                </For>
 
-                    <button class="add-assistant-button" onClick={props.addAssistant}>
-                        + 新增助手
-                    </button>
-                </div>
+                <button 
+                    class="w-full mt-[10px] px-3 py-2 bg-none border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px_var(--primary-30)] text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)]"
+                    onClick={props.addAssistant}
+                >
+                    + 新增助手
+                </button>
             </div>
 
+            {/* 右键菜单：对应 .assistant-context-menu 及其动画 */}
             {showMenuDiv() && (
                 <div
-                    class="assistant-context-menu"
-                    classList={{ 'menu-exiting': isMenuAnimatingOut() }}
+                    class="assistant-context-menu animate-[menuEnter_0.2s_ease-out_forwards] fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-lg py-1 origin-top-left"
+                    classList={{ 
+                        'animate-[menuEnter_0.2s_ease-out_forwards]': !isMenuAnimatingOut(),
+                        'animate-[menuExit_0.2s_ease-in_forwards]': isMenuAnimatingOut() 
+                    }}
                     style={{
                         top: `${menuState().y}px`,
                         left: `${menuState().x}px`
                     }}
                 >
                     <button
-                        class="context-menu-button"
+                        class="context-menu-button block w-full text-left px-3 py-2 text-white bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)] disabled:opacity-30"
                         disabled={menuState().targetId === "default-assistant-id"}
                         onClick={() => {
                             props.setEditingAsstId(menuState().targetId);
@@ -304,7 +303,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                     </button>
 
                     <button
-                        class="context-menu-button delete"
+                        class="context-menu-button delete w-full text-left px-3 py-2 text-[#ff4d4d] bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)] disabled:opacity-30"
                         disabled={menuState().targetId === "default-assistant-id"}
                         onClick={() => removeAssistant(menuState().targetId)}
                     >
@@ -313,8 +312,25 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                 </div>
             )}
 
-            <div class="resize-handle left-handle" onMouseDown={(e) => props.onResize(e as MouseEvent)}>
-                <div class="collapse-indicator" title={props.isCollapsed ? "展开助手栏" : "折叠助手栏"} onClick={(e) => props.onToggle(e)}>
+            {/* 拖拽把手：对应 .resize-handle.left-handle */}
+            <div 
+                class="resize-handle hover:bg-[var(--primary-20)] after:rounded-[2px] after:h-[calc(100%-30px)] after:transition-all after:duration-300 after:ease-in-out after:w-1 after:content-[''] after:bg-[var(--primary-10)] !bg-transparent absolute top-0 bottom-0 right-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group transition-colors duration-200"
+                classList={{ 'bg-[var(--primary-20)]': true }} // 悬停状态由 CSS 变量控制更准
+                onMouseDown={(e) => props.onResize(e as MouseEvent)}
+            >
+                {/* 把手内部的竖线：对应 .resize-handle::after */}
+                <div class="absolute w-1 h-[calc(100%-30px)] bg-[var(--primary-10)] rounded-sm transition-all duration-300 group-hover:bg-[var(--primary-color)] group-hover:h-[calc(100%-20px)] group-hover:shadow-[0_0_10px_var(--primary-color)]"></div>
+
+                {/* 折叠按钮：对应 .collapse-indicator */}
+                <div 
+                    class="collapse-indicator hover:scale-110 pointer-events-auto absolute z-[1001] w-[10px] h-12 bg-[var(--primary-color)] rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-black font-bold text-[10px] shadow-[0_0_10px_var(--primary-color)] opacity-0 transition-all duration-200 hover:scale-y-110 hover:opacity-100 group-hover:opacity-100"
+                    classList={{ 'opacity-40 !opacity-100 scale-y-100 shadow-[0_0_15px_var(--primary-color)]': props.isCollapsed }}
+                    title={props.isCollapsed ? "展开助手栏" : "折叠助手栏"} 
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        props.onToggle(e);
+                    }}
+                >
                     {props.isCollapsed ? '〉' : '〈'}
                 </div>
             </div>

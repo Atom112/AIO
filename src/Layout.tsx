@@ -14,9 +14,9 @@ import { Component, ParentProps } from "solid-js";
  */
 const Layout: Component<ParentProps> = (props) => {
   return (
-    <div class="app-container">
+    <div class="app-container min-h-screen flex flex-col bg-transparent">
       <NavBar />
-      <main class="content-area">
+      <main class="content-area flex-1 relative overflow-hidden">
         <Transition name="page-fade">
           {props.children}
         </Transition>

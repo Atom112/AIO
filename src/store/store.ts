@@ -1,4 +1,4 @@
-import { createStore } from "solid-js/store";
+import { createStore,reconcile } from "solid-js/store";
 import { createEffect, createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
 import { readFile } from '@tauri-apps/plugin-fs';
@@ -244,3 +244,26 @@ createEffect(() => {
     document.documentElement.style.setProperty('--primary-color', color);
     localStorage.setItem('theme-color', color);
 });
+
+
+/**
+ * 平滑更新指定话题的消息历史（解决动画闪烁/DOM全量重建问题）
+ * 使用 reconcile 保持已存在消息的 DOM 节点引用，只增量更新变化的部分。
+ * * @param assistantId - 助手 ID
+ * @param topicId - 话题 ID
+ * @param newHistory - 最新的完整消息历史数组
+ */
+export const updateTopicHistorySmoothly = (
+    assistantId: string, 
+    topicId: string, 
+    newHistory: Message[]
+) => {
+    setDatas(
+        'assistants', 
+        (asst) => asst.id === assistantId, // 定位助手
+        'topics', 
+        (topic) => topic.id === topicId,   // 定位话题
+        'history', 
+        reconcile(newHistory)              // 核心：智能 Diff 替换
+    );
+};

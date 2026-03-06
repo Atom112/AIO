@@ -8,7 +8,6 @@ import {
     setCurrentTopicId,
     saveSingleAssistantToBackend
 } from '../store/store';
-import './TopicSidebar.css';
 
 /**
  * 组件 Props 接口定义
@@ -191,7 +190,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
             setCurrentTopicId(newT.id);
         } else {
             // 正常从界面和内存物理移除
-            setDatas('assistants', a => a.id === asstId, 'topics', topics =>
+            setDatas('assistants', a => a.id === asstId, 'topics', (topics: any[]) =>
                 topics.filter((t: Topic) => t.id !== topicId)
             );
             // 如果删的是当前选中的，切到第一个
@@ -210,93 +209,124 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         closeTopicMenu();
     };
 
-    return (
-        <div classList={{
-            'dialog-container': true,
-            'is-collapsed': props.isCollapsed
-        }}
+return (
+        <div 
+            // 基础容器：对应 .dialog-container
+            class="dialog-container relative flex flex-col flex-shrink-0 transition-all duration-300 cubic-bezier[0.4,0,0.2,1] min-w-0"
+            classList={{
+                'is-collapsed': props.isCollapsed
+            }}
             style={{
                 width: props.isCollapsed ? '0%' : `${props.width}%`,
                 padding: props.isCollapsed ? '0' : '15px',
                 "border": props.isCollapsed ? 'none' : `1px solid var(--primary-color)`,
-                "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`
-            }}>
-            <div class="resize-handle right-handle" onMouseDown={(e) => props.onResize(e as MouseEvent)}>
-                <div class="collapse-indicator" title={props.isCollapsed ? "展开话题栏" : "折叠话题栏"} onClick={(e) => props.onToggle(e)}>
+                "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`,
+                "border-radius": "8px"
+            }}
+        >
+            {/* 拖拽把手：对应 .resize-handle.right-handle */}
+            <div 
+                class="resize-handle hover:bg-[var(--primary-20)] after:rounded-[2px] after:h-[calc(100%-30px)] after:transition-all after:duration-300 after:ease-in-out after:w-1 after:content-[''] after:bg-[var(--primary-10)] !bg-transparent absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group transition-colors duration-200"
+                classList={{ 'bg-[var(--primary-20)]': true }} // 悬停状态由 CSS 变量控制更准
+                onMouseDown={(e) => props.onResize(e as MouseEvent)}
+            >
+                {/* 把手内部的竖线：对应 .resize-handle::after */}
+                <div class="absolute w-1 h-[calc(100%-30px)] bg-[var(--primary-10)] rounded-sm transition-all duration-300 group-hover:bg-[var(--primary-color)] group-hover:h-[calc(100%-20px)] group-hover:shadow-[0_0_10px_var(--primary-color)]"></div>
+
+                {/* 折叠按钮：对应 .collapse-indicator */}
+                <div 
+                    class="collapse-indicator hover:scale-110 pointer-events-auto absolute z-[1001] w-[10px] h-12 bg-[var(--primary-color)] rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-black font-bold text-[10px] shadow-[0_0_10px_var(--primary-color)] opacity-0 transition-all duration-200 hover:scale-y-110 hover:opacity-100 group-hover:opacity-100"
+                    classList={{ 'opacity-40 !opacity-100 scale-y-100 shadow-[0_0_15px_var(--primary-color)]': props.isCollapsed }}
+                    title={props.isCollapsed ? "展开话题栏" : "折叠话题栏"} 
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        props.onToggle(e);
+                    }}
+                >
                     {props.isCollapsed ? '〈' : '〉'}
                 </div>
             </div>
-            <div class={props.isCollapsed ? "collapsed-content-hide" : "dialog-content"}>
-                <div class="dialog-content">
-                    <Show when={props.currentAssistant}>
-                        {(asst) => (
-                            <>
-                                <div class="info-header">
-                                    <h3>{asst().name} 的话题</h3>
-                                </div>
 
-                                <button class="add-topic-button" onClick={props.addTopic}>
-                                    + 新建话题
-                                </button>
+            {/* 内容遮罩层：对应 .collapsed-content-hide */}
+            <div 
+                class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
+                classList={{ "opacity-0 pointer-events-none overflow-hidden": props.isCollapsed }}
+            >
+                <Show when={props.currentAssistant}>
+                    {(asst) => (
+                        <div class="flex flex-col h-full">
+                            <div class="info-header mb-4">
+                                <h3 class="text-white text-lg font-medium">{asst().name} 的话题</h3>
+                            </div>
 
-                                <div class="topics-list">
-                                    <For each={asst().topics}>
-                                        {(topic) => (
-                                            <div
-                                                classList={{
-                                                    'topic-item': true,
-                                                    'active': topic.id === currentTopicId()
-                                                }}
-                                                onClick={() => setCurrentTopicId(topic.id)}
+                            <button 
+                                class="add-topic-button w-full px-3 py-2 bg-transparent border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px var(--primary-30)] text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)] active:scale-[0.98]" 
+                                onClick={props.addTopic}
+                            >
+                                + 新建话题
+                            </button>
+
+                            <div class="topics-list mt-[15px] space-y-1">
+                                <For each={asst().topics}>
+                                    {(topic) => (
+                                        <div
+                                            class="topic-item group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
+                                            classList={{
+                                                'active bg-[var(--primary-20)] !border-[var(--primary-color)]': topic.id === currentTopicId()
+                                            }}
+                                            onClick={() => setCurrentTopicId(topic.id)}
+                                        >
+                                            <Show
+                                                when={props.editingTopicId === topic.id}
+                                                fallback={<span class="topic-name text-[#e0e0e0] flex-grow text-[0.9rem] truncate pr-2 select-none">{topic.name}</span>}
                                             >
-                                                <Show
-                                                    when={props.editingTopicId === topic.id}
-                                                    fallback={<span class="topic-name">{topic.name}</span>}
-                                                >
-                                                    <input
-                                                        class="rename-input"
-                                                        value={topic.name}
-                                                        ref={(el) => {
-                                                            setTimeout(() => {
-                                                                el.focus();
-                                                                el.select();
-                                                            }, 0);
-                                                        }}
-                                                        onBlur={(e) => saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
-                                                        onKeyDown={(e) => e.key === 'Enter' && saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
-                                                        onClick={(e) => e.stopPropagation()}
-                                                    />
-                                                </Show>
+                                                <input
+                                                    class="rename-input bg-[#1a1a1a] border border-[var(--primary-color)] rounded px-2 py-0.5 text-white text-[0.85rem] h-5 outline-none w-[80%]"
+                                                    value={topic.name}
+                                                    ref={(el) => {
+                                                        setTimeout(() => {
+                                                            el.focus();
+                                                            el.select();
+                                                        }, 0);
+                                                    }}
+                                                    onBlur={(e) => saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                            </Show>
 
-                                                <button
-                                                    class="assistant-menu-button"
-                                                    onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
-                                                >
-                                                    <svg fill="#FFFFFF" viewBox="0 0 24 24" style="width: 18px;">
-                                                        <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
-                                                    </svg>
-                                                </button>
-                                            </div>
-                                        )}
-                                    </For>
-                                </div>
-                            </>
-                        )}
-                    </Show>
-                </div>
+                                            <button
+                                                class="assistant-menu-button flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)] opacity-0 group-hover:opacity-100"
+                                                onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
+                                            >
+                                                <svg fill="#FFFFFF" viewBox="0 0 24 24" class="w-[18px]">
+                                                    <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    )}
+                                </For>
+                            </div>
+                        </div>
+                    )}
+                </Show>
             </div>
 
+            {/* 右键菜单浮层：对应 .assistant-context-menu */}
             {showTopicMenuDiv() && (
                 <div
-                    class="assistant-context-menu"
-                    classList={{ 'menu-exiting': isTopicMenuAnimatingOut() }}
+                    class="assistant-context-menu animate-[menuEnter_0.2s_ease-out_forwards] fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left"
+                    classList={{ 
+                        'animate-[menuEnter_0.2s_ease-out_forwards]': !isTopicMenuAnimatingOut(),
+                        'animate-[menuExit_0.2s_ease-in_forwards]': isTopicMenuAnimatingOut() 
+                    }}
                     style={{
                         top: `${topicMenuState().y}px`,
                         left: `${topicMenuState().x}px`
                     }}
                 >
                     <button
-                        class="context-menu-button"
+                        class="context-menu-button w-full text-left px-3 py-2 text-white bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
                         onClick={() => {
                             props.setEditingTopicId(topicMenuState().targetTopicId);
                             closeTopicMenu();
@@ -306,7 +336,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                     </button>
 
                     <button
-                        class="context-menu-button delete"
+                        class="context-menu-button delete w-full text-left px-3 py-2 text-[#ff4d4d] bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
                         onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}
                     >
                         删除话题

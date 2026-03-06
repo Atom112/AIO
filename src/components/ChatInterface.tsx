@@ -2,7 +2,6 @@ import { Component, For, Show, Setter } from 'solid-js';
 import Markdown from './Markdown';
 import { Topic, globalUserAvatar, selectedModel } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
-import './ChatInterface.css';
 
 /**
  * 组件 Props 接口定义
@@ -57,18 +56,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     /**
      * 根据模型名称获取对应的品牌 Logo 路径
      * 
-     * 匹配规则（不区分大小写）：
-     * - GPT → OpenAI Logo
-     * - Claude → Anthropic Claude Logo
-     * - Grok → xAI Grok Logo
-     * - Gemini → Google Gemini Logo
-     * - DeepSeek → DeepSeek Logo
-     * - Qwen/QwQ → 阿里通义千问 Logo
-     * - Kimi/Moonshot → 月之暗面 Logo
-     * - Doubao → 字节豆包 Logo
-     * - GLM → 智谱清言 Logo
-     * - 默认 → Ollama Logo（本地模型）
-     * 
      * @param {string} modelName - 模型名称或 ID
      * @returns {string} Logo 图片的 URL 路径
      */
@@ -87,93 +74,95 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     };
 
     return (
-        <div class="chat-input-container">
+        <div class="flex flex-col flex-grow items-stretch border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full">
+            {/* 消息展示区域 */}
             <div
-                class="chat-messages-area"
-                classList={{ 'topic-switching': props.isChangingTopic }}
+                class={`flex-grow opacity-100 overflow-y-auto pb-[15px] transition-opacity duration-200 ease-out z-[1] ${props.isChangingTopic ? 'opacity-0' : 'opacity-100'}`}
             >
                 <Show when={props.activeTopic}>
                     <For each={props.activeTopic?.history}>
                         {(msg: any, index) => (
                             <div
-                                class={`message ${msg.role}`}
+                                class={`message flex flex-col mb-3 pointer-events-auto 
+                                        animate-message-in opacity-0
+                                        ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
                                 style={{
-                                    "animation-delay": `${Math.min(index() * 0.03, 0.4)}s`,
-                                    "animation-duration": props.typingIndex === index() ? "0.1s" : "0.35s"
+                                    "animation-delay": `${index() * 0.03}s`,
+                                    "animation-fill-mode": "forwards"
                                 }}
                             >
-                                <div class="message-wrapper">
+                                <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
-                                        <div class="chat-avatar-container ai">
+                                        <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#dfdfdf] border border-[var(--primary-20)] shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
                                             <img
                                                 src={getModelLogo(msg.modelId || selectedModel()?.model_id || "")}
                                                 alt="AI"
-                                                class="chat-avatar-img"
+                                                class="w-[25px] h-[25px] rounded-full"
                                             />
                                         </div>
                                     </Show>
 
-                                    <div class="message-body">
+                                    <div class={`flex flex-col max-w-[75%] ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}>
                                         <div
-                                            class="message-content"
-                                            classList={{ 'typing': props.typingIndex === index() }}
+                                            class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] transition-[height] duration-200 overflow-wrap-break-word group relative
+                                                ${msg.role === 'assistant'
+                                                    ? 'bg-[#333] border border-[#555] rounded-tl-[2px] color-white'
+                                                    : 'bg-[var(--primary-5)] border border-[var(--primary-color)] rounded-tr-[2px] color-white'}
+                                                ${props.typingIndex === index() ? 'after:content-["|"] after:ml-[2px] after:text-[var(--primary-color)] after:animate-[cursor-blink_0.8s_infinite]' : ''}`}
                                         >
                                             <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
                                                 <For each={msg.displayFiles}>
                                                     {(file: any) => (
-                                                        <div class="file-attachment-card">
-                                                            <div class="file-icon-wrapper">
-                                                                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <div class="flex items-center bg-[var(--primary-10)] border border-[var(--primary-5)] rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 hover:border-[var(--primary-color)] first:mt-3">
+                                                            <div class="flex flex-shrink-0 items-center justify-center w-10 h-10 bg-[var(--primary-10)] rounded-md mr-3">
+                                                                <svg class="w-6 h-6 text-[var(--primary-color)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                                                                 </svg>
                                                             </div>
-                                                            <div class="file-info">
-                                                                <div class="file-name">{file.name}</div>
-                                                                <div class="file-meta">已解析</div>
+                                                            <div class="flex-grow overflow-hidden">
+                                                                <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis white-space-nowrap">{file.name}</div>
+                                                                <div class="text-[var(--primary-50)] text-[0.75rem] mt-[2px]">已解析</div>
                                                             </div>
                                                         </div>
                                                     )}
                                                 </For>
                                             </Show>
 
-                                            <div class="message-text-part">
+                                            <div class="mt-1">
                                                 <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
                                             </div>
                                         </div>
 
                                         <Show when={msg.role === 'assistant' && (msg.modelId || selectedModel()?.model_id)}>
-                                            <div class="message-model-info">
+                                            <div class="text-[#888] font-mono text-[11px] ml-1 mt-1 opacity-70 pointer-events-none select-none text-left">
                                                 {msg.modelId || selectedModel()?.model_id}
                                             </div>
                                         </Show>
 
-                                        <div class="message-actions">
+                                        <div class={`flex mt-1 px-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-[5] ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}>
                                             <button
-                                                class="copy-bubble-button"
+                                                class="flex items-center gap-1 relative bg-transparent border border-[var(--primary-20)] rounded-lg text-[var(--primary-color)] cursor-pointer text-[13px] px-3 py-1 transition-all duration-200 hover:bg-[var(--primary-10)] hover:border-[var(--primary-color)]"
                                                 onClick={(e) => {
                                                     const currentBtn = e.currentTarget;
-                                                    const text = msg.role === 'user' && msg.displayText !== undefined
-                                                        ? msg.displayText
-                                                        : msg.content;
-
+                                                    const text = msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content;
                                                     if (!text) return;
-
                                                     navigator.clipboard.writeText(text).then(() => {
                                                         const label = currentBtn.querySelector('span');
                                                         if (label) {
                                                             const originalText = label.innerText;
-                                                            currentBtn.classList.add('copied');
+                                                            currentBtn.style.color = '#4af908';
+                                                            currentBtn.style.borderColor = '#4af908';
                                                             label.innerText = '已复制';
-
                                                             setTimeout(() => {
-                                                                currentBtn.classList.remove('copied');
+                                                                currentBtn.style.color = '';
+                                                                currentBtn.style.borderColor = '';
                                                                 label.innerText = originalText;
                                                             }, 2000);
                                                         }
                                                     });
                                                 }}
                                             >
-                                                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 14px; height: 14px;">
+                                                <svg class="w-[14px] h-[14px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                     <path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
                                                 </svg>
                                                 <span>复制</span>
@@ -182,8 +171,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </div>
 
                                     <Show when={msg.role === 'user'}>
-                                        <div class="chat-avatar-container user">
-                                            <img src={globalUserAvatar()} alt="User" class="chat-avatar-img" />
+                                        <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#333] border border-[#555] shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
+                                            <img src={globalUserAvatar()} alt="User" class="w-full h-full object-cover" />
                                         </div>
                                     </Show>
                                 </div>
@@ -192,16 +181,13 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     </For>
 
                     <Show when={props.isThinking}>
-                        <div class="message assistant">
-                            <div class="message-wrapper">
-                                <div class="chat-avatar-container ai">
-                                    <img
-                                        src={getModelLogo(selectedModel()?.model_id || "")}
-                                        class="chat-avatar-img"
-                                    />
+                        <div class="flex flex-col mb-3 items-start animate-[bubble-in_0.35s_ease-out_forwards]">
+                            <div class="flex gap-3 w-full justify-start items-start">
+                                <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#dfdfdf] border border-[var(--primary-20)] overflow-hidden">
+                                    <img src={getModelLogo(selectedModel()?.model_id || "")} class="w-[25px] h-[25px]" />
                                 </div>
-                                <div class="message-body">
-                                    <div class="message-content" style="opacity: 0.6">
+                                <div class="flex flex-col max-w-[75%] items-start">
+                                    <div class="bg-[#333] border border-[#555] rounded-[10px] rounded-tl-[2px] px-[14px] py-[10px] text-white opacity-60">
                                         AI 正在思考中...
                                     </div>
                                 </div>
@@ -211,22 +197,26 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 </Show>
             </div>
 
+            {/* 加载状态 */}
             <Show when={props.isProcessing}>
-                <div class="loading-overlay">正在解析文件内容...</div>
+                <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.8)] text-[var(--primary-color)] text-sm z-[100]">
+                    正在解析文件内容...
+                </div>
             </Show>
 
-            <div class="file-tags-container">
+            {/* 待上传文件标签 */}
+            <div class="flex flex-wrap gap-[3px] bg-transparent pt-[3px] relative z-0">
                 <For each={props.pendingFiles}>
                     {(file, i) => (
-                        <div class="file-tag">
-                            <Show when={file.type === 'image'} fallback={<span class="file-icon">📄</span>}>
-                                <img
-                                    src={file.content}
-                                    style="width: 20px; height: 20px; object-fit: cover; margin-right: 5px; border-radius: 2px;"
-                                />
+                        <div class="flex items-center bg-[var(--primary-10)] border border-[var(--primary-5)] rounded-[16px] text-[var(--primary-color)] text-[12px] px-[10px] py-1 transition-all duration-200 hover:bg-[var(--primary-20)] hover:border-[var(--primary-color)] animate-[tagFadeIn_0.3s_ease-out]">
+                            <Show when={file.type === 'image'} fallback={<span class="mr-1">📄</span>}>
+                                <img src={file.content} class="w-5 h-5 object-cover mr-1 rounded-[2px]" />
                             </Show>
                             {file.name}
-                            <button onClick={() => props.setPendingFiles(p => p.filter((_, idx) => idx !== i()))}>
+                            <button
+                                class="flex items-center bg-none border-none text-[rgba(255,255,255,0.5)] cursor-pointer text-lg leading-none ml-2 transition-colors duration-200 hover:text-[#ff4d4d]"
+                                onClick={() => props.setPendingFiles(p => p.filter((_, idx) => idx !== i()))}
+                            >
                                 ×
                             </button>
                         </div>
@@ -234,11 +224,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 </For>
             </div>
 
-            <div class="chat-input-wrapper">
-                <div class="chat-input-unified">
+            {/* 输入框区域 */}
+            <div class="bg-transparent flex flex-col relative w-full z-10">
+                <div class="bg-[#151515] border border-[#333] rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 focus-within:border-[var(--primary-color)] focus-within:shadow-[0_0_10px_var(--primary-10)] w-full">
                     <textarea
                         ref={textareaRef}
-                        class="unified-textarea"
+                        class="bg-transparent border-none text-white font-inherit text-base leading-relaxed min-h-[40px] max-h-[20vh] outline-none overflow-y-hidden px-[5px] pb-[5px] resize-none w-full focus:overflow-y-auto"
                         placeholder="输入消息... (Ctrl + Enter 换行)"
                         value={props.inputMessage}
                         onInput={(e) => {
@@ -262,10 +253,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         }}
                     />
 
-                    <div class="input-toolbar">
-                        <div class="toolbar-left">
+                    <div class="flex items-center justify-between border-top border-t border-[rgba(255,255,255,0.05)] pt-2">
+                        <div class="flex items-center gap-2">
                             <button
-                                class="toolbar-icon-btn"
+                                class="flex items-center justify-center bg-transparent border-none rounded-md text-[#888] cursor-pointer p-1.5 transition-all duration-200 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--primary-color)]"
                                 title="上传文件"
                                 onClick={async () => {
                                     const selected = await open({ multiple: true });
@@ -276,13 +267,13 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     }
                                 }}
                             >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <path d="M15.5 5.5L8.5 12.5C7.39543 13.6046 7.39543 15.3954 8.5 16.5C9.60457 17.6046 11.3954 17.6046 12.5 16.5L19.5 9.5C21.1569 7.84315 21.1569 5.15685 19.5 3.5C17.8431 1.84315 15.1569 1.84315 13.5 3.5L6.5 10.5C4.29086 12.7091 4.29086 16.2909 6.5 18.5C8.70914 20.7091 12.2909 20.7091 14.5 18.5L20.5 12.5" />
                                 </svg>
                             </button>
 
                             <button
-                                class="toolbar-icon-btn"
+                                class="flex items-center justify-center bg-transparent border-none rounded-md text-[#888] cursor-pointer p-1.5 transition-all duration-200 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--primary-color)]"
                                 title="上传图片"
                                 onClick={async () => {
                                     const selected = await open({
@@ -296,7 +287,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     }
                                 }}
                             >
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <rect x="3" y="3" width="18" height="18" rx="2" />
                                     <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" />
                                     <path d="M21 15L16 10L5 21" stroke-linecap="round" stroke-linejoin="round" />
@@ -304,23 +295,21 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             </button>
                         </div>
 
-                        <div class="toolbar-right">
+                        <div class="flex items-center gap-2">
                             <button
-                                classList={{
-                                    'unified-send-btn': true,
-                                    'stop-state': props.isThinking
-                                }}
+                                class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95
+                                    ${props.isThinking ? 'bg-[#ff4d4d] text-white' : 'bg-[var(--primary-color)] text-black'}`}
                                 onClick={() => props.isThinking
                                     ? props.handleStopGeneration()
                                     : props.handleSendMessage()
                                 }
                             >
                                 <Show when={props.isThinking} fallback={
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" />
                                     </svg>
                                 }>
-                                    <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="currentColor">
                                         <rect x="6" y="6" width="12" height="12" rx="2" />
                                     </svg>
                                 </Show>
@@ -330,28 +319,30 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 </div>
             </div>
 
+            {/* 拖拽覆盖层 */}
             <Show when={props.isDragging}>
-                <div class="drag-drop-overlay">
-                    <div class="drag-drop-content">
-                        <div class="drag-icons">
-                            <div class="drag-icon-card side">
+                <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.7)] backdrop-blur-[4px] pointer-events-none z-[9999] animate-[fadeIn_0.3s_ease-out]">
+                    <div class="relative flex flex-col items-center justify-center w-[420px] h-[280px] bg-[#1a1a1a] border-2 border-[var(--primary-color)] rounded-xl shadow-[0_0_30px_var(--primary-20)] text-white text-center p-5">
+                        <div class="flex items-end mb-[25px] mt-[-30px]">
+                            <div class="flex items-center justify-center w-[60px] h-20 bg-[#2a2a2a] border border-[var(--primary-color)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] -rotate-12 translate-x-[15px] z-[1]">
                                 <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                     <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                                 </svg>
                             </div>
-                            <div class="drag-icon-card center">
+                            <div class="flex items-center justify-center w-[70px] h-[90px] bg-[#333] border border-[var(--primary-color)] rounded-md shadow-[0_0_20px_rgba(8,221,249,0.3)] text-[var(--primary-color)] z-[3]">
                                 <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                                     <path d="M12 16V8m0 0l-3 3m3-3l3 3m-9 8h12"></path>
                                 </svg>
                             </div>
-                            <div class="drag-icon-card side">
+                            <div class="flex items-center justify-center w-[60px] h-20 bg-[#2a2a2a] border border-[rgba(8,221,249,0.5)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] rotate-12 -translate-x-[15px] z-[1]">
                                 <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                     <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
                                 </svg>
                             </div>
                         </div>
-                        <h2>上传文件</h2>
-                        <p>支持 PDF、Docx、pptx 和图片解析</p>
+                        <h2 class="text-[var(--primary-color)] text-[22px] tracking-wider mb-2.5 z-[2]">上传文件</h2>
+                        <p class="text-[rgba(255,255,255,0.7)] text-sm leading-relaxed max-w-[80%] z-[2]">支持 PDF、Docx、pptx 和图片解析</p>
+                        <div class="absolute inset-3 border border-dashed border-[rgba(8,221,249,0.4)] rounded-lg pointer-events-none"></div>
                     </div>
                 </div>
             </Show>

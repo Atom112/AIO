@@ -24,15 +24,10 @@ const AppSettings: Component = () => {
     /** 开机自启开关状态：true 表示随系统启动 */
     const [autoStart, setAutoStart] = createSignal(true);
     /** 应用版本号，默认 1.0.0，挂载后从 Tauri API 获取真实版本 */
-    const [version, setVersion] = createSignal('1.0.0');
+    const [version, setVersion] = createSignal('');
 
     /**
      * 组件挂载时执行：初始化 HSL 状态和获取应用版本
-     * 
-     * 数据流：
-     * 1. 从全局 Store 读取当前主题色（Hex格式）
-     * 2. 转换为 HSL 格式并设置到本地 Signal（h, s, l）
-     * 3. 异步调用 Tauri getVersion() 获取版本号
      */
     onMount(async () => {
         // 将全局主题色（Hex）转换为 HSL，用于初始化滑块位置
@@ -50,15 +45,6 @@ const AppSettings: Component = () => {
         }
     });
 
-    /**
-     * 主题色同步 Effect：监听全局 themeColor 变化，同步更新本地 HSL 状态
-     * 
-     * 【核心逻辑】
-     * 当全局主题色被外部修改（如其他组件或预设主题点击）时，自动更新滑块位置。
-     * 使用 untrack() 避免在拖动滑块时触发此 Effect（防止抽搐/死循环）。
-     * 
-     * 数据流：themeColor(Store) → hexToHsl() → setH/setS/setL → 滑块UI更新
-     */
     createEffect(() => {
         const currentHex = themeColor(); // 订阅全局主题色变化
 
@@ -81,14 +67,9 @@ const AppSettings: Component = () => {
     /**
      * 滑块更新处理器：处理色相/饱和度滑块的输入事件
      * 
-     * 【设计目的】
-     * 直接操作本地 Signal 确保滑块响应流畅，避免 Hex↔HSL 反复转换导致的精度损失。
-     * 更新完成后立即同步到全局 Store，触发应用主题色更新。
-     * 
      * @param {('h' | 's')} type - 滑块类型：'h' 色相 或 's' 饱和度
      * @param {number} val - 滑块当前数值
      * 
-     * 数据流：滑块输入 → setH/setS → 读取最新 h,s,l → hslToHex() → setThemeColor() → 全局更新
      */
     const handleSliderUpdate = (type: 'h' | 's' | 'l', val: number) => {
         let nextH = h();
@@ -113,7 +94,7 @@ const AppSettings: Component = () => {
     /**
      * Hex 颜色转 RGB 对象
      * 
-     * @param {string} hex - Hex 颜色字符串（如 "#08ddf9"）
+     * @param {string} hex Hex 颜色字符串
      * @returns {{r: number, g: number, b: number}} RGB 分量对象，解析失败返回 0
      */
     const hexToRgb = (hex: string) => {
@@ -125,12 +106,6 @@ const AppSettings: Component = () => {
 
     /**
      * Hex 颜色转 HSL 对象
-     * 
-     * 算法说明：
-     * 1. 将 RGB 归一化到 [0,1]
-     * 2. 计算 max/min 确定亮度 l
-     * 3. 根据 max-min 差值计算饱和度 s
-     * 4. 根据 max 所属通道计算色相 h（0-360度）
      * 
      * @param {string} hex - Hex 颜色字符串
      * @returns {{h: number, s: number, l: number}} HSL 分量对象（h:0-360, s/l:0-100）
@@ -164,6 +139,13 @@ const AppSettings: Component = () => {
         };
     };
 
+    /**
+     * 环形色盘交互处理器：将鼠标或触摸在色环上的位置映射为色相（Hue）角度并更新主题色
+     *
+     * @param {MouseEvent | TouchEvent} e - 鼠标或触摸事件
+     * @param {DOMRect} rect - 色环元素的边界（getBoundingClientRect()）
+     * @returns {void}
+     */
     const handleRingInteraction = (e: MouseEvent | TouchEvent, rect: DOMRect) => {
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
@@ -179,9 +161,7 @@ const AppSettings: Component = () => {
     const pointerStyle = createMemo(() => {
         // 将色相值转换为弧度，减去 90 度是因为 conic-gradient 起点在 12 点方向
         const rad = ((h() - 90) * Math.PI) / 180;
-
         const radius = 102;
-
         const x = Math.cos(rad) * radius;
         const y = Math.sin(rad) * radius;
 
@@ -193,13 +173,11 @@ const AppSettings: Component = () => {
 
     /**
      * HSL 颜色转 Hex 字符串
-     * 
-     * 算法说明：使用 HSL 转 RGB 的通用公式，通过辅助函数 f(n) 计算各通道值
-     * 
+     *  
      * @param {number} h - 色相 (0-360)
      * @param {number} s - 饱和度 (0-100)
      * @param {number} l - 亮度 (0-100)
-     * @returns {string} Hex 颜色字符串（如 "#08ddf9"）
+     * @returns {string} Hex 颜色字符串
      */
     const hslToHex = (h: number, s: number, l: number) => {
         l /= 100; // 亮度归一化
@@ -238,7 +216,7 @@ const AppSettings: Component = () => {
                     <h3>应用状态</h3>
                     <div class="version-wrapper">
                         <span class="version-label">版本号:</span>
-                        <div class="version-badge">v{version()}-Beta</div>
+                        <div class="version-badge">v{version()}</div>
                     </div>
                 </div>
 
@@ -372,19 +350,6 @@ const AppSettings: Component = () => {
                             />
                         </div>
                     </div>
-                </div>
-            </div>
-
-            <div class="settings-card">
-                <div class="card-header">
-                    <h3>更新日志</h3>
-                </div>
-
-                <div class="update-log-content">
-                    <p>• 优化自定义调色算法，彻底解决滑块抽搐问题</p>
-                    <p>• 新增饱和度调节轨道，支持更精细的色彩自定义</p>
-                    <p>• 修复 CSS 兼容性编译器警告，移除冗余样式代码</p>
-                    <p>• 增强视觉反馈，预设颜色选中态实时高亮</p>
                 </div>
             </div>
         </div>

@@ -4,12 +4,14 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
+
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    
     if !app_dir.exists() {
         fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
     }
+    
     let db_path = app_dir.join("chat_history.db");
-
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     // 启用外键支持

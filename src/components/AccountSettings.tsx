@@ -28,7 +28,6 @@ const AccountSettings: Component = () => {
 
                 <div class="setting-item">
                     <label>订阅方案</label>
-                    {/* 硬编码的订阅信息：专业版年度订阅 */}
                     <div class="static-value">专业版 (按年订阅)</div>
                 </div>
 

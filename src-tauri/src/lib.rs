@@ -9,36 +9,15 @@ use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tokio::task::JoinHandle;
 
-// --- 状态定义 ---
-
-/// 流式任务管理器
-///
-/// 用于跟踪所有活跃的 LLM 生成任务。
-/// 使用 `DashMap` (分段加锁的哈希表) 以支持跨线程并发安全地访问任务句柄。
-/// 键通常是对话的 ID，值是对应的异步任务句柄 `JoinHandle`。
 pub struct StreamManager(pub Arc<DashMap<String, JoinHandle<()>>>);
 pub struct DbState(pub std::sync::Mutex<rusqlite::Connection>);
-/// 本地 Llama 服务状态
-///
-/// 存储本地运行的模型服务进程信息。
-/// 使用 `Mutex` 确保在启动和停止服务时对子进程句柄的独占访问。
 pub struct LocalLlamaState {
-    /// 存储子进程句柄。如果服务未运行，则为 `None`。
     pub child_process: Mutex<Option<std::process::Child>>,
 }
 
-/// 应用程序启动入口
-///
-/// 该函数由 `main.rs` 调用，配置并运行 Tauri 运行时环境。
-///
-/// 功能包括：
-/// 状态管理: 注入 `StreamManager` 和 `LocalLlamaState` 供后端各处使用。
-/// 命令注册: 将 `commands` 模块中定义的所有异步函数注册到前端。
-/// 事件监听: 监听窗口销毁事件，确保在应用关闭时强行杀死残留的本地模型服务进程。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // 注入全局状态，前端命令可以通过 State<'_, T> 获取
         .setup(|app| {
             let conn = db::init_db(app.handle())?;
             app.manage(DbState(std::sync::Mutex::new(conn)));
@@ -51,9 +30,7 @@ pub fn run() {
         .manage(LocalLlamaState {
             child_process: Mutex::new(None),
         })
-        // 注册前端唤起接口 (Invoke Handlers)
         .invoke_handler(tauri::generate_handler![
-            // 配置相关命令
             commands::config::load_assistants,
             commands::config::save_assistant,
             commands::config::delete_assistant,

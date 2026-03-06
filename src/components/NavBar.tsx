@@ -20,7 +20,6 @@ import {
   loadAvatarFromPath,
   logout
 } from '../store/store';
-import './NavBar.css';
 
 /**
  * 初始化当前窗口实例
@@ -138,8 +137,8 @@ const NavBar: Component<NavBarProps> = () => {
    * 头像裁剪完成回调
    * 
    * 数据流分支：
-   * - 已登录：调用 sync_avatar_to_backend 同步到云端，清理本地文件
-   * - 未登录：调用 upload_avatar 保存到本地，记录路径到 localStorage
+   * 已登录：调用 sync_avatar_to_backend 同步到云端，更新全局头像状态，释放本地 Blob URL
+   * 未登录：调用 upload_avatar 保存到本地，记录路径到 localStorage
    * 
    * @param {string} croppedDataUrl - 裁剪后的 Base64 DataURL
    */
@@ -442,45 +441,69 @@ const NavBar: Component<NavBarProps> = () => {
     };
   });
 
-  return (
+return (
     <>
-      <div data-tauri-drag-region class="navbar-drag-region"></div>
+      {/* 顶部拖拽背景区域，确保在边缘也能触发拖拽 */}
+      <div 
+        data-tauri-drag-region 
+        class="absolute top-0 left-0 right-0 h-[60px] z-[1] [app-region:drag]"
+      ></div>
 
-      <nav class="navbar">
-        <div class="logo-container">
-          <img src="/icons/logo.png" alt="AIO" class="logo" />
+      <nav 
+        data-tauri-drag-region
+        class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] bg-[#1e1e1e] border border-[var(--primary-color)] rounded-lg m-0 mr-[1px] z-[1000] shadow-[inset_0_0_20px_1px_var(--primary-30)] [app-region:drag] select-none"
+      >
+        {/* Logo 容器 - 绝对定位在左侧 */}
+        <div class="absolute left-[10px] top-1/2 -translate-y-1/2 flex items-center justify-center z-[1001] pointer-events-none">
+          <img src="/icons/logo.png" alt="AIO" class="w-10 h-10 object-contain block [app-region:no-drag]" />
         </div>
 
-        <A href="/chat" class="nav-item" title="对话" activeClass="active" data-tauri-drag-region="false">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+        {/* 聊天导航 */}
+        <A 
+          href="/chat" 
+          title="对话" 
+          activeClass="!text-[var(--primary-color)] font-bold" 
+          class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer [app-region:no-drag]"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
           </svg>
         </A>
 
-        <A href="/settings" class="nav-item" title="设置" activeClass="active" data-tauri-drag-region="false">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+        {/* 设置导航 */}
+        <A 
+          href="/settings" 
+          title="设置" 
+          activeClass="!text-[var(--primary-color)] font-bold" 
+          class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer [app-region:no-drag]"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
           </svg>
         </A>
 
+        {/* 用户头像及其下拉菜单 */}
         <div
-          class="user-avatar-wrapper"
+          class="relative flex items-center cursor-pointer [app-region:no-drag]"
           onMouseEnter={() => setUserMenuVisible(true)}
           onMouseLeave={() => setUserMenuVisible(false)}
         >
           <img
             src={globalUserAvatar()}
             alt="User Avatar"
-            class="avatar"
+            class="w-10 h-10 rounded-full border-2 border-[#333] transition-all duration-200 object-cover hover:border-[var(--primary-color)]"
             onError={(e) => {
               e.currentTarget.src = "/icons/user.svg";
             }}
           />
           
-          <div classList={{ 'user-dropdown-menu': true, 'active': isUserMenuVisible() }}>
-            <div class="user-dropdown-item" onClick={handleEditAvatar}>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+          <div 
+            class="absolute top-full left-1/2 -translate-x-1/2 mt-3 bg-[#1e1e1e] min-w-[140px] border border-[var(--primary-color)] rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5 before:content-[''] before:absolute before:-top-1.5 before:left-1/2 before:-translate-x-1/2 before:rotate-45 before:w-2.5 before:h-2.5 before:bg-[#1e1e1e] before:border-l before:border-t before:border-[var(--primary-color)]"
+            classList={{ 'invisible opacity-0': !isUserMenuVisible(), 'visible opacity-100': isUserMenuVisible() }}
+          >
+            <div class="flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)]" onClick={handleEditAvatar}>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
               </svg>
@@ -490,37 +513,37 @@ const NavBar: Component<NavBarProps> = () => {
             <Show
               when={datas.isLoggedIn}
               fallback={
-                <div class="user-dropdown-item"
+                <div class="flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)]"
                   onClick={() => {
                     setIsLoginModalOpen(true);
                     setUserMenuVisible(false);
                   }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
                   </svg>
                   登录账号
                 </div>
               }
             >
-              <div class="user-dropdown-divider"></div>
-              <div class="user-dropdown-item" style="font-weight: 500;">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+              <div class="h-[1px] bg-[#333] my-1.5 mx-2 opacity-60"></div>
+              <div class="flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)] font-medium">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                 </svg>
                 账号信息
               </div>
-              <div class="user-dropdown-item"
+              <div class="flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)]"
                 onClick={() => {
                   setIsLoginModalOpen(true);
                   setUserMenuVisible(false);
                 }}>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
                 </svg>
                 切换账号
               </div>
-              <div class="user-dropdown-item logout-item" onClick={handleLogout}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <div class="flex items-center gap-2.5 p-2.5 text-[#E08090] opacity-90 text-[13px] rounded-md transition-all hover:bg-[rgba(255,77,79,0.15)] hover:text-[#E08090]" onClick={handleLogout}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4">
                   <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
                 </svg>
                 退出登录
@@ -529,100 +552,112 @@ const NavBar: Component<NavBarProps> = () => {
           </div>
         </div>
 
+        {/* 模型选择器 */}
         <div
-          class="model-selector-wrapper"
+          class="relative flex items-center [app-region:no-drag]"
           onMouseEnter={() => setDropdownVisible(true)}
           onMouseLeave={() => setDropdownVisible(false)}
         >
-          <div class="nav-item model-selector" title="选择模型">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+          <div class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer" title="选择模型">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
               <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z" />
             </svg>
           </div>
 
-          <div classList={{ 'dropdown-menu': true, 'active': isDropdownVisible() }}>
-            <div class="dropdown-columns-container">
+          <div 
+            class="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-[#1e1e1e] min-w-[480px] border border-[#333] rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] z-[1000] transition-all duration-200 overflow-hidden"
+            classList={{ 
+              'invisible opacity-0 translate-y-2': !isDropdownVisible(), 
+              'visible opacity-100 translate-y-0 border-[var(--primary-color)]': isDropdownVisible() 
+            }}
+          >
+            <div class="flex flex-row h-[400px]">
               {/* 左列：线上模型 */}
-              <div class="dropdown-column">
-                <div class="column-header">线上模型</div>
-                <div class="column-content">
+              <div class="flex-1 flex flex-col min-w-[240px]">
+                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-[#252525] border-b border-[#333]">线上模型</div>
+                <div class="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-[#444]">
                   <For each={onlineModels()}>
                     {(model) => (
                       <div
-                        class="dropdown-item"
-                        classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
+                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-[#484848] hover:text-white"
+                        classList={{ 'bg-[var(--primary-20)] border-l-3 border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}
                         onClick={() => handleModelSelect(model)}
                       >
-                        <div class="nav-model-logo-container">
-                          <img src={getModelLogo(model.model_id)} alt="logo" class="nav-model-logo" />
+                        <div class="w-7 h-7 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm"
+                             classList={{ 'border border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}>
+                          <img src={getModelLogo(model.model_id)} alt="logo" class="w-[18px] h-[18px] object-contain" />
                         </div>
-                        <div class="model-text-group">
-                          <div class="model-id-text">{model.model_id}</div>
-                          <div class="model-provider-text">{model.owned_by}</div>
+                        <div class="flex-1 flex flex-col items-start justify-center overflow-hidden text-left">
+                          <div class="max-w-[160px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
+                          <div class="text-[10px] text-[var(--primary-color)] opacity-70">{model.owned_by}</div>
                         </div>
                       </div>
                     )}
                   </For>
-                  {onlineModels().length === 0 && <div class="no-model-tip">无线上模型</div>}
+                  {onlineModels().length === 0 && <div class="p-5 text-center text-[#555] text-[13px]">无线上模型</div>}
                 </div>
               </div>
 
-              <div class="column-divider"></div>
+              <div class="w-[1px] bg-[#333] self-stretch"></div>
 
-              <div class="dropdown-column">
-                <div class="column-header">本地模型</div>
-                <div class="column-content">
+              {/* 右列：本地模型 */}
+              <div class="flex-1 flex flex-col min-w-[240px]">
+                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-[#252525] border-b border-[#333]">本地模型</div>
+                <div class="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-[#444]">
                   <For each={localModels()}>
                     {(model) => (
                       <div
-                        class="dropdown-item"
-                        classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
+                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-[#484848] hover:text-white"
+                        classList={{ 'bg-[var(--primary-20)] border-l-3 border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}
                         onClick={() => handleModelSelect(model)}
                       >
-                        <div class="nav-model-logo-container">
-                          <img src={getModelLogo(model.model_id)} alt="logo" class="nav-model-logo" />
+                        <div class="w-7 h-7 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm"
+                             classList={{ 'border border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}>
+                          <img src={getModelLogo(model.model_id)} alt="logo" class="w-[18px] h-[18px] object-contain" />
                         </div>
-                        <div class="model-text-group">
-                          <div class="model-id-text">{model.model_id}</div>
-                          <div class="model-provider-text">Local</div>
+                        <div class="flex-1 flex flex-col items-start justify-center overflow-hidden text-left">
+                          <div class="max-w-[160px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
+                          <div class="text-[10px] text-[var(--primary-color)] opacity-70">Local</div>
                         </div>
                       </div>
                     )}
                   </For>
-                  {localModels().length === 0 && <div class="no-model-tip">无本地模型</div>}
+                  {localModels().length === 0 && <div class="p-5 text-center text-[#555] text-[13px]">无本地模型</div>}
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <a href="#" title="设置提示词" class="nav-item" onClick={handleOpenPromptModal} data-tauri-drag-region="false">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+        {/* 提示词设置按钮 */}
+        <a href="#" title="设置提示词" class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer [app-region:no-drag]" onClick={handleOpenPromptModal}>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
           </svg>
         </a>
 
-        <div class="window-controls">
-          <button class="control-button minimize" onClick={handleMinimize} title="最小化">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+        {/* 窗口控制按钮 */}
+        <div class="absolute right-5 flex items-center [app-region:no-drag]">
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-[var(--primary-color)] text-[18px] cursor-pointer rounded-md transition-all hover:bg-[#333] hover:text-white ml-1" onClick={handleMinimize} title="最小化">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
               <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14" />
             </svg>
           </button>
 
-          <button class="control-button maximize" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-[var(--primary-color)] text-[18px] cursor-pointer rounded-md transition-all hover:bg-[#333] hover:text-white ml-1" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
             {isMaximized() ? (
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 8.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v8.25A2.25 2.25 0 0 0 6 16.5h2.25m8.25-8.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-7.5A2.25 2.25 0 0 1 8.25 18v-1.5m8.25-8.25h-6a2.25 2.25 0 0 0-2.25 2.25v6" />
               </svg>
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 7.5A2.25 2.25 0 0 1 7.5 5.25h9a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25v-9Z" />
               </svg>
             )}
           </button>
 
-          <button class="control-button close" onClick={handleClose} title="关闭">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-[var(--primary-color)] text-[18px] cursor-pointer rounded-md transition-all hover:bg-[#E08090] hover:text-white ml-1" onClick={handleClose} title="关闭">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="w-6 h-6">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
           </button>
@@ -651,6 +686,6 @@ const NavBar: Component<NavBarProps> = () => {
       />
     </>
   );
-}
+};
 
 export default NavBar;

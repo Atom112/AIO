@@ -1,62 +1,3 @@
-* {
-    scrollbar-width: thin;
-    scrollbar-color: var(--primary-color) transparent;
-}
-
-::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-    background-color: var(--primary-color);
-    border-radius: 10px;
-    border: 1px solid rgb(0 0 0 / 0%);
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background-color: #06b8d1;
-}
-
-.chat-page {
-    background-color: #1e1e1e;
-    box-shadow:inset 0 0 20px 1px var(--primary-30);
-    inset: 65px 1px 1px 0;
-    display: flex;
-    gap: 3px;
-    padding: 20px;
-    position: fixed;
-    border: 1px solid var(--primary-color);
-    border-radius: 8px;
-}
-
-.resize-handle {
-    bottom: 0;
-    cursor: ew-resize;
-    position: absolute;
-    top: 0;
-    width: 4px;
-    transition: background-color 0.2s;
-    background-color: transparent !important;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-}
-
-.resize-handle::after {
-    content: "";
-    width: 4px;
-    background-color: var(--primary-10);
-    transition: all 0.3s ease;
-    height: calc(100% - 30px);
-    border-radius: 2px;
-}
-
 .resize-handle:hover::after,
 .chat-page.is-resizing .resize-handle::after {
     background-color: var(--primary-color);
@@ -64,91 +5,15 @@
     box-shadow: 0 0 10px var(--primary-color), 0 0 20px var(--primary-color);
 }
 
-.resize-handle:hover {
-    background-color: var(--primary-20);
-}
-
-.collapse-indicator {
-    pointer-events: auto; 
-    z-index: 1001;
-    width: 10px;
-    height: 48px;
-    background-color: var(--primary-color);
-    border-radius: 20px;
-    backdrop-filter: blur(8px); 
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #000;
-    font-weight: bold;
-    font-size: 10px;
-    box-shadow: 0 0 10px var(--primary-color);
-    opacity: 0;
-    transition: opacity 0.2s, transform 0.2s;
-    position: absolute;
-}
-
-.collapse-indicator:hover {
-    transform: scaleY(1.1);
-    opacity: 1;
+.chat-page.is-resizing .assistant-selector,
+.chat-page.is-resizing .dialog-container {
+    transition: none !important;
 }
 
 .is-collapsed .collapse-indicator {
     opacity: 0.4;
     background-color: var(--primary-color);
     box-shadow: 0 0 15px var(--primary-color);
-}
-
-.resize-handle:hover .collapse-indicator {
-    opacity: 1;
-}
-
-.assistant-selector, .dialog-container {
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s, border-width 0.3s;
-    position: relative;
-    overflow: visible !important; 
-    min-width: 0; 
-}
-
-.chat-page.is-resizing .assistant-selector,
-.chat-page.is-resizing .dialog-container {
-    transition: none !important;
-}
-
-.chat-page.is-resizing .resize-handle {
-    background-color: var(--primary-10); 
-}
-
-.collapsed-content-hide {
-    opacity: 0;
-    pointer-events: none;
-    overflow: hidden;
-}
-
-.left-handle {
-    right: -4px;
-}
-
-.right-handle {
-    left: -4px;
-}
-
-.assistant-content, .dialog-content {
-    height: 100%;
-    overflow: hidden auto;
-    width: 100%;
-}
-
-.rename-input {
-    background: #1e1e1e;
-    border: 1px solid var(--primary-color);
-    border-radius: 4px;
-    color: white;
-    font-size: 0.95rem;
-    outline: none;
-    padding: 2px 4px;
-    width: 80%;
 }
 
 .topic-item .rename-input {
@@ -158,65 +23,12 @@
     padding: 2px 5px;
 }
 
-.assistant-context-menu {
-    animation: menuEnter 0.2s ease-out forwards;
-    background-color: #2e2e2e;
-    border: 1px solid var(--primary-color);
-    border-radius: 8px;
-    box-shadow: 0 2px 5px rgb(0 0 0 / 20%);
-    min-width: 150px;
-    position: fixed;
-    transform-origin: top left;
-    z-index: 100;
-}
-
 .assistant-context-menu.menu-exiting {
     animation: menuExit 0.2s ease-in forwards;
 }
 
-.context-menu-button {
-    background: none;
-    border-radius: 8px;
-    border: none;
-    box-sizing: border-box;
-    color: #FFF;
-    cursor: pointer;
-    display: block;
-    padding: 8px 12px;
-    text-align: left;
-    width: 100%;
-    transition: all 0.2s;
-}
-
-.context-menu-button:hover {
-    background-color: var(--primary-10);
-}
-
 .context-menu-button.delete {
     color: #ff4d4d;
-}
-
-.assistant-menu-button {
-    align-items: center;
-    background-color: #1e1e1e;
-    border: none;
-    border-radius: 4px;
-    color: #FFF;
-    cursor: pointer;
-    display: flex;
-    height: 30px;
-    justify-content: center;
-    width: 30px;
-    transition: background-color 0.2s, transform 0.2s;
-}
-
-.assistant-menu-button:hover {
-    background-color: var(--primary-5);
-}
-
-.assistant-menu-button:active {
-    background-color: var(--primary-10);
-    transform: scale(0.92);
 }
 
 @keyframes menuEnter {

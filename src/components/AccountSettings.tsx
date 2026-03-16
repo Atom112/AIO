@@ -1,5 +1,4 @@
 import { Component } from 'solid-js';
-import './AccountSettings.css';
 
 /**
  * 账号设置页面组件
@@ -14,25 +13,16 @@ const AccountSettings: Component = () => {
     return (
         <div class="tab-content-simple">
             <div class="placeholder-card">
-
                 <h3>账号信息</h3>
-                <div class="setting-item">
-                    <label>当前用户</label>
+                <div class="flex flex-col gap-2">
+                    <label>
+                        当前用户
+                        </label>
                     <div class="static-value">Premium User</div>
                 </div>
 
-                <div class="setting-item">
-                    <label>注册邮箱</label>
-                    <div class="static-value">user@example.com</div>
-                </div>
-
-                <div class="setting-item">
-                    <label>订阅方案</label>
-                    <div class="static-value">专业版 (按年订阅)</div>
-                </div>
-
                 <button 
-                    class="save-settings-button" 
+                    class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
                     style="width: 150px; margin-top: 20px;"
                 >
                     退出登录

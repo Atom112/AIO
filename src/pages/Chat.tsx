@@ -8,8 +8,6 @@ import {
 import AssistantSidebar from '../components/AssistantSidebar';
 import ChatInterface from '../components/ChatInterface';
 import TopicSidebar from '../components/TopicSidebar';
-import './Chat.css';
-
 
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = "default-assistant-id";
@@ -475,7 +473,8 @@ const ChatPage: Component = () => {
   });
 
   return (
-    <div class="chat-page fixed inset-[65px_1px_1px_0] flex gap-[3px] p-5 bg-[#1e1e1e] border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px_var(--primary-30)]" classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
+    <div class="fixed inset-[65px_1px_1px_0] flex gap-[3px] p-5 bg-[#1e1e1e] border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px_var(--primary-30)]" 
+          classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
       <AssistantSidebar
         width={displayLeftWidth()}
         isCollapsed={isLeftCollapsed()}
@@ -484,6 +483,7 @@ const ChatPage: Component = () => {
         editingAsstId={editingAsstId()}
         setEditingAsstId={setEditingAsstId}
         addAssistant={addAssistant}
+        isResizing={isResizing()}
       />
 
       <ChatInterface
@@ -511,6 +511,7 @@ const ChatPage: Component = () => {
         editingTopicId={editingTopicId()}
         setEditingTopicId={setEditingTopicId}
         addTopic={addTopic}
+        isResizing={isResizing()}
       />
     </div>
   );

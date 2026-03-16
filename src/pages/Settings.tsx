@@ -14,8 +14,7 @@ const Icons = {
      * @returns JSX.Element SVG 图标元素
      */
     Provider: () => (
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            {/* 顶层菱形 */}
+        <svg class='block' xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
     ),
@@ -25,10 +24,8 @@ const Icons = {
      * @returns JSX.Element SVG 图标元素
      */
     Account: () => (
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            {/* 肩部线条 */}
+        <svg class='block' xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            {/* 头部圆形 */}
             <circle cx="12" cy="7" r="4" />
         </svg>
     ),
@@ -38,12 +35,9 @@ const Icons = {
      * @returns JSX.Element SVG 图标元素
      */
     App: () => (
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            {/* 外框圆角矩形 */}
+        <svg class='block' xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            {/* 垂直分隔线 */}
             <line x1="9" y1="3" x2="9" y2="21" />
-            {/* 水平分隔线 */}
             <line x1="3" y1="9" x2="21" y2="9" />
         </svg>
     )
@@ -73,7 +67,7 @@ const Settings: Component = () => {
     ];
 
     return (
-        <div class="settings-page">
+        <div class="flex fixed inset-[65px_1px_1px_0] p-[15px] border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-[8px] gap-[15px] bg-[#1e1e1e]">
             <div class="settings-sidebar">
                 <div class="sidebar-header">设置中心</div>
 

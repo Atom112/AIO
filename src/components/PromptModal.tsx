@@ -1,6 +1,5 @@
 import { Component, createSignal, createEffect } from 'solid-js';
 import { Show } from 'solid-js/web';
-import './PromptModal.css';
 
 /**
  * PromptModal 组件属性接口定义
@@ -90,42 +89,33 @@ const PromptModal: Component<PromptModalProps> = (props) => {
     return (
         <Show when={props.show}>
             <div
-                classList={{ 
-                    "modal-backdrop": true, 
-                    "overlay-out": isExiting()
-                }}
-                class="overlay-in"
+                class="fixed top-0 left-0 w-full h-full bg-black/60 flex justify-center items-center z-[1000] rounded-lg"
                 onClick={(e) => e.target === e.currentTarget && handleClose()}
             >
                 <div
-                    classList={{ 
-                        "modal-content": true, 
-                        "animate-out": isExiting()
-                    }}
-                    class="animate-in" 
+                    class="border border-[var(--primary-color)] bg-[#2a2a2a] text-[#e0e0e0] p-6 rounded-lg shadow-[0_5px_15px_rgba(0,0,0,0.3)] w-[90%] max-w-[500px] flex flex-col gap-4"
                 >
-                    <div class="modal-header">
-                        <h2>设置当前模型提示词</h2>
-                        <button onClick={handleClose} class="close-button">
+                    <div class="flex justify-between items-center border-b border-[#444] pb-3">
+                        <h2 class='m-0 text-xl'>设置当前模型提示词</h2>
+                        <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-[#E08090]">
                             &times;
                         </button>
                     </div>
-
-                    <div class="modal-body">
                         <textarea
                             rows={8}
                             value={promptText()}
                             onInput={(e) => setPromptText(e.currentTarget.value)}
                             placeholder="例如：你是一个乐于助人的 AI 助手。"
+                            class="w-full p-2.5 bg-[#333] border border-[#555] rounded-lg text-[#e0e0e0] text-base font-mono resize-y box-border focus:outline-none focus:border-[var(--primary-50)]" 
+                            style="font-family: 'JetBrains Mono', Consolas, Monaco, 'Courier New', monospace !important;"
                         />
-                    </div>
 
-                    <div class="modal-footer">
-                        <button onClick={handleClose} class="btn-cancel">
+                    <div class="flex justify-end gap-3">
+                        <button onClick={handleClose} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-[#555] text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-[#666]">
                             取消
                         </button>
 
-                        <button onClick={handleSave} class="btn-save">
+                        <button onClick={handleSave} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-[var(--primary-color)] text-black rounded-lg hover:bg-[var(--primary-50)] transition-all duration-200">
                             保存
                         </button>
                     </div>

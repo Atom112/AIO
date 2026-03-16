@@ -379,11 +379,12 @@ const ProviderSettings: Component = () => {
                         />
                     </div>
                     
-                    <button class="save-settings-button" onClick={handleSave}>
+                    <button class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                            onClick={handleSave}>
                         保存当前配置
                     </button>
                     <button 
-                        class="save-settings-button" 
+                        class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
                         onClick={handleQueryModels} 
                         disabled={isLoading()}
                     >
@@ -394,7 +395,7 @@ const ProviderSettings: Component = () => {
                         <label>本地模型管理 (.gguf)</label>
                         <div style="display:flex; flex-direction: column; gap: 10px;">
                             <button 
-                                class="save-settings-button" 
+                                class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
                                 onClick={selectModelFile} 
                                 style="width: 100%"
                             >
@@ -402,7 +403,7 @@ const ProviderSettings: Component = () => {
                             </button>
 
                             <button
-                                class="save-settings-button"
+                                class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
                                 style={{
                                     "background-color": isLocalRunning() ? "#E08090" : "var(--primary-color)",
                                     "margin-top": "10px"
@@ -534,8 +535,9 @@ const ProviderSettings: Component = () => {
                                 </div>
                                 
                                 <div class="switch-container">
-                                    <label class="switch">
+                                    <label class="relative inline-block w-[40px] h-[20px]">
                                         <input 
+                                            class="opacity-0 w-0 h-0 absolute inset-0 cursor-pointer"
                                             type="checkbox"
                                             checked={activatedModels().some(am => 
                                                 am.model_id === m.id && am.api_url === apiUrl()

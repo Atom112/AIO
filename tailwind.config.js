@@ -39,20 +39,42 @@ export default {
           '50%': { opacity: '0.8' },
         },
         'message-in': {
-          '0%': { 
-            opacity: '0', 
+          '0%': {
+            opacity: '0',
             transform: 'translateY(16px) scale(0.95)',
-            filter: 'blur(4px)' 
+            filter: 'blur(4px)'
           },
-          '100%': { 
-            opacity: '1', 
+          '100%': {
+            opacity: '1',
             transform: 'translateY(0) scale(1)',
-            filter: 'blur(0)' 
+            filter: 'blur(0)'
+          },
+        },
+        menuEnter: {
+          '0%': {
+            opacity: '0',
+            transform: 'translateY(-8px) scale(0.95)',
+          },
+          '100%': {
+            opacity: '1',
+            transform: 'translateY(0) scale(1)',
+          },
+        },
+        menuExit: {
+          '0%': {
+            opacity: '1',
+            transform: 'translateY(0) scale(1)',
+          },
+          '100%': {
+            opacity: '0',
+            transform: 'translateY(-8px) scale(0.95)',
           },
         },
       },
       animation: {
         'message-in': 'message-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
+        'menu-enter': 'menuEnter 0.2s ease-out forwards',
+        'menu-exit': 'menuExit 0.2s ease-in forwards',
       },
     },
   },

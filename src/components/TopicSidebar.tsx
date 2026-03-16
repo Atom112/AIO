@@ -27,6 +27,7 @@ interface TopicSidebarProps {
     addTopic: () => void;
     isCollapsed: boolean;
     onToggle: (e: MouseEvent) => void;
+    isResizing: boolean;
 }
 
 const createTopic = (name?: string): Topic => ({
@@ -212,7 +213,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 return (
         <div 
             // 基础容器：对应 .dialog-container
-            class="dialog-container relative flex flex-col flex-shrink-0 transition-all duration-300 cubic-bezier[0.4,0,0.2,1] min-w-0"
+            class="relative flex flex-col flex-shrink-0 transition-all duration-300 cubic-bezier[0.4,0,0.2,1] min-w-0"
             classList={{
                 'is-collapsed': props.isCollapsed
             }}
@@ -221,13 +222,18 @@ return (
                 padding: props.isCollapsed ? '0' : '15px',
                 "border": props.isCollapsed ? 'none' : `1px solid var(--primary-color)`,
                 "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`,
-                "border-radius": "8px"
+                "border-radius": "8px",
+                "transition": props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' // 调整宽度时取消过渡，避免卡顿
             }}
         >
             {/* 拖拽把手：对应 .resize-handle.right-handle */}
             <div 
-                class="resize-handle hover:bg-[var(--primary-20)] after:rounded-[2px] after:h-[calc(100%-30px)] after:transition-all after:duration-300 after:ease-in-out after:w-1 after:content-[''] after:bg-[var(--primary-10)] !bg-transparent absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group transition-colors duration-200"
-                classList={{ 'bg-[var(--primary-20)]': true }} // 悬停状态由 CSS 变量控制更准
+                class="hover:bg-[var(--primary-20)] after:rounded-[2px] after:h-[calc(100%-30px)] after:transition-all after:duration-300 after:ease-in-out after:w-1 after:content-[''] after:bg-[var(--primary-10)] !bg-transparent absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group transition-colors duration-200"
+                classList={{ 
+                    'after:h-[calc(100%-20px)]': props.isResizing,
+                    'after:bg-[var(--primary-color)]': props.isResizing,
+                    'after:shadow-[0_0_10px_var(--primary-color)]': props.isResizing 
+                }}
                 onMouseDown={(e) => props.onResize(e as MouseEvent)}
             >
                 {/* 把手内部的竖线：对应 .resize-handle::after */}
@@ -270,7 +276,7 @@ return (
                                 <For each={asst().topics}>
                                     {(topic) => (
                                         <div
-                                            class="topic-item group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
+                                            class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
                                             classList={{
                                                 'active bg-[var(--primary-20)] !border-[var(--primary-color)]': topic.id === currentTopicId()
                                             }}
@@ -281,7 +287,7 @@ return (
                                                 fallback={<span class="topic-name text-[#e0e0e0] flex-grow text-[0.9rem] truncate pr-2 select-none">{topic.name}</span>}
                                             >
                                                 <input
-                                                    class="rename-input bg-[#1a1a1a] border border-[var(--primary-color)] rounded px-2 py-0.5 text-white text-[0.85rem] h-5 outline-none w-[80%]"
+                                                    class="bg-[#1a1a1a] border border-[var(--primary-color)] rounded px-2 py-0.5 text-white text-[0.85rem] h-5 outline-none w-[80%]"
                                                     value={topic.name}
                                                     ref={(el) => {
                                                         setTimeout(() => {
@@ -296,7 +302,7 @@ return (
                                             </Show>
 
                                             <button
-                                                class="assistant-menu-button flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)] opacity-0 group-hover:opacity-100"
+                                                class="flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)] opacity-0 group-hover:opacity-100"
                                                 onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
                                             >
                                                 <svg fill="#FFFFFF" viewBox="0 0 24 24" class="w-[18px]">
@@ -315,7 +321,7 @@ return (
             {/* 右键菜单浮层：对应 .assistant-context-menu */}
             {showTopicMenuDiv() && (
                 <div
-                    class="assistant-context-menu animate-[menuEnter_0.2s_ease-out_forwards] fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left"
+                    class="fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left"
                     classList={{ 
                         'animate-[menuEnter_0.2s_ease-out_forwards]': !isTopicMenuAnimatingOut(),
                         'animate-[menuExit_0.2s_ease-in_forwards]': isTopicMenuAnimatingOut() 
@@ -326,7 +332,7 @@ return (
                     }}
                 >
                     <button
-                        class="context-menu-button w-full text-left px-3 py-2 text-white bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
+                        class="w-full text-left px-3 py-2 text-white bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
                         onClick={() => {
                             props.setEditingTopicId(topicMenuState().targetTopicId);
                             closeTopicMenu();
@@ -336,7 +342,7 @@ return (
                     </button>
 
                     <button
-                        class="context-menu-button delete w-full text-left px-3 py-2 text-[#ff4d4d] bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
+                        class="w-full text-left px-3 py-2 text-[#ff4d4d] bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
                         onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}
                     >
                         删除话题

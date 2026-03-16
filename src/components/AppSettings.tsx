@@ -1,6 +1,5 @@
 import { Component, createEffect, createMemo, createSignal, For, onMount, untrack } from 'solid-js';
 import { open } from '@tauri-apps/plugin-shell';
-import './AppSettings.css';
 import { setThemeColor, themeColor } from '../store/store';
 import { getVersion } from '@tauri-apps/api/app';
 
@@ -210,24 +209,28 @@ const AppSettings: Component = () => {
     ];
 
     return (
-        <div class="app-settings-container">
-            <div class="settings-card">
-                <div class="card-header">
-                    <h3>应用状态</h3>
-                    <div class="version-wrapper">
-                        <span class="version-label">版本号:</span>
-                        <div class="version-badge">v{version()}</div>
+        <div class="flex flex-col gap-[15px] box-border">
+            <div class="bg-[rgb(255_255_255/0.04)] border border-[var(--primary-color)] rounded-xl shadow-[inset_0_0_20px_1px_var(--primary-30)] p-6 transition-colors duration-300">
+                <div class="flex justify-between items-center mb-5">
+                    <h3 class="m-0 text-base text-white">应用状态</h3>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-[#888] font-medium">版本号:</span>
+                        <div class="bg-[var(--primary-color,#08ddf9)] text-black text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
+                            style="font-family: 'JetBrains Mono', monospace;">
+                            v{version()}
+                        </div>
                     </div>
                 </div>
 
-                <div class="setting-item-row">
-                    <div class="item-label">
-                        <span>系统自启</span>
-                        <p class="item-desc">随系统启动自动运行应用</p>
+                <div class="flex justify-between items-center py-3 border-b border-white/5">
+                    <div>
+                        <span class="block text-[#eee] text-[14px]">系统自启</span>
+                        <p class="text-xs text-[#777] mt-1">随系统启动自动运行应用</p>
                     </div>
 
-                    <label class="switch">
+                    <label class="relative inline-block w-[40px] h-[20px]">
                         <input
+                            class="opacity-0 w-0 h-0"
                             type="checkbox"
                             checked={autoStart()}
                             onChange={(e) => setAutoStart(e.currentTarget.checked)}
@@ -236,14 +239,14 @@ const AppSettings: Component = () => {
                     </label>
                 </div>
 
-                <div class="setting-item-row">
-                    <div class="item-label">
-                        <span>开源主页</span>
-                        <p class="item-desc">访问 GitHub 仓库获取最新动态</p>
+                <div class="flex justify-between items-center py-3 border-b border-white/5">
+                    <div>
+                        <span class="block text-[#eee] text-[14px]">开源主页</span>
+                        <p class="text-xs text-[#777] mt-1">访问 GitHub 仓库获取最新动态</p>
                     </div>
 
                     <div
-                        class="github-link"
+                        class="flex items-center gap-2 bg-[var(--primary-5)] text-[#ccc] px-4 py-2 rounded-lg cursor-pointer border border-[var(--primary-color)] transition-all duration-200 hover:bg-[var(--primary-50)] hover:text-black"
                         onClick={() => open('https://github.com/Atom112/AIO')}
                         title="访问 GitHub"
                     >
@@ -255,26 +258,43 @@ const AppSettings: Component = () => {
                 </div>
             </div>
 
-            <div class="settings-card cool-theme-card">
-                <div class="card-header">
-                    <h3>视觉主题</h3>
+            <div class="bg-[rgb(255_255_255/0.04)] border border-[var(--primary-color)] rounded-xl shadow-[inset_0_0_20px_1px_var(--primary-30)] p-6 transition-colors duration-300">
+                <div class="flex justify-between items-center mb-5">
+                    <h3 class='m-0 text-base text-white'>视觉主题</h3>
                 </div>
 
-                <div class="picker-controls" style={{
+                <div class="flex flex-col gap-[10px]" style={{
                     "--h": h(),
                     "--s": `${s()}%`,
                     "--l": `${l()}%`
                 }}>
-                    <div class="cool-picker-layout">
-                        <div class="rgb-sidebar">
-                            <div class="rgb-field"><span>R</span><div class="rgb-value">{rgb().r}</div></div>
-                            <div class="rgb-field"><span>G</span><div class="rgb-value">{rgb().g}</div></div>
-                            <div class="rgb-field"><span>B</span><div class="rgb-value">{rgb().b}</div></div>
+                    <div class="grid grid-cols-[100px_240px_100px] gap-8 items-center justify-center py-5">
+                        <div class="flex flex-col gap-3">
+                            <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
+                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">R</span>
+                                <div class="font-mono text-[16px] text-white font-bold">{rgb().r}</div>
+                            </div>
+                            <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
+                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">G</span>
+                                <div class="font-mono text-[16px] text-white font-bold">{rgb().g}</div>
+                            </div>
+                            <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
+                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">B</span>
+                                <div class="font-mono text-[16px] text-white font-bold">{rgb().b}</div>
+                            </div>
                         </div>
 
-                        <div class="hue-ring-container">
+                        <div class="relative w-[220px] h-[220px] flex items-center justify-center">
                             <div
-                                class="hue-ring"
+                                class="w-full h-full rounded-full cursor-pointer transition-filter duration-300"
+                                style="background: conic-gradient(hsl(0deg var(--s) var(--l)), 
+                                        hsl(60deg var(--s) var(--l)), 
+                                        hsl(120deg var(--s) var(--l)), 
+                                        hsl(180deg var(--s) var(--l)), 
+                                        hsl(240deg var(--s) var(--l)), 
+                                        hsl(300deg var(--s) var(--l)), 
+                                        hsl(360deg var(--s) var(--l))); 
+                                        mask: radial-gradient(transparent 59.5%, black 60.5%);"
                                 onPointerDown={(e) => {
                                     const target = e.currentTarget;
                                     const rect = target.getBoundingClientRect();
@@ -294,20 +314,21 @@ const AppSettings: Component = () => {
                             />
 
                             <div
-                                class="center-preview"
+                                class="absolute w-[110px] h-[110px] rounded-full flex flex-col items-center justify-center shadow-[0_0_20px_var(--primary-color)] border-2 border-white/20 z-20"
                                 style={{ background: themeColor() }}
                             >
-                                <span class="hex-text">{themeColor().toUpperCase()}</span>
+                                <span class="text-[14px] font-extrabold text-white">{themeColor().toUpperCase()}</span>
                             </div>
 
-                            <div class="hue-pointer" style={pointerStyle()} />
+                            <div class="absolute top-1/2 left-1/2 w-[18px] h-[18px] border-[3px] border-white rounded-full shadow-[0_0_5px_#fff,inset_0_0_10px_#fff] pointer-events-none z-[3]"
+                                style={pointerStyle()} />
                         </div>
 
-                        <div class="preset-sidebar">
+                        <div class="flex flex-col gap-3">
                             <For each={presetThemes}>
                                 {(theme) => (
                                     <div
-                                        class="strip-item"
+                                        class="w-[40px] h-[40px] rounded-full cursor-pointer transition-transform duration-200 border-2 border-transparent hover:scale-110"
                                         onClick={() => setThemeColor(theme.color)}
                                         style={{
                                             background: theme.color,
@@ -321,9 +342,9 @@ const AppSettings: Component = () => {
                         </div>
                     </div>
 
-                    <div class="bottom-controls">
-                        <div class="control-group">
-                            <label>饱和度 (Saturation)</label>
+                    <div class="mt-[25px] px-[20px]">
+                        <div class="mb-2">
+                            <label class="block text-[12px] text-[#666] mb-[10px] text-center">饱和度 (Saturation)</label>
                             <input
                                 type="range"
                                 min="0" max="100"
@@ -336,8 +357,8 @@ const AppSettings: Component = () => {
                             />
                         </div>
 
-                        <div class="control-group">
-                            <label>亮度 (Lightness)</label>
+                        <div class="mb-2">
+                            <label class="block text-[12px] text-[#666] mb-[10px] text-center">亮度 (Lightness)</label>
                             <input
                                 type="range"
                                 min="0" max="100"

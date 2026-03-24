@@ -177,7 +177,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                         "scale-95 opacity-0": isExiting(),
                         "scale-100 opacity-100": !isExiting()
                     }}
-                    class="relative min-h-[400px] bg-[#1e1e1e] w-[360px] border border-[var(--primary-color)] rounded-lg p-6 shadow-[0_0_20px_rgba(var(--primary-rgb),0.2)] text-[#e0e0e0] transition-all duration-300 ease-out transform pointer-events-auto"
+                    class="relative min-h-[400px] bg-[#1e1e1e] w-[360px] border border-[var(--primary-color)] rounded-lg p-6 shadow-[0_0_20px_var(--primary-20)] text-[#e0e0e0] transition-all duration-300 ease-out transform pointer-events-auto"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* 成功状态覆盖层 */}
@@ -189,8 +189,8 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                             }}
                             class="absolute inset-0 bg-[#1e1e1e]/98 flex flex-col items-center justify-center z-50 rounded-lg transition-all duration-300"
                         >
-                            <div class="success-circle">
-                                <svg viewBox="0 0 52 52" class="w-[60px] height-[60px] rounded-full block stroke-[3] stroke-[var(--primary-color)] [stroke-miterlimit:10] checkmark">
+                            <div>
+                                <svg viewBox="0 0 52 52" class="w-[60px] h-[60px] rounded-full block stroke-[3] stroke-[var(--primary-color)] [stroke-miterlimit:10]">
                                     <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none" />
                                     <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
                                 </svg>

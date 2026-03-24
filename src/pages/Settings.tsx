@@ -2,7 +2,6 @@ import { Component, createSignal, Switch, Match, JSX } from 'solid-js';
 import ProviderSettings from '../components/ProviderSettings';
 import AccountSettings from '../components/AccountSettings';
 import AppSettings from '../components/AppSettings';
-import './Settings.css';
 
 /**
  * 图标组件集合
@@ -105,19 +104,19 @@ return (
             <div class="flex-1 overflow-y-auto pr-1 scroll-smooth bg-[radial-gradient(circle_at_50%_50%,rgb(8_221_249/0.02)_0%,transparent_80%)]">
                 <Switch>
                     <Match when={activeTab() === 'provider'}>
-                        <div class="tab-content-wrapper h-full animate-in fade-in slide-in-from-bottom-2 duration-400">
+                        <div class="h-full">
                             <ProviderSettings />
                         </div>
                     </Match>
                     
                     <Match when={activeTab() === 'account'}>
-                        <div class="tab-content-wrapper h-full animate-in fade-in slide-in-from-bottom-2 duration-400">
+                        <div class="h-full">
                             <AccountSettings />
                         </div>
                     </Match>
                     
                     <Match when={activeTab() === 'app'}>
-                        <div class="tab-content-wrapper h-full animate-in fade-in slide-in-from-bottom-2 duration-400">
+                        <div class="h-full">
                             <AppSettings />
                         </div>
                     </Match>

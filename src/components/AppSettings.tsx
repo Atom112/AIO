@@ -228,14 +228,14 @@ const AppSettings: Component = () => {
                         <p class="text-xs text-[#777] mt-1">随系统启动自动运行应用</p>
                     </div>
 
-                    <label class="relative inline-block w-[40px] h-[20px]">
+                    <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
                         <input
-                            class="opacity-0 w-0 h-0"
+                            class="opacity-0 w-0 h-0 peer"
                             type="checkbox"
                             checked={autoStart()}
                             onChange={(e) => setAutoStart(e.currentTarget.checked)}
                         />
-                        <span class="slider"></span>
+                        <span class="absolute inset-0 bg-[#333] border border-[#555] rounded-full transition-all duration-300 peer-checked:bg-[var(--primary-color)] peer-checked:border-[var(--primary-color)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
                     </label>
                 </div>
 
@@ -286,7 +286,7 @@ const AppSettings: Component = () => {
 
                         <div class="relative w-[220px] h-[220px] flex items-center justify-center">
                             <div
-                                class="w-full h-full rounded-full cursor-pointer transition-filter duration-300"
+                                class="w-full h-full rounded-full cursor-pointer transition-all duration-300"
                                 style="background: conic-gradient(hsl(0deg var(--s) var(--l)), 
                                         hsl(60deg var(--s) var(--l)), 
                                         hsl(120deg var(--s) var(--l)), 

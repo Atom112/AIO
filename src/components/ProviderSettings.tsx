@@ -468,7 +468,7 @@ return (
                 <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
                     <For each={filteredActivatedModels()}>
                         {(m) => (
-                            <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-[var(--primary-20)] animate-[cardEnter_0.3s_ease-out_forwards]">
+                            <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-[var(--primary-20)]">
                                 <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-[var(--primary-20)]">
                                     <img src={getModelLogo(m.model_id)} alt="logo" class="w-5 h-5 object-contain" />
                                 </div>

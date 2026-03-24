@@ -213,10 +213,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 return (
         <div 
             // 基础容器：对应 .dialog-container
-            class="relative flex flex-col flex-shrink-0 transition-all duration-300 cubic-bezier[0.4,0,0.2,1] min-w-0"
-            classList={{
-                'is-collapsed': props.isCollapsed
-            }}
+            class="relative flex flex-col flex-shrink-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] min-w-0"
             style={{
                 width: props.isCollapsed ? '0%' : `${props.width}%`,
                 padding: props.isCollapsed ? '0' : '15px',
@@ -241,7 +238,7 @@ return (
 
                 {/* 折叠按钮：对应 .collapse-indicator */}
                 <div 
-                    class="collapse-indicator hover:scale-110 pointer-events-auto absolute z-[1001] w-[10px] h-12 bg-[var(--primary-color)] rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-black font-bold text-[10px] shadow-[0_0_10px_var(--primary-color)] opacity-0 transition-all duration-200 hover:scale-y-110 hover:opacity-100 group-hover:opacity-100"
+                    class="hover:scale-110 pointer-events-auto absolute z-[1001] w-[10px] h-12 bg-[var(--primary-color)] rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-black font-bold text-[10px] shadow-[0_0_10px_var(--primary-color)] opacity-0 transition-all duration-200 hover:scale-y-110 hover:opacity-100 group-hover:opacity-100"
                     classList={{ 'opacity-40 !opacity-100 scale-y-100 shadow-[0_0_15px_var(--primary-color)]': props.isCollapsed }}
                     title={props.isCollapsed ? "展开话题栏" : "折叠话题栏"} 
                     onClick={(e) => {
@@ -261,22 +258,22 @@ return (
                 <Show when={props.currentAssistant}>
                     {(asst) => (
                         <div class="flex flex-col h-full">
-                            <div class="info-header mb-4">
+                            <div class="mb-4">
                                 <h3 class="text-white text-lg font-medium">{asst().name} 的话题</h3>
                             </div>
 
                             <button 
-                                class="add-topic-button w-full px-3 py-2 bg-transparent border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px var(--primary-30)] text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)] active:scale-[0.98]" 
+                                class="w-full px-3 py-2 bg-transparent border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px_var(--primary-30)] text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)] active:scale-[0.98]" 
                                 onClick={props.addTopic}
                             >
                                 + 新建话题
                             </button>
 
-                            <div class="topics-list mt-[15px] space-y-1">
+                            <div class="mt-[15px] space-y-1">
                                 <For each={asst().topics}>
                                     {(topic) => (
                                         <div
-                                            class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
+                                            class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
                                             classList={{
                                                 'active bg-[var(--primary-20)] !border-[var(--primary-color)]': topic.id === currentTopicId()
                                             }}
@@ -284,7 +281,7 @@ return (
                                         >
                                             <Show
                                                 when={props.editingTopicId === topic.id}
-                                                fallback={<span class="topic-name text-[#e0e0e0] flex-grow text-[0.9rem] truncate pr-2 select-none">{topic.name}</span>}
+                                                fallback={<span class="text-[#e0e0e0] flex-grow text-[0.9rem] truncate pr-2 select-none">{topic.name}</span>}
                                             >
                                                 <input
                                                     class="bg-[#1a1a1a] border border-[var(--primary-color)] rounded px-2 py-0.5 text-white text-[0.85rem] h-5 outline-none w-[80%]"
@@ -322,10 +319,6 @@ return (
             {showTopicMenuDiv() && (
                 <div
                     class="fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left"
-                    classList={{ 
-                        'animate-[menuEnter_0.2s_ease-out_forwards]': !isTopicMenuAnimatingOut(),
-                        'animate-[menuExit_0.2s_ease-in_forwards]': isTopicMenuAnimatingOut() 
-                    }}
                     style={{
                         top: `${topicMenuState().y}px`,
                         left: `${topicMenuState().x}px`

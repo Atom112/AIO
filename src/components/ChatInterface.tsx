@@ -77,19 +77,13 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         <div class="flex flex-col flex-grow items-stretch border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full">
             {/* 消息展示区域 */}
             <div
-                class={`flex-grow opacity-100 overflow-y-auto pb-[15px] transition-opacity duration-200 ease-out z-[1] ${props.isChangingTopic ? 'opacity-0' : 'opacity-100'}`}
+                class={`flex-grow overflow-y-auto pb-[15px] transition-opacity duration-200 ease-out z-[1] ${props.isChangingTopic ? 'opacity-0' : 'opacity-100'}`}
             >
                 <Show when={props.activeTopic}>
                     <For each={props.activeTopic?.history}>
                         {(msg: any, index) => (
                             <div
-                                class={`message flex flex-col mb-3 pointer-events-auto 
-                                        animate-message-in opacity-0
-                                        ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
-                                style={{
-                                    "animation-delay": `${index() * 0.03}s`,
-                                    "animation-fill-mode": "forwards"
-                                }}
+                                class={`flex flex-col mb-3 pointer-events-auto ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
                             >
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
@@ -104,11 +98,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
                                     <div class={`flex flex-col max-w-[75%] ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}>
                                         <div
-                                            class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] transition-[height] duration-200 overflow-wrap-break-word group relative
+                                            class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] transition-[height] duration-200 break-words group relative
                                                 ${msg.role === 'assistant'
-                                                    ? 'bg-[#333] border border-[#555] rounded-tl-[2px] color-white'
-                                                    : 'bg-[var(--primary-5)] border border-[var(--primary-color)] rounded-tr-[2px] color-white'}
-                                                ${props.typingIndex === index() ? 'after:content-["|"] after:ml-[2px] after:text-[var(--primary-color)] after:animate-[cursor-blink_0.8s_infinite]' : ''}`}
+                                                    ? 'bg-[#333] border border-[#555] rounded-tl-[2px] text-white'
+                                                    : 'bg-[var(--primary-5)] border border-[var(--primary-color)] rounded-tr-[2px] text-white'}`}
                                         >
                                             <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
                                                 <For each={msg.displayFiles}>
@@ -120,7 +113,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                                 </svg>
                                                             </div>
                                                             <div class="flex-grow overflow-hidden">
-                                                                <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis white-space-nowrap">{file.name}</div>
+                                                                <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{file.name}</div>
                                                                 <div class="text-[var(--primary-50)] text-[0.75rem] mt-[2px]">已解析</div>
                                                             </div>
                                                         </div>
@@ -181,7 +174,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     </For>
 
                     <Show when={props.isThinking}>
-                        <div class="flex flex-col mb-3 items-start animate-[bubble-in_0.35s_ease-out_forwards]">
+                        <div class="flex flex-col mb-3 items-start">
                             <div class="flex gap-3 w-full justify-start items-start">
                                 <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#dfdfdf] border border-[var(--primary-20)] overflow-hidden">
                                     <img src={getModelLogo(selectedModel()?.model_id || "")} class="w-[25px] h-[25px]" />
@@ -208,7 +201,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             <div class="flex flex-wrap gap-[3px] bg-transparent pt-[3px] relative z-0">
                 <For each={props.pendingFiles}>
                     {(file, i) => (
-                        <div class="flex items-center bg-[var(--primary-10)] border border-[var(--primary-5)] rounded-[16px] text-[var(--primary-color)] text-[12px] px-[10px] py-1 transition-all duration-200 hover:bg-[var(--primary-20)] hover:border-[var(--primary-color)] animate-[tagFadeIn_0.3s_ease-out]">
+                        <div class="flex items-center bg-[var(--primary-10)] border border-[var(--primary-5)] rounded-[16px] text-[var(--primary-color)] text-[12px] px-[10px] py-1 transition-all duration-200 hover:bg-[var(--primary-20)] hover:border-[var(--primary-color)]">
                             <Show when={file.type === 'image'} fallback={<span class="mr-1">📄</span>}>
                                 <img src={file.content} class="w-5 h-5 object-cover mr-1 rounded-[2px]" />
                             </Show>
@@ -253,7 +246,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         }}
                     />
 
-                    <div class="flex items-center justify-between border-top border-t border-[rgba(255,255,255,0.05)] pt-2">
+                    <div class="flex items-center justify-between border-t border-[rgba(255,255,255,0.05)] pt-2">
                         <div class="flex items-center gap-2">
                             <button
                                 class="flex items-center justify-center bg-transparent border-none rounded-md text-[#888] cursor-pointer p-1.5 transition-all duration-200 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--primary-color)]"
@@ -321,7 +314,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
             {/* 拖拽覆盖层 */}
             <Show when={props.isDragging}>
-                <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.7)] backdrop-blur-[4px] pointer-events-none z-[9999] animate-[fadeIn_0.3s_ease-out]">
+                <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.7)] backdrop-blur-[4px] pointer-events-none z-[9999]">
                     <div class="relative flex flex-col items-center justify-center w-[420px] h-[280px] bg-[#1a1a1a] border-2 border-[var(--primary-color)] rounded-xl shadow-[0_0_30px_var(--primary-20)] text-white text-center p-5">
                         <div class="flex items-end mb-[25px] mt-[-30px]">
                             <div class="flex items-center justify-center w-[60px] h-20 bg-[#2a2a2a] border border-[var(--primary-color)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] -rotate-12 translate-x-[15px] z-[1]">

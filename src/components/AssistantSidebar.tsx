@@ -212,7 +212,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
     return (
         <div
             // 基础容器：对应 .assistant-selector
-            class="relative flex flex-col flex-shrink-0 transition-all duration-300 cubic-bezier[0.4,0,0.2,1] min-w-0"
+            class="relative flex flex-col flex-shrink-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] min-w-0"
             style={{
                 width: props.isCollapsed ? '0%' : `${props.width}%`,
                 padding: props.isCollapsed ? '0' : '15px',
@@ -284,10 +284,6 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
             {showMenuDiv() && (
                 <div
                     class="fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left"
-                    classList={{
-                        'animate-[menuEnter_0.2s_ease-out_forwards]': !isMenuAnimatingOut(),
-                        'animate-[menuExit_0.2s_ease-in_forwards]': isMenuAnimatingOut()
-                    }}
                     style={{
                         top: `${menuState().y}px`,
                         left: `${menuState().x}px`

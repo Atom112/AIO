@@ -66,40 +66,58 @@ const Settings: Component = () => {
         { id: 'app', label: '应用信息', icon: <Icons.App /> },
     ];
 
-    return (
-        <div class="flex fixed inset-[65px_1px_1px_0] p-[15px] border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-[8px] gap-[15px] bg-[#1e1e1e]">
-            <div class="settings-sidebar">
-                <div class="sidebar-header">设置中心</div>
+return (
+        <div class="flex fixed inset-[65px_1px_1px_0] p-4 border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-lg gap-4 bg-[#1e1e1e]">
+            {/* 侧边栏 */}
+            <div class="w-[200px] bg-black/30 border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] flex flex-col rounded-lg overflow-hidden">
+                <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
+                    设置中心
+                </div>
 
-                <div class="sidebar-menu">
+                <div class="flex flex-col px-2">
                     {menuItems.map(item => (
                         <div
-                            class={`sidebar-item ${activeTab() === item.id ? 'active' : ''}`}
+                            class={`relative px-5 py-4 my-1 cursor-pointer flex items-center gap-3 rounded-lg border border-transparent transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group overflow-hidden
+                                ${activeTab() === item.id 
+                                    ? 'bg-[var(--primary-10)] text-[var(--primary-color)] [text-shadow:0_0_8px_var(--primary-5)] border-[var(--primary-20)] shadow-[inset_0_0_10px_var(--primary-10)]' 
+                                    : 'text-[#aaa] hover:bg-[var(--primary-10)] hover:text-white hover:pl-6'
+                                }`}
                             onClick={() => setActiveTab(item.id)}
                         >
-                            <span class="sidebar-icon">{item.icon}</span>
-                            <span class="sidebar-label">{item.label}</span>
+                            {/* 激活状态的左侧指示条 (原 ::before) */}
+                            <span 
+                                class={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-3/5 bg-[var(--primary-color)] rounded-r-sm transition-transform duration-300 
+                                    ${activeTab() === item.id ? 'scale-y-100' : 'scale-y-0 group-hover:scale-y-50'}`}
+                            />
+                            
+                            <span class={`flex items-center justify-center w-5 h-5 transition-colors duration-300 ${activeTab() === item.id ? 'text-[var(--primary-color)]' : 'text-[#666] group-hover:text-white'}`}>
+                                {item.icon}
+                            </span>
+                            <span class="text-sm font-medium leading-none">
+                                {item.label}
+                            </span>
                         </div>
                     ))}
                 </div>
             </div>
 
-            <div class="settings-main-content">
+            {/* 主内容区 */}
+            <div class="flex-1 overflow-y-auto pr-1 scroll-smooth bg-[radial-gradient(circle_at_50%_50%,rgb(8_221_249/0.02)_0%,transparent_80%)]">
                 <Switch>
                     <Match when={activeTab() === 'provider'}>
-                        <div class="tab-content-wrapper">
+                        <div class="tab-content-wrapper h-full animate-in fade-in slide-in-from-bottom-2 duration-400">
                             <ProviderSettings />
                         </div>
                     </Match>
                     
                     <Match when={activeTab() === 'account'}>
-                        <div class="tab-content-wrapper">
+                        <div class="tab-content-wrapper h-full animate-in fade-in slide-in-from-bottom-2 duration-400">
                             <AccountSettings />
                         </div>
                     </Match>
                     
                     <Match when={activeTab() === 'app'}>
-                        <div class="tab-content-wrapper">
+                        <div class="tab-content-wrapper h-full animate-in fade-in slide-in-from-bottom-2 duration-400">
                             <AppSettings />
                         </div>
                     </Match>

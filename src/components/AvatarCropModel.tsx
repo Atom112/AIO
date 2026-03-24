@@ -1,7 +1,6 @@
 import { Component, createSignal, onCleanup } from 'solid-js';
 import Cropper from 'cropperjs';
 import 'cropperjs/dist/cropper.css';
-import './AvatarCropModel.css';
 
 /**
  * 组件 Props 接口定义
@@ -152,28 +151,20 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
     return (
         <div 
-            classList={{ 
-                "crop-modal-overlay": true, 
-                "overlay-out": isExiting()
-            }} 
-            class="overlay-in"
+            class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/85 backdrop-blur-sm"
         >
             <div
-                classList={{ 
-                    "crop-modal-container": true, 
-                    "animate-out": isExiting()
-                }}
-                class="animate-in"
+                class="bg-[#1a1a1a] w-[600px] border border-[var(--primary-color)] rounded-xl shadow-[0_0_20px_var(--primary-20)] overflow-hidden flex flex-col"
             >
-                <div class="crop-modal-header">
+                <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-[#333] text-[var(--primary-color)] font-bold">
                     <span>裁剪图片</span>
-                    <button onClick={handleClose} class="close-button">
+                    <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-[#E08090]">
                         &times;
                     </button>
                 </div>
 
-                <div class="crop-main-area">
-                    <div class="cropper-wrapper">
+                <div class="flex h-[350px] p-[20px] gap-[20px]">
+                    <div class="flex-1 bg-black rounded-md overflow-hidden border border-[#333]">
                         <img
                             ref={imageElement}
                             src={props.imageSrc}
@@ -186,20 +177,20 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                         />
                     </div>
 
-                    <div class="crop-preview-side">
-                        <div class="preview-label">预览</div>
-                        <div ref={previewElement} class="avatar-preview-circle"></div>
+                    <div class="w-[150px] flex flex-col items-center justify-center">
+                        <div class="text-[#888] text-[12px] mb-[10px]">预览</div>
+                        <div ref={previewElement} class="w-[120px] h-[120px] rounded-full overflow-hidden border-2 border-[var(--primary-color)] bg-black"></div>
                     </div>
                 </div>
 
-                <div class="crop-controls">
-                    <div class="zoom-slider-container">
+                <div class="p-[20px] bg-[#222]">
+                    <div class="flex items-center gap-[10px] mb-[20px]">
                         <input
                             type="range"
                             min="0.1"
                             max="3"
                             step="0.05"
-                            class='cropslider'
+                            class="flex-1 accent-[var(--primary-color)] cursor-pointer bg-[var(--primary-color)] rounded-[4px] h-[6px] transition-colors duration-300"
                             value={zoomValue()}
                             onInput={(e) => {
                                 const val = parseFloat(e.currentTarget.value);
@@ -209,9 +200,9 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                         />
                     </div>
 
-                    <div class="modal-actions">
-                        <button class="btn-cancel" onClick={handleClose}>取消</button>
-                        <button class="btn-save" onClick={handleSave}>保存头像</button>
+                    <div class="flex justify-end gap-3">
+                        <button class="px-5 py-2 bg-[#333] text-[#ccc] border-none rounded cursor-pointer" onClick={handleClose}>取消</button>
+                        <button class="px-[30px] py-2 bg-[var(--primary-color)] text-black font-bold border-none rounded cursor-pointer transition-transform duration-100 hover:scale-105" onClick={handleSave}>保存头像</button>
                     </div>
                 </div>
             </div>

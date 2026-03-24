@@ -2,7 +2,6 @@ import { Component, createSignal, For, createMemo, onCleanup, onMount } from 'so
 import { config, saveConfig, setDatas, selectedModel } from '../store/store';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import './ProviderSettings.css';
 
 /** 从 API 获取的原始模型信息 */
 interface ModelItem { 
@@ -351,62 +350,64 @@ const ProviderSettings: Component = () => {
         }
     };
 
-    return (
-        <div class="tab-content-provider">
-            <div class="settings-container">
-                <div class="info-header" style="border-bottom: 1px solid; padding-bottom: 10px; margin-bottom: 30px;">
-                    <h3>API 服务配置</h3>
+return (
+        <div class="flex gap-4 h-full">
+            {/* 左侧配置面板 */}
+            <div class="w-[22%] p-5 border border-[var(--primary-color)] rounded-xl bg-[var(--primary-5)] overflow-y-auto">
+                <div class="border-b border-[var(--primary-20)] pb-2.5 mb-8">
+                    <h3 class="text-lg font-bold">API 服务配置</h3>
                 </div>
                 
-                <div class="settings-form">
-                    <div class="setting-item">
-                        <label>API 供应商网址</label>
+                <div class="flex flex-col gap-5">
+                    <div class="flex flex-col gap-2">
+                        <label class="text-sm font-bold">API 供应商网址</label>
                         <input 
                             type="text" 
-                            class="settings-input" 
+                            class="bg-[#1a1a1d] border border-[#333] text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-[var(--primary-color)]" 
                             value={apiUrl()} 
                             onInput={(e) => setApiUrl(e.currentTarget.value)} 
                         />
                     </div>
                     
-                    <div class="setting-item">
-                        <label>API Key</label>
+                    <div class="flex flex-col gap-2">
+                        <label class="text-sm font-bold">API Key</label>
                         <input 
                             type="password" 
-                            class="settings-input" 
+                            class="bg-[#1a1a1d] border border-[#333] text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-[var(--primary-color)]" 
                             value={apiKey()} 
                             onInput={(e) => setApiKey(e.currentTarget.value)} 
                         />
                     </div>
                     
-                    <button class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
-                            onClick={handleSave}>
+                    <button 
+                        class="mt-2.5 bg-[var(--primary-color)] text-black border-none p-3 font-bold rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                        onClick={handleSave}
+                    >
                         保存当前配置
                     </button>
+                    
                     <button 
-                        class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                        class="bg-[var(--primary-color)] text-black border-none p-3 font-bold rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80 disabled:opacity-50"
                         onClick={handleQueryModels} 
                         disabled={isLoading()}
                     >
                         {isLoading() ? "查询中..." : "获取可用模型列表"}
                     </button>
 
-                    <div class="setting-item">
-                        <label>本地模型管理 (.gguf)</label>
-                        <div style="display:flex; flex-direction: column; gap: 10px;">
+                    <div class="flex flex-col gap-2">
+                        <label class="text-sm font-bold border-t border-[var(--primary-20)] pt-4 mt-2">本地模型管理 (.gguf)</label>
+                        <div class="flex flex-col gap-2.5">
                             <button 
-                                class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                                class="bg-[var(--primary-color)] text-black border-none p-3 font-bold rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80 w-full"
                                 onClick={selectModelFile} 
-                                style="width: 100%"
                             >
                                 + 选择并添加本地模型
                             </button>
 
                             <button
-                                class="mt-[10px] bg-[var(--primary-color)] text-black border-none p-[12px] font-bold rounded-[6px] cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                                class="p-3 font-bold rounded-md cursor-pointer transition-all duration-200 hover:opacity-80 text-black border-none"
                                 style={{
-                                    "background-color": isLocalRunning() ? "#E08090" : "var(--primary-color)",
-                                    "margin-top": "10px"
+                                    "background-color": isLocalRunning() ? "#E08090" : "var(--primary-color)"
                                 }}
                                 onClick={toggleLocalEngine}
                             >
@@ -415,35 +416,43 @@ const ProviderSettings: Component = () => {
                         </div>
                     </div>
                     
-                    {saveStatus() && <div class="save-hint">{saveStatus()}</div>}
+                    {saveStatus() && (
+                        <div class="text-sm text-[var(--primary-color)] animate-pulse text-center">
+                            {saveStatus()}
+                        </div>
+                    )}
                 </div>
             </div>
 
-            <div class="models-list-panel activated-panel">
-                <div class="models-header-complex">
-                    <h4>已激活模型 ({filteredActivatedModels().length})</h4>
-                    <div class="models-tools-row">
+            {/* 中间已激活面板 */}
+            <div class="flex-1 border border-[var(--primary-color)] rounded-xl bg-[var(--primary-5)] flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
+                <div class="p-5 border-b border-[var(--primary-20)] flex flex-col gap-4 bg-[var(--primary-5)]">
+                    <h4 class="font-bold flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                        已激活模型 ({filteredActivatedModels().length})
+                    </h4>
+                    <div class="flex gap-3">
                         <input 
                             type="text" 
                             placeholder="搜索已激活..." 
-                            class="models-search-input" 
+                            class="flex-[2] bg-[#1a1a1d] border border-[#333] text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-[var(--primary-color)]" 
                             onInput={(e) => setSearchQueryAct(e.currentTarget.value)} 
                         />
                         
-                        <div class="custom-select-container" ref={dropdownRefAct}>
+                        <div class="relative flex-1 min-w-[140px]" ref={dropdownRefAct}>
                             <div 
-                                class={`custom-select-trigger ${isDropdownOpenAct() ? 'open' : ''}`} 
+                                class={`bg-[#1a1a1d] border border-[#333] px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-[var(--primary-color)] transition-all ${isDropdownOpenAct() ? 'border-[var(--primary-color)]' : ''}`} 
                                 onClick={() => setIsDropdownOpenAct(!isDropdownOpenAct())}
                             >
                                 {selectedProviderAct() === "All" ? "所有厂商" : selectedProviderAct()}
-                                <span class="arrow-icon">▼</span>
+                                <span class={`transition-transform duration-200 ${isDropdownOpenAct() ? 'rotate-180' : ''}`}>▼</span>
                             </div>
                             {isDropdownOpenAct() && (
-                                <div class="custom-select-dropdown">
+                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-[#1a1a1d] border border-[var(--primary-color)] rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl">
                                     <For each={providersAct()}>
                                         {(p) => (
                                             <div 
-                                                class={`custom-select-item ${selectedProviderAct() === p ? 'active' : ''}`}
+                                                class={`p-2.5 text-[#eee] cursor-pointer text-xs hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)] transition-colors ${selectedProviderAct() === p ? 'bg-[var(--primary-10)] text-[var(--primary-color)]' : ''}`}
                                                 onClick={() => { setSelectedProviderAct(p); setIsDropdownOpenAct(false); }}
                                             >
                                                 {p === "All" ? "所有厂商" : p}
@@ -456,21 +465,24 @@ const ProviderSettings: Component = () => {
                     </div>
                 </div>
                 
-                <div class="models-scroll-area">
+                <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
                     <For each={filteredActivatedModels()}>
                         {(m) => (
-                            <div class="model-card activated">
-                                <div class="model-logo-container">
-                                    <img src={getModelLogo(m.model_id)} alt="logo" class="model-item-logo" />
+                            <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-[var(--primary-20)] animate-[cardEnter_0.3s_ease-out_forwards]">
+                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-[var(--primary-20)]">
+                                    <img src={getModelLogo(m.model_id)} alt="logo" class="w-5 h-5 object-contain" />
                                 </div>
 
-                                <div class="model-info">
-                                    <span class="model-id">{m.model_id}</span>
-                                    <span class="model-provider">
-                                        {m.api_url.includes('127.0.0.1') ? '本地服务' : m.api_url.replace('https://', '').split('/')[0]}
+                                <div class="grow flex flex-col font-mono">
+                                    <span class="text-[#eee] font-medium text-sm truncate">{m.model_id}</span>
+                                    <span class="text-[#666] text-[10px]">
+                                        {m.api_url.includes('127.0.0.1') ? '● 本地服务' : m.api_url.replace('https://', '').split('/')[0]}
                                     </span>
                                 </div>
-                                <button class="remove-act-btn" onClick={() => removeActivatedModel(m)}>
+                                <button 
+                                    class="border border-[#E08090] bg-transparent text-[#E08090] px-2.5 py-1 rounded cursor-pointer whitespace-nowrap shrink-0 transition-all duration-200 hover:text-[#1a1a1d] hover:bg-[#E08090] text-xs" 
+                                    onClick={() => removeActivatedModel(m)}
+                                >
                                     移除
                                 </button>
                             </div>
@@ -479,30 +491,31 @@ const ProviderSettings: Component = () => {
                 </div>
             </div>
 
-            <div class="models-list-panel">
-                <div class="models-header-complex">
-                    <h4>可用模型列表 ({filteredModels().length})</h4>
-                    <div class="models-tools-row">
+            {/* 右侧可用列表面板 */}
+            <div class="flex-1 border border-[var(--primary-color)] rounded-xl bg-[var(--primary-5)] flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
+                <div class="p-5 border-b border-[var(--primary-20)] flex flex-col gap-4 bg-[var(--primary-5)]">
+                    <h4 class="font-bold">可用模型列表 ({filteredModels().length})</h4>
+                    <div class="flex gap-3">
                         <input 
                             type="text" 
-                            placeholder="搜索可用..." 
-                            class="models-search-input" 
+                            placeholder="搜索模型名称..." 
+                            class="flex-[2] bg-[#1a1a1d] border border-[#333] text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-[var(--primary-color)]" 
                             onInput={(e) => setSearchQuery(e.currentTarget.value)} 
                         />
-                        <div class="custom-select-container" ref={dropdownRef}>
+                        <div class="relative flex-1 min-w-[140px]" ref={dropdownRef}>
                             <div 
-                                class={`custom-select-trigger ${isDropdownOpen() ? 'open' : ''}`} 
+                                class={`bg-[#1a1a1d] border border-[#333] px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-[var(--primary-color)] transition-all ${isDropdownOpen() ? 'border-[var(--primary-color)]' : ''}`} 
                                 onClick={() => setIsDropdownOpen(!isDropdownOpen())}
                             >
                                 {selectedProvider() === "All" ? "所有厂商" : selectedProvider()}
-                                <span class="arrow-icon">▼</span>
+                                <span class={`transition-transform duration-200 ${isDropdownOpen() ? 'rotate-180' : ''}`}>▼</span>
                             </div>
                             {isDropdownOpen() && (
-                                <div class="custom-select-dropdown">
+                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-[#1a1a1d] border border-[var(--primary-color)] rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl text-xs">
                                     <For each={providers()}>
                                         {(p) => (
                                             <div 
-                                                class={`custom-select-item ${selectedProvider() === p ? 'active' : ''}`}
+                                                class={`p-2.5 text-[#eee] cursor-pointer hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)] transition-colors ${selectedProvider() === p ? 'bg-[var(--primary-10)] text-[var(--primary-color)]' : ''}`}
                                                 onClick={() => { setSelectedProvider(p); setIsDropdownOpen(false); }}
                                             >
                                                 {p === "All" ? "所有厂商" : p}
@@ -515,36 +528,36 @@ const ProviderSettings: Component = () => {
                     </div>
                 </div>
                 
-                <div class="models-scroll-area">
+                <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
                     {models().length === 0 && (
-                        <div style="color: #444; text-align: center; margin-top: 50px;">
+                        <div class="text-[#444] text-center mt-12 italic text-sm">
                             点击左侧“查询模型”按钮获取列表
                         </div>
                     )}
                     
                     <For each={filteredModels()}>
                         {(m) => (
-                            <div class="model-card">
-                                <div class="model-logo-container">
-                                    <img src={getModelLogo(m.id)} alt="logo" class="model-item-logo" />
+                            <div class="border-l-[3px] border-[var(--primary-color)] bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-[var(--primary-20)]">
+                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-[var(--primary-20)]">
+                                    <img src={getModelLogo(m.id)} alt="logo" class="w-5 h-5 object-contain" />
                                 </div>
 
-                                <div class="model-info">
-                                    <span class="model-id">{m.id}</span>
-                                    <span class="model-provider">Provider: {m.owned_by}</span>
+                                <div class="grow flex flex-col font-mono text-sm">
+                                    <span class="text-[#eee] font-medium truncate">{m.id}</span>
+                                    <span class="text-[#666] text-[10px]">Provider: {m.owned_by}</span>
                                 </div>
                                 
-                                <div class="switch-container">
-                                    <label class="relative inline-block w-[40px] h-[20px]">
+                                <div class="shrink-0 flex items-center">
+                                    <label class="relative inline-block w-9 h-5 cursor-pointer">
                                         <input 
-                                            class="opacity-0 w-0 h-0 absolute inset-0 cursor-pointer"
+                                            class="opacity-0 w-0 h-0 peer"
                                             type="checkbox"
                                             checked={activatedModels().some(am => 
                                                 am.model_id === m.id && am.api_url === apiUrl()
                                             )}
                                             onChange={() => toggleActivation(m)} 
                                         />
-                                        <span class="slider"></span>
+                                        <span class="absolute inset-0 bg-[#333] border border-[#555] rounded-full transition-all duration-300 peer-checked:bg-[var(--primary-color)] peer-checked:border-[var(--primary-color)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-4"></span>
                                     </label>
                                 </div>
                             </div>

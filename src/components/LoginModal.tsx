@@ -1,6 +1,5 @@
 import { createSignal, Component, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import './LoginModal.css';
 
 /**
  * 组件 Props 接口定义
@@ -101,22 +100,22 @@ const LoginModal: Component<LoginModalProps> = (props) => {
 
         try {
             if (isRegister()) {
-                
+
                 // 前端验证：密码一致性检查
                 if (password() !== confirmPassword()) {
                     throw new Error("两次输入的密码不一致");
                 }
-                
+
                 // 调用 Tauri 后端命令：register_to_backend
                 await invoke('register_to_backend', {
                     email: email(),
                     password: password(),
                     confirmPassword: confirmPassword()
                 });
-                
+
                 // 注册成功：显示成功动画
                 setIsSuccess(true);
-                
+
                 // 延时处理：先显示成功状态 800ms，再播放离开动画
                 setTimeout(() => {
                     setIsLeaving(true); // 触发离开动画
@@ -131,17 +130,17 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                 }, 800);
 
             } else {
-                
+
                 // 调用 Tauri 后端命令：login_to_backend
                 // 注意：后端使用 username 字段接收邮箱
                 const result: any = await invoke('login_to_backend', {
                     username: email(),
                     password: password()
                 });
-                
+
                 // 登录成功：显示欢迎动画
                 setIsSuccess(true);
-                
+
                 // 延时处理：先显示成功状态 600ms，再播放离开动画
                 setTimeout(() => {
                     setIsLeaving(true);
@@ -164,105 +163,127 @@ const LoginModal: Component<LoginModalProps> = (props) => {
     };
 
     return (
-
         <Show when={props.show}>
             <div
-                classList={{ 
-                    "modal-overlay": true, 
-                    "overlay-out": isExiting()
+                classList={{
+                    "opacity-0 pointer-events-none": isExiting(),
+                    "opacity-100": !isExiting()
                 }}
-                class="overlay-in"
+                class="fixed inset-0 bg-black/70 flex items-center justify-center z-[2000] backdrop-blur-sm transition-all duration-200 ease-out"
                 onClick={handleClose}
             >
                 <div
-                    classList={{ 
-                        "login-modal-content": true, 
-                        "animate-out": isExiting()
+                    classList={{
+                        "scale-95 opacity-0": isExiting(),
+                        "scale-100 opacity-100": !isExiting()
                     }}
-                    class="animate-in"
+                    class="relative min-h-[400px] bg-[#1e1e1e] w-[360px] border border-[var(--primary-color)] rounded-lg p-6 shadow-[0_0_20px_rgba(var(--primary-rgb),0.2)] text-[#e0e0e0] transition-all duration-300 ease-out transform pointer-events-auto"
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <div class="modal-overlay" onClick={props.onClose}>
-                        <div class="login-modal-content" onClick={(e) => e.stopPropagation()}>
-                            <Show when={isSuccess()}>
-                                <div classList={{
-                                    'success-overlay': true,
-                                    'leaving': isLeaving()
-                                }}>
-                                    <div class="success-circle">
-                                        <svg viewBox="0 0 52 52" class="checkmark">
-                                            <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none" />
-                                            <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
-                                        </svg>
-                                    </div>
-                                    <span class="success-text">
-                                        {isRegister() ? '注册成功' : '欢迎回来'}
-                                    </span>
-                                </div>
-                            </Show>
-
-                            <div class="modal-header">
-                                <h3>{isRegister() ? '新用户注册' : '账号登录'}</h3>
-                                <button class="close-btn" onClick={handleClose}>×</button>
+                    {/* 成功状态覆盖层 */}
+                    <Show when={isSuccess()}>
+                        <div
+                            classList={{
+                                'opacity-0 scale-105 blur-lg': isLeaving(),
+                                'opacity-100 scale-100': !isLeaving()
+                            }}
+                            class="absolute inset-0 bg-[#1e1e1e]/98 flex flex-col items-center justify-center z-50 rounded-lg transition-all duration-300"
+                        >
+                            <div class="success-circle">
+                                <svg viewBox="0 0 52 52" class="w-[60px] height-[60px] rounded-full block stroke-[3] stroke-[var(--primary-color)] [stroke-miterlimit:10] checkmark">
+                                    <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none" />
+                                    <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
+                                </svg>
                             </div>
-
-                            <form class="login-form" onSubmit={handleSubmit}>
-                                <div class="input-group">
-                                    <label>电子邮箱</label>
-                                    <input
-                                        type="email"
-                                        value={email()}
-                                        onInput={(e) => setEmail(e.currentTarget.value)}
-                                        placeholder="example@mail.com"
-                                        required
-                                    />
-                                </div>
-                                
-                                <div class="input-group">
-                                    <label>密码</label>
-                                    <input
-                                        type="password"
-                                        value={password()}
-                                        onInput={(e) => setPassword(e.currentTarget.value)}
-                                        placeholder="请输入密码"
-                                        required
-                                    />
-                                </div>
-
-                                <Show when={isRegister()}>
-                                    <div class="input-group">
-                                        <label>确认密码</label>
-                                        <input
-                                            type="password"
-                                            value={confirmPassword()}
-                                            onInput={(e) => setConfirmPassword(e.currentTarget.value)}
-                                            placeholder="请再次输入密码"
-                                            required
-                                        />
-                                    </div>
-                                </Show>
-
-                                {error() && <div class="error-msg">{error()}</div>}
-
-                                <button type="submit" class="login-submit-btn" disabled={loading()}>
-                                    {loading() ? '请稍候...' : (isRegister() ? '跳转注册' : '立即登录')}
-                                </button>
-                            </form>
-
-                            <div class="modal-footer">
-                                <span>
-                                    {isRegister() ? '已有账号？' : '没有账号？'}
-                                    <a href="javascript:void(0)" onClick={toggleMode}>
-                                        {isRegister() ? '立即登录' : '注册'}
-                                    </a>
-                                </span>
-                            </div>
+                            <span class="mt-[15px] text-[var(--primary-color)] text-lg font-bold tracking-[2px]">
+                                {isRegister() ? '注册成功' : '欢迎回来'}
+                            </span>
                         </div>
+                    </Show>
+
+                    {/* 头部 */}
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="m-0 text-lg text-[var(--primary-color)] font-medium">
+                            {isRegister() ? '新用户注册' : '账号登录'}
+                        </h3>
+                        <button
+                            class="bg-none border-none text-[#888] text-2xl cursor-pointer hover:text-white transition-colors"
+                            onClick={handleClose}
+                        >×</button>
+                    </div>
+
+                    {/* 表单 */}
+                    <form class="flex flex-col gap-4" onSubmit={handleSubmit}>
+                        <div class="flex flex-col gap-2">
+                            <label class="text-[13px] text-[#888]">电子邮箱</label>
+                            <input
+                                type="email"
+                                value={email()}
+                                onInput={(e) => setEmail(e.currentTarget.value)}
+                                placeholder="example@mail.com"
+                                required
+                                class="bg-[#252525] border border-[#333] p-[10px] rounded-md text-white outline-none transition-colors focus:border-[var(--primary-color)]"
+                            />
+                        </div>
+
+                        <div class="flex flex-col gap-2">
+                            <label class="text-[13px] text-[#888]">密码</label>
+                            <input
+                                type="password"
+                                value={password()}
+                                onInput={(e) => setPassword(e.currentTarget.value)}
+                                placeholder="请输入密码"
+                                required
+                                class="bg-[#252525] border border-[#333] p-[10px] rounded-md text-white outline-none transition-colors focus:border-[var(--primary-color)]"
+                            />
+                        </div>
+
+                        <Show when={isRegister()}>
+                            <div class="flex flex-col gap-2">
+                                <label class="text-[13px] text-[#888]">确认密码</label>
+                                <input
+                                    type="password"
+                                    value={confirmPassword()}
+                                    onInput={(e) => setConfirmPassword(e.currentTarget.value)}
+                                    placeholder="请再次输入密码"
+                                    required
+                                    class="bg-[#252525] border border-[#333] p-[10px] rounded-md text-white outline-none transition-colors focus:border-[var(--primary-color)]"
+                                />
+                            </div>
+                        </Show>
+
+                        <Show when={error()}>
+                            <div class="text-[#ff4d4f] text-[12px] mb-3 bg-[#fff2f0] p-2 rounded border border-[#ffccc7]">
+                                {error()}
+                            </div>
+                        </Show>
+
+                        <button
+                            type="submit"
+                            disabled={loading()}
+                            class="w-full p-3 mt-[10px] bg-[rgba(var(--primary-rgb),0.2)] border border-[var(--primary-color)] text-[var(--primary-color)] rounded-md font-bold cursor-pointer transition-all hover:bg-[var(--primary-color)] hover:text-[#1e1e1e] disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {loading() ? '请稍候...' : (isRegister() ? '跳转注册' : '立即登录')}
+                        </button>
+                    </form>
+
+                    {/* 页脚 */}
+                    <div class="mt-5 text-center text-[12px] text-[#888]">
+                        <span>
+                            {isRegister() ? '已有账号？' : '没有账号？'}
+                            <a
+                                href="javascript:void(0)"
+                                onClick={toggleMode}
+                                class="text-[var(--primary-color)] no-underline hover:underline ml-1"
+                            >
+                                {isRegister() ? '立即登录' : '注册'}
+                            </a>
+                        </span>
                     </div>
                 </div>
             </div>
         </Show>
     );
-};
+}
 
 export default LoginModal;

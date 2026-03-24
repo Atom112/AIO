@@ -233,20 +233,38 @@ const ChatPage: Component = () => {
     const topicId = currentTopicId();
     if (!asstId || !topicId) return;
 
-    // 构造 UI 消息对象（用于本地显示，与 API 格式可能不同）
     const newUserMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
-      content: apiContent, // API 格式的内容（可能是字符串或数组）
-      displayFiles: files.map(f => ({ name: f.name })), // UI 显示用的文件列表
-      displayText: userInput // UI 显示用的纯文本（不含文件上下文）
+      content: apiContent,
+      displayFiles: files.map(f => ({ name: f.name })),
+      displayText: userInput
     };
-    const aiMsgId = crypto.randomUUID();
+
+    const currentAsst = currentAssistant();
+    const currentTopic = activeTopic();
+    if (!currentAsst || !currentTopic) return;
+    const messagesForAI = [
+      { role: 'system', content: currentAsst.prompt },
+      ...(currentTopic.summary ? [{
+        role: 'system',
+        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
+      }] : []),
+      ...currentTopic.history.map((m: any) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: newUserMsg.content }
+    ];
+
+    const lastMsg = messagesForAI[messagesForAI.length - 1];
+    if (lastMsg.role !== 'user') {
+      console.error("错误：发送给 API 的最后一条消息不是 User!", lastMsg);
+      return;
+    }
+
     // 更新本地 Store：添加用户消息和空的 AI 占位消息
     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
       ...h,
       newUserMsg,
-      { id: aiMsgId, role: 'assistant' as const, content: "", modelId: currentMdl.model_id }
+      { id: crypto.randomUUID(), role: 'assistant' as const, content: "", modelId: selectedModel()?.model_id }
     ]);
 
     // 清空输入状态和文件列表，设置生成中状态
@@ -257,16 +275,6 @@ const ChatPage: Component = () => {
     setTypingIndex(activeTopic()?.history.length! - 1);
 
     try {
-      // 构造发送给 AI 的完整消息数组
-      const messagesForAI = [
-        { role: 'system', content: asstObj.prompt }, // 系统提示词
-        ...(topicObj.summary ? [{ // 若有历史摘要则作为系统消息插入
-          role: 'system',
-          content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${topicObj.summary}`
-        }] : []),
-        ...topicObj.history.map((m: any) => ({ role: m.role, content: m.content })) // 完整历史记录
-      ];
-
       // 调用 Tauri 后端流式接口（非阻塞，通过事件监听接收数据）
       await invoke('call_llm_stream', {
         apiUrl: currentMdl.api_url,

@@ -8,12 +8,11 @@ export default {
     extend: {
       colors: {
         // 映射 CSS 变量，使你可以使用 bg-primary, text-primary-50 等类名
-        primary: 'var(--primary-color)',
-        'primary-5': 'var(--primary-5)',
-        'primary-10': 'var(--primary-10)',
-        'primary-20': 'var(--primary-20)',
-        'primary-30': 'var(--primary-30)',
-        'primary-50': 'var(--primary-50)',
+        'pri': 'var(--primary-color)',
+        'pri-10': 'var(--primary-10)',
+        'pri-20': 'var(--primary-20)',
+        'pri-30': 'var(--primary-30)',
+        'pri-50': 'var(--primary-50)',
       },
       boxShadow: {
         'theme-inner': 'inset 0 0 20px 1px var(--primary-30)',

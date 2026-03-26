@@ -93,7 +93,7 @@ export interface User {
 // II. 全局响应式状态 (Global State)
 
 /** 全局用户头像状态信号，默认使用系统默认头像 */
-export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/user.svg');
+export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-logo/user.svg');
 
 /** 缓存上一次生成的 Blob URL，用于内存管理 */
 let lastBlobUrl: string | null = null;
@@ -106,7 +106,7 @@ let lastBlobUrl: string | null = null;
  * @returns 头像的可访问 URL 字符串
  */
 export const loadAvatarFromPath = async (input: string): Promise<string> => {
-    if (!input) return '/icons/user.svg';
+    if (!input) return '/icons/app-logo/user.svg';
 
     if (input.startsWith('data:image')) {
         return input;
@@ -127,7 +127,7 @@ export const loadAvatarFromPath = async (input: string): Promise<string> => {
         return lastBlobUrl;
     } catch (e) {
         console.error("从物理路径加载头像失败:", e, "路径:", input);
-        return '/icons/user.svg';
+        return '/icons/app-logo/user.svg';
     }
 };
 
@@ -232,7 +232,7 @@ export const logout = () => {
     setDatas('isLoggedIn', false);
     localStorage.removeItem('auth-token');
     // 重置头像为默认
-    setGlobalUserAvatar('/icons/user.svg');
+    setGlobalUserAvatar('/icons/app-logo/user.svg');
 };
 
 /** 主题颜色信号，从本地存储读取或使用默认色 #08ddf9 */

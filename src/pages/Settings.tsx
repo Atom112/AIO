@@ -2,45 +2,7 @@ import { Component, createSignal, Switch, Match, JSX } from 'solid-js';
 import ProviderSettings from '../components/ProviderSettings';
 import AccountSettings from '../components/AccountSettings';
 import AppSettings from '../components/AppSettings';
-
-/**
- * 图标组件集合
- * 使用内联 SVG 定义三个菜单项对应的图标，保持代码整洁且无需外部图标库依赖
- */
-const Icons = {
-    /**
-     * 供应商图标 - 三层菱形堆叠，象征服务提供商/云服务商的分层架构
-     * @returns JSX.Element SVG 图标元素
-     */
-    Provider: () => (
-        <svg class='block' xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-        </svg>
-    ),
-    
-    /**
-     * 账号图标 - 用户轮廓（头部圆形 + 肩部线条）
-     * @returns JSX.Element SVG 图标元素
-     */
-    Account: () => (
-        <svg class='block' xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-        </svg>
-    ),
-    
-    /**
-     * 应用图标 - 九宫格/网格布局，象征应用程序界面
-     * @returns JSX.Element SVG 图标元素
-     */
-    App: () => (
-        <svg class='block' xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <line x1="9" y1="3" x2="9" y2="21" />
-            <line x1="3" y1="9" x2="21" y2="9" />
-        </svg>
-    )
-};
+import Icon from '../components/Icon';
 
 /**
  * 设置页面主组件
@@ -60,15 +22,15 @@ const Settings: Component = () => {
      * 结构: { id: 唯一标识, label: 显示文本, icon: JSX 图标元素 }
      */
     const menuItems = [
-        { id: 'provider', label: '供应商设置', icon: <Icons.Provider /> },
-        { id: 'account', label: '账号信息', icon: <Icons.Account /> },
-        { id: 'app', label: '应用信息', icon: <Icons.App /> },
+        { id: 'provider', label: '供应商设置', icon: <Icon src="/icons/app-logo/provider.svg" class="w-5 h-5" /> },
+        { id: 'account', label: '账号信息', icon: <Icon src="/icons/app-logo/account.svg" class="w-5 h-5" /> },
+        { id: 'app', label: '应用信息', icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" /> },
     ];
 
 return (
-        <div class="flex fixed inset-[65px_1px_1px_0] p-4 border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-lg gap-4 bg-[#1e1e1e]">
+        <div class="flex fixed inset-[65px_1px_1px_0] p-4 glow-border rounded-lg gap-4 bg-[#1e1e1e]">
             {/* 侧边栏 */}
-            <div class="w-[200px] bg-black/30 border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] flex flex-col rounded-lg overflow-hidden">
+            <div class="w-[200px] bg-black/30 glow-border flex flex-col rounded-lg overflow-hidden">
                 <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
                     设置中心
                 </div>

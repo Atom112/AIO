@@ -82,6 +82,64 @@ html, body {
   opacity: 0; /* 初始透明，由动画带入 */
 }
 
+/* ========== 全局复用组件类 ========== */
+@layer components {
+
+    /* 主题色发光边框：圆角 + 内发光阴影 */
+    .glow-border {
+        @apply border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)];
+    }
+
+    /* 模态框遮罩层 */
+    .modal-overlay {
+        @apply fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 backdrop-blur-sm;
+    }
+
+    /* 模态框内容面板 */
+    .modal-panel {
+        @apply bg-[#1e1e1e] border border-[var(--primary-color)] rounded-xl;
+        box-shadow: 0 0 20px var(--primary-20);
+    }
+
+    /* 模态框关闭按钮 (×) */
+    .close-btn {
+        @apply w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-[#E08090];
+    }
+
+    /* 右键上下文菜单容器 */
+    .context-menu {
+        @apply fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left;
+    }
+
+    /* 上下文菜单项 */
+    .context-menu-item {
+        @apply w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)];
+    }
+
+    /* 侧边栏列表项（含发光边框，需在元素上额外添加 group 类） */
+    .sidebar-item {
+        @apply flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a];
+    }
+
+    /* 三点操作菜单按钮（需在父元素上添加 group 类） */
+    .dot-menu-btn {
+        @apply flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)] opacity-0;
+    }
+    .group:hover .dot-menu-btn {
+        @apply opacity-100;
+    }
+
+    /* 用户下拉菜单项 */
+    .user-menu-item {
+        @apply flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)];
+    }
+
+    /* 主色调操作按钮 */
+    .primary-btn {
+        @apply bg-[var(--primary-color)] text-black font-bold border-none rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80;
+    }
+}
+
 input[type="range"] {
     appearance: none;
     width: 100%;

@@ -2,6 +2,7 @@ import { Component, For, Show, Setter } from 'solid-js';
 import Markdown from './Markdown';
 import { Topic, globalUserAvatar, selectedModel } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
+import Icon from './Icon';
 
 /**
  * 组件 Props 接口定义
@@ -61,20 +62,20 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
      */
     const getModelLogo = (modelName: string) => {
         const name = modelName.toLowerCase();
-        if (name.includes('gpt')) return '/icons/openai.svg';
-        if (name.includes('claude')) return '/icons/claude-color.svg';
-        if (name.includes('grok')) return '/icons/grok.svg';
-        if (name.includes('gemini')) return '/icons/gemini-color.svg';
-        if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
-        if (name.includes('qwen') || name.includes('qwq')) return '/icons/qwen-color.svg';
-        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/moonshot.svg';
-        if (name.includes('doubao')) return '/icons/doubao-color.svg';
-        if (name.includes('glm')) return '/icons/zhipu-color.svg';
-        return '/icons/ollama.svg';
+        if (name.includes('gpt')) return '/icons/model-logo/openai.svg';
+        if (name.includes('claude')) return '/icons/model-logo/claude-color.svg';
+        if (name.includes('grok')) return '/icons/model-logo/grok.svg';
+        if (name.includes('gemini')) return '/icons/model-logo/gemini-color.svg';
+        if (name.includes('deepseek')) return '/icons/model-logo/deepseek-color.svg';
+        if (name.includes('qwen') || name.includes('qwq')) return '/icons/model-logo/qwen-color.svg';
+        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/model-logo/moonshot.svg';
+        if (name.includes('doubao')) return '/icons/model-logo/doubao-color.svg';
+        if (name.includes('glm')) return '/icons/model-logo/zhipu-color.svg';
+        return '/icons/model-logo/ollama.svg';
     };
 
     return (
-        <div class="flex flex-col flex-grow items-stretch border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full">
+        <div class="flex flex-col flex-grow items-stretch glow-border rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full">
             {/* 消息展示区域 */}
             <div
                 class={`flex-grow overflow-y-auto pb-[15px] transition-opacity duration-200 ease-out z-[1] ${props.isChangingTopic ? 'opacity-0' : 'opacity-100'}`}
@@ -107,10 +108,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 <For each={msg.displayFiles}>
                                                     {(file: any) => (
                                                         <div class="flex items-center bg-[var(--primary-10)] border border-[var(--primary-5)] rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 hover:border-[var(--primary-color)] first:mt-3">
-                                                            <div class="flex flex-shrink-0 items-center justify-center w-10 h-10 bg-[var(--primary-10)] rounded-md mr-3">
-                                                                <svg class="w-6 h-6 text-[var(--primary-color)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                                </svg>
+                                                            <div class="flex flex-shrink-0 items-center justify-center w-10 h-10 bg-[var(--primary-10)] rounded-md mr-3 text-[var(--primary-color)]">
+                                                                <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
                                                             </div>
                                                             <div class="flex-grow overflow-hidden">
                                                                 <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{file.name}</div>
@@ -155,9 +154,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     });
                                                 }}
                                             >
-                                                <svg class="w-[14px] h-[14px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                                                </svg>
+                                                <Icon src="/icons/app-logo/clipboard-copy.svg" class="w-[14px] h-[14px]" />
                                                 <span>复制</span>
                                             </button>
                                         </div>
@@ -260,9 +257,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     }
                                 }}
                             >
-                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M15.5 5.5L8.5 12.5C7.39543 13.6046 7.39543 15.3954 8.5 16.5C9.60457 17.6046 11.3954 17.6046 12.5 16.5L19.5 9.5C21.1569 7.84315 21.1569 5.15685 19.5 3.5C17.8431 1.84315 15.1569 1.84315 13.5 3.5L6.5 10.5C4.29086 12.7091 4.29086 16.2909 6.5 18.5C8.70914 20.7091 12.2909 20.7091 14.5 18.5L20.5 12.5" />
-                                </svg>
+                                <Icon src="/icons/app-logo/paperclip.svg" class="w-5 h-5" />
                             </button>
 
                             <button
@@ -280,11 +275,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     }
                                 }}
                             >
-                                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                                    <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" />
-                                    <path d="M21 15L16 10L5 21" stroke-linecap="round" stroke-linejoin="round" />
-                                </svg>
+                                <Icon src="/icons/app-logo/image-photo.svg" class="w-5 h-5" />
                             </button>
                         </div>
 
@@ -298,13 +289,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 }
                             >
                                 <Show when={props.isThinking} fallback={
-                                    <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" />
-                                    </svg>
+                                    <Icon src="/icons/app-logo/send.svg" class="w-[18px] h-[18px]" />
                                 }>
-                                    <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="currentColor">
-                                        <rect x="6" y="6" width="12" height="12" rx="2" />
-                                    </svg>
+                                    <Icon src="/icons/app-logo/stop-square.svg" class="w-[18px] h-[18px]" />
                                 </Show>
                             </button>
                         </div>
@@ -318,19 +305,13 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <div class="relative flex flex-col items-center justify-center w-[420px] h-[280px] bg-[#1a1a1a] border-2 border-[var(--primary-color)] rounded-xl shadow-[0_0_30px_var(--primary-20)] text-white text-center p-5">
                         <div class="flex items-end mb-[25px] mt-[-30px]">
                             <div class="flex items-center justify-center w-[60px] h-20 bg-[#2a2a2a] border border-[var(--primary-color)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] -rotate-12 translate-x-[15px] z-[1]">
-                                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
+                                <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
                             </div>
                             <div class="flex items-center justify-center w-[70px] h-[90px] bg-[#333] border border-[var(--primary-color)] rounded-md shadow-[0_0_20px_rgba(8,221,249,0.3)] text-[var(--primary-color)] z-[3]">
-                                <svg width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                                    <path d="M12 16V8m0 0l-3 3m3-3l3 3m-9 8h12"></path>
-                                </svg>
+                                <Icon src="/icons/app-logo/upload-arrow.svg" class="w-8 h-8" />
                             </div>
                             <div class="flex items-center justify-center w-[60px] h-20 bg-[#2a2a2a] border border-[rgba(8,221,249,0.5)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] rotate-12 -translate-x-[15px] z-[1]">
-                                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                    <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
-                                </svg>
+                                <Icon src="/icons/app-logo/file-blank.svg" class="w-6 h-6" />
                             </div>
                         </div>
                         <h2 class="text-[var(--primary-color)] text-[22px] tracking-wider mb-2.5 z-[2]">上传文件</h2>

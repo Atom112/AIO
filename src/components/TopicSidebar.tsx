@@ -8,6 +8,7 @@ import {
     setCurrentTopicId,
     saveSingleAssistantToBackend
 } from '../store/store';
+import Icon from './Icon';
 
 /**
  * 组件 Props 接口定义
@@ -263,7 +264,7 @@ return (
                             </div>
 
                             <button 
-                                class="w-full px-3 py-2 bg-transparent border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px_var(--primary-30)] text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)] active:scale-[0.98]" 
+                                class="w-full px-3 py-2 bg-transparent glow-border rounded-lg text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)] active:scale-[0.98]" 
                                 onClick={props.addTopic}
                             >
                                 + 新建话题
@@ -273,7 +274,7 @@ return (
                                 <For each={asst().topics}>
                                     {(topic) => (
                                         <div
-                                            class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
+                                            class="group sidebar-item"
                                             classList={{
                                                 'active bg-[var(--primary-20)] !border-[var(--primary-color)]': topic.id === currentTopicId()
                                             }}
@@ -299,12 +300,10 @@ return (
                                             </Show>
 
                                             <button
-                                                class="flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)] opacity-0 group-hover:opacity-100"
+                                                class="dot-menu-btn"
                                                 onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
                                             >
-                                                <svg fill="#FFFFFF" viewBox="0 0 24 24" class="w-[18px]">
-                                                    <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
-                                                </svg>
+                                                <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
                                             </button>
                                         </div>
                                     )}
@@ -318,14 +317,14 @@ return (
             {/* 右键菜单浮层：对应 .assistant-context-menu */}
             {showTopicMenuDiv() && (
                 <div
-                    class="fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left"
+                    class="context-menu"
                     style={{
                         top: `${topicMenuState().y}px`,
                         left: `${topicMenuState().x}px`
                     }}
                 >
                     <button
-                        class="w-full text-left px-3 py-2 text-white bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
+                        class="context-menu-item text-white"
                         onClick={() => {
                             props.setEditingTopicId(topicMenuState().targetTopicId);
                             closeTopicMenu();
@@ -335,7 +334,7 @@ return (
                     </button>
 
                     <button
-                        class="w-full text-left px-3 py-2 text-[#ff4d4d] bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)]"
+                        class="context-menu-item text-[#ff4d4d]"
                         onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}
                     >
                         删除话题

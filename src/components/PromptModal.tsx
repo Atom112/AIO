@@ -89,15 +89,15 @@ const PromptModal: Component<PromptModalProps> = (props) => {
     return (
         <Show when={props.show}>
             <div
-                class="fixed top-0 left-0 w-full h-full bg-black/60 flex justify-center items-center z-[1000] rounded-lg"
+                class="modal-overlay bg-black/60 z-[1000] rounded-lg"
                 onClick={(e) => e.target === e.currentTarget && handleClose()}
             >
                 <div
-                    class="border border-[var(--primary-color)] bg-[#2a2a2a] text-[#e0e0e0] p-6 rounded-lg shadow-[0_5px_15px_rgba(0,0,0,0.3)] w-[90%] max-w-[500px] flex flex-col gap-4"
+                    class="modal-panel bg-[#2a2a2a] text-[#e0e0e0] p-6 rounded-lg w-[90%] max-w-[500px] flex flex-col gap-4"
                 >
                     <div class="flex justify-between items-center border-b border-[#444] pb-3">
                         <h2 class='m-0 text-xl'>设置当前模型提示词</h2>
-                        <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-[#E08090]">
+                        <button onClick={handleClose} class="close-btn">
                             &times;
                         </button>
                     </div>

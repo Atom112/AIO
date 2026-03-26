@@ -151,14 +151,14 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
     return (
         <div 
-            class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/85 backdrop-blur-sm"
+            class="modal-overlay bg-black/85"
         >
             <div
-                class="bg-[#1a1a1a] w-[600px] border border-[var(--primary-color)] rounded-xl shadow-[0_0_20px_var(--primary-20)] overflow-hidden flex flex-col"
+                class="modal-panel bg-[#1a1a1a] w-[600px] overflow-hidden flex flex-col"
             >
                 <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-[#333] text-[var(--primary-color)] font-bold">
                     <span>裁剪图片</span>
-                    <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-[#E08090]">
+                    <button onClick={handleClose} class="close-btn">
                         &times;
                     </button>
                 </div>

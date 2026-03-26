@@ -74,16 +74,16 @@ const ProviderSettings: Component = () => {
      */
     const getModelLogo = (modelName: string) => {
         const name = modelName.toLowerCase();
-        if (name.includes('gpt')) return '/icons/openai.svg';
-        if (name.includes('claude')) return '/icons/claude-color.svg';
-        if (name.includes('grok')) return '/icons/grok.svg';
-        if (name.includes('gemini')) return '/icons/gemini-color.svg';
-        if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
-        if (name.includes('qwen')) return '/icons/qwen-color.svg';
-        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/moonshot.svg';
-        if (name.includes('doubao')) return '/icons/doubao-color.svg';
-        if (name.includes('glm')) return '/icons/zhipu-color.svg';
-        return '/icons/ollama.svg';
+        if (name.includes('gpt')) return '/icons/model-logo/openai.svg';
+        if (name.includes('claude')) return '/icons/model-logo/claude-color.svg';
+        if (name.includes('grok')) return '/icons/model-logo/grok.svg';
+        if (name.includes('gemini')) return '/icons/model-logo/gemini-color.svg';
+        if (name.includes('deepseek')) return '/icons/model-logo/deepseek-color.svg';
+        if (name.includes('qwen')) return '/icons/model-logo/qwen-color.svg';
+        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/model-logo/moonshot.svg';
+        if (name.includes('doubao')) return '/icons/model-logo/doubao-color.svg';
+        if (name.includes('glm')) return '/icons/model-logo/zhipu-color.svg';
+        return '/icons/model-logo/ollama.svg';
     };
 
     /**
@@ -380,14 +380,14 @@ return (
                     </div>
                     
                     <button 
-                        class="mt-2.5 bg-[var(--primary-color)] text-black border-none p-3 font-bold rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                        class="mt-2.5 primary-btn p-3"
                         onClick={handleSave}
                     >
                         保存当前配置
                     </button>
                     
                     <button 
-                        class="bg-[var(--primary-color)] text-black border-none p-3 font-bold rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80 disabled:opacity-50"
+                        class="primary-btn p-3 disabled:opacity-50"
                         onClick={handleQueryModels} 
                         disabled={isLoading()}
                     >
@@ -398,7 +398,7 @@ return (
                         <label class="text-sm font-bold border-t border-[var(--primary-20)] pt-4 mt-2">本地模型管理 (.gguf)</label>
                         <div class="flex flex-col gap-2.5">
                             <button 
-                                class="bg-[var(--primary-color)] text-black border-none p-3 font-bold rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80 w-full"
+                                class="primary-btn p-3 w-full"
                                 onClick={selectModelFile} 
                             >
                                 + 选择并添加本地模型

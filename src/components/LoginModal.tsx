@@ -169,7 +169,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                     "opacity-0 pointer-events-none": isExiting(),
                     "opacity-100": !isExiting()
                 }}
-                class="fixed inset-0 bg-black/70 flex items-center justify-center z-[2000] backdrop-blur-sm transition-all duration-200 ease-out"
+                class="modal-overlay transition-all duration-200 ease-out"
                 onClick={handleClose}
             >
                 <div
@@ -177,7 +177,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                         "scale-95 opacity-0": isExiting(),
                         "scale-100 opacity-100": !isExiting()
                     }}
-                    class="relative min-h-[400px] bg-[#1e1e1e] w-[360px] border border-[var(--primary-color)] rounded-lg p-6 shadow-[0_0_20px_var(--primary-20)] text-[#e0e0e0] transition-all duration-300 ease-out transform pointer-events-auto"
+                    class="relative min-h-[400px] modal-panel w-[360px] p-6 text-[#e0e0e0] transition-all duration-300 ease-out transform pointer-events-auto"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* 成功状态覆盖层 */}

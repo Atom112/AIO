@@ -12,7 +12,7 @@ import { Component } from 'solid-js';
 const AccountSettings: Component = () => {
     return (
         <div class="w-full h-full">
-            <div class="w-full max-w-2xl border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] rounded-xl bg-[var(--primary-5)] p-8">
+            <div class="w-full max-w-2xl glow-border rounded-xl bg-[var(--primary-5)] p-8">
                 {/* 标题部分 */}
                 <div class="border-b border-[var(--primary-20)] pb-3 mb-8">
                     <h3 class="text-xl font-bold tracking-tight text-white">账号信息</h3>

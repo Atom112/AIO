@@ -1,5 +1,6 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
 import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId } from '../store/store';
+import Icon from './Icon';
 
 /**
  * 组件 Props 接口定义
@@ -230,7 +231,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                 <For each={datas.assistants}>
                     {(assistant) => (
                         <div
-                            class="group flex items-center justify-between my-1 px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a]"
+                            class="group sidebar-item my-1"
                             classList={{
                                 'active bg-[var(--primary-20)] !border-[var(--primary-color)]': assistant.id === currentAssistantId()
                             }}
@@ -261,19 +262,17 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                             </Show>
 
                             <button
-                                class="flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)] opacity-0 group-hover:opacity-100"
+                                class="dot-menu-btn"
                                 onClick={(e) => openMenu(e as MouseEvent, assistant.id)}
                             >
-                                <svg fill="#FFFFFF" viewBox="0 0 24 24" class="w-[18px]">
-                                    <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
-                                </svg>
+                                <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
                             </button>
                         </div>
                     )}
                 </For>
 
                 <button
-                    class="w-full mt-[10px] px-3 py-2 bg-none border border-[var(--primary-color)] rounded-lg shadow-[inset_0_0_20px_1px_var(--primary-30)] text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)]"
+                    class="w-full mt-[10px] px-3 py-2 bg-none glow-border rounded-lg text-white cursor-pointer transition-all duration-300 hover:bg-[var(--primary-10)]"
                     onClick={props.addAssistant}
                 >
                     + 新增助手
@@ -283,14 +282,14 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
             {/* 右键菜单：对应 .assistant-context-menu 及其动画 */}
             {showMenuDiv() && (
                 <div
-                    class="fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left"
+                    class="context-menu"
                     style={{
                         top: `${menuState().y}px`,
                         left: `${menuState().x}px`
                     }}
                 >
                     <button
-                        class="w-full text-left px-3 py-2 text-white bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)] disabled:opacity-30"
+                        class="context-menu-item text-white disabled:opacity-30"
                         disabled={menuState().targetId === "default-assistant-id"}
                         onClick={() => {
                             props.setEditingAsstId(menuState().targetId);
@@ -301,7 +300,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                     </button>
 
                     <button
-                        class="w-full text-left px-3 py-2 text-[#ff4d4d] bg-none border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)] disabled:opacity-30"
+                        class="context-menu-item text-[#ff4d4d] disabled:opacity-30"
                         disabled={menuState().targetId === "default-assistant-id"}
                         onClick={() => removeAssistant(menuState().targetId)}
                     >

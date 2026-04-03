@@ -1,4 +1,4 @@
-import { createSignal, Component, Show } from 'solid-js';
+import { createSignal, Component, Show, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 
 /**
@@ -48,6 +48,18 @@ const LoginModal: Component<LoginModalProps> = (props) => {
     const [isLeaving, setIsLeaving] = createSignal(false);
     /** 模态框退出动画状态：控制整体关闭动画 */
     const [isExiting, setIsExiting] = createSignal(false);
+    /** 入场动画状态：true 时显示入场初始状态 */
+    const [isEntering, setIsEntering] = createSignal(true);
+
+    /**
+     * 监听模态框显示状态，触发入场动画
+     */
+    createEffect(() => {
+        if (props.show) {
+            setIsEntering(true);
+            setTimeout(() => setIsEntering(false), 0);
+        }
+    });
 
     /**
      * 切换登录/注册模式
@@ -68,7 +80,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
      * 
      * 动画流程：
      * 1. 设置 isExiting=true 触发退出动画（CSS 类 overlay-out/animate-out）
-     * 2. 等待 200ms（CSS 动画时长）
+     * 2. 等待 300ms（CSS 动画时长）
      * 3. 重置状态并调用父组件 onClose
      */
     const handleClose = () => {
@@ -76,7 +88,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
         setTimeout(() => {
             setIsExiting(false);
             props.onClose();
-        }, 200);
+        }, 300);
     };
 
     /**
@@ -166,18 +178,18 @@ const LoginModal: Component<LoginModalProps> = (props) => {
         <Show when={props.show}>
             <div
                 classList={{
-                    "opacity-0 pointer-events-none": isExiting(),
-                    "opacity-100": !isExiting()
+                    "opacity-0 pointer-events-none": isExiting() || isEntering(),
+                    "opacity-100": !isExiting() && !isEntering()
                 }}
                 class="modal-overlay transition-all duration-200 ease-out"
                 onClick={handleClose}
             >
                 <div
                     classList={{
-                        "scale-95 opacity-0": isExiting(),
-                        "scale-100 opacity-100": !isExiting()
+                        "scale-95 opacity-0": isExiting() || isEntering(),
+                        "scale-100 opacity-100": !isExiting() && !isEntering()
                     }}
-                    class="relative min-h-[400px] modal-panel w-[360px] p-6 text-[#e0e0e0] transition-all duration-300 ease-out transform pointer-events-auto"
+                    class="relative min-h-[400px] modal-panel w-[360px] p-6 text-[#e0e0e0] transition-all duration-500 ease-out transform pointer-events-auto"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* 成功状态覆盖层 */}
@@ -187,15 +199,15 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                                 'opacity-0 scale-105 blur-lg': isLeaving(),
                                 'opacity-100 scale-100': !isLeaving()
                             }}
-                            class="absolute inset-0 bg-[#1e1e1e]/98 flex flex-col items-center justify-center z-50 rounded-lg transition-all duration-300"
+                            class="absolute inset-0 bg-dark/98 flex flex-col items-center justify-center z-50 rounded-lg transition-all duration-300"
                         >
                             <div>
-                                <svg viewBox="0 0 52 52" class="w-[60px] h-[60px] rounded-full block stroke-[3] stroke-[var(--primary-color)] [stroke-miterlimit:10]">
+                                <svg viewBox="0 0 52 52" class="w-[60px] h-[60px] rounded-full block stroke-[3] stroke-pri [stroke-miterlimit:10]">
                                     <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none" />
                                     <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8" />
                                 </svg>
                             </div>
-                            <span class="mt-[15px] text-[var(--primary-color)] text-lg font-bold tracking-[2px]">
+                            <span class="mt-[15px] text-pri text-lg font-bold tracking-[2px]">
                                 {isRegister() ? '注册成功' : '欢迎回来'}
                             </span>
                         </div>
@@ -203,13 +215,12 @@ const LoginModal: Component<LoginModalProps> = (props) => {
 
                     {/* 头部 */}
                     <div class="flex justify-between items-center mb-6">
-                        <h3 class="m-0 text-lg text-[var(--primary-color)] font-medium">
+                        <h3 class="m-0 text-lg text-pri font-medium">
                             {isRegister() ? '新用户注册' : '账号登录'}
                         </h3>
-                        <button
-                            class="bg-none border-none text-[#888] text-2xl cursor-pointer hover:text-white transition-colors"
-                            onClick={handleClose}
-                        >×</button>
+                        <button onClick={handleClose} class="close-btn">
+                            &times;
+                        </button>
                     </div>
 
                     {/* 表单 */}
@@ -222,7 +233,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                                 onInput={(e) => setEmail(e.currentTarget.value)}
                                 placeholder="example@mail.com"
                                 required
-                                class="bg-[#252525] border border-[#333] p-[10px] rounded-md text-white outline-none transition-colors focus:border-[var(--primary-color)]"
+                                class="bg-dark-600 border border-dark-300 p-[10px] rounded-md text-white outline-none transition-colors focus:border-pri"
                             />
                         </div>
 
@@ -234,11 +245,19 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                                 onInput={(e) => setPassword(e.currentTarget.value)}
                                 placeholder="请输入密码"
                                 required
-                                class="bg-[#252525] border border-[#333] p-[10px] rounded-md text-white outline-none transition-colors focus:border-[var(--primary-color)]"
+                                class="bg-dark-600 border border-dark-300 p-[10px] rounded-md text-white outline-none transition-colors focus:border-pri"
                             />
                         </div>
 
-                        <Show when={isRegister()}>
+                        <div
+                            class="overflow-hidden transition-[max-height,opacity,padding] duration-300"
+                            style={{
+                                "max-height": isRegister() ? '140px' : '0px',
+                                "opacity": isRegister() ? '1' : '0',
+                                "padding-top": isRegister() ? '0.5rem' : '0px',
+                                "padding-bottom": isRegister() ? '0.5rem' : '0px'
+                            }}
+                        >
                             <div class="flex flex-col gap-2">
                                 <label class="text-[13px] text-[#888]">确认密码</label>
                                 <input
@@ -246,11 +265,11 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                                     value={confirmPassword()}
                                     onInput={(e) => setConfirmPassword(e.currentTarget.value)}
                                     placeholder="请再次输入密码"
-                                    required
-                                    class="bg-[#252525] border border-[#333] p-[10px] rounded-md text-white outline-none transition-colors focus:border-[var(--primary-color)]"
+                                    required={isRegister()}
+                                    class="bg-dark-600 border border-dark-300 p-[10px] rounded-md text-white outline-none transition-colors focus:border-pri"
                                 />
                             </div>
-                        </Show>
+                        </div>
 
                         <Show when={error()}>
                             <div class="text-[#ff4d4f] text-[12px] mb-3 bg-[#fff2f0] p-2 rounded border border-[#ffccc7]">
@@ -261,7 +280,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                         <button
                             type="submit"
                             disabled={loading()}
-                            class="w-full p-3 mt-[10px] bg-[rgba(var(--primary-rgb),0.2)] border border-[var(--primary-color)] text-[var(--primary-color)] rounded-md font-bold cursor-pointer transition-all hover:bg-[var(--primary-color)] hover:text-[#1e1e1e] disabled:opacity-50 disabled:cursor-not-allowed"
+                            class="w-full p-3 mt-[10px] bg-[rgba(var(--primary-rgb),0.2)] border border-pri text-pri rounded-md font-bold cursor-pointer transition-all hover:bg-pri hover:text-dark disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {loading() ? '请稍候...' : (isRegister() ? '跳转注册' : '立即登录')}
                         </button>
@@ -274,7 +293,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                             <a
                                 href="javascript:void(0)"
                                 onClick={toggleMode}
-                                class="text-[var(--primary-color)] no-underline hover:underline ml-1"
+                                class="text-pri no-underline hover:underline ml-1"
                             >
                                 {isRegister() ? '立即登录' : '注册'}
                             </a>

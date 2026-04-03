@@ -1,0 +1,12 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="aioGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00b3ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00ffff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- 连体线条 AIO -->
+  <path d="M40 140 L70 60 L100 140 M115 60 V140 M140 100 A25 25 0 1 1 140 99.9" 
+        stroke="url(#aioGrad2)" stroke-width="14" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- 科技感节点 -->
+</svg>

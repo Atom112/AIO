@@ -84,11 +84,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <For each={props.activeTopic?.history}>
                         {(msg: any, index) => (
                             <div
-                                class={`flex flex-col mb-3 pointer-events-auto ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                                class={`flex flex-col mb-3 pointer-events-auto animate-message-in ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
                             >
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
-                                        <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#dfdfdf] border border-[var(--primary-20)] shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
+                                        <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#dfdfdf] border border-pri-20 shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
                                             <img
                                                 src={getModelLogo(msg.modelId || selectedModel()?.model_id || "")}
                                                 alt="AI"
@@ -101,19 +101,19 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                         <div
                                             class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] transition-[height] duration-200 break-words group relative
                                                 ${msg.role === 'assistant'
-                                                    ? 'bg-[#333] border border-[#555] rounded-tl-[2px] text-white'
-                                                    : 'bg-[var(--primary-5)] border border-[var(--primary-color)] rounded-tr-[2px] text-white'}`}
+                                                    ? 'bg-dark-300 border border-dark-100 rounded-tl-[2px] text-white'
+                                                    : 'bg-pri-5 border border-pri rounded-tr-[2px] text-white'}`}
                                         >
                                             <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
                                                 <For each={msg.displayFiles}>
                                                     {(file: any) => (
-                                                        <div class="flex items-center bg-[var(--primary-10)] border border-[var(--primary-5)] rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 hover:border-[var(--primary-color)] first:mt-3">
-                                                            <div class="flex flex-shrink-0 items-center justify-center w-10 h-10 bg-[var(--primary-10)] rounded-md mr-3 text-[var(--primary-color)]">
+                                                        <div class="flex items-center bg-pri-10 border border-pri-5 rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 hover:border-pri first:mt-3">
+                                                            <div class="flex flex-shrink-0 items-center justify-center w-10 h-10 bg-pri-10 rounded-md mr-3 text-pri">
                                                                 <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
                                                             </div>
                                                             <div class="flex-grow overflow-hidden">
                                                                 <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{file.name}</div>
-                                                                <div class="text-[var(--primary-50)] text-[0.75rem] mt-[2px]">已解析</div>
+                                                                <div class="text-pri-50 text-[0.75rem] mt-[2px]">已解析</div>
                                                             </div>
                                                         </div>
                                                     )}
@@ -121,7 +121,17 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             </Show>
 
                                             <div class="mt-1">
-                                                <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                                                <Show
+                                                    when={msg.role === 'assistant' && !msg.content}
+                                                    fallback={
+                                                        <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                                                    }
+                                                >
+                                                    <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
+                                                        <Icon src="/icons/app-logo/loading.svg" class="w-4 h-4 animate-spin opacity-50" />
+                                                        <span class="animate-pulse">AI 正在思考中...</span>
+                                                    </div>
+                                                </Show>
                                             </div>
                                         </div>
 
@@ -133,7 +143,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
                                         <div class={`flex mt-1 px-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-[5] ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}>
                                             <button
-                                                class="flex items-center gap-1 relative bg-transparent border border-[var(--primary-20)] rounded-lg text-[var(--primary-color)] cursor-pointer text-[13px] px-3 py-1 transition-all duration-200 hover:bg-[var(--primary-10)] hover:border-[var(--primary-color)]"
+                                                class="flex items-center gap-1 relative bg-transparent border border-pri-20 rounded-lg text-pri cursor-pointer text-[13px] px-3 py-1 transition-all duration-200 hover:bg-pri-10 hover:border-pri"
                                                 onClick={(e) => {
                                                     const currentBtn = e.currentTarget;
                                                     const text = msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content;
@@ -161,7 +171,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </div>
 
                                     <Show when={msg.role === 'user'}>
-                                        <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#333] border border-[#555] shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
+                                        <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-dark-300 border border-dark-100 shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
                                             <img src={globalUserAvatar()} alt="User" class="w-full h-full object-cover" />
                                         </div>
                                     </Show>
@@ -169,27 +179,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             </div>
                         )}
                     </For>
-
-                    <Show when={props.isThinking}>
-                        <div class="flex flex-col mb-3 items-start">
-                            <div class="flex gap-3 w-full justify-start items-start">
-                                <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-[#dfdfdf] border border-[var(--primary-20)] overflow-hidden">
-                                    <img src={getModelLogo(selectedModel()?.model_id || "")} class="w-[25px] h-[25px]" />
-                                </div>
-                                <div class="flex flex-col max-w-[75%] items-start">
-                                    <div class="bg-[#333] border border-[#555] rounded-[10px] rounded-tl-[2px] px-[14px] py-[10px] text-white opacity-60">
-                                        AI 正在思考中...
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </Show>
                 </Show>
             </div>
 
             {/* 加载状态 */}
             <Show when={props.isProcessing}>
-                <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.8)] text-[var(--primary-color)] text-sm z-[100]">
+                <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.8)] text-pri text-sm z-[100]">
                     正在解析文件内容...
                 </div>
             </Show>
@@ -198,7 +193,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             <div class="flex flex-wrap gap-[3px] bg-transparent pt-[3px] relative z-0">
                 <For each={props.pendingFiles}>
                     {(file, i) => (
-                        <div class="flex items-center bg-[var(--primary-10)] border border-[var(--primary-5)] rounded-[16px] text-[var(--primary-color)] text-[12px] px-[10px] py-1 transition-all duration-200 hover:bg-[var(--primary-20)] hover:border-[var(--primary-color)]">
+                        <div class="flex items-center bg-pri-10 border border-pri-5 rounded-[16px] text-pri text-[12px] px-[10px] py-1 transition-all duration-200 hover:bg-pri-20 hover:border-pri">
                             <Show when={file.type === 'image'} fallback={<span class="mr-1">📄</span>}>
                                 <img src={file.content} class="w-5 h-5 object-cover mr-1 rounded-[2px]" />
                             </Show>
@@ -216,7 +211,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
             {/* 输入框区域 */}
             <div class="bg-transparent flex flex-col relative w-full z-10">
-                <div class="bg-[#151515] border border-[#333] rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 focus-within:border-[var(--primary-color)] focus-within:shadow-[0_0_10px_var(--primary-10)] w-full">
+                <div class="bg-dark-900 border border-dark-300 rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 focus-within:border-pri focus-within:shadow-[0_0_10px_var(--primary-10)] w-full">
                     <textarea
                         ref={textareaRef}
                         class="bg-transparent border-none text-white font-inherit text-base leading-relaxed min-h-[40px] max-h-[20vh] outline-none overflow-y-hidden px-[5px] pb-[5px] resize-none w-full focus:overflow-y-auto"
@@ -246,7 +241,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <div class="flex items-center justify-between border-t border-[rgba(255,255,255,0.05)] pt-2">
                         <div class="flex items-center gap-2">
                             <button
-                                class="flex items-center justify-center bg-transparent border-none rounded-md text-[#888] cursor-pointer p-1.5 transition-all duration-200 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--primary-color)]"
+                                class="flex items-center justify-center bg-transparent border-none rounded-md text-[#888] cursor-pointer p-1.5 transition-all duration-200 hover:bg-[rgba(255,255,255,0.1)] hover:text-pri"
                                 title="上传文件"
                                 onClick={async () => {
                                     const selected = await open({ multiple: true });
@@ -261,7 +256,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             </button>
 
                             <button
-                                class="flex items-center justify-center bg-transparent border-none rounded-md text-[#888] cursor-pointer p-1.5 transition-all duration-200 hover:bg-[rgba(255,255,255,0.1)] hover:text-[var(--primary-color)]"
+                                class="flex items-center justify-center bg-transparent border-none rounded-md text-[#888] cursor-pointer p-1.5 transition-all duration-200 hover:bg-[rgba(255,255,255,0.1)] hover:text-pri"
                                 title="上传图片"
                                 onClick={async () => {
                                     const selected = await open({
@@ -282,7 +277,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         <div class="flex items-center gap-2">
                             <button
                                 class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95
-                                    ${props.isThinking ? 'bg-[#ff4d4d] text-white' : 'bg-[var(--primary-color)] text-black'}`}
+                                    ${props.isThinking ? 'bg-[#ff4d4d] text-white' : 'bg-pri text-black'}`}
                                 onClick={() => props.isThinking
                                     ? props.handleStopGeneration()
                                     : props.handleSendMessage()
@@ -302,19 +297,19 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             {/* 拖拽覆盖层 */}
             <Show when={props.isDragging}>
                 <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.7)] backdrop-blur-[4px] pointer-events-none z-[9999]">
-                    <div class="relative flex flex-col items-center justify-center w-[420px] h-[280px] bg-[#1a1a1a] border-2 border-[var(--primary-color)] rounded-xl shadow-[0_0_30px_var(--primary-20)] text-white text-center p-5">
+                    <div class="relative flex flex-col items-center justify-center w-[420px] h-[280px] bg-dark-850 border-2 border-pri rounded-xl shadow-[0_0_30px_var(--primary-20)] text-white text-center p-5">
                         <div class="flex items-end mb-[25px] mt-[-30px]">
-                            <div class="flex items-center justify-center w-[60px] h-20 bg-[#2a2a2a] border border-[var(--primary-color)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] -rotate-12 translate-x-[15px] z-[1]">
+                            <div class="flex items-center justify-center w-[60px] h-20 bg-dark-500 border border-pri rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] -rotate-12 translate-x-[15px] z-[1]">
                                 <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
                             </div>
-                            <div class="flex items-center justify-center w-[70px] h-[90px] bg-[#333] border border-[var(--primary-color)] rounded-md shadow-[0_0_20px_rgba(8,221,249,0.3)] text-[var(--primary-color)] z-[3]">
+                            <div class="flex items-center justify-center w-[70px] h-[90px] bg-dark-300 border border-pri rounded-md shadow-[0_0_20px_rgba(8,221,249,0.3)] text-pri z-[3]">
                                 <Icon src="/icons/app-logo/upload-arrow.svg" class="w-8 h-8" />
                             </div>
-                            <div class="flex items-center justify-center w-[60px] h-20 bg-[#2a2a2a] border border-[rgba(8,221,249,0.5)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] rotate-12 -translate-x-[15px] z-[1]">
+                            <div class="flex items-center justify-center w-[60px] h-20 bg-dark-500 border border-[rgba(8,221,249,0.5)] rounded-md shadow-[0_4px_15px_rgba(0,0,0,0.5)] opacity-60 scale-[0.85] translate-y-[10px] rotate-12 -translate-x-[15px] z-[1]">
                                 <Icon src="/icons/app-logo/file-blank.svg" class="w-6 h-6" />
                             </div>
                         </div>
-                        <h2 class="text-[var(--primary-color)] text-[22px] tracking-wider mb-2.5 z-[2]">上传文件</h2>
+                        <h2 class="text-pri text-[22px] tracking-wider mb-2.5 z-[2]">上传文件</h2>
                         <p class="text-[rgba(255,255,255,0.7)] text-sm leading-relaxed max-w-[80%] z-[2]">支持 PDF、Docx、pptx 和图片解析</p>
                         <div class="absolute inset-3 border border-dashed border-[rgba(8,221,249,0.4)] rounded-lg pointer-events-none"></div>
                     </div>

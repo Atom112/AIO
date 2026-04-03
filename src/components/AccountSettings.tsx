@@ -12,9 +12,9 @@ import { Component } from 'solid-js';
 const AccountSettings: Component = () => {
     return (
         <div class="w-full h-full">
-            <div class="w-full max-w-2xl glow-border rounded-xl bg-[var(--primary-5)] p-8">
+            <div class="w-full max-w-2xl glow-border rounded-xl bg-pri-5 p-8">
                 {/* 标题部分 */}
-                <div class="border-b border-[var(--primary-20)] pb-3 mb-8">
+                <div class="border-b border-pri-20 pb-3 mb-8">
                     <h3 class="text-xl font-bold tracking-tight text-white">账号信息</h3>
                 </div>
                 
@@ -24,8 +24,8 @@ const AccountSettings: Component = () => {
                         <label class="text-xs font-bold text-[#666] uppercase tracking-widest">
                             当前登录身份
                         </label>
-                        <div class="bg-[#121212] p-4 rounded-lg border border-[#333] text-[var(--primary-color)] font-mono text-lg shadow-inner flex items-center gap-3">
-                            <span class="w-2 h-2 rounded-full bg-[var(--primary-color)] animate-pulse"></span>
+                        <div class="bg-dark-950 p-4 rounded-lg border border-dark-300 text-pri font-mono text-lg shadow-inner flex items-center gap-3">
+                            <span class="w-2 h-2 rounded-full bg-pri animate-pulse"></span>
                             Premium User
                         </div>
                     </div>
@@ -34,7 +34,7 @@ const AccountSettings: Component = () => {
                 {/* 操作按钮 */}
                 <div class="flex items-center gap-4">
                     <button 
-                        class="bg-[#E08090] text-black border-none py-3 px-8 font-bold rounded-md cursor-pointer transition-all duration-200 hover:opacity-90 hover:scale-[1.02] active:scale-95 shadow-lg shadow-[#E08090]/10"
+                        class="bg-danger text-black border-none py-3 px-8 font-bold rounded-md cursor-pointer transition-all duration-200 hover:opacity-90 hover:scale-[1.02] active:scale-95 shadow-lg shadow-danger/10"
                     >
                         退出当前账号
                     </button>

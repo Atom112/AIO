@@ -353,8 +353,8 @@ const ProviderSettings: Component = () => {
 return (
         <div class="flex gap-4 h-full">
             {/* 左侧配置面板 */}
-            <div class="w-[22%] p-5 border border-[var(--primary-color)] rounded-xl bg-[var(--primary-5)] overflow-y-auto">
-                <div class="border-b border-[var(--primary-20)] pb-2.5 mb-8">
+            <div class="w-[22%] p-5 border border-pri rounded-xl bg-pri-5 overflow-y-auto">
+                <div class="border-b border-pri-20 pb-2.5 mb-8">
                     <h3 class="text-lg font-bold">API 服务配置</h3>
                 </div>
                 
@@ -363,7 +363,7 @@ return (
                         <label class="text-sm font-bold">API 供应商网址</label>
                         <input 
                             type="text" 
-                            class="bg-[#1a1a1d] border border-[#333] text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-[var(--primary-color)]" 
+                            class="bg-dark-850 border border-dark-300 text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-pri" 
                             value={apiUrl()} 
                             onInput={(e) => setApiUrl(e.currentTarget.value)} 
                         />
@@ -373,7 +373,7 @@ return (
                         <label class="text-sm font-bold">API Key</label>
                         <input 
                             type="password" 
-                            class="bg-[#1a1a1d] border border-[#333] text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-[var(--primary-color)]" 
+                            class="bg-dark-850 border border-dark-300 text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-pri" 
                             value={apiKey()} 
                             onInput={(e) => setApiKey(e.currentTarget.value)} 
                         />
@@ -395,13 +395,13 @@ return (
                     </button>
 
                     <div class="flex flex-col gap-2">
-                        <label class="text-sm font-bold border-t border-[var(--primary-20)] pt-4 mt-2">本地模型管理 (.gguf)</label>
+                        <label class="text-sm font-bold border-t border-pri-20 pt-4 mt-2">本地模型管理 (.gguf)</label>
                         <div class="flex flex-col gap-2.5">
                             <button 
                                 class="primary-btn p-3 w-full"
                                 onClick={selectModelFile} 
                             >
-                                + 选择并添加本地模型
+                                选择并添加本地模型
                             </button>
 
                             <button
@@ -417,7 +417,7 @@ return (
                     </div>
                     
                     {saveStatus() && (
-                        <div class="text-sm text-[var(--primary-color)] animate-pulse text-center">
+                        <div class="text-sm text-pri animate-pulse text-center">
                             {saveStatus()}
                         </div>
                     )}
@@ -425,8 +425,8 @@ return (
             </div>
 
             {/* 中间已激活面板 */}
-            <div class="flex-1 border border-[var(--primary-color)] rounded-xl bg-[var(--primary-5)] flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
-                <div class="p-5 border-b border-[var(--primary-20)] flex flex-col gap-4 bg-[var(--primary-5)]">
+            <div class="flex-1 border border-pri rounded-xl bg-pri-5 flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
+                <div class="p-5 border-b border-pri-20 flex flex-col gap-4 bg-pri-5">
                     <h4 class="font-bold flex items-center gap-2">
                         <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
                         已激活模型 ({filteredActivatedModels().length})
@@ -435,24 +435,24 @@ return (
                         <input 
                             type="text" 
                             placeholder="搜索已激活..." 
-                            class="flex-[2] bg-[#1a1a1d] border border-[#333] text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-[var(--primary-color)]" 
+                            class="flex-[2] bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-pri" 
                             onInput={(e) => setSearchQueryAct(e.currentTarget.value)} 
                         />
                         
                         <div class="relative flex-1 min-w-[140px]" ref={dropdownRefAct}>
                             <div 
-                                class={`bg-[#1a1a1d] border border-[#333] px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-[var(--primary-color)] transition-all ${isDropdownOpenAct() ? 'border-[var(--primary-color)]' : ''}`} 
+                                class={`bg-dark-850 border border-dark-300 px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-pri transition-all ${isDropdownOpenAct() ? 'border-pri' : ''}`} 
                                 onClick={() => setIsDropdownOpenAct(!isDropdownOpenAct())}
                             >
                                 {selectedProviderAct() === "All" ? "所有厂商" : selectedProviderAct()}
                                 <span class={`transition-transform duration-200 ${isDropdownOpenAct() ? 'rotate-180' : ''}`}>▼</span>
                             </div>
                             {isDropdownOpenAct() && (
-                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-[#1a1a1d] border border-[var(--primary-color)] rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl">
+                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-dark-850 border border-pri rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl">
                                     <For each={providersAct()}>
                                         {(p) => (
                                             <div 
-                                                class={`p-2.5 text-[#eee] cursor-pointer text-xs hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)] transition-colors ${selectedProviderAct() === p ? 'bg-[var(--primary-10)] text-[var(--primary-color)]' : ''}`}
+                                                class={`p-2.5 text-[#eee] cursor-pointer text-xs hover:bg-pri-20 hover:text-pri transition-colors ${selectedProviderAct() === p ? 'bg-pri-10 text-pri' : ''}`}
                                                 onClick={() => { setSelectedProviderAct(p); setIsDropdownOpenAct(false); }}
                                             >
                                                 {p === "All" ? "所有厂商" : p}
@@ -468,8 +468,8 @@ return (
                 <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
                     <For each={filteredActivatedModels()}>
                         {(m) => (
-                            <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-[var(--primary-20)]">
-                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-[var(--primary-20)]">
+                            <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
+                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
                                     <img src={getModelLogo(m.model_id)} alt="logo" class="w-5 h-5 object-contain" />
                                 </div>
 
@@ -480,7 +480,7 @@ return (
                                     </span>
                                 </div>
                                 <button 
-                                    class="border border-[#E08090] bg-transparent text-[#E08090] px-2.5 py-1 rounded cursor-pointer whitespace-nowrap shrink-0 transition-all duration-200 hover:text-[#1a1a1d] hover:bg-[#E08090] text-xs" 
+                                    class="border border-danger bg-transparent text-danger px-2.5 py-1 rounded cursor-pointer whitespace-nowrap shrink-0 transition-all duration-200 hover:text-dark-850 hover:bg-danger text-xs" 
                                     onClick={() => removeActivatedModel(m)}
                                 >
                                     移除
@@ -492,30 +492,30 @@ return (
             </div>
 
             {/* 右侧可用列表面板 */}
-            <div class="flex-1 border border-[var(--primary-color)] rounded-xl bg-[var(--primary-5)] flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
-                <div class="p-5 border-b border-[var(--primary-20)] flex flex-col gap-4 bg-[var(--primary-5)]">
+            <div class="flex-1 border border-pri rounded-xl bg-pri-5 flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
+                <div class="p-5 border-b border-pri-20 flex flex-col gap-4 bg-pri-5">
                     <h4 class="font-bold">可用模型列表 ({filteredModels().length})</h4>
                     <div class="flex gap-3">
                         <input 
                             type="text" 
                             placeholder="搜索模型名称..." 
-                            class="flex-[2] bg-[#1a1a1d] border border-[#333] text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-[var(--primary-color)]" 
+                            class="flex-[2] bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-pri" 
                             onInput={(e) => setSearchQuery(e.currentTarget.value)} 
                         />
                         <div class="relative flex-1 min-w-[140px]" ref={dropdownRef}>
                             <div 
-                                class={`bg-[#1a1a1d] border border-[#333] px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-[var(--primary-color)] transition-all ${isDropdownOpen() ? 'border-[var(--primary-color)]' : ''}`} 
+                                class={`bg-dark-850 border border-dark-300 px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-pri transition-all ${isDropdownOpen() ? 'border-pri' : ''}`} 
                                 onClick={() => setIsDropdownOpen(!isDropdownOpen())}
                             >
                                 {selectedProvider() === "All" ? "所有厂商" : selectedProvider()}
                                 <span class={`transition-transform duration-200 ${isDropdownOpen() ? 'rotate-180' : ''}`}>▼</span>
                             </div>
                             {isDropdownOpen() && (
-                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-[#1a1a1d] border border-[var(--primary-color)] rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl text-xs">
+                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-dark-850 border border-pri rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl text-xs">
                                     <For each={providers()}>
                                         {(p) => (
                                             <div 
-                                                class={`p-2.5 text-[#eee] cursor-pointer hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)] transition-colors ${selectedProvider() === p ? 'bg-[var(--primary-10)] text-[var(--primary-color)]' : ''}`}
+                                                class={`p-2.5 text-[#eee] cursor-pointer hover:bg-pri-20 hover:text-pri transition-colors ${selectedProvider() === p ? 'bg-pri-10 text-pri' : ''}`}
                                                 onClick={() => { setSelectedProvider(p); setIsDropdownOpen(false); }}
                                             >
                                                 {p === "All" ? "所有厂商" : p}
@@ -537,8 +537,8 @@ return (
                     
                     <For each={filteredModels()}>
                         {(m) => (
-                            <div class="border-l-[3px] border-[var(--primary-color)] bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-[var(--primary-20)]">
-                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-[var(--primary-20)]">
+                            <div class="border-l-[3px] border-pri bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
+                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
                                     <img src={getModelLogo(m.id)} alt="logo" class="w-5 h-5 object-contain" />
                                 </div>
 
@@ -557,7 +557,7 @@ return (
                                             )}
                                             onChange={() => toggleActivation(m)} 
                                         />
-                                        <span class="absolute inset-0 bg-[#333] border border-[#555] rounded-full transition-all duration-300 peer-checked:bg-[var(--primary-color)] peer-checked:border-[var(--primary-color)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-4"></span>
+                                        <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-4"></span>
                                     </label>
                                 </div>
                             </div>

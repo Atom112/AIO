@@ -9,10 +9,29 @@ export default {
       colors: {
         // 映射 CSS 变量，使你可以使用 bg-primary, text-primary-50 等类名
         'pri': 'var(--primary-color)',
+        'pri-5': 'var(--primary-5)',
         'pri-10': 'var(--primary-10)',
         'pri-20': 'var(--primary-20)',
         'pri-30': 'var(--primary-30)',
         'pri-50': 'var(--primary-50)',
+        // 深色背景色阶：统一管理所有深灰色背景
+        'dark': {
+          DEFAULT: '#1e1e1e',
+          50: '#666666',
+          100: '#555555',
+          200: '#484848',
+          300: '#333333',
+          400: '#2e2e2e',
+          500: '#2a2a2a',
+          600: '#252525',
+          700: '#222222',
+          800: '#1e1e1e',
+          850: '#1a1a1a',
+          900: '#151515',
+          950: '#121212',
+        },
+        // 危险/关闭操作色
+        'danger': '#E08090',
       },
       boxShadow: {
         'theme-inner': 'inset 0 0 20px 1px var(--primary-30)',

@@ -58,28 +58,34 @@ html, body {
   z-index: 1;
 }
 
+/* Settings 子选项卡切换过渡 */
+.settings-tab-fade-enter-active,
+.settings-tab-fade-exit-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  contain: paint; 
+}
+
+/* 1. 进入前的初始状态 */
+.settings-tab-fade-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+/* 2. 离开后的结束状态  */
+.settings-tab-fade-exit-active {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+/* 当容器内部有正在执行动画的子元素时，隐藏溢出 */
+.flex-1:has(.settings-tab-fade-enter-active),
+.flex-1:has(.settings-tab-fade-exit-active) {
+  overflow-y: hidden !important;
+}
+
 /* 加载动画容器 */
 .loading-container {
   @apply flex items-center justify-center h-screen w-screen text-gray-400;
-}
-
-@keyframes message-in {
-  0% {
-    opacity: 0;
-    transform: translateY(16px) scale(0.95);
-    filter: blur(4px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-}
-
-/* 定义基础动画类 */
-.animate-message-in {
-  animation: message-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-  opacity: 0; /* 初始透明，由动画带入 */
 }
 
 /* ========== 全局复用组件类 ========== */
@@ -87,7 +93,7 @@ html, body {
 
     /* 主题色发光边框：圆角 + 内发光阴影 */
     .glow-border {
-        @apply border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)];
+        @apply border border-pri shadow-theme-inner;
     }
 
     /* 模态框遮罩层 */
@@ -97,33 +103,33 @@ html, body {
 
     /* 模态框内容面板 */
     .modal-panel {
-        @apply bg-[#1e1e1e] border border-[var(--primary-color)] rounded-xl;
+        @apply bg-dark border border-pri rounded-xl;
         box-shadow: 0 0 20px var(--primary-20);
     }
 
     /* 模态框关闭按钮 (×) */
     .close-btn {
-        @apply w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-[#E08090];
+        @apply w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-danger;
     }
 
     /* 右键上下文菜单容器 */
     .context-menu {
-        @apply fixed z-[100] min-w-[150px] bg-[#2e2e2e] border border-[var(--primary-color)] rounded-lg shadow-xl py-1 origin-top-left;
+        @apply fixed z-[100] min-w-[150px] bg-dark-400 border border-pri rounded-lg shadow-xl py-1 origin-top-left;
     }
 
     /* 上下文菜单项 */
     .context-menu-item {
-        @apply w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-[var(--primary-10)];
+        @apply w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-pri-10;
     }
 
     /* 侧边栏列表项（含发光边框，需在元素上额外添加 group 类） */
     .sidebar-item {
-        @apply flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-[var(--primary-color)] shadow-[inset_0_0_20px_1px_var(--primary-30)] bg-transparent transition-all duration-200 hover:bg-[#2a2a2a];
+        @apply flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-pri shadow-theme-inner bg-transparent transition-all duration-200 hover:bg-dark-500;
     }
 
     /* 三点操作菜单按钮（需在父元素上添加 group 类） */
     .dot-menu-btn {
-        @apply flex items-center justify-center w-[30px] h-[30px] bg-[#1e1e1e] border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-[var(--primary-5)] active:scale-90 active:bg-[var(--primary-10)] opacity-0;
+        @apply flex items-center justify-center w-[30px] h-[30px] bg-dark border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-pri-5 active:scale-90 active:bg-pri-10 opacity-0;
     }
     .group:hover .dot-menu-btn {
         @apply opacity-100;
@@ -131,12 +137,22 @@ html, body {
 
     /* 用户下拉菜单项 */
     .user-menu-item {
-        @apply flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-[var(--primary-20)] hover:text-[var(--primary-color)];
+        @apply flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-pri-20 hover:text-[var(--primary-color)];
     }
 
     /* 主色调操作按钮 */
     .primary-btn {
-        @apply bg-[var(--primary-color)] text-black font-bold border-none rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80;
+        @apply bg-pri text-black font-bold border-none rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80;
+    }
+
+    /* 导航栏图标链接（聊天、设置、模型选择、提示词） */
+    .nav-icon-link {
+        @apply flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer;
+    }
+
+    /* 窗口控制按钮（最小化、最大化、关闭） */
+    .win-ctrl-btn {
+        @apply w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-pri text-[18px] cursor-pointer rounded-md transition-all hover:text-white ml-1;
     }
 }
 

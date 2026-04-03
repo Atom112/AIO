@@ -39,13 +39,15 @@ const PromptModal: Component<PromptModalProps> = (props) => {
 
     /** 退出动画状态：true 时添加退出动画类名 */
     const [isExiting, setIsExiting] = createSignal(false);
+    /** 入场动画状态：true 时显示入场初始状态 */
+    const [isEntering, setIsEntering] = createSignal(true);
 
     /**
      * 处理关闭模态框（带动画）
      * 
      * 动画流程：
      * 1. 设置 isExiting=true 触发 CSS 退出动画
-     * 2. 等待 200ms（CSS 动画时长）
+     * 2. 等待 500ms（CSS 动画时长）
      * 3. 重置状态并调用父组件 onClose
      */
     const handleClose = () => {
@@ -53,7 +55,7 @@ const PromptModal: Component<PromptModalProps> = (props) => {
         setTimeout(() => {
             setIsExiting(false);
             props.onClose();
-        }, 200);
+        }, 300);
     };
 
     /**
@@ -61,6 +63,7 @@ const PromptModal: Component<PromptModalProps> = (props) => {
      * 
      * 副作用逻辑：每当 props.show 变为 true（模态框打开）时，
      * 将 props.initialPrompt 同步到本地 promptText，确保每次打开都是最新初始值。
+     * 并触发入场动画。
      * 
      * 数据流：props.initialPrompt → setPromptText → 文本域显示
      */
@@ -68,6 +71,9 @@ const PromptModal: Component<PromptModalProps> = (props) => {
         if (props.show) {
             // 使用空字符串作为默认值，避免 undefined
             setPromptText(props.initialPrompt ?? '');
+            // 触发入场动画
+            setIsEntering(true);
+            setTimeout(() => setIsEntering(false), 0);
         }
     });
 
@@ -89,11 +95,19 @@ const PromptModal: Component<PromptModalProps> = (props) => {
     return (
         <Show when={props.show}>
             <div
-                class="modal-overlay bg-black/60 z-[1000] rounded-lg"
+                classList={{
+                    "opacity-0 pointer-events-none": isExiting() || isEntering(),
+                    "opacity-100": !isExiting() && !isEntering()
+                }}
+                class="modal-overlay bg-black/60 z-[1000] rounded-lg transition-all duration-200 ease-out"
                 onClick={(e) => e.target === e.currentTarget && handleClose()}
             >
                 <div
-                    class="modal-panel bg-[#2a2a2a] text-[#e0e0e0] p-6 rounded-lg w-[90%] max-w-[500px] flex flex-col gap-4"
+                    classList={{
+                        "scale-95 opacity-0": isExiting() || isEntering(),
+                        "scale-100 opacity-100": !isExiting() && !isEntering()
+                    }}
+                    class="modal-panel bg-dark-500 text-[#e0e0e0] p-6 rounded-lg w-[90%] max-w-[500px] flex flex-col gap-4 transition-all duration-500 ease-out transform"
                 >
                     <div class="flex justify-between items-center border-b border-[#444] pb-3">
                         <h2 class='m-0 text-xl'>设置当前模型提示词</h2>
@@ -106,16 +120,16 @@ const PromptModal: Component<PromptModalProps> = (props) => {
                             value={promptText()}
                             onInput={(e) => setPromptText(e.currentTarget.value)}
                             placeholder="例如：你是一个乐于助人的 AI 助手。"
-                            class="w-full p-2.5 bg-[#333] border border-[#555] rounded-lg text-[#e0e0e0] text-base font-mono resize-y box-border focus:outline-none focus:border-[var(--primary-50)]" 
+                            class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[#e0e0e0] text-base font-mono resize-y box-border focus:outline-none focus:border-pri-50" 
                             style="font-family: 'JetBrains Mono', Consolas, Monaco, 'Courier New', monospace !important;"
                         />
 
                     <div class="flex justify-end gap-3">
-                        <button onClick={handleClose} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-[#555] text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-[#666]">
+                        <button onClick={handleClose} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-dark-100 text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-dark-50">
                             取消
                         </button>
 
-                        <button onClick={handleSave} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-[var(--primary-color)] text-black rounded-lg hover:bg-[var(--primary-50)] transition-all duration-200">
+                        <button onClick={handleSave} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-pri text-black rounded-lg hover:scale-105 transition-all duration-200">
                             保存
                         </button>
                     </div>

@@ -1,4 +1,5 @@
 import { Component, createSignal, Switch, Match, JSX } from 'solid-js';
+import { Transition } from 'solid-transition-group';
 import ProviderSettings from '../components/ProviderSettings';
 import AccountSettings from '../components/AccountSettings';
 import AppSettings from '../components/AppSettings';
@@ -28,7 +29,7 @@ const Settings: Component = () => {
     ];
 
 return (
-        <div class="flex fixed inset-[65px_1px_1px_0] p-4 glow-border rounded-lg gap-4 bg-[#1e1e1e]">
+        <div class="flex fixed inset-[65px_1px_1px_0] p-4 glow-border rounded-lg gap-4 bg-dark">
             {/* 侧边栏 */}
             <div class="w-[200px] bg-black/30 glow-border flex flex-col rounded-lg overflow-hidden">
                 <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
@@ -40,18 +41,18 @@ return (
                         <div
                             class={`relative px-5 py-4 my-1 cursor-pointer flex items-center gap-3 rounded-lg border border-transparent transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group overflow-hidden
                                 ${activeTab() === item.id 
-                                    ? 'bg-[var(--primary-10)] text-[var(--primary-color)] [text-shadow:0_0_8px_var(--primary-5)] border-[var(--primary-20)] shadow-[inset_0_0_10px_var(--primary-10)]' 
-                                    : 'text-[#aaa] hover:bg-[var(--primary-10)] hover:text-white hover:pl-6'
+                                    ? 'bg-pri-10 text-pri [text-shadow:0_0_8px_var(--primary-5)] border-pri-20 shadow-[inset_0_0_10px_var(--primary-10)]' 
+                                    : 'text-[#aaa] hover:bg-pri-10 hover:text-white hover:pl-6'
                                 }`}
                             onClick={() => setActiveTab(item.id)}
                         >
                             {/* 激活状态的左侧指示条 (原 ::before) */}
                             <span 
-                                class={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-3/5 bg-[var(--primary-color)] rounded-r-sm transition-transform duration-300 
+                                class={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-3/5 bg-pri rounded-r-sm transition-transform duration-300 
                                     ${activeTab() === item.id ? 'scale-y-100' : 'scale-y-0 group-hover:scale-y-50'}`}
                             />
                             
-                            <span class={`flex items-center justify-center w-5 h-5 transition-colors duration-300 ${activeTab() === item.id ? 'text-[var(--primary-color)]' : 'text-[#666] group-hover:text-white'}`}>
+                            <span class={`flex items-center justify-center w-5 h-5 transition-colors duration-300 ${activeTab() === item.id ? 'text-pri' : 'text-[#666] group-hover:text-white'}`}>
                                 {item.icon}
                             </span>
                             <span class="text-sm font-medium leading-none">
@@ -64,25 +65,25 @@ return (
 
             {/* 主内容区 */}
             <div class="flex-1 overflow-y-auto pr-1 scroll-smooth bg-[radial-gradient(circle_at_50%_50%,rgb(8_221_249/0.02)_0%,transparent_80%)]">
-                <Switch>
-                    <Match when={activeTab() === 'provider'}>
-                        <div class="h-full">
-                            <ProviderSettings />
-                        </div>
-                    </Match>
-                    
-                    <Match when={activeTab() === 'account'}>
-                        <div class="h-full">
-                            <AccountSettings />
-                        </div>
-                    </Match>
-                    
-                    <Match when={activeTab() === 'app'}>
-                        <div class="h-full">
-                            <AppSettings />
-                        </div>
-                    </Match>
-                </Switch>
+                <Transition name="settings-tab-fade" mode="outin">
+                    <Switch>
+                        <Match when={activeTab() === 'provider'}>
+                            <div class="h-full">
+                                <ProviderSettings />
+                            </div>
+                        </Match>
+                        <Match when={activeTab() === 'account'}>
+                            <div class="h-full">
+                                <AccountSettings />
+                            </div>
+                        </Match>
+                        <Match when={activeTab() === 'app'}>
+                            <div class="h-full">
+                                <AppSettings />
+                            </div>
+                        </Match>
+                    </Switch>
+                </Transition>
             </div>
         </div>
     );

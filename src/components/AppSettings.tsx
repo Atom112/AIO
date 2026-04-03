@@ -236,7 +236,7 @@ const AppSettings: Component = () => {
                             checked={autoStart()}
                             onChange={(e) => setAutoStart(e.currentTarget.checked)}
                         />
-                        <span class="absolute inset-0 bg-[#333] border border-[#555] rounded-full transition-all duration-300 peer-checked:bg-[var(--primary-color)] peer-checked:border-[var(--primary-color)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
+                        <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
                     </label>
                 </div>
 
@@ -247,7 +247,7 @@ const AppSettings: Component = () => {
                     </div>
 
                     <div
-                        class="flex items-center gap-2 bg-[var(--primary-5)] text-[#ccc] px-4 py-2 rounded-lg cursor-pointer border border-[var(--primary-color)] transition-all duration-200 hover:bg-[var(--primary-50)] hover:text-black"
+                        class="flex items-center gap-2 bg-pri-5 text-[#ccc] px-4 py-2 rounded-lg cursor-pointer border border-pri transition-all duration-200 hover:bg-pri-50 hover:text-black"
                         onClick={() => open('https://github.com/Atom112/AIO')}
                         title="访问 GitHub"
                     >

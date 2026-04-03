@@ -452,19 +452,19 @@ return (
 
       <nav 
         data-tauri-drag-region
-        class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] bg-[#1e1e1e] glow-border rounded-lg m-0 mr-[1px] z-[1000] [app-region:drag] select-none"
+        class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] bg-dark glow-border rounded-lg m-0 mr-[1px] z-[1000] [app-region:drag] select-none"
       >
         {/* Logo 容器 - 绝对定位在左侧 */}
         <div class="absolute left-[10px] top-1/2 -translate-y-1/2 flex items-center justify-center z-[1001] pointer-events-none">
-          <img src="/icons/app-logo/logo.png" alt="AIO" class="w-10 h-10 object-contain block [app-region:no-drag]" />
+          <img src="/icons/app-logo/logo.svg" alt="AIO" class="w-10 h-10 object-contain block [app-region:no-drag]" />
         </div>
 
         {/* 聊天导航 */}
         <A 
           href="/chat" 
           title="对话" 
-          activeClass="!text-[var(--primary-color)] font-bold" 
-          class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer [app-region:no-drag]"
+          activeClass="!text-pri font-bold" 
+          class="nav-icon-link [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
@@ -473,8 +473,8 @@ return (
         <A 
           href="/settings" 
           title="设置" 
-          activeClass="!text-[var(--primary-color)] font-bold" 
-          class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer [app-region:no-drag]"
+          activeClass="!text-pri font-bold" 
+          class="nav-icon-link [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/settings-gear.svg" class="w-6 h-6" />
         </A>
@@ -488,14 +488,14 @@ return (
           <img
             src={globalUserAvatar()}
             alt="User Avatar"
-            class="w-10 h-10 rounded-full border-2 border-[#333] transition-all duration-200 object-cover hover:border-[var(--primary-color)]"
+            class="w-10 h-10 rounded-full border-2 border-dark-300 transition-all duration-200 object-cover hover:border-pri"
             onError={(e) => {
               e.currentTarget.src = "/icons/app-logo/user.svg";
             }}
           />
           
           <div 
-            class="absolute top-full left-1/2 -translate-x-1/2 mt-3 bg-[#1e1e1e] min-w-[140px] border border-[var(--primary-color)] rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5 before:content-[''] before:absolute before:-top-1.5 before:left-1/2 before:-translate-x-1/2 before:rotate-45 before:w-2.5 before:h-2.5 before:bg-[#1e1e1e] before:border-l before:border-t before:border-[var(--primary-color)]"
+            class="absolute top-full left-1/2 -translate-x-1/2 mt-3 bg-dark min-w-[140px] border border-pri rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5 before:content-[''] before:absolute before:-top-1.5 before:left-1/2 before:-translate-x-1/2 before:rotate-45 before:w-2.5 before:h-2.5 before:bg-dark before:border-l before:border-t before:border-pri"
             classList={{ 'invisible opacity-0': !isUserMenuVisible(), 'visible opacity-100': isUserMenuVisible() }}
           >
             <div class="user-menu-item" onClick={handleEditAvatar}>
@@ -516,7 +516,7 @@ return (
                 </div>
               }
             >
-              <div class="h-[1px] bg-[#333] my-1.5 mx-2 opacity-60"></div>
+              <div class="h-[1px] bg-dark-300 my-1.5 mx-2 opacity-60"></div>
               <div class="user-menu-item font-medium">
                 <Icon src="/icons/app-logo/info-circle.svg" class="w-4 h-4" />
                 账号信息
@@ -543,36 +543,36 @@ return (
           onMouseEnter={() => setDropdownVisible(true)}
           onMouseLeave={() => setDropdownVisible(false)}
         >
-          <div class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer" title="选择模型">
+          <div class="nav-icon-link" title="选择模型">
             <Icon src="/icons/app-logo/model-selector.svg" class="w-6 h-6" />
           </div>
 
           <div 
-            class="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-[#1e1e1e] min-w-[480px] border border-[#333] rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] z-[1000] transition-all duration-200 overflow-hidden"
+            class="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-dark min-w-[480px] border border-dark-300 rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] z-[1000] transition-all duration-200 overflow-hidden"
             classList={{ 
               'invisible opacity-0 translate-y-2': !isDropdownVisible(), 
-              'visible opacity-100 translate-y-0 border-[var(--primary-color)]': isDropdownVisible() 
+              'visible opacity-100 translate-y-0 border-pri': isDropdownVisible() 
             }}
           >
             <div class="flex flex-row h-[400px]">
               {/* 左列：线上模型 */}
               <div class="flex-1 flex flex-col min-w-[240px]">
-                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-[#252525] border-b border-[#333]">线上模型</div>
+                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-dark-600 border-b border-dark-300">线上模型</div>
                 <div class="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-[#444]">
                   <For each={onlineModels()}>
                     {(model) => (
                       <div
-                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-[#484848] hover:text-white"
-                        classList={{ 'bg-[var(--primary-20)] border-l-3 border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}
+                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-dark-200 hover:text-white"
+                        classList={{ 'bg-pri-20 border-l-3 border-pri': selectedModel()?.model_id === model.model_id }}
                         onClick={() => handleModelSelect(model)}
                       >
                         <div class="w-7 h-7 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm"
-                             classList={{ 'border border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}>
+                             classList={{ 'border border-pri': selectedModel()?.model_id === model.model_id }}>
                           <img src={getModelLogo(model.model_id)} alt="logo" class="w-[18px] h-[18px] object-contain" />
                         </div>
                         <div class="flex-1 flex flex-col items-start justify-center overflow-hidden text-left">
                           <div class="max-w-[160px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
-                          <div class="text-[10px] text-[var(--primary-color)] opacity-70">{model.owned_by}</div>
+                          <div class="text-[10px] text-pri opacity-70">{model.owned_by}</div>
                         </div>
                       </div>
                     )}
@@ -581,26 +581,26 @@ return (
                 </div>
               </div>
 
-              <div class="w-[1px] bg-[#333] self-stretch"></div>
+              <div class="w-[1px] bg-dark-300 self-stretch"></div>
 
               {/* 右列：本地模型 */}
               <div class="flex-1 flex flex-col min-w-[240px]">
-                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-[#252525] border-b border-[#333]">本地模型</div>
+                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-dark-600 border-b border-dark-300">本地模型</div>
                 <div class="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-[#444]">
                   <For each={localModels()}>
                     {(model) => (
                       <div
-                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-[#484848] hover:text-white"
-                        classList={{ 'bg-[var(--primary-20)] border-l-3 border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}
+                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-dark-200 hover:text-white"
+                        classList={{ 'bg-pri-20 border-l-3 border-pri': selectedModel()?.model_id === model.model_id }}
                         onClick={() => handleModelSelect(model)}
                       >
                         <div class="w-7 h-7 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm"
-                             classList={{ 'border border-[var(--primary-color)]': selectedModel()?.model_id === model.model_id }}>
+                             classList={{ 'border border-pri': selectedModel()?.model_id === model.model_id }}>
                           <img src={getModelLogo(model.model_id)} alt="logo" class="w-[18px] h-[18px] object-contain" />
                         </div>
                         <div class="flex-1 flex flex-col items-start justify-center overflow-hidden text-left">
                           <div class="max-w-[160px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
-                          <div class="text-[10px] text-[var(--primary-color)] opacity-70">Local</div>
+                          <div class="text-[10px] text-pri opacity-70">Local</div>
                         </div>
                       </div>
                     )}
@@ -613,17 +613,17 @@ return (
         </div>
 
         {/* 提示词设置按钮 */}
-        <a href="#" title="设置提示词" class="flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer [app-region:no-drag]" onClick={handleOpenPromptModal}>
+        <a href="#" title="设置提示词" class="nav-icon-link [app-region:no-drag]" onClick={handleOpenPromptModal}>
           <Icon src="/icons/app-logo/prompt.svg" class="w-6 h-6" />
         </a>
 
         {/* 窗口控制按钮 */}
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-[var(--primary-color)] text-[18px] cursor-pointer rounded-md transition-all hover:bg-[#333] hover:text-white ml-1" onClick={handleMinimize} title="最小化">
+          <button class="win-ctrl-btn hover:bg-dark-300" onClick={handleMinimize} title="最小化">
             <Icon src="/icons/app-logo/minimize.svg" class="w-6 h-6" />
           </button>
 
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-[var(--primary-color)] text-[18px] cursor-pointer rounded-md transition-all hover:bg-[#333] hover:text-white ml-1" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
+          <button class="win-ctrl-btn hover:bg-dark-300" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
             {isMaximized() ? (
               <Icon src="/icons/app-logo/restore.svg" class="w-6 h-6" />
             ) : (
@@ -631,7 +631,7 @@ return (
             )}
           </button>
 
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-[var(--primary-color)] text-[18px] cursor-pointer rounded-md transition-all hover:bg-[#E08090] hover:text-white ml-1" onClick={handleClose} title="关闭">
+          <button class="win-ctrl-btn hover:bg-danger" onClick={handleClose} title="关闭">
             <Icon src="/icons/app-logo/close-x.svg" class="w-6 h-6" />
           </button>
         </div>

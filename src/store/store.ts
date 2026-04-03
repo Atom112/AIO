@@ -1,12 +1,9 @@
-// src/store.ts  
-import { createStore } from "solid-js/store";
+import { createStore,reconcile } from "solid-js/store";
 import { createEffect, createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
 import { readFile } from '@tauri-apps/plugin-fs';
 
-// =============================================================================
 // I. 接口定义 (Interfaces)
-// =============================================================================
 
 /**
  * 消息项接口，定义聊天消息的数据结构
@@ -93,12 +90,10 @@ export interface User {
     token: string;
 }
 
-// =============================================================================
 // II. 全局响应式状态 (Global State)
-// =============================================================================
 
 /** 全局用户头像状态信号，默认使用系统默认头像 */
-export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/user.svg');
+export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-logo/user.svg');
 
 /** 缓存上一次生成的 Blob URL，用于内存管理 */
 let lastBlobUrl: string | null = null;
@@ -111,7 +106,7 @@ let lastBlobUrl: string | null = null;
  * @returns 头像的可访问 URL 字符串
  */
 export const loadAvatarFromPath = async (input: string): Promise<string> => {
-    if (!input) return '/icons/user.svg';
+    if (!input) return '/icons/app-logo/user.svg';
 
     if (input.startsWith('data:image')) {
         return input;
@@ -132,7 +127,7 @@ export const loadAvatarFromPath = async (input: string): Promise<string> => {
         return lastBlobUrl;
     } catch (e) {
         console.error("从物理路径加载头像失败:", e, "路径:", input);
-        return '/icons/user.svg';
+        return '/icons/app-logo/user.svg';
     }
 };
 
@@ -160,9 +155,7 @@ export const [currentAssistantId, setCurrentAssistantId] = createSignal<string |
 /** 当前选中的话题 ID 信号，用于 Chat 页面跟踪当前对话 */
 export const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(null);
 
-// =============================================================================
 // III. 配置初始化与管理 (Configuration)
-// =============================================================================
 
 /**
  * 从本地存储加载应用初始配置
@@ -185,9 +178,7 @@ export const saveConfig = (newConfig: AppConfig) => {
     localStorage.setItem('app_config', JSON.stringify(newConfig));
 };
 
-// =============================================================================
 // IV. 后端持久化逻辑 (Backend Persistence)
-// =============================================================================
 
 /**
  * 将指定助手数据持久化保存到后端
@@ -241,7 +232,7 @@ export const logout = () => {
     setDatas('isLoggedIn', false);
     localStorage.removeItem('auth-token');
     // 重置头像为默认
-    setGlobalUserAvatar('/icons/user.svg');
+    setGlobalUserAvatar('/icons/app-logo/user.svg');
 };
 
 /** 主题颜色信号，从本地存储读取或使用默认色 #08ddf9 */
@@ -253,3 +244,26 @@ createEffect(() => {
     document.documentElement.style.setProperty('--primary-color', color);
     localStorage.setItem('theme-color', color);
 });
+
+
+/**
+ * 平滑更新指定话题的消息历史（解决动画闪烁/DOM全量重建问题）
+ * 使用 reconcile 保持已存在消息的 DOM 节点引用，只增量更新变化的部分。
+ * * @param assistantId - 助手 ID
+ * @param topicId - 话题 ID
+ * @param newHistory - 最新的完整消息历史数组
+ */
+export const updateTopicHistorySmoothly = (
+    assistantId: string, 
+    topicId: string, 
+    newHistory: Message[]
+) => {
+    setDatas(
+        'assistants', 
+        (asst) => asst.id === assistantId, // 定位助手
+        'topics', 
+        (topic) => topic.id === topicId,   // 定位话题
+        'history', 
+        reconcile(newHistory)              // 核心：智能 Diff 替换
+    );
+};

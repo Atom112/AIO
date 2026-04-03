@@ -1,55 +1,6 @@
-/**
- * ============================================================================
- * 文件功能摘要
- * ============================================================================
- * 
- * 【核心功能】
- * 头像裁剪模态框组件，基于 Cropper.js 实现图片裁剪功能。
- * 提供圆形预览、缩放控制、裁剪保存等功能，支持进入/退出动画效果。
- * 
- * 【数据流流向】
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  外部数据流入 (Props)                                                    │
- * │  ├── imageSrc: string ← 父组件传入的待裁剪图片 DataURL/URL              │
- * │  ├── onSave: (croppedDataUrl: string) => void ← 保存回调，传出裁剪结果   │
- * │  └── onCancel: () => void ← 取消回调，关闭模态框                         │
- * │                                                                          │
- * │  用户交互输出                                                            │
- * │  ├── cropper.zoomTo() → 实时缩放图片（Cropper.js 实例方法）              │
- * │  ├── cropper.getCroppedCanvas() → 获取裁剪后的 Canvas 对象               │
- * │  ├── canvas.toDataURL() → 压缩为 JPEG Base64（质量 0.8）                 │
- * │  └── onSave/onCancel → 通过 Props 回调通知父组件                         │
- * │                                                                          │
- * │  本地状态                                                                │
- * │  ├── zoomValue: 缩放滑块当前值（0.1-3）                                  │
- * │  └── isExiting: 控制退出动画状态                                         │
- * │                                                                          │
- * │  外部库                                                                  │
- * │  └── Cropper.js: 图片裁剪核心库，通过 ref 操作 DOM 实例                  │
- * └─────────────────────────────────────────────────────────────────────────┘
- * 
- * 【组件层级】
- * AvatarCropModal (本组件)
- * ├── 遮罩层 (点击关闭)
- * ├── 模态框容器
- * │   ├── 头部标题 + 关闭按钮
- * │   ├── 主区域
- * │   │   ├── 裁剪区 (img + Cropper.js 绑定)
- * │   │   └── 预览区 (圆形预览)
- * │   └── 底部控制区
- * │       ├── 缩放滑块
- * │       └── 操作按钮 (取消/保存)
- * ============================================================================
- */
-
-// SolidJS 核心 API
-import { Component, createSignal, onCleanup } from 'solid-js';
-// Cropper.js: 图片裁剪库，提供拖拽、缩放、裁剪框等功能
+import { Component, createSignal, onCleanup, onMount } from 'solid-js';
 import Cropper from 'cropperjs';
-// Cropper.js 默认样式
 import 'cropperjs/dist/cropper.css';
-// 本地自定义样式
-import './AvatarCropModel.css';
 
 /**
  * 组件 Props 接口定义
@@ -77,7 +28,6 @@ interface AvatarCropModalProps {
  * @returns {JSX.Element} 裁剪模态框 JSX 元素
  */
 const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
-    // ==================== DOM 引用 ====================
 
     /** 图片元素引用：Cropper.js 绑定的目标元素 */
     let imageElement: HTMLImageElement | undefined;
@@ -86,14 +36,19 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
     /** Cropper.js 实例：通过 ref 保存以便调用实例方法 */
     let cropper: Cropper | null = null;
 
-    // ==================== 本地状态 ====================
-
     /** 缩放值：范围 0.1-3，默认 1（原图大小），绑定滑块 */
     const [zoomValue, setZoomValue] = createSignal(1);
     /** 退出动画标记：true 时添加退出动画类名，动画完成后关闭 */
     const [isExiting, setIsExiting] = createSignal(false);
+    /** 入场动画标记：true 时显示初始进入状态 */
+    const [isEntering, setIsEntering] = createSignal(true);
 
-    // ==================== 动画控制 ====================
+    // 入场动画：组件挂载后立即从隐藏状态过渡到可见状态
+    onMount(() => {
+        setIsEntering(true);
+        const enterTimer = setTimeout(() => setIsEntering(false), 20); // 20ms 触发样式变更
+        onCleanup(() => clearTimeout(enterTimer));
+    });
 
     /**
      * 触发退出动画并执行回调
@@ -120,8 +75,6 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
     const handleClose = () => {
         triggerExit(props.onCancel);
     };
-
-    // ==================== Cropper.js 初始化 ====================
 
     /**
      * 初始化 Cropper.js 实例
@@ -157,7 +110,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
             cropBoxResizable: true,   // 可调整裁剪框
             toggleDragModeOnDblclick: false, // 禁用双击切换拖拽模式
             preview: previewElement,  // 实时预览目标容器
-            
+
             /**
              * Cropper 准备就绪回调
              * 重置缩放值为 1，确保滑块与实例状态同步
@@ -174,8 +127,6 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
     onCleanup(() => {
         cropper?.destroy();
     });
-
-    // ==================== 业务操作 ====================
 
     /**
      * 处理保存按钮点击
@@ -199,7 +150,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
             // 压缩为 JPEG Base64，质量 0.8（平衡画质与体积）
             const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
-            
+
             // 先播放退出动画，再回调保存
             triggerExit(() => {
                 props.onSave(compressedBase64);
@@ -207,82 +158,73 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
         }
     };
 
-    // ==================== 渲染逻辑 ====================
-
     return (
-        // 遮罩层：全屏半透明背景，点击关闭
-        <div 
-            classList={{ 
-                "crop-modal-overlay": true, 
-                "overlay-out": isExiting()  // 退出动画类
-            }} 
-            class="overlay-in"  // 进入动画类
+        <div
+            classList={{
+                'opacity-0 pointer-events-none': isExiting() || isEntering(),
+                'opacity-100': !isExiting() && !isEntering(),
+            }}
+            class="modal-overlay bg-black/85 z-[1000] transition-all duration-300 ease-out"
+            onClick={(e) => e.target === e.currentTarget && handleClose()}
         >
-            {/* 模态框容器：包含所有内容 */}
             <div
-                classList={{ 
-                    "crop-modal-container": true, 
-                    "animate-out": isExiting()  // 退出动画类
+                classList={{
+                    'scale-95 opacity-0 translate-y-2': isExiting() || isEntering(),
+                    'scale-100 opacity-100 translate-y-0': !isExiting() && !isEntering(),
                 }}
-                class="animate-in"  // 进入动画类
+                class="modal-panel bg-dark-850 w-[600px] overflow-hidden flex flex-col transition-all duration-250 ease-out transform"
             >
-                {/* 头部：标题 + 关闭按钮 */}
-                <div class="crop-modal-header">
+                <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-dark-300 text-pri font-bold">
                     <span>裁剪图片</span>
-                    <button onClick={handleClose} class="close-button">
-                        &times;  {/* HTML 实体：乘号，作为 X 图标 */}
+                    <button onClick={handleClose} class="close-btn">
+                        &times;
                     </button>
                 </div>
 
-                {/* 主区域：裁剪区 + 预览区 */}
-                <div class="crop-main-area">
-                    {/* 左侧：图片裁剪区 */}
-                    <div class="cropper-wrapper">
+                <div class="flex h-[350px] p-[20px] gap-[20px]">
+                    <div class="flex-1 bg-black rounded-md overflow-hidden border border-dark-300">
                         <img
-                            ref={imageElement}           // DOM 引用绑定
-                            src={props.imageSrc}         // 图片源
-                            onLoad={initCropper}         // 图片加载完成后初始化 Cropper
-                            crossOrigin="anonymous"      // 允许跨域图片处理
-                            style={{ 
-                                "display": "block",      // 消除图片底部间隙
-                                "max-width": "100%"      // 响应式宽度
+                            ref={imageElement}
+                            src={props.imageSrc}
+                            onLoad={initCropper}
+                            crossOrigin="anonymous"
+                            style={{
+                                "display": "block",
+                                "max-width": "100%"
                             }}
                         />
                     </div>
 
-                    {/* 右侧：圆形预览区 */}
-                    <div class="crop-preview-side">
-                        <div class="preview-label">预览</div>
-                        {/* previewElement 引用：Cropper.js 自动渲染预览到此容器 */}
-                        <div ref={previewElement} class="avatar-preview-circle"></div>
+                    <div class="w-[150px] flex flex-col items-center justify-center">
+                        <div class="text-[#888] text-[12px] mb-[10px]">预览</div>
+                        <div ref={previewElement} class="w-[120px] h-[120px] rounded-full overflow-hidden border-2 border-pri bg-black"></div>
                     </div>
                 </div>
 
-                {/* 底部控制区：缩放滑块 + 操作按钮 */}
-                <div class="crop-controls">
-                    {/* 缩放控制 */}
-                    <div class="zoom-slider-container">
+                <div class="p-[20px] bg-dark-700">
+                    <div class="flex items-center gap-[10px] mb-[20px]">
                         <input
                             type="range"
-                            min="0.1"    // 最小缩放：10%
-                            max="3"      // 最大缩放：300%
-                            step="0.05"  // 步进：5%
-                            class='cropslider'
-                            value={zoomValue()}  // 双向绑定缩放值
+                            min="0.1"
+                            max="3"
+                            step="0.05"
+                            class="flex-1 accent-pri cursor-pointer bg-pri rounded-[4px] h-[6px] transition-colors duration-300"
+                            value={zoomValue()}
                             onInput={(e) => {
                                 const val = parseFloat(e.currentTarget.value);
-                                // 调用 Cropper.js 实例方法实时缩放
                                 cropper?.zoomTo(val);
-                                // 同步更新本地状态
                                 setZoomValue(val);
                             }}
                         />
                     </div>
 
-                    {/* 操作按钮组 */}
-                    <div class="modal-actions">
-                        <button class="btn-cancel" onClick={handleClose}>取消</button>
-                        <button class="btn-save" onClick={handleSave}>保存头像</button>
+                    <div class="flex justify-end gap-3">
+                        <button onClick={handleClose} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-dark-100 text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-dark-50">
+                            取消
+                        </button>
+                        <button onClick={handleSave} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-pri text-black rounded-lg hover:scale-105 transition-all duration-200">
+                            保存
+                        </button>
                     </div>
                 </div>
             </div>
@@ -290,5 +232,4 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
     );
 };
 
-// 默认导出组件
 export default AvatarCropModal;

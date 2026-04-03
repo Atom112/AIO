@@ -1,130 +1,188 @@
-/* src/index.css */
-/* 全局属性 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   background-color: transparent;
 
   --primary-color: #08ddf9;
-  /* 核心主色 */
-
-  /* 自动生成的透明度色系 (基于主色推导) */
+  /* 使用 color-mix 保持颜色透明度随主题色自动计算 */
   --primary-5: color-mix(in srgb, var(--primary-color), transparent 95%);
   --primary-10: color-mix(in srgb, var(--primary-color), transparent 90%);
   --primary-20: color-mix(in srgb, var(--primary-color), transparent 80%);
   --primary-30: color-mix(in srgb, var(--primary-color), transparent 70%);
   --primary-50: color-mix(in srgb, var(--primary-color), transparent 50%);
+
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary-color) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--primary-color);
+    border-radius: 10px;
+}
+
+html, body {
+  @apply m-0 h-full overflow-hidden font-sans antialiased;
+  color: rgb(255 255 255 / 87%);
   
-  /* 语义化映射 (方便后续维护) */
-  --theme-border: var(--primary-color);
-  --theme-bg-soft: var(--primary-10);
-  --theme-hover: var(--primary-20);
-  --theme-shadow: 0 0 15px var(--primary-20);
 }
 
-html {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  height: 100%;
-  /* 确保html元素的高度占据整个视口 */
-  overflow: hidden;
-  /* 隐藏html的滚动条，主界面不需要滚动条 */
-}
-
-body {
-  color: rgba(255, 255, 255, 0.87);
-  /* 文字颜色 */
-  margin: 0;
-  /* 移除默认的 body 边距 */
-  min-height: 100vh;
-  /* 让应用至少占满整个屏幕的高度 */
-  height: 100%;
-  /* 确保body元素的高度占据整个父元素（html），即整个视口 */
-  overflow: hidden;
-  /* 隐藏body的滚动条，同样防止其内容溢出产生滚动 */
-
-}
-
+/* 保持 Solid Transition Group 动画样式 */
 .page-fade-enter-active,
 .page-fade-exit-active {
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
-/* 进入时的起始状态：透明，稍微向右偏移 */
 .page-fade-enter-from {
   opacity: 0;
   transform: translateX(20px);
   z-index: 2;
-  /* 确保新进入的页面浮在上面 */
 }
 
-/* 离开时的结束状态：透明，稍微向左偏移 */
 .page-fade-exit-to {
   opacity: 0;
   transform: translateX(-20px);
   z-index: 1;
 }
 
-/* 进入效果：从小到大并淡入 */
-@keyframes modal-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95) translateY(-20px);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+/* Settings 子选项卡切换过渡 */
+.settings-tab-fade-enter-active,
+.settings-tab-fade-exit-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  contain: paint; 
 }
 
-/* 退出效果：从大到小并淡出 */
-@keyframes modal-out {
-  from {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-
-  to {
-    opacity: 0;
-    transform: scale(0.95) translateY(-20px);
-  }
+/* 1. 进入前的初始状态 */
+.settings-tab-fade-enter {
+  opacity: 0;
+  transform: translateY(10px);
 }
 
-/* 遮罩层淡入 */
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
+/* 2. 离开后的结束状态  */
+.settings-tab-fade-exit-active {
+  opacity: 0;
+  transform: translateY(-10px);
 }
 
-/* 遮罩层淡出 */
-@keyframes fade-out {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0;
-  }
+/* 当容器内部有正在执行动画的子元素时，隐藏溢出 */
+.flex-1:has(.settings-tab-fade-enter-active),
+.flex-1:has(.settings-tab-fade-exit-active) {
+  overflow-y: hidden !important;
 }
 
-/* 应用类 */
-.animate-in {
-  animation: modal-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+/* 加载动画容器 */
+.loading-container {
+  @apply flex items-center justify-center h-screen w-screen text-gray-400;
 }
 
-.animate-out {
-  animation: modal-out 0.25s ease-in forwards;
+/* ========== 全局复用组件类 ========== */
+@layer components {
+
+    /* 主题色发光边框：圆角 + 内发光阴影 */
+    .glow-border {
+        @apply border border-pri shadow-theme-inner;
+    }
+
+    /* 模态框遮罩层 */
+    .modal-overlay {
+        @apply fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 backdrop-blur-sm;
+    }
+
+    /* 模态框内容面板 */
+    .modal-panel {
+        @apply bg-dark border border-pri rounded-xl;
+        box-shadow: 0 0 20px var(--primary-20);
+    }
+
+    /* 模态框关闭按钮 (×) */
+    .close-btn {
+        @apply w-8 h-8 rounded-lg bg-transparent border-none text-2xl text-[#aaa] cursor-pointer leading-none p-0 transition-all duration-200 hover:text-white hover:bg-danger;
+    }
+
+    /* 右键上下文菜单容器 */
+    .context-menu {
+        @apply fixed z-[100] min-w-[150px] bg-dark-400 border border-pri rounded-lg shadow-xl py-1 origin-top-left;
+    }
+
+    /* 上下文菜单项 */
+    .context-menu-item {
+        @apply w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 hover:bg-pri-10;
+    }
+
+    /* 侧边栏列表项（含发光边框，需在元素上额外添加 group 类） */
+    .sidebar-item {
+        @apply flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg border border-pri shadow-theme-inner bg-transparent transition-all duration-200 hover:bg-dark-500;
+    }
+
+    /* 三点操作菜单按钮（需在父元素上添加 group 类） */
+    .dot-menu-btn {
+        @apply flex items-center justify-center w-[30px] h-[30px] bg-dark border-none rounded cursor-pointer text-white transition-all duration-200 hover:bg-pri-5 active:scale-90 active:bg-pri-10 opacity-0;
+    }
+    .group:hover .dot-menu-btn {
+        @apply opacity-100;
+    }
+
+    /* 用户下拉菜单项 */
+    .user-menu-item {
+        @apply flex items-center gap-2.5 p-2.5 text-[#e0e0e0] text-[13px] rounded-md transition-all hover:bg-pri-20 hover:text-[var(--primary-color)];
+    }
+
+    /* 主色调操作按钮 */
+    .primary-btn {
+        @apply bg-pri text-black font-bold border-none rounded-md cursor-pointer transition-opacity duration-200 hover:opacity-80;
+    }
+
+    /* 导航栏图标链接（聊天、设置、模型选择、提示词） */
+    .nav-icon-link {
+        @apply flex items-center gap-2 px-3 py-2 rounded-md text-[#a0a0a0] hover:text-white transition-all duration-200 cursor-pointer;
+    }
+
+    /* 窗口控制按钮（最小化、最大化、关闭） */
+    .win-ctrl-btn {
+        @apply w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-pri text-[18px] cursor-pointer rounded-md transition-all hover:text-white ml-1;
+    }
 }
 
-.overlay-in {
-  animation: fade-in 0.3s ease-out forwards;
+input[type="range"] {
+    appearance: none;
+    width: 100%;
+    height: 14px;
+    border-radius: 7px;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
 }
 
-.overlay-out {
-  animation: fade-out 0.25s ease-in forwards;
+input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 16px;
+    height: 26px;
+    border-radius: 6px;
+    background: rgb(255 255 255 / 15%);
+    backdrop-filter: blur(6px);
+    border: 2.5px solid rgb(255 255 255 / 85%);
+    box-shadow:
+        0 4px 12px rgb(0 0 0 / 40%),
+        inset 0 0 4px rgb(255 255 255 / 50%);
+    transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s;
+    margin-top: 0;
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+    transform: scale(1.15);
+    border-color: #fff;
+    background: rgb(255 255 255 / 25%);
 }

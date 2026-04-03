@@ -3,7 +3,6 @@
         "target": "ES2020",
         "useDefineForClassFields": true,
         "module": "ESNext",
-        // 启用 JSX 支持（SolidJS 需要）
         "jsx": "preserve",
         "jsxImportSource": "solid-js",
         "moduleResolution": "bundler",

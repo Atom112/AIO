@@ -1,11 +1,10 @@
-use crate::models::*; // 导入模型定义，如 AppConfig, Assistant, ActivatedModel 等
+use crate::models::*;
 use crate::DbState;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
-use std::fs; // 导入标准库文件系统模块
+use std::fs;
 use tauri::Manager;
-/// 保存应用程序通用配置
-/// #[tauri::command] 标记允许此函数从前端通过 invoke 调用
+
 #[tauri::command]
 pub fn save_app_config(config: AppConfig) -> Result<(), String> {
     // 1. 获取操作系统的用户配置目录 (如 Windows 的 AppData/Roaming 或 Linux 的 ~/.config)
@@ -144,7 +143,6 @@ pub async fn save_assistant(
     )
     .map_err(|e| e.to_string())?;
 
-    // 2. 【核心修复】清理已被前端删除的话题 (解决死而复生问题)
     let current_topic_ids: Vec<String> = assistant.topics.iter().map(|t| t.id.clone()).collect();
     let mut stmt = conn
         .prepare("SELECT id FROM topics WHERE assistant_id = ?")
@@ -162,7 +160,6 @@ pub async fn save_assistant(
         }
     }
 
-    // 3. 遍历话题执行增量同步
     for topic in assistant.topics {
         conn.execute(
             "INSERT INTO topics (id, assistant_id, name, summary) VALUES (?1, ?2, ?3, ?4)
@@ -171,8 +168,6 @@ pub async fn save_assistant(
         )
         .map_err(|e| e.to_string())?;
 
-        // 4. 【性能优化重点】增量同步消息
-        // 不再 DELETE ALL，而是使用 ON CONFLICT DO NOTHING (如果 ID 存在则跳过，不存在则插入)
         for msg in topic.history {
             // 假设 Message 结构体现在也有了 id 字段
             let msg_id = msg
@@ -185,7 +180,7 @@ pub async fn save_assistant(
             conn.execute(
                 "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text) 
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT(id) DO NOTHING", // 关键：已存在的 ID 不再重复写入
+                 ON CONFLICT(id) DO NOTHING",
                 params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text],
             ).map_err(|e| e.to_string())?;
         }
@@ -270,7 +265,6 @@ pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<St
     if !avatars_dir.exists() {
         std::fs::create_dir_all(&avatars_dir).map_err(|e| e.to_string())?;
     } else {
-        // --- 核心修复：删除所有旧的 user_avatar 缓存 ---
         // 我们只删除以此前缀开头的文件，避免误删目录下可能存在的其它资源
         if let Ok(entries) = std::fs::read_dir(&avatars_dir) {
             for entry in entries.flatten() {

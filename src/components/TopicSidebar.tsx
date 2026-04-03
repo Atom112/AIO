@@ -1,66 +1,14 @@
-/**
- * ============================================================================
- * 文件功能摘要
- * ============================================================================
- * 
- * 【核心功能】
- * 话题侧边栏组件，展示当前助手的话题列表，支持话题切换、新建、重命名、删除等操作。
- * 提供可拖拽调整宽度的布局能力，以及右键菜单交互。
- * 
- * 【数据流流向】
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  外部数据流入 (Props)                                                    │
- * │  ├── width: number ← 父组件控制的侧边栏宽度百分比                        │
- * │  ├── onResize: (e: MouseEvent) => void ← 拖拽调整宽度的事件回调          │
- * │  ├── currentAssistant: Assistant | undefined ← 当前选中的助手对象      │
- * │  ├── editingTopicId: string | null ← 当前处于重命名编辑状态的话题 ID      │
- * │  ├── setEditingTopicId: (id: string | null) => void ← 设置编辑状态回调   │
- * │  └── addTopic: () => void ← 新建话题的回调函数                           │
- * │                                                                          │
- * │  全局状态流入                                                            │
- * │  ├── datas.assistants ← 助手列表（含话题数据）                           │
- * │  ├── currentTopicId ← 当前选中话题 ID                                    │
- * │  └── setCurrentTopicId ← 设置当前话题 ID                                 │
- * │                                                                          │
- * │  全局状态流出                                                            │
- * │  ├── setDatas() → 更新话题名称（乐观更新）                               │
- * │  ├── setCurrentTopicId() → 切换当前话题                                  │
- * │  └── saveSingleAssistantToBackend() → 持久化助手数据到后端             │
- * │                                                                          │
- * │  本地文件                                                                │
- * │  └── 导入 TopicSidebar.css 样式文件                                      │
- * └─────────────────────────────────────────────────────────────────────────┘
- * 
- * 【组件层级】
- * TopicSidebar (本组件)
- * ├── 拖拽调整手柄 (resize-handle)
- * ├── 对话内容容器
- * │   ├── 助手信息头部 (条件渲染)
- * │   ├── 新建话题按钮
- * │   └── 话题列表 (For 循环)
- * │       ├── 话题项 (点击切换、条件渲染编辑输入框或名称)
- * │       └── 菜单按钮 (打开上下文菜单)
- * └── 上下文菜单 (Portal 方式渲染，条件显示)
- * 
- * 【状态管理】
- * - 菜单状态：控制话题上下文菜单的显示/位置/动画
- * ============================================================================
- */
-
-// SolidJS 核心 API
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
-// 全局状态管理：助手数据、话题操作、后端持久化
 import {
-    Assistant,      // 助手类型定义
-    Topic,          // 话题类型定义
-    datas,          // 全局数据对象
-    setDatas,       // 修改全局数据的 Setter
-    currentTopicId, // 当前选中话题 ID（Signal）
-    setCurrentTopicId, // 设置当前话题 ID
-    saveSingleAssistantToBackend // 保存助手到后端 API
+    Assistant,
+    Topic,
+    datas,
+    setDatas,
+    currentTopicId,
+    setCurrentTopicId,
+    saveSingleAssistantToBackend
 } from '../store/store';
-// 本地样式文件
-import './TopicSidebar.css';
+import Icon from './Icon';
 
 /**
  * 组件 Props 接口定义
@@ -80,6 +28,7 @@ interface TopicSidebarProps {
     addTopic: () => void;
     isCollapsed: boolean;
     onToggle: (e: MouseEvent) => void;
+    isResizing: boolean;
 }
 
 const createTopic = (name?: string): Topic => ({
@@ -99,7 +48,6 @@ const createTopic = (name?: string): Topic => ({
  * @returns {JSX.Element} 话题侧边栏 JSX 元素
  */
 const TopicSidebar: Component<TopicSidebarProps> = (props) => {
-    // ==================== 本地状态定义 ====================
 
     /** 
      * 控制菜单 DOM 是否渲染（布尔值）
@@ -123,8 +71,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         targetTopicId: null as string | null
     });
 
-    // ==================== 生命周期钩子 ====================
-
     /**
      * 组件挂载时：注册全局点击监听，实现点击外部关闭菜单
      * 
@@ -143,8 +89,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         window.addEventListener('click', handleTopicClickOutside);
         onCleanup(() => window.removeEventListener('click', handleTopicClickOutside));
     });
-
-    // ==================== 业务逻辑函数 ====================
 
     /**
      * 保存话题重命名结果
@@ -248,7 +192,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
             setCurrentTopicId(newT.id);
         } else {
             // 正常从界面和内存物理移除
-            setDatas('assistants', a => a.id === asstId, 'topics', topics =>
+            setDatas('assistants', a => a.id === asstId, 'topics', (topics: any[]) =>
                 topics.filter((t: Topic) => t.id !== topicId)
             );
             // 如果删的是当前选中的，切到第一个
@@ -267,116 +211,120 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         closeTopicMenu();
     };
 
-    // ==================== 渲染逻辑 ====================
-
-    return (
-        // 主容器：宽度由父组件 props 控制
-        <div classList={{
-            'dialog-container': true,
-            'is-collapsed': props.isCollapsed
-        }}
+return (
+        <div 
+            // 基础容器：对应 .dialog-container
+            class="relative flex flex-col flex-shrink-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] min-w-0"
             style={{
                 width: props.isCollapsed ? '0%' : `${props.width}%`,
                 padding: props.isCollapsed ? '0' : '15px',
                 "border": props.isCollapsed ? 'none' : `1px solid var(--primary-color)`,
-                "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`
-            }}>
-            {/* 拖拽调整宽度的手柄：位于右侧 */}
-            <div class="resize-handle right-handle" onMouseDown={(e) => props.onResize(e as MouseEvent)}>
-                <div class="collapse-indicator" title={props.isCollapsed ? "展开话题栏" : "折叠话题栏"} onClick={(e) => props.onToggle(e)}>
+                "box-shadow": props.isCollapsed ? 'none' : `inset 0 0 20px 1px var(--primary-30)`,
+                "border-radius": "8px",
+                "transition": props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' // 调整宽度时取消过渡，避免卡顿
+            }}
+        >
+            {/* 拖拽把手：对应 .resize-handle.right-handle */}
+            <div 
+                class="hover:bg-pri-20 after:rounded-[2px] after:h-[calc(100%-30px)] after:transition-all after:duration-300 after:ease-in-out after:w-1 after:content-[''] after:bg-pri-10 !bg-transparent absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group transition-colors duration-200"
+                classList={{ 
+                    'after:h-[calc(100%-20px)]': props.isResizing,
+                    'after:bg-pri': props.isResizing,
+                    'after:shadow-[0_0_10px_var(--primary-color)]': props.isResizing 
+                }}
+                onMouseDown={(e) => props.onResize(e as MouseEvent)}
+            >
+                {/* 把手内部的竖线：对应 .resize-handle::after */}
+                <div class="absolute w-1 h-[calc(100%-30px)] bg-pri-10 rounded-sm transition-all duration-300 group-hover:bg-pri group-hover:h-[calc(100%-20px)] group-hover:shadow-[0_0_10px_var(--primary-color)]"></div>
+
+                {/* 折叠按钮：对应 .collapse-indicator */}
+                <div 
+                    class="hover:scale-110 pointer-events-auto absolute z-[1001] w-[10px] h-12 bg-pri rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-black font-bold text-[10px] shadow-[0_0_10px_var(--primary-color)] opacity-0 transition-all duration-200 hover:scale-y-110 hover:opacity-100 group-hover:opacity-100"
+                    classList={{ 'opacity-40 !opacity-100 scale-y-100 shadow-[0_0_15px_var(--primary-color)]': props.isCollapsed }}
+                    title={props.isCollapsed ? "展开话题栏" : "折叠话题栏"} 
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        props.onToggle(e);
+                    }}
+                >
                     {props.isCollapsed ? '〈' : '〉'}
                 </div>
             </div>
-            <div class={props.isCollapsed ? "collapsed-content-hide" : "dialog-content"}>
-                {/* 内容区：话题列表和相关信息 */}
-                <div class="dialog-content">
-                    {/* 条件渲染：有选中助手时显示话题列表 */}
-                    <Show when={props.currentAssistant}>
-                        {/* SolidJS 的 Show 回调模式：asst 是 Signal，需调用 asst() 获取值 */}
-                        {(asst) => (
-                            <>
-                                {/* 助手信息头部：显示助手名称 */}
-                                <div class="info-header">
-                                    <h3>{asst().name} 的话题</h3>
-                                </div>
 
-                                {/* 新建话题按钮 */}
-                                <button class="add-topic-button" onClick={props.addTopic}>
-                                    + 新建话题
-                                </button>
+            {/* 内容遮罩层：对应 .collapsed-content-hide */}
+            <div 
+                class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
+                classList={{ "opacity-0 pointer-events-none overflow-hidden": props.isCollapsed }}
+            >
+                <Show when={props.currentAssistant}>
+                    {(asst) => (
+                        <div class="flex flex-col h-full">
+                            <div class="mb-4">
+                                <h3 class="text-white text-lg font-medium">{asst().name} 的话题</h3>
+                            </div>
 
-                                {/* 话题列表容器 */}
-                                <div class="topics-list">
-                                    {/* 循环渲染话题 */}
-                                    <For each={asst().topics}>
-                                        {(topic) => (
-                                            <div
-                                                // 动态类名：active 状态高亮当前选中话题
-                                                classList={{
-                                                    'topic-item': true,
-                                                    'active': topic.id === currentTopicId()
-                                                }}
-                                                // 点击切换到该话题
-                                                onClick={() => setCurrentTopicId(topic.id)}
+                            <button 
+                                class="w-full px-3 py-2 bg-transparent glow-border rounded-lg text-white cursor-pointer transition-all duration-300 hover:bg-pri-10 active:scale-[0.98]" 
+                                onClick={props.addTopic}
+                            >
+                                + 新建话题
+                            </button>
+
+                            <div class="mt-[15px] space-y-1">
+                                <For each={asst().topics}>
+                                    {(topic) => (
+                                        <div
+                                            class="group sidebar-item"
+                                            classList={{
+                                                'active bg-pri-20 !border-pri': topic.id === currentTopicId()
+                                            }}
+                                            onClick={() => setCurrentTopicId(topic.id)}
+                                        >
+                                            <Show
+                                                when={props.editingTopicId === topic.id}
+                                                fallback={<span class="text-[#e0e0e0] flex-grow text-[0.9rem] truncate pr-2 select-none">{topic.name}</span>}
                                             >
-                                                {/* 条件渲染：重命名输入框或话题名称 */}
-                                                <Show
-                                                    when={props.editingTopicId === topic.id}
-                                                    fallback={<span class="topic-name">{topic.name}</span>}
-                                                >
-                                                    <input
-                                                        class="rename-input"
-                                                        value={topic.name}
-                                                        // 自动聚焦并选中文字：使用 setTimeout 确保 DOM 已挂载
-                                                        ref={(el) => {
-                                                            setTimeout(() => {
-                                                                el.focus();
-                                                                el.select();
-                                                            }, 0);
-                                                        }}
-                                                        // 失焦保存
-                                                        onBlur={(e) => saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
-                                                        // 回车键保存
-                                                        onKeyDown={(e) => e.key === 'Enter' && saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
-                                                        // 阻止冒泡，防止触发话题项的点击切换
-                                                        onClick={(e) => e.stopPropagation()}
-                                                    />
-                                                </Show>
+                                                <input
+                                                    class="bg-dark-850 border border-pri rounded px-2 py-0.5 text-white text-[0.85rem] h-5 outline-none w-[80%]"
+                                                    value={topic.name}
+                                                    ref={(el) => {
+                                                        setTimeout(() => {
+                                                            el.focus();
+                                                            el.select();
+                                                        }, 0);
+                                                    }}
+                                                    onBlur={(e) => saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                            </Show>
 
-                                                {/* 菜单按钮：点击打开上下文菜单 */}
-                                                <button
-                                                    class="assistant-menu-button"
-                                                    onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
-                                                >
-                                                    {/* 三点菜单图标 SVG */}
-                                                    <svg fill="#FFFFFF" viewBox="0 0 24 24" style="width: 18px;">
-                                                        <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0-6a2 2 0 1 0 4 0a2 2 0 0 0-4 0zm0 12a2 2 0 1 0 4 0a2 2 0 0 0-4 0z" />
-                                                    </svg>
-                                                </button>
-                                            </div>
-                                        )}
-                                    </For>
-                                </div>
-                            </>
-                        )}
-                    </Show>
-                </div>
+                                            <button
+                                                class="dot-menu-btn"
+                                                onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
+                                            >
+                                                <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
+                                            </button>
+                                        </div>
+                                    )}
+                                </For>
+                            </div>
+                        </div>
+                    )}
+                </Show>
             </div>
-            {/* 话题上下文菜单：条件渲染，使用 Portal 方式渲染在 body 层级 */}
+
+            {/* 右键菜单浮层：对应 .assistant-context-menu */}
             {showTopicMenuDiv() && (
                 <div
-                    class="assistant-context-menu"
-                    // 动态添加退出动画类
-                    classList={{ 'menu-exiting': isTopicMenuAnimatingOut() }}
-                    // 绝对定位：基于触发按钮计算的坐标
+                    class="context-menu"
                     style={{
                         top: `${topicMenuState().y}px`,
                         left: `${topicMenuState().x}px`
                     }}
                 >
-                    {/* 重命名按钮：设置编辑状态并关闭菜单 */}
                     <button
-                        class="context-menu-button"
+                        class="context-menu-item text-white"
                         onClick={() => {
                             props.setEditingTopicId(topicMenuState().targetTopicId);
                             closeTopicMenu();
@@ -385,9 +333,8 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         重命名
                     </button>
 
-                    {/* 删除按钮：红色警示样式 */}
                     <button
-                        class="context-menu-button delete"
+                        class="context-menu-item text-[#ff4d4d]"
                         onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}
                     >
                         删除话题
@@ -398,5 +345,4 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     );
 };
 
-// 默认导出组件
 export default TopicSidebar;

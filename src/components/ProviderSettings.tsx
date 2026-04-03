@@ -1,66 +1,7 @@
-/**
- * ============================================================================
- * 文件功能摘要
- * ============================================================================
- * 
- * 【核心功能】
- * AI 模型提供商管理设置页面，提供 API 配置管理、模型列表获取、本地模型管理三大功能模块。
- * 支持云端 API 模型（OpenAI 格式）的激活/停用，以及本地 Llama.cpp 模型的启动/停止控制。
- * 
- * 【数据流流向】
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  全局状态流入                                                            │
- * │  ├── config() ← 当前 API 配置（url/key）                                 │
- * │  ├── selectedModel() ← 当前选中的模型                                    │
- * │  └── setDatas('activatedModels') → 更新全局已激活模型列表                │
- * │                                                                          │
- * │  Tauri 后端命令调用                                                      │
- * │  ├── invoke('load_app_config') → 加载应用配置                            │
- * │  ├── invoke('save_app_config') → 保存 API 配置                           │
- * │  ├── invoke('load_activated_models') → 加载已激活模型                      │
- * │  ├── invoke('save_activated_models') → 持久化激活模型列表                │
- * │  ├── invoke('load_fetched_models') → 加载缓存的可用模型                    │
- * │  ├── invoke('save_fetched_models') → 缓存可用模型列表                      │
- * │  ├── invoke('fetch_models') → 从 API 端点获取模型列表                      │
- * │  ├── invoke('start_local_server') → 启动本地 Llama 服务                    │
- * │  ├── invoke('stop_local_server') → 停止本地 Llama 服务                   │
- * │  ├── invoke('is_local_server_running') → 检查本地服务状态                  │
- * │  └── open() (dialog plugin) → 选择本地 .gguf 模型文件                      │
- * │                                                                          │
- * │  本地状态                                                                │
- * │  ├── apiUrl/apiKey: 表单输入的 API 配置                                    │
- * │  ├── localModelPath: 选中的本地模型文件路径                                │
- * │  ├── isLocalRunning: 本地服务运行状态                                      │
- * │  ├── models: 从 API 获取的可用模型列表                                     │
- * │  ├── activatedModels: 已激活的模型配置列表                                 │
- * │  ├── searchQuery/searchQueryAct: 搜索关键词                                │
- * │  ├── selectedProvider/selectedProviderAct: 厂商筛选条件                  │
- * │  └── isDropdownOpen/isDropdownOpenAct: 下拉菜单展开状态                    │
- * └─────────────────────────────────────────────────────────────────────────┘
- * 
- * 【组件层级】
- * ProviderSettings (本组件)
- * ├── 左侧：API 配置面板
- * │   ├── API URL 输入
- * │   ├── API Key 输入
- * │   ├── 保存配置按钮
- * │   ├── 获取模型列表按钮
- * │   └── 本地模型管理区（选择文件 + 启动/停止服务）
- * ├── 中间：已激活模型列表面板（可搜索筛选、移除）
- * └── 右侧：可用模型列表面板（从 API 获取，可勾选激活）
- * ============================================================================
- */
-
-// SolidJS 核心 API
 import { Component, createSignal, For, createMemo, onCleanup, onMount } from 'solid-js';
-// 全局状态管理
 import { config, saveConfig, setDatas, selectedModel } from '../store/store';
-// Tauri 核心 API
 import { invoke } from '@tauri-apps/api/core';
-// Tauri 对话框插件
 import { open } from '@tauri-apps/plugin-dialog';
-// 本地样式
-import './ProviderSettings.css';
 
 /** 从 API 获取的原始模型信息 */
 interface ModelItem { 
@@ -86,7 +27,6 @@ interface ActivatedModel {
  * @returns {JSX.Element} 设置页面 JSX 元素
  */
 const ProviderSettings: Component = () => {
-    // ==================== 表单状态 ====================
 
     /** API 供应商网址输入值 */
     const [apiUrl, setApiUrl] = createSignal(config().apiUrl);
@@ -95,14 +35,10 @@ const ProviderSettings: Component = () => {
     /** 保存状态提示文本（如"配置已保存"） */
     const [saveStatus, setSaveStatus] = createSignal("");
 
-    // ==================== 本地模型状态 ====================
-
     /** 选中的本地 .gguf 模型文件路径 */
     const [localModelPath, setLocalModelPath] = createSignal("");
     /** 本地 Llama 服务是否正在运行 */
     const [isLocalRunning, setIsLocalRunning] = createSignal(false);
-
-    // ==================== 模型列表状态 ====================
 
     /** 从 API 获取的可用模型列表 */
     const [models, setModels] = createSignal<ModelItem[]>([]);
@@ -111,8 +47,6 @@ const ProviderSettings: Component = () => {
     /** 已激活的模型配置列表（持久化到本地） */
     const [activatedModels, setActivatedModels] = createSignal<ActivatedModel[]>([]);
 
-    // ==================== 搜索筛选状态（可用模型）====================
-
     /** 可用模型搜索关键词 */
     const [searchQuery, setSearchQuery] = createSignal("");
     /** 可用模型厂商筛选条件 */
@@ -120,16 +54,12 @@ const ProviderSettings: Component = () => {
     /** 可用模型厂商下拉菜单展开状态 */
     const [isDropdownOpen, setIsDropdownOpen] = createSignal(false);
 
-    // ==================== 搜索筛选状态（已激活模型）====================
-
     /** 已激活模型搜索关键词 */
     const [searchQueryAct, setSearchQueryAct] = createSignal("");
     /** 已激活模型厂商筛选条件 */
     const [selectedProviderAct, setSelectedProviderAct] = createSignal("All");
     /** 已激活模型厂商下拉菜单展开状态 */
     const [isDropdownOpenAct, setIsDropdownOpenAct] = createSignal(false);
-
-    // ==================== DOM 引用 ====================
 
     /** 可用模型厂商下拉容器引用（用于点击外部关闭） */
     let dropdownRef: HTMLDivElement | undefined;
@@ -144,19 +74,17 @@ const ProviderSettings: Component = () => {
      */
     const getModelLogo = (modelName: string) => {
         const name = modelName.toLowerCase();
-        if (name.includes('gpt')) return '/icons/openai.svg';
-        if (name.includes('claude')) return '/icons/claude-color.svg';
-        if (name.includes('grok')) return '/icons/grok.svg';
-        if (name.includes('gemini')) return '/icons/gemini-color.svg';
-        if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
-        if (name.includes('qwen')) return '/icons/qwen-color.svg';
-        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/moonshot.svg';
-        if (name.includes('doubao')) return '/icons/doubao-color.svg';
-        if (name.includes('glm')) return '/icons/zhipu-color.svg';
-        return '/icons/ollama.svg';
+        if (name.includes('gpt')) return '/icons/model-logo/openai.svg';
+        if (name.includes('claude')) return '/icons/model-logo/claude-color.svg';
+        if (name.includes('grok')) return '/icons/model-logo/grok.svg';
+        if (name.includes('gemini')) return '/icons/model-logo/gemini-color.svg';
+        if (name.includes('deepseek')) return '/icons/model-logo/deepseek-color.svg';
+        if (name.includes('qwen')) return '/icons/model-logo/qwen-color.svg';
+        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/model-logo/moonshot.svg';
+        if (name.includes('doubao')) return '/icons/model-logo/doubao-color.svg';
+        if (name.includes('glm')) return '/icons/model-logo/zhipu-color.svg';
+        return '/icons/model-logo/ollama.svg';
     };
-
-    // ==================== 本地模型管理 ====================
 
     /**
      * 打开文件对话框选择本地 .gguf 模型文件
@@ -288,8 +216,6 @@ const ProviderSettings: Component = () => {
         await invoke('save_activated_models', { models: newList });
     };
 
-    // ==================== 生命周期钩子 ====================
-
     /**
      * 组件挂载时初始化数据
      * 
@@ -323,8 +249,6 @@ const ProviderSettings: Component = () => {
         onCleanup(() => window.removeEventListener('click', handleClickOutside));
     });
 
-    // ==================== 派生状态（Memo）====================
-
     /** 可用模型的厂商列表（去重，用于筛选下拉） */
     const providers = createMemo(() => ["All", ...Array.from(new Set(models().map(m => m.owned_by || "unknown")))]);
     
@@ -346,8 +270,6 @@ const ProviderSettings: Component = () => {
             (selectedProviderAct() === "All" || m.owned_by === selectedProviderAct())
         )
     );
-
-    // ==================== 核心操作交互 ====================
 
     /**
      * 切换模型的激活状态（勾选/取消勾选）
@@ -428,68 +350,64 @@ const ProviderSettings: Component = () => {
         }
     };
 
-    // ==================== 渲染逻辑 ====================
-
-    return (
-        <div class="tab-content-provider">
-            <div class="settings-container">
-                {/* API 配置区域 */}
-                <div class="info-header" style="border-bottom: 1px solid; padding-bottom: 10px; margin-bottom: 30px;">
-                    <h3>API 服务配置</h3>
+return (
+        <div class="flex gap-4 h-full">
+            {/* 左侧配置面板 */}
+            <div class="w-[22%] p-5 border border-pri rounded-xl bg-pri-5 overflow-y-auto">
+                <div class="border-b border-pri-20 pb-2.5 mb-8">
+                    <h3 class="text-lg font-bold">API 服务配置</h3>
                 </div>
                 
-                <div class="settings-form">
-                    {/* API URL 输入 */}
-                    <div class="setting-item">
-                        <label>API 供应商网址</label>
+                <div class="flex flex-col gap-5">
+                    <div class="flex flex-col gap-2">
+                        <label class="text-sm font-bold">API 供应商网址</label>
                         <input 
                             type="text" 
-                            class="settings-input" 
+                            class="bg-dark-850 border border-dark-300 text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-pri" 
                             value={apiUrl()} 
                             onInput={(e) => setApiUrl(e.currentTarget.value)} 
                         />
                     </div>
                     
-                    {/* API Key 输入 */}
-                    <div class="setting-item">
-                        <label>API Key</label>
+                    <div class="flex flex-col gap-2">
+                        <label class="text-sm font-bold">API Key</label>
                         <input 
                             type="password" 
-                            class="settings-input" 
+                            class="bg-dark-850 border border-dark-300 text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-pri" 
                             value={apiKey()} 
                             onInput={(e) => setApiKey(e.currentTarget.value)} 
                         />
                     </div>
                     
-                    {/* 操作按钮组 */}
-                    <button class="save-settings-button" onClick={handleSave}>
+                    <button 
+                        class="mt-2.5 primary-btn p-3"
+                        onClick={handleSave}
+                    >
                         保存当前配置
                     </button>
+                    
                     <button 
-                        class="save-settings-button" 
+                        class="primary-btn p-3 disabled:opacity-50"
                         onClick={handleQueryModels} 
                         disabled={isLoading()}
                     >
                         {isLoading() ? "查询中..." : "获取可用模型列表"}
                     </button>
 
-                    {/* 本地模型管理区 */}
-                    <div class="setting-item">
-                        <label>本地模型管理 (.gguf)</label>
-                        <div style="display:flex; flex-direction: column; gap: 10px;">
+                    <div class="flex flex-col gap-2">
+                        <label class="text-sm font-bold border-t border-pri-20 pt-4 mt-2">本地模型管理 (.gguf)</label>
+                        <div class="flex flex-col gap-2.5">
                             <button 
-                                class="save-settings-button" 
+                                class="primary-btn p-3 w-full"
                                 onClick={selectModelFile} 
-                                style="width: 100%"
                             >
-                                + 选择并添加本地模型
+                                选择并添加本地模型
                             </button>
 
                             <button
-                                class="save-settings-button"
+                                class="p-3 font-bold rounded-md cursor-pointer transition-all duration-200 hover:opacity-80 text-black border-none"
                                 style={{
-                                    "background-color": isLocalRunning() ? "#E08090" : "var(--primary-color)",
-                                    "margin-top": "10px"
+                                    "background-color": isLocalRunning() ? "#E08090" : "var(--primary-color)"
                                 }}
                                 onClick={toggleLocalEngine}
                             >
@@ -498,39 +416,43 @@ const ProviderSettings: Component = () => {
                         </div>
                     </div>
                     
-                    {/* 状态提示 */}
-                    {saveStatus() && <div class="save-hint">{saveStatus()}</div>}
+                    {saveStatus() && (
+                        <div class="text-sm text-pri animate-pulse text-center">
+                            {saveStatus()}
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* 中间：已激活模型列表面板 */}
-            <div class="models-list-panel activated-panel">
-                <div class="models-header-complex">
-                    <h4>已激活模型 ({filteredActivatedModels().length})</h4>
-                    <div class="models-tools-row">
-                        {/* 搜索输入 */}
+            {/* 中间已激活面板 */}
+            <div class="flex-1 border border-pri rounded-xl bg-pri-5 flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
+                <div class="p-5 border-b border-pri-20 flex flex-col gap-4 bg-pri-5">
+                    <h4 class="font-bold flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                        已激活模型 ({filteredActivatedModels().length})
+                    </h4>
+                    <div class="flex gap-3">
                         <input 
                             type="text" 
                             placeholder="搜索已激活..." 
-                            class="models-search-input" 
+                            class="flex-[2] bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-pri" 
                             onInput={(e) => setSearchQueryAct(e.currentTarget.value)} 
                         />
                         
-                        {/* 厂商筛选下拉框 */}
-                        <div class="custom-select-container" ref={dropdownRefAct}>
+                        <div class="relative flex-1 min-w-[140px]" ref={dropdownRefAct}>
                             <div 
-                                class={`custom-select-trigger ${isDropdownOpenAct() ? 'open' : ''}`} 
+                                class={`bg-dark-850 border border-dark-300 px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-pri transition-all ${isDropdownOpenAct() ? 'border-pri' : ''}`} 
                                 onClick={() => setIsDropdownOpenAct(!isDropdownOpenAct())}
                             >
                                 {selectedProviderAct() === "All" ? "所有厂商" : selectedProviderAct()}
-                                <span class="arrow-icon">▼</span>
+                                <span class={`transition-transform duration-200 ${isDropdownOpenAct() ? 'rotate-180' : ''}`}>▼</span>
                             </div>
                             {isDropdownOpenAct() && (
-                                <div class="custom-select-dropdown">
+                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-dark-850 border border-pri rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl">
                                     <For each={providersAct()}>
                                         {(p) => (
                                             <div 
-                                                class={`custom-select-item ${selectedProviderAct() === p ? 'active' : ''}`}
+                                                class={`p-2.5 text-[#eee] cursor-pointer text-xs hover:bg-pri-20 hover:text-pri transition-colors ${selectedProviderAct() === p ? 'bg-pri-10 text-pri' : ''}`}
                                                 onClick={() => { setSelectedProviderAct(p); setIsDropdownOpenAct(false); }}
                                             >
                                                 {p === "All" ? "所有厂商" : p}
@@ -543,23 +465,24 @@ const ProviderSettings: Component = () => {
                     </div>
                 </div>
                 
-                {/* 已激活模型列表 */}
-                <div class="models-scroll-area">
+                <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
                     <For each={filteredActivatedModels()}>
                         {(m) => (
-                            <div class="model-card activated">
-                                {/* 模型 Logo */}
-                                <div class="model-logo-container">
-                                    <img src={getModelLogo(m.model_id)} alt="logo" class="model-item-logo" />
+                            <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
+                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
+                                    <img src={getModelLogo(m.model_id)} alt="logo" class="w-5 h-5 object-contain" />
                                 </div>
 
-                                <div class="model-info">
-                                    <span class="model-id">{m.model_id}</span>
-                                    <span class="model-provider">
-                                        {m.api_url.includes('127.0.0.1') ? '本地服务' : m.api_url.replace('https://', '').split('/')[0]}
+                                <div class="grow flex flex-col font-mono">
+                                    <span class="text-[#eee] font-medium text-sm truncate">{m.model_id}</span>
+                                    <span class="text-[#666] text-[10px]">
+                                        {m.api_url.includes('127.0.0.1') ? '● 本地服务' : m.api_url.replace('https://', '').split('/')[0]}
                                     </span>
                                 </div>
-                                <button class="remove-act-btn" onClick={() => removeActivatedModel(m)}>
+                                <button 
+                                    class="border border-danger bg-transparent text-danger px-2.5 py-1 rounded cursor-pointer whitespace-nowrap shrink-0 transition-all duration-200 hover:text-dark-850 hover:bg-danger text-xs" 
+                                    onClick={() => removeActivatedModel(m)}
+                                >
                                     移除
                                 </button>
                             </div>
@@ -568,31 +491,31 @@ const ProviderSettings: Component = () => {
                 </div>
             </div>
 
-            {/* 右侧：可用模型列表面板 */}
-            <div class="models-list-panel">
-                <div class="models-header-complex">
-                    <h4>可用模型列表 ({filteredModels().length})</h4>
-                    <div class="models-tools-row">
+            {/* 右侧可用列表面板 */}
+            <div class="flex-1 border border-pri rounded-xl bg-pri-5 flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
+                <div class="p-5 border-b border-pri-20 flex flex-col gap-4 bg-pri-5">
+                    <h4 class="font-bold">可用模型列表 ({filteredModels().length})</h4>
+                    <div class="flex gap-3">
                         <input 
                             type="text" 
-                            placeholder="搜索可用..." 
-                            class="models-search-input" 
+                            placeholder="搜索模型名称..." 
+                            class="flex-[2] bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-pri" 
                             onInput={(e) => setSearchQuery(e.currentTarget.value)} 
                         />
-                        <div class="custom-select-container" ref={dropdownRef}>
+                        <div class="relative flex-1 min-w-[140px]" ref={dropdownRef}>
                             <div 
-                                class={`custom-select-trigger ${isDropdownOpen() ? 'open' : ''}`} 
+                                class={`bg-dark-850 border border-dark-300 px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-pri transition-all ${isDropdownOpen() ? 'border-pri' : ''}`} 
                                 onClick={() => setIsDropdownOpen(!isDropdownOpen())}
                             >
                                 {selectedProvider() === "All" ? "所有厂商" : selectedProvider()}
-                                <span class="arrow-icon">▼</span>
+                                <span class={`transition-transform duration-200 ${isDropdownOpen() ? 'rotate-180' : ''}`}>▼</span>
                             </div>
                             {isDropdownOpen() && (
-                                <div class="custom-select-dropdown">
+                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-dark-850 border border-pri rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl text-xs">
                                     <For each={providers()}>
                                         {(p) => (
                                             <div 
-                                                class={`custom-select-item ${selectedProvider() === p ? 'active' : ''}`}
+                                                class={`p-2.5 text-[#eee] cursor-pointer hover:bg-pri-20 hover:text-pri transition-colors ${selectedProvider() === p ? 'bg-pri-10 text-pri' : ''}`}
                                                 onClick={() => { setSelectedProvider(p); setIsDropdownOpen(false); }}
                                             >
                                                 {p === "All" ? "所有厂商" : p}
@@ -605,39 +528,36 @@ const ProviderSettings: Component = () => {
                     </div>
                 </div>
                 
-                {/* 可用模型列表 */}
-                <div class="models-scroll-area">
-                    {/* 空状态提示 */}
+                <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
                     {models().length === 0 && (
-                        <div style="color: #444; text-align: center; margin-top: 50px;">
+                        <div class="text-[#444] text-center mt-12 italic text-sm">
                             点击左侧“查询模型”按钮获取列表
                         </div>
                     )}
                     
                     <For each={filteredModels()}>
                         {(m) => (
-                            <div class="model-card">
-                                {/* 模型 Logo */}
-                                <div class="model-logo-container">
-                                    <img src={getModelLogo(m.id)} alt="logo" class="model-item-logo" />
+                            <div class="border-l-[3px] border-pri bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
+                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
+                                    <img src={getModelLogo(m.id)} alt="logo" class="w-5 h-5 object-contain" />
                                 </div>
 
-                                <div class="model-info">
-                                    <span class="model-id">{m.id}</span>
-                                    <span class="model-provider">Provider: {m.owned_by}</span>
+                                <div class="grow flex flex-col font-mono text-sm">
+                                    <span class="text-[#eee] font-medium truncate">{m.id}</span>
+                                    <span class="text-[#666] text-[10px]">Provider: {m.owned_by}</span>
                                 </div>
                                 
-                                {/* 激活开关 */}
-                                <div class="switch-container">
-                                    <label class="switch">
+                                <div class="shrink-0 flex items-center">
+                                    <label class="relative inline-block w-9 h-5 cursor-pointer">
                                         <input 
+                                            class="opacity-0 w-0 h-0 peer"
                                             type="checkbox"
                                             checked={activatedModels().some(am => 
                                                 am.model_id === m.id && am.api_url === apiUrl()
                                             )}
                                             onChange={() => toggleActivation(m)} 
                                         />
-                                        <span class="slider"></span>
+                                        <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-4"></span>
                                     </label>
                                 </div>
                             </div>
@@ -649,5 +569,4 @@ const ProviderSettings: Component = () => {
     );
 };
 
-// 默认导出组件
 export default ProviderSettings;

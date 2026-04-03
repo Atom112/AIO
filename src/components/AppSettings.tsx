@@ -1,65 +1,8 @@
-/**
- * ============================================================================
- * 文件功能摘要
- * ============================================================================
- * 
- * 【核心功能】
- * Tauri 桌面应用的设置页面组件，提供应用状态管理、主题色彩自定义、
- * 系统自启配置和更新日志展示等功能。支持 HSL 色彩空间的实时调色，
- * 包含预设主题快速切换和色相/饱和度滑块精细调节。
- * 
- * 【数据流流向】
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  外部数据流入                                                            │
- * │  ├── themeColor (Signal) ← 从 '../store/store' 导入，全局主题色状态      │
- * │  └── getVersion() ← Tauri API，获取应用版本号                            │
- * │                                                                          │
- * │  用户交互输出                                                            │
- * │  ├── setThemeColor() → 写入全局 Store，同步更新应用主题色                │
- * │  ├── setAutoStart() → 本地 Signal（TODO: 需接入系统自启API）             │
- * │  └── open() → Tauri shell 插件，调用系统浏览器打开 GitHub 链接           │
- * │                                                                          │
- * │  本地状态管理 (SolidJS Signals)                                          │
- * │  ├── h, s, l: 色相/饱和度/亮度，用于滑块实时控制                         │
- * │  ├── autoStart: 开机自启开关状态                                         │
- * │  └── version: 应用版本号                                                 │
- * │                                                                          │
- * │  本地文件                                                                │
- * │  └── 导入 AppSettings.css 样式文件                                       │
- * └─────────────────────────────────────────────────────────────────────────┘
- * 
- * 【组件层级】
- * AppSettings (本组件)
- * ├── 应用状态卡片 (版本号、自启开关、GitHub链接)
- * ├── 视觉主题卡片 (色彩预览、预设主题、HSL滑块)
- * └── 更新日志卡片 (静态文本列表)
- * 
- * 【关键技术点】
- * - 使用 untrack() 防止 createEffect 死循环
- * - HSL ↔ Hex 双向颜色空间转换
- * - SolidJS 响应式系统：createMemo 派生 RGB/HSL 值
- * ============================================================================
- */
-
-// SolidJS 核心响应式 API
-import {
-    Component,      // 组件类型定义
-    createEffect,   // 创建响应式副作用
-    createMemo,     // 创建记忆化计算值
-    createSignal,   // 创建响应式状态
-    For,            // 列表渲染组件
-    onMount,        // 组件挂载生命周期钩子
-    untrack         // 在响应式上下文中读取非响应式值
-} from 'solid-js';
-
-// Tauri 插件：调用系统默认程序打开外部链接
+import { Component, createEffect, createMemo, createSignal, For, onMount, untrack } from 'solid-js';
 import { open } from '@tauri-apps/plugin-shell';
-// 本地样式文件
-import './AppSettings.css';
-// 全局状态管理：主题色状态及 Setter 函数
 import { setThemeColor, themeColor } from '../store/store';
-// Tauri API：获取应用版本信息
 import { getVersion } from '@tauri-apps/api/app';
+import Icon from './Icon';
 
 /**
  * 应用设置页面组件
@@ -71,7 +14,6 @@ import { getVersion } from '@tauri-apps/api/app';
  * @returns {JSX.Element} 应用设置页面的 JSX 元素
  */
 const AppSettings: Component = () => {
-    // ==================== 本地状态定义 ====================
 
     /** 色相 (Hue): 0-360 度，控制颜色的基本色调 */
     const [h, setH] = createSignal(0);
@@ -82,17 +24,10 @@ const AppSettings: Component = () => {
     /** 开机自启开关状态：true 表示随系统启动 */
     const [autoStart, setAutoStart] = createSignal(true);
     /** 应用版本号，默认 1.0.0，挂载后从 Tauri API 获取真实版本 */
-    const [version, setVersion] = createSignal('1.0.0');
-
-    // ==================== 生命周期钩子 ====================
+    const [version, setVersion] = createSignal('');
 
     /**
      * 组件挂载时执行：初始化 HSL 状态和获取应用版本
-     * 
-     * 数据流：
-     * 1. 从全局 Store 读取当前主题色（Hex格式）
-     * 2. 转换为 HSL 格式并设置到本地 Signal（h, s, l）
-     * 3. 异步调用 Tauri getVersion() 获取版本号
      */
     onMount(async () => {
         // 将全局主题色（Hex）转换为 HSL，用于初始化滑块位置
@@ -110,17 +45,6 @@ const AppSettings: Component = () => {
         }
     });
 
-    // ==================== 响应式副作用 ====================
-
-    /**
-     * 主题色同步 Effect：监听全局 themeColor 变化，同步更新本地 HSL 状态
-     * 
-     * 【核心逻辑】
-     * 当全局主题色被外部修改（如其他组件或预设主题点击）时，自动更新滑块位置。
-     * 使用 untrack() 避免在拖动滑块时触发此 Effect（防止抽搐/死循环）。
-     * 
-     * 数据流：themeColor(Store) → hexToHsl() → setH/setS/setL → 滑块UI更新
-     */
     createEffect(() => {
         const currentHex = themeColor(); // 订阅全局主题色变化
 
@@ -140,19 +64,12 @@ const AppSettings: Component = () => {
         }
     });
 
-    // ==================== 事件处理函数 ====================
-
     /**
      * 滑块更新处理器：处理色相/饱和度滑块的输入事件
-     * 
-     * 【设计目的】
-     * 直接操作本地 Signal 确保滑块响应流畅，避免 Hex↔HSL 反复转换导致的精度损失。
-     * 更新完成后立即同步到全局 Store，触发应用主题色更新。
      * 
      * @param {('h' | 's')} type - 滑块类型：'h' 色相 或 's' 饱和度
      * @param {number} val - 滑块当前数值
      * 
-     * 数据流：滑块输入 → setH/setS → 读取最新 h,s,l → hslToHex() → setThemeColor() → 全局更新
      */
     const handleSliderUpdate = (type: 'h' | 's' | 'l', val: number) => {
         let nextH = h();
@@ -174,12 +91,10 @@ const AppSettings: Component = () => {
         setThemeColor(nextHex);
     };
 
-    // ==================== 颜色转换工具函数 ====================
-
     /**
      * Hex 颜色转 RGB 对象
      * 
-     * @param {string} hex - Hex 颜色字符串（如 "#08ddf9"）
+     * @param {string} hex Hex 颜色字符串
      * @returns {{r: number, g: number, b: number}} RGB 分量对象，解析失败返回 0
      */
     const hexToRgb = (hex: string) => {
@@ -191,12 +106,6 @@ const AppSettings: Component = () => {
 
     /**
      * Hex 颜色转 HSL 对象
-     * 
-     * 算法说明：
-     * 1. 将 RGB 归一化到 [0,1]
-     * 2. 计算 max/min 确定亮度 l
-     * 3. 根据 max-min 差值计算饱和度 s
-     * 4. 根据 max 所属通道计算色相 h（0-360度）
      * 
      * @param {string} hex - Hex 颜色字符串
      * @returns {{h: number, s: number, l: number}} HSL 分量对象（h:0-360, s/l:0-100）
@@ -230,17 +139,21 @@ const AppSettings: Component = () => {
         };
     };
 
+    /**
+     * 环形色盘交互处理器：将鼠标或触摸在色环上的位置映射为色相（Hue）角度并更新主题色
+     *
+     * @param {MouseEvent | TouchEvent} e - 鼠标或触摸事件
+     * @param {DOMRect} rect - 色环元素的边界（getBoundingClientRect()）
+     * @returns {void}
+     */
     const handleRingInteraction = (e: MouseEvent | TouchEvent, rect: DOMRect) => {
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
-
         const clientX = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
         const clientY = 'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
-
         const angle = Math.atan2(clientY - centerY, clientX - centerX);
         let degree = (angle * 180) / Math.PI + 90;
         if (degree < 0) degree += 360;
-
         handleSliderUpdate('h', Math.round(degree));
     };
 
@@ -248,9 +161,7 @@ const AppSettings: Component = () => {
     const pointerStyle = createMemo(() => {
         // 将色相值转换为弧度，减去 90 度是因为 conic-gradient 起点在 12 点方向
         const rad = ((h() - 90) * Math.PI) / 180;
-
         const radius = 102;
-
         const x = Math.cos(rad) * radius;
         const y = Math.sin(rad) * radius;
 
@@ -262,13 +173,11 @@ const AppSettings: Component = () => {
 
     /**
      * HSL 颜色转 Hex 字符串
-     * 
-     * 算法说明：使用 HSL 转 RGB 的通用公式，通过辅助函数 f(n) 计算各通道值
-     * 
+     *  
      * @param {number} h - 色相 (0-360)
      * @param {number} s - 饱和度 (0-100)
      * @param {number} l - 亮度 (0-100)
-     * @returns {string} Hex 颜色字符串（如 "#08ddf9"）
+     * @returns {string} Hex 颜色字符串
      */
     const hslToHex = (h: number, s: number, l: number) => {
         l /= 100; // 亮度归一化
@@ -285,15 +194,11 @@ const AppSettings: Component = () => {
         return `#${f(0)}${f(8)}${f(4)}`;
     };
 
-    // ==================== 派生状态（Memo）====================
-
     /** 
      * 记忆化 RGB 值：基于当前主题色自动计算 RGB 分量
      * 用于 RGB 输入框展示
      */
     const rgb = createMemo(() => hexToRgb(themeColor()));
-
-    // ==================== 静态数据 ====================
 
     /** 预设主题列表：包含名称和 Hex 颜色值 */
     const presetThemes = [
@@ -304,133 +209,125 @@ const AppSettings: Component = () => {
         { name: '夕阳橙', color: '#F5A97F' },
     ];
 
-    // ==================== 渲染逻辑 ====================
-
     return (
-        // 主容器：应用设置页面根元素
-        <div class="app-settings-container">
-
-            {/* ==================== 卡片 1: 应用状态 ==================== */}
-            <div class="settings-card">
-                <div class="card-header">
-                    <h3>📱 应用状态</h3>
-                    <div class="version-wrapper">
-                        <span class="version-label">版本号:</span>
-                        {/* 动态渲染版本号，从 Tauri API 获取 */}
-                        <div class="version-badge">v{version()}-Beta</div>
+        <div class="flex flex-col gap-[15px] box-border">
+            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6 transition-colors duration-300">
+                <div class="flex justify-between items-center mb-5">
+                    <h3 class="m-0 text-base text-white">应用状态</h3>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-[#888] font-medium">版本号:</span>
+                        <div class="bg-[var(--primary-color,#08ddf9)] text-black text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
+                            style="font-family: 'JetBrains Mono', monospace;">
+                            v{version()}
+                        </div>
                     </div>
                 </div>
 
-                {/* 设置项：系统自启开关 */}
-                <div class="setting-item-row">
-                    <div class="item-label">
-                        <span>系统自启</span>
-                        <p class="item-desc">随系统启动自动运行应用</p>
+                <div class="flex justify-between items-center py-3 border-b border-white/5">
+                    <div>
+                        <span class="block text-[#eee] text-[14px]">系统自启</span>
+                        <p class="text-xs text-[#777] mt-1">随系统启动自动运行应用</p>
                     </div>
-                    {/* 自定义 Switch 开关组件 */}
-                    <label class="switch">
+
+                    <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
                         <input
+                            class="opacity-0 w-0 h-0 peer"
                             type="checkbox"
                             checked={autoStart()}
                             onChange={(e) => setAutoStart(e.currentTarget.checked)}
                         />
-                        <span class="slider"></span>
+                        <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
                     </label>
                 </div>
 
-                {/* 设置项：GitHub 开源主页链接 */}
-                <div class="setting-item-row">
-                    <div class="item-label">
-                        <span>开源主页</span>
-                        <p class="item-desc">访问 GitHub 仓库获取最新动态</p>
+                <div class="flex justify-between items-center py-3 border-b border-white/5">
+                    <div>
+                        <span class="block text-[#eee] text-[14px]">开源主页</span>
+                        <p class="text-xs text-[#777] mt-1">访问 GitHub 仓库获取最新动态</p>
                     </div>
-                    {/* 点击调用 Tauri open() 在系统浏览器中打开链接 */}
+
                     <div
-                        class="github-link"
+                        class="flex items-center gap-2 bg-pri-5 text-[#ccc] px-4 py-2 rounded-lg cursor-pointer border border-pri transition-all duration-200 hover:bg-pri-50 hover:text-black"
                         onClick={() => open('https://github.com/Atom112/AIO')}
                         title="访问 GitHub"
                     >
-                        {/* GitHub Logo SVG */}
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.43.372.823 1.102.823 2.222 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
-                        </svg>
+                        <Icon src="/icons/app-logo/github.svg" class="w-5 h-5" />
                         <span>GitHub</span>
                     </div>
                 </div>
             </div>
 
-            {/* ==================== 卡片 2: 视觉主题 ==================== */}
-            <div class="settings-card cool-theme-card">
-                <div class="card-header">
-                    <h3>🎨 视觉主题</h3>
+            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6 transition-colors duration-300">
+                <div class="flex justify-between items-center mb-5">
+                    <h3 class='m-0 text-base text-white'>视觉主题</h3>
                 </div>
 
-                <div class="picker-controls" style={{
+                <div class="flex flex-col gap-[10px]" style={{
                     "--h": h(),
                     "--s": `${s()}%`,
                     "--l": `${l()}%`
                 }}>
-                    {/* 三栏布局 */}
-                    <div class="cool-picker-layout">
-
-                        {/* 左侧：RGB 值 */}
-                        <div class="rgb-sidebar">
-                            <div class="rgb-field"><span>R</span><div class="rgb-value">{rgb().r}</div></div>
-                            <div class="rgb-field"><span>G</span><div class="rgb-value">{rgb().g}</div></div>
-                            <div class="rgb-field"><span>B</span><div class="rgb-value">{rgb().b}</div></div>
+                    <div class="grid grid-cols-[100px_240px_100px] gap-8 items-center justify-center py-5">
+                        <div class="flex flex-col gap-3">
+                            <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
+                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">R</span>
+                                <div class="font-mono text-[16px] text-white font-bold">{rgb().r}</div>
+                            </div>
+                            <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
+                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">G</span>
+                                <div class="font-mono text-[16px] text-white font-bold">{rgb().g}</div>
+                            </div>
+                            <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
+                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">B</span>
+                                <div class="font-mono text-[16px] text-white font-bold">{rgb().b}</div>
+                            </div>
                         </div>
 
-                        {/* 中间：色相环 + 预览 */}
-                        <div class="hue-ring-container">
-                            {/* 色相环主体 */}
+                        <div class="relative w-[220px] h-[220px] flex items-center justify-center">
                             <div
-                                class="hue-ring"
-                                // 使用 Pointer Events 统一处理鼠标和触摸
+                                class="w-full h-full rounded-full cursor-pointer transition-all duration-300"
+                                style="background: conic-gradient(hsl(0deg var(--s) var(--l)), 
+                                        hsl(60deg var(--s) var(--l)), 
+                                        hsl(120deg var(--s) var(--l)), 
+                                        hsl(180deg var(--s) var(--l)), 
+                                        hsl(240deg var(--s) var(--l)), 
+                                        hsl(300deg var(--s) var(--l)), 
+                                        hsl(360deg var(--s) var(--l))); 
+                                        mask: radial-gradient(transparent 59.5%, black 60.5%);"
                                 onPointerDown={(e) => {
                                     const target = e.currentTarget;
                                     const rect = target.getBoundingClientRect();
-
-                                    // 激活捕获：即便鼠标移出元素，后续 move/up 事件仍发给此元素
                                     target.setPointerCapture(e.pointerId);
-
                                     handleRingInteraction(e as any, rect);
-
                                     const onPointerMove = (ev: PointerEvent) => {
                                         handleRingInteraction(ev as any, rect);
                                     };
-
                                     const onPointerUp = (ev: PointerEvent) => {
-                                        // 释放捕获并移除监听
                                         target.releasePointerCapture(ev.pointerId);
                                         target.removeEventListener('pointermove', onPointerMove);
                                         target.removeEventListener('pointerup', onPointerUp);
                                     };
-
-                                    // 直接在元素上监听，不再需要 window
                                     target.addEventListener('pointermove', onPointerMove);
                                     target.addEventListener('pointerup', onPointerUp);
                                 }}
-                            // 移除之前的 onTouchStart，Pointer Events 已覆盖
                             />
 
-                            {/* 环中心的颜色预览 */}
                             <div
-                                class="center-preview"
+                                class="absolute w-[110px] h-[110px] rounded-full flex flex-col items-center justify-center shadow-[0_0_20px_var(--primary-color)] border-2 border-white/20 z-20"
                                 style={{ background: themeColor() }}
                             >
-                                <span class="hex-text">{themeColor().toUpperCase()}</span>
+                                <span class="text-[14px] font-extrabold text-white">{themeColor().toUpperCase()}</span>
                             </div>
 
-                            {/* 指示点 */}
-                            <div class="hue-pointer" style={pointerStyle()} />
+                            <div class="absolute top-1/2 left-1/2 w-[18px] h-[18px] border-[3px] border-white rounded-full shadow-[0_0_5px_#fff,inset_0_0_10px_#fff] pointer-events-none z-[3]"
+                                style={pointerStyle()} />
                         </div>
 
-                        {/* 右侧：预设颜色 */}
-                        <div class="preset-sidebar">
+                        <div class="flex flex-col gap-3">
                             <For each={presetThemes}>
                                 {(theme) => (
                                     <div
-                                        class="strip-item"
+                                        class="w-[40px] h-[40px] rounded-full cursor-pointer transition-transform duration-200 border-2 border-transparent hover:scale-110"
                                         onClick={() => setThemeColor(theme.color)}
                                         style={{
                                             background: theme.color,
@@ -444,10 +341,9 @@ const AppSettings: Component = () => {
                         </div>
                     </div>
 
-                    {/* 下方：饱和度控制 */}
-                    <div class="bottom-controls">
-                        <div class="control-group">
-                            <label>饱和度 (Saturation)</label>
+                    <div class="mt-[25px] px-[20px]">
+                        <div class="mb-2">
+                            <label class="block text-[12px] text-[#666] mb-[10px] text-center">饱和度 (Saturation)</label>
                             <input
                                 type="range"
                                 min="0" max="100"
@@ -460,15 +356,14 @@ const AppSettings: Component = () => {
                             />
                         </div>
 
-                        <div class="control-group">
-                            <label>亮度 (Lightness)</label>
+                        <div class="mb-2">
+                            <label class="block text-[12px] text-[#666] mb-[10px] text-center">亮度 (Lightness)</label>
                             <input
                                 type="range"
                                 min="0" max="100"
                                 value={l()}
                                 class="custom-slider light-slider"
                                 style={{
-                                    /* 这里的渐变从黑到当前色再到白 */
                                     background: `linear-gradient(to right, #000, hsl(${h()}, ${s()}%, 50%), #fff)`
                                 }}
                                 onInput={(e) => handleSliderUpdate('l', parseInt(e.currentTarget.value))}
@@ -477,23 +372,8 @@ const AppSettings: Component = () => {
                     </div>
                 </div>
             </div>
-
-            {/* ==================== 卡片 3: 更新日志 ==================== */}
-            <div class="settings-card">
-                <div class="card-header">
-                    <h3>📝 更新日志</h3>
-                </div>
-                {/* 静态更新内容：当前版本的功能更新说明 */}
-                <div class="update-log-content">
-                    <p>• 优化自定义调色算法，彻底解决滑块抽搐问题</p>
-                    <p>• 新增饱和度调节轨道，支持更精细的色彩自定义</p>
-                    <p>• 修复 CSS 兼容性编译器警告，移除冗余样式代码</p>
-                    <p>• 增强视觉反馈，预设颜色选中态实时高亮</p>
-                </div>
-            </div>
         </div>
     );
 };
 
-// 默认导出组件
 export default AppSettings;

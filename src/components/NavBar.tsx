@@ -1,90 +1,13 @@
-/**
- * ============================================================================
- * 文件功能摘要
- * ============================================================================
- * 
- * @file NavBar.tsx
- * @description 应用程序顶部导航栏组件，集成路由导航、模型管理、用户系统、窗口控制于一体。
- * 
- * 【核心功能】
- * 1. 路由导航：对话页面与设置页面的切换
- * 2. 模型选择器：线上/本地模型分类展示，支持 Local-Llama.cpp 自动启动与健康检查
- * 3. 用户系统：头像上传（支持裁剪）、登录/登出、账号信息展示
- * 4. 助手提示词管理：快速编辑当前助手的 System Prompt
- * 5. 窗口控制：基于 Tauri API 的自定义标题栏（最小化、最大化、关闭）
- * 6. 拖拽区域：实现无边框窗口的拖拽移动
- * 
- * 【数据流流向】
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  全局状态流入                                                            │
- * │  ├── datas.activatedModels ← 已激活的模型列表                            │
- * │  ├── datas.assistants ← 助手列表                                         │
- * │  ├── datas.user ← 当前登录用户信息                                       │
- * │  ├── datas.isLoggedIn ← 登录状态                                         │
- * │  ├── currentAssistantId ← 当前选中助手 ID                                │
- * │  ├── selectedModel ← 当前选中模型                                        │
- * │  └── globalUserAvatar ← 用户头像 URL                                     │
- * │                                                                          │
- * │  全局状态流出                                                            │
- * │  ├── setSelectedModel() → 切换当前模型                                   │
- * │  ├── setDatas() → 更新助手提示词、模型列表、用户信息                     │
- * │  ├── setGlobalUserAvatar() → 更新用户头像                                │
- * │  └── saveSingleAssistantToBackend() → 持久化助手数据                     │
- * │                                                                          │
- * │  Tauri 后端命令调用                                                      │
- * │  ├── invoke('load_activated_models') → 加载已激活模型                    │
- * │  ├── invoke('load_app_config') → 加载应用配置                            │
- * │  ├── invoke('save_app_config') → 保存模型偏好                            │
- * │  ├── invoke('start_local_server') → 启动 Llama.cpp 本地服务              │
- * │  ├── invoke('is_local_server_running') → 检查本地服务状态                │
- * │  ├── invoke('validate_token') → 验证登录 Token                           │
- * │  ├── invoke('sync_avatar_to_backend') → 同步头像到云端                   │
- * │  ├── invoke('upload_avatar') → 保存头像到本地                            │
- * │  ├── invoke('clear_local_avatar_cache') → 清理本地头像缓存               │
- * │  ├── appWindow.minimize/maximize/close → 窗口控制                        │
- * │  └── open/readFile (plugin) → 文件选择器与读取                           │
- * │                                                                          │
- * │  网络请求                                                                │
- * │  └── fetch(/health) → 本地 Llama 服务健康检查                            │
- * │                                                                          │
- * │  本地存储                                                                │
- * │  ├── localStorage.getItem('auth-token') → 读取登录凭证                   │
- * │  ├── localStorage.setItem('auth-token') → 保存登录凭证                   │
- * │  ├── localStorage.getItem('user-avatar-path') → 读取本地头像路径         │
- * │  └── localStorage.removeItem('user-avatar-path') → 清理本地头像路径      │
- * └─────────────────────────────────────────────────────────────────────────┘
- * 
- * 【组件层级】
- * NavBar (本组件)
- * ├── 拖拽区域 (data-tauri-drag-region)
- * ├── 导航栏主体
- * │   ├── 左侧：Logo + 路由链接（对话/设置）
- * │   ├── 中间：用户头像 + 下拉菜单（登录/头像/登出）
- * │   ├── 右侧：模型选择器 + 提示词按钮 + 窗口控制
- * │   └── 子组件
- * │       ├── AvatarCropModal (头像裁剪弹窗)
- * │       ├── PromptModal (提示词编辑弹窗)
- * │       └── LoginModal (登录弹窗)
- * ============================================================================
- */
-
-// SolidJS 核心 API
 import { createSignal, onMount, For, Component, Show } from 'solid-js';
-// Tauri 窗口 API：自定义标题栏控制
 import { Window } from '@tauri-apps/api/window';
-// SolidJS 路由组件
 import { A } from '@solidjs/router';
-// Tauri 核心 API：调用 Rust 命令
 import { invoke } from '@tauri-apps/api/core';
-// Tauri 对话框插件：系统文件选择器
 import { open } from '@tauri-apps/plugin-dialog';
-// Tauri 文件系统插件：读取文件
 import { readFile } from '@tauri-apps/plugin-fs';
-// 子组件导入
 import AvatarCropModal from './AvatarCropModel';
 import PromptModal from './PromptModal';
 import LoginModal from './LoginModal';
-// 全局状态管理
+import Icon from './Icon';
 import {
   datas,
   setDatas,
@@ -98,8 +21,6 @@ import {
   loadAvatarFromPath,
   logout
 } from '../store/store';
-// 本地样式
-import './NavBar.css';
 
 /**
  * 初始化当前窗口实例
@@ -119,7 +40,6 @@ interface NavBarProps { }
  * @returns {JSX.Element} 导航栏 JSX 元素
  */
 const NavBar: Component<NavBarProps> = () => {
-  // ==================== 状态声明 ====================
 
   /** 提示词弹窗中临时编辑的提示词内容 */
   const [modalPrompt, setModalPrompt] = createSignal('');
@@ -136,14 +56,10 @@ const NavBar: Component<NavBarProps> = () => {
   /** 控制登录弹窗的显示/隐藏 */
   const [isLoginModalOpen, setIsLoginModalOpen] = createSignal(false);
 
-  // ==================== 派生状态 ====================
-
   /** 线上模型列表：过滤出 owned_by 不为 Local-Llama.cpp 的模型 */
   const onlineModels = () => datas.activatedModels.filter(m => m.owned_by !== "Local-Llama.cpp");
   /** 本地模型列表：过滤出 owned_by 为 Local-Llama.cpp 的模型 */
   const localModels = () => datas.activatedModels.filter(m => m.owned_by === "Local-Llama.cpp");
-
-  // ==================== 用户认证处理 ====================
 
   /**
    * 登录成功回调处理
@@ -186,12 +102,10 @@ const NavBar: Component<NavBarProps> = () => {
             console.log("退出成功，已恢复本地头像");
         } catch (err) {
             console.error("恢复本地头像失败:", err);
-            setGlobalUserAvatar('/icons/user.svg'); // 失败则回退默认
+            setGlobalUserAvatar('/icons/app-logo/user.svg'); // 失败则回退默认
         }
     }
   };
-
-  // ==================== 头像管理 ====================
 
   /**
    * 处理编辑头像：打开文件选择器并触发裁剪流程
@@ -224,8 +138,8 @@ const NavBar: Component<NavBarProps> = () => {
    * 头像裁剪完成回调
    * 
    * 数据流分支：
-   * - 已登录：调用 sync_avatar_to_backend 同步到云端，清理本地文件
-   * - 未登录：调用 upload_avatar 保存到本地，记录路径到 localStorage
+   * 已登录：调用 sync_avatar_to_backend 同步到云端，更新全局头像状态，释放本地 Blob URL
+   * 未登录：调用 upload_avatar 保存到本地，记录路径到 localStorage
    * 
    * @param {string} croppedDataUrl - 裁剪后的 Base64 DataURL
    */
@@ -255,8 +169,6 @@ const NavBar: Component<NavBarProps> = () => {
     }
   };
 
-  // ==================== 模型管理 ====================
-
   /**
    * 根据模型名称获取对应的品牌 Logo 路径
    * 
@@ -265,16 +177,16 @@ const NavBar: Component<NavBarProps> = () => {
    */
   const getModelLogo = (modelName: string) => {
     const name = modelName.toLowerCase();
-    if (name.includes('gpt')) return '/icons/openai.svg';
-    if (name.includes('claude')) return '/icons/claude-color.svg';
-    if (name.includes('grok')) return '/icons/grok.svg';
-    if (name.includes('gemini')) return '/icons/gemini-color.svg';
-    if (name.includes('deepseek')) return '/icons/deepseek-color.svg';
-    if (name.includes('qwen')) return '/icons/qwen-color.svg';
-    if (name.includes('kimi') || name.includes('moonshot')) return '/icons/moonshot.svg';
-    if (name.includes('doubao')) return '/icons/doubao-color.svg';
-    if (name.includes('glm')) return '/icons/zhipu-color.svg';
-    return '/icons/ollama.svg';
+    if (name.includes('gpt')) return '/icons/model-logo/openai.svg';
+    if (name.includes('claude')) return '/icons/model-logo/claude-color.svg';
+    if (name.includes('grok')) return '/icons/model-logo/grok.svg';
+    if (name.includes('gemini')) return '/icons/model-logo/gemini-color.svg';
+    if (name.includes('deepseek')) return '/icons/model-logo/deepseek-color.svg';
+    if (name.includes('qwen')) return '/icons/model-logo/qwen-color.svg';
+    if (name.includes('kimi') || name.includes('moonshot')) return '/icons/model-logo/moonshot.svg';
+    if (name.includes('doubao')) return '/icons/model-logo/doubao-color.svg';
+    if (name.includes('glm')) return '/icons/model-logo/zhipu-color.svg';
+    return '/icons/model-logo/ollama.svg';
   };
 
   /**
@@ -400,7 +312,7 @@ const NavBar: Component<NavBarProps> = () => {
 
         if (assistant) {
           const topicId = assistant.topics[0]?.id;
-          const loadingText = "🚀 **正在启动本地 Llama 服务器...**";
+          const loadingText = "**正在启动本地 Llama 服务器...**";
 
           // UI 注入启动反馈
           if (topicId) {
@@ -429,21 +341,21 @@ const NavBar: Component<NavBarProps> = () => {
                 setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
                   'history', h => h.map((msg: any) =>
                     msg.content === loadingText
-                      ? { ...msg, content: "✅ **本地服务器启动成功，可以开始对话了！**" }
+                      ? { ...msg, content: "**本地服务器启动成功，可以开始对话了！**" }
                       : msg
                   )
                 );
               } else if (attempts >= maxAttempts) {
                 clearInterval(poll);
                 setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-                  'history', h => [...h, { role: 'assistant', content: "❌ **服务器启动超时，请检查显存空间或模型文件。**" }]
+                  'history', h => [...h, { role: 'assistant', content: "**服务器启动超时，请检查显存空间或模型文件。**" }]
                 );
               }
             }, 1500);
 
           } catch (err) {
             setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-              'history', h => [...h, { role: 'assistant', content: `❌ **启动失败: ${err}**` }]
+              'history', h => [...h, { role: 'assistant', content: `**启动失败: ${err}**` }]
             );
           }
         } else {
@@ -453,8 +365,6 @@ const NavBar: Component<NavBarProps> = () => {
       }
     }
   };
-
-  // ==================== 窗口控制 ====================
 
   /** 最小化窗口 */
   const handleMinimize = async () => await appWindow.minimize();
@@ -467,8 +377,6 @@ const NavBar: Component<NavBarProps> = () => {
   
   /** 关闭窗口 */
   const handleClose = async () => await appWindow.close();
-
-  // ==================== 生命周期钩子 ====================
 
   /**
    * 组件挂载时初始化：
@@ -497,7 +405,7 @@ const NavBar: Component<NavBarProps> = () => {
 
     // 本地头像兜底
     const localSavedPath = localStorage.getItem('user-avatar-path');
-    if (localSavedPath && globalUserAvatar() === '/icons/user.svg') {
+    if (localSavedPath && globalUserAvatar() === '/icons/app-logo/user.svg') {
       const url = await loadAvatarFromPath(localSavedPath);
       setGlobalUserAvatar(url);
     }
@@ -534,169 +442,170 @@ const NavBar: Component<NavBarProps> = () => {
     };
   });
 
-  // ==================== 渲染逻辑 ====================
-
-  return (
+return (
     <>
-      {/* 窗口拖拽响应区：实现无边框窗口拖拽 */}
-      <div data-tauri-drag-region class="navbar-drag-region"></div>
+      {/* 顶部拖拽背景区域，确保在边缘也能触发拖拽 */}
+      <div 
+        data-tauri-drag-region 
+        class="absolute top-0 left-0 right-0 h-[60px] z-[1] [app-region:drag]"
+      ></div>
 
-      <nav class="navbar">
-        {/* --- 左侧区域：Logo 与主导航 --- */}
-        <div class="logo-container">
-          <img src="/icons/logo.png" alt="AIO" class="logo" />
+      <nav 
+        data-tauri-drag-region
+        class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] bg-dark glow-border rounded-lg m-0 mr-[1px] z-[1000] [app-region:drag] select-none"
+      >
+        {/* Logo 容器 - 绝对定位在左侧 */}
+        <div class="absolute left-[10px] top-1/2 -translate-y-1/2 flex items-center justify-center z-[1001] pointer-events-none">
+          <img src="/icons/app-logo/logo.svg" alt="AIO" class="w-10 h-10 object-contain block [app-region:no-drag]" />
         </div>
 
-        {/* 对话页面链接 */}
-        <A href="/chat" class="nav-item" title="对话" activeClass="active" data-tauri-drag-region="false">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
-          </svg>
+        {/* 聊天导航 */}
+        <A 
+          href="/chat" 
+          title="对话" 
+          activeClass="!text-pri font-bold" 
+          class="nav-icon-link [app-region:no-drag]"
+        >
+          <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
 
-        {/* 设置页面链接 */}
-        <A href="/settings" class="nav-item" title="设置" activeClass="active" data-tauri-drag-region="false">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-          </svg>
+        {/* 设置导航 */}
+        <A 
+          href="/settings" 
+          title="设置" 
+          activeClass="!text-pri font-bold" 
+          class="nav-icon-link [app-region:no-drag]"
+        >
+          <Icon src="/icons/app-logo/settings-gear.svg" class="w-6 h-6" />
         </A>
 
-        {/* --- 中间区域：用户头像与下拉菜单 --- */}
+        {/* 用户头像及其下拉菜单 */}
         <div
-          class="user-avatar-wrapper"
+          class="relative flex items-center cursor-pointer [app-region:no-drag]"
           onMouseEnter={() => setUserMenuVisible(true)}
           onMouseLeave={() => setUserMenuVisible(false)}
         >
           <img
             src={globalUserAvatar()}
             alt="User Avatar"
-            class="avatar"
+            class="w-10 h-10 rounded-full border-2 border-dark-300 transition-all duration-200 object-cover hover:border-pri"
             onError={(e) => {
-              e.currentTarget.src = "/icons/user.svg"; // 加载失败回退默认图标
+              e.currentTarget.src = "/icons/app-logo/user.svg";
             }}
           />
           
-          {/* 用户下拉菜单 */}
-          <div classList={{ 'user-dropdown-menu': true, 'active': isUserMenuVisible() }}>
-            {/* 更换头像选项 */}
-            <div class="user-dropdown-item" onClick={handleEditAvatar}>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
-              </svg>
+          <div 
+            class="absolute top-full left-1/2 -translate-x-1/2 mt-3 bg-dark min-w-[140px] border border-pri rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5 before:content-[''] before:absolute before:-top-1.5 before:left-1/2 before:-translate-x-1/2 before:rotate-45 before:w-2.5 before:h-2.5 before:bg-dark before:border-l before:border-t before:border-pri"
+            classList={{ 'invisible opacity-0': !isUserMenuVisible(), 'visible opacity-100': isUserMenuVisible() }}
+          >
+            <div class="user-menu-item" onClick={handleEditAvatar}>
+              <Icon src="/icons/app-logo/camera.svg" class="w-4 h-4" />
               更换头像
             </div>
 
-            {/* 条件渲染：登录状态决定菜单内容 */}
             <Show
               when={datas.isLoggedIn}
               fallback={
-                // 未登录：显示登录选项
-                <div class="user-dropdown-item"
+                <div class="user-menu-item"
                   onClick={() => {
                     setIsLoginModalOpen(true);
                     setUserMenuVisible(false);
                   }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                  </svg>
+                  <Icon src="/icons/app-logo/user-profile.svg" class="w-4 h-4" />
                   登录账号
                 </div>
               }
             >
-              {/* 已登录：显示账号信息、切换账号、退出登录 */}
-              <div class="user-dropdown-divider"></div>
-              <div class="user-dropdown-item" style="font-weight: 500;">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
-                </svg>
+              <div class="h-[1px] bg-dark-300 my-1.5 mx-2 opacity-60"></div>
+              <div class="user-menu-item font-medium">
+                <Icon src="/icons/app-logo/info-circle.svg" class="w-4 h-4" />
                 账号信息
               </div>
-              <div class="user-dropdown-item"
+              <div class="user-menu-item"
                 onClick={() => {
                   setIsLoginModalOpen(true);
                   setUserMenuVisible(false);
                 }}>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:16px; height:16px;">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                </svg>
+                <Icon src="/icons/app-logo/switch-arrows.svg" class="w-4 h-4" />
                 切换账号
               </div>
-              <div class="user-dropdown-item logout-item" onClick={handleLogout}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-                </svg>
+              <div class="flex items-center gap-2.5 p-2.5 text-[#E08090] opacity-90 text-[13px] rounded-md transition-all hover:bg-[rgba(255,77,79,0.15)] hover:text-[#E08090]" onClick={handleLogout}>
+                <Icon src="/icons/app-logo/logout.svg" class="w-4 h-4" />
                 退出登录
               </div>
             </Show>
           </div>
         </div>
 
-        {/* --- 右侧区域：模型选择器 --- */}
+        {/* 模型选择器 */}
         <div
-          class="model-selector-wrapper"
+          class="relative flex items-center [app-region:no-drag]"
           onMouseEnter={() => setDropdownVisible(true)}
           onMouseLeave={() => setDropdownVisible(false)}
         >
-          <div class="nav-item model-selector" title="选择模型">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 0 0 2.25-2.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v2.25A2.25 2.25 0 0 0 6 10.5Zm0 9.75h2.25A2.25 2.25 0 0 0 10.5 18v-2.25a2.25 2.25 0 0 0-2.25-2.25H6a2.25 2.25 0 0 0-2.25 2.25V18A2.25 2.25 0 0 0 6 20.25Zm9.75-9.75H18a2.25 2.25 0 0 0 2.25-2.25V6A2.25 2.25 0 0 0 18 3.75h-2.25A2.25 2.25 0 0 0 13.5 6v2.25a2.25 2.25 0 0 0 2.25 2.25Z" />
-            </svg>
+          <div class="nav-icon-link" title="选择模型">
+            <Icon src="/icons/app-logo/model-selector.svg" class="w-6 h-6" />
           </div>
 
-          {/* 模型下拉菜单：双列布局（线上/本地） */}
-          <div classList={{ 'dropdown-menu': true, 'active': isDropdownVisible() }}>
-            <div class="dropdown-columns-container">
+          <div 
+            class="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-dark min-w-[480px] border border-dark-300 rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] z-[1000] transition-all duration-200 overflow-hidden"
+            classList={{ 
+              'invisible opacity-0 translate-y-2': !isDropdownVisible(), 
+              'visible opacity-100 translate-y-0 border-pri': isDropdownVisible() 
+            }}
+          >
+            <div class="flex flex-row h-[400px]">
               {/* 左列：线上模型 */}
-              <div class="dropdown-column">
-                <div class="column-header">线上模型</div>
-                <div class="column-content">
+              <div class="flex-1 flex flex-col min-w-[240px]">
+                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-dark-600 border-b border-dark-300">线上模型</div>
+                <div class="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-[#444]">
                   <For each={onlineModels()}>
                     {(model) => (
                       <div
-                        class="dropdown-item"
-                        classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
+                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-dark-200 hover:text-white"
+                        classList={{ 'bg-pri-20 border-l-3 border-pri': selectedModel()?.model_id === model.model_id }}
                         onClick={() => handleModelSelect(model)}
                       >
-                        <div class="nav-model-logo-container">
-                          <img src={getModelLogo(model.model_id)} alt="logo" class="nav-model-logo" />
+                        <div class="w-7 h-7 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm"
+                             classList={{ 'border border-pri': selectedModel()?.model_id === model.model_id }}>
+                          <img src={getModelLogo(model.model_id)} alt="logo" class="w-[18px] h-[18px] object-contain" />
                         </div>
-                        <div class="model-text-group">
-                          <div class="model-id-text">{model.model_id}</div>
-                          <div class="model-provider-text">{model.owned_by}</div>
+                        <div class="flex-1 flex flex-col items-start justify-center overflow-hidden text-left">
+                          <div class="max-w-[160px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
+                          <div class="text-[10px] text-pri opacity-70">{model.owned_by}</div>
                         </div>
                       </div>
                     )}
                   </For>
-                  {onlineModels().length === 0 && <div class="no-model-tip">无线上模型</div>}
+                  {onlineModels().length === 0 && <div class="p-5 text-center text-[#555] text-[13px]">无线上模型</div>}
                 </div>
               </div>
 
-              <div class="column-divider"></div>
+              <div class="w-[1px] bg-dark-300 self-stretch"></div>
 
               {/* 右列：本地模型 */}
-              <div class="dropdown-column">
-                <div class="column-header">本地模型</div>
-                <div class="column-content">
+              <div class="flex-1 flex flex-col min-w-[240px]">
+                <div class="px-4 py-3 text-[12px] font-bold text-[#888] uppercase tracking-widest bg-dark-600 border-b border-dark-300">本地模型</div>
+                <div class="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-[#444]">
                   <For each={localModels()}>
                     {(model) => (
                       <div
-                        class="dropdown-item"
-                        classList={{ 'selected': selectedModel()?.model_id === model.model_id }}
+                        class="flex flex-row items-center gap-2.5 p-2 text-[#a0a0a0] text-sm rounded-lg cursor-pointer select-none transition-all hover:bg-dark-200 hover:text-white"
+                        classList={{ 'bg-pri-20 border-l-3 border-pri': selectedModel()?.model_id === model.model_id }}
                         onClick={() => handleModelSelect(model)}
                       >
-                        <div class="nav-model-logo-container">
-                          <img src={getModelLogo(model.model_id)} alt="logo" class="nav-model-logo" />
+                        <div class="w-7 h-7 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm"
+                             classList={{ 'border border-pri': selectedModel()?.model_id === model.model_id }}>
+                          <img src={getModelLogo(model.model_id)} alt="logo" class="w-[18px] h-[18px] object-contain" />
                         </div>
-                        <div class="model-text-group">
-                          <div class="model-id-text">{model.model_id}</div>
-                          <div class="model-provider-text">Local</div>
+                        <div class="flex-1 flex flex-col items-start justify-center overflow-hidden text-left">
+                          <div class="max-w-[160px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
+                          <div class="text-[10px] text-pri opacity-70">Local</div>
                         </div>
                       </div>
                     )}
                   </For>
-                  {localModels().length === 0 && <div class="no-model-tip">无本地模型</div>}
+                  {localModels().length === 0 && <div class="p-5 text-center text-[#555] text-[13px]">无本地模型</div>}
                 </div>
               </div>
             </div>
@@ -704,41 +613,30 @@ const NavBar: Component<NavBarProps> = () => {
         </div>
 
         {/* 提示词设置按钮 */}
-        <a href="#" title="设置提示词" class="nav-item" onClick={handleOpenPromptModal} data-tauri-drag-region="false">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
-          </svg>
+        <a href="#" title="设置提示词" class="nav-icon-link [app-region:no-drag]" onClick={handleOpenPromptModal}>
+          <Icon src="/icons/app-logo/prompt.svg" class="w-6 h-6" />
         </a>
 
-        {/* --- 窗口控制按钮组 --- */}
-        <div class="window-controls">
-          <button class="control-button minimize" onClick={handleMinimize} title="最小化">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14" />
-            </svg>
+        {/* 窗口控制按钮 */}
+        <div class="absolute right-5 flex items-center [app-region:no-drag]">
+          <button class="win-ctrl-btn hover:bg-dark-300" onClick={handleMinimize} title="最小化">
+            <Icon src="/icons/app-logo/minimize.svg" class="w-6 h-6" />
           </button>
 
-          <button class="control-button maximize" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
+          <button class="win-ctrl-btn hover:bg-dark-300" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
             {isMaximized() ? (
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 8.25V6a2.25 2.25 0 0 0-2.25-2.25H6A2.25 2.25 0 0 0 3.75 6v8.25A2.25 2.25 0 0 0 6 16.5h2.25m8.25-8.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-7.5A2.25 2.25 0 0 1 8.25 18v-1.5m8.25-8.25h-6a2.25 2.25 0 0 0-2.25 2.25v6" />
-              </svg>
+              <Icon src="/icons/app-logo/restore.svg" class="w-6 h-6" />
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 7.5A2.25 2.25 0 0 1 7.5 5.25h9a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-9a2.25 2.25 0 0 1-2.25-2.25v-9Z" />
-              </svg>
+              <Icon src="/icons/app-logo/maximize.svg" class="w-6 h-6" />
             )}
           </button>
 
-          <button class="control-button close" onClick={handleClose} title="关闭">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.5} stroke="currentColor" class="size-6">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-            </svg>
+          <button class="win-ctrl-btn hover:bg-danger" onClick={handleClose} title="关闭">
+            <Icon src="/icons/app-logo/close-x.svg" class="w-6 h-6" />
           </button>
         </div>
       </nav>
 
-      {/* 子组件渲染 */}
       <Show when={tempImage()}>
         <AvatarCropModal
           imageSrc={tempImage()!}
@@ -761,6 +659,6 @@ const NavBar: Component<NavBarProps> = () => {
       />
     </>
   );
-}
+};
 
 export default NavBar;

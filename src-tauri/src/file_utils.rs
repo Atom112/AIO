@@ -1,10 +1,12 @@
+/// 工具函数组：处理文件内容提取和转换。
+
 use base64::{engine::general_purpose, Engine as _};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
 
-/// 内部函数：从 Office XML 的 `<t>` 标签中提取文本内容。
+/// 从 Office XML 的 `<t>` 标签中提取文本内容。
 pub fn extract_text_from_xml(xml: &str) -> String {
     let reader = xml::EventReader::new(xml.as_bytes());
     let mut out = String::new();
@@ -53,7 +55,7 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
     Ok(full_text)
 }
 
-/// Tauri 命令: 处理各种格式的文件内容。
+/// 处理各种格式的文件内容。
 ///
 /// 支持格式
 /// 图像 (png/jpg/webp): 返回 Base64 DataURI。

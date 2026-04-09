@@ -1,62 +1,35 @@
 import { Component, For, Show, Setter } from 'solid-js';
 import Markdown from './Markdown';
-import { Topic, globalUserAvatar, selectedModel } from '../store/store';
+import { Topic, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import Icon from './Icon';
 
-/**
- * 组件 Props 接口定义
- */
 interface ChatInterfaceProps {
-    /** 当前激活的话题对象，包含消息历史 */
-    activeTopic: Topic | null;
-    /** 话题切换中状态，用于触发动画效果 */
-    isChangingTopic: boolean;
-    /** AI 是否正在思考/生成回复 */
-    isThinking: boolean;
-    /** 是否正在后台处理文件解析 */
-    isProcessing: boolean;
-    /** 是否有文件正在被拖拽到聊天区域 */
-    isDragging: boolean;
-    /** 当前应用打字机效果的消息索引，null 表示无 */
-    typingIndex: number | null;
-    /** 输入框当前文本值 */
-    inputMessage: string;
-    /** 设置输入框文本的 Setter */
-    setInputMessage: Setter<string>;
-    /** 待发送文件列表（已选择但未发送） */
-    pendingFiles: { name: string, content: string, type: 'text' | 'image' }[];
-    /** 设置待发送文件列表的 Setter */
-    setPendingFiles: Setter<{ name: string, content: string, type: 'text' | 'image' }[]>;
-    /** 发送消息回调（包含文本和 pendingFiles） */
-    handleSendMessage: () => void;
-    /** 停止 AI 生成回调 */
-    handleStopGeneration: () => void;
-    /**
-     * 文件上传处理回调
-     * @param path - 文件绝对路径
-     * @param type - 文件类型：'file' 通用文件 或 'image' 图片
-     */
-    handleFileUpload: (path: string, type: 'file' | 'image') => Promise<void>;
+    activeTopic: Topic | null; // 当前激活的话题对象
+    isChangingTopic: boolean; // 话题切换中状态
+    isThinking: boolean; // AI 是否正在生成回复
+    isProcessing: boolean; // 是否正在处理文件解析
+    isDragging: boolean; // 是否有文件被拖拽到聊天区域
+    typingIndex: number | null; // 应用打字机效果的消息索引
+    inputMessage: string; // 输入框当前文本值
+    setInputMessage: Setter<string>; // 设置输入框文本
+    pendingFiles: { name: string, content: string, type: 'text' | 'image' }[]; // 待发送文件列表
+    setPendingFiles: Setter<{ name: string, content: string, type: 'text' | 'image' }[]>; // 设置待发送文件
+    handleSendMessage: () => void; // 发送消息回调
+    handleStopGeneration: () => void; // 停止 AI 生成回调
+    handleFileUpload: (path: string, type: 'file' | 'image') => Promise<void>; // 文件上传处理回调
 }
 
 /**
  * 聊天界面组件
- * 
- * @component
- * @description 完整的聊天交互界面，包括消息渲染、输入控制、文件上传。
- *              支持 Markdown 渲染、代码复制、文件拖拽、自适应输入框。
- * 
  * @param {ChatInterfaceProps} props - 组件属性
  * @returns {JSX.Element} 聊天界面 JSX 元素
  */
 const ChatInterface: Component<ChatInterfaceProps> = (props) => {
-    /** 文本域 DOM 引用，用于重置高度 */
-    let textareaRef: HTMLTextAreaElement | undefined;
+    let textareaRef: HTMLTextAreaElement | undefined; // 文本域 DOM 引用
 
     /**
      * 根据模型名称获取对应的品牌 Logo 路径
-     * 
      * @param {string} modelName - 模型名称或 ID
      * @returns {string} Logo 图片的 URL 路径
      */
@@ -76,10 +49,27 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
     return (
         <div class="flex flex-col flex-grow items-stretch glow-border rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full">
-            {/* 消息展示区域 */}
             <div
                 class={`flex-grow overflow-y-auto pb-[15px] transition-opacity duration-200 ease-out z-[1] ${props.isChangingTopic ? 'opacity-0' : 'opacity-100'}`}
             >
+                <Show when={isStartingLocalModel()}>
+                    <div class="w-full mb-4 p-4 bg-dark-300 rounded-lg border border-pri-20">
+                        <div class="flex items-center gap-3 mb-2">
+                            <Icon src="/icons/app-logo/loading.svg" class="w-5 h-5 animate-spin text-pri" />
+                            <span class="text-white text-sm">正在启动本地 Llama 服务器...</span>
+                        </div>
+                        <div class="w-full bg-dark-500 rounded-full h-2">
+                            <div 
+                                class="bg-pri h-2 rounded-full transition-all duration-300" 
+                                style={{ width: `${localModelStartProgress()}%` }}
+                            ></div>
+                        </div>
+                        <div class="text-right text-xs text-pri-50 mt-1">
+                            {Math.round(localModelStartProgress())}%
+                        </div>
+                    </div>
+                </Show>
+
                 <Show when={props.activeTopic}>
                     <For each={props.activeTopic?.history}>
                         {(msg: any, index) => (
@@ -182,14 +172,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 </Show>
             </div>
 
-            {/* 加载状态 */}
             <Show when={props.isProcessing}>
                 <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.8)] text-pri text-sm z-[100]">
                     正在解析文件内容...
                 </div>
             </Show>
 
-            {/* 待上传文件标签 */}
             <div class="flex flex-wrap gap-[3px] bg-transparent pt-[3px] relative z-0">
                 <For each={props.pendingFiles}>
                     {(file, i) => (
@@ -209,7 +197,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 </For>
             </div>
 
-            {/* 输入框区域 */}
             <div class="bg-transparent flex flex-col relative w-full z-10">
                 <div class="bg-dark-900 border border-dark-300 rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 focus-within:border-pri focus-within:shadow-[0_0_10px_var(--primary-10)] w-full">
                     <textarea
@@ -294,7 +281,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 </div>
             </div>
 
-            {/* 拖拽覆盖层 */}
             <Show when={props.isDragging}>
                 <div class="absolute inset-0 flex items-center justify-center bg-[rgba(0,0,0,0.7)] backdrop-blur-[4px] pointer-events-none z-[9999]">
                     <div class="relative flex flex-col items-center justify-center w-[420px] h-[280px] bg-dark-850 border-2 border-pri rounded-xl shadow-[0_0_30px_var(--primary-20)] text-white text-center p-5">

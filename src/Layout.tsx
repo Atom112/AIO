@@ -9,7 +9,6 @@ import { Component, ParentProps } from "solid-js";
 /**
  * Layout 组件
  * @param props - 包含 children (当前匹配路由指向的组件内容)
- * 
  * @returns 返回一个包含通用导航和过渡动画的内容区域
  */
 const Layout: Component<ParentProps> = (props) => {

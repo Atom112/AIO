@@ -1,9 +1,9 @@
 mod commands;
-mod models;
-mod utils;
+mod data_models;
+mod file_utils;
 mod db;
 
-use crate::utils::process_file_content;
+use crate::file_utils::process_file_content;
 use dashmap::DashMap;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -47,9 +47,9 @@ pub fn run() {
             commands::llm::fetch_models,
             commands::llm::summarize_history,
             commands::llm::append_message,
-            commands::server::start_local_server,
-            commands::server::stop_local_server,
-            commands::server::is_local_server_running,
+            commands::llama_server::start_local_server,
+            commands::llama_server::stop_local_server,
+            commands::llama_server::is_local_server_running,
             commands::auth::login_to_backend,
             commands::auth::register_to_backend,
             commands::auth::validate_token,

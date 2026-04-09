@@ -1,4 +1,6 @@
-use crate::models::*;
+/// 配置相关的 Tauri 命令：处理应用程序通用配置、AI 助手预设、已激活模型列表以及从云端获取的模型信息的保存和加载。
+
+use crate::data_models::*;
 use crate::DbState;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;

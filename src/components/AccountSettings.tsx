@@ -6,7 +6,6 @@ import { Component } from 'solid-js';
  * @component
  * @description 渲染用户账号信息展示页面，包含静态的用户信息卡片和退出登录按钮。
  *              当前实现为占位符版本，所有用户数据均为硬编码。
- * 
  * @returns {JSX.Element} 返回账号设置页面的 JSX 元素
  */
 const AccountSettings: Component = () => {

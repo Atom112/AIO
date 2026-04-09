@@ -1,6 +1,8 @@
+/// LLM 相关的 Tauri 命令：处理与大语言模型交互的核心功能，包括流式调用、模型列表获取、生成停止以及对话历史总结等。
+
 use crate::DbState;
 use rusqlite::params;
-use crate::models::*;
+use crate::data_models::*;
 use crate::StreamManager;
 use futures_util::StreamExt; // 用于处理流式数据
 use serde_json::json;

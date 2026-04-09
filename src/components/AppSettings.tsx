@@ -6,37 +6,25 @@ import Icon from './Icon';
 
 /**
  * 应用设置页面组件
- * 
- * @component
- * @description 提供应用配置界面，包括主题色彩自定义（HSL调色）、系统自启设置、
- *              版本信息展示和 GitHub 仓库链接。使用 Tauri API 与宿主系统交互。
- * 
  * @returns {JSX.Element} 应用设置页面的 JSX 元素
  */
 const AppSettings: Component = () => {
 
-    /** 色相 (Hue): 0-360 度，控制颜色的基本色调 */
-    const [h, setH] = createSignal(0);
-    /** 饱和度 (Saturation): 0-100%，控制颜色鲜艳程度 */
-    const [s, setS] = createSignal(0);
-    /** 亮度 (Lightness): 0-100%，控制颜色明暗（当前固定，未提供滑块调节） */
-    const [l, setL] = createSignal(0);
-    /** 开机自启开关状态：true 表示随系统启动 */
-    const [autoStart, setAutoStart] = createSignal(true);
-    /** 应用版本号，默认 1.0.0，挂载后从 Tauri API 获取真实版本 */
-    const [version, setVersion] = createSignal('');
+    const [h, setH] = createSignal(0); // 色相 (0-360 度)
+    const [s, setS] = createSignal(0); // 饱和度 (0-100%)
+    const [l, setL] = createSignal(0); // 亮度 (0-100%)
+    const [autoStart, setAutoStart] = createSignal(true); // 系统自启开关状态
+    const [version, setVersion] = createSignal(''); // 应用版本号
 
     /**
-     * 组件挂载时执行：初始化 HSL 状态和获取应用版本
+     * 初始化 HSL 状态和获取应用版本
      */
     onMount(async () => {
-        // 将全局主题色（Hex）转换为 HSL，用于初始化滑块位置
         const initialHsl = hexToHsl(themeColor());
         setH(initialHsl.h);
         setS(initialHsl.s);
         setL(initialHsl.l);
 
-        // 获取应用版本号，失败时保持默认值并打印错误
         try {
             const v = await getVersion();
             setVersion(v);
@@ -45,17 +33,17 @@ const AppSettings: Component = () => {
         }
     });
 
+    /**
+     * 监听全局主题色变化，同步更新本地 HSL 状态
+     */
     createEffect(() => {
-        const currentHex = themeColor(); // 订阅全局主题色变化
+        const currentHex = themeColor();
 
-        // 使用 untrack 读取本地 h,s,l，防止创建循环依赖
-        // 比较当前 Hex 与本地 HSL 转换后的 Hex，判断是否需要更新
         const shouldUpdate = untrack(() => {
             const mappedHex = hslToHex(h(), s(), l());
             return currentHex.toLowerCase() !== mappedHex.toLowerCase();
         });
 
-        // 仅当外部主题色与本地状态不一致时才更新（避免覆盖用户正在拖动的滑块）
         if (shouldUpdate) {
             const currentHsl = hexToHsl(currentHex);
             setH(currentHsl.h);
@@ -65,11 +53,9 @@ const AppSettings: Component = () => {
     });
 
     /**
-     * 滑块更新处理器：处理色相/饱和度滑块的输入事件
-     * 
-     * @param {('h' | 's')} type - 滑块类型：'h' 色相 或 's' 饱和度
-     * @param {number} val - 滑块当前数值
-     * 
+     * 处理色相/饱和度/亮度滑块输入
+     * @param {('h' | 's' | 'l')} type - 滑块类型
+     * @param {number} val - 滑块数值
      */
     const handleSliderUpdate = (type: 'h' | 's' | 'l', val: number) => {
         let nextH = h();
@@ -93,9 +79,8 @@ const AppSettings: Component = () => {
 
     /**
      * Hex 颜色转 RGB 对象
-     * 
-     * @param {string} hex Hex 颜色字符串
-     * @returns {{r: number, g: number, b: number}} RGB 分量对象，解析失败返回 0
+     * @param {string} hex - Hex 颜色字符串
+     * @returns {{r: number, g: number, b: number}} RGB 分量对象
      */
     const hexToRgb = (hex: string) => {
         const r = parseInt(hex.slice(1, 3), 16) || 0;
@@ -106,24 +91,20 @@ const AppSettings: Component = () => {
 
     /**
      * Hex 颜色转 HSL 对象
-     * 
      * @param {string} hex - Hex 颜色字符串
      * @returns {{h: number, s: number, l: number}} HSL 分量对象（h:0-360, s/l:0-100）
      */
     const hexToHsl = (hex: string) => {
         let { r, g, b } = hexToRgb(hex);
-        // 归一化到 [0,1]
         r /= 255; g /= 255; b /= 255;
 
         const max = Math.max(r, g, b), min = Math.min(r, g, b);
         let h = 0, s = 0, l = (max + min) / 2;
 
-        // 非灰度色才计算色相和饱和度
         if (max !== min) {
             const d = max - min;
             s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
 
-            // 计算色相（0-6 范围，后续转角度）
             if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
             else if (max === g) h = (b - r) / d + 2;
             else h = (r - g) / d + 4;
@@ -131,7 +112,6 @@ const AppSettings: Component = () => {
             h /= 6;
         }
 
-        // 转换为标准 HSL 单位
         return {
             h: Math.round(h * 360),
             s: Math.round(s * 100),
@@ -140,11 +120,9 @@ const AppSettings: Component = () => {
     };
 
     /**
-     * 环形色盘交互处理器：将鼠标或触摸在色环上的位置映射为色相（Hue）角度并更新主题色
-     *
+     * 环形色盘交互处理：将鼠标/触摸位置映射为色相角度
      * @param {MouseEvent | TouchEvent} e - 鼠标或触摸事件
-     * @param {DOMRect} rect - 色环元素的边界（getBoundingClientRect()）
-     * @returns {void}
+     * @param {DOMRect} rect - 色环元素的边界
      */
     const handleRingInteraction = (e: MouseEvent | TouchEvent, rect: DOMRect) => {
         const centerX = rect.left + rect.width / 2;
@@ -157,36 +135,33 @@ const AppSettings: Component = () => {
         handleSliderUpdate('h', Math.round(degree));
     };
 
-    // 计算指示点的位置
+    /**
+     * 计算色环指示点位置（基于当前色相）
+     */
     const pointerStyle = createMemo(() => {
-        // 将色相值转换为弧度，减去 90 度是因为 conic-gradient 起点在 12 点方向
         const rad = ((h() - 90) * Math.PI) / 180;
         const radius = 102;
         const x = Math.cos(rad) * radius;
         const y = Math.sin(rad) * radius;
 
         return {
-            // 第一个 translate 处理环形位移，第二个 translate(-50%, -50%) 确保圆点中心对齐坐标
             transform: `translate(${x}px, ${y}px) translate(-50%, -50%)`
         };
     });
 
     /**
      * HSL 颜色转 Hex 字符串
-     *  
      * @param {number} h - 色相 (0-360)
      * @param {number} s - 饱和度 (0-100)
      * @param {number} l - 亮度 (0-100)
      * @returns {string} Hex 颜色字符串
      */
     const hslToHex = (h: number, s: number, l: number) => {
-        l /= 100; // 亮度归一化
-        // 计算色度相关参数
+        l /= 100;
         const a = (s * Math.min(l, 1 - l)) / 100;
 
-        // 辅助函数：根据角度偏移计算颜色通道
         const f = (n: number) => {
-            const k = (n + h / 30) % 12; // 每 30 度一个分段
+            const k = (n + h / 30) % 12;
             const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
             return Math.round(255 * color).toString(16).padStart(2, '0');
         };
@@ -194,13 +169,8 @@ const AppSettings: Component = () => {
         return `#${f(0)}${f(8)}${f(4)}`;
     };
 
-    /** 
-     * 记忆化 RGB 值：基于当前主题色自动计算 RGB 分量
-     * 用于 RGB 输入框展示
-     */
-    const rgb = createMemo(() => hexToRgb(themeColor()));
+    const rgb = createMemo(() => hexToRgb(themeColor())); // 当前主题色的 RGB 值
 
-    /** 预设主题列表：包含名称和 Hex 颜色值 */
     const presetThemes = [
         { name: '极光青', color: '#90D0E0' },
         { name: '樱花粉', color: '#F5BDE6' },
@@ -216,7 +186,7 @@ const AppSettings: Component = () => {
                     <h3 class="m-0 text-base text-white">应用状态</h3>
                     <div class="flex items-center gap-2">
                         <span class="text-xs text-[#888] font-medium">版本号:</span>
-                        <div class="bg-[var(--primary-color,#08ddf9)] text-black text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
+                        <div class="bg-pri text-black text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
                             style="font-family: 'JetBrains Mono', monospace;">
                             v{version()}
                         </div>

@@ -14,21 +14,15 @@ import Icon from './Icon';
  * 组件 Props 接口定义
  */
 interface TopicSidebarProps {
-    /** 侧边栏宽度百分比（0-100） */
-    width: number;
-    /** 拖拽调整宽度时的鼠标事件回调 */
-    onResize: (e: MouseEvent) => void;
-    /** 当前选中的助手对象，undefined 表示无选中助手 */
-    currentAssistant: Assistant | undefined;
-    /** 当前处于重命名编辑状态的话题 ID，null 表示无 */
-    editingTopicId: string | null;
-    /** 设置重命名状态的回调函数 */
-    setEditingTopicId: (id: string | null) => void;
-    /** 新建话题的回调函数 */
-    addTopic: () => void;
-    isCollapsed: boolean;
-    onToggle: (e: MouseEvent) => void;
-    isResizing: boolean;
+    width: number;                              //侧边栏宽度百分比（0-100）
+    onResize: (e: MouseEvent) => void;          //拖拽调整宽度时的鼠标事件回调
+    currentAssistant: Assistant | undefined;    //当前选中的助手对象，undefined 表示无选中助手
+    editingTopicId: string | null;              //当前处于重命名编辑状态的话题 ID，null 表示无
+    setEditingTopicId: (id: string | null) => void;    //设置重命名状态的回调函数
+    addTopic: () => void;                       //新建话题的回调函数
+    isCollapsed: boolean;                       //侧边栏是否折叠（完全隐藏内容，仅显示把手）
+    onToggle: (e: MouseEvent) => void;          //点击折叠/展开按钮的回调函数
+    isResizing: boolean;                        //是否正在调整宽度（拖拽过程中），用于优化动画效果
 }
 
 const createTopic = (name?: string): Topic => ({
@@ -42,21 +36,13 @@ const createTopic = (name?: string): Topic => ({
  * 话题侧边栏组件
  * 
  * @component
- * @description 渲染助手的话题列表，支持话题管理操作和宽度调整。
- * 
  * @param {TopicSidebarProps} props - 组件属性
  * @returns {JSX.Element} 话题侧边栏 JSX 元素
  */
 const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
-    /** 
-     * 控制菜单 DOM 是否渲染（布尔值）
-     * 与 topicMenuState.isOpen 配合实现退出动画
-     */
-    const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
-
-    /** 菜单是否正在执行退出动画，用于添加 CSS 退出动画类名 */
-    const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);
+    const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);//控制菜单 DOM 是否渲染（布尔值）
+    const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);    //菜单是否正在执行退出动画，用于添加 CSS 退出动画类名
 
     /**
      * 菜单完整状态对象
@@ -73,13 +59,10 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
     /**
      * 组件挂载时：注册全局点击监听，实现点击外部关闭菜单
-     * 
      * 清理函数：组件卸载时移除事件监听
      */
     onMount(() => {
-        /**
-         * 全局点击处理器：点击页面任意位置关闭话题菜单
-         */
+        // 全局点击处理器：点击页面任意位置关闭话题菜单
         const handleTopicClickOutside = () => {
             if (topicMenuState().isOpen) {
                 closeTopicMenu();
@@ -92,14 +75,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
     /**
      * 保存话题重命名结果
-     * 
-     * 数据流：
-     * 1. 验证输入非空，否则取消编辑
-     * 2. 乐观更新：先修改本地 Store 的话题名称（通过路径导航）
-     *    路径：assistants → 匹配 assistant id → topics → 匹配 topic id → name
-     * 3. 异步保存：调用 API 持久化整个助手数据到后端
-     * 4. 清理状态：退出编辑模式
-     * 
      * @param {string} asstId - 所属助手 ID
      * @param {string} topicId - 话题 ID
      * @param {string} newName - 新名称
@@ -107,25 +82,15 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
         // 输入验证：空值则取消编辑
         if (!newName.trim()) return props.setEditingTopicId(null);
-
-        // 乐观更新：立即修改本地状态，UI 即时响应
-        // SolidJS Store 路径导航语法：逐层定位到目标属性
         setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'name', newName);
-
         // 异步持久化：保存助手数据到后端
         await saveSingleAssistantToBackend(asstId);
-
         // 退出编辑模式
         props.setEditingTopicId(null);
     };
 
     /**
      * 打开话题上下文菜单
-     * 
-     * 交互逻辑：
-     * - 计算菜单位置：基于触发按钮的视口坐标，向左偏移 100px
-     * - 显示菜单并设置目标话题 ID
-     * 
      * @param {MouseEvent} e - 鼠标事件对象
      * @param {string} topicId - 目标话题 ID
      */
@@ -149,11 +114,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
     /**
      * 关闭话题菜单（带退出动画）
-     * 
-     * 动画流程：
-     * 1. 立即设置 isOpen=false，触发 CSS 退出动画
-     * 2. 设置 isTopicMenuAnimatingOut=true，添加退出动画类
-     * 3. 200ms 延迟后从 DOM 移除菜单
      */
     const closeTopicMenu = () => {
         setTopicMenuState(p => ({ ...p, isOpen: false }));
@@ -166,15 +126,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     };
 
     /**
-     * 删除话题
-     * 
-     * 数据流与状态处理：
-     * 1. 防御性检查：确保助手至少保留一个话题
-     * 2. 乐观更新：从本地话题列表过滤移除
-     * 3. 如删除的是当前选中话题，自动切换到第一个话题
-     * 4. 异步持久化：保存助手数据到后端
-     * 5. 关闭菜单
-     * 
+     * 删除话题 
      * @param {string} asstId - 所属助手 ID
      * @param {string} topicId - 要删除的话题 ID
      */
@@ -213,7 +165,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
 return (
         <div 
-            // 基础容器：对应 .dialog-container
             class="relative flex flex-col flex-shrink-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] min-w-0"
             style={{
                 width: props.isCollapsed ? '0%' : `${props.width}%`,
@@ -224,7 +175,6 @@ return (
                 "transition": props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' // 调整宽度时取消过渡，避免卡顿
             }}
         >
-            {/* 拖拽把手：对应 .resize-handle.right-handle */}
             <div 
                 class="hover:bg-pri-20 after:rounded-[2px] after:h-[calc(100%-30px)] after:transition-all after:duration-300 after:ease-in-out after:w-1 after:content-[''] after:bg-pri-10 !bg-transparent absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group transition-colors duration-200"
                 classList={{ 
@@ -234,10 +184,8 @@ return (
                 }}
                 onMouseDown={(e) => props.onResize(e as MouseEvent)}
             >
-                {/* 把手内部的竖线：对应 .resize-handle::after */}
                 <div class="absolute w-1 h-[calc(100%-30px)] bg-pri-10 rounded-sm transition-all duration-300 group-hover:bg-pri group-hover:h-[calc(100%-20px)] group-hover:shadow-[0_0_10px_var(--primary-color)]"></div>
 
-                {/* 折叠按钮：对应 .collapse-indicator */}
                 <div 
                     class="hover:scale-110 pointer-events-auto absolute z-[1001] w-[10px] h-12 bg-pri rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-black font-bold text-[10px] shadow-[0_0_10px_var(--primary-color)] opacity-0 transition-all duration-200 hover:scale-y-110 hover:opacity-100 group-hover:opacity-100"
                     classList={{ 'opacity-40 !opacity-100 scale-y-100 shadow-[0_0_15px_var(--primary-color)]': props.isCollapsed }}
@@ -251,7 +199,6 @@ return (
                 </div>
             </div>
 
-            {/* 内容遮罩层：对应 .collapsed-content-hide */}
             <div 
                 class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
                 classList={{ "opacity-0 pointer-events-none overflow-hidden": props.isCollapsed }}
@@ -314,7 +261,6 @@ return (
                 </Show>
             </div>
 
-            {/* 右键菜单浮层：对应 .assistant-context-menu */}
             {showTopicMenuDiv() && (
                 <div
                     class="context-menu"

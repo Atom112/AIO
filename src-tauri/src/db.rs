@@ -1,3 +1,5 @@
+/// 数据库模块：负责初始化 SQLite 数据库连接，创建必要的表结构，并提供数据库访问接口。
+
 use rusqlite::{Connection, Result};
 use std::fs;
 use tauri::AppHandle;

@@ -18,10 +18,10 @@ const DEFAULT_ASST_ID = "default-assistant-id";
  * @returns Topic 对象，包含唯一 ID、名称、空历史记录和空摘要
  */
 const createTopic = (name?: string): Topic => ({
-  id: Date.now().toString(), // 使用当前时间戳作为唯一标识符
+  id: Date.now().toString(),                                // 使用当前时间戳作为唯一标识符
   name: name || `新话题 ${new Date().toLocaleTimeString()}`, // 默认名称包含创建时间
-  history: [], // 消息历史记录数组
-  summary: "" // SQLite 存储方案新增：长期记忆摘要，用于压缩历史上下文
+  history: [],                                              // 消息历史记录数组
+  summary: ""                                               // SQLite 存储方案新增：长期记忆摘要，用于压缩历史上下文
 });
 
 /**
@@ -31,54 +31,55 @@ const createTopic = (name?: string): Topic => ({
  * @returns Assistant 对象，包含 ID、名称、系统提示词和默认话题
  */
 const createAssistant = (name?: string, id?: string): Assistant => ({
-  id: id ?? Date.now().toString(), // 若未提供 ID 则生成新的时间戳 ID
-  name: name || '新助手', // 默认助手名称
-  prompt: '你是一个乐于助人的 AI 助手。', // 默认系统提示词
-  topics: [createTopic('默认话题')] // 每个助手默认创建一个"默认话题"
+  id: id ?? Date.now().toString(),        // 若未提供 ID 则生成新的时间戳 ID
+  name: name || '新助手',                  // 默认助手名称
+  prompt: '你是一个乐于助人的 AI 助手。',     // 默认系统提示词
+  topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
 });
 
 /**
  * 聊天页面主组件
  * 管理三栏布局、所有业务逻辑和状态流转
+ * @component
  */
 const ChatPage: Component = () => {
 
-  /** 左侧面板宽度百分比（助手列表），默认 18%，范围 15%-30% */
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
     Number(localStorage.getItem('chat-left-panel-width')) || 18
-  );
-  /** 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30% */
+  ); // 左侧面板宽度百分比（助手列表），默认 18%，范围 15%-30%
   const [rightPanelWidth, setRightPanelWidth] = createSignal(
     Number(localStorage.getItem('chat-right-panel-width')) || 18
-  );
+  ); // 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30%
   const [isResizing, setIsResizing] = createSignal(false);
-  /** 左右两侧面板宽度调整逻辑 **/
-  const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(localStorage.getItem('left-collapsed') === 'true');
+  const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(localStorage.getItem('left-collapsed') === 'true'); // 左右两侧面板宽度调整逻辑
   const [isRightCollapsed, setIsRightCollapsed] = createSignal(localStorage.getItem('right-collapsed') === 'true');
-  /** 当前输入框中的消息文本 */
-  const [inputMessage, setInputMessage] = createSignal("");
-  /** 待发送的文件列表（用户上传但尚未发送的文件） */
-  const [pendingFiles, setPendingFiles] = createSignal<{ name: string, content: string, type: 'text' | 'image' }[]>([]);
-  /** AI 是否正在思考/生成回复（控制加载动画和停止按钮） */
-  const [isThinking, setIsThinking] = createSignal(false);
-  /** 是否正在处理文件（控制文件解析加载状态） */
-  const [isProcessing, setIsProcessing] = createSignal(false);
-  /** 是否正在拖拽文件到窗口（控制拖拽状态样式） */
-  const [isDragging, setIsDragging] = createSignal(false);
-  /** 是否正在切换话题（控制切换动画） */
-  const [isChangingTopic, setIsChangingTopic] = createSignal(false);
-  /** 当前正在打字机效果显示的消息索引，null 表示无打字效果 */
-  const [typingIndex, setTypingIndex] = createSignal<number | null>(null);
-  /** 当前正在编辑名称的助手 ID，null 表示无编辑中 */
-  const [editingAsstId, setEditingAsstId] = createSignal<string | null>(null);
-  /** 当前正在编辑名称的话题 ID，null 表示无编辑中 */
-  const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);
+  const [inputMessage, setInputMessage] = createSignal("");                       // 当前输入框中的消息文本
+  const [pendingFiles, setPendingFiles] = createSignal<{ name: string, content: string, type: 'text' | 'image' }[]>([]); // 待发送的文件列表（用户上传但尚未发送的文件）
+  const [isThinking, setIsThinking] = createSignal(false);                        // AI 是否正在思考/生成回复（控制加载动画和停止按钮）
+  const [isProcessing, setIsProcessing] = createSignal(false);                    // 是否正在处理文件（控制文件解析加载状态）
+  const [isDragging, setIsDragging] = createSignal(false);                        // 是否正在拖拽文件到窗口（控制拖拽状态样式）
+  const [isChangingTopic, setIsChangingTopic] = createSignal(false);              // 是否正在切换话题（控制切换动画）
+  const [typingIndex, setTypingIndex] = createSignal<number | null>(null);        // 当前正在打字机效果显示的消息索引，null 表示无打字效果
+  const [editingAsstId, setEditingAsstId] = createSignal<string | null>(null);    // 当前正在编辑名称的助手 ID，null 表示无编辑中
+  const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
 
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
+  /**
+   * 计算左侧面板显示宽度
+   * @returns {number} 左侧面板宽度，如果折叠则返回0
+   */
   const displayLeftWidth = () => isLeftCollapsed() ? 0 : leftPanelWidth();
+  /**
+   * 计算右侧面板显示宽度
+   * @returns {number} 右侧面板宽度，如果折叠则返回0
+   */
   const displayRightWidth = () => isRightCollapsed() ? 0 : rightPanelWidth();
 
+  /**
+   * 切换左侧面板的折叠状态
+   * @param {MouseEvent} e - 鼠标事件
+   */
   const toggleLeft = (e: MouseEvent) => {
     e.stopPropagation(); // 防止触发拖拽
     const newState = !isLeftCollapsed();
@@ -89,6 +90,10 @@ const ChatPage: Component = () => {
     }
   };
 
+  /**
+   * 切换右侧面板的折叠状态
+   * @param {MouseEvent} e - 鼠标事件
+   */
   const toggleRight = (e: MouseEvent) => {
     e.stopPropagation();
     const newState = !isRightCollapsed();
@@ -101,15 +106,12 @@ const ChatPage: Component = () => {
 
   /**
    * 当前选中的助手对象
-   * 根据 currentAssistantId 从 datas.assistants 数组中查找
    * @returns Assistant | undefined
    */
   const currentAssistant = () => datas.assistants.find(a => a.id === currentAssistantId());
 
   /**
    * 当前激活的话题对象
-   * 先获取当前助手，再从中查找 currentTopicId 对应的话题
-   * 若找不到则返回该助手的第一个话题，若助手无话题则返回 null
    * @returns Topic | null
    */
   const activeTopic = () => {
@@ -127,39 +129,30 @@ const ChatPage: Component = () => {
   const handleFileUpload = async (filePath: string, fileType: 'file' | 'image') => {
     setIsProcessing(true); // 开始处理，显示加载状态
     try {
-      // 从路径中提取文件名（兼容 Windows 和 Unix 路径分隔符）
       const fileName = filePath.split(/[\\/]/).pop() || '未知文件';
-      // 调用 Rust 后端读取文件内容（文本直接读取，图片转为 base64）
       const content = await invoke<string>('process_file_content', { path: filePath });
-      // 根据文件扩展名或传入的类型判断是否为图片
       const isImg = fileType === 'image' || ['png', 'jpg', 'jpeg'].includes(fileName.split('.').pop()?.toLowerCase() || '');
-      // 添加到待发送文件列表
       setPendingFiles(prev => [...prev, { name: fileName, content, type: isImg ? 'image' : 'text' }]);
     } catch (err) {
-      alert(err); // 解析失败时提示错误
+      alert(err);
     } finally {
-      setIsProcessing(false); // 无论成功与否，结束加载状态
+      setIsProcessing(false);
     }
   };
 
   /**
-   * 核心优化：检测上下文长度并生成历史摘要
-   * 当历史消息超过 25 条时，将前 15 条发送给 LLM 生成摘要
-   * 摘要存储在 topic.summary 中，后续对话携带摘要以节省 Token
-   * 同时从 history 中移除已摘要的消息，保持列表精简
+   * 检查并总结对话历史
+   * 当历史记录超过25条时，触发总结机制以压缩上下文
    */
   const checkAndSummarize = async () => {
     const topic = activeTopic();
     const currentMdl = selectedModel();
-    // 前置条件检查：必须有话题、模型，且 AI 不在生成中
     if (!topic || !currentMdl || isThinking()) return;
-
     // 当历史记录多于 25 条时触发总结机制
     if (topic.history.length > 25) {
       console.log("正在通过 SQLite 触发历史总结...");
       // 取前 15 条消息进行总结（保留后 10 条保持上下文连贯性）
       const messagesToSummarize = topic.history.slice(0, 15);
-
       try {
         // 调用后端 LLM 接口生成摘要
         const newSummarySnippet = await invoke<string>('summarize_history', {
@@ -195,9 +188,8 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 发送消息核心逻辑
-   * 处理用户输入、文件附件、构造 API 请求格式、调用流式接口
-   * 同时处理多模态内容（文本 + 图片）的格式转换
+   * 处理发送消息的逻辑
+   * 包括文件处理、API调用和状态更新
    */
   const handleSendMessage = async () => {
     const currentMdl = selectedModel();
@@ -292,8 +284,7 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 停止 AI 生成
-   * 调用后端中断当前流式请求
+   * 停止当前的AI生成过程
    */
   const handleStopGeneration = async () => {
     await invoke('stop_llm_stream', {
@@ -305,8 +296,8 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 添加新助手
-   * 创建助手对象 → 更新状态 → 选中新助手 → 持久化到 SQLite
+   * 添加新的助手
+   * 创建新助手并设置为当前选中助手
    */
   const addAssistant = async () => {
     const newAsst = createAssistant(`新助手 ${datas.assistants.length + 1}`);
@@ -317,8 +308,8 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 添加新话题到当前助手
-   * 创建话题对象 → 追加到当前助手的 topics 数组 → 选中新话题 → 持久化
+   * 添加新的话题到当前助手
+   * 创建新话题并设置为当前选中话题
    */
   const addTopic = async () => {
     const asstId = currentAssistantId();
@@ -359,12 +350,6 @@ const ChatPage: Component = () => {
     document.addEventListener('mouseup', stopResize);
   };
 
-  /**
-   * 组件挂载时初始化
-   * 1. 从 SQLite 加载助手数据
-   * 2. 设置 Tauri 拖拽事件监听（文件拖入）
-   * 3. 设置 LLM 流式响应监听
-   */
   onMount(() => {
     // 首次进入：从 SQLite 加载所有助手数据
     invoke<Assistant[]>('load_assistants').then(async (loaded) => {
@@ -411,27 +396,18 @@ const ChatPage: Component = () => {
 
     // 设置多个事件监听器，存储 unlisten 函数用于清理
     const unlistens = [
-      // 拖拽进入窗口：显示拖拽状态样式
       listen('tauri://drag-enter', () => setIsDragging(true)),
-      // 拖拽离开窗口：取消拖拽状态
       listen('tauri://drag-leave', () => setIsDragging(false)),
-      // 拖拽释放文件：逐个处理上传的文件
       listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
         setIsDragging(false);
         for (const p of e.payload.paths) await handleFileUpload(p, 'file');
       }),
-      // 流式输出监听：接收 LLM 生成的文本块
       listen<any>('llm-chunk', (e) => {
         const { assistant_id, topic_id, content, done } = e.payload;
-
-        // 生成完成处理
         if (done) {
           setIsThinking(false);
           setTypingIndex(null);
-
-          // 保存当前状态到 SQLite
           saveSingleAssistantToBackend(assistant_id);
-          // 延迟检查是否需要历史摘要（避免立即触发影响性能）
           setTimeout(() => checkAndSummarize(), 500);
           return;
         }
@@ -452,11 +428,6 @@ const ChatPage: Component = () => {
     onCleanup(() => unlistens.forEach(u => u.then(fn => fn())));
   });
 
-  /**
-   * 话题切换动画效果
-   * 当 currentTopicId 变化时，短暂设置 isChangingTopic 为 true
-   * 用于触发 CSS 过渡动画
-   */
   createEffect(() => {
     const tId = currentTopicId();
     if (tId) {
@@ -481,8 +452,8 @@ const ChatPage: Component = () => {
   });
 
   return (
-    <div class="fixed inset-[65px_1px_1px_0] flex gap-[3px] p-5 bg-dark glow-border rounded-lg" 
-          classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
+    <div class="fixed inset-[65px_1px_1px_0] flex gap-[3px] p-5 bg-dark glow-border rounded-lg"
+      classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
       <AssistantSidebar
         width={displayLeftWidth()}
         isCollapsed={isLeftCollapsed()}

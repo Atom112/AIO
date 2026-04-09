@@ -1,3 +1,5 @@
+/// 认证相关的 Tauri 命令：处理用户登录、注册、Token 验证以及头像同步等功能。
+
 use serde::{Deserialize, Serialize};
 
 /// 登录成功后的响应结构体

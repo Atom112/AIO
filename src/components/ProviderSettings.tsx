@@ -20,55 +20,32 @@ interface ActivatedModel {
 
 /**
  * 提供商设置页面组件
- * 
  * @component
  * @description 管理 AI 模型 API 配置和模型激活状态，支持云端和本地模型。
- * 
  * @returns {JSX.Element} 设置页面 JSX 元素
  */
 const ProviderSettings: Component = () => {
 
-    /** API 供应商网址输入值 */
-    const [apiUrl, setApiUrl] = createSignal(config().apiUrl);
-    /** API Key 输入值 */
-    const [apiKey, setApiKey] = createSignal(config().apiKey);
-    /** 保存状态提示文本（如"配置已保存"） */
-    const [saveStatus, setSaveStatus] = createSignal("");
+    const [apiUrl, setApiUrl] = createSignal(config().apiUrl);                  //API 供应商网址输入值
+    const [apiKey, setApiKey] = createSignal(config().apiKey);                  //API Key 输入值
+    const [saveStatus, setSaveStatus] = createSignal("");                       //保存状态提示文本（如"配置已保存"）
+    const [localModelPath, setLocalModelPath] = createSignal("");               //选中的本地 .gguf 模型文件路径
+    const [isLocalRunning, setIsLocalRunning] = createSignal(false);            //本地 Llama 服务是否正在运行
+    const [models, setModels] = createSignal<ModelItem[]>([]);                  //从 API 获取的可用模型列表
+    const [isLoading, setIsLoading] = createSignal(false);                      //是否正在查询模型列表
+    const [activatedModels, setActivatedModels] = createSignal<ActivatedModel[]>([]);    //已激活的模型配置列表（持久化到本地）
+    const [searchQuery, setSearchQuery] = createSignal("");                     //可用模型搜索关键词
+    const [selectedProvider, setSelectedProvider] = createSignal("All");        //可用模型厂商筛选条件
+    const [isDropdownOpen, setIsDropdownOpen] = createSignal(false);            //可用模型厂商下拉菜单展开状态
+    const [searchQueryAct, setSearchQueryAct] = createSignal("");               // 已激活模型搜索关键词
+    const [selectedProviderAct, setSelectedProviderAct] = createSignal("All");  //已激活模型厂商筛选条件
+    const [isDropdownOpenAct, setIsDropdownOpenAct] = createSignal(false);      //已激活模型厂商下拉菜单展开状态
 
-    /** 选中的本地 .gguf 模型文件路径 */
-    const [localModelPath, setLocalModelPath] = createSignal("");
-    /** 本地 Llama 服务是否正在运行 */
-    const [isLocalRunning, setIsLocalRunning] = createSignal(false);
-
-    /** 从 API 获取的可用模型列表 */
-    const [models, setModels] = createSignal<ModelItem[]>([]);
-    /** 是否正在查询模型列表 */
-    const [isLoading, setIsLoading] = createSignal(false);
-    /** 已激活的模型配置列表（持久化到本地） */
-    const [activatedModels, setActivatedModels] = createSignal<ActivatedModel[]>([]);
-
-    /** 可用模型搜索关键词 */
-    const [searchQuery, setSearchQuery] = createSignal("");
-    /** 可用模型厂商筛选条件 */
-    const [selectedProvider, setSelectedProvider] = createSignal("All");
-    /** 可用模型厂商下拉菜单展开状态 */
-    const [isDropdownOpen, setIsDropdownOpen] = createSignal(false);
-
-    /** 已激活模型搜索关键词 */
-    const [searchQueryAct, setSearchQueryAct] = createSignal("");
-    /** 已激活模型厂商筛选条件 */
-    const [selectedProviderAct, setSelectedProviderAct] = createSignal("All");
-    /** 已激活模型厂商下拉菜单展开状态 */
-    const [isDropdownOpenAct, setIsDropdownOpenAct] = createSignal(false);
-
-    /** 可用模型厂商下拉容器引用（用于点击外部关闭） */
-    let dropdownRef: HTMLDivElement | undefined;
-    /** 已激活模型厂商下拉容器引用（用于点击外部关闭） */
-    let dropdownRefAct: HTMLDivElement | undefined;
+    let dropdownRef: HTMLDivElement | undefined;        //可用模型厂商下拉容器引用（用于点击外部关闭）
+    let dropdownRefAct: HTMLDivElement | undefined;    //已激活模型厂商下拉容器引用（用于点击外部关闭）
 
     /**
      * 根据模型名称获取对应的品牌 Logo 路径
-     * 
      * @param {string} modelName - 模型名称或 ID
      * @returns {string} Logo 图片的 URL 路径
      */
@@ -88,12 +65,6 @@ const ProviderSettings: Component = () => {
 
     /**
      * 打开文件对话框选择本地 .gguf 模型文件
-     * 
-     * 数据流：
-     * 1. 调用 Tauri open() 打开系统文件选择器（过滤 .gguf）
-     * 2. 提取文件名作为模型名称
-     * 3. 构建 ActivatedModel 对象（标记为 Local-Llama.cpp）
-     * 4. 添加到激活列表并持久化保存
      */
     const selectModelFile = async () => {
         const file = await open({
@@ -131,16 +102,6 @@ const ProviderSettings: Component = () => {
 
     /**
      * 切换本地 Llama 服务器的运行状态（启动/停止）
-     * 
-     * 启动数据流：
-     * 1. 保存模型路径到应用配置
-     * 2. 调用 start_local_server 启动后端服务（GPU 加速）
-     * 3. 将启动的模型添加到激活列表（如未存在）
-     * 4. 更新运行状态标志
-     * 
-     * 停止数据流：
-     * 1. 调用 stop_local_server 停止后端服务
-     * 2. 更新运行状态标志
      */
     const toggleLocalEngine = async () => {
         if (isLocalRunning()) {
@@ -202,7 +163,6 @@ const ProviderSettings: Component = () => {
 
     /**
      * 从激活列表中移除指定模型
-     * 
      * @param {ActivatedModel} target - 待移除的模型配置对象
      */
     const removeActivatedModel = async (target: ActivatedModel) => {
@@ -218,13 +178,6 @@ const ProviderSettings: Component = () => {
 
     /**
      * 组件挂载时初始化数据
-     * 
-     * 加载流程：
-     * 1. 加载已激活模型列表
-     * 2. 加载缓存的可用模型列表
-     * 3. 检查本地服务运行状态
-     * 4. 加载应用配置（恢复本地模型路径）
-     * 5. 注册全局点击监听（关闭下拉菜单）
      */
     onMount(async () => {
         // 加载持久化数据
@@ -273,12 +226,6 @@ const ProviderSettings: Component = () => {
 
     /**
      * 切换模型的激活状态（勾选/取消勾选）
-     * 
-     * 数据流：
-     * - 取消激活：从 activatedModels 中过滤移除
-     * - 激活：构建 ActivatedModel 对象（包含当前 API 配置）并添加
-     * - 持久化：保存到后端并同步全局 Store
-     * 
      * @param {ModelItem} item - 从 API 获取的可用模型项
      */
     const toggleActivation = async (item: ModelItem) => {
@@ -311,8 +258,6 @@ const ProviderSettings: Component = () => {
 
     /**
      * 保存当前 API 配置
-     * 
-     * 数据流：apiUrl/apiKey → save_app_config → saveConfig → 全局状态更新
      */
     const handleSave = async () => {
         const newConfig = { 
@@ -328,11 +273,6 @@ const ProviderSettings: Component = () => {
 
     /**
      * 从配置的 API 端点获取可用模型列表
-     * 
-     * 数据流：
-     * 1. 调用 fetch_models 后端命令（携带 apiUrl/apiKey）
-     * 2. 更新本地 models 状态
-     * 3. 缓存结果到本地存储（save_fetched_models）
      */
     const handleQueryModels = async () => {
         setIsLoading(true);

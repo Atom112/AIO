@@ -1,55 +1,30 @@
 import { createSignal, Component, Show, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 
-/**
- * 组件 Props 接口定义
- */
 interface LoginModalProps {
-    /** 控制模态框显示/隐藏 */
-    show: boolean;
-    /** 关闭模态框回调 */
-    onClose: () => void;
-    /**
-     * 登录成功回调
-     * @param userData - 后端返回的用户信息对象
-     */
-    onSuccess: (userData: any) => void;
+    show: boolean; // 控制模态框显示/隐藏
+    onClose: () => void; // 关闭模态框回调
+    onSuccess: (userData: any) => void; // 登录成功回调
 }
 
 /**
  * 登录/注册模态框组件
- * 
- * @component
- * @description 提供完整的登录注册功能，包含表单验证、后端交互、成功动画。
- *              使用 Tauri invoke 与 Rust 后端通信。
- * 
  * @param {LoginModalProps} props - 组件属性
  * @returns {JSX.Element} 登录模态框 JSX 元素
  */
 const LoginModal: Component<LoginModalProps> = (props) => {
 
-    /** 当前模式：false=登录，true=注册 */
-    const [isRegister, setIsRegister] = createSignal(false);
-    /** 邮箱输入值 */
-    const [email, setEmail] = createSignal('');
-    /** 用户名（当前未使用，预留字段） */
-    const [username, setUsername] = createSignal('');
-    /** 密码输入值 */
-    const [password, setPassword] = createSignal('');
-    /** 提交加载状态：true 时禁用按钮显示"请稍候" */
-    const [loading, setLoading] = createSignal(false);
-    /** 错误提示信息，非空时显示错误样式 */
-    const [error, setError] = createSignal('');
-    /** 确认密码（仅注册模式使用） */
-    const [confirmPassword, setConfirmPassword] = createSignal('');
-    /** 操作成功状态：true 时显示成功动画覆盖层 */
-    const [isSuccess, setIsSuccess] = createSignal(false);
-    /** 成功动画离开状态：控制成功覆盖层的退出动画 */
-    const [isLeaving, setIsLeaving] = createSignal(false);
-    /** 模态框退出动画状态：控制整体关闭动画 */
-    const [isExiting, setIsExiting] = createSignal(false);
-    /** 入场动画状态：true 时显示入场初始状态 */
-    const [isEntering, setIsEntering] = createSignal(true);
+    const [isRegister, setIsRegister] = createSignal(false); // 当前模式：false=登录，true=注册
+    const [email, setEmail] = createSignal(''); // 邮箱输入值
+    const [username, setUsername] = createSignal(''); // 用户名（预留字段）
+    const [password, setPassword] = createSignal(''); // 密码输入值
+    const [loading, setLoading] = createSignal(false); // 提交加载状态
+    const [error, setError] = createSignal(''); // 错误提示信息
+    const [confirmPassword, setConfirmPassword] = createSignal(''); // 确认密码
+    const [isSuccess, setIsSuccess] = createSignal(false); // 操作成功状态
+    const [isLeaving, setIsLeaving] = createSignal(false); // 成功覆盖层离开动画状态
+    const [isExiting, setIsExiting] = createSignal(false); // 模态框退出动画状态
+    const [isEntering, setIsEntering] = createSignal(true); // 入场动画状态
 
     /**
      * 监听模态框显示状态，触发入场动画
@@ -63,10 +38,6 @@ const LoginModal: Component<LoginModalProps> = (props) => {
 
     /**
      * 切换登录/注册模式
-     * 
-     * 切换时清理相关状态：
-     * - 清空错误信息
-     * - 清空密码字段（安全考虑）
      */
     const toggleMode = () => {
         setIsRegister(!isRegister());
@@ -76,12 +47,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
     };
 
     /**
-     * 处理关闭模态框（带动画）
-     * 
-     * 动画流程：
-     * 1. 设置 isExiting=true 触发退出动画（CSS 类 overlay-out/animate-out）
-     * 2. 等待 300ms（CSS 动画时长）
-     * 3. 重置状态并调用父组件 onClose
+     * 处理关闭模态框（带退出动画）
      */
     const handleClose = () => {
         setIsExiting(true);
@@ -93,16 +59,6 @@ const LoginModal: Component<LoginModalProps> = (props) => {
 
     /**
      * 表单提交处理（登录或注册）
-     * 
-     * 数据流：
-     * 1. 阻止默认表单提交行为
-     * 2. 设置加载状态，清空旧错误
-     * 3. 根据 isRegister 状态分支处理：
-     *    - 注册：验证密码一致性 → 调用 register_to_backend → 显示成功 → 自动切换到登录
-     *    - 登录：调用 login_to_backend → 显示成功 → 回调 onSuccess
-     * 4. 捕获异常显示错误信息
-     * 5. 最终关闭加载状态
-     * 
      * @param {Event} e - 表单提交事件
      */
     const handleSubmit = async (e: Event) => {
@@ -112,64 +68,50 @@ const LoginModal: Component<LoginModalProps> = (props) => {
 
         try {
             if (isRegister()) {
-
-                // 前端验证：密码一致性检查
                 if (password() !== confirmPassword()) {
                     throw new Error("两次输入的密码不一致");
                 }
 
-                // 调用 Tauri 后端命令：register_to_backend
                 await invoke('register_to_backend', {
                     email: email(),
                     password: password(),
                     confirmPassword: confirmPassword()
                 });
 
-                // 注册成功：显示成功动画
                 setIsSuccess(true);
 
-                // 延时处理：先显示成功状态 800ms，再播放离开动画
                 setTimeout(() => {
-                    setIsLeaving(true); // 触发离开动画
+                    setIsLeaving(true);
                     setTimeout(() => {
-                        // 清理状态并切换到登录模式
                         setIsSuccess(false);
                         setIsLeaving(false);
                         setIsRegister(false);
                         setPassword('');
                         setConfirmPassword('');
-                    }, 300); // 离开动画时长 300ms
+                    }, 300);
                 }, 800);
 
             } else {
-
-                // 调用 Tauri 后端命令：login_to_backend
-                // 注意：后端使用 username 字段接收邮箱
                 const result: any = await invoke('login_to_backend', {
                     username: email(),
                     password: password()
                 });
 
-                // 登录成功：显示欢迎动画
                 setIsSuccess(true);
 
-                // 延时处理：先显示成功状态 600ms，再播放离开动画
                 setTimeout(() => {
                     setIsLeaving(true);
                     setTimeout(() => {
-                        // 回调父组件并传递用户信息，清理状态
                         props.onSuccess(result);
                         setIsSuccess(false);
                         setIsLeaving(false);
-                        handleClose(); // 调用带动画的关闭
+                        handleClose();
                     }, 300);
                 }, 600);
             }
         } catch (err: any) {
-            // 捕获后端错误或前端验证错误，显示在表单中
             setError(err.toString());
         } finally {
-            // 无论成功失败，关闭加载状态
             setLoading(false);
         }
     };
@@ -192,7 +134,6 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                     class="relative min-h-[400px] modal-panel w-[360px] p-6 text-[#e0e0e0] transition-all duration-500 ease-out transform pointer-events-auto"
                     onClick={(e) => e.stopPropagation()}
                 >
-                    {/* 成功状态覆盖层 */}
                     <Show when={isSuccess()}>
                         <div
                             classList={{
@@ -213,7 +154,6 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                         </div>
                     </Show>
 
-                    {/* 头部 */}
                     <div class="flex justify-between items-center mb-6">
                         <h3 class="m-0 text-lg text-pri font-medium">
                             {isRegister() ? '新用户注册' : '账号登录'}
@@ -223,7 +163,6 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                         </button>
                     </div>
 
-                    {/* 表单 */}
                     <form class="flex flex-col gap-4" onSubmit={handleSubmit}>
                         <div class="flex flex-col gap-2">
                             <label class="text-[13px] text-[#888]">电子邮箱</label>
@@ -286,7 +225,6 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                         </button>
                     </form>
 
-                    {/* 页脚 */}
                     <div class="mt-5 text-center text-[12px] text-[#888]">
                         <span>
                             {isRegister() ? '已有账号？' : '没有账号？'}

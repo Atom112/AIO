@@ -1,7 +1,10 @@
+/// 本地llama服务器管理相关的 Tauri 命令：启动、停止和检查本地大模型服务器的状态。
+
 use crate::LocalLlamaState;
 use std::io::{BufRead, BufReader};
 use tauri::path::BaseDirectory;
 use tauri::Manager;
+use tauri::Emitter;
 use tokio::task;
 use tokio::time::{sleep, Duration};
 
@@ -80,8 +83,12 @@ pub async fn start_local_server(
     // 6. 启动进程
     let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
 
+    // 发送初始进度
+    let _ = app.emit("llama-progress", 0.05);
+
     // 7. 日志实时监控：新开一个线程读取服务器输出日志
     let stderr = child.stderr.take().expect("无法获取 stderr");
+    let app_clone = app.clone();
     task::spawn_blocking(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
@@ -98,6 +105,17 @@ pub async fn start_local_server(
                 }
                 if line.contains("error") || line.contains("Error") || line.contains("failed") {
                     println!("LLAMA 错误: {}", line);
+                }
+
+                // 进度更新
+                if line.contains("build info") || line.contains("system info") {
+                    let _ = app_clone.emit("llama-progress", 0.1);
+                } else if line.contains("loading model") {
+                    let _ = app_clone.emit("llama-progress", 0.2);
+                } else if line.contains("model loaded") || line.contains("done") {
+                    let _ = app_clone.emit("llama-progress", 0.5);
+                } else if line.contains("HTTP server listening") || line.contains("listening on") {
+                    let _ = app_clone.emit("llama-progress", 0.8);
                 }
             }
         }
@@ -123,7 +141,10 @@ pub async fn start_local_server(
         .send()
         .await
     {
-        Ok(_) => println!("健康检查通过"),
+        Ok(_) => {
+            println!("健康检查通过");
+            let _ = app.emit("llama-progress", 1.0);
+        }
         Err(_) => {
             let _ = child.kill(); // 如果访问不到健康接口，杀掉进程
             return Err("服务未响应健康检查，可能启动失败".to_string());

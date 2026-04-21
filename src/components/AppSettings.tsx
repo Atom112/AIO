@@ -181,7 +181,7 @@ const AppSettings: Component = () => {
 
     return (
         <div class="flex flex-col gap-[15px] box-border">
-            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6 transition-colors duration-300">
+            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class="m-0 text-base text-white">应用状态</h3>
                     <div class="flex items-center gap-2">
@@ -227,7 +227,7 @@ const AppSettings: Component = () => {
                 </div>
             </div>
 
-            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6 transition-colors duration-300">
+            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class='m-0 text-base text-white'>视觉主题</h3>
                 </div>

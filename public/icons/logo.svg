@@ -1,0 +1,107 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 霓虹渐变 -->
+    <linearGradient id="neonCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00f5ff;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#00c3ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0080ff;stop-opacity:1" />
+    </linearGradient>
+
+    <linearGradient id="neonPurple" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff00ff;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#b300ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6600ff;stop-opacity:1" />
+    </linearGradient>
+
+    <linearGradient id="coreGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00f5ff;stop-opacity:0.9" />
+    </linearGradient>
+
+    <!-- 发光滤镜 -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+      <feMerge>
+        <feMergeNode in="coloredBlur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <filter id="intenseGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur" />
+      <feGaussianBlur stdDeviation="2" result="coloredBlur2" />
+      <feMerge>
+        <feMergeNode in="coloredBlur" />
+        <feMergeNode in="coloredBlur2" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 背景圆环装饰 -->
+  <circle cx="100" cy="100" r="95" fill="none" stroke="url(#neonCyan)" stroke-width="0.5" opacity="0.3" />
+  <circle cx="100" cy="100" r="85" fill="none" stroke="url(#neonPurple)" stroke-width="0.5" opacity="0.3" />
+
+  <!-- 外环六边形装饰 -->
+  <g transform="translate(100,100)" filter="url(#glow)">
+    <path d="M 0,-80 L 69.28,-40 L 69.28,40 L 0,80 L -69.28,40 L -69.28,-40 Z" fill="none" stroke="url(#neonCyan)" stroke-width="2" opacity="0.8" />
+    <circle cx="0" cy="-80" r="4" fill="#00f5ff" filter="url(#glow)" />
+    <circle cx="69.28" cy="-40" r="4" fill="#00f5ff" filter="url(#glow)" />
+    <circle cx="69.28" cy="40" r="4" fill="#00f5ff" filter="url(#glow)" />
+    <circle cx="0" cy="80" r="4" fill="#00f5ff" filter="url(#glow)" />
+    <circle cx="-69.28" cy="40" r="4" fill="#00f5ff" filter="url(#glow)" />
+    <circle cx="-69.28" cy="-40" r="4" fill="#00f5ff" filter="url(#glow)" />
+  </g>
+
+  <!-- 中环六边形 -->
+  <g transform="translate(100,100) rotate(30)" filter="url(#glow)">
+    <path d="M 0,-60 L 52,-30 L 52,30 L 0,60 L -52,30 L -52,-30 Z" fill="none" stroke="url(#neonPurple)" stroke-width="1.5" opacity="0.9" />
+  </g>
+
+  <!-- 内核：AIO 字母与芯片融合 -->
+  <g transform="translate(100,100)" filter="url(#intenseGlow)">
+    <rect x="-35" y="-35" width="70" height="70" rx="8" fill="#0a0a0a" stroke="url(#neonCyan)" stroke-width="2" />
+    <g stroke="#00f5ff" stroke-width="2" opacity="0.6">
+      <!-- 修正了原代码中对称性的一处坐标错误 -->
+      <line x1="-35" y1="-25" x2="-45" y2="-25" />
+      <line x1="-35" y1="-15" x2="-45" y2="-15" />
+      <line x1="-35" y1="-5" x2="-45" y2="-5" />
+      <line x1="-35" y1="5" x2="-45" y2="5" />
+      <line x1="-35" y1="15" x2="-45" y2="15" />
+      <line x1="-35" y1="25" x2="-45" y2="25" />
+      <line x1="35" y1="-25" x2="45" y2="-25" />
+      <line x1="35" y1="-15" x2="45" y2="-15" />
+      <line x1="35" y1="-5" x2="45" y2="-5" />
+      <line x1="35" y1="5" x2="45" y2="5" />
+      <line x1="35" y1="15" x2="45" y2="15" />
+      <line x1="35" y1="25" x2="45" y2="25" />
+      <line x1="-25" y1="-35" x2="-25" y2="-45" />
+      <line x1="-15" y1="-35" x2="-15" y2="-45" />
+      <line x1="-5" y1="-35" x2="-5" y2="-45" />
+      <line x1="5" y1="-35" x2="5" y2="-45" />
+      <line x1="15" y1="-35" x2="15" y2="-45" />
+      <line x1="25" y1="-35" x2="25" y2="-45" />
+      <line x1="-25" y1="35" x2="-25" y2="45" />
+      <line x1="-15" y1="35" x2="-15" y2="45" />
+      <line x1="-5" y1="35" x2="-5" y2="45" />
+      <line x1="5" y1="35" x2="5" y2="45" />
+      <line x1="15" y1="35" x2="15" y2="45" />
+      <line x1="25" y1="35" x2="25" y2="45" />
+    </g>
+    <text x="0" y="8" font-family="Arial Black, sans-serif" font-size="28" font-weight="900" text-anchor="middle" fill="url(#coreGradient)" letter-spacing="-2">AIO</text>
+  </g>
+
+  <!-- 静态波纹 -->
+  <g transform="translate(100,100)" opacity="0.2">
+    <circle cx="0" cy="0" r="50" fill="none" stroke="#00f5ff" stroke-width="1" />
+    <circle cx="0" cy="0" r="58" fill="none" stroke="#ff00ff" stroke-width="0.5" opacity="0.5" />
+  </g>
+
+  <!-- 角落装饰 -->
+  <g opacity="0.6">
+    <rect x="10" y="10" width="20" height="2" fill="#00f5ff" filter="url(#glow)" />
+    <rect x="10" y="15" width="10" height="2" fill="#00f5ff" filter="url(#glow)" />
+    <rect x="170" y="188" width="20" height="2" fill="#ff00ff" filter="url(#glow)" />
+    <rect x="180" y="183" width="10" height="2" fill="#ff00ff" filter="url(#glow)" />
+  </g>
+</svg>

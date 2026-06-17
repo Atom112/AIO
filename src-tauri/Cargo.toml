@@ -1,7 +1,7 @@
 [package]
 name = "aio"
-version = "0.3.1-Beta"
-description = "A lightweight, efficient, and user-friendly AI chat application built with Rust and Tauri."
+version = "0.3.1"
+description = "A Tauri App"
 authors = ["Loch"]
 edition = "2021"
 license = "Apache-2.0"

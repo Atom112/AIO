@@ -15,7 +15,7 @@
 
 
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.3.1-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.3.1
 
@@ -34,7 +34,7 @@
 - 优化了聊天上下文处理逻辑，重构了设置界面
 
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.3.0-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.3.0
 
@@ -48,7 +48,7 @@
 - 优化消息输入框文件上传逻辑
 - 增加单次对话上下文限制
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.2.13-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.13
 
@@ -60,7 +60,7 @@
 ### ✨ Added（新增）
 - 添加用户头像，AI供应商logo头像，支持用户更换头像
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.2.12-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.12
 
@@ -72,7 +72,7 @@
 ### ✨ Added（新增）
 - 新增`.deb`、`.rpm`和`.dmg`安装包
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.2.9-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.9
 
@@ -84,7 +84,7 @@
 ### ✨ Added（新增）
 - 集成`llama.cpp`支持运行`.gguf`本地模型
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.2.0-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.0
 
@@ -96,7 +96,7 @@
 ### ✨ Added（新增）
 - 添加了话题自动总结和话题重命名
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.1.7-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.7
 
@@ -111,7 +111,7 @@
 ### 🐛 Fixed（修复）
 - 修复了切换页面导致聊天框内文件卡片渲染失败的问题 **closes [#2](https://github.com/Atom112/AIO/issues/2) ([8e634d](https://github.com/Atom112/AIO/commit/8e634dabe85167d6d60448374c3fed45b0fa5950))**
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.1.6-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.6
 
@@ -123,7 +123,7 @@
 ### ⚡️ Changed（变更）
 - 优化了模型调用逻辑
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.1.5-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.5
 
@@ -139,7 +139,7 @@
 ### 🐛 Fixed（修复）
 - 修复了因事件监听器泄露导致的聊天文字重复问题 **closes [#1](https://github.com/Atom112/AIO/issues/1) ([ec957a](https://github.com/Atom112/AIO/commit/ec957a38f74b7fc0fa70f7e97e8fbbf193550ee6))**
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.1.3-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.3
 
@@ -152,6 +152,6 @@
 - AIO 初始版本发布。
 - 集成了核心功能：综合API调用、模型选择与AI文本对话
 
-<p align="right"><a href="#top"><img src="/public/icons/app-logo/top.svg"></img></a></p>
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.1.0-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.0

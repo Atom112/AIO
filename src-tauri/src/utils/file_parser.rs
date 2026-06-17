@@ -71,7 +71,7 @@ pub async fn process_file_content(path: String) -> Result<String, String> {
         "png" | "jpg" | "jpeg" | "webp" => {
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
             let b64 = general_purpose::STANDARD.encode(bytes);
-            Ok(format!("data:image/{};base64,{}", extension, b64))
+            Ok(format!("data:image/{};base64,{}" , extension, b64))
         }
         "pdf" => pdf_extract::extract_text(&path).map_err(|e| format!("PDF解析失败: {}", e)),
         "docx" | "pptx" => read_office_file(&path, &extension),

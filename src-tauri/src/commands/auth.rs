@@ -1,4 +1,12 @@
-/// 认证相关的 Tauri 命令：处理用户登录、注册、Token 验证以及头像同步等功能。
+//! # 身份验证模块 (Authentication Module)
+//!
+//! ## 功能描述
+//! 该文件负责处理与后端 Java 服务的身份验证交互，包括登录、注册、Token 验证以及头像同步。
+//!
+//! ## 数据流向
+//! 1. **前端 -> 本地后端**: 前端通过 Tauri `invoke` 调用此模块的异步函数。
+//! 2. **本地后端 -> 远程后端**: 模块使用 `reqwest` 库向 `http://localhost:8080` 发起网络请求 (JSON/HTTP)。
+//! 3. **结果回传**: 获取响应并反序列化为 `LoginResponse` 或错误信息，最终返回给前端。
 
 use serde::{Deserialize, Serialize};
 
@@ -19,9 +27,9 @@ pub struct LoginResponse {
 
 /// 将用户头像同步至远程后端
 /// 
-/// Arguments
-/// `token` - JWT 身份令牌
-/// `avatar_data` - 处理后的头像数据（通常为 Base64 字符串）
+/// # Arguments
+/// * `token` - JWT 身份令牌
+/// * `avatar_data` - 处理后的头像数据（通常为 Base64 字符串）
 #[tauri::command]
 pub async fn sync_avatar_to_backend(token: String, avatar_data: String) -> Result<(), String> {
     let client = reqwest::Client::new();

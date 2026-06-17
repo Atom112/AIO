@@ -1,5 +1,5 @@
-use crate::models::*; // 导入模型定义，如 AppConfig, Assistant, ActivatedModel 等
-use crate::DbState;
+use crate::core::models::*;
+use crate::core::state::DbState;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use std::fs; // 导入标准库文件系统模块

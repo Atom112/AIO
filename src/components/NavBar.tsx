@@ -48,8 +48,9 @@ const NavBar: Component<NavBarProps> = () => {
   const [tempImage, setTempImage] = createSignal<string | null>(null); // 头像裁剪用的临时图片 DataURL
   const [isLoginModalOpen, setIsLoginModalOpen] = createSignal(false); // 登录弹窗显示状态
 
-  const onlineModels = () => datas.activatedModels.filter(m => m.owned_by !== "Local-Llama.cpp"); // 线上模型列表
-  const localModels = () => datas.activatedModels.filter(m => m.owned_by === "Local-Llama.cpp"); // 本地模型列表
+  const isLocalModel = (m: ActivatedModel) => !!(m.local_path || m.engine_type);
+  const onlineModels = () => datas.activatedModels.filter(m => !isLocalModel(m));
+  const localModels = () => datas.activatedModels.filter(m => isLocalModel(m));
 
   /**
    * 登录成功回调处理
@@ -164,14 +165,15 @@ const NavBar: Component<NavBarProps> = () => {
    * @param {ActivatedModel} model - 需要启动的本地模型信息
    */
   const startLocalModel = async (model: ActivatedModel) => {
-    if (model.owned_by === "Local-Llama.cpp" && model.local_path) {
+    if (model.local_path) {
       const isRunning = await invoke<boolean>('is_local_server_running');
       if (!isRunning) {
         try {
           await invoke('start_local_server', {
             modelPath: model.local_path,
             port: 8080,
-            gpuLayers: 99
+            gpuLayers: 99,
+            engineType: model.engine_type || 'llama_cpp'
           });
           console.info("本地模型服务已静默拉起");
         } catch (e) {
@@ -247,7 +249,7 @@ const NavBar: Component<NavBarProps> = () => {
       console.error("保存模型偏好失败:", e);
     }
 
-    if (model.owned_by === "Local-Llama.cpp" && model.local_path) {
+    if (isLocalModel(model) && model.local_path) {
       const isRunning = await invoke<boolean>('is_local_server_running');
 
       if (!isRunning) {
@@ -261,7 +263,7 @@ const NavBar: Component<NavBarProps> = () => {
 
         if (assistant) {
           const topicId = assistant.topics[0]?.id;
-          const loadingText = "**正在启动本地 Llama 服务器...**";
+          const loadingText = "**正在启动本地推理引擎...**";
 
           if (topicId) {
             setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
@@ -275,7 +277,8 @@ const NavBar: Component<NavBarProps> = () => {
             await invoke('start_local_server', {
               modelPath: model.local_path,
               port: 8080,
-              gpuLayers: 99
+              gpuLayers: 99,
+              engineType: model.engine_type || 'llama_cpp'
             });
 
             let attempts = 0;
@@ -323,7 +326,7 @@ const NavBar: Component<NavBarProps> = () => {
             );
           }
         } else {
-          await invoke('start_local_server', { modelPath: model.local_path, port: 8080, gpuLayers: 99 });
+          await invoke('start_local_server', { modelPath: model.local_path, port: 8080, gpuLayers: 99, engineType: model.engine_type || 'llama_cpp' });
         }
       }
     }
@@ -344,6 +347,9 @@ const NavBar: Component<NavBarProps> = () => {
   onMount(async () => {
     // 监听llama启动进度事件
     const unlistenProgress = await listen('llama-progress', (event) => {
+      setLocalModelStartProgress((event.payload as number) * 100);
+    });
+    const unlistenEngineProgress = await listen('engine-progress', (event) => {
       setLocalModelStartProgress((event.payload as number) * 100);
     });
 
@@ -384,7 +390,7 @@ const NavBar: Component<NavBarProps> = () => {
         const found = models.find(m => m.model_id === lastSelectedId);
         const targetModel = found || models[0];
         setSelectedModel(targetModel);
-        if (targetModel.owned_by === "Local-Llama.cpp") {
+        if (isLocalModel(targetModel)) {
           startLocalModel(targetModel);
         }
       }
@@ -401,6 +407,7 @@ const NavBar: Component<NavBarProps> = () => {
     return () => {
       unlistenResized();
       unlistenProgress();
+      unlistenEngineProgress();
     };
   });
 

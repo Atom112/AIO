@@ -85,7 +85,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <div class="w-full mb-4 p-4 bg-dark-300 rounded-lg border border-pri-20">
                         <div class="flex items-center gap-3 mb-2">
                             <Icon src="/icons/app-logo/loading.svg" class="w-5 h-5 animate-spin text-pri" />
-                            <span class="text-white text-sm">正在启动本地 Llama 服务器...</span>
+                            <span class="text-white text-sm">正在启动本地推理引擎...</span>
                         </div>
                         <div class="w-full bg-dark-500 rounded-full h-2">
                             <div 

@@ -42,6 +42,7 @@ export interface ActivatedModel {
     model_id: string;       // 模型唯一标识符，例如 'gpt-4o', 'llama3'
     owned_by: string;       // 模型提供商或厂商名称
     local_path?: string;    // 本地模型的文件系统绝对路径，仅本地模型有效
+    engine_type?: string;   // 本地推理引擎类型标识，如 "llama_cpp", "vllm"
 }
 
  /* 用户接口，定义用户账户信息 */

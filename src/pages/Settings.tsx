@@ -29,9 +29,9 @@ const Settings: Component = () => {
     ];
 
 return (
-        <div class="flex fixed inset-[65px_1px_1px_0] p-4 glow-border rounded-lg gap-4 bg-dark">
+        <div class="flex h-full p-4 gap-4" style="background: transparent;">
             {/* 侧边栏 */}
-            <div class="w-[200px] bg-black/30 glow-border flex flex-col rounded-lg overflow-hidden">
+            <div class="w-[200px] flex flex-col rounded-lg overflow-hidden" style="background: rgba(18, 22, 35, 0.25); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
                 <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
                     设置中心
                 </div>
@@ -64,7 +64,7 @@ return (
             </div>
 
             {/* 主内容区 */}
-            <div class="flex-1 overflow-y-auto pr-1 scroll-smooth bg-[radial-gradient(circle_at_50%_50%,rgb(8_221_249/0.02)_0%,transparent_80%)]">
+            <div class="flex-1 overflow-y-auto pr-1 scroll-smooth">
                 <Transition name="settings-tab-fade" mode="outin">
                     <Switch>
                         <Match when={activeTab() === 'provider'}>

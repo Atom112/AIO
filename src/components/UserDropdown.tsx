@@ -14,65 +14,40 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
   const [imgSrc, setImgSrc] = createSignal(props.avatar);
   const [isLoaded, setIsLoaded] = createSignal(false);
 
-  createEffect(() => {
-    setImgSrc(props.avatar);
-    setIsLoaded(false);
-  });
+  createEffect(() => { setImgSrc(props.avatar); setIsLoaded(false); });
 
   return (
-    <div
-      class="relative flex items-center cursor-pointer [app-region:no-drag]"
+    <div class="relative flex items-center cursor-pointer [app-region:no-drag]"
       onMouseEnter={() => setIsVisible(true)}
-      onMouseLeave={() => setIsVisible(false)}
-    >
-      <div class="relative w-10 h-10 rounded-full overflow-hidden border-2 border-dark-300 transition-all duration-200 hover:border-pri">
-        <img
-          src={imgSrc()}
-          alt="User Avatar"
-          class="w-full h-full object-cover transition-opacity duration-300"
+      onMouseLeave={() => setIsVisible(false)}>
+      <div class="relative w-10 h-10 rounded-full overflow-hidden transition-all duration-200"
+        style="border: 2px solid rgba(255,255,255,0.06);"
+        onMouseEnter={(e) => e.currentTarget.style.borderColor = 'rgba(124,154,191,0.3)'}
+        onMouseLeave={(e) => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'}>
+        <img src={imgSrc()} alt="User Avatar" class="w-full h-full object-cover transition-opacity duration-300"
           classList={{ 'opacity-0': !isLoaded(), 'opacity-100': isLoaded() }}
           onLoad={() => setIsLoaded(true)}
-          onError={() => setImgSrc('/icons/app-logo/user.svg')}
-        />
-        <div
-          class="absolute inset-0 w-full h-full bg-dark-500 flex items-center justify-center transition-opacity duration-300 pointer-events-none"
-          classList={{ 'opacity-100': !isLoaded(), 'opacity-0': isLoaded() }}
-        >
+          onError={() => setImgSrc('/icons/app-logo/user.svg')} />
+        <div class="absolute inset-0 w-full h-full flex items-center justify-center transition-opacity duration-300 pointer-events-none"
+          style="background: rgba(255,255,255,0.04);"
+          classList={{ 'opacity-100': !isLoaded(), 'opacity-0': isLoaded() }}>
           <Icon src="/icons/app-logo/user.svg" class="w-5 h-5 opacity-50" />
         </div>
       </div>
-      
-      <div 
-        class="absolute top-full left-1/2 -translate-x-1/2 mt-3 bg-dark min-w-[140px] border border-pri rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5 before:content-[''] before:absolute before:-top-1.5 before:left-1/2 before:-translate-x-1/2 before:rotate-45 before:w-2.5 before:h-2.5 before:bg-dark before:border-l before:border-t before:border-pri"
+      <div
+        class="absolute top-full left-1/2 -translate-x-1/2 mt-3 min-w-[140px] rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5"
         classList={{ 'invisible opacity-0': !isVisible(), 'visible opacity-100': isVisible() }}
-      >
+        style="background: rgba(18, 22, 35, 0.85); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
         <div class="user-menu-item" onClick={props.onEditAvatar}>
           <Icon src="/icons/app-logo/camera.svg" class="w-4 h-4" />
           更换头像
         </div>
-
-        <Show
-          when={props.isLoggedIn}
-          fallback={
-            <div class="user-menu-item" onClick={props.onLoginClick}>
-              <Icon src="/icons/app-logo/user-profile.svg" class="w-4 h-4" />
-              登录账号
-            </div>
-          }
-        >
-          <div class="h-[1px] bg-dark-300 my-1.5 mx-2 opacity-60"></div>
-          <div class="user-menu-item font-medium">
-            <Icon src="/icons/app-logo/info-circle.svg" class="w-4 h-4" />
-            账号信息
-          </div>
-          <div class="user-menu-item" onClick={props.onLoginClick}>
-            <Icon src="/icons/app-logo/switch-arrows.svg" class="w-4 h-4" />
-            切换账号
-          </div>
-          <div 
-            class="flex items-center gap-2.5 p-2.5 text-[#E08090] opacity-90 text-[13px] rounded-md transition-all hover:bg-[rgba(255,77,79,0.15)] hover:text-[#E08090]" 
-            onClick={props.onLogout}
-          >
+        <Show when={props.isLoggedIn}
+          fallback={<div class="user-menu-item" onClick={props.onLoginClick}><Icon src="/icons/app-logo/user-profile.svg" class="w-4 h-4" />登录账号</div>}>
+          <div class="user-menu-item" style="color: rgba(224,128,144,0.8);"
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(224,128,144,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            onClick={props.onLogout}>
             <Icon src="/icons/app-logo/logout.svg" class="w-4 h-4" />
             退出登录
           </div>

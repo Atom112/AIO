@@ -452,7 +452,7 @@ const ChatPage: Component = () => {
   });
 
   return (
-    <div class="fixed inset-[65px_1px_1px_0] flex gap-[3px] p-5 bg-dark glow-border rounded-lg"
+    <div class="h-full flex gap-[3px] p-[1px]" style="background: transparent;"
       classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
       <AssistantSidebar
         width={displayLeftWidth()}

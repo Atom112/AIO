@@ -55,8 +55,8 @@ export interface User {
 
 /** 全局用户头像状态信号，默认使用系统默认头像 */
 export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-logo/user.svg');
-/** 主题颜色信号，从本地存储读取或使用默认色 #08ddf9 */
-export const [themeColor, setThemeColor] = createSignal(localStorage.getItem('theme-color') || '#08ddf9');
+/** 主题颜色信号，从本地存储读取或使用默认柔雾蓝 #7c9abf */
+export const [themeColor, setThemeColor] = createSignal(localStorage.getItem('theme-color') || '#7c9abf');
 /** 当前选中的模型信号，用于获取当前对话使用的 AI 配置 */
 export const [selectedModel, setSelectedModel] = createSignal<ActivatedModel | null>(null);
 /** 当前选中的助手 ID 信号，用于侧边栏助手切换 */
@@ -193,8 +193,23 @@ export const logout = () => {
 // 监听主题颜色变化并同步到 CSS 变量和本地存储
 createEffect(() => {
     const color = themeColor();
+    // 打标记全局禁用过渡, 确保主题色切换即时无动画
+    document.documentElement.setAttribute('data-theme-changing', '');
     document.documentElement.style.setProperty('--primary-color', color);
+    // 同步 RGB 分量供 rgba(var(--primary-rgb), 0.xx) 使用
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+        document.documentElement.style.setProperty('--primary-rgb', `${r}, ${g}, ${b}`);
+    }
     localStorage.setItem('theme-color', color);
+    // 下一帧移除标记, 恢复正常的交互过渡动画
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            document.documentElement.removeAttribute('data-theme-changing');
+        });
+    });
 });
 
 

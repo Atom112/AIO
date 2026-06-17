@@ -172,22 +172,22 @@ const AppSettings: Component = () => {
     const rgb = createMemo(() => hexToRgb(themeColor())); // 当前主题色的 RGB 值
 
     const presetThemes = [
-        { name: '极光青', color: '#90D0E0' },
-        { name: '樱花粉', color: '#F5BDE6' },
-        { name: '翡翠绿', color: '#A6DA95' },
-        { name: '紫罗兰', color: '#B0B0F0' },
-        { name: '夕阳橙', color: '#F5A97F' },
+        { name: '柔雾蓝', color: '#7c9abf' },
+        { name: '灰粉', color: '#b8929e' },
+        { name: '暖灰', color: '#a8a098' },
+        { name: '鼠尾绿', color: '#9aab9a' },
+        { name: '薰衣草', color: '#a89cc8' },
     ];
 
     return (
         <div class="flex flex-col gap-[15px] box-border">
-            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">
+            <div class="rounded-xl p-6" style="background: rgba(18, 22, 35, 0.6); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class="m-0 text-base text-white">应用状态</h3>
                     <div class="flex items-center gap-2">
                         <span class="text-xs text-[#888] font-medium">版本号:</span>
-                        <div class="bg-pri text-black text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
-                            style="font-family: 'JetBrains Mono', monospace;">
+                        <div class="text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
+                            style="background: rgba(124,154,191,0.15); color: rgba(255,255,255,0.8); font-family: 'JetBrains Mono', monospace;">
                             v{version()}
                         </div>
                     </div>
@@ -217,7 +217,8 @@ const AppSettings: Component = () => {
                     </div>
 
                     <div
-                        class="flex items-center gap-2 bg-pri-5 text-[#ccc] px-4 py-2 rounded-lg cursor-pointer border border-pri transition-all duration-200 hover:bg-pri-50 hover:text-black"
+                        class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
+                        style="background: rgba(124,154,191,0.08); color: rgba(255,255,255,0.5); border: 1px solid rgba(124,154,191,0.08);"
                         onClick={() => open('https://github.com/Atom112/AIO')}
                         title="访问 GitHub"
                     >

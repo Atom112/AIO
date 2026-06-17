@@ -90,9 +90,9 @@ const Markdown: Component<MarkdownProps> = (props) => {
             const textToCopy = (codeElement as HTMLElement).innerText;
 
             navigator.clipboard.writeText(textToCopy).then(() => {
-                const span = btn.querySelector('.copy-text');
+                const span = btn.querySelector('.copy-text') as HTMLElement | null;
                 if (span) {
-                    const oldText = span.innerText;
+                    const oldText = span.innerText || '';
                     span.innerText = '已复制!';
                     btn.classList.add('copied');
 

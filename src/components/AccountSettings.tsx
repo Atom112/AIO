@@ -1,40 +1,31 @@
 import { Component } from 'solid-js';
 
-/**
- * 账号设置页面组件
- * 
- * @component
- * @description 渲染用户账号信息展示页面，包含静态的用户信息卡片和退出登录按钮。
- *              当前实现为占位符版本，所有用户数据均为硬编码。
- * @returns {JSX.Element} 返回账号设置页面的 JSX 元素
- */
 const AccountSettings: Component = () => {
     return (
         <div class="w-full h-full">
-            <div class="w-full max-w-2xl glow-border rounded-xl bg-pri-5 p-8">
-                {/* 标题部分 */}
-                <div class="border-b border-pri-20 pb-3 mb-8">
-                    <h3 class="text-xl font-bold tracking-tight text-white">账号信息</h3>
+            <div class="w-full max-w-2xl rounded-xl p-8"
+                 style="background: rgba(18, 22, 35, 0.6); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);">
+                <div class="pb-3 mb-8" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                    <h3 class="text-xl font-bold tracking-tight" style="color: rgba(255,255,255,0.85);">账号信息</h3>
                 </div>
-                
-                {/* 信息展示区 */}
+
                 <div class="flex flex-col gap-4 mb-10">
                     <div class="flex flex-col gap-2.5">
-                        <label class="text-xs font-bold text-[#666] uppercase tracking-widest">
+                        <label class="text-xs font-bold uppercase tracking-widest" style="color: rgba(255,255,255,0.3);">
                             当前登录身份
                         </label>
-                        <div class="bg-dark-950 p-4 rounded-lg border border-dark-300 text-pri font-mono text-lg shadow-inner flex items-center gap-3">
-                            <span class="w-2 h-2 rounded-full bg-pri animate-pulse"></span>
+                        <div class="p-4 rounded-lg text-lg flex items-center gap-3"
+                             style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06); color: rgba(124,154,191,0.7); font-family: monospace;">
+                            <span class="w-2 h-2 rounded-full" style="background: rgba(124,154,191,0.5); animation: pulse 2s infinite;"></span>
                             Premium User
                         </div>
                     </div>
                 </div>
 
-                {/* 操作按钮 */}
                 <div class="flex items-center gap-4">
-                    <button 
-                        class="bg-danger text-black border-none py-3 px-8 font-bold rounded-md cursor-pointer transition-all duration-200 hover:opacity-90 hover:scale-[1.02] active:scale-95 shadow-lg shadow-danger/10"
-                    >
+                    <button
+                        class="border-none py-3 px-8 font-bold rounded-md cursor-pointer transition-all duration-200 hover:opacity-90 hover:scale-[1.02] active:scale-95"
+                        style="background: rgba(224,128,144,0.2); color: rgba(224,128,144,0.8);">
                         退出当前账号
                     </button>
                 </div>

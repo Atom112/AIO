@@ -418,9 +418,9 @@ return (
         class="absolute top-0 left-0 right-0 h-[60px] z-[1] [app-region:drag]"
       ></div>
 
-      <nav 
+      <nav
         data-tauri-drag-region
-        class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] bg-dark glow-border rounded-lg m-0 mr-[1px] z-[1000] [app-region:drag] select-none"
+        class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] m-0 mr-[1px] z-[100] [app-region:drag] select-none"
       >
         <div class="absolute left-[10px] top-1/2 -translate-y-1/2 flex items-center justify-center z-[1001] pointer-events-none">
           <img src="/icons/app-logo/logo.svg" alt="AIO" class="w-10 h-10 object-contain block [app-region:no-drag]" />
@@ -464,11 +464,11 @@ return (
         </a>
 
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
-          <button class="win-ctrl-btn hover:bg-dark-300" onClick={handleMinimize} title="最小化">
+          <button class="win-ctrl-btn hover:bg-white/10" onClick={handleMinimize} title="最小化">
             <Icon src="/icons/app-logo/minimize.svg" class="w-6 h-6" />
           </button>
 
-          <button class="win-ctrl-btn hover:bg-dark-300" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
+          <button class="win-ctrl-btn hover:bg-white/10" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
             {isMaximized() ? (
               <Icon src="/icons/app-logo/restore.svg" class="w-6 h-6" />
             ) : (

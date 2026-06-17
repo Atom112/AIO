@@ -1,9 +1,14 @@
 /// llama.cpp 本地推理引擎插件实现
+///
+/// 启动策略：
+/// 1. 优先使用 app data 下通过自动安装的引擎（EngineInstaller）
+/// 2. 回退到 resources/engines/llama-cpp/ 下的 bundled 版本（旧版打包兼容）
 
 use crate::core::state::LocalEngineState;
+use crate::plugins::engine::installer::EngineInstaller;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task;
@@ -27,8 +32,19 @@ impl LocalEnginePlugin for LlamaCppPlugin {
         &["gguf"]
     }
 
+    fn is_platform_supported(&self) -> bool {
+        true // llama.cpp 全平台支持
+    }
+
+    fn install_path(&self, app: &AppHandle) -> PathBuf {
+        EngineInstaller::get_engine_dir(app)
+    }
+
+    fn is_installed(&self, app: &AppHandle) -> bool {
+        EngineInstaller::is_installed(app)
+    }
+
     fn progress_event_name(&self) -> &'static str {
-        // 保留旧事件名以兼容前端
         "llama-progress"
     }
 
@@ -58,8 +74,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             .stderr(std::process::Stdio::piped());
 
         #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-
+        cmd.creation_flags(0x08000000);
         cmd
     }
 
@@ -86,120 +101,107 @@ impl LocalEnginePlugin for LlamaCppPlugin {
         gpu_layers: i32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
-        println!(
-            "[DEBUG] 启动参数 - 引擎: llama.cpp, 模型: {}, 端口: {}, GPU层数: {}",
-            model_path, port, gpu_layers
-        );
+            println!(
+                "[DEBUG] 启动参数 - 引擎: llama.cpp, 模型: {}, 端口: {}, GPU层数: {}",
+                model_path, port, gpu_layers
+            );
 
-        // 参数验证
-        if gpu_layers <= 0 {
-            return Err("GPU 层数必须大于 0，建议设置为 99 或 999".to_string());
-        }
+            if gpu_layers <= 0 {
+                return Err("GPU 层数必须大于 0，建议设置为 99 或 999".to_string());
+            }
 
-        // 路径解析：获取引擎二进制文件路径
-        // 预期路径: resources/engines/llama-cpp/llama-server.exe
-        let resource_dir = app
-            .path()
-            .resolve("resources/engines/llama-cpp", BaseDirectory::Resource)
-            .map_err(|e| format!("无法解析资源路径: {}", e))?;
+            // 优先使用自动安装的引擎，再回退到 bundled 路径
+            let exe_path = if EngineInstaller::get_exe_path(&app).exists() {
+                EngineInstaller::get_exe_path(&app)
+            } else {
+                let resource_dir = app
+                    .path()
+                    .resolve("resources/engines/llama-cpp", BaseDirectory::Resource)
+                    .map_err(|e| format!("无法解析资源路径: {}", e))?;
+                let fallback = resource_dir.join("llama-server.exe");
+                if !fallback.exists() {
+                    return Err(
+                        "找不到 llama.cpp 引擎。请先在设置页面中安装引擎。".to_string()
+                    );
+                }
+                fallback
+            };
 
-        let exe_path = resource_dir.join("llama-server.exe");
+            if !Path::new(model_path).exists() {
+                return Err(format!("模型文件不存在: {}", model_path));
+            }
 
-        if !exe_path.exists() {
-            return Err(format!("找不到执行文件: {:?}", exe_path));
-        }
+            let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
+            let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
 
-        if !Path::new(model_path).exists() {
-            return Err(format!("模型文件不存在: {}", model_path));
-        }
+            let _ = app.emit(self.progress_event_name(), 0.05);
 
-        // 构建命令并启动
-        let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
-        let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
-
-        // 发射初始进度
-        let _ = app.emit(self.progress_event_name(), 0.05);
-
-        // 日志实时监控
-        let stderr = child.stderr.take().expect("无法获取 stderr");
-        let app_clone = app.clone();
-        let event_name = self.progress_event_name().to_string();
-        task::spawn_blocking(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    println!("[llama-server] {}", line);
-
-                    if line.contains("offloaded") {
-                        println!("GPU 卸载状态: {}", line);
-                    }
-                    if line.contains("CUDA") {
-                        println!("CUDA 信息: {}", line);
-                    }
-                    if line.contains("error") || line.contains("Error") || line.contains("failed") {
-                        println!("LLAMA 错误: {}", line);
-                    }
-
-                    let progress = if line.contains("build info") || line.contains("system info") {
-                        Some(0.1)
-                    } else if line.contains("loading model") {
-                        Some(0.2)
-                    } else if line.contains("model loaded") || line.contains("done") {
-                        Some(0.5)
-                    } else if line.contains("HTTP server listening") || line.contains("listening on") {
-                        Some(0.8)
-                    } else {
-                        None
-                    };
-
-                    if let Some(p) = progress {
-                        let _ = app_clone.emit(&event_name, p);
+            let stderr = child.stderr.take().expect("无法获取 stderr");
+            let app_clone = app.clone();
+            let event_name = self.progress_event_name().to_string();
+            task::spawn_blocking(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    if let Ok(line) = line {
+                        println!("[llama-server] {}", line);
+                        if line.contains("offloaded") {
+                            println!("GPU 卸载状态: {}", line);
+                        }
+                        if line.contains("CUDA") {
+                            println!("CUDA 信息: {}", line);
+                        }
+                        if line.contains("error") || line.contains("Error") || line.contains("failed") {
+                            println!("LLAMA 错误: {}", line);
+                        }
+                        let progress = if line.contains("build info") || line.contains("system info") {
+                            Some(0.1)
+                        } else if line.contains("loading model") {
+                            Some(0.2)
+                        } else if line.contains("model loaded") || line.contains("done") {
+                            Some(0.5)
+                        } else if line.contains("HTTP server listening") || line.contains("listening on") {
+                            Some(0.8)
+                        } else {
+                            None
+                        };
+                        if let Some(p) = progress {
+                            let _ = app_clone.emit(&event_name, p);
+                        }
                     }
                 }
+            });
+
+            sleep(Duration::from_millis(2000)).await;
+            match child.try_wait() {
+                Ok(None) => println!("进程正常运行中"),
+                Ok(Some(status)) => {
+                    return Err(format!("进程启动后立即退出，退出码: {}", status));
+                }
+                Err(e) => return Err(format!("无法检查进程状态: {}", e)),
             }
-        });
 
-        // 等待并检查进程是否崩溃
-        sleep(Duration::from_millis(2000)).await;
-        match child.try_wait() {
-            Ok(None) => println!("进程正常运行中"),
-            Ok(Some(status)) => {
-                return Err(format!("进程启动后立即退出，退出码: {}", status));
+            let client = reqwest::Client::new();
+            let health_url = format!("http://127.0.0.1:{}/health", port);
+            match client
+                .get(&health_url)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(_) => {
+                    println!("健康检查通过");
+                    let _ = app.emit(self.progress_event_name(), 1.0);
+                }
+                Err(_) => {
+                    let _ = child.kill();
+                    return Err("服务未响应健康检查，可能启动失败".to_string());
+                }
             }
-            Err(e) => return Err(format!("无法检查进程状态: {}", e)),
-        }
 
-        // 健康检查
-        let client = reqwest::Client::new();
-        let health_url = format!("http://127.0.0.1:{}/health", port);
+            *state.engine_type.lock().unwrap() = self.identifier().to_string();
+            *state.child_process.lock().unwrap() = Some(child);
 
-        match client
-            .get(&health_url)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-        {
-            Ok(_) => {
-                println!("健康检查通过");
-                let _ = app.emit(self.progress_event_name(), 1.0);
-            }
-            Err(_) => {
-                let _ = child.kill();
-                return Err("服务未响应健康检查，可能启动失败".to_string());
-            }
-        }
-
-        // 存储进程句柄和引擎类型到全局状态
-        {
-            let mut type_lock = state.engine_type.lock().unwrap();
-            *type_lock = self.identifier().to_string();
-        }
-        {
-            let mut proc_lock = state.child_process.lock().unwrap();
-            *proc_lock = Some(child);
-        }
-
-        Ok(format!("http://127.0.0.1:{}/v1", port))
+            Ok(format!("http://127.0.0.1:{}/v1", port))
         })
     }
 }

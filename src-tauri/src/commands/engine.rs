@@ -1,8 +1,9 @@
-/// 本地推理引擎管理相关的 Tauri 命令：启动、停止和检查本地大模型服务器的状态。
+/// 本地推理引擎管理相关的 Tauri 命令：启动、停止、检查状态以及引擎安装管理。
 
 use crate::core::state::LocalEngineState;
+use crate::plugins::engine::installer::{EngineInstaller, EngineStatus, EngineUpdateInfo};
 use crate::plugins::engine::EngineManager;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::time::{sleep, Duration};
 
 /// 启动本地大模型服务器
@@ -62,4 +63,73 @@ pub fn is_local_server_running(state: State<'_, LocalEngineState>) -> bool {
         }
     }
     false
+}
+
+/// 获取所有引擎的安装状态
+#[tauri::command]
+pub async fn get_engines_status(app: AppHandle) -> Result<Vec<EngineStatus>, String> {
+    let mut statuses = Vec::new();
+
+    // llama.cpp 状态
+    let installed = EngineInstaller::is_installed(&app);
+    let version = EngineInstaller::get_installed_version(&app);
+    let latest = EngineInstaller::fetch_latest_release()
+        .await
+        .map(|r| r.tag_name)
+        .ok();
+    statuses.push(EngineStatus {
+        id: "llama_cpp".into(),
+        name: "llama.cpp".into(),
+        installed,
+        version,
+        latest_version: latest,
+        platform_supported: true,
+        error: None,
+    });
+
+    // vLLM 状态（Windows 上不可用）
+    #[cfg(target_os = "windows")]
+    statuses.push(EngineStatus {
+        id: "vllm".into(),
+        name: "vLLM".into(),
+        installed: false,
+        version: None,
+        latest_version: None,
+        platform_supported: false,
+        error: Some("vLLM 不支持 Windows 平台".into()),
+    });
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use crate::plugins::engine::vllm::VllmPlugin;
+        use crate::plugins::engine::LocalEnginePlugin;
+        let vllm = VllmPlugin;
+        statuses.push(EngineStatus {
+            id: "vllm".into(),
+            name: "vLLM".into(),
+            installed: vllm.is_installed(&app),
+            version: None,
+            latest_version: None,
+            platform_supported: vllm.is_platform_supported(),
+            error: None,
+        });
+    }
+
+    Ok(statuses)
+}
+
+/// 安装/更新 llama.cpp 引擎（后台任务，通过 Tauri Event 发射进度）
+#[tauri::command]
+pub async fn install_engine(app: AppHandle) -> Result<String, String> {
+    let app_clone = app.clone();
+    let progress = move |p: f64| {
+        let _ = app_clone.emit("engine-install-progress", p);
+    };
+    EngineInstaller::install(&app, progress).await
+}
+
+/// 检查 llama.cpp 是否有更新
+#[tauri::command]
+pub async fn check_llama_update(app: AppHandle) -> Result<EngineUpdateInfo, String> {
+    EngineInstaller::check_update(&app).await
 }

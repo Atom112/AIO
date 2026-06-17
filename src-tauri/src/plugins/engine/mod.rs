@@ -1,10 +1,12 @@
 /// 本地推理引擎插件系统
 /// 提供统一的 LocalEnginePlugin trait 和 EngineManager 注册中心
 
+pub mod installer;
 pub mod llama_cpp;
 pub mod vllm;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::future::Future;
 use tauri::AppHandle;
@@ -19,6 +21,17 @@ pub trait LocalEnginePlugin: Send + Sync {
     fn identifier(&self) -> &'static str;
     /// 支持的模型文件扩展名
     fn supported_extensions(&self) -> &[&'static str];
+
+    /// 当前平台是否支持此引擎
+    fn is_platform_supported(&self) -> bool {
+        true
+    }
+
+    /// 获取引擎在 app data 下的安装路径
+    fn install_path(&self, app: &AppHandle) -> PathBuf;
+
+    /// 引擎是否已安装
+    fn is_installed(&self, app: &AppHandle) -> bool;
 
     /// 启动引擎，返回其暴露的 OpenAI-compatible API Base URL
     fn start<'a>(
@@ -49,7 +62,6 @@ pub trait LocalEnginePlugin: Send + Sync {
 }
 
 /// 引擎管理器：维护所有已注册插件
-#[allow(dead_code)]
 pub struct EngineManager {
     plugins: HashMap<String, Box<dyn LocalEnginePlugin>>,
 }
@@ -60,7 +72,7 @@ impl EngineManager {
             plugins: HashMap::new(),
         };
         mgr.register(Box::new(llama_cpp::LlamaCppPlugin));
-        // mgr.register(Box::new(vllm::VllmPlugin)); // 后续注册
+        mgr.register(Box::new(vllm::VllmPlugin));
         mgr
     }
 

@@ -1,4 +1,4 @@
-import { Component, Show, createSignal } from 'solid-js';
+import { Component, Show, createSignal, createEffect } from 'solid-js';
 import Icon from './Icon';
 
 interface UserDropdownProps {
@@ -11,6 +11,13 @@ interface UserDropdownProps {
 
 const UserDropdown: Component<UserDropdownProps> = (props) => {
   const [isVisible, setIsVisible] = createSignal(false);
+  const [imgSrc, setImgSrc] = createSignal(props.avatar);
+  const [isLoaded, setIsLoaded] = createSignal(false);
+
+  createEffect(() => {
+    setImgSrc(props.avatar);
+    setIsLoaded(false);
+  });
 
   return (
     <div
@@ -18,14 +25,22 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
       onMouseEnter={() => setIsVisible(true)}
       onMouseLeave={() => setIsVisible(false)}
     >
-      <img
-        src={props.avatar}
-        alt="User Avatar"
-        class="w-10 h-10 rounded-full border-2 border-dark-300 transition-all duration-200 object-cover hover:border-pri"
-        onError={(e) => {
-          e.currentTarget.src = "/icons/app-logo/user.svg";
-        }}
-      />
+      <div class="relative w-10 h-10 rounded-full overflow-hidden border-2 border-dark-300 transition-all duration-200 hover:border-pri">
+        <img
+          src={imgSrc()}
+          alt="User Avatar"
+          class="w-full h-full object-cover transition-opacity duration-300"
+          classList={{ 'opacity-0': !isLoaded(), 'opacity-100': isLoaded() }}
+          onLoad={() => setIsLoaded(true)}
+          onError={() => setImgSrc('/icons/app-logo/user.svg')}
+        />
+        <div
+          class="absolute inset-0 w-full h-full bg-dark-500 flex items-center justify-center transition-opacity duration-300 pointer-events-none"
+          classList={{ 'opacity-100': !isLoaded(), 'opacity-0': isLoaded() }}
+        >
+          <Icon src="/icons/app-logo/user.svg" class="w-5 h-5 opacity-50" />
+        </div>
+      </div>
       
       <div 
         class="absolute top-full left-1/2 -translate-x-1/2 mt-3 bg-dark min-w-[140px] border border-pri rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5 before:content-[''] before:absolute before:-top-1.5 before:left-1/2 before:-translate-x-1/2 before:rotate-45 before:w-2.5 before:h-2.5 before:bg-dark before:border-l before:border-t before:border-pri"

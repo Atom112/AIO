@@ -1,4 +1,4 @@
-import { Component, For, Show, Setter } from 'solid-js';
+import { Component, For, Show, Setter, createSignal, createEffect } from 'solid-js';
 import Markdown from './Markdown';
 import { Topic, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -25,6 +25,35 @@ interface ChatInterfaceProps {
  * @param {ChatInterfaceProps} props - 组件属性
  * @returns {JSX.Element} 聊天界面 JSX 元素
  */
+const UserMessageAvatar: Component = () => {
+    const [isLoaded, setIsLoaded] = createSignal(false);
+    const [imgSrc, setImgSrc] = createSignal(globalUserAvatar());
+
+    createEffect(() => {
+        setImgSrc(globalUserAvatar());
+        setIsLoaded(false);
+    });
+
+    return (
+        <div class="relative flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-dark-300 border border-dark-100 shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
+            <img
+                src={imgSrc()}
+                alt="User"
+                class="w-full h-full object-cover transition-opacity duration-300"
+                classList={{ 'opacity-0': !isLoaded(), 'opacity-100': isLoaded() }}
+                onLoad={() => setIsLoaded(true)}
+                onError={() => setImgSrc('/icons/app-logo/user.svg')}
+            />
+            <div
+                class="absolute inset-0 w-full h-full bg-dark-300 flex items-center justify-center transition-opacity duration-300 pointer-events-none"
+                classList={{ 'opacity-100': !isLoaded(), 'opacity-0': isLoaded() }}
+            >
+                <Icon src="/icons/app-logo/user.svg" class="w-5 h-5 opacity-50" />
+            </div>
+        </div>
+    );
+};
+
 const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     let textareaRef: HTMLTextAreaElement | undefined; // 文本域 DOM 引用
 
@@ -161,9 +190,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </div>
 
                                     <Show when={msg.role === 'user'}>
-                                        <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full bg-dark-300 border border-dark-100 shadow-[0_2px_6px_rgba(0,0,0,0.15)] overflow-hidden">
-                                            <img src={globalUserAvatar()} alt="User" class="w-full h-full object-cover" />
-                                        </div>
+                                        <UserMessageAvatar />
                                     </Show>
                                 </div>
                             </div>

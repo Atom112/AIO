@@ -79,7 +79,8 @@ let lastBlobUrl: string | null = null;
 export const loadAvatarFromPath = async (input: string): Promise<string> => {
     if (!input) return '/icons/app-logo/user.svg';
 
-    if (input.startsWith('data:image')) {
+    // 直接返回已可访问的 URL（Base64 / 网络地址）
+    if (input.startsWith('data:image') || input.startsWith('http://') || input.startsWith('https://')) {
         return input;
     }
 

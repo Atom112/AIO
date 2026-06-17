@@ -59,13 +59,14 @@ const NavBar: Component<NavBarProps> = () => {
     console.log("登录成功:", user);
     setDatas('user', user);
     setDatas('isLoggedIn', true);
-    
+
     if (user.token) {
       localStorage.setItem('auth-token', user.token);
     }
-    
+
     if (user.avatar) {
-      setGlobalUserAvatar(user.avatar);
+      const avatarUrl = await loadAvatarFromPath(user.avatar);
+      setGlobalUserAvatar(avatarUrl);
     }
   };
 
@@ -355,7 +356,8 @@ const NavBar: Component<NavBarProps> = () => {
         setDatas('isLoggedIn', true);
 
         if (userData.avatar) {
-          setGlobalUserAvatar(userData.avatar);
+          const avatarUrl = await loadAvatarFromPath(userData.avatar);
+          setGlobalUserAvatar(avatarUrl);
         }
       } catch (err) {
         console.warn("身份过期或云端获取失败:", err);

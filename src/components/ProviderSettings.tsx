@@ -26,7 +26,7 @@ import {
     formatRelativeTime,
 } from '../utils/models';
 import { getProviderLogo } from '../utils/modelLogo';
-import type { ProviderConfig, TestConnectionResult } from '../utils/models';
+import type { ProviderConfig, TestConnectionResult, FetchedModel } from '../utils/models';
 import type { ModelMeta } from '@aio/models-data';
 import Icon from './Icon';
 
@@ -94,6 +94,53 @@ const DEFAULT_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; ownedBy: st
 };
 
 /**
+ * 仿 LobeHub 风格的单行模型展示
+ * 左侧: displayName (或 fallback 到 id) + id 徽标 + 发布日期 + ownedBy
+ * 右侧: 启用/未启用 toggle
+ */
+const ModelRow: Component<{
+    model: FetchedModel;
+    enabled: boolean;
+    onToggle: () => void;
+}> = (props) => (
+    <div class="flex items-center gap-3 px-3 py-2 rounded border border-dark-300 hover:border-pri-30 transition-colors">
+        <div class="grow min-w-0">
+            <div class="text-sm text-white truncate">
+                {props.model.displayName || props.model.id}
+            </div>
+            <div class="flex items-center gap-2 text-[10px] text-[#888] font-mono mt-0.5 flex-wrap">
+                <Show when={props.model.displayName && props.model.displayName !== props.model.id}>
+                    <span class="px-1.5 py-0.5 rounded bg-dark-850 border border-dark-300">
+                        {props.model.id}
+                    </span>
+                </Show>
+                <Show when={props.model.releasedAt}>
+                    <span>发布于 {props.model.releasedAt}</span>
+                </Show>
+                <span>{props.model.ownedBy}</span>
+            </div>
+        </div>
+        <button
+            type="button"
+            class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 focus:outline-none focus:ring-2 focus:ring-pri/50"
+            classList={{
+                'bg-pri': props.enabled,
+                'bg-dark-300': !props.enabled,
+            }}
+            onClick={(e) => { e.stopPropagation(); props.onToggle(); }}
+        >
+            <span
+                class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"
+                classList={{
+                    'translate-x-5': props.enabled,
+                    'translate-x-1': !props.enabled,
+                }}
+            />
+        </button>
+    </div>
+);
+
+/**
  * ProviderSettings 页面 (lobehub 形态)
  * @description 顶部保留本地模型管理；下面是多 provider 卡片列表，每个独立配置。
  */
@@ -115,7 +162,7 @@ const ProviderSettings: Component = () => {
 
     // 测试连接 / 拉取模型 的瞬态状态（按 provider id 存）
     const [testStates, setTestStates] = createSignal<Record<string, { status: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string; sampleModels?: string[] }>>({});
-    const [fetchStates, setFetchStates] = createSignal<Record<string, { status: 'idle' | 'fetching' | 'ok' | 'fail'; msg?: string; liveModels?: Array<{ id: string; owned_by: string }> }>>({});
+    const [fetchStates, setFetchStates] = createSignal<Record<string, { status: 'idle' | 'fetching' | 'ok' | 'fail'; msg?: string }>>({});
 
     // 添加自定义 provider 的弹窗
     const [showAddCustom, setShowAddCustom] = createSignal(false);
@@ -365,14 +412,42 @@ const ProviderSettings: Component = () => {
         setExpandedIds(s);
     };
 
-    const toggleModelEnabled = (providerId: string, modelId: string) => {
+    const toggleFetchedModel = (providerId: string, modelId: string) => {
         const cur = editingConfigs()[providerId];
         if (!cur) return;
-        const enabled = cur.enabledModels.includes(modelId);
-        const newList = enabled
+        const isEnabled = cur.enabledModels.includes(modelId);
+        const newList = isEnabled
             ? cur.enabledModels.filter(m => m !== modelId)
             : [...cur.enabledModels, modelId];
         updateProvider(providerId, { enabledModels: newList });
+    };
+
+    /** 已启用的 fetched 模型（按 enabledModels 原顺序） */
+    const enabledFetchedList = (providerId: string): FetchedModel[] => {
+        const cfg = editingConfigs()[providerId];
+        if (!cfg?.fetchedModels) return [];
+        const orderMap = new Map(cfg.enabledModels.map((m, i) => [m, i]));
+        return cfg.fetchedModels
+            .filter(m => cfg.enabledModels.includes(m.id))
+            .sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
+    };
+
+    /** 未启用的 fetched 模型（按 id 字母序） */
+    const disabledFetchedList = (providerId: string): FetchedModel[] => {
+        const cfg = editingConfigs()[providerId];
+        if (!cfg?.fetchedModels) return [];
+        return cfg.fetchedModels
+            .filter(m => !cfg.enabledModels.includes(m.id))
+            .sort((a, b) => a.id.localeCompare(b.id));
+    };
+
+    /** 孤儿: enabledModels 中但不在 fetchedModels 里的 (默认列表残留 + 旧 customModelIds) */
+    const orphanEnabledList = (providerId: string): string[] => {
+        const cfg = editingConfigs()[providerId];
+        if (!cfg) return [];
+        if (!cfg.fetchedModels) return cfg.enabledModels;
+        const fetchedIds = new Set(cfg.fetchedModels.map(m => m.id));
+        return cfg.enabledModels.filter(m => !fetchedIds.has(m));
     };
 
     const handleTestConnection = async (cfg: ProviderConfig) => {
@@ -401,21 +476,40 @@ const ProviderSettings: Component = () => {
         const id = cfg.id;
         setFetchStates(s => ({ ...s, [id]: { status: 'fetching' } }));
         try {
-            const r = await invoke<{ success: boolean; models: Array<{ id: string; owned_by: string }>; error: string | null; elapsedMs: number }>(
+            const r = await invoke<{
+                success: boolean;
+                models: Array<{ id: string; owned_by: string; display_name?: string; released_at?: string }>;
+                error: string | null;
+                elapsedMs: number;
+            }>(
                 'fetch_provider_models',
                 { apiUrl: cfg.apiUrl, apiKey: cfg.apiKey, proxyUrl: cfg.proxyUrl ?? null },
             );
             if (r.success) {
-                setFetchStates(s => ({
-                    ...s,
-                    [id]: { status: 'ok', msg: `已拉到 ${r.models.length} 个`, liveModels: r.models },
+                // 转 FetchedModel 形态（新模型默认未启用，符合 LobeHub 行为）
+                const incoming: FetchedModel[] = r.models.map(m => ({
+                    id: m.id,
+                    ownedBy: m.owned_by,
+                    displayName: m.display_name,
+                    releasedAt: m.released_at,
                 }));
-                // 合并到 customModelIds
+                // 合并到 fetchedModels：保留已存在的（displayName 等可能更新），追加新的
                 const cur = editingConfigs()[id];
                 if (cur) {
-                    const newCustom = Array.from(new Set([...cur.customModelIds, ...r.models.map(m => m.id)]));
-                    updateProvider(id, { customModelIds: newCustom });
+                    const existing = cur.fetchedModels ?? [];
+                    const incomingMap = new Map(incoming.map(m => [m.id, m]));
+                    const merged: FetchedModel[] = existing.map(m => incomingMap.get(m.id) ?? m);
+                    for (const m of incoming) {
+                        if (!existing.find(e => e.id === m.id)) {
+                            merged.push(m);
+                        }
+                    }
+                    updateProvider(id, { fetchedModels: merged });
                 }
+                setFetchStates(s => ({
+                    ...s,
+                    [id]: { status: 'ok', msg: `已拉到 ${r.models.length} 个（默认未启用，可在下方勾选）` },
+                }));
             } else {
                 setFetchStates(s => ({ ...s, [id]: { status: 'fail', msg: r.error ?? '失败' } }));
             }
@@ -426,6 +520,7 @@ const ProviderSettings: Component = () => {
 
     /**
      * 拉取失败时使用该 provider 的硬编码默认模型列表（与 Rust `default_providers()` 同步）
+     * 默认未启用，用户手动 toggle
      */
     const handleUseDefaultModels = (id: string) => {
         const defaults = DEFAULT_MODELS_BY_PROVIDER[id];
@@ -435,11 +530,14 @@ const ProviderSettings: Component = () => {
         }
         const cur = editingConfigs()[id];
         if (!cur) return;
-        const newCustom = Array.from(new Set([...cur.customModelIds, ...defaults.map(d => d.id)]));
-        updateProvider(id, { customModelIds: newCustom });
+        const asFetched: FetchedModel[] = defaults.map(d => ({ id: d.id, ownedBy: d.ownedBy }));
+        const existing = cur.fetchedModels ?? [];
+        const existingIds = new Set(existing.map(m => m.id));
+        const merged = [...asFetched, ...existing.filter(m => !existingIds.has(m.id))];
+        updateProvider(id, { fetchedModels: merged });
         setFetchStates(s => ({
             ...s,
-            [id]: { status: 'ok', msg: `已使用 ${defaults.length} 个内置默认模型`, liveModels: defaults.map(d => ({ id: d.id, owned_by: d.ownedBy })) },
+            [id]: { status: 'ok', msg: `已加载 ${defaults.length} 个内置默认模型（默认未启用）` },
         }));
     };
 
@@ -459,6 +557,7 @@ const ProviderSettings: Component = () => {
             isCustom: true,
             customModelIds: [],
             proxyUrl: undefined,
+            fetchedModels: undefined,
         };
         setEditingConfigs({ ...editingConfigs(), [id]: newCfg });
         setShowAddCustom(false);
@@ -974,45 +1073,58 @@ const ProviderSettings: Component = () => {
                                                 </button>
                                             </Show>
 
-                                            {/* 模型列表 */}
+                                            {/* 模型列表（仿 LobeHub 双段 toggle） */}
                                             <div>
                                                 <div class="text-[10px] text-[#888] uppercase tracking-wider mb-2">
                                                     启用模型 <span class="text-pri">({cfg()?.enabledModels.length ?? 0})</span>
                                                 </div>
 
-                                                <Show when={(cfg()?.customModelIds.length ?? 0) > 0}>
-                                                    <details class="mb-3">
-                                                        <summary class="text-xs text-[#888] cursor-pointer hover:text-[#aaa] py-1">
-                                                            📋 从 API 拉取的模型 ({cfg()?.customModelIds.length}) — 勾选以启用
-                                                        </summary>
-                                                        <div class="mt-2 max-h-48 overflow-y-auto space-y-1 pr-1">
-                                                            <For each={cfg()?.customModelIds ?? []}>
-                                                                {(mid) => (
-                                                                    <label class="flex items-center gap-2 px-2 py-1 rounded hover:bg-pri-10 cursor-pointer">
-                                                                        <input
-                                                                            type="checkbox"
-                                                                            checked={cfg()?.enabledModels.includes(mid) ?? false}
-                                                                            onChange={() => toggleModelEnabled(id, mid)}
-                                                                            class="accent-pri"
-                                                                        />
-                                                                        <span class="font-mono text-xs text-[#ccc] grow truncate">{mid}</span>
-                                                                    </label>
-                                                                )}
-                                                            </For>
-                                                        </div>
-                                                    </details>
+                                                {/* 拉取空状态提示 */}
+                                                <Show when={!cfg()?.fetchedModels || cfg()!.fetchedModels!.length === 0}>
+                                                    <div class="text-xs text-[#666] italic py-2">
+                                                        点击上方"从 API 拉取模型"获取该 provider 的全部可用模型后再勾选启用
+                                                    </div>
                                                 </Show>
 
-                                                <Show when={(cfg()?.enabledModels.length ?? 0) > 0}>
+                                                {/* 已启用 (按 enabledModels 顺序) */}
+                                                <Show when={enabledFetchedList(id).length > 0}>
+                                                    <div class="text-[10px] text-[#666] uppercase tracking-wider mt-3 mb-1.5">
+                                                        已启用 ({enabledFetchedList(id).length})
+                                                    </div>
+                                                    <div class="space-y-1">
+                                                        <For each={enabledFetchedList(id)}>
+                                                            {(m) => <ModelRow model={m} enabled={true} onToggle={() => toggleFetchedModel(id, m.id)} />}
+                                                        </For>
+                                                    </div>
+                                                </Show>
+
+                                                {/* 未启用 (按 id 字母序) */}
+                                                <Show when={disabledFetchedList(id).length > 0}>
+                                                    <div class="text-[10px] text-[#666] uppercase tracking-wider mt-3 mb-1.5">
+                                                        未启用 ({disabledFetchedList(id).length})
+                                                    </div>
+                                                    <div class="space-y-1">
+                                                        <For each={disabledFetchedList(id)}>
+                                                            {(m) => <ModelRow model={m} enabled={false} onToggle={() => toggleFetchedModel(id, m.id)} />}
+                                                        </For>
+                                                    </div>
+                                                </Show>
+
+                                                {/* 孤儿: enabledModels 中但不在 fetchedModels 里的 (默认列表残留 + 旧 customModelIds) */}
+                                                <Show when={orphanEnabledList(id).length > 0}>
+                                                    <div class="text-[10px] text-[#666] uppercase tracking-wider mt-3 mb-1.5">
+                                                        默认启用 (不在 API 列表中)
+                                                    </div>
                                                     <div class="flex flex-wrap gap-1.5">
-                                                        <For each={cfg()?.enabledModels ?? []}>
+                                                        <For each={orphanEnabledList(id)}>
                                                             {(mid) => (
                                                                 <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-pri-20 text-pri text-[11px] font-mono">
                                                                     <span class="truncate max-w-[200px]">{mid}</span>
                                                                     <button
+                                                                        type="button"
                                                                         class="text-pri hover:text-danger text-[14px] leading-none shrink-0"
                                                                         title="移除"
-                                                                        onClick={() => toggleModelEnabled(id, mid)}
+                                                                        onClick={() => toggleFetchedModel(id, mid)}
                                                                     >
                                                                         ×
                                                                     </button>
@@ -1022,6 +1134,7 @@ const ProviderSettings: Component = () => {
                                                     </div>
                                                 </Show>
 
+                                                {/* 空启用警告 */}
                                                 <Show when={(cfg()?.enabledModels.length ?? 0) === 0}>
                                                     <div class="text-[10px] text-[#666] italic py-2">
                                                         未启用任何模型 — 该 provider 配置后不会出现在聊天模型选择中

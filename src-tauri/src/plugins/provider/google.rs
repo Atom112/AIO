@@ -86,12 +86,17 @@ impl ProviderPlugin for GoogleProvider {
                     .strip_prefix("models/")
                     .unwrap_or(&raw_name)
                     .to_string();
-                let owned = m
+                let display_name = m
                     .get("displayName")
                     .and_then(|x| x.as_str())
-                    .unwrap_or("Google")
-                    .to_string();
-                Some(LiveModel { id, owned_by: owned })
+                    .map(String::from);
+                // Gemini 不返回发布信息
+                Some(LiveModel {
+                    id,
+                    owned_by: "Google".to_string(),
+                    display_name,
+                    released_at: None,
+                })
             })
             .collect()
     }

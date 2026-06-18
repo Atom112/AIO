@@ -76,12 +76,21 @@ impl ProviderPlugin for AnthropicProvider {
         arr.iter()
             .filter_map(|m| {
                 let id = m.get("id").and_then(|x| x.as_str())?.to_string();
-                let owned = m
+                let display_name = m
                     .get("display_name")
                     .and_then(|x| x.as_str())
-                    .unwrap_or("Anthropic")
-                    .to_string();
-                Some(LiveModel { id, owned_by: owned })
+                    .map(String::from);
+                // Anthropic 返回 created_at 是 ISO 8601 字符串，原样存即可
+                let released_at = m
+                    .get("created_at")
+                    .and_then(|x| x.as_str())
+                    .map(String::from);
+                Some(LiveModel {
+                    id,
+                    owned_by: "Anthropic".to_string(),
+                    display_name,
+                    released_at,
+                })
             })
             .collect()
     }

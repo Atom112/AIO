@@ -46,6 +46,10 @@ pub struct ProviderConfig {
     /// 旧配置无此字段时反序列化为 None，逻辑上视为"不代理"。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    /// 从 API 持久化拉取的模型列表（含 displayName/releasedAt）。
+    /// 旧配置无此字段时反序列化为空数组。
+    #[serde(default)]
+    pub fetched_models: Vec<LiveModel>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -174,6 +178,7 @@ fn default_providers() -> BTreeMap<String, ProviderConfig> {
                 is_custom: false,
                 custom_model_ids: vec![],
                 proxy_url: None,
+                fetched_models: vec![],
             },
         );
     }
@@ -209,6 +214,7 @@ fn migrate_from_activated_models(
             is_custom: false,
             custom_model_ids: vec![],
             proxy_url: None,
+            fetched_models: vec![],
         });
         entry.enabled = true;
         entry.api_url = if url.starts_with("http") { url.clone() } else { entry.api_url.clone() };
@@ -260,6 +266,7 @@ pub fn load_provider_configs() -> Result<ProviderConfigFile, String> {
                             is_custom: false,
                             custom_model_ids: vec![],
                             proxy_url: None,
+                            fetched_models: vec![],
                         });
                         entry.enabled = true;
                         entry.api_url = url.to_string();

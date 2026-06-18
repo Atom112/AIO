@@ -72,6 +72,8 @@ impl ProviderPlugin for OllamaProvider {
                 Some(LiveModel {
                     id,
                     owned_by: "ollama".to_string(),
+                    display_name: None,
+                    released_at: None,
                 })
             })
             .collect()

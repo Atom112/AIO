@@ -33,6 +33,12 @@ pub struct StreamPayload {
 pub struct LiveModel {
     pub id: String,
     pub owned_by: String,
+    /// 厂商返回的展示名（Google/Anthropic 有；OpenAI/Ollama 无 → None）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// 发布日期 YYYY-MM-DD（OpenAI 的 `created` 转；Anthropic 的 `created_at` 原样；Google/Ollama 无 → None）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_at: Option<String>,
 }
 
 /// 消息中包含的附件元数据。

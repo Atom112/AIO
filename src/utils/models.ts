@@ -9,6 +9,16 @@ import type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data'
 
 export type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data'
 
+/** 从 provider API 拉取并持久化的模型条目（仿 LobeHub 列表行） */
+export interface FetchedModel {
+  id: string
+  ownedBy: string
+  /** 厂商返回的展示名（Google `displayName` / Anthropic `display_name`），OpenAI/Ollama 无 */
+  displayName?: string
+  /** 发布日期 YYYY-MM-DD，OpenAI `created` 转 / Anthropic `created_at` 原样 */
+  releasedAt?: string
+}
+
 export interface ProviderConfig {
   id: string
   enabled: boolean
@@ -20,6 +30,8 @@ export interface ProviderConfig {
   customModelIds: string[]
   /** per-provider HTTP/HTTPS 代理 (例如 `http://127.0.0.1:7890`)，用于解决国内访问 OpenAI/Google 的网络问题 */
   proxyUrl?: string
+  /** 从 API 持久化拉取的模型列表，用于仿 LobeHub 风格的双段 toggle 列表 */
+  fetchedModels?: FetchedModel[]
 }
 
 export interface ProviderConfigFile {

@@ -83,7 +83,17 @@ impl ProviderPlugin for OpenAICompatProvider {
                     .and_then(|x| x.as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                Some(LiveModel { id, owned_by: owned })
+                // OpenAI `created` 是 Unix 秒，转换为 YYYY-MM-DD
+                let released_at = m
+                    .get("created")
+                    .and_then(|x| x.as_i64())
+                    .and_then(crate::plugins::provider::unix_to_ymd);
+                Some(LiveModel {
+                    id,
+                    owned_by: owned,
+                    display_name: None,
+                    released_at,
+                })
             })
             .collect()
     }

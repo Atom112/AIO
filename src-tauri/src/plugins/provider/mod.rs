@@ -119,3 +119,40 @@ pub fn classify_reqwest_error(err: &reqwest::Error, host: &str) -> String {
 pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// 测试连接用较短超时
 pub const TEST_TIMEOUT_SECS: u64 = 20;
+
+/// Unix 秒时间戳 → YYYY-MM-DD（用于 OpenAI `created` 字段）
+/// 不引入 chrono 依赖，手算 Howard Hinnant 日期算法
+pub fn unix_to_ymd(secs: i64) -> Option<String> {
+    days_since_epoch_to_ymd(secs.div_euclid(86_400))
+}
+
+/// 自 1970-01-01 起的天数 → YYYY-MM-DD（Gregorian）
+fn days_since_epoch_to_ymd(days: i64) -> Option<String> {
+    // Howard Hinnant 算法：http://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // [0, 399]
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    Some(format!("{:04}-{:02}-{:02}", y, m, d))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unix_to_ymd() {
+        // 2025-01-01 00:00:00 UTC = 1735689600
+        assert_eq!(unix_to_ymd(1_735_689_600), Some("2025-01-01".to_string()));
+        // 2000-01-01 00:00:00 UTC = 946684800
+        assert_eq!(unix_to_ymd(946_684_800), Some("2000-01-01".to_string()));
+        // 1970-01-01 00:00:00 UTC = 0
+        assert_eq!(unix_to_ymd(0), Some("1970-01-01".to_string()));
+    }
+}

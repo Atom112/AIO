@@ -1,22 +1,17 @@
-import { Component, createSignal, For, createMemo, onCleanup, onMount } from 'solid-js';
-import { config, saveConfig, setDatas, selectedModel, modelsCatalog } from '../store/store';
-import { findModel, formatContextWindow, formatPricing } from '../utils/models';
-import type { ModelMeta } from '@aio/models-data';
+import { Component, createSignal, For, Show, onMount, createMemo, onCleanup } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { selectedModel, setSelectedModel, providerConfigs, setProviderConfigs } from '../store/store';
+import { findModel, formatContextWindow, formatPricing } from '../utils/models';
+import type { ProviderConfig, TestConnectionResult } from '../utils/models';
+import type { ModelMeta } from '@aio/models-data';
 
-/** 从 API 获取的原始模型信息 */
-interface ModelItem {
-    id: string;
-    owned_by: string;
-}
-
-/** 已激活的模型完整配置（含 API 连接信息） */
-interface ActivatedModel {
+/** 已激活的模型完整配置（含 API 连接信息，仅用于本地模型） */
+interface LocalModel {
+    model_id: string;
     owned_by: string;
     api_url: string;
     api_key: string;
-    model_id: string;
     local_path?: string;
     engine_type?: string;
 }
@@ -26,45 +21,81 @@ const ENGINE_OPTIONS = [
     { id: 'llama_cpp', name: 'llama.cpp', ownedBy: 'Local-llama.cpp', extensions: ['gguf'] },
 ] as const;
 
+/** Provider 列表的展示顺序（决定卡片顺序） */
+const PROVIDER_ORDER = [
+    'openai', 'anthropic', 'google', 'deepseek',
+    'groq', 'mistral', 'xai', 'cohere',
+] as const;
+
+const PROVIDER_LOGOS: Record<string, string> = {
+    openai: '/icons/model-logo/openai.svg',
+    anthropic: '/icons/model-logo/claude-color.svg',
+    google: '/icons/model-logo/gemini-color.svg',
+    deepseek: '/icons/model-logo/deepseek-color.svg',
+    groq: '/icons/app-logo/switch-arrows.svg',
+    mistral: '/icons/model-logo/ollama.svg',
+    xai: '/icons/model-logo/grok.svg',
+    cohere: '/icons/model-logo/ollama.svg',
+    custom: '/icons/app-logo/switch-arrows.svg',
+};
+
 /**
- * 提供商设置页面组件
- * @component
- * @description 管理 AI 模型 API 配置和模型激活状态，支持云端和本地模型。
- * @returns {JSX.Element} 设置页面 JSX 元素
+ * ProviderSettings 页面 (lobehub 形态)
+ * @description 顶部保留本地模型管理；下面是多 provider 卡片列表，每个独立配置。
  */
 const ProviderSettings: Component = () => {
+    // ===== 本地模型相关状态（保留旧逻辑） =====
+    const [localModelPath, setLocalModelPath] = createSignal('');
+    const [isLocalRunning, setIsLocalRunning] = createSignal(false);
+    const [localActivatedModels, setLocalActivatedModels] = createSignal<LocalModel[]>([]);
+    const [localSaveStatus, setLocalSaveStatus] = createSignal('');
 
-    const [apiUrl, setApiUrl] = createSignal(config().apiUrl);                  //API 供应商网址输入值
-    const [apiKey, setApiKey] = createSignal(config().apiKey);                  //API Key 输入值
-    const [saveStatus, setSaveStatus] = createSignal("");                       //保存状态提示文本（如"配置已保存"）
-    const [localModelPath, setLocalModelPath] = createSignal("");               //选中的本地 .gguf 模型文件路径
-    const [isLocalRunning, setIsLocalRunning] = createSignal(false);            //本地 Llama 服务是否正在运行
-    const [models, setModels] = createSignal<ModelItem[]>([]);                  //从 API 获取的可用模型列表
-    const [isLoading, setIsLoading] = createSignal(false);                      //是否正在查询模型列表
-    const [activatedModels, setActivatedModels] = createSignal<ActivatedModel[]>([]);    //已激活的模型配置列表（持久化到本地）
-    const [searchQuery, setSearchQuery] = createSignal("");                     //可用模型搜索关键词
-    const [selectedProvider, setSelectedProvider] = createSignal("All");        //可用模型厂商筛选条件
-    const [isDropdownOpen, setIsDropdownOpen] = createSignal(false);            //可用模型厂商下拉菜单展开状态
-    const [searchQueryAct, setSearchQueryAct] = createSignal("");               // 已激活模型搜索关键词
-    const [selectedProviderAct, setSelectedProviderAct] = createSignal("All");  //已激活模型厂商筛选条件
-    const [isDropdownOpenAct, setIsDropdownOpenAct] = createSignal(false);      //已激活模型厂商下拉菜单展开状态
+    // ===== Provider 卡片相关状态 =====
+    const [searchQuery, setSearchQuery] = createSignal('');
+    const [expandedIds, setExpandedIds] = createSignal<Set<string>>(new Set());
+    const [saving, setSaving] = createSignal(false);
+    const [saveBanner, setSaveBanner] = createSignal<{ ok: boolean; msg: string } | null>(null);
 
-    let dropdownRef: HTMLDivElement | undefined;        //可用模型厂商下拉容器引用（用于点击外部关闭）
-    let dropdownRefAct: HTMLDivElement | undefined;    //已激活模型厂商下拉容器引用（用于点击外部关闭）
+    // 临时输入值（不直接绑到全局 signal，避免输入过程触发重渲染）
+    const [editingConfigs, setEditingConfigs] = createSignal<Record<string, ProviderConfig>>({});
 
-    /**
-     * 刷新引擎状态显示
-     */
-    const refreshEngineStatus = async () => {
+    // 测试连接 / 拉取模型 的瞬态状态（按 provider id 存）
+    const [testStates, setTestStates] = createSignal<Record<string, { status: 'idle' | 'testing' | 'ok' | 'fail'; msg?: string; sampleModels?: string[] }>>({});
+    const [fetchStates, setFetchStates] = createSignal<Record<string, { status: 'idle' | 'fetching' | 'ok' | 'fail'; msg?: string; liveModels?: Array<{ id: string; owned_by: string }> }>>({});
+
+    // 添加自定义 provider 的弹窗
+    const [showAddCustom, setShowAddCustom] = createSignal(false);
+    const [newCustomName, setNewCustomName] = createSignal('');
+    const [newCustomUrl, setNewCustomUrl] = createSignal('');
+
+    onMount(async () => {
+        // 加载本地模型相关
+        try {
+            const listAct = await invoke<LocalModel[]>('load_activated_models');
+            setLocalActivatedModels(listAct);
+        } catch { /* 静默 */ }
+
+        try {
+            const running = await invoke<boolean>('is_local_server_running');
+            setIsLocalRunning(running);
+        } catch { /* 静默 */ }
+
+        try {
+            const configData: any = await invoke('load_app_config');
+            if (configData?.localModelPath) setLocalModelPath(configData.localModelPath);
+        } catch { /* 静默 */ }
+
+        // 初始化 editing 副本
+        setEditingConfigs({ ...providerConfigs() });
+
+        // 加载引擎状态
         try {
             const statuses: any[] = await invoke('get_engines_status');
             const llama = statuses.find((s: any) => s.id === 'llama_cpp');
             const vllm = statuses.find((s: any) => s.id === 'vllm');
             const el = document.getElementById('engine-status');
             if (el) {
-                const llamaStatus = llama?.installed
-                    ? `● 已安装 ${llama.version || ''}`
-                    : '○ 未安装';
+                const llamaStatus = llama?.installed ? `● 已安装 ${llama.version || ''}` : '○ 未安装';
                 const vllmStatus = vllm?.platform_supported
                     ? (vllm?.installed ? '● 已安装' : '○ 未安装')
                     : '╳ 当前平台不支持';
@@ -73,585 +104,649 @@ const ProviderSettings: Component = () => {
                     <div>vLLM: ${vllmStatus}</div>
                 `;
             }
-        } catch (_e) { /* 静默忽略 */ }
-    };
+        } catch { /* 静默 */ }
+    });
 
-    /**
-     * 根据模型名称获取对应的品牌 Logo 路径
-     * @param {string} modelName - 模型名称或 ID
-     * @returns {string} Logo 图片的 URL 路径
-     */
-    const getModelLogo = (modelName: string) => {
-        const name = modelName.toLowerCase();
-        if (name.includes('gpt')) return '/icons/model-logo/openai.svg';
-        if (name.includes('claude')) return '/icons/model-logo/claude-color.svg';
-        if (name.includes('grok')) return '/icons/model-logo/grok.svg';
-        if (name.includes('gemini')) return '/icons/model-logo/gemini-color.svg';
-        if (name.includes('deepseek')) return '/icons/model-logo/deepseek-color.svg';
-        if (name.includes('qwen')) return '/icons/model-logo/qwen-color.svg';
-        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/model-logo/moonshot.svg';
-        if (name.includes('doubao')) return '/icons/model-logo/doubao-color.svg';
-        if (name.includes('glm')) return '/icons/model-logo/zhipu-color.svg';
-        return '/icons/model-logo/ollama.svg';
-    };
-
-    /**
-     * 打开文件对话框选择本地 .gguf 模型文件
-     */
+    // ===== 本地模型相关函数 =====
     const selectModelFile = async () => {
         const file = await open({
             multiple: false,
-            filters: [{ name: 'GGUF Model', extensions: ['gguf'] }]
+            filters: [{ name: 'GGUF Model', extensions: ['gguf'] }],
         });
-
         if (file) {
             setLocalModelPath(file);
-
-            const fileNameWithExt = file.split(/[\\/]/).pop() || "local-model";
-            const modelName = fileNameWithExt.replace(/\.[^/.]+$/, "");
-
+            const fileNameWithExt = file.split(/[\\/]/).pop() || 'local-model';
+            const modelName = fileNameWithExt.replace(/\.[^/.]+$/, '');
             const engine = ENGINE_OPTIONS[0];
-            const localModelInfo: ActivatedModel = {
+            const newLocal: LocalModel = {
                 model_id: modelName,
                 owned_by: engine.ownedBy,
-                api_url: "http://127.0.0.1:8080/v1",
-                api_key: "local-no-key",
+                api_url: 'http://127.0.0.1:8080/v1',
+                api_key: 'local-no-key',
                 local_path: file,
-                engine_type: engine.id
+                engine_type: engine.id,
             };
-
-            const exists = activatedModels().find(m => m.local_path === file);
-            if (!exists) {
-                const newList = [...activatedModels(), localModelInfo];
-                setActivatedModels(newList);
-                setDatas('activatedModels', newList);
+            if (!localActivatedModels().find(m => m.local_path === file)) {
+                const newList = [...localActivatedModels(), newLocal];
+                setLocalActivatedModels(newList);
                 await invoke('save_activated_models', { models: newList });
-                setSaveStatus(`已添加本地模型: ${modelName} (${engine.name})`);
+                setLocalSaveStatus(`已添加本地模型: ${modelName} (${engine.name})`);
+                setTimeout(() => setLocalSaveStatus(''), 3000);
             }
         }
     };
 
-    /**
-     * 切换本地 Llama 服务器的运行状态（启动/停止）
-     */
     const toggleLocalEngine = async () => {
         if (isLocalRunning()) {
             await invoke('stop_local_server');
             setIsLocalRunning(false);
-            setSaveStatus("本地引擎已停止");
+            setLocalSaveStatus('本地引擎已停止');
         } else {
-            if (!localModelPath()) return alert("请先选择模型文件");
-
+            if (!localModelPath()) return alert('请先选择模型文件');
             try {
-                const currentCfg = await invoke<any>('load_app_config');
-                await invoke('save_app_config', {
-                    config: { ...currentCfg, localModelPath: localModelPath() }
-                });
-
-                setSaveStatus("正在启动本地引擎...");
-
+                const currentCfg: any = await invoke('load_app_config');
+                await invoke('save_app_config', { config: { ...currentCfg, localModelPath: localModelPath() } });
+                setLocalSaveStatus('正在启动本地引擎...');
                 const engine = ENGINE_OPTIONS[0];
                 const serverUrl: string = await invoke('start_local_server', {
                     modelPath: localModelPath(),
                     port: 8080,
                     gpuLayers: 99,
-                    engineType: engine.id
+                    engineType: engine.id,
                 });
-
                 setIsLocalRunning(true);
-                setSaveStatus("本地引擎已就绪");
-
+                setLocalSaveStatus('本地引擎已就绪');
                 const fullPath = localModelPath();
-                const fileNameWithExt = fullPath.split(/[\\/]/).pop() || "local-model";
-                const modelName = fileNameWithExt.replace(/\.[^/.]+$/, "");
-
-                const localModelInfo: ActivatedModel = {
+                const fileNameWithExt = fullPath.split(/[\\/]/).pop() || 'local-model';
+                const modelName = fileNameWithExt.replace(/\.[^/.]+$/, '');
+                const newLocal: LocalModel = {
                     model_id: modelName,
                     owned_by: engine.ownedBy,
                     api_url: serverUrl,
-                    api_key: "local-no-key",
-                    engine_type: engine.id
+                    api_key: 'local-no-key',
+                    engine_type: engine.id,
                 };
-
-                if (!activatedModels().some(m => m.model_id === modelName && m.api_url === serverUrl)) {
-                    const newList = [...activatedModels(), localModelInfo];
-                    setActivatedModels(newList);
-                    setDatas('activatedModels', newList);
+                if (!localActivatedModels().some(m => m.model_id === modelName && m.api_url === serverUrl)) {
+                    const newList = [...localActivatedModels(), newLocal];
+                    setLocalActivatedModels(newList);
                     await invoke('save_activated_models', { models: newList });
                 }
-
-                setSaveStatus(`本地模型 ${modelName} 已启动 (${engine.name})`);
+                setLocalSaveStatus(`本地模型 ${modelName} 已启动 (${engine.name})`);
             } catch (err) {
-                alert("启动失败: " + err);
+                alert('启动失败: ' + err);
                 setIsLocalRunning(false);
             }
         }
+        setTimeout(() => setLocalSaveStatus(''), 3000);
     };
 
-    /**
-     * 从激活列表中移除指定模型
-     * @param {ActivatedModel} target - 待移除的模型配置对象
-     */
-    const removeActivatedModel = async (target: ActivatedModel) => {
-        const newList = activatedModels().filter(m =>
-            !(m.model_id === target.model_id && m.api_url === target.api_url)
-        );
-
-        setActivatedModels(newList);
-        setDatas('activatedModels', newList);
+    const removeLocalModel = async (target: LocalModel) => {
+        const newList = localActivatedModels().filter(m => !(m.model_id === target.model_id && m.api_url === target.api_url));
+        setLocalActivatedModels(newList);
         await invoke('save_activated_models', { models: newList });
     };
 
-    /**
-     * 组件挂载时初始化数据
-     */
-    onMount(async () => {
-        // 加载持久化数据
-        const listAct = await invoke<ActivatedModel[]>('load_activated_models');
-        setActivatedModels(listAct);
-
-        const cachedModels = await invoke<ModelItem[]>('load_fetched_models');
-        if (cachedModels) setModels(cachedModels);
-
-        const running = await invoke<boolean>('is_local_server_running');
-        setIsLocalRunning(running);
-
-        const configData = await invoke<any>('load_app_config');
-        if (configData.localModelPath) setLocalModelPath(configData.localModelPath);
-
-        // 刷新引擎状态
-        await refreshEngineStatus();
-
-        // 点击外部关闭下拉菜单
-        const handleClickOutside = (e: MouseEvent) => {
-            if (dropdownRef && !dropdownRef.contains(e.target as Node)) setIsDropdownOpen(false);
-            if (dropdownRefAct && !dropdownRefAct.contains(e.target as Node)) setIsDropdownOpenAct(false);
-        };
-        window.addEventListener('click', handleClickOutside);
-        onCleanup(() => window.removeEventListener('click', handleClickOutside));
-    });
-
-    /** 可用模型的厂商列表（去重，用于筛选下拉） */
-    const providers = createMemo(() => ["All", ...Array.from(new Set(models().map(m => m.owned_by || "unknown")))]);
-
-    /** 根据当前 API URL 推断的厂商 ID（用于从目录补全元数据） */
-    const apiUrlProviderHint = createMemo(() => {
-        const u = apiUrl().toLowerCase();
-        if (u.includes('api.openai.com')) return 'openai';
-        if (u.includes('api.anthropic.com')) return 'anthropic';
-        if (u.includes('generativelanguage.googleapis.com')) return 'google';
-        if (u.includes('api.deepseek.com')) return 'deepseek';
-        if (u.includes('api.groq.com')) return 'groq';
-        if (u.includes('api.mistral.ai')) return 'mistral';
-        if (u.includes('api.x.ai')) return 'xai';
-        if (u.includes('openrouter.ai')) return 'openrouter';
-        return null;
-    });
-
-    /** 从目录中为模型补全元数据 */
-    const enrichModel = (id: string, fallbackOwnedBy: string): ModelMeta | null => {
-        const cat = modelsCatalog();
-        if (!cat) return null;
-        const hint = apiUrlProviderHint() ?? fallbackOwnedBy.toLowerCase();
-        return findModel(cat, hint, id);
-    };
-
-    /** 筛选后的可用模型列表（搜索 + 厂商筛选） */
-    const filteredModels = createMemo(() =>
-        models().filter(m =>
-            m.id.toLowerCase().includes(searchQuery().toLowerCase()) &&
-            (selectedProvider() === "All" || m.owned_by === selectedProvider())
-        )
-    );
-
-    /** 已激活模型的厂商列表（去重） */
-    const providersAct = createMemo(() => ["All", ...Array.from(new Set(activatedModels().map(m => m.owned_by || "unknown")))]);
-
-    /** 筛选后的已激活模型列表（搜索 + 厂商筛选） */
-    const filteredActivatedModels = createMemo(() =>
-        activatedModels().filter(m =>
-            m.model_id.toLowerCase().includes(searchQueryAct().toLowerCase()) &&
-            (selectedProviderAct() === "All" || m.owned_by === selectedProviderAct())
-        )
-    );
-
-    /**
-     * 切换模型的激活状态（勾选/取消勾选）
-     * @param {ModelItem} item - 从 API 获取的可用模型项
-     */
-    const toggleActivation = async (item: ModelItem) => {
-        const isCurrentlyActive = activatedModels().some(m =>
-            m.model_id === item.id && m.api_url === apiUrl()
-        );
-
-        let newList;
-        if (isCurrentlyActive) {
-            newList = activatedModels().filter(m =>
-                !(m.model_id === item.id && m.api_url === apiUrl())
-            );
-        } else {
-            const newActive: ActivatedModel = {
-                model_id: item.id,
-                owned_by: item.owned_by || "unknown",
-                api_url: apiUrl(),
-                api_key: apiKey(),
-            };
-            newList = [...activatedModels(), newActive];
+    // ===== Provider 卡片相关函数 =====
+    const isDirty = createMemo(() => {
+        const cur = providerConfigs();
+        const edt = editingConfigs();
+        const curIds = Object.keys(cur).sort();
+        const edtIds = Object.keys(edt).sort();
+        if (curIds.length !== edtIds.length) return true;
+        for (const id of curIds) {
+            if (!edt[id]) return true;
+            const a = cur[id];
+            const b = edt[id];
+            if (a.enabled !== b.enabled) return true;
+            if (a.apiUrl !== b.apiUrl) return true;
+            if (a.apiKey !== b.apiKey) return true;
+            if (a.displayName !== b.displayName) return true;
+            if (a.enabledModels.length !== b.enabledModels.length) return true;
+            for (let i = 0; i < a.enabledModels.length; i++) {
+                if (a.enabledModels[i] !== b.enabledModels[i]) return true;
+            }
         }
+        return false;
+    });
 
-        setActivatedModels(newList);
-        setDatas('activatedModels', newList);
-        await invoke('save_activated_models', { models: newList });
-    };
-
-    /**
-     * 保存当前 API 配置
-     */
     const handleSave = async () => {
-        const newConfig = {
-            apiUrl: apiUrl(),
-            apiKey: apiKey(),
-            defaultModel: selectedModel()?.model_id || ""
-        };
-        await invoke('save_app_config', { config: newConfig });
-        saveConfig(newConfig as any);
-        setSaveStatus("配置已成功保存！");
-        setTimeout(() => setSaveStatus(""), 3000);
-    };
-
-    /**
-     * 从配置的 API 端点获取可用模型列表
-     */
-    const handleQueryModels = async () => {
-        setIsLoading(true);
+        setSaving(true);
+        setSaveBanner(null);
         try {
-            const list: ModelItem[] = await invoke('fetch_models', {
-                apiUrl: apiUrl(),
-                apiKey: apiKey()
-            });
-            setModels(list);
-            await invoke('save_fetched_models', { models: list });
-        } catch (err) {
-            alert(`查询失败: ${err}`);
+            const file = {
+                version: 1,
+                updatedAt: String(Date.now()),
+                providers: editingConfigs(),
+            };
+            await invoke('save_provider_configs', { file });
+            setProviderConfigs(editingConfigs());
+            setSaveBanner({ ok: true, msg: '已保存' });
+        } catch (e) {
+            setSaveBanner({ ok: false, msg: typeof e === 'string' ? e : (e instanceof Error ? e.message : '未知错误') });
         } finally {
-            setIsLoading(false);
+            setSaving(false);
+            setTimeout(() => setSaveBanner(null), 4000);
         }
     };
 
-	return (
-        <div class="flex gap-4 h-full">
-            {/* 左侧配置面板 */}
-            <div class="w-[22%] p-5 border border-pri rounded-xl bg-pri-5 overflow-y-auto">
-                <div class="border-b border-pri-20 pb-2.5 mb-8">
-                    <h3 class="text-lg font-bold">API 服务配置</h3>
+    const updateProvider = (id: string, patch: Partial<ProviderConfig>) => {
+        const cur = editingConfigs()[id];
+        if (!cur) return;
+        setEditingConfigs({ ...editingConfigs(), [id]: { ...cur, ...patch } });
+    };
+
+    const toggleExpanded = (id: string) => {
+        const s = new Set(expandedIds());
+        if (s.has(id)) s.delete(id);
+        else s.add(id);
+        setExpandedIds(s);
+    };
+
+    const toggleModelEnabled = (providerId: string, modelId: string) => {
+        const cur = editingConfigs()[providerId];
+        if (!cur) return;
+        const enabled = cur.enabledModels.includes(modelId);
+        const newList = enabled
+            ? cur.enabledModels.filter(m => m !== modelId)
+            : [...cur.enabledModels, modelId];
+        updateProvider(providerId, { enabledModels: newList });
+    };
+
+    const handleTestConnection = async (cfg: ProviderConfig) => {
+        const id = cfg.id;
+        setTestStates(s => ({ ...s, [id]: { status: 'testing' } }));
+        try {
+            const r = await invoke<TestConnectionResult>('test_provider_connection', {
+                apiUrl: cfg.apiUrl,
+                apiKey: cfg.apiKey,
+            });
+            if (r.success) {
+                setTestStates(s => ({
+                    ...s,
+                    [id]: { status: 'ok', msg: `✓ ${r.modelCount} 个模型 · ${r.elapsedMs}ms`, sampleModels: r.sampleModelIds },
+                }));
+            } else {
+                setTestStates(s => ({ ...s, [id]: { status: 'fail', msg: r.error ?? '失败' } }));
+            }
+        } catch (e) {
+            setTestStates(s => ({ ...s, [id]: { status: 'fail', msg: typeof e === 'string' ? e : String(e) } }));
+        }
+    };
+
+    const handleFetchModels = async (cfg: ProviderConfig) => {
+        const id = cfg.id;
+        setFetchStates(s => ({ ...s, [id]: { status: 'fetching' } }));
+        try {
+            const r = await invoke<{ success: boolean; models: Array<{ id: string; owned_by: string }>; error: string | null; elapsedMs: number }>(
+                'fetch_provider_models',
+                { apiUrl: cfg.apiUrl, apiKey: cfg.apiKey },
+            );
+            if (r.success) {
+                setFetchStates(s => ({
+                    ...s,
+                    [id]: { status: 'ok', msg: `已拉到 ${r.models.length} 个`, liveModels: r.models },
+                }));
+                // 合并到 customModelIds
+                const cur = editingConfigs()[id];
+                if (cur) {
+                    const newCustom = Array.from(new Set([...cur.customModelIds, ...r.models.map(m => m.id)]));
+                    updateProvider(id, { customModelIds: newCustom });
+                }
+            } else {
+                setFetchStates(s => ({ ...s, [id]: { status: 'fail', msg: r.error ?? '失败' } }));
+            }
+        } catch (e) {
+            setFetchStates(s => ({ ...s, [id]: { status: 'fail', msg: typeof e === 'string' ? e : String(e) } }));
+        }
+    };
+
+    const addCustomProvider = () => {
+        const name = newCustomName().trim();
+        const url = newCustomUrl().trim();
+        if (!name || !url) return alert('名称和 URL 都不能为空');
+        const id = 'custom-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32);
+        if (editingConfigs()[id]) return alert('已存在同 ID 的 provider');
+        const newCfg: ProviderConfig = {
+            id,
+            enabled: true,
+            displayName: name,
+            apiUrl: url,
+            apiKey: '',
+            enabledModels: [],
+            isCustom: true,
+            customModelIds: [],
+        };
+        setEditingConfigs({ ...editingConfigs(), [id]: newCfg });
+        setShowAddCustom(false);
+        setNewCustomName('');
+        setNewCustomUrl('');
+        setExpandedIds(s => { const ns = new Set(s); ns.add(id); return ns; });
+    };
+
+    const removeCustomProvider = (id: string) => {
+        if (!confirm('确认删除该自定义 provider？')) return;
+        const next = { ...editingConfigs() };
+        delete next[id];
+        setEditingConfigs(next);
+    };
+
+    // ===== 派生数据 =====
+    const allProviders = createMemo(() => {
+        const edt = editingConfigs();
+        const ids = new Set<string>();
+        // 按预设顺序
+        for (const id of PROVIDER_ORDER) {
+            if (edt[id]) ids.add(id);
+        }
+        // 自定义 provider 排后
+        for (const id of Object.keys(edt)) {
+            if (!ids.has(id) && edt[id]?.isCustom) ids.add(id);
+        }
+        return Array.from(ids);
+    });
+
+    const filteredProviderIds = createMemo(() => {
+        const q = searchQuery().trim().toLowerCase();
+        if (!q) return allProviders();
+        const edt = editingConfigs();
+        return allProviders().filter(id => {
+            const c = edt[id];
+            if (!c) return false;
+            if (c.displayName.toLowerCase().includes(q)) return true;
+            if (c.id.toLowerCase().includes(q)) return true;
+            // 搜模型 id
+            const cat = findModel(null as any, '', '') ; // 避免未使用警告
+            return c.enabledModels.some(m => m.toLowerCase().includes(q)) ||
+                   c.customModelIds.some(m => m.toLowerCase().includes(q));
+        });
+    });
+
+    const getModelLogo = (providerId: string) => {
+        return PROVIDER_LOGOS[providerId] ?? '/icons/model-logo/ollama.svg';
+    };
+
+    // 统计当前激活的 provider 数量
+    const enabledCount = createMemo(() => Object.values(editingConfigs()).filter(c => c.enabled).length);
+    const totalEnabledModels = createMemo(() => {
+        return Object.values(editingConfigs())
+            .filter(c => c.enabled)
+            .reduce((sum, c) => sum + c.enabledModels.length, 0);
+    });
+
+    return (
+        <div class="flex flex-col gap-4 h-full overflow-y-auto pr-2">
+            {/* 顶部：本地模型管理（保留原逻辑） */}
+            <div class="border border-pri rounded-xl bg-pri-5 p-5">
+                <div class="border-b border-pri-20 pb-2.5 mb-4">
+                    <h3 class="text-base font-bold">🖥 本地模型管理</h3>
                 </div>
-
-                <div class="flex flex-col gap-5">
-                    <div class="flex flex-col gap-2">
-                        <label class="text-sm font-bold">API 供应商网址</label>
-                        <input
-                            type="text"
-                            class="bg-dark-850 border border-dark-300 text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-pri"
-                            value={apiUrl()}
-                            onInput={(e) => setApiUrl(e.currentTarget.value)}
-                        />
+                <div class="flex flex-col gap-3">
+                    <div class="text-sm text-[#aaa]">
+                        llama.cpp (GGUF 模型) · 当前路径：<span class="font-mono text-[#ccc]">{localModelPath() || '未选择'}</span>
+                    </div>
+                    <div class="flex gap-3">
+                        <button
+                            class="primary-btn p-2.5 flex-1"
+                            onClick={selectModelFile}
+                        >
+                            📁 选择并添加本地模型
+                        </button>
+                        <button
+                            class="p-2.5 flex-1 font-bold rounded-md transition-all duration-200 hover:opacity-80 text-black border-none"
+                            style={{ 'background-color': isLocalRunning() ? '#E08090' : 'var(--primary-color)' }}
+                            onClick={toggleLocalEngine}
+                        >
+                            {isLocalRunning() ? '⏹ 停止本地推理引擎' : '▶ 启动本地 llama.cpp 引擎'}
+                        </button>
                     </div>
 
-                    <div class="flex flex-col gap-2">
-                        <label class="text-sm font-bold">API Key</label>
-                        <input
-                            type="password"
-                            class="bg-dark-850 border border-dark-300 text-white p-3 rounded-md outline-none transition-colors duration-300 focus:border-pri"
-                            value={apiKey()}
-                            onInput={(e) => setApiKey(e.currentTarget.value)}
-                        />
+                    <Show when={localSaveStatus()}>
+                        <div class="text-sm text-pri animate-pulse text-center">{localSaveStatus()}</div>
+                    </Show>
+
+                    <div id="engine-status" class="text-xs text-[#aaa] space-y-1 leading-relaxed px-1">
+                        加载中...
                     </div>
 
-                    <button
-                        class="mt-2.5 primary-btn p-3"
-                        onClick={handleSave}
-                    >
-                        保存当前配置
-                    </button>
-
-                    <button
-                        class="primary-btn p-3 disabled:opacity-50"
-                        onClick={handleQueryModels}
-                        disabled={isLoading()}
-                    >
-                        {isLoading() ? "查询中..." : "获取可用模型列表"}
-                    </button>
-
-                    <div class="flex flex-col gap-2">
-                        <label class="text-sm font-bold border-t border-pri-20 pt-4 mt-2">本地模型管理</label>
-                        <div class="flex flex-col gap-2.5">
-                            <div class="text-sm text-[#aaa] px-1 py-1">
-                                🖥 引擎: llama.cpp (GGUF 模型)
-                            </div>
-
-                            <button
-                                class="primary-btn p-3 w-full"
-                                onClick={selectModelFile}
-                            >
-                                📁 选择并添加本地模型
-                            </button>
-
-                            <button
-                                class="p-3 font-bold rounded-md cursor-pointer transition-all duration-200 hover:opacity-80 text-black border-none"
-                                style={{
-                                    "background-color": isLocalRunning() ? "#E08090" : "var(--primary-color)"
-                                }}
-                                onClick={toggleLocalEngine}
-                            >
-                                {isLocalRunning() ? "⏹ 停止本地推理引擎" : "▶ 启动本地 llama.cpp 引擎"}
-                            </button>
-
-                            {/* ─── 引擎管理区域 ─── */}
-                            <div class="border-t border-pri-20 pt-3 mt-1 flex flex-col gap-2">
-                                <label class="text-sm font-bold">🔧 引擎管理</label>
-                                <div id="engine-status" class="text-xs text-[#aaa] space-y-1 leading-relaxed">
-                                    加载中...
-                                </div>
-                                <button
-                                    class="primary-btn p-2.5 w-full text-sm"
-                                    id="btn-install-engine"
-                                    onClick={async () => {
-                                        const btn = document.getElementById('btn-install-engine') as HTMLButtonElement;
-                                        btn.disabled = true;
-                                        btn.textContent = '⏳ 正在安装...';
-                                        try {
-                                            await invoke('install_engine');
-                                            setSaveStatus('llama.cpp 引擎安装/更新完成！');
-                                            await refreshEngineStatus();
-                                        } catch (err) {
-                                            alert('安装失败: ' + err);
-                                        } finally {
-                                            btn.disabled = false;
-                                            btn.textContent = '🔄 安装/更新引擎';
+                    <div class="flex gap-2">
+                        <button
+                            class="primary-btn p-2.5 flex-1 text-sm"
+                            onClick={async () => {
+                                const btn = document.getElementById('btn-install-engine') as HTMLButtonElement;
+                                btn.disabled = true;
+                                btn.textContent = '⏳ 正在安装...';
+                                try {
+                                    await invoke('install_engine');
+                                    setLocalSaveStatus('llama.cpp 引擎安装/更新完成！');
+                                } catch (err) {
+                                    alert('安装失败: ' + err);
+                                } finally {
+                                    btn.disabled = false;
+                                    btn.textContent = '🔄 安装/更新引擎';
+                                }
+                            }}
+                        >
+                            🔄 安装/更新引擎
+                        </button>
+                        <button
+                            class="p-2.5 flex-1 rounded-md cursor-pointer text-xs border border-pri-30 bg-transparent text-[#aaa] hover:bg-pri-10 transition-all"
+                            onClick={async () => {
+                                try {
+                                    const info: any = await invoke('check_llama_update');
+                                    if (info.has_update) {
+                                        if (confirm(`新版本可用: ${info.latest_version}\n当前版本: ${info.current_version || '未安装'}\n是否现在安装？`)) {
+                                            (document.getElementById('btn-install-engine') as HTMLButtonElement)?.click();
                                         }
-                                    }}
-                                >
-                                    🔄 安装/更新引擎
-                                </button>
-                                <button
-                                    class="p-2.5 w-full rounded-md cursor-pointer text-xs border border-pri-30 bg-transparent text-[#aaa] hover:bg-pri-10 transition-all"
-                                    onClick={async () => {
-                                        try {
-                                            const info: any = await invoke('check_llama_update');
-                                            if (info.has_update) {
-                                                if (confirm(`新版本可用: ${info.latest_version}\n当前版本: ${info.current_version || '未安装'}\n是否现在安装？`)) {
-                                                    document.getElementById('btn-install-engine')?.click();
-                                                }
-                                            } else {
-                                                alert(`✅ 已是最新版本: ${info.current_version}`);
-                                            }
-                                        } catch (err) {
-                                            alert('检查更新失败: ' + err);
-                                        }
-                                    }}
-                                >
-                                    📋 检查引擎更新
-                                </button>
-                            </div>
-                        </div>
+                                    } else {
+                                        alert(`✅ 已是最新版本: ${info.current_version}`);
+                                    }
+                                } catch (err) {
+                                    alert('检查更新失败: ' + err);
+                                }
+                            }}
+                        >
+                            📋 检查引擎更新
+                        </button>
                     </div>
 
-                    {saveStatus() && (
-                        <div class="text-sm text-pri animate-pulse text-center">
-                            {saveStatus()}
+                    <Show when={localActivatedModels().length > 0}>
+                        <div class="mt-2 border-t border-pri-20 pt-3">
+                            <h4 class="text-sm font-bold mb-2">本地模型列表</h4>
+                            <For each={localActivatedModels()}>
+                                {(m) => (
+                                    <div class="flex items-center gap-3 p-2 rounded bg-white/5 mb-1.5">
+                                        <span class="font-mono text-sm text-[#eee] grow truncate">{m.model_id}</span>
+                                        <span class="text-[10px] text-[#666]">● 本地服务</span>
+                                        <button
+                                            class="text-xs text-danger border border-danger bg-transparent px-2 py-0.5 rounded hover:bg-danger hover:text-dark-850 transition-all"
+                                            onClick={() => removeLocalModel(m)}
+                                        >
+                                            移除
+                                        </button>
+                                    </div>
+                                )}
+                            </For>
                         </div>
-                    )}
+                    </Show>
                 </div>
             </div>
 
-            {/* 中间已激活面板 */}
-            <div class="flex-1 border border-pri rounded-xl bg-pri-5 flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
-                <div class="p-5 border-b border-pri-20 flex flex-col gap-4 bg-pri-5">
-                    <h4 class="font-bold flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
-                        已激活模型 ({filteredActivatedModels().length})
-                    </h4>
-                    <div class="flex gap-3">
-                        <input
-                            type="text"
-                            placeholder="搜索已激活..."
-                            class="flex-[2] bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-pri"
-                            onInput={(e) => setSearchQueryAct(e.currentTarget.value)}
-                        />
-
-                        <div class="relative flex-1 min-w-[140px]" ref={dropdownRefAct}>
-                            <div
-                                class={`bg-dark-850 border border-dark-300 px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-pri transition-all ${isDropdownOpenAct() ? 'border-pri' : ''}`}
-                                onClick={() => setIsDropdownOpenAct(!isDropdownOpenAct())}
-                            >
-                                {selectedProviderAct() === "All" ? "所有厂商" : selectedProviderAct()}
-                                <span class={`transition-transform duration-200 ${isDropdownOpenAct() ? 'rotate-180' : ''}`}>▼</span>
-                            </div>
-                            {isDropdownOpenAct() && (
-                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-dark-850 border border-pri rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl">
-                                    <For each={providersAct()}>
-                                        {(p) => (
-                                            <div
-                                                class={`p-2.5 text-[#eee] cursor-pointer text-xs hover:bg-pri-20 hover:text-pri transition-colors ${selectedProviderAct() === p ? 'bg-pri-10 text-pri' : ''}`}
-                                                onClick={() => { setSelectedProviderAct(p); setIsDropdownOpenAct(false); }}
-                                            >
-                                                {p === "All" ? "所有厂商" : p}
-                                            </div>
-                                        )}
-                                    </For>
-                                </div>
-                            )}
-                        </div>
+            {/* Provider 卡片区 */}
+            <div class="border border-pri rounded-xl bg-pri-5 p-5">
+                <div class="border-b border-pri-20 pb-2.5 mb-4 flex justify-between items-center">
+                    <h3 class="text-base font-bold">☁ 云端模型供应商</h3>
+                    <div class="flex items-center gap-3 text-xs text-[#888]">
+                        <span>已启用 <span class="text-pri font-bold">{enabledCount()}</span> 个</span>
+                        <span>·</span>
+                        <span>已选 <span class="text-pri font-bold">{totalEnabledModels()}</span> 个模型</span>
                     </div>
                 </div>
 
-                <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
-                    <For each={filteredActivatedModels()}>
-                        {(m) => {
-                            const meta = () => enrichModel(m.model_id, m.owned_by);
-                            return (
-                                <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
-                                    <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
-                                        <img src={getModelLogo(m.model_id)} alt="logo" class="w-5 h-5 object-contain" />
-                                    </div>
-
-                                    <div class="grow flex flex-col font-mono min-w-0">
-                                        <span class="text-[#eee] font-medium text-sm truncate">{m.model_id}</span>
-                                        <span class="text-[#666] text-[10px]">
-                                            {m.api_url.includes('127.0.0.1') ? '● 本地服务' : m.api_url.replace('https://', '').split('/')[0]}
-                                        </span>
-                                        {meta() && (
-                                            <div class="flex gap-1.5 mt-1 flex-wrap">
-                                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-semibold">
-                                                    {formatContextWindow(meta()!.contextWindow)} ctx
-                                                </span>
-                                                {meta()!.capabilities.tools && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">工具</span>
-                                                )}
-                                                {meta()!.capabilities.vision && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">视觉</span>
-                                                )}
-                                                {meta()!.capabilities.reasoning && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">推理</span>
-                                                )}
-                                                {meta()!.status === 'deprecated' && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">已弃用</span>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <button
-                                        class="border border-danger bg-transparent text-danger px-2.5 py-1 rounded cursor-pointer whitespace-nowrap shrink-0 transition-all duration-200 hover:text-dark-850 hover:bg-danger text-xs"
-                                        onClick={() => removeActivatedModel(m)}
-                                    >
-                                        移除
-                                    </button>
-                                </div>
-                            );
+                <div class="flex gap-3 mb-4">
+                    <input
+                        type="text"
+                        placeholder="搜索供应商或模型..."
+                        class="flex-1 bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-sm transition-colors focus:border-pri"
+                        onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                    />
+                    <button
+                        class="px-4 py-2 rounded-md text-sm font-medium transition-all"
+                        style={{
+                            background: 'rgba(var(--primary-rgb), 0.18)',
+                            color: 'var(--primary-color)',
+                            border: '1px solid rgba(var(--primary-rgb), 0.25)',
                         }}
-                    </For>
+                        onClick={() => setShowAddCustom(true)}
+                    >
+                        ➕ 添加自定义
+                    </button>
                 </div>
-            </div>
 
-            {/* 右侧可用列表面板 */}
-            <div class="flex-1 border border-pri rounded-xl bg-pri-5 flex flex-col min-w-0 overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
-                <div class="p-5 border-b border-pri-20 flex flex-col gap-4 bg-pri-5">
-                    <h4 class="font-bold">可用模型列表 ({filteredModels().length})</h4>
-                    <div class="flex gap-3">
-                        <input
-                            type="text"
-                            placeholder="搜索模型名称..."
-                            class="flex-[2] bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-xs transition-colors focus:border-pri"
-                            onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                        />
-                        <div class="relative flex-1 min-w-[140px]" ref={dropdownRef}>
-                            <div
-                                class={`bg-dark-850 border border-dark-300 px-3 py-2 rounded-md cursor-pointer text-xs flex justify-between items-center hover:border-pri transition-all ${isDropdownOpen() ? 'border-pri' : ''}`}
-                                onClick={() => setIsDropdownOpen(!isDropdownOpen())}
-                            >
-                                {selectedProvider() === "All" ? "所有厂商" : selectedProvider()}
-                                <span class={`transition-transform duration-200 ${isDropdownOpen() ? 'rotate-180' : ''}`}>▼</span>
+                <Show when={showAddCustom()}>
+                    <div class="border border-pri-30 rounded-lg p-4 mb-4 bg-pri-5">
+                        <h4 class="text-sm font-bold mb-3">添加自定义 OpenAI 兼容 Provider</h4>
+                        <div class="flex flex-col gap-2.5">
+                            <input
+                                type="text"
+                                placeholder="显示名称，如：My Azure OpenAI"
+                                class="bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-sm focus:border-pri"
+                                value={newCustomName()}
+                                onInput={(e) => setNewCustomName(e.currentTarget.value)}
+                            />
+                            <input
+                                type="text"
+                                placeholder="API URL，如：https://my-resource.openai.azure.com/openai/deployments"
+                                class="bg-dark-850 border border-dark-300 text-white px-3 py-2 rounded-md outline-none text-sm focus:border-pri font-mono"
+                                value={newCustomUrl()}
+                                onInput={(e) => setNewCustomUrl(e.currentTarget.value)}
+                            />
+                            <div class="flex gap-2 justify-end">
+                                <button
+                                    class="px-3 py-1.5 text-sm rounded border border-pri-30 bg-transparent text-[#aaa] hover:bg-pri-10"
+                                    onClick={() => { setShowAddCustom(false); setNewCustomName(''); setNewCustomUrl(''); }}
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    class="primary-btn px-3 py-1.5 text-sm"
+                                    onClick={addCustomProvider}
+                                >
+                                    添加
+                                </button>
                             </div>
-                            {isDropdownOpen() && (
-                                <div class="absolute top-[calc(100%+5px)] left-0 right-0 bg-dark-850 border border-pri rounded-lg z-[100] max-h-[250px] overflow-y-auto shadow-2xl text-xs">
-                                    <For each={providers()}>
-                                        {(p) => (
-                                            <div
-                                                class={`p-2.5 text-[#eee] cursor-pointer hover:bg-pri-20 hover:text-pri transition-colors ${selectedProvider() === p ? 'bg-pri-10 text-pri' : ''}`}
-                                                onClick={() => { setSelectedProvider(p); setIsDropdownOpen(false); }}
-                                            >
-                                                {p === "All" ? "所有厂商" : p}
-                                            </div>
-                                        )}
-                                    </For>
-                                </div>
-                            )}
                         </div>
                     </div>
-                </div>
+                </Show>
 
-                <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
-                    {models().length === 0 && (
-                        <div class="text-[#444] text-center mt-12 italic text-sm">
-                            点击左侧“查询模型”按钮获取列表
-                        </div>
-                    )}
-
-                    <For each={filteredModels()}>
-                        {(m) => {
-                            const meta = () => enrichModel(m.id, m.owned_by);
+                <div class="flex flex-col gap-3">
+                    <For each={filteredProviderIds()}>
+                        {(id) => {
+                            const cfg = () => editingConfigs()[id];
+                            const isExpanded = () => expandedIds().has(id);
                             return (
-                                <div class="border-l-[3px] border-pri bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
-                                    <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
-                                        <img src={getModelLogo(m.id)} alt="logo" class="w-5 h-5 object-contain" />
-                                    </div>
-
-                                    <div class="grow flex flex-col font-mono text-sm min-w-0">
-                                        <span class="text-[#eee] font-medium truncate">{m.id}</span>
-                                        <span class="text-[#666] text-[10px]">Provider: {m.owned_by}</span>
-                                        {meta() && (
-                                            <div class="flex gap-1.5 mt-1 flex-wrap">
-                                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-semibold">
-                                                    {formatContextWindow(meta()!.contextWindow)} ctx
-                                                </span>
-                                                {meta()!.capabilities.tools && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">工具</span>
-                                                )}
-                                                {meta()!.capabilities.vision && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">视觉</span>
-                                                )}
-                                                {meta()!.capabilities.reasoning && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">推理</span>
-                                                )}
-                                                {meta()!.pricing && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300">
-                                                        {formatPricing(meta()!.pricing!.input, meta()!.pricing!.output)}
-                                                    </span>
-                                                )}
-                                                {meta()!.status === 'deprecated' && (
-                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">已弃用</span>
-                                                )}
+                                <div class="border border-pri-20 rounded-lg overflow-hidden bg-white/3">
+                                    {/* 卡片头 */}
+                                    <div
+                                        class="flex items-center gap-3 p-3 cursor-pointer hover:bg-pri-10 transition-colors"
+                                        onClick={() => toggleExpanded(id)}
+                                    >
+                                        <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
+                                            <img src={getModelLogo(id)} alt="logo" class="w-5 h-5 object-contain" />
+                                        </div>
+                                        <div class="grow min-w-0">
+                                            <div class="text-sm font-bold text-[#eee] truncate">{cfg()?.displayName || id}</div>
+                                            <div class="text-[10px] text-[#666] font-mono truncate">
+                                                {cfg()?.apiUrl || '(未配置)'} · {cfg()?.enabledModels.length ?? 0} 个模型
                                             </div>
-                                        )}
-                                    </div>
-
-                                    <div class="shrink-0 flex items-center">
-                                        <label class="relative inline-block w-9 h-5 cursor-pointer">
+                                        </div>
+                                        <label class="relative inline-block w-9 h-5 cursor-pointer shrink-0" onClick={(e) => e.stopPropagation()}>
                                             <input
                                                 class="opacity-0 w-0 h-0 peer"
                                                 type="checkbox"
-                                                checked={activatedModels().some(am =>
-                                                    am.model_id === m.id && am.api_url === apiUrl()
-                                                )}
-                                                onChange={() => toggleActivation(m)}
+                                                checked={cfg()?.enabled ?? false}
+                                                onChange={(e) => updateProvider(id, { enabled: e.currentTarget.checked })}
                                             />
                                             <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-4"></span>
                                         </label>
+                                        <span class={`text-[#888] transition-transform duration-200 ${isExpanded() ? 'rotate-180' : ''}`}>▼</span>
                                     </div>
+
+                                    {/* 卡片体 */}
+                                    <Show when={isExpanded()}>
+                                        <div class="border-t border-pri-20 p-4 bg-pri-5">
+                                            <div class="grid grid-cols-2 gap-3 mb-4">
+                                                <div>
+                                                    <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">显示名称</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm font-mono focus:border-pri outline-none"
+                                                        value={cfg()?.displayName ?? ''}
+                                                        onInput={(e) => updateProvider(id, { displayName: e.currentTarget.value })}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">API URL</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm font-mono focus:border-pri outline-none"
+                                                        value={cfg()?.apiUrl ?? ''}
+                                                        onInput={(e) => updateProvider(id, { apiUrl: e.currentTarget.value })}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-4">
+                                                <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">API Key</label>
+                                                <input
+                                                    type="password"
+                                                    placeholder="sk-..."
+                                                    class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm font-mono focus:border-pri outline-none"
+                                                    value={cfg()?.apiKey ?? ''}
+                                                    onInput={(e) => updateProvider(id, { apiKey: e.currentTarget.value })}
+                                                />
+                                            </div>
+
+                                            {/* 操作按钮区 */}
+                                            <div class="flex gap-2 mb-4 flex-wrap">
+                                                <button
+                                                    class="px-3 py-1.5 text-xs rounded border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 transition-all disabled:opacity-50"
+                                                    disabled={testStates()[id]?.status === 'testing'}
+                                                    onClick={() => cfg() && handleTestConnection(cfg())}
+                                                >
+                                                    {testStates()[id]?.status === 'testing' ? '⏳ 测试中...' : '🧪 测试连接'}
+                                                </button>
+                                                <button
+                                                    class="px-3 py-1.5 text-xs rounded border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 transition-all disabled:opacity-50"
+                                                    disabled={fetchStates()[id]?.status === 'fetching'}
+                                                    onClick={() => cfg() && handleFetchModels(cfg())}
+                                                >
+                                                    {fetchStates()[id]?.status === 'fetching' ? '⏳ 拉取中...' : '📥 从 API 拉取模型'}
+                                                </button>
+                                                <Show when={cfg()?.isCustom}>
+                                                    <button
+                                                        class="px-3 py-1.5 text-xs rounded border border-danger bg-transparent text-danger hover:bg-danger hover:text-dark-850 transition-all"
+                                                        onClick={() => removeCustomProvider(id)}
+                                                    >
+                                                        🗑 删除
+                                                    </button>
+                                                </Show>
+                                            </div>
+
+                                            <Show when={testStates()[id]}>
+                                                <div
+                                                    class="mb-3 px-3 py-2 rounded text-xs"
+                                                    style={{
+                                                        background: testStates()[id]?.status === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+                                                        color: testStates()[id]?.status === 'ok' ? '#4ade80' : '#f87171',
+                                                    }}
+                                                >
+                                                    {testStates()[id]?.msg}
+                                                    <Show when={testStates()[id]?.sampleModels && testStates()[id]!.sampleModels!.length > 0}>
+                                                        <span class="text-[#888] ml-2">
+                                                            ({testStates()[id]!.sampleModels!.slice(0, 3).join(', ')}...)
+                                                        </span>
+                                                    </Show>
+                                                </div>
+                                            </Show>
+
+                                            <Show when={fetchStates()[id]}>
+                                                <div
+                                                    class="mb-3 px-3 py-2 rounded text-xs"
+                                                    style={{
+                                                        background: fetchStates()[id]?.status === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+                                                        color: fetchStates()[id]?.status === 'ok' ? '#4ade80' : '#f87171',
+                                                    }}
+                                                >
+                                                    {fetchStates()[id]?.msg}
+                                                </div>
+                                            </Show>
+
+                                            {/* 模型列表 */}
+                                            <div>
+                                                <div class="text-[10px] text-[#888] uppercase tracking-wider mb-2">
+                                                    启用模型 <span class="text-pri">({cfg()?.enabledModels.length ?? 0})</span>
+                                                </div>
+
+                                                <Show when={(cfg()?.customModelIds.length ?? 0) > 0}>
+                                                    <details class="mb-3">
+                                                        <summary class="text-xs text-[#888] cursor-pointer hover:text-[#aaa] py-1">
+                                                            📋 从 API 拉取的模型 ({cfg()?.customModelIds.length}) — 勾选以启用
+                                                        </summary>
+                                                        <div class="mt-2 max-h-48 overflow-y-auto space-y-1 pr-1">
+                                                            <For each={cfg()?.customModelIds ?? []}>
+                                                                {(mid) => (
+                                                                    <label class="flex items-center gap-2 px-2 py-1 rounded hover:bg-pri-10 cursor-pointer">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={cfg()?.enabledModels.includes(mid) ?? false}
+                                                                            onChange={() => toggleModelEnabled(id, mid)}
+                                                                            class="accent-pri"
+                                                                        />
+                                                                        <span class="font-mono text-xs text-[#ccc] grow truncate">{mid}</span>
+                                                                    </label>
+                                                                )}
+                                                            </For>
+                                                        </div>
+                                                    </details>
+                                                </Show>
+
+                                                <Show when={(cfg()?.enabledModels.length ?? 0) > 0}>
+                                                    <div class="flex flex-wrap gap-1.5">
+                                                        <For each={cfg()?.enabledModels ?? []}>
+                                                            {(mid) => (
+                                                                <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-pri-20 text-pri text-[11px] font-mono">
+                                                                    <span class="truncate max-w-[200px]">{mid}</span>
+                                                                    <button
+                                                                        class="text-pri hover:text-danger text-[14px] leading-none shrink-0"
+                                                                        title="移除"
+                                                                        onClick={() => toggleModelEnabled(id, mid)}
+                                                                    >
+                                                                        ×
+                                                                    </button>
+                                                                </span>
+                                                            )}
+                                                        </For>
+                                                    </div>
+                                                </Show>
+
+                                                <Show when={(cfg()?.enabledModels.length ?? 0) === 0}>
+                                                    <div class="text-[10px] text-[#666] italic py-2">
+                                                        未启用任何模型 — 该 provider 配置后不会出现在聊天模型选择中
+                                                    </div>
+                                                </Show>
+                                            </div>
+                                        </div>
+                                    </Show>
                                 </div>
                             );
                         }}
                     </For>
+
+                    <Show when={filteredProviderIds().length === 0}>
+                        <div class="text-center text-[#666] py-8 italic text-sm">
+                            没有匹配的供应商
+                        </div>
+                    </Show>
+                </div>
+
+                {/* 底部保存栏 */}
+                <div class="mt-5 pt-4 border-t border-pri-20 flex items-center justify-between gap-3">
+                    <Show when={saveBanner()}>
+                        <div
+                            class="text-sm"
+                            style={{ color: saveBanner()!.ok ? 'var(--primary-color)' : '#f87171' }}
+                        >
+                            {saveBanner()!.msg}
+                        </div>
+                    </Show>
+                    <div class="grow"></div>
+                    <button
+                        class="primary-btn px-6 py-2.5 disabled:opacity-50"
+                        disabled={!isDirty() || saving()}
+                        onClick={handleSave}
+                    >
+                        {saving() ? '保存中…' : '保存所有配置'}
+                    </button>
                 </div>
             </div>
         </div>

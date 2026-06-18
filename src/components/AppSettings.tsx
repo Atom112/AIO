@@ -7,18 +7,7 @@ import {
     setAppUpdateAvailable,
     setAppUpdateInfo,
     setAppUpdateDismissed,
-    modelsCatalog,
-    modelsCatalogSource,
-    modelsCatalogPath,
-    modelsCatalogVersion,
-    modelsCatalogGeneratedAt,
-    setModelsCatalog,
-    setModelsCatalogSource,
-    setModelsCatalogPath,
-    setModelsCatalogVersion,
-    setModelsCatalogGeneratedAt,
 } from '../store/store';
-import { updateModelsCatalog, refreshModelsCatalog, getCatalogMeta, formatRelativeTime } from '../utils/models';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from './Icon';
 
@@ -48,10 +37,6 @@ const AppSettings: Component = () => {
     const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
     const [endpointDisplay, setEndpointDisplay] = createSignal<string>(''); // 调试展示用：当前 endpoint
 
-    const [catalogUpdating, setCatalogUpdating] = createSignal(false); // 模型数据更新中
-    const [catalogUpdateResult, setCatalogUpdateResult] = createSignal<{ ok: boolean; msg: string; ts: number } | null>(null);
-    const [catalogUrlDisplay, setCatalogUrlDisplay] = createSignal<string>(''); // catalog 下载端点
-
     /**
      * 初始化 HSL 状态和获取应用版本
      */
@@ -75,67 +60,7 @@ const AppSettings: Component = () => {
         } catch (e) {
             console.warn('获取 endpoint 失败:', e);
         }
-
-        // 加载 catalog URL 用于调试展示
-        try {
-            const u = await invoke<string>('get_catalog_url');
-            setCatalogUrlDisplay(u);
-        } catch (e) {
-            console.warn('获取 catalog URL 失败:', e);
-        }
     });
-
-    /**
-     * 手动检查并更新模型元数据
-     */
-    const handleUpdateCatalog = async () => {
-        setCatalogUpdating(true);
-        setCatalogUpdateResult(null);
-        try {
-            const result = await updateModelsCatalog();
-            if (result.success) {
-                setCatalogUpdateResult({
-                    ok: true,
-                    msg: `已更新 · v${result.version} · ${result.modelCount} 个模型 · ${result.elapsedMs}ms · ${(result.bytes / 1024).toFixed(0)} KB`,
-                    ts: Date.now(),
-                });
-                // 刷新 store 中的元数据
-                const cat = modelsCatalog();
-                if (cat) {
-                    const meta = getCatalogMeta();
-                    setModelsCatalog(cat);
-                    setModelsCatalogSource(meta.source);
-                    setModelsCatalogPath(meta.path);
-                    setModelsCatalogVersion(meta.version);
-                    setModelsCatalogGeneratedAt(meta.generatedAt);
-                }
-            } else {
-                setCatalogUpdateResult({
-                    ok: false,
-                    msg: result.error ?? '更新失败',
-                    ts: Date.now(),
-                });
-            }
-        } catch (e) {
-            setCatalogUpdateResult({
-                ok: false,
-                msg: typeof e === 'string' ? e : (e instanceof Error ? e.message : '未知错误'),
-                ts: Date.now(),
-            });
-        } finally {
-            setCatalogUpdating(false);
-        }
-    };
-
-    /** catalog 来源的人类可读描述 */
-    const catalogSourceLabel = (): string => {
-        switch (modelsCatalogSource()) {
-            case 'appdata':       return 'AppData 缓存';
-            case 'bundled':       return '应用内置';
-            case 'dev_fallback':  return '开发模式 (node_modules)';
-            case 'empty':         return '无';
-        }
-    };
 
     /**
      * 监听全局主题色变化，同步更新本地 HSL 状态
@@ -442,115 +367,6 @@ const AppSettings: Component = () => {
                         title="当前 tauri.conf.json 中配置的更新清单地址"
                     >
                         <span style="color: rgba(255,255,255,0.3)">endpoint:</span> {endpointDisplay()}
-                    </div>
-                </Show>
-            </div>
-
-            <div class="rounded-xl p-6" style="background: rgba(18, 22, 35, 0.6); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);">
-                <div class="flex justify-between items-center mb-5">
-                    <h3 class="m-0 text-base text-white">模型元数据库</h3>
-                    <div class="flex items-center gap-2">
-                        <span class="text-xs text-[#888]">来源:</span>
-                        <div class="text-xs px-2.5 py-0.5 rounded-full font-medium"
-                            style={{
-                                background: 'rgba(124,154,191,0.15)',
-                                color: 'rgba(255,255,255,0.7)',
-                                'font-family': "'JetBrains Mono', monospace",
-                            }}>
-                            {catalogSourceLabel()}
-                        </div>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-3 gap-3 mb-4">
-                    <div class="bg-white/5 border border-white/10 rounded-lg p-3">
-                        <div class="text-[10px] text-[#888] uppercase tracking-wider mb-1">厂商</div>
-                        <div class="text-xl font-bold text-white font-mono">
-                            {modelsCatalog()?.providerCount ?? 0}
-                        </div>
-                    </div>
-                    <div class="bg-white/5 border border-white/10 rounded-lg p-3">
-                        <div class="text-[10px] text-[#888] uppercase tracking-wider mb-1">模型</div>
-                        <div class="text-xl font-bold text-white font-mono">
-                            {modelsCatalog()?.modelCount ?? 0}
-                        </div>
-                    </div>
-                    <div class="bg-white/5 border border-white/10 rounded-lg p-3">
-                        <div class="text-[10px] text-[#888] uppercase tracking-wider mb-1">版本</div>
-                        <div class="text-base font-bold text-white font-mono truncate" title={modelsCatalogVersion() ?? ''}>
-                            {modelsCatalogVersion() ? `v${modelsCatalogVersion()}` : '—'}
-                        </div>
-                    </div>
-                </div>
-
-                <div class="flex justify-between items-center py-2">
-                    <div class="flex-1 min-w-0 pr-4">
-                        <span class="block text-[#eee] text-[14px]">检查数据更新</span>
-                        <p
-                            class="text-xs mt-1"
-                            style={{
-                                color: (() => {
-                                    const r = catalogUpdateResult();
-                                    if (!r) return '#777';
-                                    return r.ok ? 'var(--primary-color)' : '#d99';
-                                })(),
-                            }}
-                        >
-                            {(() => {
-                                const r = catalogUpdateResult();
-                                if (r) return r.msg;
-                                const gen = modelsCatalogGeneratedAt();
-                                if (gen) return `数据生成于 ${formatRelativeTime(gen)}`;
-                                return '点击右侧按钮从 aio-models-data 拉取最新数据';
-                            })()}
-                        </p>
-                    </div>
-
-                    <button
-                        class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                        style={{
-                            background: 'rgba(var(--primary-rgb), 0.18)',
-                            color: 'var(--primary-color)',
-                            border: '1px solid rgba(var(--primary-rgb), 0.25)',
-                        }}
-                        disabled={catalogUpdating()}
-                        onClick={handleUpdateCatalog}
-                        title="从 aio-models-data 仓库拉取最新模型元数据"
-                    >
-                        <Icon src="/icons/app-logo/switch-arrows.svg" class="w-4 h-4" />
-                        <span class="text-sm font-medium">
-                            {catalogUpdating() ? '下载中…' : '检查数据更新'}
-                        </span>
-                    </button>
-                </div>
-
-                <Show when={catalogUrlDisplay()}>
-                    <div
-                        class="mt-3 px-3 py-2 rounded-lg text-[11px] font-mono leading-relaxed"
-                        style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            color: 'rgba(255, 255, 255, 0.45)',
-                            border: '1px solid rgba(255, 255, 255, 0.05)',
-                            'word-break': 'break-all',
-                        }}
-                        title="catalog 数据下载端点 (aio-models-data 仓库 raw)"
-                    >
-                        <span style="color: rgba(255,255,255,0.3)">source URL:</span> {catalogUrlDisplay()}
-                    </div>
-                </Show>
-
-                <Show when={modelsCatalogPath()}>
-                    <div
-                        class="mt-2 px-3 py-2 rounded-lg text-[11px] font-mono leading-relaxed"
-                        style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            color: 'rgba(255, 255, 255, 0.35)',
-                            border: '1px solid rgba(255, 255, 255, 0.05)',
-                            'word-break': 'break-all',
-                        }}
-                        title="当前生效的 catalog 本地路径"
-                    >
-                        <span style="color: rgba(255,255,255,0.25)">local path:</span> {modelsCatalogPath()}
                     </div>
                 </Show>
             </div>

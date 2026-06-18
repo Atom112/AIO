@@ -2,7 +2,7 @@ import { createStore,reconcile } from "solid-js/store";
 import { createEffect, createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
 import { readFile } from '@tauri-apps/plugin-fs';
-import type { Catalog } from '../utils/models';
+import type { Catalog, CatalogSourceTag, ProviderConfig } from '../utils/models';
 
 // 接口定义
  /* 消息项接口，定义聊天消息的数据结构 */
@@ -69,6 +69,46 @@ export const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(n
 export const [modelsCatalog, setModelsCatalog] = createSignal<Catalog | null>(null);
 /** 模型目录加载状态：'idle' | 'loading' | 'ready' | 'failed' */
 export const [modelsCatalogStatus, setModelsCatalogStatus] = createSignal<'idle' | 'loading' | 'ready' | 'failed'>('idle');
+/** 当前 catalog 来源标签 */
+export const [modelsCatalogSource, setModelsCatalogSource] = createSignal<CatalogSourceTag>('empty');
+/** 当前 catalog 在磁盘上的路径（仅 AppData/Bundled 来源有值） */
+export const [modelsCatalogPath, setModelsCatalogPath] = createSignal<string | null>(null);
+/** 当前 catalog 版本号（来自 models.dev） */
+export const [modelsCatalogVersion, setModelsCatalogVersion] = createSignal<string | null>(null);
+/** 当前 catalog 生成时间（ISO 字符串） */
+export const [modelsCatalogGeneratedAt, setModelsCatalogGeneratedAt] = createSignal<string | null>(null);
+
+/** Provider 配置 (lobehub 形态)，key = provider id */
+export const [providerConfigs, setProviderConfigs] = createSignal<Record<string, ProviderConfig>>({});
+
+/** 从 providerConfigs 派生的可用模型列表（启用 provider 的启用模型） */
+export interface ActiveModelEntry {
+    provider: string;
+    providerName: string;
+    modelId: string;
+    apiUrl: string;
+    apiKey: string;
+    isCustom: boolean;
+}
+
+export const activeProviderModels = (): ActiveModelEntry[] => {
+    const cfgs = providerConfigs();
+    const out: ActiveModelEntry[] = [];
+    for (const cfg of Object.values(cfgs)) {
+        if (!cfg.enabled) continue;
+        for (const mid of cfg.enabledModels) {
+            out.push({
+                provider: cfg.id,
+                providerName: cfg.displayName,
+                modelId: mid,
+                apiUrl: cfg.apiUrl,
+                apiKey: cfg.apiKey,
+                isCustom: cfg.isCustom,
+            });
+        }
+    }
+    return out;
+};
 
 /** 是否正在启动本地模型 */
 export const [isStartingLocalModel, setIsStartingLocalModel] = createSignal(false);

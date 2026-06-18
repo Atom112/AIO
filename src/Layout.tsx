@@ -9,7 +9,7 @@ import { Transition } from "solid-transition-group";
 import { Component, onCleanup, onMount, ParentProps } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { loadModelsCatalog } from "./utils/models";
+import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from "./utils/models";
 import {
     appUpdateAvailable,
     setAppUpdateAvailable,
@@ -21,7 +21,13 @@ import {
     getIgnoredUpdateVersion,
     setModelsCatalog,
     setModelsCatalogStatus,
+    setModelsCatalogSource,
+    setModelsCatalogPath,
+    setModelsCatalogVersion,
+    setModelsCatalogGeneratedAt,
+    setProviderConfigs,
 } from "./store/store";
+import type { ProviderConfigFile } from "./utils/models";
 
 /**
  * Layout 组件
@@ -48,10 +54,38 @@ const Layout: Component<ParentProps> = (props) => {
         setModelsCatalogStatus('loading');
         loadModelsCatalog()
             .then(c => {
+                const meta = getCatalogMeta();
                 setModelsCatalog(c);
+                setModelsCatalogSource(meta.source);
+                setModelsCatalogPath(meta.path);
+                setModelsCatalogVersion(meta.version);
+                setModelsCatalogGeneratedAt(meta.generatedAt);
                 setModelsCatalogStatus('ready');
             })
             .catch(() => setModelsCatalogStatus('failed'));
+
+        // 异步加载 provider 配置（启动后做一次）
+        invoke<ProviderConfigFile>('load_provider_configs')
+            .then(file => setProviderConfigs(file.providers))
+            .catch(e => console.warn('[provider-configs] 启动加载失败:', e));
+
+        // 静默后台检查 catalog 更新（仅在已加载完成后再触发，避免阻塞首屏）
+        setTimeout(async () => {
+            try {
+                const result = await updateModelsCatalog();
+                if (result.success) {
+                    const cat = await loadModelsCatalog();
+                    const meta = getCatalogMeta();
+                    setModelsCatalog(cat);
+                    setModelsCatalogSource(meta.source);
+                    setModelsCatalogPath(meta.path);
+                    setModelsCatalogVersion(meta.version);
+                    setModelsCatalogGeneratedAt(meta.generatedAt);
+                }
+            } catch (e) {
+                console.warn('[catalog] 启动静默更新失败:', e);
+            }
+        }, 8000);
 
         setTimeout(async () => {
             try {

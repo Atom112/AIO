@@ -9,7 +9,74 @@ import type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data'
 
 export type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data'
 
+export interface ProviderConfig {
+  id: string
+  enabled: boolean
+  displayName: string
+  apiUrl: string
+  apiKey: string
+  enabledModels: string[]
+  isCustom: boolean
+  customModelIds: string[]
+}
+
+export interface ProviderConfigFile {
+  version: number
+  updatedAt: string
+  providers: Record<string, ProviderConfig>
+  legacyActivatedModels?: LegacyActivatedModel[] | null
+}
+
+export interface LegacyActivatedModel {
+  model_id: string
+  owned_by: string
+  api_url: string
+  api_key: string
+  local_path?: string | null
+  engine_type?: string | null
+}
+
+export interface TestConnectionResult {
+  success: boolean
+  modelCount: number
+  sampleModelIds: string[]
+  error: string | null
+  elapsedMs: number
+}
+
+export interface FetchLiveModelsResult {
+  success: boolean
+  models: Array<{ id: string; owned_by: string }>
+  error: string | null
+  elapsedMs: number
+}
+
+export type CatalogSourceTag = 'appdata' | 'bundled' | 'dev_fallback' | 'empty'
+
+export interface CatalogResponse {
+  source: CatalogSourceTag
+  json: string
+  path: string | null
+  version: string | null
+  generatedAt: string | null
+}
+
+export interface UpdateResult {
+  success: boolean
+  modelCount: number
+  providerCount: number
+  version: string
+  cachedPath: string
+  error: string | null
+  bytes: number
+  elapsedMs: number
+}
+
 let cachedCatalog: Catalog | null = null
+let cachedSource: CatalogSourceTag = 'empty'
+let cachedPath: string | null = null
+let cachedVersion: string | null = null
+let cachedGeneratedAt: string | null = null
 let loadPromise: Promise<Catalog> | null = null
 
 const EMPTY_CATALOG: Catalog = {
@@ -22,10 +89,20 @@ const EMPTY_CATALOG: Catalog = {
   models: [],
 }
 
+function applyResponse(resp: CatalogResponse): Catalog {
+  const cat = JSON.parse(resp.json) as Catalog
+  cachedCatalog = cat
+  cachedSource = resp.source
+  cachedPath = resp.path
+  cachedVersion = resp.version
+  cachedGeneratedAt = resp.generatedAt
+  return cat
+}
+
 async function loadCatalogFromBackend(): Promise<Catalog> {
   try {
-    const json = await invoke<string>('load_models_catalog')
-    return JSON.parse(json) as Catalog
+    const resp = await invoke<CatalogResponse>('load_models_catalog_full')
+    return applyResponse(resp)
   } catch (e) {
     console.warn('[models] 从后端加载 catalog 失败:', e)
     return EMPTY_CATALOG
@@ -36,7 +113,6 @@ export async function loadModelsCatalog(): Promise<Catalog> {
   if (cachedCatalog) return cachedCatalog
   if (loadPromise) return loadPromise
   loadPromise = loadCatalogFromBackend().then(c => {
-    cachedCatalog = c
     loadPromise = null
     return c
   })
@@ -45,6 +121,39 @@ export async function loadModelsCatalog(): Promise<Catalog> {
 
 export function getCachedCatalog(): Catalog | null {
   return cachedCatalog
+}
+
+export function getCatalogMeta(): {
+  source: CatalogSourceTag
+  path: string | null
+  version: string | null
+  generatedAt: string | null
+} {
+  return {
+    source: cachedSource,
+    path: cachedPath,
+    version: cachedVersion,
+    generatedAt: cachedGeneratedAt,
+  }
+}
+
+export async function refreshModelsCatalog(): Promise<Catalog> {
+  loadPromise = null
+  return loadModelsCatalog()
+}
+
+export async function updateModelsCatalog(
+  url?: string
+): Promise<UpdateResult> {
+  const result = await invoke<UpdateResult>('update_models_catalog', { url: url ?? null })
+  if (result.success) {
+    await refreshModelsCatalog()
+  }
+  return result
+}
+
+export async function getCatalogUrl(): Promise<string> {
+  return await invoke<string>('get_catalog_url')
 }
 
 export function findModel(
@@ -113,4 +222,26 @@ export function formatContextWindow(tokens: number): string {
 export function formatPricing(input: number, output: number): string {
   if (input === 0 && output === 0) return '免费'
   return `$${input}/${output}/1M`
+}
+
+/** 把 ISO 时间格式化为「X 天前」之类的相对描述 */
+export function formatRelativeTime(iso: string | null): string {
+  if (!iso) return '从未更新'
+  try {
+    const d = new Date(iso)
+    const now = Date.now()
+    const diff = now - d.getTime()
+    const minutes = Math.floor(diff / 60_000)
+    if (minutes < 1) return '刚刚'
+    if (minutes < 60) return `${minutes} 分钟前`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours} 小时前`
+    const days = Math.floor(hours / 24)
+    if (days < 30) return `${days} 天前`
+    const months = Math.floor(days / 30)
+    if (months < 12) return `${months} 个月前`
+    return `${Math.floor(months / 12)} 年前`
+  } catch {
+    return iso
+  }
 }

@@ -30,6 +30,7 @@
     "solid-transition-group": "^0.3.0"
   },
   "devDependencies": {
+    "@lobehub/icons-static-svg": "^1.91.0",
     "@tauri-apps/cli": "^2.11.2",
     "@types/dompurify": "^3.0.5",
     "@types/marked": "^5.0.2",

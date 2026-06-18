@@ -18,6 +18,8 @@ export interface ProviderConfig {
   enabledModels: string[]
   isCustom: boolean
   customModelIds: string[]
+  /** per-provider HTTP/HTTPS 代理 (例如 `http://127.0.0.1:7890`)，用于解决国内访问 OpenAI/Google 的网络问题 */
+  proxyUrl?: string
 }
 
 export interface ProviderConfigFile {

@@ -52,6 +52,48 @@ const PROVIDER_ORDER = [
 ] as const;
 
 /**
+ * 拉取失败时的回退默认模型列表（与 Rust `default_providers()` 保持一致）
+ * 键为 provider id，值为 (modelId, ownedBy) 元组列表
+ */
+const DEFAULT_MODELS_BY_PROVIDER: Record<string, Array<{ id: string; ownedBy: string }>> = {
+    openai: [
+        { id: 'gpt-4o', ownedBy: 'OpenAI' },
+        { id: 'gpt-4o-mini', ownedBy: 'OpenAI' },
+        { id: 'o3', ownedBy: 'OpenAI' },
+        { id: 'o4-mini', ownedBy: 'OpenAI' },
+    ],
+    anthropic: [
+        { id: 'claude-sonnet-4-5', ownedBy: 'Anthropic' },
+        { id: 'claude-opus-4-1', ownedBy: 'Anthropic' },
+        { id: 'claude-haiku-4-5', ownedBy: 'Anthropic' },
+    ],
+    google: [
+        { id: 'gemini-2.5-pro', ownedBy: 'Google' },
+        { id: 'gemini-2.5-flash', ownedBy: 'Google' },
+    ],
+    deepseek: [
+        { id: 'deepseek-v4-pro', ownedBy: 'DeepSeek' },
+        { id: 'deepseek-v4-flash', ownedBy: 'DeepSeek' },
+    ],
+    groq: [
+        { id: 'llama-3.3-70b-versatile', ownedBy: 'Groq' },
+        { id: 'llama-3.1-8b-instant', ownedBy: 'Groq' },
+    ],
+    mistral: [
+        { id: 'mistral-large-latest', ownedBy: 'Mistral' },
+        { id: 'codestral-latest', ownedBy: 'Mistral' },
+    ],
+    xai: [
+        { id: 'grok-4', ownedBy: 'xAI' },
+        { id: 'grok-4-fast', ownedBy: 'xAI' },
+    ],
+    cohere: [
+        { id: 'command-a', ownedBy: 'Cohere' },
+        { id: 'command-r-plus', ownedBy: 'Cohere' },
+    ],
+};
+
+/**
  * ProviderSettings 页面 (lobehub 形态)
  * @description 顶部保留本地模型管理；下面是多 provider 卡片列表，每个独立配置。
  */
@@ -340,6 +382,7 @@ const ProviderSettings: Component = () => {
             const r = await invoke<TestConnectionResult>('test_provider_connection', {
                 apiUrl: cfg.apiUrl,
                 apiKey: cfg.apiKey,
+                proxyUrl: cfg.proxyUrl ?? null,
             });
             if (r.success) {
                 setTestStates(s => ({
@@ -360,7 +403,7 @@ const ProviderSettings: Component = () => {
         try {
             const r = await invoke<{ success: boolean; models: Array<{ id: string; owned_by: string }>; error: string | null; elapsedMs: number }>(
                 'fetch_provider_models',
-                { apiUrl: cfg.apiUrl, apiKey: cfg.apiKey },
+                { apiUrl: cfg.apiUrl, apiKey: cfg.apiKey, proxyUrl: cfg.proxyUrl ?? null },
             );
             if (r.success) {
                 setFetchStates(s => ({
@@ -381,6 +424,25 @@ const ProviderSettings: Component = () => {
         }
     };
 
+    /**
+     * 拉取失败时使用该 provider 的硬编码默认模型列表（与 Rust `default_providers()` 同步）
+     */
+    const handleUseDefaultModels = (id: string) => {
+        const defaults = DEFAULT_MODELS_BY_PROVIDER[id];
+        if (!defaults || defaults.length === 0) {
+            setFetchStates(s => ({ ...s, [id]: { status: 'fail', msg: '该 provider 无内置默认模型，请手动添加' } }));
+            return;
+        }
+        const cur = editingConfigs()[id];
+        if (!cur) return;
+        const newCustom = Array.from(new Set([...cur.customModelIds, ...defaults.map(d => d.id)]));
+        updateProvider(id, { customModelIds: newCustom });
+        setFetchStates(s => ({
+            ...s,
+            [id]: { status: 'ok', msg: `已使用 ${defaults.length} 个内置默认模型`, liveModels: defaults.map(d => ({ id: d.id, owned_by: d.ownedBy })) },
+        }));
+    };
+
     const addCustomProvider = () => {
         const name = newCustomName().trim();
         const url = newCustomUrl().trim();
@@ -396,6 +458,7 @@ const ProviderSettings: Component = () => {
             enabledModels: [],
             isCustom: true,
             customModelIds: [],
+            proxyUrl: undefined,
         };
         setEditingConfigs({ ...editingConfigs(), [id]: newCfg });
         setShowAddCustom(false);
@@ -833,6 +896,19 @@ const ProviderSettings: Component = () => {
                                                 />
                                             </div>
 
+                                            <div class="mb-4">
+                                                <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">
+                                                    代理 URL <span class="text-[#666]">(可选，用于解决国内访问 OpenAI/Google 的网络问题，例如 http://127.0.0.1:7890)</span>
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="留空则不使用代理"
+                                                    class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm font-mono focus:border-pri outline-none"
+                                                    value={cfg()?.proxyUrl ?? ''}
+                                                    onInput={(e) => updateProvider(id, { proxyUrl: e.currentTarget.value || undefined })}
+                                                />
+                                            </div>
+
                                             {/* 操作按钮区 */}
                                             <div class="flex gap-2 mb-4 flex-wrap">
                                                 <button
@@ -886,6 +962,16 @@ const ProviderSettings: Component = () => {
                                                 >
                                                     {fetchStates()[id]?.msg}
                                                 </div>
+                                            </Show>
+
+                                            {/* 拉取失败时显示回退按钮 */}
+                                            <Show when={fetchStates()[id]?.status === 'fail'}>
+                                                <button
+                                                    class="mb-3 px-3 py-1.5 text-xs rounded border border-yellow-500 bg-transparent text-yellow-300 hover:bg-yellow-500 hover:text-dark-850 transition-all"
+                                                    onClick={() => handleUseDefaultModels(id)}
+                                                >
+                                                    ⚡ 使用内置默认模型列表
+                                                </button>
                                             </Show>
 
                                             {/* 模型列表 */}

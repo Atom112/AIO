@@ -18,6 +18,11 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::core::models::LiveModel;
+use crate::plugins::provider::{
+    classify_reqwest_error, ProviderManager, TEST_TIMEOUT_SECS, DEFAULT_TIMEOUT_SECS,
+};
+
 const APPDATA_DIRNAME: &str = "com.loch.aio";
 const PROVIDER_FILE: &str = "provider-configs.json";
 const ACTIVATED_MODELS_FILE: &str = "activated_models.json";
@@ -37,6 +42,10 @@ pub struct ProviderConfig {
     pub is_custom: bool,
     #[serde(default)]
     pub custom_model_ids: Vec<String>,
+    /// per-provider HTTP/HTTPS 代理 URL (例如 `http://127.0.0.1:7890`)。
+    /// 旧配置无此字段时反序列化为 None，逻辑上视为"不代理"。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -79,13 +88,6 @@ pub struct FetchLiveModelsResult {
     pub models: Vec<LiveModel>,
     pub error: Option<String>,
     pub elapsed_ms: u128,
-}
-
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct LiveModel {
-    pub id: String,
-    pub owned_by: String,
 }
 
 fn config_dir() -> Option<PathBuf> {
@@ -171,6 +173,7 @@ fn default_providers() -> BTreeMap<String, ProviderConfig> {
                 enabled_models: models.into_iter().map(String::from).collect(),
                 is_custom: false,
                 custom_model_ids: vec![],
+                proxy_url: None,
             },
         );
     }
@@ -205,6 +208,7 @@ fn migrate_from_activated_models(
             enabled_models: vec![],
             is_custom: false,
             custom_model_ids: vec![],
+            proxy_url: None,
         });
         entry.enabled = true;
         entry.api_url = if url.starts_with("http") { url.clone() } else { entry.api_url.clone() };
@@ -255,6 +259,7 @@ pub fn load_provider_configs() -> Result<ProviderConfigFile, String> {
                             enabled_models: vec![],
                             is_custom: false,
                             custom_model_ids: vec![],
+                            proxy_url: None,
                         });
                         entry.enabled = true;
                         entry.api_url = url.to_string();
@@ -311,34 +316,21 @@ pub fn save_provider_configs(file: ProviderConfigFile) -> Result<(), String> {
     save_provider_configs_internal(&f)
 }
 
-/// 测试 provider 连接
+/// 测试 provider 连接（按 host 派发到对应 provider 插件）
 #[tauri::command]
 pub async fn test_provider_connection(
     api_url: String,
     api_key: String,
+    proxy_url: Option<String>,
 ) -> Result<TestConnectionResult, String> {
     let started = std::time::Instant::now();
-    let client = reqwest::Client::builder()
-        .user_agent("AIO-Desktop/0.4 (provider-test)")
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))?;
+    let mgr = ProviderManager::new();
+    let plugin = mgr.for_url(&api_url);
 
-    let models_url = if api_url.ends_with("/models") {
-        api_url.clone()
-    } else {
-        let trimmed = api_url.trim_end_matches('/');
-        if trimmed.ends_with("/v1") || trimmed.ends_with("/v1beta") {
-            format!("{}/models", trimmed)
-        } else {
-            format!("{}/v1/models", trimmed)
-        }
-    };
+    let client = plugin.build_client(proxy_url.as_deref(), TEST_TIMEOUT_SECS)?;
+    let url = plugin.models_url(&api_url);
+    let req = plugin.apply_auth(client.get(&url), &api_key);
 
-    let mut req = client.get(&models_url);
-    if !api_key.is_empty() {
-        req = req.bearer_auth(&api_key);
-    }
     let resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
@@ -346,18 +338,26 @@ pub async fn test_provider_connection(
                 success: false,
                 model_count: 0,
                 sample_model_ids: vec![],
-                error: Some(format!("网络错误: {}", e)),
+                error: Some(classify_reqwest_error(&e, &api_url)),
                 elapsed_ms: started.elapsed().as_millis(),
             });
         }
     };
 
     if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let msg = if status == 401 || status == 403 {
+            format!("HTTP {}: 认证失败，请检查 API Key 是否正确", status)
+        } else if status == 404 {
+            format!("HTTP 404: 端点不存在 ({})", plugin.identifier())
+        } else {
+            format!("HTTP {}", status)
+        };
         return Ok(TestConnectionResult {
             success: false,
             model_count: 0,
             sample_model_ids: vec![],
-            error: Some(format!("HTTP {}", resp.status().as_u16())),
+            error: Some(msg),
             elapsed_ms: started.elapsed().as_millis(),
         });
     }
@@ -388,13 +388,9 @@ pub async fn test_provider_connection(
         }
     };
 
-    let arr = v.get("data").and_then(|x| x.as_array()).cloned().unwrap_or_default();
-    let count = arr.len();
-    let samples: Vec<String> = arr
-        .iter()
-        .take(5)
-        .filter_map(|m| m.get("id").and_then(|x| x.as_str()).map(String::from))
-        .collect();
+    let models = plugin.parse_models(&v);
+    let count = models.len();
+    let samples: Vec<String> = models.iter().take(5).map(|m| m.id.clone()).collect();
 
     Ok(TestConnectionResult {
         success: true,
@@ -405,51 +401,46 @@ pub async fn test_provider_connection(
     })
 }
 
-/// 从 provider 的 API 拉取模型列表（用 OpenAI /v1/models 协议）
+/// 从 provider 的 API 拉取模型列表（按 host 派发到对应 provider 插件）
 #[tauri::command]
 pub async fn fetch_provider_models(
     api_url: String,
     api_key: String,
+    proxy_url: Option<String>,
 ) -> Result<FetchLiveModelsResult, String> {
     let started = std::time::Instant::now();
-    let client = reqwest::Client::builder()
-        .user_agent("AIO-Desktop/0.4 (fetch-provider-models)")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))?;
+    let mgr = ProviderManager::new();
+    let plugin = mgr.for_url(&api_url);
 
-    let models_url = if api_url.ends_with("/models") {
-        api_url.clone()
-    } else {
-        let trimmed = api_url.trim_end_matches('/');
-        if trimmed.ends_with("/v1") || trimmed.ends_with("/v1beta") {
-            format!("{}/models", trimmed)
-        } else {
-            format!("{}/v1/models", trimmed)
-        }
-    };
+    let client = plugin.build_client(proxy_url.as_deref(), DEFAULT_TIMEOUT_SECS)?;
+    let url = plugin.models_url(&api_url);
+    let req = plugin.apply_auth(client.get(&url), &api_key);
 
-    let mut req = client.get(&models_url);
-    if !api_key.is_empty() {
-        req = req.bearer_auth(&api_key);
-    }
     let resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
             return Ok(FetchLiveModelsResult {
                 success: false,
                 models: vec![],
-                error: Some(format!("网络错误: {}", e)),
+                error: Some(classify_reqwest_error(&e, &api_url)),
                 elapsed_ms: started.elapsed().as_millis(),
             });
         }
     };
 
     if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let msg = if status == 401 || status == 403 {
+            format!("HTTP {}: 认证失败，请检查 API Key", status)
+        } else if status == 404 {
+            format!("HTTP 404: 端点不存在 ({})", plugin.identifier())
+        } else {
+            format!("HTTP {}", status)
+        };
         return Ok(FetchLiveModelsResult {
             success: false,
             models: vec![],
-            error: Some(format!("HTTP {}", resp.status().as_u16())),
+            error: Some(msg),
             elapsed_ms: started.elapsed().as_millis(),
         });
     }
@@ -478,19 +469,7 @@ pub async fn fetch_provider_models(
         }
     };
 
-    let arr = v.get("data").and_then(|x| x.as_array()).cloned().unwrap_or_default();
-    let models: Vec<LiveModel> = arr
-        .iter()
-        .filter_map(|m| {
-            let id = m.get("id").and_then(|x| x.as_str())?.to_string();
-            let owned = m
-                .get("owned_by")
-                .and_then(|x| x.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            Some(LiveModel { id, owned_by: owned })
-        })
-        .collect();
+    let models = plugin.parse_models(&v);
 
     Ok(FetchLiveModelsResult {
         success: true,

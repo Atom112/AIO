@@ -27,6 +27,14 @@ pub struct StreamPayload {
     pub done: bool,
 }
 
+/// 从 provider 实时拉取的单个模型信息（OpenAI-兼容 /v1/models 或厂商自定义端点）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveModel {
+    pub id: String,
+    pub owned_by: String,
+}
+
 /// 消息中包含的附件元数据。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FileMeta {

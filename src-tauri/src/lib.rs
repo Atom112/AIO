@@ -65,6 +65,13 @@ pub fn run() {
             commands::update::restart_app,
             commands::update::get_updater_endpoint,
             commands::catalog::load_models_catalog,
+            commands::catalog::load_models_catalog_full,
+            commands::catalog::update_models_catalog,
+            commands::catalog::get_catalog_url,
+            commands::provider_config::load_provider_configs,
+            commands::provider_config::save_provider_configs,
+            commands::provider_config::test_provider_connection,
+            commands::provider_config::fetch_provider_models,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

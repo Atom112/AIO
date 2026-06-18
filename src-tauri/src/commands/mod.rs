@@ -3,4 +3,5 @@ pub mod catalog;
 pub mod config;
 pub mod engine;
 pub mod llm;
+pub mod provider_config;
 pub mod update;

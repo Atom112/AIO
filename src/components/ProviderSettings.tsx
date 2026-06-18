@@ -1,4 +1,4 @@
-import { Component, createSignal, For, Show, onMount, createMemo, onCleanup } from 'solid-js';
+import { Component, createSignal, For, Show, onMount, createMemo, createEffect, onCleanup } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { selectedModel, setSelectedModel, providerConfigs, setProviderConfigs } from '../store/store';
@@ -85,9 +85,6 @@ const ProviderSettings: Component = () => {
             if (configData?.localModelPath) setLocalModelPath(configData.localModelPath);
         } catch { /* 静默 */ }
 
-        // 初始化 editing 副本
-        setEditingConfigs({ ...providerConfigs() });
-
         // 加载引擎状态
         try {
             const statuses: any[] = await invoke('get_engines_status');
@@ -105,6 +102,18 @@ const ProviderSettings: Component = () => {
                 `;
             }
         } catch { /* 静默 */ }
+    });
+
+    // 关键修复：providerConfigs 异步加载完成后，自动同步到 editingConfigs
+    // 避免用户进页面时看到空白（onMount 只跑一次）
+    let editingInitialized = false;
+    createEffect(() => {
+        const cfgs = providerConfigs();
+        if (Object.keys(cfgs).length === 0) return;
+        if (!editingInitialized) {
+            setEditingConfigs({ ...cfgs });
+            editingInitialized = true;
+        }
     });
 
     // ===== 本地模型相关函数 =====
@@ -473,6 +482,37 @@ const ProviderSettings: Component = () => {
 
             {/* Provider 卡片区 */}
             <div class="border border-pri rounded-xl bg-pri-5 p-5">
+                <Show when={enabledCount() === 0}>
+                    <div
+                        class="mb-4 px-4 py-3 rounded-lg text-sm"
+                        style={{
+                            background: 'rgba(251, 191, 36, 0.1)',
+                            color: 'rgb(252, 211, 77)',
+                            border: '1px solid rgba(251, 191, 36, 0.3)',
+                        }}
+                    >
+                        <div class="font-bold mb-1">⚠ 还没有启用任何 provider</div>
+                        <div class="text-xs opacity-80 leading-relaxed">
+                            切换下方任一 provider 卡片右上角的开关，填写 API Key 后保存。
+                            启用后即可在聊天顶部的模型下拉中看到。
+                        </div>
+                    </div>
+                </Show>
+                <Show when={enabledCount() > 0 && Object.values(editingConfigs()).some(c => c.enabled && !c.apiKey)}>
+                    <div
+                        class="mb-4 px-4 py-3 rounded-lg text-sm"
+                        style={{
+                            background: 'rgba(251, 191, 36, 0.08)',
+                            color: 'rgb(252, 211, 77)',
+                            border: '1px solid rgba(251, 191, 36, 0.2)',
+                        }}
+                    >
+                        <div class="font-bold mb-1">⚠ 部分 provider 未配置 API Key</div>
+                        <div class="text-xs opacity-80 leading-relaxed">
+                            展开对应卡片填入 Key 后保存。未配置 Key 的模型在聊天中会调用失败。
+                        </div>
+                    </div>
+                </Show>
                 <div class="border-b border-pri-20 pb-2.5 mb-4 flex justify-between items-center">
                     <h3 class="text-base font-bold">☁ 云端模型供应商</h3>
                     <div class="flex items-center gap-3 text-xs text-[#888]">

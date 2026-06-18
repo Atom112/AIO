@@ -158,7 +158,7 @@ fn default_providers() -> BTreeMap<String, ProviderConfig> {
             id.to_string(),
             ProviderConfig {
                 id: id.to_string(),
-                enabled: false,
+                enabled: true,  // 默认启用：让用户立刻看到所有 preset 模型，再决定是否禁用/填 key
                 display_name: name.to_string(),
                 api_url: url.to_string(),
                 api_key: String::new(),

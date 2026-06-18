@@ -56,6 +56,7 @@ const ModelDropdown: Component<ModelDropdownProps> = (props) => {
               <For each={props.onlineModels}>
                 {(model) => {
                   const meta = () => getMeta(model);
+                  const noKey = () => !model.api_key;
                   return (
                     <div
                       class="flex flex-row items-center gap-2.5 p-2 text-sm rounded-lg cursor-pointer select-none transition-all"
@@ -70,8 +71,8 @@ const ModelDropdown: Component<ModelDropdownProps> = (props) => {
                       <div class="flex-1 flex flex-col items-start justify-center overflow-hidden text-left min-w-0">
                         <div class="max-w-[200px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
                         <div style="color: rgba(124,154,191,0.5); font-size: 10px;">{model.owned_by}</div>
-                        <Show when={meta()}>
-                          <div class="flex gap-1 mt-0.5 flex-wrap">
+                        <div class="flex gap-1 mt-0.5 flex-wrap">
+                          <Show when={meta()}>
                             <span class="text-[9px] px-1 py-0.5 rounded bg-pri-20 text-pri">{formatContextWindow(meta()!.contextWindow)}</span>
                             <Show when={meta()!.capabilities.tools}>
                               <span class="text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">工具</span>
@@ -85,8 +86,11 @@ const ModelDropdown: Component<ModelDropdownProps> = (props) => {
                             <Show when={meta()!.status === 'deprecated'}>
                               <span class="text-[9px] px-1 py-0.5 rounded bg-red-500/20 text-red-300">已弃用</span>
                             </Show>
-                          </div>
-                        </Show>
+                          </Show>
+                          <Show when={noKey()}>
+                            <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300" title="该 provider 未配置 API Key">⚠ 未配置 Key</span>
+                          </Show>
+                        </div>
                       </div>
                     </div>
                   );
@@ -95,8 +99,9 @@ const ModelDropdown: Component<ModelDropdownProps> = (props) => {
               {props.onlineModels.length === 0 && (
                 <div class="p-5 text-center text-[13px]" style="color: rgba(255,255,255,0.2);">
                   <div>无线上模型</div>
-                  <div class="text-[10px] mt-1" style="color: rgba(255,255,255,0.15);">
-                    去 <span style="color: rgba(124,154,191,0.5);">设置 → 供应商设置</span> 启用
+                  <div class="text-[10px] mt-1.5 leading-relaxed" style="color: rgba(255,255,255,0.25);">
+                    去 <span style="color: rgba(124,154,191,0.5); font-medium;">设置中心 → 供应商设置</span><br/>
+                    启用 provider 并填写 API Key
                   </div>
                 </div>
               )}

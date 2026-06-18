@@ -64,6 +64,7 @@ pub fn run() {
             commands::update::install_app_update,
             commands::update::restart_app,
             commands::update::get_updater_endpoint,
+            commands::catalog::load_models_catalog,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

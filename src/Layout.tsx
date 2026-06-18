@@ -9,6 +9,7 @@ import { Transition } from "solid-transition-group";
 import { Component, onCleanup, onMount, ParentProps } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import { loadModelsCatalog } from "./utils/models";
 import {
     appUpdateAvailable,
     setAppUpdateAvailable,
@@ -18,6 +19,8 @@ import {
     setAppUpdateProgress,
     setAppUpdateReady,
     getIgnoredUpdateVersion,
+    setModelsCatalog,
+    setModelsCatalogStatus,
 } from "./store/store";
 
 /**
@@ -40,6 +43,15 @@ const Layout: Component<ParentProps> = (props) => {
         setAppUpdateDownloading(false);
         setAppUpdateProgress(0);
         setAppUpdateReady(false);
+
+        // 异步加载模型目录（不阻塞首屏，由 settings 页面按需使用）
+        setModelsCatalogStatus('loading');
+        loadModelsCatalog()
+            .then(c => {
+                setModelsCatalog(c);
+                setModelsCatalogStatus('ready');
+            })
+            .catch(() => setModelsCatalogStatus('failed'));
 
         setTimeout(async () => {
             try {

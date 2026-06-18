@@ -38,7 +38,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": []
+    "resources": [
+      "../node_modules/@aio/models-data/dist/data/models.json"
+    ]
   },
   "plugins": {
     "updater": {

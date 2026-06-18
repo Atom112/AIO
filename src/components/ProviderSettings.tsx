@@ -1,5 +1,7 @@
 import { Component, createSignal, For, createMemo, onCleanup, onMount } from 'solid-js';
-import { config, saveConfig, setDatas, selectedModel } from '../store/store';
+import { config, saveConfig, setDatas, selectedModel, modelsCatalog } from '../store/store';
+import { findModel, formatContextWindow, formatPricing } from '../utils/models';
+import type { ModelMeta } from '@aio/models-data';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 
@@ -231,6 +233,28 @@ const ProviderSettings: Component = () => {
 
     /** 可用模型的厂商列表（去重，用于筛选下拉） */
     const providers = createMemo(() => ["All", ...Array.from(new Set(models().map(m => m.owned_by || "unknown")))]);
+
+    /** 根据当前 API URL 推断的厂商 ID（用于从目录补全元数据） */
+    const apiUrlProviderHint = createMemo(() => {
+        const u = apiUrl().toLowerCase();
+        if (u.includes('api.openai.com')) return 'openai';
+        if (u.includes('api.anthropic.com')) return 'anthropic';
+        if (u.includes('generativelanguage.googleapis.com')) return 'google';
+        if (u.includes('api.deepseek.com')) return 'deepseek';
+        if (u.includes('api.groq.com')) return 'groq';
+        if (u.includes('api.mistral.ai')) return 'mistral';
+        if (u.includes('api.x.ai')) return 'xai';
+        if (u.includes('openrouter.ai')) return 'openrouter';
+        return null;
+    });
+
+    /** 从目录中为模型补全元数据 */
+    const enrichModel = (id: string, fallbackOwnedBy: string): ModelMeta | null => {
+        const cat = modelsCatalog();
+        if (!cat) return null;
+        const hint = apiUrlProviderHint() ?? fallbackOwnedBy.toLowerCase();
+        return findModel(cat, hint, id);
+    };
 
     /** 筛选后的可用模型列表（搜索 + 厂商筛选） */
     const filteredModels = createMemo(() =>
@@ -483,26 +507,48 @@ const ProviderSettings: Component = () => {
 
                 <div class="flex-1 overflow-y-auto p-4 space-y-2.5 scrollbar-thin scrollbar-thumb-[#333]">
                     <For each={filteredActivatedModels()}>
-                        {(m) => (
-                            <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
-                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
-                                    <img src={getModelLogo(m.model_id)} alt="logo" class="w-5 h-5 object-contain" />
-                                </div>
+                        {(m) => {
+                            const meta = () => enrichModel(m.model_id, m.owned_by);
+                            return (
+                                <div class="border-l-[3px] border-green-500 bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
+                                    <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
+                                        <img src={getModelLogo(m.model_id)} alt="logo" class="w-5 h-5 object-contain" />
+                                    </div>
 
-                                <div class="grow flex flex-col font-mono">
-                                    <span class="text-[#eee] font-medium text-sm truncate">{m.model_id}</span>
-                                    <span class="text-[#666] text-[10px]">
-                                        {m.api_url.includes('127.0.0.1') ? '● 本地服务' : m.api_url.replace('https://', '').split('/')[0]}
-                                    </span>
+                                    <div class="grow flex flex-col font-mono min-w-0">
+                                        <span class="text-[#eee] font-medium text-sm truncate">{m.model_id}</span>
+                                        <span class="text-[#666] text-[10px]">
+                                            {m.api_url.includes('127.0.0.1') ? '● 本地服务' : m.api_url.replace('https://', '').split('/')[0]}
+                                        </span>
+                                        {meta() && (
+                                            <div class="flex gap-1.5 mt-1 flex-wrap">
+                                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-semibold">
+                                                    {formatContextWindow(meta()!.contextWindow)} ctx
+                                                </span>
+                                                {meta()!.capabilities.tools && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">工具</span>
+                                                )}
+                                                {meta()!.capabilities.vision && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">视觉</span>
+                                                )}
+                                                {meta()!.capabilities.reasoning && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">推理</span>
+                                                )}
+                                                {meta()!.status === 'deprecated' && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">已弃用</span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button
+                                        class="border border-danger bg-transparent text-danger px-2.5 py-1 rounded cursor-pointer whitespace-nowrap shrink-0 transition-all duration-200 hover:text-dark-850 hover:bg-danger text-xs"
+                                        onClick={() => removeActivatedModel(m)}
+                                    >
+                                        移除
+                                    </button>
                                 </div>
-                                <button
-                                    class="border border-danger bg-transparent text-danger px-2.5 py-1 rounded cursor-pointer whitespace-nowrap shrink-0 transition-all duration-200 hover:text-dark-850 hover:bg-danger text-xs"
-                                    onClick={() => removeActivatedModel(m)}
-                                >
-                                    移除
-                                </button>
-                            </div>
-                        )}
+                            );
+                        }}
                     </For>
                 </div>
             </div>
@@ -552,32 +598,59 @@ const ProviderSettings: Component = () => {
                     )}
 
                     <For each={filteredModels()}>
-                        {(m) => (
-                            <div class="border-l-[3px] border-pri bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
-                                <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
-                                    <img src={getModelLogo(m.id)} alt="logo" class="w-5 h-5 object-contain" />
-                                </div>
+                        {(m) => {
+                            const meta = () => enrichModel(m.id, m.owned_by);
+                            return (
+                                <div class="border-l-[3px] border-pri bg-white/5 rounded-lg p-3 flex items-center gap-4 transition-all duration-200 hover:bg-pri-20">
+                                    <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center shrink-0 border border-pri-20">
+                                        <img src={getModelLogo(m.id)} alt="logo" class="w-5 h-5 object-contain" />
+                                    </div>
 
-                                <div class="grow flex flex-col font-mono text-sm">
-                                    <span class="text-[#eee] font-medium truncate">{m.id}</span>
-                                    <span class="text-[#666] text-[10px]">Provider: {m.owned_by}</span>
-                                </div>
+                                    <div class="grow flex flex-col font-mono text-sm min-w-0">
+                                        <span class="text-[#eee] font-medium truncate">{m.id}</span>
+                                        <span class="text-[#666] text-[10px]">Provider: {m.owned_by}</span>
+                                        {meta() && (
+                                            <div class="flex gap-1.5 mt-1 flex-wrap">
+                                                <span class="text-[9px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-semibold">
+                                                    {formatContextWindow(meta()!.contextWindow)} ctx
+                                                </span>
+                                                {meta()!.capabilities.tools && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">工具</span>
+                                                )}
+                                                {meta()!.capabilities.vision && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">视觉</span>
+                                                )}
+                                                {meta()!.capabilities.reasoning && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">推理</span>
+                                                )}
+                                                {meta()!.pricing && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300">
+                                                        {formatPricing(meta()!.pricing!.input, meta()!.pricing!.output)}
+                                                    </span>
+                                                )}
+                                                {meta()!.status === 'deprecated' && (
+                                                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">已弃用</span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
 
-                                <div class="shrink-0 flex items-center">
-                                    <label class="relative inline-block w-9 h-5 cursor-pointer">
-                                        <input
-                                            class="opacity-0 w-0 h-0 peer"
-                                            type="checkbox"
-                                            checked={activatedModels().some(am =>
-                                                am.model_id === m.id && am.api_url === apiUrl()
-                                            )}
-                                            onChange={() => toggleActivation(m)}
-                                        />
-                                        <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-4"></span>
-                                    </label>
+                                    <div class="shrink-0 flex items-center">
+                                        <label class="relative inline-block w-9 h-5 cursor-pointer">
+                                            <input
+                                                class="opacity-0 w-0 h-0 peer"
+                                                type="checkbox"
+                                                checked={activatedModels().some(am =>
+                                                    am.model_id === m.id && am.api_url === apiUrl()
+                                                )}
+                                                onChange={() => toggleActivation(m)}
+                                            />
+                                            <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-4"></span>
+                                        </label>
+                                    </div>
                                 </div>
-                            </div>
-                        )}
+                            );
+                        }}
                     </For>
                 </div>
             </div>

@@ -2,6 +2,7 @@ import { createStore,reconcile } from "solid-js/store";
 import { createEffect, createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
 import { readFile } from '@tauri-apps/plugin-fs';
+import type { Catalog } from '../utils/models';
 
 // 接口定义
  /* 消息项接口，定义聊天消息的数据结构 */
@@ -63,6 +64,11 @@ export const [selectedModel, setSelectedModel] = createSignal<ActivatedModel | n
 export const [currentAssistantId, setCurrentAssistantId] = createSignal<string | null>(null);
 /** 当前选中的话题 ID 信号，用于 Chat 页面跟踪当前对话 */
 export const [currentTopicId, setCurrentTopicId] = createSignal<string | null>(null);
+
+/** 模型目录信号（来自 @aio/models-data 同步数据，启动时由 Layout 加载） */
+export const [modelsCatalog, setModelsCatalog] = createSignal<Catalog | null>(null);
+/** 模型目录加载状态：'idle' | 'loading' | 'ready' | 'failed' */
+export const [modelsCatalogStatus, setModelsCatalogStatus] = createSignal<'idle' | 'loading' | 'ready' | 'failed'>('idle');
 
 /** 是否正在启动本地模型 */
 export const [isStartingLocalModel, setIsStartingLocalModel] = createSignal(false);

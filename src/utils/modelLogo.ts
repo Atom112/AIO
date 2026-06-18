@@ -2,35 +2,58 @@
  * 模型 / Provider logo 工具
  * @description 统一所有调用方对 logo 的获取逻辑
  *
- * 来源：public/icons/model-logo/ (vendored from @lobehub/icons-static-svg)
+ * 来源：@lobehub/icons-static-svg (通过 Vite ?raw 嵌入 bundle, 0 文件依赖)
  * 优先级：
  * 1. provider id 直接查表（最准确）
  * 2. model id 文本匹配（兜底，处理 custom provider + 未知来源）
  * 3. 通用 neutral 图标
  */
 
-const FALLBACK_LOGO = '/icons/model-logo/logo.svg';
+import openaiSvg from '@lobehub/icons-static-svg/icons/openai.svg?raw';
+import claudeSvg from '@lobehub/icons-static-svg/icons/claude-color.svg?raw';
+import geminiSvg from '@lobehub/icons-static-svg/icons/gemini-color.svg?raw';
+import googleSvg from '@lobehub/icons-static-svg/icons/google.svg?raw';
+import deepseekSvg from '@lobehub/icons-static-svg/icons/deepseek-color.svg?raw';
+import groqSvg from '@lobehub/icons-static-svg/icons/groq.svg?raw';
+import groqTextSvg from '@lobehub/icons-static-svg/icons/groq-text.svg?raw';
+import mistralSvg from '@lobehub/icons-static-svg/icons/mistral-color.svg?raw';
+import xaiSvg from '@lobehub/icons-static-svg/icons/xai.svg?raw';
+import grokSvg from '@lobehub/icons-static-svg/icons/grok.svg?raw';
+import cohereSvg from '@lobehub/icons-static-svg/icons/cohere-color.svg?raw';
+import moonshotSvg from '@lobehub/icons-static-svg/icons/moonshot.svg?raw';
+import zhipuSvg from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw';
+import qwenSvg from '@lobehub/icons-static-svg/icons/qwen-color.svg?raw';
+import ollamaSvg from '@lobehub/icons-static-svg/icons/ollama.svg?raw';
+import doubaoSvg from '@lobehub/icons-static-svg/icons/doubao-color.svg?raw';
+import fallbackSvg from '../../public/icons/model-logo/logo.svg?raw';
+
+/** SVG 字符串 → data URL（base64 编码, UTF-8 安全） */
+function svgToDataUrl(svg: string): string {
+  // 用 encodeURIComponent + unescape 兼容 UTF-8 字符（部分 SVG 含中文/特殊符号）
+  const b64 = btoa(unescape(encodeURIComponent(svg)));
+  return `data:image/svg+xml;base64,${b64}`;
+}
 
 const PROVIDER_LOGOS: Record<string, string> = {
-  openai:     '/icons/model-logo/openai.svg',
-  anthropic:  '/icons/model-logo/claude-color.svg',
-  google:     '/icons/model-logo/gemini-color.svg',
-  google_brand: '/icons/model-logo/google.svg',
-  deepseek:   '/icons/model-logo/deepseek-color.svg',
-  groq:       '/icons/model-logo/groq.svg',
-  groq_text:  '/icons/model-logo/groq-text.svg',
-  mistral:    '/icons/model-logo/mistral-color.svg',
-  xai:        '/icons/model-logo/xai.svg',
-  grok:       '/icons/model-logo/grok.svg',
-  cohere:     '/icons/model-logo/cohere-color.svg',
-  moonshot:   '/icons/model-logo/moonshot.svg',
-  kimi:       '/icons/model-logo/moonshot.svg',
-  zhipu:      '/icons/model-logo/zhipu-color.svg',
-  qwen:       '/icons/model-logo/qwen-color.svg',
-  ollama:     '/icons/model-logo/ollama.svg',
-  doubao:     '/icons/model-logo/doubao-color.svg',
-  openrouter: '/icons/model-logo/openai.svg',
-  custom:     FALLBACK_LOGO,
+  openai:       svgToDataUrl(openaiSvg),
+  anthropic:    svgToDataUrl(claudeSvg),
+  google:       svgToDataUrl(geminiSvg),
+  google_brand: svgToDataUrl(googleSvg),
+  deepseek:     svgToDataUrl(deepseekSvg),
+  groq:         svgToDataUrl(groqSvg),
+  groq_text:    svgToDataUrl(groqTextSvg),
+  mistral:      svgToDataUrl(mistralSvg),
+  xai:          svgToDataUrl(xaiSvg),
+  grok:         svgToDataUrl(grokSvg),
+  cohere:       svgToDataUrl(cohereSvg),
+  moonshot:     svgToDataUrl(moonshotSvg),
+  kimi:         svgToDataUrl(moonshotSvg),
+  zhipu:        svgToDataUrl(zhipuSvg),
+  qwen:         svgToDataUrl(qwenSvg),
+  ollama:       svgToDataUrl(ollamaSvg),
+  doubao:       svgToDataUrl(doubaoSvg),
+  openrouter:   svgToDataUrl(openaiSvg),  // 兜底用 openai 图标
+  custom:       svgToDataUrl(fallbackSvg),
 };
 
 interface TextRule {
@@ -54,6 +77,8 @@ const TEXT_RULES: TextRule[] = [
   { match: n => n.includes('qwen') || n.includes('qwq') || n.includes('qvq'), logo: PROVIDER_LOGOS.qwen },
   { match: n => n.includes('doubao') || n.includes('seedream') || n.includes('volcengine'), logo: PROVIDER_LOGOS.doubao },
 ];
+
+export const FALLBACK_LOGO = PROVIDER_LOGOS.custom;
 
 export function getProviderLogo(providerId: string | null | undefined): string {
   if (!providerId) return FALLBACK_LOGO;

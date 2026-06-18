@@ -13,6 +13,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@aio/models-data": "file:../aio-models-data",
+    "@lobehub/icons-static-svg": "^1.91.0",
     "@solidjs/router": "^0.15.3",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
@@ -30,7 +31,6 @@
     "solid-transition-group": "^0.3.0"
   },
   "devDependencies": {
-    "@lobehub/icons-static-svg": "^1.91.0",
     "@tauri-apps/cli": "^2.11.2",
     "@types/dompurify": "^3.0.5",
     "@types/marked": "^5.0.2",

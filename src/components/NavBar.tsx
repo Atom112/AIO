@@ -24,7 +24,9 @@ import {
   loadAvatarFromPath,
   logout,
   setIsStartingLocalModel,
-  setLocalModelStartProgress
+  setLocalModelStartProgress,
+  activeProviderModels,
+  providerConfigs,
 } from '../store/store';
 
 /**
@@ -49,8 +51,15 @@ const NavBar: Component<NavBarProps> = () => {
   const [isLoginModalOpen, setIsLoginModalOpen] = createSignal(false); // 登录弹窗显示状态
 
   const isLocalModel = (m: ActivatedModel) => !!(m.local_path || m.engine_type);
-  const onlineModels = () => datas.activatedModels.filter(m => !isLocalModel(m));
   const localModels = () => datas.activatedModels.filter(m => isLocalModel(m));
+  // 云端模型：来自 providerConfigs (lobehub 形态)
+  const cloudModels = () => activeProviderModels().map(m => ({
+      model_id: m.modelId,
+      owned_by: m.providerName,
+      api_url: m.apiUrl,
+      api_key: m.apiKey,
+      provider_id: m.provider,
+  } as ActivatedModel & { provider_id: string }));
 
   /**
    * 登录成功回调处理
@@ -451,9 +460,9 @@ return (
           onLogout={handleLogout}
         />
 
-        <ModelDropdown 
+        <ModelDropdown
           selectedModel={selectedModel()}
-          onlineModels={onlineModels()}
+          onlineModels={cloudModels()}
           localModels={localModels()}
           onSelect={handleModelSelect}
           getModelLogo={getModelLogo}

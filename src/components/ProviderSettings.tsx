@@ -25,6 +25,7 @@ import {
     getCatalogMeta,
     formatRelativeTime,
 } from '../utils/models';
+import { getProviderLogo } from '../utils/modelLogo';
 import type { ProviderConfig, TestConnectionResult } from '../utils/models';
 import type { ModelMeta } from '@aio/models-data';
 import Icon from './Icon';
@@ -49,18 +50,6 @@ const PROVIDER_ORDER = [
     'openai', 'anthropic', 'google', 'deepseek',
     'groq', 'mistral', 'xai', 'cohere',
 ] as const;
-
-const PROVIDER_LOGOS: Record<string, string> = {
-    openai: '/icons/model-logo/openai.svg',
-    anthropic: '/icons/model-logo/claude-color.svg',
-    google: '/icons/model-logo/gemini-color.svg',
-    deepseek: '/icons/model-logo/deepseek-color.svg',
-    groq: '/icons/app-logo/switch-arrows.svg',
-    mistral: '/icons/model-logo/ollama.svg',
-    xai: '/icons/model-logo/grok.svg',
-    cohere: '/icons/model-logo/ollama.svg',
-    custom: '/icons/app-logo/switch-arrows.svg',
-};
 
 /**
  * ProviderSettings 页面 (lobehub 形态)
@@ -454,7 +443,7 @@ const ProviderSettings: Component = () => {
     });
 
     const getModelLogo = (providerId: string) => {
-        return PROVIDER_LOGOS[providerId] ?? '/icons/model-logo/ollama.svg';
+        return getProviderLogo(providerId);
     };
 
     // 统计当前激活的 provider 数量

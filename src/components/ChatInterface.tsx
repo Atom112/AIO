@@ -2,6 +2,7 @@ import { Component, For, Show, Setter, createSignal, createEffect } from 'solid-
 import Markdown from './Markdown';
 import { Topic, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
+import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import Icon from './Icon';
 
 interface ChatInterfaceProps {
@@ -55,17 +56,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     let textareaRef: HTMLTextAreaElement | undefined;
 
     const getModelLogo = (modelName: string) => {
-        const name = modelName.toLowerCase();
-        if (name.includes('gpt')) return '/icons/model-logo/openai.svg';
-        if (name.includes('claude')) return '/icons/model-logo/claude-color.svg';
-        if (name.includes('grok')) return '/icons/model-logo/grok.svg';
-        if (name.includes('gemini')) return '/icons/model-logo/gemini-color.svg';
-        if (name.includes('deepseek')) return '/icons/model-logo/deepseek-color.svg';
-        if (name.includes('qwen') || name.includes('qwq')) return '/icons/model-logo/qwen-color.svg';
-        if (name.includes('kimi') || name.includes('moonshot')) return '/icons/model-logo/moonshot.svg';
-        if (name.includes('doubao')) return '/icons/model-logo/doubao-color.svg';
-        if (name.includes('glm')) return '/icons/model-logo/zhipu-color.svg';
-        return '/icons/model-logo/ollama.svg';
+        return getLogoByIds(null, modelName);
     };
 
     return (

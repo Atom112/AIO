@@ -28,6 +28,7 @@ import {
   activeProviderModels,
   providerConfigs,
 } from '../store/store';
+import { getLogo as getLogoByIds } from '../utils/modelLogo';
 
 /**
  * 初始化窗口实例
@@ -156,17 +157,10 @@ const NavBar: Component<NavBarProps> = () => {
    * @returns {string} Logo 图片路径
    */
   const getModelLogo = (modelName: string) => {
-    const name = modelName.toLowerCase();
-    if (name.includes('gpt')) return '/icons/model-logo/openai.svg';
-    if (name.includes('claude')) return '/icons/model-logo/claude-color.svg';
-    if (name.includes('grok')) return '/icons/model-logo/grok.svg';
-    if (name.includes('gemini')) return '/icons/model-logo/gemini-color.svg';
-    if (name.includes('deepseek')) return '/icons/model-logo/deepseek-color.svg';
-    if (name.includes('qwen')) return '/icons/model-logo/qwen-color.svg';
-    if (name.includes('kimi') || name.includes('moonshot')) return '/icons/model-logo/moonshot.svg';
-    if (name.includes('doubao')) return '/icons/model-logo/doubao-color.svg';
-    if (name.includes('glm')) return '/icons/model-logo/zhipu-color.svg';
-    return '/icons/model-logo/ollama.svg';
+    // 根据 model_name 找 logo
+    // 注: 传入的 modelName 实际可能是 model_id (来自 activatedModels / onlineModels)
+    // 这里走文本匹配兜底
+    return getLogoByIds(null, modelName);
   };
 
   /**

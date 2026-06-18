@@ -25,7 +25,6 @@ import zhipuSvg from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw';
 import qwenSvg from '@lobehub/icons-static-svg/icons/qwen-color.svg?raw';
 import ollamaSvg from '@lobehub/icons-static-svg/icons/ollama.svg?raw';
 import doubaoSvg from '@lobehub/icons-static-svg/icons/doubao-color.svg?raw';
-import fallbackSvg from '../../public/icons/model-logo/logo.svg?raw';
 
 /** SVG 字符串 → data URL（base64 编码, UTF-8 安全） */
 function svgToDataUrl(svg: string): string {
@@ -53,7 +52,6 @@ const PROVIDER_LOGOS: Record<string, string> = {
   ollama:       svgToDataUrl(ollamaSvg),
   doubao:       svgToDataUrl(doubaoSvg),
   openrouter:   svgToDataUrl(openaiSvg),  // 兜底用 openai 图标
-  custom:       svgToDataUrl(fallbackSvg),
 };
 
 interface TextRule {

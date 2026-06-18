@@ -92,22 +92,26 @@ jobs:
       - name: Install frontend dependencies  
         run: npm install  
   
-      # Tauri 构建和发布  
+      # Tauri 构建和发布
       - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: "AIO v__VERSION__"
           releaseDraft: true
           prerelease: false
+          # 让 Tauri 在 release 中同时产出 updater 清单 latest.json 与 .sig 签名
+          includeUpdaterJson: true
           # 修改 args 逻辑：
           # 如果是 Ubuntu，强制指定只打包 deb 和 rpm
           # 如果是其他系统（macOS/Windows），按原逻辑处理
           args: >-
-            ${{ 
-              matrix.platform == 'ubuntu-22.04' 
-              && '--bundles deb,rpm --verbose' 
-              || (matrix.target != '' && format('--target {0} --verbose', matrix.target) || '--verbose') 
+            ${{
+              matrix.platform == 'ubuntu-22.04'
+              && '--bundles deb,rpm --verbose'
+              || (matrix.target != '' && format('--target {0} --verbose', matrix.target) || '--verbose')
             }}

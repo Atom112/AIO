@@ -28,6 +28,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(StreamManager(Arc::new(dashmap::DashMap::new())))
         .manage(LocalEngineState::new())
         .manage(EngineManager::new())
@@ -59,6 +60,10 @@ pub fn run() {
             commands::auth::validate_token,
             commands::auth::sync_avatar_to_backend,
             commands::config::clear_local_avatar_cache,
+            commands::update::check_app_update,
+            commands::update::install_app_update,
+            commands::update::restart_app,
+            commands::update::get_updater_endpoint,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

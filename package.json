@@ -18,6 +18,7 @@
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-updater": "^2",
     "cropperjs": "^1.6.2",
     "dompurify": "^3.3.1",
     "highlight.js": "^11.11.1",
@@ -28,11 +29,13 @@
     "solid-transition-group": "^0.3.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.6",
+    "@tauri-apps/cli": "^2.11.2",
     "@types/dompurify": "^3.0.5",
     "@types/marked": "^5.0.2",
     "@types/node": "^25.0.8",
+    "autoprefixer": "^10.5.0",
     "baseline-browser-mapping": "^2.9.17",
+    "tailwindcss": "^3.4.19",
     "typescript": "^5.9.3",
     "vite": "^6.0.3",
     "vite-plugin-solid": "^2.11.0"

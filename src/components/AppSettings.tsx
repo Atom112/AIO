@@ -1,8 +1,26 @@
-import { Component, createEffect, createMemo, createSignal, For, onMount, untrack } from 'solid-js';
+import { Component, createEffect, createMemo, createSignal, For, onMount, Show, untrack } from 'solid-js';
 import { open } from '@tauri-apps/plugin-shell';
-import { setThemeColor, themeColor } from '../store/store';
+import { invoke } from '@tauri-apps/api/core';
+import {
+    setThemeColor,
+    themeColor,
+    setAppUpdateAvailable,
+    setAppUpdateInfo,
+    setAppUpdateDismissed,
+} from '../store/store';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from './Icon';
+
+/**
+ * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）
+ * 用 `kind` 字段做 tag，前端按类别显示不同提示
+ */
+type CheckUpdateResult =
+    | { kind: 'up_to_date'; current_version: string }
+    | { kind: 'update_available'; info: { version: string; current_version: string; notes?: string; pub_date?: string } }
+    | { kind: 'service_not_ready'; current_version: string; endpoint: string; reason: string }
+    | { kind: 'network'; current_version: string; endpoint: string; reason: string }
+    | { kind: 'failed'; current_version: string; endpoint: string; reason: string };
 
 /**
  * 应用设置页面组件
@@ -15,6 +33,9 @@ const AppSettings: Component = () => {
     const [l, setL] = createSignal(0); // 亮度 (0-100%)
     const [autoStart, setAutoStart] = createSignal(true); // 系统自启开关状态
     const [version, setVersion] = createSignal(''); // 应用版本号
+    const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
+    const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
+    const [endpointDisplay, setEndpointDisplay] = createSignal<string>(''); // 调试展示用：当前 endpoint
 
     /**
      * 初始化 HSL 状态和获取应用版本
@@ -30,6 +51,14 @@ const AppSettings: Component = () => {
             setVersion(v);
         } catch (e) {
             console.error("获取版本失败", e);
+        }
+
+        // 加载当前 endpoint 用于调试展示
+        try {
+            const eps = await invoke<string[]>('get_updater_endpoint');
+            setEndpointDisplay(eps.join(', '));
+        } catch (e) {
+            console.warn('获取 endpoint 失败:', e);
         }
     });
 
@@ -75,6 +104,62 @@ const AppSettings: Component = () => {
 
         const nextHex = hslToHex(nextH, nextS, nextL);
         setThemeColor(nextHex);
+    };
+
+    /**
+     * 手动检查更新：调用后端 check_app_update，根据结构化结果更新 toast 状态和按钮提示
+     */
+    const handleManualCheck = async () => {
+        setCheckUpdating(true);
+        setCheckResult(null);
+        try {
+            const result = await invoke<CheckUpdateResult>('check_app_update');
+            setCheckResult(result);
+
+            switch (result.kind) {
+                case 'update_available':
+                    setAppUpdateInfo({
+                        version: result.info.version,
+                        currentVersion: result.info.current_version,
+                        notes: result.info.notes,
+                        pubDate: result.info.pub_date,
+                    });
+                    setAppUpdateDismissed(false);
+                    setAppUpdateAvailable(true);
+                    break;
+                case 'up_to_date':
+                case 'service_not_ready':
+                case 'network':
+                case 'failed':
+                    // 这几种情况都不弹左下角 Toast
+                    break;
+            }
+        } catch (e) {
+            console.error('手动检查更新失败:', e);
+            setCheckResult({
+                kind: 'failed',
+                current_version: version(),
+                endpoint: endpointDisplay(),
+                reason: typeof e === 'string' ? e : (e instanceof Error ? e.message : '未知错误'),
+            });
+        } finally {
+            setCheckUpdating(false);
+        }
+    };
+
+    /**
+     * 把结构化的检查结果翻译为显示在按钮旁的提示文字
+     */
+    const checkResultMessage = (): string => {
+        const r = checkResult();
+        if (!r) return '检查 AIO 是否有新版本发布';
+        switch (r.kind) {
+            case 'up_to_date':         return '当前已是最新版本';
+            case 'update_available':   return '已发现新版本，左下角查看详情';
+            case 'service_not_ready':  return '当前 release 尚未配置自动更新服务';
+            case 'network':            return '网络错误，无法连接更新服务器';
+            case 'failed':             return '检查失败，请稍后重试';
+        }
     };
 
     /**
@@ -226,6 +311,64 @@ const AppSettings: Component = () => {
                         <span>GitHub</span>
                     </div>
                 </div>
+
+                <div class="flex justify-between items-center py-3">
+                    <div class="flex-1 min-w-0 pr-4">
+                        <span class="block text-[#eee] text-[14px]">版本更新</span>
+                        <p
+                            class="text-xs mt-1"
+                            style={{
+                                color: (() => {
+                                    const r = checkResult();
+                                    if (!r) return '#777';
+                                    if (r.kind === 'update_available') return 'var(--primary-color)';
+                                    if (r.kind === 'service_not_ready' || r.kind === 'failed' || r.kind === 'network') return '#d99';
+                                    return '#7c9abf';
+                                })(),
+                            }}
+                        >
+                            {checkResultMessage()}
+                        </p>
+                        <Show when={checkResult() && checkResult()!.kind !== 'update_available' && checkResult()!.kind !== 'up_to_date'}>
+                            <p class="text-[11px] text-[#666] mt-1 break-all leading-relaxed">
+                                {checkResult()!.kind === 'service_not_ready' && '💡 '}
+                                {(checkResult() as { reason?: string }).reason}
+                            </p>
+                        </Show>
+                    </div>
+
+                    <button
+                        class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                        style={{
+                            background: 'rgba(var(--primary-rgb), 0.18)',
+                            color: 'var(--primary-color)',
+                            border: '1px solid rgba(var(--primary-rgb), 0.25)',
+                        }}
+                        disabled={checkUpdating()}
+                        onClick={handleManualCheck}
+                        title="手动检查更新"
+                    >
+                        <Icon src="/icons/app-logo/switch-arrows.svg" class="w-4 h-4" />
+                        <span class="text-sm font-medium">
+                            {checkUpdating() ? '检查中…' : '检查更新'}
+                        </span>
+                    </button>
+                </div>
+
+                <Show when={endpointDisplay()}>
+                    <div
+                        class="mt-2 px-3 py-2 rounded-lg text-[11px] font-mono leading-relaxed"
+                        style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            color: 'rgba(255, 255, 255, 0.45)',
+                            border: '1px solid rgba(255, 255, 255, 0.05)',
+                            'word-break': 'break-all',
+                        }}
+                        title="当前 tauri.conf.json 中配置的更新清单地址"
+                    >
+                        <span style="color: rgba(255,255,255,0.3)">endpoint:</span> {endpointDisplay()}
+                    </div>
+                </Show>
             </div>
 
             <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">

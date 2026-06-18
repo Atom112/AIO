@@ -20,6 +20,7 @@ use tauri_plugin_updater::Error as UpdaterError;
 
 /// 标准化后的更新信息（返回给前端）
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct AppUpdateInfo {
     /// 最新版本号（已去掉 `v` 前缀）
     pub version: String,

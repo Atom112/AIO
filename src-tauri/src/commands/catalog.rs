@@ -45,6 +45,7 @@ pub enum CatalogSource {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct CatalogResponse {
     pub source: CatalogSource,
     pub json: String,
@@ -54,6 +55,7 @@ pub struct CatalogResponse {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateResult {
     pub success: bool,
     pub model_count: usize,

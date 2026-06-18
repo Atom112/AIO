@@ -24,6 +24,7 @@ const ACTIVATED_MODELS_FILE: &str = "activated_models.json";
 const APP_CONFIG_FILE: &str = "config.json";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderConfig {
     pub id: String,
     pub enabled: bool,
@@ -39,6 +40,7 @@ pub struct ProviderConfig {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderConfigFile {
     pub version: u32,
     pub updated_at: String,
@@ -48,6 +50,7 @@ pub struct ProviderConfigFile {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct LegacyActivatedModel {
     pub model_id: String,
     pub owned_by: String,
@@ -60,6 +63,7 @@ pub struct LegacyActivatedModel {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct TestConnectionResult {
     pub success: bool,
     pub model_count: usize,
@@ -69,6 +73,7 @@ pub struct TestConnectionResult {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct FetchLiveModelsResult {
     pub success: bool,
     pub models: Vec<LiveModel>,
@@ -77,6 +82,7 @@ pub struct FetchLiveModelsResult {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct LiveModel {
     pub id: String,
     pub owned_by: String,
@@ -227,6 +233,8 @@ pub fn load_provider_configs() -> Result<ProviderConfigFile, String> {
             if let Ok(parsed) = serde_json::from_str::<ProviderConfigFile>(&raw) {
                 return Ok(parsed);
             }
+            // 解析失败：可能是旧 snake_case 格式 (rename_all 之前版本)，直接删除重来
+            let _ = fs::remove_file(&p);
         }
     }
 

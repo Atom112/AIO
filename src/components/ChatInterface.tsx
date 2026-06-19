@@ -200,7 +200,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     {(file, i) => (
                         <div class="flex items-center rounded-[16px] text-[12px] px-[10px] py-1 transition-all duration-200"
                              style="background: rgba(124,154,191,0.08); border: 1px solid rgba(124,154,191,0.04); color: rgba(124,154,191,0.6);">
-                            <Show when={file.type === 'image'} fallback={<span class="mr-1">📄</span>}>
+                            <Show when={file.type === 'image'} fallback={<span class="mr-1 inline-flex"><Icon name="file" size={12} class="opacity-60" /></span>}>
                                 <img src={file.content} class="w-5 h-5 object-cover mr-1 rounded-[2px]" />
                             </Show>
                             {file.name}

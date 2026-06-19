@@ -88,7 +88,9 @@ const ModelDropdown: Component<ModelDropdownProps> = (props) => {
                             </Show>
                           </Show>
                           <Show when={noKey()}>
-                            <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300" title="该 provider 未配置 API Key">⚠ 未配置 Key</span>
+                            <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 inline-flex items-center gap-0.5" title="该 provider 未配置 API Key">
+                                <Icon name="alert-triangle" size={9} /> 未配置 Key
+                            </span>
                           </Show>
                         </div>
                       </div>

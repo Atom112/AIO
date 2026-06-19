@@ -330,9 +330,11 @@ const AppSettings: Component = () => {
                             {checkResultMessage()}
                         </p>
                         <Show when={checkResult() && checkResult()!.kind !== 'update_available' && checkResult()!.kind !== 'up_to_date'}>
-                            <p class="text-[11px] text-[#666] mt-1 break-all leading-relaxed">
-                                {checkResult()!.kind === 'service_not_ready' && '💡 '}
-                                {(checkResult() as { reason?: string }).reason}
+                            <p class="text-[11px] text-[#666] mt-1 break-all leading-relaxed flex items-start gap-1">
+                                <Show when={checkResult()!.kind === 'service_not_ready'}>
+                                    <Icon name="lightbulb" size={11} class="text-yellow-300 shrink-0 mt-0.5" />
+                                </Show>
+                                <span>{(checkResult() as { reason?: string }).reason}</span>
                             </p>
                         </Show>
                     </div>

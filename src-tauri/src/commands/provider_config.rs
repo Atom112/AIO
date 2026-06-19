@@ -1,17 +1,14 @@
-//! # Provider 配置模块 (lobehub 形态)
+//! # Provider 配置模块 (lobehub v2 形态)
 //!
 //! 每个 provider 独立配置：开关 / API URL / Key / 启用的模型列表。
 //! 持久化到 `$APPDATA/com.loch.aio/provider-configs.json`。
 //!
-//! ## 数据迁移
-//! 首次启动时如果新文件不存在 + 旧 `activatedModels.json` 存在：
-//! - 按 `api_url` 分组（相同 URL 视为同一 provider）
-//! - 用 host 反查推断 provider id（OpenAI/Anthropic 等）
-//! - 生成初始 ProviderConfig 列表
-//!
-//! ## 测试连接
-//! 调 `fetch_models` 内部使用的同一套逻辑（GET {api_url}/models），
-//! 验证返回 200 + JSON 数组。
+//! ## 设计 (v2)
+//! - 完整的 provider 列表来自前端 catalog (`@aio/models-data`)，后端不持有预设。
+//! - `version=2` 配置文件与旧版本不兼容：加载时若 version 不匹配或解析失败，直接清空返回。
+//! - 旧 `activated_models.json` / `config.json` 不再迁移（用户需重新配置）。
+//! - 模型元数据（displayName / contextWindow / pricing / capabilities）由 catalog 提供，
+//!   后端 `fetch_provider_models` 仅作为可选的"实时校验"通道。
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -25,8 +22,7 @@ use crate::plugins::provider::{
 
 const APPDATA_DIRNAME: &str = "com.loch.aio";
 const PROVIDER_FILE: &str = "provider-configs.json";
-const ACTIVATED_MODELS_FILE: &str = "activated_models.json";
-const APP_CONFIG_FILE: &str = "config.json";
+const CURRENT_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -58,21 +54,6 @@ pub struct ProviderConfigFile {
     pub version: u32,
     pub updated_at: String,
     pub providers: BTreeMap<String, ProviderConfig>,
-    #[serde(default)]
-    pub legacy_activated_models: Option<Vec<LegacyActivatedModel>>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct LegacyActivatedModel {
-    pub model_id: String,
-    pub owned_by: String,
-    pub api_url: String,
-    pub api_key: String,
-    #[serde(default)]
-    pub local_path: Option<String>,
-    #[serde(default)]
-    pub engine_type: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -106,14 +87,6 @@ fn provider_path() -> Option<PathBuf> {
     Some(config_dir()?.join(PROVIDER_FILE))
 }
 
-fn activated_models_path() -> Option<PathBuf> {
-    Some(config_dir()?.join(ACTIVATED_MODELS_FILE))
-}
-
-fn app_config_path() -> Option<PathBuf> {
-    Some(config_dir()?.join(APP_CONFIG_FILE))
-}
-
 fn now_iso() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -124,187 +97,35 @@ fn now_iso() -> String {
     format!("{}", secs)
 }
 
-fn detect_provider_from_url(url: &str) -> Option<(&'static str, &'static str)> {
-    let u = url.to_lowercase();
-    let known: &[(&str, &str, &str)] = &[
-        ("api.openai.com", "openai", "https://api.openai.com/v1"),
-        ("api.anthropic.com", "anthropic", "https://api.anthropic.com"),
-        ("generativelanguage.googleapis.com", "google", "https://generativelanguage.googleapis.com/v1beta"),
-        ("api.deepseek.com", "deepseek", "https://api.deepseek.com/v1"),
-        ("api.groq.com", "groq", "https://api.groq.com/openai/v1"),
-        ("api.mistral.ai", "mistral", "https://api.mistral.ai/v1"),
-        ("api.x.ai", "xai", "https://api.x.ai/v1"),
-        ("api.cohere.ai", "cohere", "https://api.cohere.ai/v1"),
-        ("openrouter.ai", "openrouter", "https://openrouter.ai/api/v1"),
-    ];
-    for (host, id, default_url) in known {
-        if u.contains(host) {
-            return Some((id, default_url));
-        }
-    }
-    None
-}
-
-fn default_providers() -> BTreeMap<String, ProviderConfig> {
-    let presets: Vec<(&str, &str, &str, Vec<&str>)> = vec![
-        ("openai", "OpenAI", "https://api.openai.com/v1",
-         vec!["gpt-4o", "gpt-4o-mini", "o3", "o4-mini"]),
-        ("anthropic", "Anthropic", "https://api.anthropic.com",
-         vec!["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"]),
-        ("google", "Google", "https://generativelanguage.googleapis.com/v1beta",
-         vec!["gemini-2.5-pro", "gemini-2.5-flash"]),
-        ("deepseek", "DeepSeek", "https://api.deepseek.com/v1",
-         vec!["deepseek-v4-pro", "deepseek-v4-flash"]),
-        ("groq", "Groq", "https://api.groq.com/openai/v1",
-         vec!["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]),
-        ("mistral", "Mistral", "https://api.mistral.ai/v1",
-         vec!["mistral-large-latest", "codestral-latest"]),
-        ("xai", "xAI", "https://api.x.ai/v1",
-         vec!["grok-4", "grok-4-fast"]),
-        ("cohere", "Cohere", "https://api.cohere.ai/v1",
-         vec!["command-a", "command-r-plus"]),
-    ];
-    let mut map = BTreeMap::new();
-    for (id, name, url, models) in presets {
-        map.insert(
-            id.to_string(),
-            ProviderConfig {
-                id: id.to_string(),
-                enabled: true,  // 默认启用：让用户立刻看到所有 preset 模型，再决定是否禁用/填 key
-                display_name: name.to_string(),
-                api_url: url.to_string(),
-                api_key: String::new(),
-                enabled_models: models.into_iter().map(String::from).collect(),
-                is_custom: false,
-                custom_model_ids: vec![],
-                proxy_url: None,
-                fetched_models: vec![],
-            },
-        );
-    }
-    map
-}
-
-fn migrate_from_activated_models(
-    activated: &[LegacyActivatedModel],
-    base: &mut BTreeMap<String, ProviderConfig>,
-) {
-    use std::collections::HashMap;
-    let mut by_url: HashMap<String, Vec<&LegacyActivatedModel>> = HashMap::new();
-    for m in activated {
-        by_url.entry(m.api_url.clone()).or_default().push(m);
-    }
-
-    for (url, group) in by_url {
-        if url.contains("127.0.0.1") || url.contains("localhost") {
-            continue;
-        }
-        let (id, default_url) = match detect_provider_from_url(&url) {
-            Some(v) => v,
-            None => continue,
-        };
-
-        let entry = base.entry(id.to_string()).or_insert_with(|| ProviderConfig {
-            id: id.to_string(),
-            enabled: true,
-            display_name: id.to_string(),
-            api_url: default_url.to_string(),
-            api_key: String::new(),
-            enabled_models: vec![],
-            is_custom: false,
-            custom_model_ids: vec![],
-            proxy_url: None,
-            fetched_models: vec![],
-        });
-        entry.enabled = true;
-        entry.api_url = if url.starts_with("http") { url.clone() } else { entry.api_url.clone() };
-        // 取第一条非空 key
-        if entry.api_key.is_empty() {
-            if let Some(m) = group.iter().find(|m| !m.api_key.is_empty()) {
-                entry.api_key = m.api_key.clone();
-            }
-        }
-        // 合并模型 id
-        let mut ids: Vec<String> = entry.enabled_models.clone();
-        for m in &group {
-            if !ids.contains(&m.model_id) {
-                ids.push(m.model_id.clone());
-            }
-        }
-        entry.enabled_models = ids;
-    }
-}
-
-/// 加载 provider 配置（首次自动迁移）
+/// 加载 provider 配置
+/// - 文件存在且 version=CURRENT_VERSION: 正常返回
+/// - 文件不存在 / 解析失败 / version 不匹配: 视为首次安装, 返回空 map
+/// - 不会从旧 activated_models.json / config.json 迁移 (v2 设计)
 #[tauri::command]
 pub fn load_provider_configs() -> Result<ProviderConfigFile, String> {
     if let Some(p) = provider_path() {
         if let Ok(raw) = fs::read_to_string(&p) {
-            if let Ok(parsed) = serde_json::from_str::<ProviderConfigFile>(&raw) {
-                return Ok(parsed);
-            }
-            // 解析失败：可能是旧 snake_case 格式 (rename_all 之前版本)，直接删除重来
-            let _ = fs::remove_file(&p);
-        }
-    }
-
-    // 首次：尝试从旧 activated_models.json + config.json 迁移
-    let mut providers = default_providers();
-
-    if let Some(p) = app_config_path() {
-        if let Ok(raw) = fs::read_to_string(&p) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                if let Some(url) = v.get("apiUrl").and_then(|x| x.as_str()) {
-                    if let Some((id, default_url)) = detect_provider_from_url(url) {
-                        let entry = providers.entry(id.to_string()).or_insert_with(|| ProviderConfig {
-                            id: id.to_string(),
-                            enabled: false,
-                            display_name: id.to_string(),
-                            api_url: default_url.to_string(),
-                            api_key: String::new(),
-                            enabled_models: vec![],
-                            is_custom: false,
-                            custom_model_ids: vec![],
-                            proxy_url: None,
-                            fetched_models: vec![],
-                        });
-                        entry.enabled = true;
-                        entry.api_url = url.to_string();
-                    }
+            match serde_json::from_str::<ProviderConfigFile>(&raw) {
+                Ok(parsed) if parsed.version == CURRENT_VERSION => return Ok(parsed),
+                Ok(_) => {
+                    // 旧 version (1) 不兼容，直接删除
+                    let _ = fs::remove_file(&p);
                 }
-                if let Some(key) = v.get("apiKey").and_then(|x| x.as_str()) {
-                    if let Some((id, _)) = detect_provider_from_url(
-                        v.get("apiUrl").and_then(|x| x.as_str()).unwrap_or(""),
-                    ) {
-                        if let Some(entry) = providers.get_mut(id) {
-                            entry.api_key = key.to_string();
-                        }
-                    }
+                Err(_) => {
+                    // 解析失败（旧 snake_case 格式等），删除
+                    let _ = fs::remove_file(&p);
                 }
             }
         }
     }
 
-    let legacy: Option<Vec<LegacyActivatedModel>> = activated_models_path()
-        .as_ref()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|raw| serde_json::from_str(&raw).ok());
-
-    let legacy_clone = legacy.clone();
-    if let Some(ref l) = legacy {
-        migrate_from_activated_models(l, &mut providers);
-    }
-
+    // 首次：返回空 map，立即写回 v2 文件
     let file = ProviderConfigFile {
-        version: 1,
+        version: CURRENT_VERSION,
         updated_at: now_iso(),
-        providers,
-        legacy_activated_models: legacy_clone,
+        providers: BTreeMap::new(),
     };
-
-    // 立即写回
     let _ = save_provider_configs_internal(&file);
-
     Ok(file)
 }
 

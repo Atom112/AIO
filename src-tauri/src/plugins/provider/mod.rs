@@ -50,9 +50,6 @@ pub trait ProviderPlugin: Send + Sync {
 
     /// 从 JSON 响应解析为统一 LiveModel 列表
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel>;
-
-    /// 该厂商的硬编码默认模型列表（拉取失败时回退用）
-    fn default_models(&self) -> Vec<(&'static str, &'static str)>;
 }
 
 /// Provider 插件管理器：按 host 派发到第一个匹配的插件
@@ -90,15 +87,6 @@ impl ProviderManager {
                     .expect("at least one provider plugin must be registered")
                     .as_ref()
             })
-    }
-
-    /// 按 provider id 查找（如 "google" / "anthropic"），用于回退时取默认模型列表
-    #[allow(dead_code)]
-    pub fn by_id(&self, id: &str) -> Option<&dyn ProviderPlugin> {
-        self.plugins
-            .iter()
-            .find(|p| p.identifier() == id)
-            .map(|p| p.as_ref())
     }
 }
 

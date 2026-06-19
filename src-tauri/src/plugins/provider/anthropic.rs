@@ -94,12 +94,4 @@ impl ProviderPlugin for AnthropicProvider {
             })
             .collect()
     }
-
-    fn default_models(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("claude-sonnet-4-5", "Anthropic"),
-            ("claude-opus-4-1", "Anthropic"),
-            ("claude-haiku-4-5", "Anthropic"),
-        ]
-    }
 }

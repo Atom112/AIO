@@ -97,19 +97,4 @@ impl ProviderPlugin for OpenAICompatProvider {
             })
             .collect()
     }
-
-    fn default_models(&self) -> Vec<(&'static str, &'static str)> {
-        // 兜底: 列出最常见的 OpenAI 兼容厂商预设
-        vec![
-            ("gpt-4o", "OpenAI"),
-            ("gpt-4o-mini", "OpenAI"),
-            ("o3", "OpenAI"),
-            ("o4-mini", "OpenAI"),
-            ("deepseek-v3", "DeepSeek"),
-            ("llama-3.3-70b-versatile", "Groq"),
-            ("mistral-large-latest", "Mistral"),
-            ("grok-4", "xAI"),
-            ("command-r-plus", "Cohere"),
-        ]
-    }
 }

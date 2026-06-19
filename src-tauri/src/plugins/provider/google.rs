@@ -86,11 +86,12 @@ impl ProviderPlugin for GoogleProvider {
                     .strip_prefix("models/")
                     .unwrap_or(&raw_name)
                     .to_string();
+                // displayName 是人类可读名（如 "Gemini 2.5 Pro"），应填到 display_name
                 let display_name = m
                     .get("displayName")
                     .and_then(|x| x.as_str())
                     .map(String::from);
-                // Gemini 不返回发布信息
+                // Gemini 响应没有标准发布日期字段，保持 None
                 Some(LiveModel {
                     id,
                     owned_by: "Google".to_string(),
@@ -101,11 +102,4 @@ impl ProviderPlugin for GoogleProvider {
             .collect()
     }
 
-    fn default_models(&self) -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("gemini-2.5-pro", "Google"),
-            ("gemini-2.5-flash", "Google"),
-            ("gemini-2.0-flash-exp", "Google"),
-        ]
-    }
 }

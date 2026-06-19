@@ -78,9 +78,4 @@ impl ProviderPlugin for OllamaProvider {
             })
             .collect()
     }
-
-    fn default_models(&self) -> Vec<(&'static str, &'static str)> {
-        // Ollama 本地，模型由用户自行 pull，不预设
-        vec![]
-    }
 }

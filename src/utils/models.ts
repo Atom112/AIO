@@ -38,16 +38,6 @@ export interface ProviderConfigFile {
   version: number
   updatedAt: string
   providers: Record<string, ProviderConfig>
-  legacyActivatedModels?: LegacyActivatedModel[] | null
-}
-
-export interface LegacyActivatedModel {
-  model_id: string
-  owned_by: string
-  api_url: string
-  api_key: string
-  local_path?: string | null
-  engine_type?: string | null
 }
 
 export interface TestConnectionResult {
@@ -60,7 +50,7 @@ export interface TestConnectionResult {
 
 export interface FetchLiveModelsResult {
   success: boolean
-  models: Array<{ id: string; owned_by: string }>
+  models: Array<{ id: string; owned_by: string; display_name?: string; released_at?: string }>
   error: string | null
   elapsedMs: number
 }
@@ -258,4 +248,107 @@ export function formatRelativeTime(iso: string | null): string {
   } catch {
     return iso
   }
+}
+
+/** 格式化 releaseDate（"2025-01-15" → "2025-01"）只取年月 */
+export function formatReleaseDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  return iso.slice(0, 7) // YYYY-MM
+}
+
+// ==================== v2 工具函数 ====================
+
+/**
+ * 合并 catalog 模型元数据 + 用户启用状态, 拆分为三段
+ * - enabled: 已启用的 (按 enabledIds 原顺序)
+ * - available: catalog 中有但未启用的 (按 releaseDate desc, 同日期按 id 字母序)
+ * - orphans: enabledModels 中有但 catalog 没有的 (遗留 custom / 老 config)
+ */
+export function listProviderModels(
+  catalog: Catalog,
+  providerId: string,
+  enabledIds: readonly string[]
+): {
+  enabled: ModelMeta[]
+  available: ModelMeta[]
+  orphans: string[]
+} {
+  const catalogModels = catalog.models.filter(m => m.provider === providerId)
+  const enabledSet = new Set(enabledIds)
+  const enabledOrder = new Map(enabledIds.map((id, i) => [id, i]))
+
+  const enabled: ModelMeta[] = []
+  const available: ModelMeta[] = []
+  const seen = new Set<string>()
+
+  for (const m of catalogModels) {
+    if (enabledSet.has(m.id)) {
+      enabled.push(m)
+      seen.add(m.id)
+    }
+  }
+  // 按 enabledIds 顺序排序 enabled
+  enabled.sort((a, b) => (enabledOrder.get(a.id) ?? 0) - (enabledOrder.get(b.id) ?? 0))
+
+  for (const m of catalogModels) {
+    if (!seen.has(m.id)) {
+      available.push(m)
+    }
+  }
+  // 按 releaseDate desc, 同日期按 id 字母序
+  available.sort((a, b) => {
+    const ra = a.releaseDate ?? ''
+    const rb = b.releaseDate ?? ''
+    if (ra !== rb) return rb.localeCompare(ra) // desc
+    return a.id.localeCompare(b.id)
+  })
+
+  // orphans: enabledIds 中有但 catalog 没有的
+  const catalogIds = new Set(catalogModels.map(m => m.id))
+  const orphans = enabledIds.filter(id => !catalogIds.has(id))
+
+  return { enabled, available, orphans }
+}
+
+/**
+ * 通过 host 反查 provider id (统一入口, 替代三处重复实现)
+ * 优先匹配 catalog 中 ProviderMeta 的 api 字段, 兜底用 9 个常见 host 映射
+ */
+const KNOWN_HOSTS: ReadonlyArray<readonly [string, string]> = [
+  ['api.openai.com', 'openai'],
+  ['api.anthropic.com', 'anthropic'],
+  ['generativelanguage.googleapis.com', 'google'],
+  ['api.deepseek.com', 'deepseek'],
+  ['api.groq.com', 'groq'],
+  ['api.mistral.ai', 'mistral'],
+  ['api.x.ai', 'xai'],
+  ['api.cohere.ai', 'cohere'],
+  ['openrouter.ai', 'openrouter'],
+]
+
+export function detectProviderByUrl(url: string): string | null {
+  if (!url) return null
+  const u = url.toLowerCase()
+  for (const [host, pid] of KNOWN_HOSTS) {
+    if (u.includes(host)) return pid
+  }
+  return null
+}
+
+/** 列表页搜索: 匹配 provider 名 + catalog 中模型 id/displayName 命中的 provider id */
+export function searchProviders(catalog: Catalog, query: string): ProviderMeta[] {
+  if (!query.trim()) return catalog.providers
+  const q = query.toLowerCase()
+  const matchedProviderIds = new Set<string>()
+  for (const p of catalog.providers) {
+    if (p.id.includes(q) || p.name.toLowerCase().includes(q)) {
+      matchedProviderIds.add(p.id)
+    }
+  }
+  for (const m of catalog.models) {
+    if (m.id.toLowerCase().includes(q) || m.displayName.toLowerCase().includes(q)) {
+      matchedProviderIds.add(m.provider)
+    }
+  }
+  return catalog.providers.filter(p => matchedProviderIds.has(p.id))
 }

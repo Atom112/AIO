@@ -8,13 +8,24 @@ import { lazy, Suspense } from 'solid-js';
 import Layout from './Layout.tsx';
 import './index.css';
 
+const Settings = lazy(() => import('./pages/Settings.tsx'));
+const ProviderList = lazy(() => import('./components/ProviderList.tsx'));
+const ProviderDetail = lazy(() => import('./pages/ProviderDetail.tsx'));
+const AccountSettings = lazy(() => import('./components/AccountSettings.tsx'));
+const AppSettings = lazy(() => import('./components/AppSettings.tsx'));
+
 render(
   () => (
     <Suspense fallback={<div class="loading-container">Loading...</div>}>
       <Router root={Layout}>
         <Route path="/" component={() => <Navigate href="/chat" />} />
-        <Route path="/chat" component={lazy(() => import("./pages/Chat.tsx"))} />
-        <Route path="/settings" component={lazy(() => import("./pages/Settings.tsx"))} />
+        <Route path="/chat" component={lazy(() => import('./pages/Chat.tsx'))} />
+        <Route path="/settings" component={Settings}>
+          <Route path="" component={ProviderList} />
+          <Route path="/provider/:providerId" component={ProviderDetail} />
+          <Route path="/account" component={AccountSettings} />
+          <Route path="/app" component={AppSettings} />
+        </Route>
       </Router>
     </Suspense>
   ),

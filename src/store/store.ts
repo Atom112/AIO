@@ -226,7 +226,7 @@ export const [datas, setDatas] = createStore({
  * 从本地存储加载应用初始配置
  */
 const initialConfig: AppConfig = JSON.parse(
-    localStorage.getItem('app_config') || '{"apiUrl":"","apiKey":"","defaultModel":"gpt-4o"}'
+    localStorage.getItem('app_config') || '{"apiUrl":"","apiKey":"","defaultModel":""}'
 );
 
 /** 应用配置信号，存储 API URL 和 Key 等全局设置 */

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
-  saveSingleAssistantToBackend, Assistant, Topic, selectedModel,
+  saveSingleAssistantToBackend, Assistant, Topic, selectedModel, reasoningLevel,
 } from '../store/store';
 import AssistantSidebar from '../components/AssistantSidebar';
 import ChatInterface from '../components/ChatInterface';
@@ -236,8 +236,20 @@ const ChatPage: Component = () => {
     const currentAsst = currentAssistant();
     const currentTopic = activeTopic();
     if (!currentAsst || !currentTopic) return;
+
+    /** 根据推理强度注入对应的 system 提示, 让模型使用 <think>...</think> 输出思考过程 */
+    const reasoningPrompt = (() => {
+        switch (reasoningLevel()) {
+            case 'low':    return '在回答前先进行简单思考. 用 <think> 标签包裹你的推理过程, 再给出最终回答. 控制思考长度, 简单问题不要过度展开.';
+            case 'medium': return '在回答前先进行中等深度的思考. 用 <think> 标签包裹你的推理过程 (分析问题、拆解步骤、对比方案), 再给出最终回答.';
+            case 'high':   return '在回答前进行深入的多步推理. 必须在 <think> 标签中详细分析问题、列出前提、考虑边界情况、对比多种方案, 再给出严谨的最终回答. 思考越充分越好.';
+            default:       return null;
+        }
+    })();
+
     const messagesForAI = [
       { role: 'system', content: currentAsst.prompt },
+      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(currentTopic.summary ? [{
         role: 'system',
         content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`

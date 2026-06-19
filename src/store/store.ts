@@ -58,6 +58,16 @@ export interface User {
 export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-logo/user.svg');
 /** 主题颜色信号，从本地存储读取或使用默认柔雾蓝 #7c9abf */
 export const [themeColor, setThemeColor] = createSignal(localStorage.getItem('theme-color') || '#7c9abf');
+/** 推理强度 (off=关闭 / low=轻度 / medium=中度 / high=深度) */
+export type ReasoningLevel = 'off' | 'low' | 'medium' | 'high';
+const REASONING_KEY = 'chat-reasoning-level';
+export const [reasoningLevel, setReasoningLevel] = createSignal<ReasoningLevel>(
+    (localStorage.getItem(REASONING_KEY) as ReasoningLevel) || 'off'
+);
+export const persistReasoningLevel = (lvl: ReasoningLevel) => {
+    setReasoningLevel(lvl);
+    localStorage.setItem(REASONING_KEY, lvl);
+};
 /** 当前选中的模型信号，用于获取当前对话使用的 AI 配置 */
 export const [selectedModel, setSelectedModel] = createSignal<ActivatedModel | null>(null);
 /** 当前选中的助手 ID 信号，用于侧边栏助手切换 */

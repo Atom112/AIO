@@ -1,5 +1,6 @@
 node_modules
 dist
+target/
 src-tauri/resources/llama-backend/
 src-tauri/keys/
 src-tauri/target/

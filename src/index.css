@@ -189,13 +189,26 @@ html, body {
         background: rgba(224, 128, 144, 0.8);
     }
 
-    /* 右键上下文菜单容器 */
+    /* 右键上下文菜单容器 (亚克力主题) */
     .context-menu {
-        @apply fixed z-[100] min-w-[150px] rounded-lg shadow-xl py-1 origin-top-left;
-        background: rgba(22, 27, 40, 0.85);
-        backdrop-filter: blur(30px);
-        -webkit-backdrop-filter: blur(30px);
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        @apply fixed z-[1500] min-w-[150px] rounded-lg shadow-xl py-1 origin-top-left;
+        background: var(--acrylic-bg);
+        backdrop-filter: blur(40px) saturate(180%);
+        -webkit-backdrop-filter: blur(40px) saturate(180%);
+        border: 1px solid var(--acrylic-border);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        animation: contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    }
+    .context-menu.closing {
+        animation: contextMenuOut 0.14s ease-in forwards;
+    }
+    @keyframes contextMenuIn {
+        from { opacity: 0; transform: scale(0.94) translateY(-4px); }
+        to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes contextMenuOut {
+        from { opacity: 1; transform: scale(1) translateY(0); }
+        to { opacity: 0; transform: scale(0.96) translateY(-2px); }
     }
 
     /* 上下文菜单项 */
@@ -273,7 +286,7 @@ html, body {
         transform: translateX(2px) scale(0.995);
     }
 
-    /* 行 logo 方块 (统一) */
+    /* 行 logo 方块 (统一, 白底深字) */
     .logo-tile {
         display: flex;
         align-items: center;
@@ -281,14 +294,17 @@ html, body {
         width: 36px;
         height: 36px;
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.85);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
         overflow: hidden;
         flex-shrink: 0;
-        transition: border-color 0.2s ease, background 0.2s ease;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        color: #1a1e2c;
     }
     .list-row:hover .logo-tile {
-        border-color: rgba(var(--primary-rgb), 0.25);
+        border-color: rgba(var(--primary-rgb), 0.5);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15), 0 0 0 2px rgba(var(--primary-rgb), 0.15);
     }
 
     /* 状态徽章 */
@@ -445,6 +461,72 @@ html, body {
         font-weight: 600;
     }
 
+    /* ========== 自定义下拉 (亚克力) ========== */
+    /* 用于已用 appearance: none 的 <select> 触发器 */
+    .select-glass {
+        appearance: none;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        background-color: rgba(0, 0, 0, 0.25);
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+        background-repeat: no-repeat;
+        background-position: right 8px center;
+        background-size: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        color: white;
+        padding-right: 28px !important;
+        cursor: pointer;
+        transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .select-glass:hover { border-color: rgba(255, 255, 255, 0.14); }
+    .select-glass:focus {
+        outline: none;
+        border-color: rgba(var(--primary-rgb), 0.55);
+        background-color: rgba(0, 0, 0, 0.35);
+        box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.12);
+    }
+    .select-glass option {
+        background: rgba(18, 22, 35, 0.95);
+        color: white;
+        padding: 4px 8px;
+    }
+
+    /* 自定义下拉组件 (亚克力面板) */
+    .dropdown-panel {
+        position: absolute;
+        z-index: 100;
+        min-width: 100%;
+        background: rgba(18, 22, 35, 0.88);
+        backdrop-filter: blur(40px) saturate(180%);
+        -webkit-backdrop-filter: blur(40px) saturate(180%);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+        padding: 4px;
+        animation: dropdownIn 0.15s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        transform-origin: top center;
+    }
+    @keyframes dropdownIn {
+        from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 10px;
+        border-radius: 6px;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: inherit;
+        cursor: pointer;
+        transition: background 0.12s ease, color 0.12s ease;
+        user-select: none;
+    }
+    .dropdown-item:hover { background: rgba(var(--primary-rgb), 0.12); color: white; }
+    .dropdown-item.selected { background: rgba(var(--primary-rgb), 0.18); color: white; }
+    .dropdown-item.active { background: rgba(var(--primary-rgb), 0.1); color: white; }
+
     /* 导航栏图标链接 */
     .nav-icon-link {
         @apply flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer;
@@ -471,14 +553,14 @@ html, body {
 
     .code-wrapper {
         @apply my-5 rounded-xl overflow-hidden;
-        background: rgba(13, 17, 23, 0.6);
+        background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.06);
     }
 
     .code-header {
         @apply flex items-center justify-between px-4 py-2.5 select-none;
-        background: rgba(22, 27, 34, 0.5);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        background: rgba(255, 255, 255, 0.03);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
 
     .code-lang {
@@ -566,4 +648,261 @@ input[type="range"]::-webkit-slider-thumb:active {
     transform: scale(1.15);
     border-color: #fff;
     background: rgba(255, 255, 255, 0.25);
+}
+
+/* ========================================
+   思考过程块 (reasoning / chain-of-thought)
+   亚克力风格: 微妙透明 + 斜体 + 软边框
+   ======================================== */
+.think-block {
+    @apply my-3 rounded-lg overflow-hidden;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background 0.2s, border-color 0.2s;
+}
+.think-block:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+.think-block.is-streaming {
+    background: rgba(var(--primary-rgb), 0.05);
+    border-color: rgba(var(--primary-rgb), 0.15);
+}
+.think-block.is-streaming:hover {
+    background: rgba(var(--primary-rgb), 0.07);
+}
+
+.think-header {
+    @apply flex items-center w-full gap-2 px-3 py-2 cursor-pointer select-none;
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+    transition: color 0.2s;
+}
+.think-header:hover {
+    color: rgba(255, 255, 255, 0.75);
+}
+.think-block.is-streaming .think-header {
+    color: rgba(var(--primary-rgb), 0.95);
+    cursor: default;
+}
+
+.think-icon-wrap {
+    @apply flex items-center justify-center w-5 h-5 rounded;
+    background: rgba(255, 255, 255, 0.05);
+    color: inherit;
+    position: relative;
+}
+.think-block.is-streaming .think-icon-wrap {
+    background: rgba(var(--primary-rgb), 0.12);
+}
+.think-icon {
+    @apply w-3.5 h-3.5;
+    animation: thinkIconPulse 2s ease-in-out infinite;
+}
+.think-block.is-streaming .think-icon {
+    animation: thinkIconSpin 2.4s linear infinite;
+}
+@keyframes thinkIconPulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+}
+@keyframes thinkIconSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.think-title {
+    @apply font-medium;
+    flex: 0 0 auto;
+}
+.think-duration {
+    @apply font-mono;
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 11px;
+    flex: 0 0 auto;
+    margin-left: 2px;
+}
+.think-block.is-streaming .think-duration {
+    color: rgba(var(--primary-rgb), 0.6);
+}
+
+.think-chevron {
+    @apply flex items-center justify-center;
+    margin-left: auto;
+    color: rgba(255, 255, 255, 0.3);
+    transition: transform 0.2s, color 0.2s;
+}
+.think-block:hover .think-chevron {
+    color: rgba(255, 255, 255, 0.55);
+}
+.think-chevron-icon {
+    transform: rotate(-90deg);
+    transition: transform 0.2s;
+}
+.think-block.is-open .think-chevron-icon {
+    transform: rotate(0deg);
+}
+.think-block.is-streaming .think-chevron {
+    display: none;
+}
+
+.think-body {
+    @apply px-3 overflow-hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s, padding 0.28s;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+.think-block.is-open .think-body {
+    max-height: 1200px;
+    opacity: 1;
+    padding-top: 2px;
+    padding-bottom: 12px;
+}
+
+.think-content {
+    @apply text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.15);
+    border-left: 2px solid rgba(255, 255, 255, 0.08);
+    max-height: 360px;
+    overflow-y: auto;
+}
+.think-block.is-streaming .think-content {
+    color: rgba(255, 255, 255, 0.65);
+    border-left-color: rgba(var(--primary-rgb), 0.4);
+    background: rgba(0, 0, 0, 0.1);
+}
+
+/* 思考内容滚动条美化 */
+.think-content::-webkit-scrollbar { width: 6px; }
+.think-content::-webkit-scrollbar-track { background: transparent; }
+.think-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+.think-content::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* markdown 段落间分隔 (think 块插入) */
+.markdown-segment > :first-child { margin-top: 0 !important; }
+.markdown-segment > :last-child { margin-bottom: 0 !important; }
+
+/* ========================================
+   推理强度按钮 + 弹窗 (LobeHub 风格)
+   亚克力: 透明背景 + 软边框 + 主色高亮
+   ======================================== */
+.reasoning-trigger {
+    @apply flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 12px;
+    font-weight: 500;
+}
+.reasoning-trigger:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.8);
+}
+.reasoning-trigger.is-active {
+    background: rgba(var(--primary-rgb), 0.15);
+    color: rgba(var(--primary-rgb), 0.95);
+    box-shadow: 0 0 0 1px rgba(var(--primary-rgb), 0.25) inset;
+}
+.reasoning-trigger.is-active:hover {
+    background: rgba(var(--primary-rgb), 0.22);
+}
+.reasoning-trigger-icon {
+    @apply flex-shrink-0;
+}
+.reasoning-trigger-label {
+    line-height: 1;
+}
+
+.reasoning-popup {
+    @apply absolute left-0 bottom-full mb-2 w-[280px] rounded-xl p-1.5 z-[1500];
+    background: var(--acrylic-bg);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border: 1px solid var(--acrylic-border);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    animation: reasoningPopupIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    transform-origin: bottom left;
+}
+@keyframes reasoningPopupIn {
+    from { opacity: 0; transform: translateY(6px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.reasoning-popup-header {
+    @apply px-3 pt-2 pb-2.5;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.reasoning-popup-title {
+    @apply flex items-center gap-2 text-[13px] font-semibold mb-1;
+    color: rgba(255, 255, 255, 0.85);
+}
+.reasoning-popup-title svg {
+    color: rgba(var(--primary-rgb), 0.9);
+}
+.reasoning-popup-sub {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    line-height: 1.5;
+    padding-left: 22px;
+}
+
+.reasoning-options {
+    @apply flex flex-col gap-0.5 pt-1.5 pb-1;
+}
+
+.reasoning-option {
+    @apply flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md border-none cursor-pointer text-left transition-all duration-150;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+}
+.reasoning-option:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.9);
+}
+.reasoning-option.is-selected {
+    background: rgba(var(--primary-rgb), 0.12);
+    color: rgba(255, 255, 255, 0.95);
+}
+.reasoning-option.is-selected:hover {
+    background: rgba(var(--primary-rgb), 0.16);
+}
+
+.reasoning-option-icon {
+    @apply flex items-center justify-center w-7 h-7 rounded-md flex-shrink-0;
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.6);
+}
+.reasoning-option.is-selected .reasoning-option-icon {
+    background: rgba(var(--primary-rgb), 0.18);
+    color: rgba(var(--primary-rgb), 0.95);
+}
+
+.reasoning-option-text {
+    @apply flex flex-col grow min-w-0;
+}
+.reasoning-option-label {
+    @apply text-[12.5px] font-semibold leading-tight;
+}
+.reasoning-option-desc {
+    font-size: 10.5px;
+    color: rgba(255, 255, 255, 0.4);
+    line-height: 1.4;
+    margin-top: 2px;
+}
+.reasoning-option.is-selected .reasoning-option-desc {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.reasoning-option-check {
+    @apply flex-shrink-0;
+    color: rgba(var(--primary-rgb), 0.95);
 }

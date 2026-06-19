@@ -1,4 +1,5 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId } from '../store/store';
 import Icon from './Icon';
 
@@ -130,22 +131,26 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
             </div>
 
             {showMenuDiv() && (
-                <div
-                    class="context-menu"
-                    style={`top: ${menuState().y}px; left: ${menuState().x}px;`}
-                >
-                    <button
-                        class="context-menu-item disabled:opacity-30"
-                        disabled={menuState().targetId === "default-assistant-id"}
-                        onClick={() => { props.setEditingAsstId(menuState().targetId); closeMenu(); }}
-                    >重命名</button>
-                    <button
-                        class="context-menu-item disabled:opacity-30"
-                        style="color: rgba(255,77,77,0.8);"
-                        disabled={menuState().targetId === "default-assistant-id"}
-                        onClick={() => removeAssistant(menuState().targetId)}
-                    >删除助手</button>
-                </div>
+                <Portal>
+                    <div
+                        class="context-menu"
+                        classList={{ closing: isMenuAnimatingOut() }}
+                        style={`top: ${menuState().y}px; left: ${menuState().x}px;`}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            class="context-menu-item disabled:opacity-30"
+                            disabled={menuState().targetId === "default-assistant-id"}
+                            onClick={() => { props.setEditingAsstId(menuState().targetId); closeMenu(); }}
+                        >重命名</button>
+                        <button
+                            class="context-menu-item disabled:opacity-30"
+                            style="color: rgba(255,77,77,0.8);"
+                            disabled={menuState().targetId === "default-assistant-id"}
+                            onClick={() => removeAssistant(menuState().targetId)}
+                        >删除助手</button>
+                    </div>
+                </Portal>
             )}
 
             {/* 调整大小把手 */}

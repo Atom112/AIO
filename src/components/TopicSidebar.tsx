@@ -1,4 +1,5 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import {
     Assistant, Topic, datas, setDatas, currentTopicId, setCurrentTopicId, saveSingleAssistantToBackend
 } from '../store/store';
@@ -157,10 +158,17 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
             </div>
 
             {showTopicMenuDiv() && (
-                <div class="context-menu" style={`top: ${topicMenuState().y}px; left: ${topicMenuState().x}px;`}>
-                    <button class="context-menu-item" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>重命名</button>
-                    <button class="context-menu-item" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>删除话题</button>
-                </div>
+                <Portal>
+                    <div
+                        class="context-menu"
+                        classList={{ closing: isTopicMenuAnimatingOut() }}
+                        style={`top: ${topicMenuState().y}px; left: ${topicMenuState().x}px;`}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button class="context-menu-item" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>重命名</button>
+                        <button class="context-menu-item" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>删除话题</button>
+                    </div>
+                </Portal>
             )}
         </div>
     );

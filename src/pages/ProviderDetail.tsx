@@ -24,6 +24,7 @@ import {
 } from '../utils/models';
 import { getProviderLogo } from '../utils/modelLogo';
 import ModelRow from '../components/ModelRow';
+import Icon from '../components/Icon';
 
 type SortKey = 'releaseDesc' | 'nameAsc';
 
@@ -177,7 +178,7 @@ const ProviderDetail: Component = () => {
                 proxyUrl: u?.proxyUrl ?? null,
             });
             if (r.success) {
-                setTestState({ status: 'ok', msg: `✓ ${r.modelCount} 个模型 · ${r.elapsedMs}ms`, sampleModels: r.sampleModelIds });
+                setTestState({ status: 'ok', msg: `连接成功 · ${r.modelCount} 个模型 · ${r.elapsedMs}ms`, sampleModels: r.sampleModelIds });
             } else {
                 setTestState({ status: 'fail', msg: r.error ?? '失败' });
             }
@@ -229,31 +230,46 @@ const ProviderDetail: Component = () => {
         <div class="h-full overflow-y-auto">
             <div class="max-w-5xl mx-auto p-4 sm:p-6">
                 {/* 顶部返回 + 标题 */}
-                <div class="flex items-center gap-3 mb-4">
+                <div class="flex items-center gap-3 mb-5 animate-row">
                     <button
                         type="button"
-                        class="px-3 py-1.5 text-sm rounded border border-dark-300 hover:border-pri-30 transition-colors flex items-center gap-1"
+                        class="px-3 py-1.5 text-sm rounded-md border border-white/10 text-[#ccc] hover:border-pri-30 hover:text-white hover:bg-white/5 transition-all duration-200 active:scale-95 flex items-center gap-1.5"
                         onClick={() => navigate('/settings')}
                     >
-                        ← 返回 Provider 列表
+                        <Icon name="arrow-left" size={14} class="text-pri" /> 返回 Provider 列表
                     </button>
                     <Show when={!catalogReady()}>
-                        <span class="text-xs text-[#888]">加载 catalog 中...</span>
+                        <span class="text-xs text-[#888] flex items-center gap-1.5">
+                            <span class="w-1.5 h-1.5 rounded-full bg-pri animate-pulse" />
+                            加载 catalog 中...
+                        </span>
                     </Show>
                 </div>
 
-                {/* Provider header */}
-                <div class="flex items-center gap-3 mb-4 pb-4 border-b border-dark-300">
-                    <div class="w-12 h-12 rounded-lg bg-dark-850 border border-dark-300 flex items-center justify-center text-xl shrink-0 overflow-hidden">
+                {/* Provider header card */}
+                <div
+                    class="glass-card mb-4 flex items-center gap-4 animate-row"
+                    style={{ "animation-delay": "30ms" }}
+                >
+                    <div class="logo-tile w-12 h-12 text-2xl" style={{ 'width': '48px', 'height': '48px' }}>
                         {getProviderLogo(providerId())
-                            ? <img src={getProviderLogo(providerId())!} alt={userCfg()?.displayName ?? providerId()} class="w-8 h-8 object-contain" />
+                            ? <img src={getProviderLogo(providerId())!} alt={userCfg()?.displayName ?? providerId()} class="w-7 h-7 object-contain" />
                             : <span>{(userCfg()?.displayName ?? providerId()).charAt(0).toUpperCase()}</span>
                         }
                     </div>
                     <div class="grow min-w-0">
-                        <h1 class="text-xl font-bold text-white truncate">{userCfg()?.displayName ?? providerMeta()?.name ?? providerId()}</h1>
-                        <div class="text-xs text-[#888] font-mono mt-0.5">
-                            {isCustom() ? '自定义 provider' : `${modelGroups().enabled.length + modelGroups().available.length} 个模型 (catalog) · 已启用 ${modelGroups().enabled.length}`}
+                        <h1 class="text-xl font-bold text-white truncate tracking-tight">{userCfg()?.displayName ?? providerMeta()?.name ?? providerId()}</h1>
+                        <div class="text-xs text-[#888] font-mono mt-1 flex items-center gap-2 flex-wrap">
+                            <Show when={isCustom()}>
+                                <span class="chip chip-info">自定义</span>
+                            </Show>
+                            <Show when={!isCustom()}>
+                                <span><span class="text-pri font-semibold">{modelGroups().enabled.length}</span><span class="text-[#666]"> / </span><span>{modelGroups().enabled.length + modelGroups().available.length}</span> 个模型已启用</span>
+                                <Show when={modelGroups().enabled.length > 0}>
+                                    <span class="text-[#666]">·</span>
+                                    <span class="chip chip-ok">运行中</span>
+                                </Show>
+                            </Show>
                         </div>
                     </div>
                     <Show when={!isCustom() && providerMeta()}>
@@ -262,160 +278,199 @@ const ProviderDetail: Component = () => {
                                 href={(providerMeta() as any).doc}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                class="text-xs text-pri hover:underline"
-                            >📖 文档</a>
+                                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-pri transition-all duration-200"
+                            >
+                                <Icon name="book" size={12} /> 文档
+                            </a>
                         </Show>
                     </Show>
                 </div>
 
-                {/* 表单: 显示名称 / API URL / API Key / 代理 */}
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-                    <div>
-                        <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">显示名称</label>
-                        <input
-                            type="text"
-                            class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm focus:border-pri outline-none"
-                            value={userCfg()?.displayName ?? ''}
-                            onInput={(e) => updateField('displayName', e.currentTarget.value)}
-                        />
+                {/* 表单 + 操作按钮 组合卡片 */}
+                <div
+                    class="glass-card mb-4 animate-row"
+                    style={{ "animation-delay": "60ms" }}
+                >
+                    <div class="section-label mb-3">连接配置</div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div>
+                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>显示名称</label>
+                            <input
+                                type="text"
+                                class="input-glass w-full px-3 py-2 text-sm"
+                                value={userCfg()?.displayName ?? ''}
+                                onInput={(e) => updateField('displayName', e.currentTarget.value)}
+                            />
+                        </div>
+                        <div>
+                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>API URL</label>
+                            <input
+                                type="text"
+                                class="input-glass w-full px-3 py-2 text-sm font-mono"
+                                value={userCfg()?.apiUrl ?? ''}
+                                onInput={(e) => updateField('apiUrl', e.currentTarget.value)}
+                            />
+                        </div>
+                        <div>
+                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>API Key</label>
+                            <input
+                                type="password"
+                                placeholder="sk-..."
+                                class="input-glass w-full px-3 py-2 text-sm font-mono"
+                                value={userCfg()?.apiKey ?? ''}
+                                onInput={(e) => updateField('apiKey', e.currentTarget.value)}
+                            />
+                        </div>
+                        <div>
+                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>
+                                代理 URL <span class="text-[#666] normal-case tracking-normal font-normal ml-1">(可选, 例如 http://127.0.0.1:7890)</span>
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="留空则不使用代理"
+                                class="input-glass w-full px-3 py-2 text-sm font-mono"
+                                value={userCfg()?.proxyUrl ?? ''}
+                                onInput={(e) => updateField('proxyUrl', e.currentTarget.value || undefined)}
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">API URL</label>
-                        <input
-                            type="text"
-                            class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm font-mono focus:border-pri outline-none"
-                            value={userCfg()?.apiUrl ?? ''}
-                            onInput={(e) => updateField('apiUrl', e.currentTarget.value)}
-                        />
-                    </div>
-                    <div>
-                        <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">API Key</label>
-                        <input
-                            type="password"
-                            placeholder="sk-..."
-                            class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm font-mono focus:border-pri outline-none"
-                            value={userCfg()?.apiKey ?? ''}
-                            onInput={(e) => updateField('apiKey', e.currentTarget.value)}
-                        />
-                    </div>
-                    <div>
-                        <label class="block text-[10px] text-[#888] uppercase tracking-wider mb-1.5">
-                            代理 URL <span class="text-[#666]">(可选, 例如 http://127.0.0.1:7890)</span>
-                        </label>
-                        <input
-                            type="text"
-                            placeholder="留空则不使用代理"
-                            class="w-full bg-dark-850 border border-dark-300 text-white px-3 py-1.5 rounded text-sm font-mono focus:border-pri outline-none"
-                            value={userCfg()?.proxyUrl ?? ''}
-                            onInput={(e) => updateField('proxyUrl', e.currentTarget.value || undefined)}
-                        />
-                    </div>
-                </div>
 
-                {/* 启用 toggle + 操作按钮 */}
-                <div class="flex items-center gap-3 mb-3 flex-wrap">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={userCfg()?.enabled ?? false}
-                            onChange={(e) => toggleProviderEnabled(e.currentTarget.checked)}
-                            class="accent-pri w-4 h-4"
-                        />
-                        <span class="text-sm text-white">启用此 provider</span>
-                    </label>
-                    <button
-                        type="button"
-                        class="px-3 py-1.5 text-xs rounded border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 transition-all disabled:opacity-50"
-                        disabled={testState().status === 'testing'}
-                        onClick={handleTestConnection}
-                    >
-                        {testState().status === 'testing' ? '⏳ 测试中...' : '🧪 测试连接'}
-                    </button>
-                    <button
-                        type="button"
-                        class="px-3 py-1.5 text-xs rounded border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 transition-all disabled:opacity-50"
-                        disabled={fetchState().status === 'fetching'}
-                        onClick={handleFetchModels}
-                    >
-                        {fetchState().status === 'fetching' ? '⏳ 拉取中...' : '📥 从 API 拉取模型'}
-                    </button>
-                    <Show when={userCfg()}>
+                    {/* 启用 toggle + 操作按钮 */}
+                    <div class="flex items-center gap-3 flex-wrap pt-3 border-t border-white/5">
                         <button
                             type="button"
-                            class="px-3 py-1.5 text-xs rounded border border-danger bg-transparent text-danger hover:bg-danger hover:text-dark-850 transition-all ml-auto"
-                            onClick={handleDelete}
+                            class="flex items-center gap-2.5 cursor-pointer bg-transparent border-0 p-0"
+                            onClick={() => toggleProviderEnabled(!(userCfg()?.enabled ?? false))}
                         >
-                            🗑 删除
+                            <span
+                                class="toggle-glass"
+                                classList={{ 'on': userCfg()?.enabled ?? false }}
+                            >
+                                <span class="toggle-knob" />
+                            </span>
+                            <span class="text-sm text-white">启用此 provider</span>
                         </button>
-                    </Show>
+                        <button
+                            type="button"
+                            class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={testState().status === 'testing'}
+                            onClick={handleTestConnection}
+                        >
+                            <Show when={testState().status === 'testing'} fallback={<Icon name="beaker" size={13} />}>
+                                <Icon name="spinner" size={13} class="animate-spin" />
+                            </Show>
+                            {testState().status === 'testing' ? '测试中...' : '测试连接'}
+                        </button>
+                        <button
+                            type="button"
+                            class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={fetchState().status === 'fetching'}
+                            onClick={handleFetchModels}
+                        >
+                            <Show when={fetchState().status === 'fetching'} fallback={<Icon name="download" size={13} />}>
+                                <Icon name="spinner" size={13} class="animate-spin" />
+                            </Show>
+                            {fetchState().status === 'fetching' ? '拉取中...' : '从 API 拉取模型'}
+                        </button>
+                        <Show when={userCfg()}>
+                            <button
+                                type="button"
+                                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95 ml-auto"
+                                onClick={handleDelete}
+                            >
+                                <Icon name="trash" size={13} /> 删除
+                            </button>
+                        </Show>
+                    </div>
                 </div>
 
                 {/* 测试/拉取反馈 */}
                 <Show when={testState().status !== 'idle'}>
                     <div
-                        class="mb-3 px-3 py-2 rounded text-xs"
-                        style={{
-                            background: testState().status === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
-                            color: testState().status === 'ok' ? '#4ade80' : (testState().status === 'testing' ? '#aaa' : '#f87171'),
+                        class="feedback-bar mb-4 animate-row"
+                        classList={{
+                            'ok': testState().status === 'ok',
+                            'fail': testState().status === 'fail',
+                            'test': testState().status === 'testing',
                         }}
                     >
-                        {testState().msg}
+                        <Show when={testState().status === 'testing'} fallback={
+                            <Show when={testState().status === 'ok'} fallback={<Icon name="x" size={14} />}>
+                                <Icon name="check" size={14} />
+                            </Show>
+                        }>
+                            <Icon name="spinner" size={14} class="animate-spin" />
+                        </Show>
+                        <span class="flex-1">{testState().msg}</span>
                         <Show when={testState().sampleModels && testState().sampleModels!.length > 0}>
-                            <span class="text-[#888] ml-2">({testState().sampleModels!.slice(0, 3).join(', ')}...)</span>
+                            <span class="text-[#888] font-mono">({testState().sampleModels!.slice(0, 3).join(', ')}...)</span>
                         </Show>
                     </div>
                 </Show>
                 <Show when={fetchState().status !== 'idle'}>
                     <div
-                        class="mb-3 px-3 py-2 rounded text-xs"
-                        style={{
-                            background: fetchState().status === 'ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
-                            color: fetchState().status === 'ok' ? '#4ade80' : (fetchState().status === 'fetching' ? '#aaa' : '#f87171'),
+                        class="feedback-bar mb-4 animate-row"
+                        classList={{
+                            'ok': fetchState().status === 'ok',
+                            'fail': fetchState().status === 'fail',
+                            'test': fetchState().status === 'fetching',
                         }}
                     >
-                        {fetchState().msg}
+                        <Show when={fetchState().status === 'fetching'} fallback={
+                            <Show when={fetchState().status === 'ok'} fallback={<Icon name="x" size={14} />}>
+                                <Icon name="check" size={14} />
+                            </Show>
+                        }>
+                            <Icon name="spinner" size={14} class="animate-spin" />
+                        </Show>
+                        <span class="flex-1">{fetchState().msg}</span>
                     </div>
                 </Show>
 
                 {/* ===== 模型列表区 ===== */}
                 <Show when={isCustom()}>
-                    <div class="mt-6 pt-4 border-t border-dark-300">
-                        <div class="text-[10px] text-[#888] uppercase tracking-wider mb-2">
-                            自定义模型 ({userCfg()?.fetchedModels?.length ?? 0})
+                    <div
+                        class="glass-card mt-4 animate-row"
+                        style={{ "animation-delay": "90ms" }}
+                    >
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="section-label">自定义模型 ({userCfg()?.fetchedModels?.length ?? 0})</div>
                         </div>
-                        <div class="text-xs text-[#888] italic mb-3">
+                        <div class="text-xs text-[#888] italic mb-3 px-1">
                             自定义 provider 无 catalog 数据, 请通过"从 API 拉取模型"获取列表后再勾选启用
                         </div>
                         <Show when={(userCfg()?.fetchedModels?.length ?? 0) > 0}>
-                            <div class="space-y-1">
+                            <div class="space-y-1.5">
                                 <For each={userCfg()?.fetchedModels ?? []}>
-                                    {(m) => (
-                                        <ModelRow
-                                            meta={{
-                                                id: m.id,
-                                                provider: providerId(),
-                                                providerName: userCfg()?.displayName ?? providerId(),
-                                                displayName: m.displayName || m.id,
-                                                family: null,
-                                                releaseDate: m.releasedAt ?? null,
-                                                lastUpdated: null,
-                                                knowledgeCutoff: null,
-                                                contextWindow: 0,
-                                                maxOutputTokens: null,
-                                                capabilities: {} as any,
-                                                modalities: { input: ['text'], output: ['text'] },
-                                                pricing: null,
-                                                status: 'active',
-                                                deprecationDate: null,
-                                                replacedBy: null,
-                                                aliases: [],
-                                                isAggregator: false,
-                                                sources: [],
-                                            } as any}
-                                            enabled={(userCfg()?.enabledModels ?? []).includes(m.id)}
-                                            onToggle={() => toggleModel(m.id)}
-                                            showPricing={false}
-                                        />
+                                    {(m, i) => (
+                                        <div class="animate-row" style={{ "animation-delay": `${i() * 30}ms` }}>
+                                            <ModelRow
+                                                meta={{
+                                                    id: m.id,
+                                                    provider: providerId(),
+                                                    providerName: userCfg()?.displayName ?? providerId(),
+                                                    displayName: m.displayName || m.id,
+                                                    family: null,
+                                                    releaseDate: m.releasedAt ?? null,
+                                                    lastUpdated: null,
+                                                    knowledgeCutoff: null,
+                                                    contextWindow: 0,
+                                                    maxOutputTokens: null,
+                                                    capabilities: {} as any,
+                                                    modalities: { input: ['text'], output: ['text'] },
+                                                    pricing: null,
+                                                    status: 'active',
+                                                    deprecationDate: null,
+                                                    replacedBy: null,
+                                                    aliases: [],
+                                                    isAggregator: false,
+                                                    sources: [],
+                                                } as any}
+                                                enabled={(userCfg()?.enabledModels ?? []).includes(m.id)}
+                                                onToggle={() => toggleModel(m.id)}
+                                                showPricing={false}
+                                            />
+                                        </div>
                                     )}
                                 </For>
                             </div>
@@ -424,65 +479,88 @@ const ProviderDetail: Component = () => {
                 </Show>
 
                 <Show when={!isCustom() && isCatalogProvider()}>
-                    <div class="mt-6 pt-4 border-t border-dark-300">
+                    <div
+                        class="glass-card mt-4 animate-row"
+                        style={{ "animation-delay": "90ms" }}
+                    >
                         <div class="flex items-center gap-3 mb-3 flex-wrap">
-                            <div class="text-[10px] text-[#888] uppercase tracking-wider">
+                            <div class="section-label">
                                 模型列表 ({modelGroups().enabled.length + modelGroups().available.length})
                             </div>
-                            <input
-                                type="text"
-                                placeholder="🔍 搜索模型..."
-                                class="bg-dark-850 border border-dark-300 text-white px-3 py-1 rounded text-xs focus:border-pri outline-none grow max-w-xs"
-                                value={search()}
-                                onInput={(e) => setSearch(e.currentTarget.value)}
-                            />
-                            <select
-                                class="bg-dark-850 border border-dark-300 text-white px-2 py-1 rounded text-xs"
-                                value={sortKey()}
-                                onChange={(e) => setSortKey(e.currentTarget.value as SortKey)}
-                            >
-                                <option value="releaseDesc">发布日期 ↓</option>
-                                <option value="nameAsc">名称 A-Z</option>
-                            </select>
+                            <div class="flex items-center gap-2 ml-auto flex-wrap">
+                                <div class="relative">
+                                    <Icon name="search" size={12} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
+                                    <input
+                                        type="text"
+                                        placeholder="搜索模型..."
+                                        class="input-glass pl-7 pr-3 py-1 text-xs"
+                                        style={{ 'width': '180px' }}
+                                        value={search()}
+                                        onInput={(e) => setSearch(e.currentTarget.value)}
+                                    />
+                                </div>
+                                <select
+                                    class="input-glass px-2 py-1 text-xs"
+                                    value={sortKey()}
+                                    onChange={(e) => setSortKey(e.currentTarget.value as SortKey)}
+                                >
+                                    <option value="releaseDesc">发布日期 ↓</option>
+                                    <option value="nameAsc">名称 A-Z</option>
+                                </select>
+                            </div>
                         </div>
 
                         {/* 已启用 */}
                         <Show when={visibleEnabled().length > 0}>
-                            <div class="text-[10px] text-[#666] uppercase tracking-wider mt-3 mb-1.5">
+                            <div class="section-label mt-2 mb-2 flex items-center gap-2">
+                                <span class="w-1.5 h-1.5 rounded-full bg-pri" />
                                 已启用 ({visibleEnabled().length})
                             </div>
-                            <div class="space-y-1">
+                            <div class="space-y-1.5">
                                 <For each={visibleEnabled()}>
-                                    {(m) => <ModelRow meta={m} enabled={true} onToggle={() => toggleModel(m.id)} />}
+                                    {(m, i) => (
+                                        <div class="animate-row" style={{ "animation-delay": `${i() * 25}ms` }}>
+                                            <ModelRow meta={m} enabled={true} onToggle={() => toggleModel(m.id)} />
+                                        </div>
+                                    )}
                                 </For>
                             </div>
                         </Show>
 
                         {/* 未启用 */}
                         <Show when={visibleAvailable().length > 0}>
-                            <div class="text-[10px] text-[#666] uppercase tracking-wider mt-3 mb-1.5">
+                            <div class="section-label mt-4 mb-2 flex items-center gap-2">
+                                <span class="w-1.5 h-1.5 rounded-full bg-[#666]" />
                                 未启用 ({visibleAvailable().length})
                             </div>
-                            <div class="space-y-1">
+                            <div class="space-y-1.5">
                                 <For each={visibleAvailable()}>
-                                    {(m) => <ModelRow meta={m} enabled={false} onToggle={() => toggleModel(m.id)} />}
+                                    {(m, i) => (
+                                        <div class="animate-row" style={{ "animation-delay": `${i() * 25}ms` }}>
+                                            <ModelRow meta={m} enabled={false} onToggle={() => toggleModel(m.id)} />
+                                        </div>
+                                    )}
                                 </For>
                             </div>
                         </Show>
 
                         {/* 孤儿 (catalog 没有但用户启用过) */}
                         <Show when={visibleOrphans().length > 0}>
-                            <div class="text-[10px] text-[#666] uppercase tracking-wider mt-3 mb-1.5">
+                            <div class="section-label mt-4 mb-2 flex items-center gap-2">
+                                <span class="w-1.5 h-1.5 rounded-full bg-yellow-400/60" />
                                 未在 catalog 中 ({visibleOrphans().length})
                             </div>
                             <div class="flex flex-wrap gap-1.5">
                                 <For each={visibleOrphans()}>
-                                    {(mid) => (
-                                        <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-pri-20 text-pri text-[11px] font-mono">
+                                    {(mid, i) => (
+                                        <span
+                                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md chip chip-warn font-mono animate-row"
+                                            style={{ "animation-delay": `${i() * 30}ms` }}
+                                        >
                                             <span class="truncate max-w-[200px]">{mid}</span>
                                             <button
                                                 type="button"
-                                                class="text-pri hover:text-danger text-[14px] leading-none"
+                                                class="w-4 h-4 flex items-center justify-center rounded-full text-[12px] leading-none transition-colors hover:bg-white/15"
                                                 title="移除"
                                                 onClick={() => removeOrphan(mid)}
                                             >×</button>
@@ -494,12 +572,12 @@ const ProviderDetail: Component = () => {
 
                         {/* 空状态 */}
                         <Show when={modelGroups().enabled.length === 0 && modelGroups().available.length === 0 && !search()}>
-                            <div class="text-xs text-[#666] italic py-4 text-center">
+                            <div class="text-xs text-[#666] italic py-6 text-center">
                                 catalog 中暂无该 provider 的模型
                             </div>
                         </Show>
                         <Show when={search() && visibleEnabled().length === 0 && visibleAvailable().length === 0 && visibleOrphans().length === 0}>
-                            <div class="text-xs text-[#666] italic py-4 text-center">
+                            <div class="text-xs text-[#666] italic py-6 text-center">
                                 无匹配 "{search()}" 的模型
                             </div>
                         </Show>
@@ -509,10 +587,10 @@ const ProviderDetail: Component = () => {
                 {/* Toast 提示 */}
                 <Show when={toast()}>
                     <div
-                        class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded text-sm z-50"
+                        class="toast-glass fixed bottom-6 left-1/2 z-50"
                         classList={{
-                            'bg-green-500/20 text-green-300': toast()!.ok,
-                            'bg-red-500/20 text-red-300': !toast()!.ok,
+                            'text-green-300': toast()!.ok,
+                            'text-red-300': !toast()!.ok,
                         }}
                     >{toast()!.msg}</div>
                 </Show>

@@ -24,9 +24,6 @@ const ModelRow: Component<{
                     {m().displayName || m().id}
                 </div>
                 <div class="flex items-center gap-1.5 text-[10px] text-[#888] font-mono mt-1 flex-wrap">
-                    <span class="px-1.5 py-0.5 rounded bg-white/5 border border-white/8 text-[#aaa]">
-                        {m().id}
-                    </span>
                     <Show when={m().releaseDate}>
                         <span>发布于 {formatReleaseDate(m().releaseDate)}</span>
                     </Show>

@@ -335,20 +335,9 @@ export function detectProviderByUrl(url: string): string | null {
   return null
 }
 
-/** 列表页搜索: 匹配 provider 名 + catalog 中模型 id/displayName 命中的 provider id */
+/** 列表页搜索: 仅匹配 provider id / name, 不含模型名 */
 export function searchProviders(catalog: Catalog, query: string): ProviderMeta[] {
   if (!query.trim()) return catalog.providers
   const q = query.toLowerCase()
-  const matchedProviderIds = new Set<string>()
-  for (const p of catalog.providers) {
-    if (p.id.includes(q) || p.name.toLowerCase().includes(q)) {
-      matchedProviderIds.add(p.id)
-    }
-  }
-  for (const m of catalog.models) {
-    if (m.id.toLowerCase().includes(q) || m.displayName.toLowerCase().includes(q)) {
-      matchedProviderIds.add(m.provider)
-    }
-  }
-  return catalog.providers.filter(p => matchedProviderIds.has(p.id))
+  return catalog.providers.filter(p => p.id.includes(q) || p.name.toLowerCase().includes(q))
 }

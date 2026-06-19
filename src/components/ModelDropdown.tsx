@@ -9,7 +9,7 @@ interface ModelDropdownProps {
   onlineModels: ActivatedModel[];
   localModels: ActivatedModel[];
   onSelect: (model: ActivatedModel) => void;
-  getModelLogo: (name: string) => string;
+  getModelLogo: (name: string) => string | undefined;
 }
 
 const ModelDropdown: Component<ModelDropdownProps> = (props) => {
@@ -48,7 +48,7 @@ const ModelDropdown: Component<ModelDropdownProps> = (props) => {
       <div
         class="absolute top-full left-1/2 -translate-x-1/2 mt-2 min-w-[520px] rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] z-[1000] transition-all duration-200 overflow-hidden"
         classList={{ 'invisible opacity-0 translate-y-2': !isVisible(), 'visible opacity-100 translate-y-0': isVisible() }}
-        style="background: rgba(18, 22, 35, 0.8); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
+        style="background: var(--acrylic-bg); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--acrylic-border);">
         <div class="flex flex-row h-[420px]">
           <div class="flex-1 flex flex-col min-w-[260px]">
             <div class="px-4 py-3 text-[12px] font-bold uppercase tracking-widest" style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">线上模型</div>

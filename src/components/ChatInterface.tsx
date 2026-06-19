@@ -4,6 +4,7 @@ import { Topic, globalUserAvatar, selectedModel, isStartingLocalModel, localMode
 import { open } from '@tauri-apps/plugin-dialog';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import Icon from './Icon';
+import ReasoningButton from './ReasoningButton';
 
 interface ChatInterfaceProps {
     activeTopic: Topic | null;
@@ -89,12 +90,21 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
                                         <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
-                                             style="background: rgba(255,255,255,0.06); border: 1px solid rgba(124,154,191,0.1); box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-                                            <img
-                                                src={getModelLogo(msg.modelId || selectedModel()?.model_id || "")}
-                                                alt="AI"
-                                                class="w-[25px] h-[25px] rounded-full"
-                                            />
+                                             style="background: #ffffff; border: 1px solid rgba(255,255,255,0.85); box-shadow: 0 2px 6px rgba(0,0,0,0.25);">
+                                            <Show
+                                                when={getModelLogo(msg.modelId || selectedModel()?.model_id || '')}
+                                                fallback={
+                                                    <span class="text-[14px] font-bold select-none" style="color: #1a1e2c;">
+                                                        {(msg.modelId || selectedModel()?.model_id || 'AI').charAt(0).toUpperCase()}
+                                                    </span>
+                                                }
+                                            >
+                                                <img
+                                                    src={getModelLogo(msg.modelId || selectedModel()?.model_id || "")!}
+                                                    alt="AI"
+                                                    class="w-[25px] h-[25px] rounded-full"
+                                                />
+                                            </Show>
                                         </div>
                                     </Show>
 
@@ -246,6 +256,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
                     <div class="flex items-center justify-between border-t pt-2" style="border-color: rgba(255,255,255,0.04);">
                         <div class="flex items-center gap-2">
+                            <ReasoningButton />
+
                             <button
                                 class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
                                 style="color: rgba(255,255,255,0.4);"

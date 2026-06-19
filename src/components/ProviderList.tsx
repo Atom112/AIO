@@ -538,7 +538,7 @@ const ProviderList: Component = () => {
                                     style={{ "animation-delay": `${(i() + 1) * 30}ms` }}
                                     onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
                                 >
-                                    <div class="logo-tile text-base">
+                                    <div class="logo-tile font-bold text-[15px]" style={{ color: '#1a1e2c' }}>
                                         {cfg.displayName.charAt(0).toUpperCase()}
                                     </div>
                                     <div class="grow min-w-0">
@@ -607,10 +607,10 @@ const ProviderRow: Component<{
             style={props.style}
             onClick={props.onClick}
         >
-            <div class="logo-tile text-base">
+            <div class="logo-tile">
                 {getProviderLogo(props.provider.id)
                     ? <img src={getProviderLogo(props.provider.id)!} alt={props.provider.name} class="w-5 h-5 object-contain" />
-                    : <span>{props.provider.name.charAt(0).toUpperCase()}</span>
+                    : <span class="font-bold text-[15px]" style={{ color: '#1a1e2c' }}>{props.provider.name.charAt(0).toUpperCase()}</span>
                 }
             </div>
             <div class="grow min-w-0">

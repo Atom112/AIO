@@ -25,6 +25,7 @@ import {
 import { getProviderLogo } from '../utils/modelLogo';
 import ModelRow from '../components/ModelRow';
 import Icon from '../components/Icon';
+import Dropdown from '../components/Dropdown';
 
 type SortKey = 'releaseDesc' | 'nameAsc';
 
@@ -251,10 +252,10 @@ const ProviderDetail: Component = () => {
                     class="glass-card mb-4 flex items-center gap-4 animate-row"
                     style={{ "animation-delay": "30ms" }}
                 >
-                    <div class="logo-tile w-12 h-12 text-2xl" style={{ 'width': '48px', 'height': '48px' }}>
+                    <div class="logo-tile w-12 h-12 text-2xl" style={{ 'width': '48px', 'height': '48px', color: '#1a1e2c' }}>
                         {getProviderLogo(providerId())
                             ? <img src={getProviderLogo(providerId())!} alt={userCfg()?.displayName ?? providerId()} class="w-7 h-7 object-contain" />
-                            : <span>{(userCfg()?.displayName ?? providerId()).charAt(0).toUpperCase()}</span>
+                            : <span class="font-bold">{(userCfg()?.displayName ?? providerId()).charAt(0).toUpperCase()}</span>
                         }
                     </div>
                     <div class="grow min-w-0">
@@ -499,14 +500,15 @@ const ProviderDetail: Component = () => {
                                         onInput={(e) => setSearch(e.currentTarget.value)}
                                     />
                                 </div>
-                                <select
-                                    class="input-glass px-2 py-1 text-xs"
+                                <Dropdown
                                     value={sortKey()}
-                                    onChange={(e) => setSortKey(e.currentTarget.value as SortKey)}
-                                >
-                                    <option value="releaseDesc">发布日期 ↓</option>
-                                    <option value="nameAsc">名称 A-Z</option>
-                                </select>
+                                    onChange={(v) => setSortKey(v as SortKey)}
+                                    options={[
+                                        { value: 'releaseDesc', label: '发布日期 ↓' },
+                                        { value: 'nameAsc', label: '名称 A-Z' },
+                                    ]}
+                                    class="text-xs"
+                                />
                             </div>
                         </div>
 

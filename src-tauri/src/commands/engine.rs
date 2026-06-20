@@ -3,11 +3,12 @@
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::installer::{EngineInstaller, EngineStatus, EngineUpdateInfo};
 use crate::plugins::engine::EngineManager;
+use crate::utils::file_parser::validate_model_path;
 use tauri::{AppHandle, Emitter, State};
 use tokio::time::{sleep, Duration};
 
 /// 启动本地大模型服务器
-/// @param model_path 模型文件的绝对路径
+/// @param model_path 模型文件的绝对路径（H8 沙箱校验）
 /// @param port 指定服务器运行的端口
 /// @param gpu_layers 卸载到 GPU 的模型层数
 /// @param engine_type 可选的引擎类型标识，不传时默认使用 llama_cpp（兼容旧配置）
@@ -27,12 +28,17 @@ pub async fn start_local_server(
         .get(&engine_id)
         .ok_or_else(|| format!("不支持的本地引擎: {}", engine_id))?;
 
+    // H8 沙箱：拒绝 home/AppData 外的模型路径
+    let safe_path = validate_model_path(&model_path)?;
+
     // 启动前清理：如果已经有一个正在运行的服务器，先关闭它
     stop_local_server(state.clone()).await?;
     sleep(Duration::from_millis(500)).await;
 
     // 调用插件启动
-    let url = plugin.start(app, &state, &model_path, port, gpu_layers).await?;
+    let url = plugin
+        .start(app, &state, safe_path.to_string_lossy().as_ref(), port, gpu_layers)
+        .await?;
 
     Ok(url)
 }
@@ -40,26 +46,26 @@ pub async fn start_local_server(
 /// 停止本地服务器
 #[tauri::command]
 pub async fn stop_local_server(state: State<'_, LocalEngineState>) -> Result<(), String> {
-    let mut proc_lock = state.child_process.lock().unwrap();
-    if let Some(mut child) = proc_lock.take() {
-        println!("[DEBUG] 正在停止本地服务器...");
+    let mut inner = state.lock();
+    if let Some(mut child) = inner.child_process.take() {
+        tracing::debug!("正在停止本地服务器...");
         let _ = child.kill();
     }
-
-    let mut type_lock = state.engine_type.lock().unwrap();
-    *type_lock = String::new();
-
+    inner.engine_type.clear();
     Ok(())
 }
 
 /// 检查本地服务器是否正在运行
 #[tauri::command]
 pub fn is_local_server_running(state: State<'_, LocalEngineState>) -> bool {
-    let mut proc_lock = state.child_process.lock().unwrap();
-    if let Some(child) = proc_lock.as_mut() {
+    let mut inner = state.lock();
+    if let Some(child) = inner.child_process.as_mut() {
         match child.try_wait() {
             Ok(None) => return true,
-            _ => return false,
+            _ => {
+                inner.child_process = None;
+                return false;
+            }
         }
     }
     false

@@ -4,7 +4,6 @@ import { A } from '@solidjs/router';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { readFile } from '@tauri-apps/plugin-fs';
 import AvatarCropModal from './AvatarCropModel';
 import PromptModal from './PromptModal';
 import LoginModal from './LoginModal';
@@ -27,6 +26,8 @@ import {
   setLocalModelStartProgress,
   activeProviderModels,
   providerConfigs,
+  isLocalAutoStartConfirmed,
+  setLocalAutoStartConfirmed,
 } from '../store/store';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 
@@ -85,7 +86,7 @@ const NavBar: Component<NavBarProps> = () => {
    * 退出登录处理
    */
   const handleLogout = async () => {
-    logout();
+    await logout();
     setUserMenuVisible(false);
     const localSavedPath = localStorage.getItem('user-avatar-path');
     if (localSavedPath) {
@@ -102,22 +103,23 @@ const NavBar: Component<NavBarProps> = () => {
 
   /**
    * 处理编辑头像：打开文件选择器并触发裁剪流程
+   * H4 适配：不再直接 readFile 任意路径，改用 Rust read_avatar_source
    */
   const handleEditAvatar = async () => {
     try {
       const selected = await open({
         multiple: false,
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }]
       });
 
       if (selected && typeof selected === 'string') {
-        const contents = await readFile(selected);
-        const blob = new Blob([contents], { type: 'image/png' });
-        const blobUrl = URL.createObjectURL(blob);
-        setTempImage(blobUrl);
+        // 由 Rust 读取并 base64 编码（无需 fs:allow-read-file ** scope）
+        const dataUrl = await invoke<string>('read_avatar_source', { path: selected });
+        setTempImage(dataUrl);
       }
     } catch (err) {
       console.error("选择头像失败:", err);
+      alert('选择头像失败: ' + err);
     }
   };
 
@@ -165,23 +167,34 @@ const NavBar: Component<NavBarProps> = () => {
 
   /**
    * 静默启动本地模型服务
+   * M13: 首次启动需用户确认；确认后写入 localStorage 永久放行
    * @param {ActivatedModel} model - 需要启动的本地模型信息
    */
   const startLocalModel = async (model: ActivatedModel) => {
-    if (model.local_path) {
-      const isRunning = await invoke<boolean>('is_local_server_running');
-      if (!isRunning) {
-        try {
-          await invoke('start_local_server', {
-            modelPath: model.local_path,
-            port: 8080,
-            gpuLayers: 99,
-            engineType: model.engine_type || 'llama_cpp'
-          });
-          console.info("本地模型服务已静默拉起");
-        } catch (e) {
-          console.error("自动启动本地模型失败:", e);
-        }
+    if (!model.local_path) return;
+    // M13 防护：未确认时不静默启动
+    if (!isLocalAutoStartConfirmed()) {
+      const ok = confirm(
+        `检测到本地模型 "${model.model_id}"\n` +
+        `路径: ${model.local_path}\n\n` +
+        `是否允许 AIO 在应用启动时自动拉起该本地推理引擎？\n` +
+        `（点击"取消"后，可随时在设置页手动启动）`
+      );
+      if (!ok) return;
+      setLocalAutoStartConfirmed();
+    }
+    const isRunning = await invoke<boolean>('is_local_server_running');
+    if (!isRunning) {
+      try {
+        await invoke('start_local_server', {
+          modelPath: model.local_path,
+          port: 8080,
+          gpuLayers: 99,
+          engineType: model.engine_type || 'llama_cpp'
+        });
+        console.info("本地模型服务已启动");
+      } catch (e) {
+        console.error("自动启动本地模型失败:", e);
       }
     }
   };
@@ -356,7 +369,13 @@ const NavBar: Component<NavBarProps> = () => {
       setLocalModelStartProgress((event.payload as number) * 100);
     });
 
-    const savedToken = localStorage.getItem('auth-token');
+    // H5 适配：从 Rust keyring 读取 token（HTTPS 校验）
+    let savedToken: string | null = null;
+    try {
+      savedToken = await invoke<string | null>('read_auth_token');
+    } catch (err) {
+      console.warn('读 keyring 失败:', err);
+    }
 
     if (savedToken) {
       try {

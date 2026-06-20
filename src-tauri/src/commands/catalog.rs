@@ -15,15 +15,25 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 use serde::Serialize;
 use tauri::{Manager, Emitter};
 
 const DEFAULT_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/Atom112/aio-models-data/main/dist/data/models.json";
 
+/// 允许拉取 catalog 的 host 白名单（H7 SSRF 防护）
+const ALLOWED_CATALOG_HOSTS: &[&str] = &[
+    "raw.githubusercontent.com",
+    "raw.githubusercontent.com.",
+];
+
 const APPDATA_FILENAME: &str = "models-catalog.json";
 const BUNDLE_FILENAME: &str = "models.json";
 const NODE_MODULES_REL: &str = "node_modules/@aio/models-data/dist/data/models.json";
+
+/// catalog body 字节上限（10MB）
+const MAX_CATALOG_BYTES: usize = 10 * 1024 * 1024;
 
 const EMPTY_CATALOG: &str = r#"{
     "version": "0.0.0",
@@ -156,6 +166,20 @@ pub fn load_models_catalog_full(app: tauri::AppHandle) -> Result<CatalogResponse
     })
 }
 
+/// 校验 URL 是否指向白名单 host（H7 SSRF 防护）
+fn validate_catalog_url(target: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(target).map_err(|e| format!("URL 解析失败: {}", e))?;
+    match parsed.scheme() {
+        "https" => {}
+        s => return Err(format!("catalog URL 必须为 HTTPS 协议，当前: {}", s)),
+    }
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+    if !ALLOWED_CATALOG_HOSTS.iter().any(|h| host == *h) {
+        return Err(format!("catalog host 未在白名单内: {}", host));
+    }
+    Ok(())
+}
+
 /// 拉取最新 catalog 并保存到 AppData
 #[tauri::command]
 pub async fn update_models_catalog(
@@ -163,11 +187,25 @@ pub async fn update_models_catalog(
     url: Option<String>,
 ) -> Result<UpdateResult, String> {
     let target_url = url.unwrap_or_else(|| DEFAULT_CATALOG_URL.to_string());
+    // H7 防护：先校验 URL
+    if let Err(e) = validate_catalog_url(&target_url) {
+        return Ok(UpdateResult {
+            success: false,
+            model_count: 0,
+            provider_count: 0,
+            version: String::new(),
+            cached_path: String::new(),
+            error: Some(e),
+            bytes: 0,
+            elapsed_ms: 0,
+        });
+    }
     let started = std::time::Instant::now();
 
     let client = reqwest::Client::builder()
         .user_agent("AIO-Desktop/0.4 (aio-models-data-updater)")
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))?;
 
@@ -190,25 +228,39 @@ pub async fn update_models_catalog(
         });
     }
 
+    // 限制 body 大小，防止 OOM
     let body = resp
-        .text()
+        .bytes()
         .await
         .map_err(|e| format!("读取响应体失败: {}", e))?;
-
-    if body.len() < 1024 {
+    if body.len() > MAX_CATALOG_BYTES {
         return Ok(UpdateResult {
             success: false,
             model_count: 0,
             provider_count: 0,
             version: String::new(),
             cached_path: String::new(),
-            error: Some(format!("响应体过小 ({} 字节)，可能不是有效 catalog", body.len())),
+            error: Some(format!("响应体超过 {}MB 上限", MAX_CATALOG_BYTES / 1024 / 1024)),
             bytes: body.len(),
             elapsed_ms: started.elapsed().as_millis(),
         });
     }
+    let body_str = String::from_utf8_lossy(&body).into_owned();
 
-    let (version, _generated_at, model_count, provider_count) = parse_catalog_meta(&body);
+    if body_str.len() < 1024 {
+        return Ok(UpdateResult {
+            success: false,
+            model_count: 0,
+            provider_count: 0,
+            version: String::new(),
+            cached_path: String::new(),
+            error: Some(format!("响应体过小 ({} 字节)，可能不是有效 catalog", body_str.len())),
+            bytes: body_str.len(),
+            elapsed_ms: started.elapsed().as_millis(),
+        });
+    }
+
+    let (version, _generated_at, model_count, provider_count) = parse_catalog_meta(&body_str);
     if model_count == 0 {
         return Ok(UpdateResult {
             success: false,
@@ -217,7 +269,7 @@ pub async fn update_models_catalog(
             version: version.clone().unwrap_or_default(),
             cached_path: String::new(),
             error: Some("响应体不包含 modelCount 字段，可能不是 catalog JSON".to_string()),
-            bytes: body.len(),
+            bytes: body_str.len(),
             elapsed_ms: started.elapsed().as_millis(),
         });
     }
@@ -250,7 +302,7 @@ pub async fn update_models_catalog(
         version: version.unwrap_or_else(|| "unknown".to_string()),
         cached_path: cached.display().to_string(),
         error: None,
-        bytes: body.len(),
+        bytes: body_str.len(),
         elapsed_ms: started.elapsed().as_millis(),
     })
 }

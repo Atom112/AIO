@@ -14,6 +14,7 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task;
 use tokio::time::{sleep, Duration};
+use tracing::debug;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -72,7 +73,7 @@ fn install_from_wheels(python: &str, wheels: &[std::path::PathBuf]) -> Result<()
         args.push(w.to_str().ok_or_else(|| format!("无效的 wheel 路径: {:?}", w))?);
     }
 
-    println!("[vLLM] 正在从 bundled .whl 安装 vllm...");
+    debug!("[vLLM] 正在从 bundled .whl 安装 vllm...");
     let mut cmd = create_progress_cmd(python, &args);
     let status = cmd.spawn()
         .map_err(|e| format!("pip install 启动失败: {}", e))?
@@ -82,7 +83,7 @@ fn install_from_wheels(python: &str, wheels: &[std::path::PathBuf]) -> Result<()
     if !status.success() {
         return Err("pip install vllm 失败。请检查 Python 环境和 CUDA 工具链是否正确安装。".to_string());
     }
-    println!("[vLLM] vllm 安装成功");
+    debug!("[vLLM] vllm 安装成功");
     Ok(())
 }
 
@@ -155,8 +156,8 @@ impl LocalEnginePlugin for VllmPlugin {
         gpu_layers: i32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
-            println!(
-                "[DEBUG] 启动参数 - 引擎: vLLM, 模型: {}, 端口: {}, GPU层数: {}",
+            debug!(
+                "启动参数 - 引擎: vLLM, 模型: {}, 端口: {}, GPU层数: {}",
                 model_path, port, gpu_layers
             );
 
@@ -192,7 +193,7 @@ impl LocalEnginePlugin for VllmPlugin {
                 let _ = app.emit(self.progress_event_name(), 0.1);
                 install_from_wheels(&python, &wheels)?;
             } else {
-                println!("[vLLM] 检测到系统已安装 vllm 包");
+                debug!("[vLLM] 检测到系统已安装 vllm 包");
             }
 
             let _ = app.emit(self.progress_event_name(), 0.15);
@@ -225,21 +226,17 @@ impl LocalEnginePlugin for VllmPlugin {
 
             let _ = app.emit(self.progress_event_name(), 0.2);
 
-            let stderr = child.stderr.take().expect("无法获取 stderr");
+            let stderr = match child.stderr.take() {
+                Some(s) => s,
+                None => return Err("无法获取 vLLM 子进程 stderr".to_string()),
+            };
             let app_clone = app.clone();
             let event_name = self.progress_event_name().to_string();
             task::spawn_blocking(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines() {
                     if let Ok(line) = line {
-                        println!("[vllm-server] {}", line);
-
-                        if line.contains("error") || line.contains("Error") || line.contains("Traceback") {
-                            println!("VLLM 错误: {}", line);
-                        }
-                        if line.contains("CUDA") || line.contains("cuda") {
-                            println!("CUDA 信息: {}", line);
-                        }
+                        debug!("[vllm-server] {}", line);
 
                         let progress = if line.contains("Loading model weights") {
                             Some(0.3)
@@ -262,24 +259,26 @@ impl LocalEnginePlugin for VllmPlugin {
 
             sleep(Duration::from_secs(5)).await;
             match child.try_wait() {
-                Ok(None) => println!("vLLM 进程正常运行中"),
+                Ok(None) => {}
                 Ok(Some(status)) => {
                     return Err(format!("vLLM 进程启动后立即退出，退出码: {}。\n常见原因：CUDA 不可用、模型路径错误、显存不足。", status));
                 }
                 Err(e) => return Err(format!("无法检查进程状态: {}", e)),
             }
 
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .connect_timeout(Duration::from_secs(3))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
             let health_url = format!("http://127.0.0.1:{}/health", port);
 
             match client
                 .get(&health_url)
-                .timeout(Duration::from_secs(15))
                 .send()
                 .await
             {
                 Ok(_) => {
-                    println!("vLLM 健康检查通过");
                     let _ = app.emit(self.progress_event_name(), 1.0);
                 }
                 Err(_) => {
@@ -288,14 +287,9 @@ impl LocalEnginePlugin for VllmPlugin {
                 }
             }
 
-            {
-                let mut type_lock = state.engine_type.lock().unwrap();
-                *type_lock = self.identifier().to_string();
-            }
-            {
-                let mut proc_lock = state.child_process.lock().unwrap();
-                *proc_lock = Some(child);
-            }
+            let mut inner = state.lock();
+            inner.engine_type = self.identifier().to_string();
+            inner.child_process = Some(child);
 
             Ok(format!("http://127.0.0.1:{}/v1", port))
         })

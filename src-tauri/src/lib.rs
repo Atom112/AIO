@@ -5,6 +5,7 @@
 //! 2. 注册暴露给前端调用的 Rust 命令（Commands）。
 //! 3. 监听程序窗口事件以执行清理任务（如关闭本地引擎进程）。
 
+mod cloud_backend;
 mod commands;
 mod core;
 mod plugins;
@@ -15,10 +16,22 @@ use crate::utils::process_file_content;
 use crate::core::state::{DbState, LocalEngineState, StreamManager};
 use crate::plugins::engine::EngineManager;
 use tauri::Manager;
+use tracing_subscriber::EnvFilter;
+
+/// 初始化 tracing（生产默认 warn，调试可通过 RUST_LOG=info 开启）
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("warn,info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .try_init();
+}
 
 /// 应用程序启动入口
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_tracing();
     tauri::Builder::default()
         .setup(|app| {
             let conn = core::db::init_db(app.handle())?;
@@ -55,11 +68,15 @@ pub fn run() {
             commands::config::upload_avatar,
             commands::llm::summarize_history,
             commands::llm::append_message,
-            commands::auth::login_to_backend,
-            commands::auth::register_to_backend,
-            commands::auth::validate_token,
-            commands::auth::sync_avatar_to_backend,
+            // 云端后端鉴权（集中在 cloud_backend 模块）
+            cloud_backend::auth::login_to_backend,
+            cloud_backend::auth::register_to_backend,
+            cloud_backend::auth::validate_token,
+            cloud_backend::auth::sync_avatar_to_backend,
+            cloud_backend::auth::logout_clear,
+            cloud_backend::auth::read_auth_token,
             commands::config::clear_local_avatar_cache,
+            commands::config::read_avatar_source,
             commands::update::check_app_update,
             commands::update::install_app_update,
             commands::update::restart_app,
@@ -72,14 +89,15 @@ pub fn run() {
             commands::provider_config::save_provider_configs,
             commands::provider_config::test_provider_connection,
             commands::provider_config::fetch_provider_models,
+            commands::provider_config::read_provider_api_key,
+            commands::provider_config::delete_provider_api_key,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 let state = window.state::<LocalEngineState>();
-
                 let child_opt = {
-                    let mut guard = state.child_process.lock().unwrap();
-                    guard.take()
+                    let mut inner = state.lock();
+                    inner.child_process.take()
                 };
                 if let Some(mut child) = child_opt {
                     let _ = child.kill();

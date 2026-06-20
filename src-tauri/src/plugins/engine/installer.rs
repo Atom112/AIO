@@ -363,37 +363,98 @@ impl EngineInstaller {
                 format!("读取 ZIP 条目失败: {}", e)
             })?;
 
-            // 跳过目录条目，并去除可能存在的顶层目录前缀
-            let raw_name = entry.name().to_string();
-
-            // 计算要去除的前缀（第一个 / 之前的内容）
-            let relative_name = if let Some(slash_pos) = raw_name.find('/') {
-                &raw_name[slash_pos + 1..]
-            } else {
-                &raw_name
+            // 安全路径检查：使用 zip crate 的 enclosed_name() 自动拒绝绝对路径和 .. 段
+            let safe_name = match entry.enclosed_name() {
+                Some(p) => p.to_path_buf(),
+                None => {
+                    return Err(format!(
+                        "ZIP 条目包含非法路径 (绝对路径或路径逃逸): {:?}",
+                        entry.name()
+                    ));
+                }
             };
 
-            if relative_name.is_empty() {
+            // 去除顶层目录前缀（与原逻辑保持一致）
+            let relative_name = match safe_name.iter().next() {
+                Some(_first) => safe_name.iter().skip(1).collect::<std::path::PathBuf>(),
+                None => continue,
+            };
+
+            if relative_name.as_os_str().is_empty() {
                 continue; // 目录条目
             }
 
-            // 安全路径检查
-            let dest_path = engine_dir.join(relative_name);
+            // 二次校验：解析后路径必须落在 engine_dir 内
+            let dest_path = engine_dir.join(&relative_name);
+            let canonical_engine = std::fs::canonicalize(&engine_dir)
+                .unwrap_or_else(|_| engine_dir.clone());
+            if let Ok(canonical_dest) = std::fs::canonicalize(&dest_path) {
+                if !canonical_dest.starts_with(&canonical_engine) {
+                    return Err(format!(
+                        "ZIP 条目路径逃逸被拦截: {:?}",
+                        relative_name
+                    ));
+                }
+            } else {
+                // 目标文件尚不存在，通过 components 检查防 .. 段
+                let mut normalized = std::path::PathBuf::new();
+                for comp in relative_name.components() {
+                    match comp {
+                        std::path::Component::Normal(c) => normalized.push(c),
+                        std::path::Component::ParentDir => {
+                            return Err(format!(
+                                "ZIP 条目含 ParentDir 段: {:?}",
+                                relative_name
+                            ));
+                        }
+                        _ => {
+                            return Err(format!(
+                                "ZIP 条目含非 Normal 段: {:?}",
+                                relative_name
+                            ));
+                        }
+                    }
+                }
+                let dest_path = engine_dir.join(&normalized);
+                let dest_str = dest_path.to_string_lossy().to_string();
+
+                if let Some(parent) = dest_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("创建目录 {} 失败: {}", parent.display(), e))?;
+                }
+
+                let mut outfile = std::fs::File::create(&dest_path)
+                    .map_err(|e| format!("创建文件 {} 失败: {}", dest_str, e))?;
+                std::io::copy(&mut entry, &mut outfile)
+                    .map_err(|e| format!("写入文件 {} 失败: {}", dest_str, e))?;
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if dest_path.extension().is_none() || dest_path.extension().unwrap() == "" {
+                        let _ = std::fs::set_permissions(
+                            &dest_path,
+                            std::fs::Permissions::from_mode(0o755),
+                        );
+                    }
+                }
+
+                let p = 0.72 + (i as f64 / total_files as f64) * 0.18;
+                fallback_progress(p.min(0.9));
+                continue;
+            }
+
             let dest_str = dest_path.to_string_lossy().to_string();
 
-            // 确保目标文件的父目录存在
             if let Some(parent) = dest_path.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("创建目录 {} 失败: {}", parent.display(), e))?;
             }
 
-            // 解压文件
             let mut outfile = std::fs::File::create(&dest_path)
                 .map_err(|e| format!("创建文件 {} 失败: {}", dest_str, e))?;
             std::io::copy(&mut entry, &mut outfile)
                 .map_err(|e| format!("写入文件 {} 失败: {}", dest_str, e))?;
 
-            // 添加可执行权限（Linux/macOS）
             #[cfg(not(target_os = "windows"))]
             {
                 if dest_path.extension().is_none() || dest_path.extension().unwrap() == "" {

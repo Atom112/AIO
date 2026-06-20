@@ -92,9 +92,9 @@ jobs:
       - name: Install frontend dependencies  
         run: npm install  
   
-      # Tauri 构建和发布
+      # Tauri 构建和发布（M14：固定到具体 commit SHA，防范 supply chain 漂移）
       - name: Build and Release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # action-v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

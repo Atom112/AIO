@@ -123,15 +123,24 @@ const ChatPage: Component = () => {
   /**
    * 处理文件上传和解析
    * 调用 Tauri 后端读取本地文件内容，支持文本文件和图片
+   * M7 加固：前端做扩展名白名单预校验，避免无效调用
    * @param filePath - 文件的绝对路径
    * @param fileType - 文件类型提示（'file' 或 'image'）
    */
   const handleFileUpload = async (filePath: string, fileType: 'file' | 'image') => {
-    setIsProcessing(true); // 开始处理，显示加载状态
+    const fileName = filePath.split(/[\\/]/).pop() || '未知文件';
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    const ALLOWED_IMG = ['png', 'jpg', 'jpeg', 'webp'];
+    const ALLOWED_DOC = ['pdf', 'docx', 'pptx', 'txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml', 'ini', 'tsv'];
+    const isImg = fileType === 'image' || ALLOWED_IMG.includes(ext);
+    const isDoc = ALLOWED_DOC.includes(ext);
+    if (!isImg && !isDoc) {
+      alert(`不支持的文件类型: .${ext}\n仅支持: ${[...ALLOWED_IMG, ...ALLOWED_DOC].join(', ')}`);
+      return;
+    }
+    setIsProcessing(true);
     try {
-      const fileName = filePath.split(/[\\/]/).pop() || '未知文件';
       const content = await invoke<string>('process_file_content', { path: filePath });
-      const isImg = fileType === 'image' || ['png', 'jpg', 'jpeg'].includes(fileName.split('.').pop()?.toLowerCase() || '');
       setPendingFiles(prev => [...prev, { name: fileName, content, type: isImg ? 'image' : 'text' }]);
     } catch (err) {
       alert(err);

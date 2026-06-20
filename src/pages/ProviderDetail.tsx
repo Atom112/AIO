@@ -274,7 +274,7 @@ const ProviderDetail: Component = () => {
                         </div>
                     </div>
                     <Show when={!isCustom() && providerMeta()}>
-                        <Show when={(providerMeta() as any).doc}>
+                        <Show when={(providerMeta() as any).doc && /^https?:\/\//i.test((providerMeta() as any).doc)}>
                             <a
                                 href={(providerMeta() as any).doc}
                                 target="_blank"

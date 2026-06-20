@@ -13,6 +13,7 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task;
 use tokio::time::{sleep, Duration};
+use tracing::debug;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -101,8 +102,8 @@ impl LocalEnginePlugin for LlamaCppPlugin {
         gpu_layers: i32,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
-            println!(
-                "[DEBUG] 启动参数 - 引擎: llama.cpp, 模型: {}, 端口: {}, GPU层数: {}",
+            debug!(
+                "启动参数 - 引擎: llama.cpp, 模型: {}, 端口: {}, GPU层数: {}",
                 model_path, port, gpu_layers
             );
 
@@ -132,27 +133,25 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             }
 
             let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
-            let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => return Err(format!("启动失败: {}", e)),
+            };
 
             let _ = app.emit(self.progress_event_name(), 0.05);
 
-            let stderr = child.stderr.take().expect("无法获取 stderr");
+            let stderr = match child.stderr.take() {
+                Some(s) => s,
+                None => return Err("无法获取子进程 stderr".to_string()),
+            };
             let app_clone = app.clone();
             let event_name = self.progress_event_name().to_string();
             task::spawn_blocking(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines() {
                     if let Ok(line) = line {
-                        println!("[llama-server] {}", line);
-                        if line.contains("offloaded") {
-                            println!("GPU 卸载状态: {}", line);
-                        }
-                        if line.contains("CUDA") {
-                            println!("CUDA 信息: {}", line);
-                        }
-                        if line.contains("error") || line.contains("Error") || line.contains("failed") {
-                            println!("LLAMA 错误: {}", line);
-                        }
+                        // 只在调试时记录子进程日志，避免泄露
+                        debug!("[llama-server] {}", line);
                         let progress = if line.contains("build info") || line.contains("system info") {
                             Some(0.1)
                         } else if line.contains("loading model") {
@@ -173,23 +172,25 @@ impl LocalEnginePlugin for LlamaCppPlugin {
 
             sleep(Duration::from_millis(2000)).await;
             match child.try_wait() {
-                Ok(None) => println!("进程正常运行中"),
+                Ok(None) => {}
                 Ok(Some(status)) => {
                     return Err(format!("进程启动后立即退出，退出码: {}", status));
                 }
                 Err(e) => return Err(format!("无法检查进程状态: {}", e)),
             }
 
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .connect_timeout(Duration::from_secs(2))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
             let health_url = format!("http://127.0.0.1:{}/health", port);
             match client
                 .get(&health_url)
-                .timeout(Duration::from_secs(5))
                 .send()
                 .await
             {
                 Ok(_) => {
-                    println!("健康检查通过");
                     let _ = app.emit(self.progress_event_name(), 1.0);
                 }
                 Err(_) => {
@@ -198,8 +199,9 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                 }
             }
 
-            *state.engine_type.lock().unwrap() = self.identifier().to_string();
-            *state.child_process.lock().unwrap() = Some(child);
+            let mut inner = state.lock();
+            inner.engine_type = self.identifier().to_string();
+            inner.child_process = Some(child);
 
             Ok(format!("http://127.0.0.1:{}/v1", port))
         })

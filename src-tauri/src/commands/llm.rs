@@ -4,7 +4,17 @@ use crate::core::models::*;
 use crate::core::state::StreamManager;
 use futures_util::StreamExt; // 用于处理流式数据
 use serde_json::json;
+use std::time::Duration;
 use tauri::{Emitter, Window}; // Emitter 用于从后端向前端推送事件
+
+/// 构造带超时的 reqwest 客户端（防止 DoS）
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 /// 核心函数：调用 LLM 并分块回传结果（流式输出）
 /// #[tauri::command] 允许前端通过 invoke 调用
@@ -44,7 +54,7 @@ pub async fn call_llm_stream(
                 api_url
             };
 
-            let client = reqwest::Client::new();
+            let client = http_client();
 
             // 构造符合 OpenAI API 标准的消息格式
             let messages_for_api: Vec<serde_json::Value> = messages
@@ -93,17 +103,15 @@ pub async fn call_llm_stream(
 
                     // 检查是否流传输结束
                     if line == "data: [DONE]" {
-                        window
-                            .emit(
-                                "llm-chunk",
-                                StreamPayload {
-                                    assistant_id: assistant_id_c.clone(),
-                                    topic_id: topic_id_c.clone(),
-                                    content: "".into(),
-                                    done: true,
-                                },
-                            )
-                            .unwrap();
+                        let _ = window.emit(
+                            "llm-chunk",
+                            StreamPayload {
+                                assistant_id: assistant_id_c.clone(),
+                                topic_id: topic_id_c.clone(),
+                                content: "".into(),
+                                done: true,
+                            },
+                        );
                         return Ok(());
                     }
 
@@ -113,17 +121,15 @@ pub async fn call_llm_stream(
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                             if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                                 // 将解析出的片段实时推送到前端
-                                window
-                                    .emit(
-                                        "llm-chunk",
-                                        StreamPayload {
-                                            assistant_id: assistant_id_c.clone(),
-                                            topic_id: topic_id_c.clone(),
-                                            content: content.to_string(),
-                                            done: false,
-                                        },
-                                    )
-                                    .unwrap();
+                                let _ = window.emit(
+                                    "llm-chunk",
+                                    StreamPayload {
+                                        assistant_id: assistant_id_c.clone(),
+                                        topic_id: topic_id_c.clone(),
+                                        content: content.to_string(),
+                                        done: false,
+                                    },
+                                );
                             }
                         }
                     }
@@ -135,18 +141,16 @@ pub async fn call_llm_stream(
 
         // 6. 错误处理：如果请求失败，发送错误信息给前端
         if let Err(e) = result {
-            println!("Stream Error: {}", e);
-            window
-                .emit(
-                    "llm-chunk",
-                    StreamPayload {
-                        assistant_id: assistant_id_c,
-                        topic_id: topic_id_c,
-                        content: format!("\n[Error: {}]", e),
-                        done: true,
-                    },
-                )
-                .unwrap();
+            tracing::error!("Stream Error: {}", e);
+            let _ = window.emit(
+                "llm-chunk",
+                StreamPayload {
+                    assistant_id: assistant_id_c,
+                    topic_id: topic_id_c,
+                    content: format!("\n[Error: {}]", e),
+                    done: true,
+                },
+            );
         }
 
         // 任务完成后，从全局状态中移除 handle
@@ -168,7 +172,7 @@ pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelI
     }
     let final_url = format!("{}/models", base_url);
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let response = client
         .get(&final_url)
         .header("Authorization", format!("Bearer {}", api_key))
@@ -204,7 +208,7 @@ pub async fn summarize_history(
     model: String,
     messages: Vec<Message>,
 ) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     let mut messages_for_api: Vec<serde_json::Value> = messages
         .iter()

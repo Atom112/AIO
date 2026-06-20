@@ -39,3 +39,10 @@ tauri-plugin-fs = "2.4.5"
 uuid = { version = "1", features = ["v4", "fast-rng", "serde"] }
 base64 = "0.22.1"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+sha2 = "0.10"
+url = "2"
+percent-encoding = "2"

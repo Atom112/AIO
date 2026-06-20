@@ -33,7 +33,8 @@ export interface Assistant {
  /* 应用基础配置接口，存储 API 连接等全局设置 */
 export interface AppConfig {
     apiUrl: string;         // API 服务提供商的基础 URL 地址
-    apiKey: string;         // 用于身份验证的 API 密钥
+    apiKey: string;         // 用于身份验证的 API 密钥（H5：仅内存使用，不落盘）
+    defaultModel?: string;  // 用户偏好的默认模型 ID
 }
 
  /* 已激活模型配置接口，定义可用 AI 模型的连接信息 */
@@ -184,6 +185,26 @@ export const setIgnoredUpdateVersion = (version: string | null): void => {
 /** 缓存上一次生成的 Blob URL，用于内存管理 */
 let lastBlobUrl: string | null = null;
 
+/** M13: 用户是否已确认允许自动启动本地推理引擎（首次启动需用户确认） */
+const AUTO_START_KEY = 'aio-local-auto-start-confirmed';
+export const isLocalAutoStartConfirmed = (): boolean => {
+    try {
+        return localStorage.getItem(AUTO_START_KEY) === '1';
+    } catch {
+        return false;
+    }
+};
+export const setLocalAutoStartConfirmed = (): void => {
+    try {
+        localStorage.setItem(AUTO_START_KEY, '1');
+    } catch { /* ignore */ }
+};
+export const clearLocalAutoStartConfirmed = (): void => {
+    try {
+        localStorage.removeItem(AUTO_START_KEY);
+    } catch { /* ignore */ }
+};
+
 /**
  * 从指定路径加载用户头像
  * @param input - 头像数据源，可以是 Base64 字符串或文件系统路径
@@ -232,23 +253,41 @@ export const [datas, setDatas] = createStore({
 
 
 // 配置初始化与管理
-/**
- * 从本地存储加载应用初始配置
- */
-const initialConfig: AppConfig = JSON.parse(
-    localStorage.getItem('app_config') || '{"apiUrl":"","apiKey":"","defaultModel":""}'
-);
+// H5 加固：API Key 改存 Rust 侧 keyring；前端 localStorage 仅保留非敏感字段
+const initialConfig: AppConfig = (() => {
+    try {
+        const raw = localStorage.getItem('app_config');
+        if (!raw) return { apiUrl: '', apiKey: '', defaultModel: '' };
+        const parsed = JSON.parse(raw);
+        // 兼容旧数据：保留非敏感字段，清空 apiKey（由 Rust 重新加载）
+        return {
+            apiUrl: parsed.apiUrl || '',
+            apiKey: '',
+            defaultModel: parsed.defaultModel || '',
+        };
+    } catch {
+        return { apiUrl: '', apiKey: '', defaultModel: '' };
+    }
+})();
 
 /** 应用配置信号，存储 API URL 和 Key 等全局设置 */
 export const [config, setConfig] = createSignal<AppConfig>(initialConfig);
 
 /**
  * 保存配置到本地存储并更新状态
+ * H5: apiKey 不再写入 localStorage，由后端存到 keyring
  * @param newConfig - 新的应用配置对象
  */
 export const saveConfig = (newConfig: AppConfig) => {
+    // 内存中保留 key 以便使用，但落盘前剥离
     setConfig(newConfig);
-    localStorage.setItem('app_config', JSON.stringify(newConfig));
+    const persisted: { apiUrl: string; defaultModel?: string } = {
+        apiUrl: newConfig.apiUrl,
+    };
+    if (newConfig.defaultModel) {
+        persisted.defaultModel = newConfig.defaultModel;
+    }
+    localStorage.setItem('app_config', JSON.stringify(persisted));
 };
 
 // 后端持久化逻辑
@@ -284,21 +323,25 @@ export const deleteAssistantFile = async (id: string) => {
 
 /**
  * 清除用户登录状态
+ * H5: token 已存于 Rust keyring，这里仅清前端 store
  */
 export const clearUserStatus = () => {
     setDatas('user', null);
     setDatas('isLoggedIn', false);
-    localStorage.removeItem('auth-token');
 };
 
 /**
  * 执行用户登出操作
+ * H5: 同步清 Rust 侧 keyring
  */
-export const logout = () => {
+export const logout = async () => {
     setDatas('user', null);
     setDatas('isLoggedIn', false);
-    localStorage.removeItem('auth-token');
-    // 重置头像为默认
+    try {
+        await invoke('logout_clear');
+    } catch (e) {
+        console.warn('清 Rust 侧 token 失败:', e);
+    }
     setGlobalUserAvatar('/icons/app-logo/user.svg');
 };
 

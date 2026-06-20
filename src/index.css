@@ -794,29 +794,34 @@ input[type="range"]::-webkit-slider-thumb:active {
 
 /* ========================================
    推理强度按钮 + 弹窗 (LobeHub 风格)
-   亚克力: 透明背景 + 软边框 + 主色高亮
+   亚克力: 透明背景 + 软边框 (与输入框工具栏其它按钮统一配色)
    ======================================== */
 .reasoning-trigger {
     @apply flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none;
-    background: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.55);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.4);
     font-size: 12px;
     font-weight: 500;
 }
 .reasoning-trigger:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(124, 154, 191, 0.6);
 }
+/* 激活态不使用主题色, 仅微微提亮文字, 与其它工具栏按钮视觉一致 */
 .reasoning-trigger.is-active {
-    background: rgba(var(--primary-rgb), 0.15);
-    color: rgba(var(--primary-rgb), 0.95);
-    box-shadow: 0 0 0 1px rgba(var(--primary-rgb), 0.25) inset;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    box-shadow: none;
 }
 .reasoning-trigger.is-active:hover {
-    background: rgba(var(--primary-rgb), 0.22);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(124, 154, 191, 0.6);
 }
 .reasoning-trigger-icon {
-    @apply flex-shrink-0;
+    @apply flex items-center justify-center flex-shrink-0;
+}
+.reasoning-trigger-icon svg {
+    display: block;
 }
 .reasoning-trigger-label {
     line-height: 1;
@@ -846,7 +851,8 @@ input[type="range"]::-webkit-slider-thumb:active {
     color: rgba(255, 255, 255, 0.85);
 }
 .reasoning-popup-title svg {
-    color: rgba(var(--primary-rgb), 0.9);
+    color: rgba(255, 255, 255, 0.85);
+    display: block;
 }
 .reasoning-popup-sub {
     font-size: 11px;
@@ -869,11 +875,11 @@ input[type="range"]::-webkit-slider-thumb:active {
     color: rgba(255, 255, 255, 0.9);
 }
 .reasoning-option.is-selected {
-    background: rgba(var(--primary-rgb), 0.12);
+    background: rgba(255, 255, 255, 0.07);
     color: rgba(255, 255, 255, 0.95);
 }
 .reasoning-option.is-selected:hover {
-    background: rgba(var(--primary-rgb), 0.16);
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .reasoning-option-icon {
@@ -881,9 +887,12 @@ input[type="range"]::-webkit-slider-thumb:active {
     background: rgba(255, 255, 255, 0.05);
     color: rgba(255, 255, 255, 0.6);
 }
+.reasoning-option-icon svg {
+    display: block;
+}
 .reasoning-option.is-selected .reasoning-option-icon {
-    background: rgba(var(--primary-rgb), 0.18);
-    color: rgba(var(--primary-rgb), 0.95);
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.95);
 }
 
 .reasoning-option-text {
@@ -904,5 +913,6 @@ input[type="range"]::-webkit-slider-thumb:active {
 
 .reasoning-option-check {
     @apply flex-shrink-0;
-    color: rgba(var(--primary-rgb), 0.95);
+    color: rgba(255, 255, 255, 0.95);
+    display: block;
 }

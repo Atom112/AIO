@@ -69,6 +69,9 @@ pub struct Message {
     /// role="assistant" 时携带模型发起的工具调用请求（OpenAI 兼容格式）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+    /// 模型原生思维链（GLM/DeepSeek-R1/Qwen3 等的 reasoning_content），仅 assistant 消息可能携带
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 /// OpenAI 风格的工具调用（assistant 消息中）

@@ -8,12 +8,13 @@ import type { McpServerConfig, McpServerStatusInfo, ToolSpec, LlmToolCallPayload
 
 // 接口定义
  /* 消息项接口，定义聊天消息的数据结构 */
-export interface Message {  
+export interface Message {
     role: 'user' | 'assistant';         // 消息发送者角色：'user' 表示用户，'assistant' 表示 AI 助手
     content: any;                       // 消息内容，支持文本或多模态内容（使用 any 类型以兼容不同格式）
     modelId?: string;                   // 生成回复的模型标识符，仅在 AI 助手回复时存在
     displayFiles?: { name: string }[];  // 消息关联的展示文件列表
     displayText?: string;               // 用于界面显示的纯文本内容（已脱敏或解析处理）
+    reasoning?: string;                 // 模型原生思维链（reasoning_content），仅 assistant 消息可能携带
 }  
 
  /* 话题接口，定义对话主题的数据结构 */

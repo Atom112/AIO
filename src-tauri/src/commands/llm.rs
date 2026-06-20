@@ -188,6 +188,24 @@ pub async fn call_llm_stream(
                                     },
                                 );
                             }
+                            // 思维链片段：GLM/DeepSeek-R1/Qwen3 等通过 reasoning_content 单独返回
+                            // 部分实现用 reasoning 作为别名，两者择一即可
+                            if let Some(reasoning) = val["choices"][0]["delta"]["reasoning_content"]
+                                .as_str()
+                                .or_else(|| val["choices"][0]["delta"]["reasoning"].as_str())
+                            {
+                                if !reasoning.is_empty() {
+                                    let _ = window.emit(
+                                        "llm-reasoning",
+                                        StreamPayload {
+                                            assistant_id: assistant_id_c.clone(),
+                                            topic_id: topic_id_c.clone(),
+                                            content: reasoning.to_string(),
+                                            done: false,
+                                        },
+                                    );
+                                }
+                            }
                             // tool_calls 累积
                             if let Some(tcs) = val["choices"][0]["delta"]["tool_calls"].as_array() {
                                 for tc in tcs {
@@ -397,8 +415,8 @@ pub async fn append_message(
     let content_json = serde_json::to_string(&message.content).unwrap_or_default();
 
     conn.execute(
-        "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![topic_id, message.role, content_json, message.model_id, files_json, message.display_text],
+        "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text, reasoning) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![topic_id, message.role, content_json, message.model_id, files_json, message.display_text, message.reasoning],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }

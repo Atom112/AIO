@@ -146,7 +146,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
             let mut topic = topic.map_err(|e| e.to_string())?;
 
             // 3. 加载历史消息
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -171,6 +171,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         tool_call_id: None,
                         name: None,
                         tool_calls: None,
+                        reasoning: row.get(6)?,    // index 6: reasoning
                     })
                 })
                 .map_err(|e| e.to_string())?;
@@ -240,10 +241,10 @@ pub async fn save_assistant(
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
 
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO NOTHING", // 关键：已存在的 ID 不再重复写入
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text],
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning],
             ).map_err(|e| e.to_string())?;
         }
     }

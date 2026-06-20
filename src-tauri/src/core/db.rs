@@ -71,6 +71,9 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     add_column_if_missing(&conn, "messages", "name", "TEXT")?;
     add_column_if_missing(&conn, "messages", "tool_calls_json", "TEXT")?;
 
+    // 迁移：模型原生思维链（reasoning_content）持久化（向后兼容）
+    add_column_if_missing(&conn, "messages", "reasoning", "TEXT")?;
+
     // 迁移：助手绑定首选模型（向后兼容）
     // 旧助手行缺少 model_id 列，反序列化时按 None 处理，视为使用全局默认模型
     add_column_if_missing(&conn, "assistants", "model_id", "TEXT")?;

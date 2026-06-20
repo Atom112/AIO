@@ -1,5 +1,6 @@
 import { Component, For, Show, Setter, createSignal, createEffect } from 'solid-js';
 import Markdown from './Markdown';
+import ThinkBlock from './ThinkBlock';
 import { Topic, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
@@ -152,6 +153,13 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                         </pre>
                                                     </div>
                                                 </Show>
+                                                {/* assistant 原生思维链（reasoning_content）：折叠渲染于正文之上 */}
+                                                <Show when={msg.role === 'assistant' && msg.reasoning}>
+                                                    <ThinkBlock
+                                                        content={msg.reasoning}
+                                                        isStreaming={index === props.typingIndex && props.isThinking && !msg.content}
+                                                    />
+                                                </Show>
                                                 {/* assistant 携带 tool_calls：渲染 ToolCallBubble */}
                                                 <Show when={msg.role === 'assistant' && (msg as any).toolCalls && (msg as any).toolCalls.length > 0}>
                                                     <For each={(msg as any).toolCalls}>
@@ -166,7 +174,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     </For>
                                                 </Show>
                                                 <Show
-                                                    when={msg.role === 'assistant' && !msg.content && !(msg as any).toolCalls}
+                                                    when={msg.role === 'assistant' && !msg.content && !(msg as any).toolCalls && !msg.reasoning}
                                                     fallback={
                                                         <Show when={msg.role !== 'tool' && !(msg as any).toolCalls}>
                                                             <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />

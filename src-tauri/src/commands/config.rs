@@ -167,6 +167,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         model_id: row.get(3)?,     // index 3: model_id
                         display_files,             // 已经解析好的 files
                         display_text: row.get(5)?, // index 5: display_text
+                        tool_call_id: None,
+                        name: None,
+                        tool_calls: None,
                     })
                 })
                 .map_err(|e| e.to_string())?;

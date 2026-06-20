@@ -5,6 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import Icon from './Icon';
 import ReasoningButton from './ReasoningButton';
+import ToolCallBubble from './ToolCallBubble';
 
 interface ChatInterfaceProps {
     activeTopic: Topic | null;
@@ -136,10 +137,40 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             </Show>
 
                                             <div class="mt-1">
+                                                {/* role="tool" 消息：紧凑显示工具结果 */}
+                                                <Show when={msg.role === 'tool'}>
+                                                    <div
+                                                        class="rounded-md px-3 py-2 text-xs"
+                                                        style="background: rgba(124,154,191,0.06); border-left: 2px solid rgba(124,154,191,0.4); color: rgba(255,255,255,0.75);"
+                                                    >
+                                                        <div class="flex items-center gap-1.5 mb-1" style="color: rgba(124,154,191,0.8);">
+                                                            <Icon src="/icons/app-logo/wrench.svg" class="w-3 h-3" />
+                                                            <span>工具 {msg.name} 返回结果</span>
+                                                        </div>
+                                                        <pre class="whitespace-pre-wrap break-all max-h-32 overflow-y-auto" style="font-size: 11px;">
+                                                            {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
+                                                        </pre>
+                                                    </div>
+                                                </Show>
+                                                {/* assistant 携带 tool_calls：渲染 ToolCallBubble */}
+                                                <Show when={msg.role === 'assistant' && (msg as any).toolCalls && (msg as any).toolCalls.length > 0}>
+                                                    <For each={(msg as any).toolCalls}>
+                                                        {(tc: any) => (
+                                                            <ToolCallBubble
+                                                                toolCall={tc}
+                                                                state={tc.state ?? 'success'}
+                                                                result={tc.result}
+                                                                error={tc.error}
+                                                            />
+                                                        )}
+                                                    </For>
+                                                </Show>
                                                 <Show
-                                                    when={msg.role === 'assistant' && !msg.content}
+                                                    when={msg.role === 'assistant' && !msg.content && !(msg as any).toolCalls}
                                                     fallback={
-                                                        <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                                                        <Show when={msg.role !== 'tool' && !(msg as any).toolCalls}>
+                                                            <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                                                        </Show>
                                                     }
                                                 >
                                                     <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">

@@ -1,8 +1,10 @@
 import { createStore,reconcile } from "solid-js/store";
 import { createEffect, createSignal } from "solid-js";
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { readFile } from '@tauri-apps/plugin-fs';
 import type { Catalog, CatalogSourceTag, ProviderConfig } from '../utils/models';
+import type { McpServerConfig, McpServerStatusInfo, ToolSpec, LlmToolCallPayload } from '../types/mcp';
 
 // 接口定义
  /* 消息项接口，定义聊天消息的数据结构 */
@@ -257,6 +259,116 @@ export const [datas, setDatas] = createStore({
     user: null as User | null,
     isLoggedIn: false
 });
+
+// ====== MCP 状态 ======
+
+/** MCP 服务器配置表（id → config） */
+export const [mcpServers, setMcpServers] = createSignal<Record<string, McpServerConfig>>({});
+/** MCP 服务器运行时状态（id → status） */
+export const [mcpServerStatus, setMcpServerStatus] = createSignal<Record<string, McpServerStatusInfo>>({});
+/** 当前对话可用的工具列表（合并所有 enabled server 的工具） */
+export const [mcpToolsCache, setMcpToolsCache] = createSignal<ToolSpec[]>([]);
+/** 工具名 → 所属 serverId（call_mcp_tool 时用） */
+export const [mcpToolToServer, setMcpToolToServer] = createSignal<Record<string, string>>({});
+
+/** LLM 工具调用事件总线（ChatPage 监听） */
+export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
+
+/** 工具调用轮数（防止死循环，5 轮上限） */
+export const TOOL_CALL_MAX_ROUNDS = 5;
+
+/**
+ * 加载并初始化 MCP 服务器列表 + 同步后端已连接状态 + 自动启动标记为 autoStart 的 server
+ */
+export const initMcpServers = async () => {
+    try {
+        const list = await invoke<McpServerConfig[]>('list_mcp_servers');
+        const map: Record<string, McpServerConfig> = {};
+        for (const cfg of list) map[cfg.id] = cfg;
+        setMcpServers(map);
+
+        // 同步后端已连接状态
+        const statusMap = await invoke<Record<string, McpServerStatusInfo>>('list_mcp_server_status');
+        setMcpServerStatus(statusMap);
+
+        // 监听后台状态推送
+        listen<McpServerStatusInfo>('mcp-server-status', (event) => {
+            const info = event.payload;
+            setMcpServerStatus(prev => ({ ...prev, [info.id]: info }));
+        });
+
+        // 自动启动标记为 autoStart 且启用的 server
+        const autoStartIds = Object.values(map)
+            .filter(cfg => cfg.enabled && cfg.autoStart)
+            .map(cfg => cfg.id);
+        if (autoStartIds.length > 0) {
+            await Promise.allSettled(autoStartIds.map(id => startMcpServerAndRefresh(id)));
+        }
+    } catch (e) {
+        console.warn('加载 MCP server 列表失败:', e);
+    }
+};
+
+/**
+ * 启动一个 MCP server 并刷新工具缓存
+ */
+export const startMcpServerAndRefresh = async (id: string): Promise<ToolSpec[]> => {
+    setMcpServerStatus(prev => ({
+        ...prev,
+        [id]: { id, status: 'connecting', toolCount: 0 },
+    }));
+    try {
+        const tools = await invoke<ToolSpec[]>('start_mcp_server', { id });
+        setMcpServerStatus(prev => ({
+            ...prev,
+            [id]: { id, status: 'connected', toolCount: tools.length },
+        }));
+        await refreshMcpToolsCache();
+        return tools;
+    } catch (e) {
+        setMcpServerStatus(prev => ({
+            ...prev,
+            [id]: { id, status: 'error', message: String(e), toolCount: 0 },
+        }));
+        throw e;
+    }
+};
+
+/** 重新拉取所有已连接 server 的工具，更新 mcpToolsCache + mcpToolToServer */
+export const refreshMcpToolsCache = async () => {
+    try {
+        const tools = await invoke<ToolSpec[]>('list_mcp_tools');
+        setMcpToolsCache(tools);
+        // 重建 tool → server 映射
+        const cfgMap = mcpServers();
+        const map: Record<string, string> = {};
+        for (const cfg of Object.values(cfgMap)) {
+            if (!cfg.enabled) continue;
+            // 由于后端 list_mcp_tools 不返回 serverId，我们只能近似匹配
+            // 真实映射在 call_mcp_tool 时由前端在 invoke 时传 serverId
+        }
+        setMcpToolToServer(map);
+    } catch (e) {
+        console.warn('刷新 MCP 工具缓存失败:', e);
+    }
+};
+
+/** 查找某工具名对应的 serverId（按 server 顺序查找） */
+export const findMcpServerForTool = (toolName: string): string | null => {
+    const cfgMap = mcpServers();
+    const statusMap = mcpServerStatus();
+    for (const [id, cfg] of Object.entries(cfgMap)) {
+        if (!cfg.enabled) continue;
+        if (statusMap[id]?.status !== 'connected') continue;
+        // 工具是否在此 server 中：白名单为空（全启用）或包含该工具
+        if (cfg.enabledTools.length === 0 || cfg.enabledTools.includes(toolName)) {
+            // 注：无法 100% 确认此 server 提供该工具（list_mcp_tools 不带 serverId），
+            // 真实可靠性由 call_mcp_tool 在后端校验。
+            return id;
+        }
+    }
+    return null;
+};
 
 
 // 配置初始化与管理

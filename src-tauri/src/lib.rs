@@ -13,8 +13,9 @@ mod utils;
 
 use std::sync::Arc;
 use crate::utils::process_file_content;
-use crate::core::state::{DbState, LocalEngineState, StreamManager};
+use crate::core::state::{DbState, LocalEngineState, McpRequestManager, McpServerState, StreamManager};
 use crate::plugins::engine::EngineManager;
+use crate::plugins::mcp::McpServerManager;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
@@ -45,6 +46,9 @@ pub fn run() {
         .manage(StreamManager(Arc::new(dashmap::DashMap::new())))
         .manage(LocalEngineState::new())
         .manage(EngineManager::new())
+        .manage(McpServerManager::builtin())
+        .manage(McpServerState::default())
+        .manage(McpRequestManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
@@ -92,9 +96,21 @@ pub fn run() {
             commands::provider_config::fetch_provider_models,
             commands::provider_config::read_provider_api_key,
             commands::provider_config::delete_provider_api_key,
+            // MCP 服务器管理
+            commands::mcp::list_mcp_servers,
+            commands::mcp::add_mcp_server,
+            commands::mcp::remove_mcp_server,
+            commands::mcp::start_mcp_server,
+            commands::mcp::stop_mcp_server,
+            commands::mcp::list_mcp_server_status,
+            commands::mcp::list_mcp_tools,
+            commands::mcp::call_mcp_tool,
+            commands::mcp::test_mcp_server_connection,
+            commands::mcp::list_mcp_transports,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                // 清理本地引擎子进程
                 let state = window.state::<LocalEngineState>();
                 let child_opt = {
                     let mut inner = state.lock();
@@ -103,6 +119,11 @@ pub fn run() {
                 if let Some(mut child) = child_opt {
                     let _ = child.kill();
                 }
+                // 清理 MCP 状态（在途调用 abort + 连接池清空）
+                let req_mgr = window.state::<McpRequestManager>();
+                req_mgr.abort_all();
+                let mcp_state = window.state::<McpServerState>();
+                mcp_state.lock().clear();
             }
         })
         .run(tauri::generate_context!())

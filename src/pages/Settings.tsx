@@ -17,6 +17,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
 
     const menuItems: Array<{ id: string; path: string; label: string; icon: JSX.Element }> = [
         { id: 'provider', path: '/settings', label: '供应商设置', icon: <Icon src="/icons/app-logo/provider.svg" class="w-5 h-5" /> },
+        { id: 'mcp', path: '/settings/mcp', label: 'MCP 服务器', icon: <Icon src="/icons/app-logo/mcp.svg" class="w-5 h-5" /> },
         { id: 'account', path: '/settings/account', label: '账号信息', icon: <Icon src="/icons/app-logo/account.svg" class="w-5 h-5" /> },
         { id: 'app', path: '/settings/app', label: '应用信息', icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" /> },
     ];

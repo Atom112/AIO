@@ -4,5 +4,6 @@ target/
 src-tauri/resources/llama-backend/
 src-tauri/keys/
 src-tauri/target/
+src-tauri/undefined/
 *.key
 *.key.pub

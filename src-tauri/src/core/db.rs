@@ -66,5 +66,35 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
             .map_err(|e| e.to_string())?;
     }
 
+    // 迁移：MCP 工具调用支持（向后兼容）
+    add_column_if_missing(&conn, "messages", "tool_call_id", "TEXT")?;
+    add_column_if_missing(&conn, "messages", "name", "TEXT")?;
+    add_column_if_missing(&conn, "messages", "tool_calls_json", "TEXT")?;
+
     Ok(conn)
+}
+
+/// 若指定表缺少指定列，则执行 ALTER TABLE ADD COLUMN。
+/// MCP 集成使用此为 messages 表增加 tool_call_id / name / tool_calls_json 三列。
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    col_type: &str,
+) -> Result<(), String> {
+    let exists: i32 = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name=?1",
+                table
+            ),
+            [column],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if exists == 0 {
+        let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, col_type);
+        conn.execute(&sql, []).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

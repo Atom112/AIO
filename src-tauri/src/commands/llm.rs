@@ -3,6 +3,7 @@ use rusqlite::params;
 use crate::core::models::*;
 use crate::core::state::StreamManager;
 use futures_util::StreamExt; // 用于处理流式数据
+use serde::Serialize;
 use serde_json::json;
 use std::time::Duration;
 use tauri::{Emitter, Window}; // Emitter 用于从后端向前端推送事件
@@ -14,6 +15,16 @@ fn http_client() -> reqwest::Client {
         .timeout(Duration::from_secs(60))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// 流式 tool_call 累积载荷（发往前端用）
+#[derive(Serialize, Clone)]
+pub struct ToolCallPayload {
+    pub assistant_id: String,
+    pub topic_id: String,
+    pub tool_call_id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 /// 核心函数：调用 LLM 并分块回传结果（流式输出）
@@ -28,6 +39,7 @@ pub async fn call_llm_stream(
     assistant_id: String,                   // 助手 ID（用于前端匹配消息）
     topic_id: String,                       // 话题/会话 ID
     messages: Vec<Message>,                 // 历史上下文消息列表
+    tools: Option<Vec<ToolSpec>>,           // 工具定义（MCP 工具，None 或空数组则不发送）
 ) -> Result<(), String> {
     // 1. 生成唯一的任务 Key，格式为 "助手ID-话题ID"
     let task_key = format!("{}-{}", assistant_id, topic_id);
@@ -57,22 +69,39 @@ pub async fn call_llm_stream(
             let client = http_client();
 
             // 构造符合 OpenAI API 标准的消息格式
+            // 支持 role="tool"（带 tool_call_id）和 assistant 携带 tool_calls
             let messages_for_api: Vec<serde_json::Value> = messages
                 .iter()
                 .map(|m| {
-                    json!({
-                        "role": m.role,
-                        "content": m.content // 这里现在可以直接是字符串或数组对象
-                    })
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("role".into(), json!(m.role));
+                    obj.insert("content".into(), m.content.clone());
+                    if let Some(tcid) = &m.tool_call_id {
+                        obj.insert("tool_call_id".into(), json!(tcid));
+                    }
+                    if let Some(name) = &m.name {
+                        obj.insert("name".into(), json!(name));
+                    }
+                    if let Some(tcs) = &m.tool_calls {
+                        obj.insert("tool_calls".into(), json!(tcs));
+                    }
+                    serde_json::Value::Object(obj)
                 })
                 .collect();
 
             // 构造请求体，开启 stream 模式
-            let body = json!({
-                "model": model,
-                "messages": messages_for_api,
-                "stream": true
-            });
+            // 若传入 tools 且非空，则附加到 body
+            let mut body_map = serde_json::Map::new();
+            body_map.insert("model".into(), json!(model));
+            body_map.insert("messages".into(), json!(messages_for_api));
+            body_map.insert("stream".into(), json!(true));
+            if let Some(tools) = &tools {
+                if !tools.is_empty() {
+                    body_map.insert("tools".into(), json!(tools));
+                    body_map.insert("tool_choice".into(), json!("auto"));
+                }
+            }
+            let body = serde_json::Value::Object(body_map);
 
             // 发送 POST 请求
             let response = client
@@ -83,9 +112,22 @@ pub async fn call_llm_stream(
                 .await
                 .map_err(|e| e.to_string())?;
 
+            // 检查 HTTP 状态码：非 2xx 时提前报错，避免对错误 JSON 走 SSE 解析
+            let status = response.status();
+            if !status.is_success() {
+                let body_text = response.text().await.unwrap_or_default();
+                let truncated = if body_text.len() > 512 { &body_text[..512] } else { &body_text };
+                return Err(format!("LLM API {}: {}", status, truncated));
+            }
+
             // 获取响应字节流
             let mut stream = response.bytes_stream();
             let mut line_buffer = String::new(); // 用于累积不完整的字节分块
+
+            // tool_call 累积状态：按 index 维护 id/name/arguments
+            // index → (id, name, arguments)
+            let mut tc_accum: std::collections::HashMap<usize, (String, String, String)> =
+                std::collections::HashMap::new();
 
             // 5. 循环处理流式返回的数据块
             while let Some(item) = stream.next().await {
@@ -103,6 +145,21 @@ pub async fn call_llm_stream(
 
                     // 检查是否流传输结束
                     if line == "data: [DONE]" {
+                        // 在结束前 flush 累积中的 tool_calls
+                        for (_idx, (id, name, args)) in tc_accum.drain() {
+                            if !id.is_empty() && !name.is_empty() {
+                                let _ = window.emit(
+                                    "llm-tool-call",
+                                    ToolCallPayload {
+                                        assistant_id: assistant_id_c.clone(),
+                                        topic_id: topic_id_c.clone(),
+                                        tool_call_id: id,
+                                        name,
+                                        arguments: args,
+                                    },
+                                );
+                            }
+                        }
                         let _ = window.emit(
                             "llm-chunk",
                             StreamPayload {
@@ -119,8 +176,8 @@ pub async fn call_llm_stream(
                     if line.starts_with("data: ") {
                         let json_str = &line[6..];
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                            // 文本片段
                             if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
-                                // 将解析出的片段实时推送到前端
                                 let _ = window.emit(
                                     "llm-chunk",
                                     StreamPayload {
@@ -131,10 +188,80 @@ pub async fn call_llm_stream(
                                     },
                                 );
                             }
+                            // tool_calls 累积
+                            if let Some(tcs) = val["choices"][0]["delta"]["tool_calls"].as_array() {
+                                for tc in tcs {
+                                    let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                                    let entry = tc_accum.entry(index).or_insert_with(|| {
+                                        (String::new(), String::new(), String::new())
+                                    });
+                                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                        entry.0 = id.to_string();
+                                    }
+                                    if let Some(name) = tc
+                                        .get("function")
+                                        .and_then(|f| f.get("name"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        entry.1 = name.to_string();
+                                    }
+                                    if let Some(args) = tc
+                                        .get("function")
+                                        .and_then(|f| f.get("arguments"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        entry.2.push_str(args);
+                                    }
+                                }
+                            }
+                            // finish_reason="tool_calls" 触发 flush
+                            let finish = val["choices"][0]["finish_reason"]
+                                .as_str()
+                                .unwrap_or("");
+                            if finish == "tool_calls" {
+                                for (_idx, (id, name, args)) in tc_accum.drain() {
+                                    if !id.is_empty() && !name.is_empty() {
+                                        let _ = window.emit(
+                                            "llm-tool-call",
+                                            ToolCallPayload {
+                                                assistant_id: assistant_id_c.clone(),
+                                                topic_id: topic_id_c.clone(),
+                                                tool_call_id: id,
+                                                name,
+                                                arguments: args,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+            // 流自然结束（未到 [DONE]）：flush 残余 tool_calls，然后 emit done
+            for (_idx, (id, name, args)) in tc_accum.drain() {
+                if !id.is_empty() && !name.is_empty() {
+                    let _ = window.emit(
+                        "llm-tool-call",
+                        ToolCallPayload {
+                            assistant_id: assistant_id_c.clone(),
+                            topic_id: topic_id_c.clone(),
+                            tool_call_id: id,
+                            name,
+                            arguments: args,
+                        },
+                    );
+                }
+            }
+            let _ = window.emit(
+                "llm-chunk",
+                StreamPayload {
+                    assistant_id: assistant_id_c.clone(),
+                    topic_id: topic_id_c.clone(),
+                    content: "".into(),
+                    done: true,
+                },
+            );
             Ok(())
         }
         .await;

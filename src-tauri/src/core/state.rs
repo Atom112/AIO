@@ -32,3 +32,46 @@ impl LocalEngineState {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
+
+// ====== MCP 状态 ======
+
+use crate::core::models::ToolResult;
+use crate::plugins::mcp::connection::McpConnection;
+use crate::plugins::mcp::error::McpError;
+
+/// MCP 服务器连接池：server_id → McpConnection
+/// 锁策略：与 LocalEngineState 一致，单锁避免嵌套死锁
+pub struct McpServerState(pub Mutex<std::collections::HashMap<String, Arc<McpConnection>>>);
+
+impl Default for McpServerState {
+    fn default() -> Self {
+        Self(Mutex::new(std::collections::HashMap::new()))
+    }
+}
+
+impl McpServerState {
+    /// 锁中毒时仍能拿到内部数据
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Arc<McpConnection>>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// 在途 MCP 工具调用：call_id → JoinHandle<Result<ToolResult, McpError>>
+/// 用户点停止时遍历 abort 所有
+pub struct McpRequestManager(
+    pub Arc<DashMap<String, JoinHandle<std::result::Result<ToolResult, McpError>>>>,
+);
+
+impl McpRequestManager {
+    pub fn new() -> Self {
+        Self(Arc::new(DashMap::new()))
+    }
+
+    /// 中止所有在途调用
+    pub fn abort_all(&self) {
+        for entry in self.0.iter() {
+            entry.value().abort();
+        }
+        self.0.clear();
+    }
+}

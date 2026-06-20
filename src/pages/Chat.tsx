@@ -5,6 +5,7 @@ import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
   saveSingleAssistantToBackend, Assistant, Topic, Message, selectedModel, reasoningLevel,
   pendingRenameRequest, setPendingRenameRequest,
+  mcpServers, mcpServerStatus, findMcpServerForTool, TOOL_CALL_MAX_ROUNDS,
 } from '../store/store';
 import AssistantSidebar from '../components/AssistantSidebar';
 import ChatInterface from '../components/ChatInterface';
@@ -342,6 +343,219 @@ const ChatPage: Component = () => {
   };
 
   /**
+   * 处理 LLM 工具调用事件（来自后端 llm-tool-call）：
+   *   1. 找到 tool_call_id 对应的 assistant 消息，标记 toolCall.state = 'calling'
+   *   2. 查找该工具对应的 MCP serverId
+   *   3. 调用 call_mcp_tool；标记 success / error
+   *   4. 追加 role="tool" 消息
+   *   5. 重新 invoke call_llm_stream 继续对话（5 轮上限）
+   */
+  const handleToolCall = async (
+    asstId: string,
+    topicId: string,
+    toolCallId: string,
+    toolName: string,
+    argsJson: string,
+  ) => {
+    const asst = datas.assistants.find((a: any) => a.id === asstId);
+    const topic = (asst?.topics as Topic[] | undefined)?.find((t: Topic) => t.id === topicId);
+    if (!asst || !topic) return;
+
+    // 5 轮上限检查
+    const rounds = topic.history.reduce((n: number, m: any) => {
+      if (m.role === 'tool') return n + 1;
+      return n;
+    }, 0);
+    if (rounds >= TOOL_CALL_MAX_ROUNDS) {
+      // 标记为 error
+      setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
+        'history', (h: any[]) => h.map((m: any) => {
+          if (m.role === 'assistant' && m.toolCalls) {
+            return {
+              ...m,
+              toolCalls: m.toolCalls.map((tc: any) =>
+                tc.id === toolCallId ? { ...tc, state: 'error', error: `已达工具调用上限 ${TOOL_CALL_MAX_ROUNDS} 轮` } : tc
+              ),
+            };
+          }
+          return m;
+        })
+      );
+      return;
+    }
+
+    // 找到最后一条 assistant 消息，初始化/更新 toolCalls
+    setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
+      'history', (h: any[]) => {
+        const lastIdx = h.length - 1;
+        if (h[lastIdx]?.role === 'assistant') {
+          const existing = h[lastIdx].toolCalls || [];
+          const hasTc = existing.find((tc: any) => tc.id === toolCallId);
+          if (!hasTc) {
+            // 首次收到此 tool_call：追加到 assistant message
+            return [
+              ...h.slice(0, lastIdx),
+              {
+                ...h[lastIdx],
+                toolCalls: [
+                  ...existing,
+                  { id: toolCallId, type: 'function', function: { name: toolName, arguments: argsJson } }
+                ]
+              }
+            ];
+          }
+          // 已存在：标记 calling
+          return [
+            ...h.slice(0, lastIdx),
+            {
+              ...h[lastIdx],
+              toolCalls: existing.map((tc: any) =>
+                tc.id === toolCallId ? { ...tc, state: 'calling' } : tc
+              )
+            }
+          ];
+        }
+        return h;
+      }
+    );
+
+    // 找 server
+    const serverId = findMcpServerForTool(toolName);
+    if (!serverId) {
+      // 标记 error，附 role=tool 错误消息
+      const errMsg = `未找到工具 ${toolName} 对应的 MCP server`;
+      setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
+        'history', (h: any[]) => [
+          ...h.map((m: any) => {
+            if (m.role === 'assistant' && m.toolCalls) {
+              return {
+                ...m,
+                toolCalls: m.toolCalls.map((tc: any) =>
+                  tc.id === toolCallId ? { ...tc, state: 'error', error: errMsg } : tc
+                ),
+              };
+            }
+            return m;
+          }),
+          { id: crypto.randomUUID(), role: 'tool' as const, content: `[Error] ${errMsg}`, toolCallId, name: toolName },
+        ]
+      );
+      return;
+    }
+
+    // 调用工具
+    let args: any = {};
+    try { args = JSON.parse(argsJson || '{}'); } catch { /* keep empty */ }
+    let resultContent: any[] = [];
+    let isError = false;
+    let errorMsg = '';
+    try {
+      const result = await invoke<any>('call_mcp_tool', {
+        serverId,
+        toolName,
+        arguments: args,
+      });
+      resultContent = result.content || [];
+      isError = !!result.isError;
+    } catch (e: any) {
+      isError = true;
+      errorMsg = String(e);
+    }
+
+    // 把结果写入 tool_call，并追加 role=tool 消息
+    const toolContentText = isError
+      ? `[Error] ${errorMsg}`
+      : (resultContent.find((c: any) => c.type === 'text')?.text || JSON.stringify(resultContent));
+
+    setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
+      'history', (h: any[]) => [
+        ...h.map((m: any) => {
+          if (m.role === 'assistant' && m.toolCalls) {
+            return {
+              ...m,
+              toolCalls: m.toolCalls.map((tc: any) =>
+                tc.id === toolCallId
+                  ? { ...tc, state: isError ? 'error' : 'success', result: resultContent, error: isError ? errorMsg : undefined }
+                  : tc
+              ),
+            };
+          }
+          return m;
+        }),
+        { id: crypto.randomUUID(), role: 'tool' as const, content: toolContentText, toolCallId, name: toolName },
+      ]
+    );
+
+    // 递归调用 LLM：把当前 history 重新发出去（带 tools）
+    await invokeLLMStreamWithHistory(asstId, topicId);
+  };
+
+  /**
+   * 用当前 history 重新调用 LLM（工具调用循环的驱动）。
+   * 复用 handleSendMessage 的消息构造逻辑但不发新 user 消息。
+   */
+  const invokeLLMStreamWithHistory = async (asstId: string, topicId: string) => {
+    const asst = datas.assistants.find((a: any) => a.id === asstId);
+    const topic = (asst?.topics as Topic[] | undefined)?.find((t: Topic) => t.id === topicId);
+    const currentMdl = selectedModel();
+    if (!asst || !topic || !currentMdl) return;
+
+    // 注入 MCP 工具列表
+    const tools = await invoke<any[]>('list_mcp_tools').catch(() => []);
+
+    // 构造传给 API 的 messages：清理 toolCalls 只保留 API 需要的字段
+    const messagesForAI: any[] = [
+      { role: 'system', content: asst.prompt },
+      ...(topic.summary ? [{ role: 'system', content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${topic.summary}` }] : []),
+      ...topic.history.map((m: any) => {
+        const obj: any = { role: m.role, content: m.content };
+        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
+        if (m.name) obj.name = m.name;
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          // 只保留 OpenAI API 认识的字段，去掉前端 UI 状态（state / result / error）
+          obj.tool_calls = m.toolCalls.map((tc: any) => ({
+            id: tc.id,
+            type: tc.type || 'function',
+            function: {
+              name: tc.function?.name,
+              arguments: tc.function?.arguments,
+            },
+          }));
+        }
+        return obj;
+      }),
+    ];
+
+    // 预先添加空的 assistant 占位消息，流式数据才有地方追加
+    const newAssistantMsg = {
+      id: crypto.randomUUID(),
+      role: 'assistant' as const,
+      content: '',
+      modelId: currentMdl.model_id,
+    };
+    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+      'history', h => [...h, newAssistantMsg]);
+    setTypingIndex(topic.history.length); // 新 assistant 消息的位置
+    setIsThinking(true);
+
+    try {
+      await invoke('call_llm_stream', {
+        apiUrl: currentMdl.api_url,
+        apiKey: currentMdl.api_key,
+        model: currentMdl.model_id,
+        assistantId: asstId,
+        topicId,
+        messages: messagesForAI,
+        tools: tools.length > 0 ? tools : null,
+      });
+    } catch (err) {
+      setIsThinking(false);
+      setTypingIndex(null);
+      console.error('LLM 续接调用失败:', err);
+    }
+  };
+
+  /**
    * 处理发送消息的逻辑
    * 包括文件处理、API调用和状态更新
    */
@@ -433,6 +647,9 @@ const ChatPage: Component = () => {
     setTypingIndex(activeTopic()?.history.length! - 1);
 
     try {
+      // 拉取 MCP 工具列表
+      const mcpTools = await invoke<any[]>('list_mcp_tools').catch(() => []);
+
       // 调用 Tauri 后端流式接口（非阻塞，通过事件监听接收数据）
       await invoke('call_llm_stream', {
         apiUrl: currentMdl.api_url,
@@ -440,7 +657,8 @@ const ChatPage: Component = () => {
         model: currentMdl.model_id,
         assistantId: asstId,
         topicId: topicId,
-        messages: messagesForAI
+        messages: messagesForAI,
+        tools: mcpTools.length > 0 ? mcpTools : null,
       });
 
     } catch (err) {
@@ -591,6 +809,11 @@ const ChatPage: Component = () => {
             'topics', t => t.id === topic_id,
             'history', lastIdx, 'content', (old: string) => old + content);
         }
+      }),
+      // LLM 工具调用事件：执行工具 → 追加 role="tool" 消息 → 递归 call_llm_stream
+      listen<any>('llm-tool-call', async (e) => {
+        const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
+        await handleToolCall(assistant_id, topic_id, tool_call_id, name, argsJson);
       })
     ];
 

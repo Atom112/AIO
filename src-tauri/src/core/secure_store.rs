@@ -14,6 +14,7 @@
 //! - `app-api-url`: 全局 API URL（仅当用户选择加密存储时）
 //! - `app-api-key`: 全局 API Key
 //! - `provider-{provider_id}-api-key`: 每个 provider 的 API Key
+//! - `mcp-server-{server_id}-env-{env_key}`: 每个 MCP server 的环境变量密钥
 
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -152,4 +153,22 @@ pub mod accounts {
     pub fn provider_key(id: &str) -> String {
         format!("provider-{}-api-key", id)
     }
+    /// MCP server 环境变量密钥：${KEYRING:mcp-server-{server_id}-env-{env_key}}
+    pub fn mcp_server_env(server_id: &str, env_key: &str) -> String {
+        format!("mcp-server-{}-env-{}", server_id, env_key)
+    }
+    /// 删除某 MCP server 的所有密钥（删除 server 时调用）
+    #[allow(dead_code)]
+    pub fn mcp_server_prefix(server_id: &str) -> String {
+        format!("mcp-server-{}-", server_id)
+    }
+}
+
+/// 列出 keyring 中某前缀下的所有 account 名。
+/// 用于删除 MCP server 时清理其所有环境变量。
+/// 注：keyring crate 暂未提供"按前缀列出"API，这里返回空 vec；
+/// 推荐做法是在删除 server 时由调用方显式传入要删除的 env 键列表。
+#[allow(dead_code)]
+pub fn list_with_prefix(_app: &AppHandle, _prefix: &str) -> Vec<String> {
+    Vec::new()
 }

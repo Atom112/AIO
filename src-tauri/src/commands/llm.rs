@@ -268,10 +268,221 @@ pub async fn append_message(
     let conn = (*state).0.lock().unwrap();
     let files_json = serde_json::to_string(&message.display_files).ok();
     let content_json = serde_json::to_string(&message.content).unwrap_or_default();
-    
+
     conn.execute(
         "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![topic_id, message.role, content_json, message.model_id, files_json, message.display_text],
     ).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 从消息内容中提取纯文本，多模态数组（OpenAI vision 格式）只保留 text 部分。
+fn extract_text_content(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| {
+                if v.get("type")?.as_str()? == "text" {
+                    v.get("text")?.as_str().map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
+    }
+}
+
+/// 清洗模型返回的原始字符串为合规标题。
+/// 1. 去除首尾空白与首尾成对引号（半角 / 全角 / 中文书名号 / 反引号）
+/// 2. 取第一个非空行（避免多行输出）
+/// 3. 递归剥离常见中英文前缀（"标题：" / "Title:" / "好的，" / "以下是" 等）
+/// 4. 去除成对 Markdown 标记（**...** / `...`）
+fn clean_topic_title(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // 取第一个非空行
+    let first_line = trimmed
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+
+    let mut s = first_line.to_string();
+
+    // 剥离常见前缀（最多尝试 3 轮，防止 "好的，标题是：xxx" 这种嵌套）
+    const PREFIXES: &[&str] = &[
+        "好的，标题是：", "好的，标题是:", "好的，标题：", "好的，标题:",
+        "好的：", "好的:", "好的，", "好的,",
+        "标题是：", "标题是:", "标题：", "标题:",
+        "Title:", "Title：", "title:", "title：",
+        "以下是", "以下为", "下面给出", "给你一个",
+        "Here is the title:", "Here is the title：",
+        "The title is:", "The title is：",
+    ];
+    for _ in 0..3 {
+        let mut matched = false;
+        for p in PREFIXES {
+            if s.starts_with(p) {
+                s = s[p.len()..].trim().to_string();
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            break;
+        }
+    }
+
+    // 去除首尾成对引号（中英文 + 反引号 + 书名号）
+    s = s
+        .trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\''
+                    | '`'
+                    | '「'
+                    | '」'
+                    | '『'
+                    | '』'
+                    | '\u{201C}'
+                    | '\u{201D}'
+                    | '\u{2018}'
+                    | '\u{2019}'
+            )
+        })
+        .to_string();
+
+    // 去除成对 Markdown 标记
+    if s.len() > 4 && s.starts_with("**") && s.ends_with("**") {
+        s = s[2..s.len() - 2].to_string();
+    } else if s.len() > 2 && s.starts_with('`') && s.ends_with('`') {
+        s = s[1..s.len() - 1].to_string();
+    }
+
+    s.trim().to_string()
+}
+
+/// 为话题生成一个简短标题（4-20 个字符）。
+/// 由前端在新话题的"第一次对话"后调用一次，生成后前端将 `topic.renamed` 置为 `true`，
+/// 后续不再调用以避免重复重命名。
+/// 仅做内容生成，不写入数据库 —— 持久化由前端在更新 Store 后通过 `save_assistant` 完成。
+///
+/// # 参数
+/// - `api_url` / `api_key` / `model`：调用方所用的 LLM 凭据（与流式对话保持一致）
+/// - `messages`：用于生成标题的对话内容（建议取前 2~4 条）
+///
+/// # 返回
+/// 成功时返回清洗后的标题字符串（已去除引号、空白、换行与常见前缀，长度限制在 1-20 字符内）。
+///
+/// # 失败模式
+/// 若 LLM 长时间返回空内容（finish_reason=stop 且 content 为空），错误信息会附带
+/// 模型名与原始长度，便于排查。前端应在 catch 中走启发式后备方案。
+#[tauri::command]
+pub async fn generate_topic_title(
+    api_url: String,
+    api_key: String,
+    model: String,
+    messages: Vec<Message>,
+) -> Result<String, String> {
+    if messages.is_empty() {
+        return Err("生成标题需要至少一条消息".to_string());
+    }
+
+    let client = http_client();
+
+    // 消息顺序遵循 LLM 约定：system 指令 → 对话上下文 → user 明确任务请求
+    // 将 system 放最前、user 任务请求放最后，能显著提升小模型 / 本地模型的格式遵循度
+    let mut messages_for_api: Vec<serde_json::Value> = vec![json!({
+        "role": "system",
+        "content": "你是一个话题标题生成助手，擅长用最少的字数精准概括对话核心内容。"
+    })];
+
+    // 注入对话历史：多模态 content 只取 text 部分，避免图片 base64 干扰生成
+    for m in &messages {
+        let text = extract_text_content(&m.content);
+        if text.trim().is_empty() {
+            continue;
+        }
+        messages_for_api.push(json!({ "role": m.role, "content": text }));
+    }
+
+    // 末尾追加明确的 user 任务请求，作为模型"应输出什么"的最终信号
+    messages_for_api.push(json!({
+        "role": "user",
+        "content": "请根据以上对话生成一个 4-20 字的话题标题。\n\
+                     严格要求：\n\
+                     1. 精准概括核心主题或关键问题\n\
+                     2. 不要加引号、冒号、序号、'好的'、'以下是'等多余文字\n\
+                     3. 不要使用任何 Markdown 标记\n\
+                     4. 你的回复必须且只能包含标题本身"
+    }));
+
+    let body = json!({
+        "model": model,
+        "messages": messages_for_api,
+        "stream": false,
+        // 200 token 足够覆盖"标题：xxx + 解释"等冗余输出；
+        // 我们会在 Rust 侧再截断到 20 字符
+        "max_tokens": 200,
+        "temperature": 0.0
+    });
+
+    // URL 处理：去掉末尾斜杠与可能的 /chat/completions 后缀
+    let base_url = api_url
+        .trim_end_matches('/')
+        .replace("/chat/completions", "");
+    let endpoint = format!("{}/chat/completions", base_url);
+
+    let res = client
+        .post(endpoint)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+
+    if let Some(err) = val.get("error") {
+        return Err(err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("API Error")
+            .to_string());
+    }
+
+    let raw = val["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let cleaned = clean_topic_title(&raw);
+
+    if cleaned.is_empty() {
+        // 附带诊断信息：模型 / finish_reason / 原始长度
+        let finish = val["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or("unknown");
+        return Err(format!(
+            "模型 {} 返回的标题为空 (finish_reason={}, raw_len={})",
+            model,
+            finish,
+            raw.len()
+        ));
+    }
+
+    // 长度限制：超过 20 字符截断（按字符而非字节，避免中文乱码）
+    let truncated: String = if cleaned.chars().count() > 20 {
+        cleaned.chars().take(20).collect()
+    } else {
+        cleaned
+    };
+
+    Ok(truncated)
 }

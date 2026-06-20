@@ -31,20 +31,40 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         assistant_id TEXT NOT NULL,
         name TEXT NOT NULL,
         summary TEXT,
+        renamed INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(assistant_id) REFERENCES assistants(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY, 
+        id TEXT PRIMARY KEY,
         topic_id TEXT NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         model_id TEXT,
-        display_files TEXT, 
+        display_files TEXT,
         display_text TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
     );"
 ).map_err(|e| e.to_string())?;
+
+    // 迁移：给已存在的 topics 表添加 renamed 列（仅当列不存在时执行）
+    // 行为：旧话题行标记为 1（已重命名），避免升级后历史话题被自动改名
+    let has_renamed: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('topics') WHERE name='renamed'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if has_renamed == 0 {
+        conn.execute(
+            "ALTER TABLE topics ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute("UPDATE topics SET renamed = 1", [])
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok(conn)
 }

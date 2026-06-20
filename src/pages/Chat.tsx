@@ -3,7 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
-  saveSingleAssistantToBackend, Assistant, Topic, selectedModel, reasoningLevel,
+  saveSingleAssistantToBackend, Assistant, Topic, Message, selectedModel, reasoningLevel,
+  pendingRenameRequest, setPendingRenameRequest,
 } from '../store/store';
 import AssistantSidebar from '../components/AssistantSidebar';
 import ChatInterface from '../components/ChatInterface';
@@ -11,6 +12,11 @@ import TopicSidebar from '../components/TopicSidebar';
 
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = "default-assistant-id";
+
+// 跟踪当前正在进行的"标题生成"任务，用于在用户切换话题时取消未完成的回调
+// （Tauri invoke 暂不支持 AbortSignal，这里仅在 JS 侧跳过结果处理；
+//  服务端调用仍会完成但结果被忽略，避免不必要的 state 更新）
+let activeTitleGen: { topicId: string; cancelled: boolean } | null = null;
 
 /**
  * 辅助函数：创建新话题对象
@@ -194,6 +200,145 @@ const ChatPage: Component = () => {
         console.error("生成总结失败:", e);
       }
     }
+  };
+
+  /**
+   * 启发式后备方案：从历史中提取一段文本作为标题。
+   * 用于 LLM 标题生成失败时保证至少能给出有意义的命名。
+   * 取第一条 user 消息的前 12 个字符。
+   */
+  const fallbackTitle = (history: Message[]): string => {
+    const firstUser = history.find(m => m.role === 'user');
+    if (!firstUser) return '';
+    let text: string;
+    if (typeof firstUser.content === 'string') {
+      text = firstUser.content;
+    } else if (firstUser.displayText) {
+      text = firstUser.displayText;
+    } else {
+      // 多模态：尝试提取 text 片段
+      try {
+        text = (firstUser.content as any[])
+          .filter((p: any) => p?.type === 'text' && p?.text)
+          .map((p: any) => p.text)
+          .join(' ');
+      } catch {
+        text = '';
+      }
+    }
+    // 去掉换行避免标题跨行
+    const cleaned = text.trim().replace(/\s+/g, ' ');
+    return cleaned.length > 12 ? cleaned.slice(0, 12) : cleaned;
+  };
+
+  /**
+   * 为"非默认话题"在首次对话后自动重命名。
+   * 规则：
+   *   1. 跳过默认话题（每个助手的话题列表第一项）
+   *   2. 跳过已重命名过的话题（topic.renamed === true）
+   *   3. 跳过 AI 回复为空/为错误的情况
+   *   4. 优先调用 LLM 生成标题；LLM 失败时回退到启发式（取首条 user 消息前 12 字）
+   *   5. 成功后更新 topic.name 并置 renamed=true，持久化到后端
+   *   6. 用户切换到其他话题时通过 activeTitleGen 取消未完成的回调处理
+   */
+  const checkAndRename = async (eventAsstId: string, eventTopicId: string) => {
+    // 取消之前未完成的标题生成任务（用户切换话题或触发了新的重命名）
+    if (activeTitleGen) {
+      activeTitleGen.cancelled = true;
+      activeTitleGen = null;
+    }
+    const task = { topicId: eventTopicId, cancelled: false };
+    activeTitleGen = task;
+
+    const asst = datas.assistants.find((a: any) => a.id === eventAsstId);
+    if (!asst) { if (activeTitleGen === task) activeTitleGen = null; return; }
+    // 必须用事件中的 topicId 重新定位（用户可能已切换话题）
+    const topic = (asst.topics as Topic[]).find((t: Topic) => t.id === eventTopicId);
+    if (!topic) { if (activeTitleGen === task) activeTitleGen = null; return; }
+
+    // 1. 默认话题不重命名
+    if (asst.topics[0]?.id === topic.id) { if (activeTitleGen === task) activeTitleGen = null; return; }
+    // 2. 已经重命名过的话题不再重命名
+    if (topic.renamed) { if (activeTitleGen === task) activeTitleGen = null; return; }
+    // 3. 没有可参考的对话内容
+    if (topic.history.length < 2) { if (activeTitleGen === task) activeTitleGen = null; return; }
+
+    // 4. 检查最后一条 AI 消息是否有效（避免错误响应触发重命名）
+    const lastMsg = topic.history[topic.history.length - 1];
+    if (lastMsg?.role !== 'assistant') { if (activeTitleGen === task) activeTitleGen = null; return; }
+    const lastContent = typeof lastMsg.content === 'string' ? lastMsg.content.trim() : '';
+    if (lastContent.length < 2 || lastContent.startsWith('[Error:')) {
+      if (activeTitleGen === task) activeTitleGen = null; return;
+    }
+
+    const currentMdl = selectedModel();
+    if (!currentMdl) { if (activeTitleGen === task) activeTitleGen = null; return; }
+
+    // 截断到前 2 条消息：业界标准做法（user + assistant 即可概括主题，省 token）
+    const sample = topic.history.slice(0, 2);
+
+    // 第一阶段：尝试 LLM 生成
+    let newName: string | null = null;
+    let llmError: unknown = null;
+    try {
+      const result = await invoke<string>('generate_topic_title', {
+        apiUrl: currentMdl.api_url,
+        apiKey: currentMdl.api_key,
+        model: currentMdl.model_id,
+        messages: sample
+      });
+      // 用户中途切换了话题或触发了新任务：放弃本次结果
+      if (task.cancelled) return;
+      if (result && result.trim()) {
+        newName = result.trim();
+      }
+    } catch (e) {
+      if (task.cancelled) return;
+      llmError = e;
+    }
+
+    // 用户在 LLM 调用期间切换了话题：放弃处理
+    if (task.cancelled) return;
+
+    // 第二阶段：LLM 失败时用启发式后备
+    if (!newName) {
+      newName = fallbackTitle(topic.history);
+      if (newName) {
+        console.warn('LLM 标题生成失败，使用启发式后备:', llmError);
+      }
+    }
+
+    // 二次校验：状态可能在异步期间被改变
+    const latestAsst = datas.assistants.find((a: any) => a.id === eventAsstId);
+    const latestTopic = latestAsst?.topics.find((t: Topic) => t.id === eventTopicId);
+    if (!latestAsst || !latestTopic) { if (activeTitleGen === task) activeTitleGen = null; return; }
+    if (latestAsst.topics[0]?.id === latestTopic.id) { if (activeTitleGen === task) activeTitleGen = null; return; }
+    if (latestTopic.renamed) { if (activeTitleGen === task) activeTitleGen = null; return; }
+
+    // 实在拿不到任何名字：仅标记为已重命名，避免下次再尝试
+    if (!newName) {
+      setDatas('assistants', a => a.id === eventAsstId, 'topics', t => t.id === eventTopicId, 'renamed', true);
+      await saveSingleAssistantToBackend(eventAsstId);
+      if (activeTitleGen === task) activeTitleGen = null;
+      console.warn('自动重命名失败，无可用后备:', llmError);
+      return;
+    }
+
+    // 与旧名相同则视为无效，但仍标记为已重命名
+    if (newName === latestTopic.name) {
+      setDatas('assistants', a => a.id === eventAsstId, 'topics', t => t.id === eventTopicId, 'renamed', true);
+      await saveSingleAssistantToBackend(eventAsstId);
+      if (activeTitleGen === task) activeTitleGen = null;
+      return;
+    }
+
+    setDatas('assistants', a => a.id === eventAsstId, 'topics', t => t.id === eventTopicId, {
+      name: newName,
+      renamed: true
+    });
+    await saveSingleAssistantToBackend(eventAsstId);
+    if (activeTitleGen === task) activeTitleGen = null;
+    console.log(`话题已自动重命名: ${latestTopic.name} → ${newName}`);
   };
 
   /**
@@ -429,7 +574,11 @@ const ChatPage: Component = () => {
           setIsThinking(false);
           setTypingIndex(null);
           saveSingleAssistantToBackend(assistant_id);
-          setTimeout(() => checkAndSummarize(), 500);
+          // 串行执行：先尝试自动重命名（非默认话题的首次对话），再触发历史压缩总结
+          setTimeout(async () => {
+            await checkAndRename(assistant_id, topic_id);
+            await checkAndSummarize();
+          }, 500);
           return;
         }
 
@@ -464,6 +613,33 @@ const ChatPage: Component = () => {
       setIsChangingTopic(true);
       setTimeout(() => setIsChangingTopic(false), 50);
     }
+  });
+
+  // 监听手动触发的"重新生成标题"请求（来自 TopicSidebar 右键菜单）
+  // 消费后立即清空信号，避免后续误触发
+  createEffect(() => {
+    const req = pendingRenameRequest();
+    if (req) {
+      setPendingRenameRequest(null);
+      void checkAndRename(req.asstId, req.topicId);
+    }
+  });
+
+  // 监听 currentTopicId 变化：若用户切换到与正在生成标题的话题不同的话题，
+  // 取消该任务的结果处理（abort）
+  let prevTitleGenTopicId: string | null = null;
+  createEffect(() => {
+    const tId = currentTopicId();
+    // 首次运行时不处理（仅记录）
+    if (prevTitleGenTopicId === null && activeTitleGen === null) {
+      prevTitleGenTopicId = tId;
+      return;
+    }
+    if (activeTitleGen && activeTitleGen.topicId !== tId) {
+      activeTitleGen.cancelled = true;
+      activeTitleGen = null;
+    }
+    prevTitleGenTopicId = tId;
   });
   createEffect(() => {
     localStorage.setItem('chat-left-panel-width', leftPanelWidth().toString());

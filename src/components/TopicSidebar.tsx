@@ -1,7 +1,8 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
-    Assistant, Topic, datas, setDatas, currentTopicId, setCurrentTopicId, saveSingleAssistantToBackend
+    Assistant, Topic, datas, setDatas, currentTopicId, setCurrentTopicId, saveSingleAssistantToBackend,
+    requestRenameTopic
 } from '../store/store';
 import Icon from './Icon';
 
@@ -39,7 +40,11 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
     const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
         if (!newName.trim()) return props.setEditingTopicId(null);
-        setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'name', newName);
+        // 用户手动重命名时也标记为已重命名，避免首次对话后又自动覆盖
+        setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, {
+            name: newName,
+            renamed: true
+        });
         await saveSingleAssistantToBackend(asstId);
         props.setEditingTopicId(null);
     };
@@ -75,6 +80,38 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         }
         await saveSingleAssistantToBackend(asstId);
         closeTopicMenu();
+    };
+
+    /**
+     * 手动重新生成话题标题。
+     * 仅对非默认话题可用（默认话题永远不重命名）。
+     * 通过 `requestRenameTopic` 通知 ChatPage 执行实际的 LLM 调用。
+     */
+    const handleRegenerateTitle = () => {
+        const asst = props.currentAssistant;
+        const targetId = topicMenuState().targetTopicId;
+        if (!asst || !targetId) return;
+        const target = asst.topics.find((t: Topic) => t.id === targetId);
+        if (!target) return;
+        const ok = requestRenameTopic(asst.id, target.id);
+        if (!ok) {
+            // 默认话题：理论上菜单项已隐藏，这里是防御性提示
+            console.warn('默认话题不支持重新生成标题');
+        }
+        closeTopicMenu();
+    };
+
+    /**
+     * 当前右键菜单指向的话题是否为默认话题。
+     * 默认话题不显示"重新生成标题"菜单项。
+     */
+    const isMenuTargetDefault = (): boolean => {
+        const asst = props.currentAssistant;
+        const targetId = topicMenuState().targetTopicId;
+        if (!asst || !targetId) return true;
+        const target = asst.topics.find((t: Topic) => t.id === targetId);
+        if (!target) return true;
+        return asst.topics[0]?.id === target.id;
     };
 
     return (
@@ -166,6 +203,9 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <button class="context-menu-item" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>重命名</button>
+                        <Show when={!isMenuTargetDefault()}>
+                            <button class="context-menu-item" onClick={handleRegenerateTitle}>重新生成标题</button>
+                        </Show>
                         <button class="context-menu-item" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>删除话题</button>
                     </div>
                 </Portal>

@@ -126,7 +126,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
         // 2. 为每个助手加载话题
         let mut t_stmt = conn
-            .prepare("SELECT id, name, summary FROM topics WHERE assistant_id = ?")
+            .prepare("SELECT id, name, summary, renamed FROM topics WHERE assistant_id = ?")
             .map_err(|e| e.to_string())?;
         let topic_iter = t_stmt
             .query_map([&asst.id], |row| {
@@ -134,6 +134,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     id: row.get(0)?,
                     name: row.get(1)?,
                     summary: row.get(2)?,
+                    // SQLite INTEGER (0/1) → bool
+                    renamed: row.get::<_, i64>(3)? != 0,
                     history: vec![], // 大数据量下建议按需加载，此处暂时全量加载以兼容原有前端
                 })
             })
@@ -216,9 +218,9 @@ pub async fn save_assistant(
     // 3. 遍历话题执行增量同步
     for topic in assistant.topics {
         conn.execute(
-            "INSERT INTO topics (id, assistant_id, name, summary) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4",
-            params![topic.id, assistant.id, topic.name, topic.summary],
+            "INSERT INTO topics (id, assistant_id, name, summary, renamed) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5",
+            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64],
         )
         .map_err(|e| e.to_string())?;
 

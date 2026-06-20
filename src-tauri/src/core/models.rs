@@ -69,6 +69,11 @@ pub struct Topic {
     pub history: Vec<Message>,
     #[serde(default)]
     pub summary: Option<String>,
+    /// 是否已经自动重命名过。新建话题为 `false`；首次对话结束后由前端置为 `true`，
+    /// 之后不再触发自动重命名。旧配置 / 旧数据库行反序列化为 `false`，
+    /// 由数据迁移在加载时统一修复。
+    #[serde(default)]
+    pub renamed: bool,
 }
 
 /// AI 助手预设模型，包含系统提示词和相关的对话列表。

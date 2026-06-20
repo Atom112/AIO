@@ -15,12 +15,19 @@ export interface Message {
 }  
 
  /* 话题接口，定义对话主题的数据结构 */
-export interface Topic {  
+export interface Topic {
     id: string;             // 话题唯一标识符
     name: string;           // 话题显示名称
     history: Message[];     // 该话题下的历史消息记录数组
     summary: string;        // 话题的长期记忆摘要，对应数据库存储的 summary 字段
-}  
+    /**
+     * 是否已自动重命名。
+     * - false：新建话题或迁移前的旧话题；首次对话结束后会被自动改名为 AI 生成的标题，并置为 true
+     * - true：已自动重命名过，或用户手动改过名；后续不再触发自动重命名
+     * - 缺省：兼容旧数据，等价于 false
+     */
+    renamed?: boolean;
+}
 
  /* 助手接口，定义 AI 助手的数据结构 */
 export interface Assistant {  
@@ -307,6 +314,49 @@ export const saveSingleAssistantToBackend = async (id: string) => {
     } catch (err) {
         console.error('保存助手失败:', err);
     }
+};
+
+// ====== 话题标题自动重命名 ======
+
+/**
+ * 待处理的重命名请求信号。
+ * ChatPage 组件通过 createEffect 监听此信号，触发实际的 LLM 调用。
+ * 消费后立即清空，避免重复触发。
+ */
+export const [pendingRenameRequest, setPendingRenameRequest] = createSignal<{ asstId: string; topicId: string } | null>(null);
+
+/**
+ * 触发话题标题的重新生成（手动入口）。
+ * 用于右键菜单的"重新生成标题"按钮。
+ * 行为：
+ *   1. 校验话题存在且不是默认话题（默认话题永远不重命名）
+ *   2. 重置 `renamed = false`，让后续的 checkAndRename 能正常工作
+ *   3. 持久化到后端
+ *   4. 通过 pendingRenameRequest 信号通知 ChatPage 执行实际的 LLM 调用
+ * @returns 是否成功发起请求（默认话题 / 不存在则返回 false）
+ */
+export const requestRenameTopic = (asstId: string, topicId: string): boolean => {
+    const asst = datas.assistants.find((a: any) => a.id === asstId);
+    const topic = asst?.topics.find((t: Topic) => t.id === topicId);
+    if (!asst || !topic) return false;
+    // 默认话题（每个助手的话题列表第一项）永远不参与自动重命名
+    if (asst.topics[0]?.id === topic.id) return false;
+
+    // 重置标志位，使 checkAndRename 能继续工作
+    setDatas(
+        'assistants',
+        (a: any) => a.id === asstId,
+        'topics',
+        (t: Topic) => t.id === topicId,
+        'renamed',
+        false
+    );
+    // 异步持久化（不阻塞 UI）
+    void saveSingleAssistantToBackend(asstId);
+
+    // 通过信号通知 ChatPage
+    setPendingRenameRequest({ asstId, topicId });
+    return true;
 };
 
 /**

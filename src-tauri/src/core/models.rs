@@ -162,6 +162,10 @@ pub struct Assistant {
     pub id: String,
     pub name: String,
     pub prompt: String,
+    /// 助手绑定的首选模型 ID（可选）。未设置时由前端回退到全局默认模型。
+    /// 旧配置 / 旧数据库行反序列化为 None，逻辑上视为「使用全局默认」。
+    #[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
     #[serde(default)]
     pub topics: Vec<Topic>,
 }

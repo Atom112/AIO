@@ -9,6 +9,7 @@ interface AssistantSidebarProps {
     editingAsstId: string | null;
     setEditingAsstId: (id: string | null) => void;
     addAssistant: () => void;
+    onOpenSettings: (id: string) => void;
     isCollapsed: boolean;
     onToggle: (e: MouseEvent) => void;
     isResizing: boolean;
@@ -138,6 +139,10 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                         style={`top: ${menuState().y}px; left: ${menuState().x}px;`}
                         onClick={(e) => e.stopPropagation()}
                     >
+                        <button
+                            class="context-menu-item"
+                            onClick={() => { const id = menuState().targetId; if (id) props.onOpenSettings(id); closeMenu(); }}
+                        >设置</button>
                         <button
                             class="context-menu-item disabled:opacity-30"
                             disabled={menuState().targetId === "default-assistant-id"}

@@ -32,10 +32,11 @@ export interface Topic {
 }
 
  /* 助手接口，定义 AI 助手的数据结构 */
-export interface Assistant {  
+export interface Assistant {
     id: string;             // 助手唯一标识符
     name: string;           // 助手显示名称
     prompt: string;         // 助手的系统提示词（Prompt）
+    modelId?: string;       // 助手绑定的首选模型 ID；未设置时回退到全局默认模型
     topics: Topic[];        // 助手关联的话题列表
 }
 
@@ -128,6 +129,186 @@ export const activeProviderModels = (): ActiveModelEntry[] => {
         }
     }
     return out;
+};
+
+/** 判断是否为本地模型（有 local_path 或 engine_type） */
+export const isLocalModel = (m: ActivatedModel): boolean => !!(m.local_path || m.engine_type);
+
+/**
+ * 生成模型在助手绑定中的唯一标识键。
+ * 云端模型用 `model_id@api_url` 复合键，以区分「同名模型来自不同 provider」的情况
+ * （例如 OpenAI 和 OpenRouter 都提供 gpt-4o，仅靠 model_id 无法区分，会导致高亮错乱）。
+ * 本地模型没有稳定的 api_url，退化为纯 model_id。
+ */
+export const modelKey = (m: ActivatedModel): string => {
+    if (isLocalModel(m) || !m.api_url) return m.model_id;
+    return `${m.model_id}@${m.api_url}`;
+};
+
+/**
+ * 当前可用的全部模型列表（云端 + 本地合并）。
+ * 云端模型来自 providerConfigs，本地模型来自 datas.activatedModels。
+ * 供助手设置弹窗的模型选择器与 resolveAssistantModel 解析使用。
+ */
+export const allAvailableModels = (): ActivatedModel[] => {
+    // 云端模型：派生自 providerConfigs (lobehub 形态)
+    const cloud = activeProviderModels().map(m => ({
+        model_id: m.modelId,
+        owned_by: m.providerName,
+        api_url: m.apiUrl,
+        api_key: m.apiKey,
+        provider_id: m.provider,
+    } as ActivatedModel & { provider_id: string }));
+    // 本地模型：activatedModels 中带 local_path / engine_type 的项
+    const local = datas.activatedModels.filter(m => isLocalModel(m));
+    return [...cloud, ...local];
+};
+
+/**
+ * 解析某助手实际应使用的模型。
+ * 优先按复合键 modelKey 匹配助手绑定的 modelId；若绑定的是旧式纯 model_id（无 @），
+ * 则退化为按 model_id 匹配首个命中项，保证向后兼容。
+ * 未绑定或匹配不到时回退到当前全局 selectedModel，再不行则取首个可用模型。
+ * 返回 null 表示当前没有任何可用模型。
+ */
+export const resolveAssistantModel = (asst: Assistant | undefined | null): ActivatedModel | null => {
+    if (!asst) return null;
+    const all = allAvailableModels();
+    if (asst.modelId) {
+        // 1. 优先按复合键精确匹配
+        const exact = all.find(m => modelKey(m) === asst.modelId);
+        if (exact) return exact;
+        // 2. 兼容旧数据：绑定的 modelId 不含 @ 时，按 model_id 兜底匹配
+        if (!asst.modelId.includes('@')) {
+            const legacy = all.find(m => m.model_id === asst.modelId);
+            if (legacy) return legacy;
+        }
+    }
+    const cur = selectedModel();
+    if (cur) return cur;
+    return all[0] ?? null;
+};
+
+/**
+ * 检查本地推理引擎服务是否就绪（2s 超时）
+ */
+const checkServerHealth = async (baseUrl: string): Promise<boolean> => {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const rootUrl = baseUrl.replace('/v1', '');
+        const resp = await fetch(`${rootUrl}/health`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        return resp.ok;
+    } catch {
+        return false;
+    }
+};
+
+/**
+ * 为指定助手启动本地推理引擎，并把启动进度以占位消息写入该助手首个话题。
+ * 从 NavBar 的 startLocalModel 逻辑提取，供助手设置弹窗选本地模型时复用。
+ * @param model - 本地模型（需带 local_path）
+ * @param asstId - 目标助手 ID（loading 消息落点）
+ */
+export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId: string): Promise<void> => {
+    if (!model.local_path) return;
+    // M13 防护：未确认时不静默启动
+    if (!isLocalAutoStartConfirmed()) {
+        const ok = confirm(
+            `检测到本地模型 "${model.model_id}"\n` +
+            `路径: ${model.local_path}\n\n` +
+            `是否允许 AIO 在应用启动时自动拉起该本地推理引擎？\n` +
+            `（点击"取消"后，可随时在设置页手动启动）`
+        );
+        if (!ok) return;
+        setLocalAutoStartConfirmed();
+    }
+    const isRunning = await invoke<boolean>('is_local_server_running');
+    if (isRunning) return;
+
+    const assistant = datas.assistants.find((a: any) => a.id === asstId);
+    if (!assistant) return;
+    const topicId = assistant.topics?.[0]?.id;
+    const loadingText = "**正在启动本地推理引擎...**";
+
+    if (topicId) {
+        setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+            'history', h => [...h, { role: 'assistant', content: loadingText }]
+        );
+    }
+
+    try {
+        setIsStartingLocalModel(true);
+        setLocalModelStartProgress(0);
+        await invoke('start_local_server', {
+            modelPath: model.local_path,
+            port: 8080,
+            gpuLayers: 99,
+            engineType: model.engine_type || 'llama_cpp'
+        });
+
+        let attempts = 0;
+        const maxAttempts = 60;
+        const poll = setInterval(async () => {
+            attempts++;
+            const isReady = await checkServerHealth("http://127.0.0.1:8080/v1");
+            if (isReady) {
+                clearInterval(poll);
+                setLocalModelStartProgress(100);
+                setTimeout(() => {
+                    setIsStartingLocalModel(false);
+                    setLocalModelStartProgress(0);
+                }, 1000);
+                if (topicId) {
+                    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+                        'history', h => h.map((msg: any) =>
+                            msg.content === loadingText
+                                ? { ...msg, content: "**本地服务器启动成功，可以开始对话了！**" }
+                                : msg
+                        )
+                    );
+                }
+            } else if (attempts >= maxAttempts) {
+                clearInterval(poll);
+                setLocalModelStartProgress(100);
+                setTimeout(() => {
+                    setIsStartingLocalModel(false);
+                    setLocalModelStartProgress(0);
+                }, 1000);
+                if (topicId) {
+                    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+                        'history', h => [...h, { role: 'assistant', content: "**服务器启动超时，请检查显存空间或模型文件。**" }]
+                    );
+                }
+            }
+        }, 500);
+    } catch (err) {
+        setLocalModelStartProgress(100);
+        setTimeout(() => {
+            setIsStartingLocalModel(false);
+            setLocalModelStartProgress(0);
+        }, 1000);
+        if (topicId) {
+            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
+                'history', h => [...h, { role: 'assistant', content: `**启动失败: ${err}**` }]
+            );
+        }
+    }
+};
+
+/**
+ * 为某助手设置绑定模型并立即同步全局 selectedModel + 持久化。
+ * 若为本地模型则顺带拉起推理引擎。供助手设置弹窗复用。
+ */
+export const setAssistantModel = async (asstId: string, model: ActivatedModel): Promise<void> => {
+    // 存复合键 modelKey（model_id@api_url 或纯 model_id），确保同名异源模型可区分
+    setDatas('assistants', (a: any) => a.id === asstId, 'modelId', modelKey(model));
+    setSelectedModel(model);
+    await saveSingleAssistantToBackend(asstId);
+    if (isLocalModel(model) && model.local_path) {
+        void startLocalEngineForAssistant(model, asstId);
+    }
 };
 
 /** 是否正在启动本地模型 */

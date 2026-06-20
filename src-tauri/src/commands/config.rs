@@ -107,7 +107,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
     // 1. 加载助手
     let mut stmt = conn
-        .prepare("SELECT id, name, prompt FROM assistants ORDER BY id")
+        .prepare("SELECT id, name, prompt, model_id FROM assistants ORDER BY id")
         .map_err(|e| e.to_string())?;
     let assistant_iter = stmt
         .query_map([], |row| {
@@ -115,6 +115,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                 id: row.get(0)?,
                 name: row.get(1)?,
                 prompt: row.get(2)?,
+                model_id: row.get(3)?,
                 topics: vec![], // 后续填充
             })
         })
@@ -194,9 +195,9 @@ pub async fn save_assistant(
 
     // 1. 保存/更新助手基本信息
     conn.execute(
-        "INSERT INTO assistants (id, name, prompt) VALUES (?1, ?2, ?3)
-         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3",
-        params![assistant.id, assistant.name, assistant.prompt],
+        "INSERT INTO assistants (id, name, prompt, model_id) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4",
+        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id],
     )
     .map_err(|e| e.to_string())?;
 

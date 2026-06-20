@@ -5,15 +5,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import AvatarCropModal from './AvatarCropModel';
-import PromptModal from './PromptModal';
 import LoginModal from './LoginModal';
 import UserDropdown from './UserDropdown';
-import ModelDropdown from './ModelDropdown';
 import Icon from './Icon';
 import {
   datas,
   setDatas,
-  currentAssistantId,
   saveSingleAssistantToBackend,
   selectedModel,
   setSelectedModel,
@@ -24,12 +21,10 @@ import {
   logout,
   setIsStartingLocalModel,
   setLocalModelStartProgress,
-  activeProviderModels,
-  providerConfigs,
-  isLocalAutoStartConfirmed,
-  setLocalAutoStartConfirmed,
+  isLocalModel,
+  startLocalEngineForAssistant,
+  currentAssistantId,
 } from '../store/store';
-import { getLogo as getLogoByIds } from '../utils/modelLogo';
 
 /**
  * 初始化窗口实例
@@ -44,24 +39,10 @@ interface NavBarProps { }
  */
 const NavBar: Component<NavBarProps> = () => {
 
-  const [modalPrompt, setModalPrompt] = createSignal(''); // 提示词弹窗的临时编辑内容
-  const [isModalOpen, setIsModalOpen] = createSignal<boolean>(false); // 提示词弹窗显示状态
-  const [isDropdownVisible, setDropdownVisible] = createSignal<boolean>(false); // 模型选择下拉菜单可见性
   const [isMaximized, setIsMaximized] = createSignal<boolean>(false); // 窗口最大化状态
   const [isUserMenuVisible, setUserMenuVisible] = createSignal(false); // 用户下拉菜单显示状态
   const [tempImage, setTempImage] = createSignal<string | null>(null); // 头像裁剪用的临时图片 DataURL
   const [isLoginModalOpen, setIsLoginModalOpen] = createSignal(false); // 登录弹窗显示状态
-
-  const isLocalModel = (m: ActivatedModel) => !!(m.local_path || m.engine_type);
-  const localModels = () => datas.activatedModels.filter(m => isLocalModel(m));
-  // 云端模型：来自 providerConfigs (lobehub 形态)
-  const cloudModels = () => activeProviderModels().map(m => ({
-      model_id: m.modelId,
-      owned_by: m.providerName,
-      api_url: m.apiUrl,
-      api_key: m.apiKey,
-      provider_id: m.provider,
-  } as ActivatedModel & { provider_id: string }));
 
   /**
    * 登录成功回调处理
@@ -154,198 +135,28 @@ const NavBar: Component<NavBarProps> = () => {
   };
 
   /**
-   * 获取模型 Logo 路径
-   * @param {string} modelName - 模型名称或 ID
-   * @returns {string} Logo 图片路径
-   */
-  const getModelLogo = (modelName: string) => {
-    // 根据 model_name 找 logo
-    // 注: 传入的 modelName 实际可能是 model_id (来自 activatedModels / onlineModels)
-    // 这里走文本匹配兜底
-    return getLogoByIds(null, modelName);
-  };
-
-  /**
-   * 静默启动本地模型服务
-   * M13: 首次启动需用户确认；确认后写入 localStorage 永久放行
-   * @param {ActivatedModel} model - 需要启动的本地模型信息
+   * 启动时拉起本地推理引擎（若默认/当前模型为本地模型）。
+   * 委托给 store 的 startLocalEngineForAssistant，由其负责确认、轮询与进度反馈。
+   * @param {ActivatedModel} model - 启动时解析出的本地模型
    */
   const startLocalModel = async (model: ActivatedModel) => {
     if (!model.local_path) return;
-    // M13 防护：未确认时不静默启动
-    if (!isLocalAutoStartConfirmed()) {
-      const ok = confirm(
-        `检测到本地模型 "${model.model_id}"\n` +
-        `路径: ${model.local_path}\n\n` +
-        `是否允许 AIO 在应用启动时自动拉起该本地推理引擎？\n` +
-        `（点击"取消"后，可随时在设置页手动启动）`
-      );
-      if (!ok) return;
-      setLocalAutoStartConfirmed();
-    }
-    const isRunning = await invoke<boolean>('is_local_server_running');
-    if (!isRunning) {
-      try {
-        await invoke('start_local_server', {
-          modelPath: model.local_path,
-          port: 8080,
-          gpuLayers: 99,
-          engineType: model.engine_type || 'llama_cpp'
-        });
-        console.info("本地模型服务已启动");
-      } catch (e) {
-        console.error("自动启动本地模型失败:", e);
+    // 启动时尚无确定的当前助手，用首个助手（若有）作为 loading 落点
+    let asstId = currentAssistantId() || datas.assistants[0]?.id;
+    if (!asstId) {
+      // 助手尚未加载：退化为直接拉起，不写 loading 消息
+      const isRunning = await invoke<boolean>('is_local_server_running');
+      if (!isRunning) {
+        try {
+          await invoke('start_local_server', {
+            modelPath: model.local_path, port: 8080, gpuLayers: 99,
+            engineType: model.engine_type || 'llama_cpp'
+          });
+        } catch (e) { console.error("自动启动本地模型失败:", e); }
       }
-    }
-  };
-
-  /**
-   * 处理打开提示词设置弹窗
-   * @param {MouseEvent} e - 点击事件
-   */
-  const handleOpenPromptModal = (e: MouseEvent) => {
-    e.preventDefault();
-    const activeId = currentAssistantId();
-    if (!activeId) {
-      alert("请先在聊天界面创建一个助手");
       return;
     }
-    const assistant = datas.assistants.find(a => a.id === activeId);
-    setModalPrompt(assistant?.prompt || '');
-    setIsModalOpen(true);
-  };
-
-  /**
-   * 处理 Prompt 保存
-   * @param {string} newPrompt - 用户输入的新提示词
-   */
-  const handleSavePrompt = (newPrompt: string) => {
-    const activeId = currentAssistantId();
-    if (activeId) {
-      setDatas('assistants', a => a.id === activeId, 'prompt', newPrompt);
-      saveSingleAssistantToBackend(activeId);
-      console.log("提示词已更新并同步到后端");
-    }
-  };
-
-  /**
-   * 检查本地服务器健康状况
-   * @param {string} baseUrl - 服务器基础地址
-   * @returns {Promise<boolean>} 服务器是否就绪
-   */
-  const checkServerHealth = async (baseUrl: string): Promise<boolean> => {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-      const rootUrl = baseUrl.replace('/v1', '');
-      const resp = await fetch(`${rootUrl}/health`, { signal: controller.signal });
-
-      clearTimeout(timeoutId);
-      return resp.ok;
-    } catch {
-      return false;
-    }
-  };
-
-  /**
-   * 处理模型切换
-   * @param {ActivatedModel} model - 用户选择的目标模型
-   */
-  const handleModelSelect = async (model: ActivatedModel) => {
-    setSelectedModel(model);
-    setDropdownVisible(false);
-
-    try {
-      const currentConfig = await invoke<any>('load_app_config');
-      await invoke('save_app_config', {
-        config: { ...currentConfig, defaultModel: model.model_id }
-      });
-    } catch (e) {
-      console.error("保存模型偏好失败:", e);
-    }
-
-    if (isLocalModel(model) && model.local_path) {
-      const isRunning = await invoke<boolean>('is_local_server_running');
-
-      if (!isRunning) {
-        if (datas.assistants.length === 0) {
-          const loaded = await invoke<any[]>('load_assistants');
-          if (loaded?.length > 0) setDatas('assistants', loaded);
-        }
-
-        let asstId = currentAssistantId() || datas.assistants[0]?.id;
-        const assistant = datas.assistants.find(a => a.id === asstId);
-
-        if (assistant) {
-          const topicId = assistant.topics[0]?.id;
-          const loadingText = "**正在启动本地推理引擎...**";
-
-          if (topicId) {
-            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-              'history', h => [...h, { role: 'assistant', content: loadingText }]
-            );
-          }
-
-          try {
-            setIsStartingLocalModel(true);
-            setLocalModelStartProgress(0);
-            await invoke('start_local_server', {
-              modelPath: model.local_path,
-              port: 8080,
-              gpuLayers: 99,
-              engineType: model.engine_type || 'llama_cpp'
-            });
-
-            let attempts = 0;
-            const maxAttempts = 60;
-
-            const poll = setInterval(async () => {
-              attempts++;
-              const isReady = await checkServerHealth("http://127.0.0.1:8080/v1");
-
-              if (isReady) {
-                clearInterval(poll);
-                setLocalModelStartProgress(100);
-                setTimeout(() => {
-                  setIsStartingLocalModel(false);
-                  setLocalModelStartProgress(0);
-                }, 1000);
-                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-                  'history', h => h.map((msg: any) =>
-                    msg.content === loadingText
-                      ? { ...msg, content: "**本地服务器启动成功，可以开始对话了！**" }
-                      : msg
-                  )
-                );
-              } else if (attempts >= maxAttempts) {
-                clearInterval(poll);
-                setLocalModelStartProgress(100);
-                setTimeout(() => {
-                  setIsStartingLocalModel(false);
-                  setLocalModelStartProgress(0);
-                }, 1000);
-                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-                  'history', h => [...h, { role: 'assistant', content: "**服务器启动超时，请检查显存空间或模型文件。**" }]
-                );
-              }
-            }, 500);
-
-          } catch (err) {
-            setLocalModelStartProgress(100);
-            setTimeout(() => {
-              setIsStartingLocalModel(false);
-              setLocalModelStartProgress(0);
-            }, 1000);
-            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-              'history', h => [...h, { role: 'assistant', content: `**启动失败: ${err}**` }]
-            );
-          }
-        } else {
-          await invoke('start_local_server', { modelPath: model.local_path, port: 8080, gpuLayers: 99, engineType: model.engine_type || 'llama_cpp' });
-        }
-      }
-    }
+    await startLocalEngineForAssistant(model, asstId);
   };
 
   const handleMinimize = async () => await appWindow.minimize(); // 最小化窗口
@@ -465,25 +276,13 @@ return (
           <Icon src="/icons/app-logo/settings-gear.svg" class="w-6 h-6" />
         </A>
 
-        <UserDropdown 
+        <UserDropdown
           avatar={globalUserAvatar()}
           isLoggedIn={datas.isLoggedIn}
           onEditAvatar={handleEditAvatar}
           onLoginClick={() => setIsLoginModalOpen(true)}
           onLogout={handleLogout}
         />
-
-        <ModelDropdown
-          selectedModel={selectedModel()}
-          onlineModels={cloudModels()}
-          localModels={localModels()}
-          onSelect={handleModelSelect}
-          getModelLogo={getModelLogo}
-        />
-
-        <a href="#" title="设置提示词" class="nav-icon-link [app-region:no-drag]" onClick={handleOpenPromptModal}>
-          <Icon src="/icons/app-logo/prompt.svg" class="w-6 h-6" />
-        </a>
 
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
           <button class="win-ctrl-btn hover:bg-white/10" onClick={handleMinimize} title="最小化">
@@ -511,14 +310,7 @@ return (
           onSave={onCropSave}
         />
       </Show>
-      
-      <PromptModal
-        show={isModalOpen()}
-        onClose={() => setIsModalOpen(false)}
-        onSave={handleSavePrompt}
-        initialPrompt={modalPrompt()}
-      />
-      
+
       <LoginModal
         show={isLoginModalOpen()}
         onClose={() => setIsLoginModalOpen(false)}

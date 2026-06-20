@@ -3,11 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
-  saveSingleAssistantToBackend, Assistant, Topic, Message, selectedModel, reasoningLevel,
+  saveSingleAssistantToBackend, Assistant, Topic, Message, selectedModel, setSelectedModel,
+  resolveAssistantModel, modelKey, reasoningLevel,
   pendingRenameRequest, setPendingRenameRequest,
   mcpServers, mcpServerStatus, findMcpServerForTool, TOOL_CALL_MAX_ROUNDS,
 } from '../store/store';
 import AssistantSidebar from '../components/AssistantSidebar';
+import AssistantSettingsModal from '../components/AssistantSettingsModal';
 import ChatInterface from '../components/ChatInterface';
 import TopicSidebar from '../components/TopicSidebar';
 
@@ -41,6 +43,7 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
   id: id ?? Date.now().toString(),        // 若未提供 ID 则生成新的时间戳 ID
   name: name || '新助手',                  // 默认助手名称
   prompt: '你是一个乐于助人的 AI 助手。',     // 默认系统提示词
+  modelId: selectedModel() ? modelKey(selectedModel()!) : undefined,  // 继承当前生效模型（复合键）作为新助手默认模型
   topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
 });
 
@@ -69,6 +72,7 @@ const ChatPage: Component = () => {
   const [typingIndex, setTypingIndex] = createSignal<number | null>(null);        // 当前正在打字机效果显示的消息索引，null 表示无打字效果
   const [editingAsstId, setEditingAsstId] = createSignal<string | null>(null);    // 当前正在编辑名称的助手 ID，null 表示无编辑中
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
+  const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
 
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
@@ -871,6 +875,24 @@ const ChatPage: Component = () => {
     localStorage.setItem('chat-right-panel-width', rightPanelWidth().toString());
   });
 
+  /**
+   * 模型跟随当前助手：
+   * 切换助手 / 助手绑定模型变化 / 可用模型列表变化时，
+   * 把全局 selectedModel 同步为该助手解析出的有效模型。
+   * 助手未绑定 modelId 时 resolveAssistantModel 会回退到当前 selectedModel，跳过覆盖。
+   * resolved 为 null（尚无可用模型）时不覆盖，避免启动早期清空。
+   */
+  createEffect(() => {
+    const id = currentAssistantId();
+    const asst = datas.assistants.find((a: any) => a.id === id) as Assistant | undefined;
+    // 触发依赖：助手 modelId 与可用模型列表（providerConfigs / activatedModels 在 store 内驱动）
+    void asst?.modelId;
+    const resolved = resolveAssistantModel(asst ?? null);
+    if (resolved && resolved.model_id !== selectedModel()?.model_id) {
+      setSelectedModel(resolved);
+    }
+  });
+
   return (
     <div class="h-full flex gap-[3px] p-[1px]" style="background: transparent;"
       classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
@@ -882,6 +904,7 @@ const ChatPage: Component = () => {
         editingAsstId={editingAsstId()}
         setEditingAsstId={setEditingAsstId}
         addAssistant={addAssistant}
+        onOpenSettings={(id) => setSettingsAsstId(id)}
         isResizing={isResizing()}
       />
 
@@ -911,6 +934,12 @@ const ChatPage: Component = () => {
         setEditingTopicId={setEditingTopicId}
         addTopic={addTopic}
         isResizing={isResizing()}
+      />
+
+      <AssistantSettingsModal
+        show={settingsAsstId() !== null}
+        assistantId={settingsAsstId()}
+        onClose={() => setSettingsAsstId(null)}
       />
     </div>
   );

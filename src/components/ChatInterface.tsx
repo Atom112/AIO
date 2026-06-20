@@ -1,6 +1,7 @@
 import { Component, For, Show, Setter, createSignal, createEffect } from 'solid-js';
 import Markdown from './Markdown';
 import ThinkBlock from './ThinkBlock';
+import ModelSelector from './ModelSelector';
 import { Topic, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
@@ -295,6 +296,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
                     <div class="flex items-center justify-between border-t pt-2" style="border-color: rgba(255,255,255,0.04);">
                         <div class="flex items-center gap-2">
+                            <ModelSelector />
                             <ReasoningButton />
 
                             <button

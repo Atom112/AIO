@@ -1,7 +1,7 @@
 /// 定义各种数据模型，包括激活模型配置、消息结构、对话主题、AI 助手预设、远程模型信息以及全局应用配置。
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// 激活模型的连接配置信息。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -106,6 +106,15 @@ pub struct ToolFunctionSpec {
     pub parameters: serde_json::Value,
 }
 
+/// 按助手视角聚合的 MCP 工具集：扁平 `tools` 喂给 LLM，`tool_server_map` 供前端解析 toolName → serverId。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantTools {
+    pub tools: Vec<ToolSpec>,
+    /// toolName → serverId（call_mcp_tool 时用，替代前端启发式查找）
+    pub tool_server_map: HashMap<String, String>,
+}
+
 /// MCP 工具调用结果
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ToolResult {
@@ -169,6 +178,13 @@ pub struct Assistant {
     /// 旧配置 / 旧数据库行反序列化为 None，逻辑上视为「使用全局默认」。
     #[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
+    /// 助手启用的 MCP server id 列表；空数组 = 该助手不使用任何 MCP 工具（opt-in 语义）。
+    /// 旧数据库行 mcp_server_ids 列为 NULL → 反序列化为空 vec，等价于「未启用 MCP」。
+    #[serde(rename = "mcpServerIds", default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_server_ids: Vec<String>,
+    /// 助手启用的 Skill id 列表；空数组表示不注入任何 Skill 指令。
+    #[serde(rename = "skillIds", default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_ids: Vec<String>,
     #[serde(default)]
     pub topics: Vec<Topic>,
 }
@@ -233,11 +249,11 @@ pub enum McpTransport {
 pub struct McpServerConfig {
     pub id: String,
     pub display_name: String,
-    pub enabled: bool,
     pub transport: McpTransport,
     /// 工具白名单；空数组 = 全部启用
     #[serde(default)]
     pub enabled_tools: Vec<String>,
+    /// 应用启动时是否自动连接（是否被某助手使用由 Assistant.mcp_server_ids 决定）
     #[serde(default)]
     pub auto_start: bool,
     /// 提示 UI 是否存在密钥存于 keyring
@@ -298,6 +314,82 @@ impl Default for McpServersFile {
             servers: BTreeMap::new(),
         }
     }
+}
+
+// ====== Skill 配置 ======
+
+/// 可复用的助手系统指令模块。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillConfig {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_slug: Option<String>,
+    #[serde(default)]
+    pub installs: u64,
+}
+
+/// Skill 持久化文件。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsFile {
+    pub version: u32,
+    pub updated_at: String,
+    pub skills: BTreeMap<String, SkillConfig>,
+}
+
+impl Default for SkillsFile {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            updated_at: String::new(),
+            skills: BTreeMap::new(),
+        }
+    }
+}
+
+/// skills.sh 市场中的 Skill 摘要。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketSkill {
+    pub id: String,
+    pub name: String,
+    pub owner: String,
+    pub repo: String,
+    pub slug: String,
+    #[serde(default)]
+    pub description: String,
+    pub source_url: String,
+    #[serde(default)]
+    pub installs: u64,
+    #[serde(default)]
+    pub installs_label: String,
+    #[serde(default)]
+    pub weekly_installs: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+/// skills.sh 官方主题分类。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillMarketCategory {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub skill_count: usize,
 }
 
 /// MCP server 初始化握手返回的服务端信息

@@ -68,7 +68,6 @@ export function emptyMcpServerConfig(): McpServerConfig {
     return {
         id: `mcp-${Date.now().toString(36)}`,
         displayName: '',
-        enabled: true,
         transport: {
             transport: 'stdio',
             command: 'npx',

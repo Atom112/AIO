@@ -2,7 +2,7 @@ import { Component, For, Show, createSignal, createMemo, onMount } from 'solid-j
 import { invoke } from '@tauri-apps/api/core';
 import {
     mcpServers, setMcpServers, mcpServerStatus, setMcpServerStatus,
-    startMcpServerAndRefresh,
+    startMcpServerAndRefresh, datas, setDatas, saveSingleAssistantToBackend,
 } from '../store/store';
 import type { McpServerConfig } from '../types/mcp';
 import { transportLabel, statusLabel, statusColor, emptyMcpServerConfig } from '../utils/mcp';
@@ -48,6 +48,19 @@ const McpServerList: Component = () => {
             const m = { ...mcpServers() };
             delete m[id];
             setMcpServers(m);
+
+            const affectedAssistantIds = datas.assistants
+                .filter(assistant => assistant.mcpServerIds?.includes(id))
+                .map(assistant => assistant.id);
+            for (const assistantId of affectedAssistantIds) {
+                setDatas(
+                    'assistants',
+                    assistant => assistant.id === assistantId,
+                    'mcpServerIds',
+                    (serverIds: string[] | undefined) => (serverIds ?? []).filter(serverId => serverId !== id),
+                );
+            }
+            await Promise.all(affectedAssistantIds.map(saveSingleAssistantToBackend));
         } catch (e: any) {
             setError(`删除失败: ${e}`);
         }

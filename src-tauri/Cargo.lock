@@ -64,6 +64,7 @@ dependencies = [
  "parking_lot",
  "pdf-extract",
  "percent-encoding",
+ "regex",
  "reqwest 0.12.24",
  "rusqlite",
  "serde",

@@ -107,15 +107,26 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
     // 1. 加载助手
     let mut stmt = conn
-        .prepare("SELECT id, name, prompt, model_id FROM assistants ORDER BY id")
+        .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids FROM assistants ORDER BY id")
         .map_err(|e| e.to_string())?;
     let assistant_iter = stmt
         .query_map([], |row| {
+            // mcp_server_ids (index 4)：TEXT 列存 JSON 数组字符串，NULL → 空 vec
+            let mcp_ids_json: Option<String> = row.get(4)?;
+            let mcp_server_ids: Vec<String> = mcp_ids_json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            let skill_ids_json: Option<String> = row.get(5)?;
+            let skill_ids: Vec<String> = skill_ids_json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
             Ok(Assistant {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 prompt: row.get(2)?,
                 model_id: row.get(3)?,
+                mcp_server_ids,
+                skill_ids,
                 topics: vec![], // 后续填充
             })
         })
@@ -195,10 +206,15 @@ pub async fn save_assistant(
     let conn = state.0.lock().unwrap();
 
     // 1. 保存/更新助手基本信息
+    // mcp_server_ids 以 JSON 数组字符串持久化；空列表存 "[]"
+    let mcp_ids_json = serde_json::to_string(&assistant.mcp_server_ids)
+        .unwrap_or_else(|_| "[]".to_string());
+    let skill_ids_json = serde_json::to_string(&assistant.skill_ids)
+        .unwrap_or_else(|_| "[]".to_string());
     conn.execute(
-        "INSERT INTO assistants (id, name, prompt, model_id) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4",
-        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id],
+        "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4, mcp_server_ids=?5, skill_ids=?6",
+        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id, mcp_ids_json, skill_ids_json],
     )
     .map_err(|e| e.to_string())?;
 

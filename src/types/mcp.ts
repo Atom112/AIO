@@ -35,6 +35,14 @@ export interface ToolResultContent {
     [key: string]: any;
 }
 
+/** 按助手视角聚合的 MCP 工具集（list_mcp_tools_for_assistant 返回） */
+export interface AssistantTools {
+    /** 扁平工具列表，直接喂给 LLM 的 tools 参数 */
+    tools: ToolSpec[];
+    /** toolName → serverId，供 call_mcp_tool 解析（替代前端启发式查找） */
+    toolServerMap: Record<string, string>;
+}
+
 // ===== MCP 传输 =====
 
 export type McpTransport =
@@ -68,10 +76,10 @@ export interface McpStreamableHttpTransport {
 export interface McpServerConfig {
     id: string;
     displayName: string;
-    enabled: boolean;
     transport: McpTransport;
     /** 工具白名单；空数组 = 全部启用 */
     enabledTools: string[];
+    /** 应用启动时是否自动连接（是否被某助手使用由 Assistant.mcpServerIds 决定） */
     autoStart: boolean;
     hasStoredSecret: boolean;
     fromCatalog?: CatalogRef;

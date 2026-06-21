@@ -6,7 +6,7 @@ import {
   saveSingleAssistantToBackend, Assistant, Topic, Message, selectedModel, setSelectedModel,
   resolveAssistantModel, modelKey, reasoningLevel,
   pendingRenameRequest, setPendingRenameRequest,
-  mcpServers, mcpServerStatus, findMcpServerForTool, TOOL_CALL_MAX_ROUNDS,
+  mcpServers, mcpServerStatus, TOOL_CALL_MAX_ROUNDS, resolveAssistantSkills,
 } from '../store/store';
 import AssistantSidebar from '../components/AssistantSidebar';
 import AssistantSettingsModal from '../components/AssistantSettingsModal';
@@ -44,6 +44,8 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
   name: name || '新助手',                  // 默认助手名称
   prompt: '你是一个乐于助人的 AI 助手。',     // 默认系统提示词
   modelId: selectedModel() ? modelKey(selectedModel()!) : undefined,  // 继承当前生效模型（复合键）作为新助手默认模型
+  mcpServerIds: [],
+  skillIds: [],
   topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
 });
 
@@ -73,6 +75,8 @@ const ChatPage: Component = () => {
   const [editingAsstId, setEditingAsstId] = createSignal<string | null>(null);    // 当前正在编辑名称的助手 ID，null 表示无编辑中
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
+  // 当前会话的 toolName → serverId 映射（由 list_mcp_tools_for_assistant 返回，供 call_mcp_tool 解析）
+  const [toolServerMap, setToolServerMap] = createSignal<Record<string, string>>({});
 
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
@@ -423,8 +427,8 @@ const ChatPage: Component = () => {
       }
     );
 
-    // 找 server
-    const serverId = findMcpServerForTool(toolName);
+    // 找 server：由 list_mcp_tools_for_assistant 返回的 toolServerMap 确定地解析
+    const serverId = toolServerMap()[toolName] ?? null;
     if (!serverId) {
       // 标记 error，附 role=tool 错误消息
       const errMsg = `未找到工具 ${toolName} 对应的 MCP server`;
@@ -504,12 +508,20 @@ const ChatPage: Component = () => {
     const currentMdl = selectedModel();
     if (!asst || !topic || !currentMdl) return;
 
-    // 注入 MCP 工具列表
-    const tools = await invoke<any[]>('list_mcp_tools').catch(() => []);
+    // 注入 MCP 工具列表（按助手勾选的 server 过滤，opt-in 语义）
+    const asstMcpIds = (asst as any).mcpServerIds ?? [];
+    const { tools, toolServerMap: tsm } = asstMcpIds.length
+      ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', { mcpServerIds: asstMcpIds }).catch(() => ({ tools: [], toolServerMap: {} }))
+      : { tools: [], toolServerMap: {} };
+    setToolServerMap(tsm);
 
     // 构造传给 API 的 messages：清理 toolCalls 只保留 API 需要的字段
     const messagesForAI: any[] = [
       { role: 'system', content: asst.prompt },
+      ...resolveAssistantSkills(asst).map(skill => ({
+        role: 'system',
+        content: `[Skill: ${skill.name}]\n${skill.content}`,
+      })),
       ...(topic.summary ? [{ role: 'system', content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${topic.summary}` }] : []),
       ...topic.history.map((m: any) => {
         const obj: any = { role: m.role, content: m.content };
@@ -621,6 +633,10 @@ const ChatPage: Component = () => {
 
     const messagesForAI = [
       { role: 'system', content: currentAsst.prompt },
+      ...resolveAssistantSkills(currentAsst).map(skill => ({
+        role: 'system',
+        content: `[Skill: ${skill.name}]\n${skill.content}`,
+      })),
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(currentTopic.summary ? [{
         role: 'system',
@@ -651,8 +667,12 @@ const ChatPage: Component = () => {
     setTypingIndex(activeTopic()?.history.length! - 1);
 
     try {
-      // 拉取 MCP 工具列表
-      const mcpTools = await invoke<any[]>('list_mcp_tools').catch(() => []);
+      // 按助手勾选的 MCP server 列表拉取工具（opt-in：空列表 = 不注入任何工具）
+      const asstMcpIds = currentAsst?.mcpServerIds ?? [];
+      const { tools: mcpTools, toolServerMap: tsm } = asstMcpIds.length
+        ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', { mcpServerIds: asstMcpIds }).catch(() => ({ tools: [], toolServerMap: {} }))
+        : { tools: [], toolServerMap: {} };
+      setToolServerMap(tsm);
 
       // 调用 Tauri 后端流式接口（非阻塞，通过事件监听接收数据）
       await invoke('call_llm_stream', {

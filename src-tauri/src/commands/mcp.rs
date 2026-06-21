@@ -227,6 +227,65 @@ pub async fn list_mcp_tools(
     Ok(all_tools)
 }
 
+/// 按助手启用的 MCP server 列表聚合工具。
+///
+/// - `mcp_server_ids`：前端传入该助手勾选的 server id 列表（opt-in，空 = 无工具）。
+/// - 仅遍历这些 id 中当前已连接的 server，应用各自 `enabled_tools` 白名单。
+/// - 返回扁平 `tools`（直接喂给 LLM）+ `tool_server_map`（toolName → serverId，供 call_mcp_tool 解析），
+///   替代前端不可靠的启发式查找。
+#[tauri::command]
+pub async fn list_mcp_tools_for_assistant(
+    app: AppHandle,
+    mgr: State<'_, McpServerManager>,
+    state: State<'_, McpServerState>,
+    mcp_server_ids: Vec<String>,
+) -> Result<AssistantTools, String> {
+    // 1) 收集入参 id 中已连接的 (cfg, plugin, conn)，先取出 conn 后立即释放锁
+    let mut jobs: Vec<(McpServerConfig, Arc<dyn McpServerPlugin>, Arc<crate::plugins::mcp::connection::McpConnection>)> = Vec::new();
+    for id in mcp_server_ids {
+        let cfg = match mcp::get_config(&app, &id) {
+            Some(c) => c,
+            None => continue,
+        };
+        let transport_id = match &cfg.transport {
+            McpTransport::Stdio { .. } => "stdio",
+            McpTransport::Http { .. } => "http",
+            McpTransport::StreamableHttp { .. } => "streamable_http",
+        };
+        let Some(plugin) = mgr.get(transport_id) else { continue };
+        let conn = {
+            let map = state.lock();
+            map.get(&id).cloned()
+        };
+        if let Some(conn) = conn {
+            jobs.push((cfg, plugin, conn));
+        }
+    }
+    drop(state);
+    drop(mgr);
+
+    // 2) 顺序拉取工具，应用白名单，构造 tools + tool_server_map
+    let mut tools = Vec::new();
+    let mut tool_server_map: HashMap<String, String> = HashMap::new();
+    for (cfg, plugin, conn) in jobs {
+        if let Ok(server_tools) = plugin.list_tools(&conn).await {
+            let filtered: Vec<ToolSpec> = if cfg.enabled_tools.is_empty() {
+                server_tools
+            } else {
+                server_tools
+                    .into_iter()
+                    .filter(|t| cfg.enabled_tools.contains(&t.function.name))
+                    .collect()
+            };
+            for t in &filtered {
+                tool_server_map.insert(t.function.name.clone(), cfg.id.clone());
+            }
+            tools.extend(filtered);
+        }
+    }
+    Ok(AssistantTools { tools, tool_server_map })
+}
+
 #[tauri::command]
 pub async fn call_mcp_tool(
     app: AppHandle,

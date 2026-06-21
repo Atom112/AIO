@@ -96,6 +96,13 @@ pub fn run() {
             commands::provider_config::fetch_provider_models,
             commands::provider_config::read_provider_api_key,
             commands::provider_config::delete_provider_api_key,
+            // Skill 管理
+            commands::skill::list_skills,
+            commands::skill::save_skill,
+            commands::skill::delete_skill,
+            commands::skill::list_skill_market_categories,
+            commands::skill::list_skill_market,
+            commands::skill::download_market_skill,
             // MCP 服务器管理
             commands::mcp::list_mcp_servers,
             commands::mcp::add_mcp_server,
@@ -104,6 +111,7 @@ pub fn run() {
             commands::mcp::stop_mcp_server,
             commands::mcp::list_mcp_server_status,
             commands::mcp::list_mcp_tools,
+            commands::mcp::list_mcp_tools_for_assistant,
             commands::mcp::call_mcp_tool,
             commands::mcp::test_mcp_server_connection,
             commands::mcp::list_mcp_transports,

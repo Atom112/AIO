@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { readFile } from '@tauri-apps/plugin-fs';
 import type { Catalog, CatalogSourceTag, ProviderConfig } from '../utils/models';
 import type { McpServerConfig, McpServerStatusInfo, ToolSpec, LlmToolCallPayload } from '../types/mcp';
+import type { SkillConfig } from '../types/skill';
 
 // 接口定义
  /* 消息项接口，定义聊天消息的数据结构 */
@@ -38,6 +39,8 @@ export interface Assistant {
     name: string;           // 助手显示名称
     prompt: string;         // 助手的系统提示词（Prompt）
     modelId?: string;       // 助手绑定的首选模型 ID；未设置时回退到全局默认模型
+    mcpServerIds?: string[];// 助手启用的 MCP server id 列表；空/未设置 = 该助手不使用任何 MCP 工具（opt-in）
+    skillIds?: string[];    // 助手启用的 Skill id 列表；空/未设置 = 不注入 Skill 指令
     topics: Topic[];        // 助手关联的话题列表
 }
 
@@ -448,10 +451,10 @@ export const [datas, setDatas] = createStore({
 export const [mcpServers, setMcpServers] = createSignal<Record<string, McpServerConfig>>({});
 /** MCP 服务器运行时状态（id → status） */
 export const [mcpServerStatus, setMcpServerStatus] = createSignal<Record<string, McpServerStatusInfo>>({});
-/** 当前对话可用的工具列表（合并所有 enabled server 的工具） */
+/** 当前对话可用的工具列表（合并所有已连接 server 的工具，供全局状态展示） */
 export const [mcpToolsCache, setMcpToolsCache] = createSignal<ToolSpec[]>([]);
-/** 工具名 → 所属 serverId（call_mcp_tool 时用） */
-export const [mcpToolToServer, setMcpToolToServer] = createSignal<Record<string, string>>({});
+/** 全局 Skill 配置表（id → config）。 */
+export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({});
 
 /** LLM 工具调用事件总线（ChatPage 监听） */
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
@@ -479,9 +482,10 @@ export const initMcpServers = async () => {
             setMcpServerStatus(prev => ({ ...prev, [info.id]: info }));
         });
 
-        // 自动启动标记为 autoStart 且启用的 server
+        // 自动启动标记为 autoStart 的 server
+        // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）
         const autoStartIds = Object.values(map)
-            .filter(cfg => cfg.enabled && cfg.autoStart)
+            .filter(cfg => cfg.autoStart)
             .map(cfg => cfg.id);
         if (autoStartIds.length > 0) {
             await Promise.allSettled(autoStartIds.map(id => startMcpServerAndRefresh(id)));
@@ -516,40 +520,14 @@ export const startMcpServerAndRefresh = async (id: string): Promise<ToolSpec[]> 
     }
 };
 
-/** 重新拉取所有已连接 server 的工具，更新 mcpToolsCache + mcpToolToServer */
+/** 重新拉取所有已连接 server 的工具，更新 mcpToolsCache（全局状态展示用） */
 export const refreshMcpToolsCache = async () => {
     try {
         const tools = await invoke<ToolSpec[]>('list_mcp_tools');
         setMcpToolsCache(tools);
-        // 重建 tool → server 映射
-        const cfgMap = mcpServers();
-        const map: Record<string, string> = {};
-        for (const cfg of Object.values(cfgMap)) {
-            if (!cfg.enabled) continue;
-            // 由于后端 list_mcp_tools 不返回 serverId，我们只能近似匹配
-            // 真实映射在 call_mcp_tool 时由前端在 invoke 时传 serverId
-        }
-        setMcpToolToServer(map);
     } catch (e) {
         console.warn('刷新 MCP 工具缓存失败:', e);
     }
-};
-
-/** 查找某工具名对应的 serverId（按 server 顺序查找） */
-export const findMcpServerForTool = (toolName: string): string | null => {
-    const cfgMap = mcpServers();
-    const statusMap = mcpServerStatus();
-    for (const [id, cfg] of Object.entries(cfgMap)) {
-        if (!cfg.enabled) continue;
-        if (statusMap[id]?.status !== 'connected') continue;
-        // 工具是否在此 server 中：白名单为空（全启用）或包含该工具
-        if (cfg.enabledTools.length === 0 || cfg.enabledTools.includes(toolName)) {
-            // 注：无法 100% 确认此 server 提供该工具（list_mcp_tools 不带 serverId），
-            // 真实可靠性由 call_mcp_tool 在后端校验。
-            return id;
-        }
-    }
-    return null;
 };
 
 
@@ -731,4 +709,23 @@ export const updateTopicHistorySmoothly = (
         'history', 
         reconcile(newHistory)              // 核心：智能 Diff 替换
     );
+};
+
+/** 从后端加载 Skill 配置。 */
+export const initSkills = async () => {
+    try {
+        const list = await invoke<SkillConfig[]>('list_skills');
+        setSkills(Object.fromEntries(list.map(skill => [skill.id, skill])));
+    } catch (e) {
+        console.warn('加载 Skill 列表失败:', e);
+    }
+};
+
+/** 返回某个助手启用且仍存在的 Skill，顺序与助手配置一致。 */
+export const resolveAssistantSkills = (assistant: Assistant | undefined | null): SkillConfig[] => {
+    if (!assistant) return [];
+    const skillMap = skills();
+    return (assistant.skillIds ?? [])
+        .map(id => skillMap[id])
+        .filter((skill): skill is SkillConfig => Boolean(skill));
 };

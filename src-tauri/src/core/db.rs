@@ -78,6 +78,13 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     // 旧助手行缺少 model_id 列，反序列化时按 None 处理，视为使用全局默认模型
     add_column_if_missing(&conn, "assistants", "model_id", "TEXT")?;
 
+    // 迁移：助手独立配置 MCP 服务器（向后兼容）
+    // 旧助手行缺少 mcp_server_ids 列，加载时按空 vec 处理，等价于「该助手不使用任何 MCP 工具」
+    add_column_if_missing(&conn, "assistants", "mcp_server_ids", "TEXT")?;
+
+    // 迁移：助手独立配置 Skill。旧助手默认不启用任何 Skill。
+    add_column_if_missing(&conn, "assistants", "skill_ids", "TEXT")?;
+
     Ok(conn)
 }
 

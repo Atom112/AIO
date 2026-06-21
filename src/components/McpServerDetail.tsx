@@ -129,19 +129,14 @@ const McpServerDetail: Component<Props> = (props) => {
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                         <input
                             type="checkbox"
-                            checked={config().enabled}
-                            onChange={(e) => updateField('enabled', e.currentTarget.checked)}
-                        />
-                        启用
-                    </label>
-                    <label class="flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                            type="checkbox"
                             checked={config().autoStart}
                             onChange={(e) => updateField('autoStart', e.currentTarget.checked)}
                         />
                         应用启动时自动连接
                     </label>
+                    <span class="text-xs" style="color: rgba(255,255,255,0.4);">
+                        （是否被助手使用由各助手设置中的「MCP 服务器」勾选项决定）
+                    </span>
                 </div>
 
                 {/* 传输类型 */}

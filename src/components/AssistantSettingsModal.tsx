@@ -3,9 +3,11 @@ import {
     datas, setDatas, saveSingleAssistantToBackend, setAssistantModel,
     allAvailableModels, isLocalModel, resolveAssistantModel, modelKey,
     ActivatedModel, modelsCatalog,
+    mcpServers, mcpServerStatus, skills,
 } from '../store/store';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import { findModel, formatContextWindow } from '../utils/models';
+import { transportLabel, statusLabel, statusColor } from '../utils/mcp';
 import Icon from './Icon';
 
 interface AssistantSettingsModalProps {
@@ -30,7 +32,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
 
     /** 当前编辑的助手对象（响应式） */
     const asst = () => datas.assistants.find((a: any) => a.id === props.assistantId) as
-        | { id: string; name: string; prompt: string; modelId?: string } | undefined;
+        | { id: string; name: string; prompt: string; modelId?: string; mcpServerIds?: string[]; skillIds?: string[] } | undefined;
 
     /** 弹窗打开时同步名称与提示词到本地编辑态，并触发入场动画 */
     createEffect(() => {
@@ -76,6 +78,38 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
         if (!id) return;
         void setAssistantModel(id, model);
     };
+
+    /** 为当前助手启用或停用一个 MCP server，并立即持久化。 */
+    const handleToggleMcpServer = async (serverId: string, enabled: boolean) => {
+        const id = props.assistantId;
+        const current = asst()?.mcpServerIds ?? [];
+        if (!id) return;
+
+        const next = enabled
+            ? Array.from(new Set([...current, serverId]))
+            : current.filter(existingId => existingId !== serverId);
+        setDatas('assistants', a => a.id === id, 'mcpServerIds', next);
+        await saveSingleAssistantToBackend(id);
+    };
+
+    const sortedMcpServers = () =>
+        Object.values(mcpServers()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    /** 为当前助手启用或停用一个 Skill，并立即持久化。 */
+    const handleToggleSkill = async (skillId: string, enabled: boolean) => {
+        const id = props.assistantId;
+        const current = asst()?.skillIds ?? [];
+        if (!id) return;
+
+        const next = enabled
+            ? Array.from(new Set([...current, skillId]))
+            : current.filter(existingId => existingId !== skillId);
+        setDatas('assistants', a => a.id === id, 'skillIds', next);
+        await saveSingleAssistantToBackend(id);
+    };
+
+    const sortedSkills = () =>
+        Object.values(skills()).sort((a, b) => a.name.localeCompare(b.name));
 
     /** 推导 model 的 provider id（用于查 catalog 元数据，与 ModelDropdown 一致） */
     const getProviderIdFor = (model: ActivatedModel): string => {
@@ -140,7 +174,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                         "scale-95 opacity-0": isExiting() || isEntering(),
                         "scale-100 opacity-100": !isExiting() && !isEntering()
                     }}
-                    class="modal-panel bg-dark-500 text-[#e0e0e0] p-6 rounded-lg w-[92%] max-w-[640px] flex flex-col gap-4 transition-all duration-500 ease-out transform"
+                    class="modal-panel bg-dark-500 text-[#e0e0e0] p-6 rounded-lg w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
                 >
                     <div class="flex justify-between items-center border-b border-[#444] pb-3">
                         <h2 class='m-0 text-xl'>助手设置</h2>
@@ -274,6 +308,93 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                                     </Show>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    {/* MCP 服务器 */}
+                    <div class="flex flex-col gap-1.5">
+                        <label class="section-label">
+                            MCP 服务器
+                            <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
+                                仅对当前助手生效
+                            </span>
+                        </label>
+                        <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
+                            <For each={sortedMcpServers()}>
+                                {(server) => {
+                                    const checked = () => (asst()?.mcpServerIds ?? []).includes(server.id);
+                                    const status = () => mcpServerStatus()[server.id]?.status ?? 'disconnected';
+                                    return (
+                                        <label
+                                            class="flex items-center gap-3 rounded-md px-2.5 py-2 cursor-pointer transition-colors hover:bg-white/5"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={checked()}
+                                                onChange={(e) => void handleToggleMcpServer(server.id, e.currentTarget.checked)}
+                                            />
+                                            <div class="flex-1 min-w-0">
+                                                <div class="text-sm text-white truncate">{server.displayName || server.id}</div>
+                                                <div class="text-[11px] truncate" style="color: rgba(255,255,255,0.4);">
+                                                    {transportLabel(server.transport)}
+                                                </div>
+                                            </div>
+                                            <span
+                                                class="px-1.5 py-0.5 rounded text-[10px] shrink-0"
+                                                style={`background: ${statusColor(status())}22; color: ${statusColor(status())};`}
+                                            >
+                                                {statusLabel(status())}
+                                            </span>
+                                        </label>
+                                    );
+                                }}
+                            </For>
+                            <Show when={sortedMcpServers().length === 0}>
+                                <div class="px-3 py-5 text-center text-xs" style="color: rgba(255,255,255,0.35);">
+                                    尚未配置 MCP 服务器，请先前往设置中心添加。
+                                </div>
+                            </Show>
+                        </div>
+                        <div class="text-[11px]" style="color: rgba(255,255,255,0.35);">
+                            勾选决定该助手可使用哪些服务器；连接状态仍在 MCP 服务器管理页统一控制。
+                        </div>
+                    </div>
+
+                    {/* Skill */}
+                    <div class="flex flex-col gap-1.5">
+                        <label class="section-label">
+                            Skill
+                            <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
+                                仅对当前助手生效
+                            </span>
+                        </label>
+                        <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
+                            <For each={sortedSkills()}>
+                                {(skill) => (
+                                    <label class="flex items-start gap-3 rounded-md px-2.5 py-2 cursor-pointer transition-colors hover:bg-white/5">
+                                        <input
+                                            type="checkbox"
+                                            class="mt-1"
+                                            checked={(asst()?.skillIds ?? []).includes(skill.id)}
+                                            onChange={(e) => void handleToggleSkill(skill.id, e.currentTarget.checked)}
+                                        />
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-sm text-white truncate">{skill.name}</div>
+                                            <div class="text-[11px] line-clamp-2" style="color: rgba(255,255,255,0.4);">
+                                                {skill.description || skill.content}
+                                            </div>
+                                        </div>
+                                    </label>
+                                )}
+                            </For>
+                            <Show when={sortedSkills().length === 0}>
+                                <div class="px-3 py-5 text-center text-xs" style="color: rgba(255,255,255,0.35);">
+                                    尚未配置 Skill，请先前往设置中心添加。
+                                </div>
+                            </Show>
+                        </div>
+                        <div class="text-[11px]" style="color: rgba(255,255,255,0.35);">
+                            已启用 Skill 会作为额外系统指令注入当前助手的每次对话。
                         </div>
                     </div>
 

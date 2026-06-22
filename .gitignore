@@ -6,3 +6,5 @@ src-tauri/target/
 src-tauri/undefined/
 *.key
 *.key.pub
+.vscode/
+.claude/

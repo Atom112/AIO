@@ -307,7 +307,7 @@ const SkillList: Component = () => {
                         }>
                             {(skill, index) => {
                                 const downloaded = () => Boolean(skills()[skill.id]);
-                                const weekly = () => skill.weeklyInstalls.at(-1) ?? 0;
+                                const weekly = () => skill.weeklyInstalls[skill.weeklyInstalls.length - 1] ?? 0;
                                 return (
                                     <div class="flex flex-col gap-3 rounded-xl p-4"
                                         style="background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08);">

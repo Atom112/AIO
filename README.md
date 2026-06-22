@@ -1,6 +1,6 @@
 
 <div align="center">
-  <img src="./public/icons/logo.png" width="120" height="120" alt="AIO Logo">
+  <img src="./public/icons/app-logo/logo.svg" width="120" height="120" alt="AIO Logo">
   <h1>AIO (All-In-One AI)</h1>
   <p>
     <strong>一个极致轻量、跨平台、支持本地 GGUF 与多厂商 API 的全能 AI 助手</strong><br>

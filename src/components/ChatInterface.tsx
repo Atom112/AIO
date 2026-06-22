@@ -159,7 +159,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 <Show when={msg.role === 'assistant' && msg.reasoning}>
                                                     <ThinkBlock
                                                         content={msg.reasoning}
-                                                        isStreaming={index === props.typingIndex && props.isThinking && !msg.content}
+                                                        isStreaming={index() === props.typingIndex && props.isThinking && !msg.content}
                                                     />
                                                 </Show>
                                                 {/* assistant 携带 tool_calls：渲染 ToolCallBubble */}

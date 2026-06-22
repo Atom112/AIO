@@ -89,6 +89,70 @@ fn check_size(path: &Path, max: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Returns the MIME type used for a supported chat attachment extension.
+pub fn attachment_mime_type(extension: &str) -> &'static str {
+    match extension {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "txt" | "log" | "ini" => "text/plain",
+        "md" => "text/markdown",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        "xml" => "application/xml",
+        "yaml" | "yml" => "application/yaml",
+        "tsv" => "text/tab-separated-values",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Validates a user-selected attachment path, extension, sandbox location, and size.
+pub fn validate_attachment_path(path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path);
+    path_in_sandbox(&path)?;
+    let extension = check_extension(
+        &path,
+        &[
+            "png", "jpg", "jpeg", "webp", "pdf", "docx", "pptx", "txt", "md", "json",
+            "csv", "log", "xml", "yaml", "yml", "ini", "tsv",
+        ],
+    )?;
+    let max = if ["png", "jpg", "jpeg", "webp"].contains(&extension.as_str()) {
+        MAX_IMAGE_BYTES
+    } else if ["pdf", "docx", "pptx"].contains(&extension.as_str()) {
+        MAX_DOC_BYTES
+    } else {
+        MAX_TEXT_BYTES
+    };
+    check_size(&path, max)?;
+    Ok(path)
+}
+
+/// Extracts text for supported document attachments. Images intentionally return `None`.
+pub fn extract_file_content(path: &Path, extension: &str) -> Result<Option<String>, String> {
+    match extension {
+        "png" | "jpg" | "jpeg" | "webp" => Ok(None),
+        "pdf" => pdf_extract::extract_text(path)
+            .map(Some)
+            .map_err(|e| format!("PDF解析失败: {}", e)),
+        "docx" | "pptx" => read_office_file(
+            path.to_str().ok_or_else(|| "文件路径不是有效 UTF-8".to_string())?,
+            extension,
+        )
+        .map(Some),
+        "txt" | "md" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "ini"
+        | "tsv" => {
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
+            Ok(Some(res.into_owned()))
+        }
+        _ => Err(format!("不支持的附件扩展名: {}", extension)),
+    }
+}
+
 /// 从 Office XML 的 `<t>` 标签中提取文本内容。
 pub fn extract_text_from_xml(xml: &str) -> String {
     let reader = xml::EventReader::new(xml.as_bytes());

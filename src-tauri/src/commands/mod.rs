@@ -1,5 +1,6 @@
 // 鉴权相关命令已迁移到 `crate::cloud_backend::auth`
 // （统一管理预留云端后端的 HTTP 调用）
+pub mod attachment;
 pub mod catalog;
 pub mod config;
 pub mod engine;

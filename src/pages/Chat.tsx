@@ -1,9 +1,9 @@
 import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
-  saveSingleAssistantToBackend, Assistant, Topic, Message, selectedModel, setSelectedModel,
+  saveSingleAssistantToBackend, Assistant, Topic, Message, PendingAttachment, StoredAttachment, selectedModel, setSelectedModel,
   resolveAssistantModel, modelKey, reasoningLevel,
   pendingRenameRequest, setPendingRenameRequest,
   mcpServers, mcpServerStatus, TOOL_CALL_MAX_ROUNDS, resolveAssistantSkills,
@@ -66,7 +66,7 @@ const ChatPage: Component = () => {
   const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(localStorage.getItem('left-collapsed') === 'true'); // 左右两侧面板宽度调整逻辑
   const [isRightCollapsed, setIsRightCollapsed] = createSignal(localStorage.getItem('right-collapsed') === 'true');
   const [inputMessage, setInputMessage] = createSignal("");                       // 当前输入框中的消息文本
-  const [pendingFiles, setPendingFiles] = createSignal<{ name: string, content: string, type: 'text' | 'image' }[]>([]); // 待发送的文件列表（用户上传但尚未发送的文件）
+  const [pendingFiles, setPendingFiles] = createSignal<PendingAttachment[]>([]); // 待发送的文件列表（已复制到应用附件目录但尚未关联消息）
   const [isThinking, setIsThinking] = createSignal(false);                        // AI 是否正在思考/生成回复（控制加载动画和停止按钮）
   const [isProcessing, setIsProcessing] = createSignal(false);                    // 是否正在处理文件（控制文件解析加载状态）
   const [isDragging, setIsDragging] = createSignal(false);                        // 是否正在拖拽文件到窗口（控制拖拽状态样式）
@@ -155,8 +155,16 @@ const ChatPage: Component = () => {
     }
     setIsProcessing(true);
     try {
-      const content = await invoke<string>('process_file_content', { path: filePath });
-      setPendingFiles(prev => [...prev, { name: fileName, content, type: isImg ? 'image' : 'text' }]);
+      const stored = await invoke<StoredAttachment>('store_chat_attachment', { path: filePath });
+      setPendingFiles(prev => prev.some(file => file.id === stored.id)
+        ? prev
+        : [...prev, {
+            ...stored,
+            name: fileName,
+            type: isImg ? 'image' : 'text',
+            previewUrl: isImg ? convertFileSrc(stored.storagePath) : undefined,
+          }]
+      );
     } catch (err) {
       alert(err);
     } finally {
@@ -588,23 +596,6 @@ const ChatPage: Component = () => {
     // 必须满足：有文本输入或有文件附件
     if (!userInput && files.length === 0) return;
 
-    // 分离文本文件和图片文件，分别处理
-    const documents = files.filter(f => f.type === 'text');
-    const images = files.filter(f => f.type === 'image');
-    // 构造文件上下文文本：列出所有文本文件的内容
-    let textContext = documents.length > 0
-      ? "参考文件内容：\n" + documents.map(d => `[${d.name}]\n${d.content}`).join('\n') + "\n---\n"
-      : "";
-
-    // 最终发送给 AI 的文本内容（文件上下文 + 用户输入）
-    const finalPrompt = `${textContext}${userInput}`;
-
-    // 适配多模态 API 格式：若有图片则构造数组格式，否则保持纯文本
-    const apiContent = images.length > 0 ? [
-      { type: "text", text: finalPrompt },
-      ...images.map(img => ({ type: "image_url", image_url: { url: img.content } }))
-    ] : finalPrompt;
-
     const asstId = currentAssistantId();
     const topicId = currentTopicId();
     if (!asstId || !topicId) return;
@@ -612,8 +603,13 @@ const ChatPage: Component = () => {
     const newUserMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
-      content: apiContent,
-      displayFiles: files.map(f => ({ name: f.name })),
+      content: userInput,
+      displayFiles: files.map(f => ({
+        id: f.id,
+        name: f.name,
+        mimeType: f.mimeType,
+        size: f.size,
+      })),
       displayText: userInput
     };
 
@@ -649,6 +645,17 @@ const ChatPage: Component = () => {
     const lastMsg = messagesForAI[messagesForAI.length - 1];
     if (lastMsg.role !== 'user') {
       console.error("错误：发送给 API 的最后一条消息不是 User!", lastMsg);
+      return;
+    }
+
+    // 先持久化用户消息和附件关联，避免流式请求期间退出或重复上传导致附件成为孤儿。
+    try {
+      await invoke('append_message', {
+        topicId,
+        message: newUserMsg,
+      });
+    } catch (err) {
+      alert(`保存消息失败: ${err}`);
       return;
     }
 

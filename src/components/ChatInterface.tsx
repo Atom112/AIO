@@ -2,8 +2,9 @@ import { Component, For, Show, Setter, createSignal, createEffect } from 'solid-
 import Markdown from './Markdown';
 import ThinkBlock from './ThinkBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import Icon from './Icon';
 import ReasoningButton from './ReasoningButton';
@@ -18,8 +19,8 @@ interface ChatInterfaceProps {
     typingIndex: number | null;
     inputMessage: string;
     setInputMessage: Setter<string>;
-    pendingFiles: { name: string, content: string, type: 'text' | 'image' }[];
-    setPendingFiles: Setter<{ name: string, content: string, type: 'text' | 'image' }[]>;
+    pendingFiles: PendingAttachment[];
+    setPendingFiles: Setter<PendingAttachment[]>;
     handleSendMessage: () => void;
     handleStopGeneration: () => void;
     handleFileUpload: (path: string, type: 'file' | 'image') => Promise<void>;
@@ -251,12 +252,20 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         <div class="flex items-center rounded-[16px] text-[12px] px-[10px] py-1 transition-all duration-200"
                              style="background: rgba(124,154,191,0.08); border: 1px solid rgba(124,154,191,0.04); color: rgba(124,154,191,0.6);">
                             <Show when={file.type === 'image'} fallback={<span class="mr-1 inline-flex"><Icon name="file" size={12} class="opacity-60" /></span>}>
-                                <img src={file.content} class="w-5 h-5 object-cover mr-1 rounded-[2px]" />
+                                <img src={file.previewUrl} class="w-5 h-5 object-cover mr-1 rounded-[2px]" />
                             </Show>
                             {file.name}
                             <button
                                 class="flex items-center bg-none border-none text-[rgba(255,255,255,0.5)] cursor-pointer text-lg leading-none ml-2 transition-colors duration-200 hover:text-[#ff4d4d]"
-                                onClick={() => props.setPendingFiles(p => p.filter((_, idx) => idx !== i()))}
+                                onClick={() => {
+                                    const duplicatePending = props.pendingFiles.some(
+                                        (pending, index) => index !== i() && pending.id === file.id
+                                    );
+                                    if (!duplicatePending) {
+                                        void invoke('discard_chat_attachment', { attachmentId: file.id });
+                                    }
+                                    props.setPendingFiles(p => p.filter((_, idx) => idx !== i()));
+                                }}
                             >
                                 ×
                             </button>

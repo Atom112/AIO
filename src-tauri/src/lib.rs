@@ -60,6 +60,8 @@ pub fn run() {
             commands::config::load_activated_models,
             commands::config::save_fetched_models,
             commands::config::load_fetched_models,
+            commands::attachment::store_chat_attachment,
+            commands::attachment::discard_chat_attachment,
             commands::llm::call_llm_stream,
             commands::llm::stop_llm_stream,
             commands::llm::fetch_models,

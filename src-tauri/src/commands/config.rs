@@ -1,6 +1,9 @@
 use crate::core::models::*;
 use crate::core::secure_store;
 use crate::core::state::DbState;
+use crate::commands::attachment::{
+    cleanup_attachment_ids, load_message_attachments, sync_message_attachments,
+};
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use std::fs; // 导入标准库文件系统模块
@@ -188,7 +191,19 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                 .map_err(|e| e.to_string())?;
 
             for msg in msg_iter {
-                topic.history.push(msg.map_err(|e| e.to_string())?);
+                let mut message = msg.map_err(|e| e.to_string())?;
+                if let Some(message_id) = &message.id {
+                    let mut stored_files = load_message_attachments(&conn, message_id)?;
+                    if !stored_files.is_empty() {
+                        if let Some(display_files) = &message.display_files {
+                            for (stored, display) in stored_files.iter_mut().zip(display_files) {
+                                stored.name = display.name.clone();
+                            }
+                        }
+                        message.display_files = Some(stored_files);
+                    }
+                }
+                topic.history.push(message);
             }
             asst.topics.push(topic);
         }
@@ -231,8 +246,10 @@ pub async fn save_assistant(
 
     for db_id in db_topic_ids {
         if !current_topic_ids.contains(&db_id) {
+            let attachment_ids = attachment_ids_for_topic(&conn, &db_id)?;
             conn.execute("DELETE FROM topics WHERE id = ?", params![db_id])
                 .map_err(|e| e.to_string())?;
+            cleanup_attachment_ids(&conn, &attachment_ids)?;
         }
     }
 
@@ -247,6 +264,29 @@ pub async fn save_assistant(
 
         // 4. 【性能优化重点】增量同步消息
         // 不再 DELETE ALL，而是使用 ON CONFLICT DO NOTHING (如果 ID 存在则跳过，不存在则插入)
+        let current_message_ids: Vec<String> = topic
+            .history
+            .iter()
+            .filter_map(|message| message.id.clone())
+            .collect();
+        let mut message_stmt = conn
+            .prepare("SELECT id FROM messages WHERE topic_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let db_message_ids = message_stmt
+            .query_map([&topic.id], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(message_stmt);
+        for db_message_id in db_message_ids {
+            if !current_message_ids.contains(&db_message_id) {
+                let attachment_ids = attachment_ids_for_message(&conn, &db_message_id)?;
+                conn.execute("DELETE FROM messages WHERE id = ?1", [&db_message_id])
+                    .map_err(|e| e.to_string())?;
+                cleanup_attachment_ids(&conn, &attachment_ids)?;
+            }
+        }
+
         for msg in topic.history {
             // 假设 Message 结构体现在也有了 id 字段
             let msg_id = msg
@@ -262,6 +302,7 @@ pub async fn save_assistant(
                  ON CONFLICT(id) DO NOTHING", // 关键：已存在的 ID 不再重复写入
                 params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning],
             ).map_err(|e| e.to_string())?;
+            sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
         }
     }
 
@@ -271,10 +312,68 @@ pub async fn save_assistant(
 #[tauri::command]
 pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
     let conn = state.0.lock().unwrap();
+    let attachment_ids = attachment_ids_for_assistant(&conn, &id)?;
     // 由于设置了 ON DELETE CASCADE，会自动删除关联的话题和消息
     conn.execute("DELETE FROM assistants WHERE id = ?", params![id])
         .map_err(|e| e.to_string())?;
+    cleanup_attachment_ids(&conn, &attachment_ids)?;
     Ok(())
+}
+
+fn attachment_ids_for_message(
+    conn: &rusqlite::Connection,
+    message_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT attachment_id FROM message_attachments WHERE message_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([message_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
+}
+
+fn attachment_ids_for_topic(
+    conn: &rusqlite::Connection,
+    topic_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT ma.attachment_id
+             FROM message_attachments ma
+             JOIN messages m ON m.id = ma.message_id
+             WHERE m.topic_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([topic_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
+}
+
+fn attachment_ids_for_assistant(
+    conn: &rusqlite::Connection,
+    assistant_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT ma.attachment_id
+             FROM message_attachments ma
+             JOIN messages m ON m.id = ma.message_id
+             JOIN topics t ON t.id = m.topic_id
+             WHERE t.assistant_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([assistant_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
 }
 
 /// 保存“已激活模型”列表（用户在界面上勾选开启的模型）

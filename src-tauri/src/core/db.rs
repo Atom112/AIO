@@ -44,8 +44,52 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         display_text TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
-    );"
+    );
+    CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        sha256 TEXT NOT NULL UNIQUE,
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        storage_path TEXT NOT NULL,
+        extracted_text TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS message_attachments (
+        message_id TEXT NOT NULL,
+        attachment_id TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (message_id, attachment_id),
+        FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE,
+        FOREIGN KEY(attachment_id) REFERENCES attachments(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_topic_id ON messages(topic_id);
+    CREATE INDEX IF NOT EXISTS idx_message_attachments_attachment_id
+        ON message_attachments(attachment_id);"
 ).map_err(|e| e.to_string())?;
+
+    // 上次异常退出可能留下尚未关联消息的临时上传；应用启动时安全清理。
+    let mut orphan_stmt = conn
+        .prepare(
+            "SELECT storage_path FROM attachments
+             WHERE id NOT IN (SELECT DISTINCT attachment_id FROM message_attachments)",
+        )
+        .map_err(|e| e.to_string())?;
+    let orphan_paths = orphan_stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(orphan_stmt);
+    conn.execute(
+        "DELETE FROM attachments
+         WHERE id NOT IN (SELECT DISTINCT attachment_id FROM message_attachments)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    for path in orphan_paths {
+        let _ = fs::remove_file(path);
+    }
 
     // 迁移：给已存在的 topics 表添加 renamed 列（仅当列不存在时执行）
     // 行为：旧话题行标记为 1（已重命名），避免升级后历史话题被自动改名

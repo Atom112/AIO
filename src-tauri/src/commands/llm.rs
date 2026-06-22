@@ -1,4 +1,6 @@
 use crate::core::state::DbState;
+use crate::commands::attachment::sync_message_attachments;
+use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use crate::core::models::*;
 use crate::core::state::StreamManager;
@@ -27,12 +29,96 @@ pub struct ToolCallPayload {
     pub arguments: String,
 }
 
+fn message_for_api(
+    conn: &rusqlite::Connection,
+    message: &Message,
+) -> Result<serde_json::Value, String> {
+    let mut content = message.content.clone();
+    if let Some(files) = &message.display_files {
+        if files.iter().any(|file| file.id.is_some()) {
+            let base_text = match &message.content {
+                serde_json::Value::String(text) => text.clone(),
+                other => extract_text_content(other),
+            };
+            let mut document_sections = Vec::new();
+            let mut image_data_urls = Vec::new();
+
+            for file in files {
+                let Some(attachment_id) = file.id.as_deref() else {
+                    continue;
+                };
+                let attachment = conn
+                    .query_row(
+                        "SELECT file_name, mime_type, storage_path, extracted_text
+                         FROM attachments WHERE id = ?1",
+                        [attachment_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, Option<String>>(3)?,
+                            ))
+                        },
+                    )
+                    .map_err(|e| format!("读取附件 {} 失败: {}", file.name, e))?;
+
+                if attachment.1.starts_with("image/") {
+                    let bytes = std::fs::read(&attachment.2)
+                        .map_err(|e| format!("读取图片附件 {} 失败: {}", attachment.0, e))?;
+                    image_data_urls.push(format!(
+                        "data:{};base64,{}",
+                        attachment.1,
+                        general_purpose::STANDARD.encode(bytes)
+                    ));
+                } else if let Some(text) = attachment.3 {
+                    document_sections.push(format!("[{}]\n{}", file.name, text));
+                }
+            }
+
+            let expanded_text = if document_sections.is_empty() {
+                base_text
+            } else {
+                format!(
+                    "参考文件内容：\n{}\n---\n{}",
+                    document_sections.join("\n"),
+                    base_text
+                )
+            };
+            content = if image_data_urls.is_empty() {
+                json!(expanded_text)
+            } else {
+                let mut parts = vec![json!({ "type": "text", "text": expanded_text })];
+                parts.extend(image_data_urls.into_iter().map(|url| {
+                    json!({ "type": "image_url", "image_url": { "url": url } })
+                }));
+                serde_json::Value::Array(parts)
+            };
+        }
+    }
+
+    let mut object = serde_json::Map::new();
+    object.insert("role".into(), json!(message.role));
+    object.insert("content".into(), content);
+    if let Some(tool_call_id) = &message.tool_call_id {
+        object.insert("tool_call_id".into(), json!(tool_call_id));
+    }
+    if let Some(name) = &message.name {
+        object.insert("name".into(), json!(name));
+    }
+    if let Some(tool_calls) = &message.tool_calls {
+        object.insert("tool_calls".into(), json!(tool_calls));
+    }
+    Ok(serde_json::Value::Object(object))
+}
+
 /// 核心函数：调用 LLM 并分块回传结果（流式输出）
 /// #[tauri::command] 允许前端通过 invoke 调用
 #[tauri::command]
 pub async fn call_llm_stream(
     window: Window,                         // Tauri 窗口句柄，用于发送事件
     state: tauri::State<'_, StreamManager>, // 全局状态，用于管理正在进行的流任务
+    db_state: tauri::State<'_, DbState>,
     mut api_url: String,                    // API 地址
     api_key: String,                        // API 密钥
     model: String,                          // 模型名称（如 gpt-3.5-turbo）
@@ -54,6 +140,13 @@ pub async fn call_llm_stream(
     let task_key_inner = task_key.clone();
     let assistant_id_c = assistant_id.clone();
     let topic_id_c = topic_id.clone();
+    let messages_for_api = {
+        let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+        messages
+            .iter()
+            .map(|message| message_for_api(&conn, message))
+            .collect::<Result<Vec<_>, _>>()?
+    };
 
     // 4. 创建异步任务执行请求
     let handle = tokio::spawn(async move {
@@ -70,25 +163,6 @@ pub async fn call_llm_stream(
 
             // 构造符合 OpenAI API 标准的消息格式
             // 支持 role="tool"（带 tool_call_id）和 assistant 携带 tool_calls
-            let messages_for_api: Vec<serde_json::Value> = messages
-                .iter()
-                .map(|m| {
-                    let mut obj = serde_json::Map::new();
-                    obj.insert("role".into(), json!(m.role));
-                    obj.insert("content".into(), m.content.clone());
-                    if let Some(tcid) = &m.tool_call_id {
-                        obj.insert("tool_call_id".into(), json!(tcid));
-                    }
-                    if let Some(name) = &m.name {
-                        obj.insert("name".into(), json!(name));
-                    }
-                    if let Some(tcs) = &m.tool_calls {
-                        obj.insert("tool_calls".into(), json!(tcs));
-                    }
-                    serde_json::Value::Object(obj)
-                })
-                .collect();
-
             // 构造请求体，开启 stream 模式
             // 若传入 tools 且非空，则附加到 body
             let mut body_map = serde_json::Map::new();
@@ -408,16 +482,32 @@ pub async fn summarize_history(
 pub async fn append_message(
     state: tauri::State<'_, DbState>,
     topic_id: String,
-    message: Message
+    message: Message,
 ) -> Result<(), String> {
     let conn = (*state).0.lock().unwrap();
+    let message_id = message
+        .id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let files_json = serde_json::to_string(&message.display_files).ok();
     let content_json = serde_json::to_string(&message.content).unwrap_or_default();
 
     conn.execute(
-        "INSERT INTO messages (topic_id, role, content, model_id, display_files, display_text, reasoning) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![topic_id, message.role, content_json, message.model_id, files_json, message.display_text, message.reasoning],
+        "INSERT INTO messages
+         (id, topic_id, role, content, model_id, display_files, display_text, reasoning)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            message_id,
+            topic_id,
+            message.role,
+            content_json,
+            message.model_id,
+            files_json,
+            message.display_text,
+            message.reasoning
+        ],
     ).map_err(|e| e.to_string())?;
+    sync_message_attachments(&conn, &message_id, message.display_files.as_ref())?;
     Ok(())
 }
 

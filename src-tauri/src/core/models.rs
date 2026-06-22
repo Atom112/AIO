@@ -41,10 +41,28 @@ pub struct LiveModel {
     pub released_at: Option<String>,
 }
 
-/// 消息中包含的附件元数据。
+/// 消息关联的附件元数据。旧记录只有 `name`，其余字段保持可选以兼容历史数据。
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct FileMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+/// 上传到应用附件目录后的完整元数据。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredAttachment {
+    pub id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+    pub storage_path: String,
 }
 
 /// 单条聊天消息模型。

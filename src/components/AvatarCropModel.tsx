@@ -2,75 +2,47 @@ import { Component, createSignal, onCleanup, onMount } from 'solid-js';
 import Cropper from 'cropperjs';
 import 'cropperjs/dist/cropper.css';
 
-/**
- * 组件 Props 接口定义
- */
 interface AvatarCropModalProps {
-    /** 待裁剪的图片源，支持 DataURL 或远程 URL */
-    imageSrc: string;
-    /**
-     * 保存回调函数
-     * @param croppedDataUrl - 裁剪后的图片 Base64 DataURL (JPEG格式，256x256)
-     */
-    onSave: (croppedDataUrl: string) => void;
-    /** 取消/关闭回调函数 */
-    onCancel: () => void;
+    imageSrc: string; // 待裁剪的图片源
+    onSave: (croppedDataUrl: string) => void; // 保存回调，返回裁剪后的 JPEG Base64
+    onCancel: () => void; // 取消/关闭回调
 }
 
 /**
  * 头像裁剪模态框组件
- * 
- * @component
- * @description 基于 Cropper.js 的图片裁剪弹窗，固定 1:1 比例输出 256x256 头像。
- *              支持缩放控制、实时预览、进入/退出动画。
- * 
  * @param {AvatarCropModalProps} props - 组件属性
  * @returns {JSX.Element} 裁剪模态框 JSX 元素
  */
 const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
-    /** 图片元素引用：Cropper.js 绑定的目标元素 */
-    let imageElement: HTMLImageElement | undefined;
-    /** 预览容器引用：Cropper.js 的 preview 配置目标 */
-    let previewElement: HTMLDivElement | undefined;
-    /** Cropper.js 实例：通过 ref 保存以便调用实例方法 */
-    let cropper: Cropper | null = null;
+    let imageElement: HTMLImageElement | undefined; // 图片元素引用
+    let previewElement: HTMLDivElement | undefined; // 预览容器引用
+    let cropper: Cropper | null = null; // Cropper.js 实例
 
-    /** 缩放值：范围 0.1-3，默认 1（原图大小），绑定滑块 */
-    const [zoomValue, setZoomValue] = createSignal(1);
-    /** 退出动画标记：true 时添加退出动画类名，动画完成后关闭 */
-    const [isExiting, setIsExiting] = createSignal(false);
-    /** 入场动画标记：true 时显示初始进入状态 */
-    const [isEntering, setIsEntering] = createSignal(true);
+    const [zoomValue, setZoomValue] = createSignal(1); // 缩放值 (0.1-3)
+    const [isExiting, setIsExiting] = createSignal(false); // 退出动画标记
+    const [isEntering, setIsEntering] = createSignal(true); // 进入动画标记
 
-    // 入场动画：组件挂载后立即从隐藏状态过渡到可见状态
     onMount(() => {
         setIsEntering(true);
-        const enterTimer = setTimeout(() => setIsEntering(false), 20); // 20ms 触发样式变更
+        const enterTimer = setTimeout(() => setIsEntering(false), 20);
         onCleanup(() => clearTimeout(enterTimer));
     });
 
     /**
      * 触发退出动画并执行回调
-     * 
-     * 动画流程：
-     * 1. 设置 isExiting=true，触发 CSS 退出动画（fadeOut/slideOut）
-     * 2. 等待 250ms（与 CSS 动画时长一致）
-     * 3. 重置 isExiting，执行业务回调（关闭或保存）
-     * 
      * @param {() => void} callback - 动画结束后执行的回调函数
      */
     const triggerExit = (callback: () => void) => {
         setIsExiting(true);
         setTimeout(() => {
             setIsExiting(false);
-            callback(); // 动画结束后执行业务逻辑
-        }, 250); // 这里的 250ms 应与 CSS 中的动画时间一致
+            callback();
+        }, 250);
     };
 
     /**
      * 处理关闭按钮点击
-     * 先播放退出动画，再调用 onCancel 关闭模态框
      */
     const handleClose = () => {
         triggerExit(props.onCancel);
@@ -78,43 +50,26 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
     /**
      * 初始化 Cropper.js 实例
-     * 
-     * 配置说明：
-     * - aspectRatio: 1     固定 1:1 正方形裁剪（头像比例）
-     * - viewMode: 1        限制裁剪框不超过画布
-     * - dragMode: 'move'   拖拽模式为移动图片（而非裁剪框）
-     * - guides: false      隐藏网格参考线
-     * - center: true       显示中心指示器
-     * - cropBoxMovable: true    允许移动裁剪框
-     * - cropBoxResizable: true  允许调整裁剪框大小
-     * - preview: 绑定预览容器，实现实时预览
      */
     const initCropper = () => {
-        // 防御性检查：确保 DOM 元素已挂载
         if (!imageElement) return;
 
-        // 销毁已有实例，防止内存泄漏和重复初始化
         if (cropper) {
             cropper.destroy();
         }
 
-        // 创建 Cropper.js 实例
         cropper = new Cropper(imageElement, {
-            aspectRatio: 1,           // 固定正方形比例
-            viewMode: 1,              // 视图模式：限制裁剪框
-            dragMode: 'move',         // 拖拽模式：移动图片
-            guides: false,            // 隐藏裁剪网格
-            center: true,             // 显示中心点
-            highlight: false,         // 不显示高亮区域
-            cropBoxMovable: true,     // 可移动裁剪框
-            cropBoxResizable: true,   // 可调整裁剪框
-            toggleDragModeOnDblclick: false, // 禁用双击切换拖拽模式
-            preview: previewElement,  // 实时预览目标容器
+            aspectRatio: 1,
+            viewMode: 1,
+            dragMode: 'move',
+            guides: false,
+            center: true,
+            highlight: false,
+            cropBoxMovable: true,
+            cropBoxResizable: true,
+            toggleDragModeOnDblclick: false,
+            preview: previewElement,
 
-            /**
-             * Cropper 准备就绪回调
-             * 重置缩放值为 1，确保滑块与实例状态同步
-             */
             ready() {
                 setZoomValue(1);
             }
@@ -122,7 +77,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
     };
 
     /**
-     * 组件卸载清理：销毁 Cropper.js 实例，释放内存
+     * 组件卸载时销毁 Cropper.js 实例
      */
     onCleanup(() => {
         cropper?.destroy();
@@ -130,28 +85,18 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
     /**
      * 处理保存按钮点击
-     * 
-     * 数据流：
-     * 1. 调用 cropper.getCroppedCanvas() 获取裁剪后的 Canvas
-     *    - 固定输出 256x256 像素
-     *    - 启用高质量图像平滑
-     * 2. 使用 canvas.toDataURL() 压缩为 JPEG，质量 0.8（80%）
-     * 3. 触发退出动画，动画完成后通过 onSave 回调传出结果
      */
     const handleSave = () => {
         if (cropper) {
-            // 获取裁剪后的 Canvas 对象，指定输出尺寸
             const canvas = cropper.getCroppedCanvas({
-                width: 256,               // 输出宽度：256px
-                height: 256,              // 输出高度：256px
-                imageSmoothingEnabled: true,   // 启用图像平滑
-                imageSmoothingQuality: 'high', // 高质量平滑
+                width: 256,
+                height: 256,
+                imageSmoothingEnabled: true,
+                imageSmoothingQuality: 'high',
             });
 
-            // 压缩为 JPEG Base64，质量 0.8（平衡画质与体积）
             const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
 
-            // 先播放退出动画，再回调保存
             triggerExit(() => {
                 props.onSave(compressedBase64);
             });

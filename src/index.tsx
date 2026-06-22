@@ -7,22 +7,34 @@ import { Router, Route, Navigate } from '@solidjs/router';
 import { lazy, Suspense } from 'solid-js';
 import Layout from './Layout.tsx';
 import './index.css';
+import { initMcpServers, initSkills } from './store/store';
 
-/**
- * 使用 render 函数将 Solid 应用挂载到 DOM。
- * 
- * 结构说明：
- * 1. <Suspense>: 处理 lazy(() => import(...)) 时的过渡状态。
- * 2. <Router>: 定义路由容器，root 属性指定了全局布局组件。
- * 3. <Route>: 具体路径配置。
- */
+// 应用启动时初始化 MCP 服务器（加载配置 + 自动连接标记为 autoStart 的 server）
+initMcpServers();
+initSkills();
+
+const Settings = lazy(() => import('./pages/Settings.tsx'));
+const ProviderList = lazy(() => import('./components/ProviderList.tsx'));
+const ProviderDetail = lazy(() => import('./pages/ProviderDetail.tsx'));
+const AccountSettings = lazy(() => import('./components/AccountSettings.tsx'));
+const AppSettings = lazy(() => import('./components/AppSettings.tsx'));
+const McpServerList = lazy(() => import('./components/McpServerList.tsx'));
+const SkillList = lazy(() => import('./components/SkillList.tsx'));
+
 render(
   () => (
     <Suspense fallback={<div class="loading-container">Loading...</div>}>
       <Router root={Layout}>
         <Route path="/" component={() => <Navigate href="/chat" />} />
-        <Route path="/chat" component={lazy(() => import("./pages/Chat.tsx"))} />
-        <Route path="/settings" component={lazy(() => import("./pages/Settings.tsx"))} />
+        <Route path="/chat" component={lazy(() => import('./pages/Chat.tsx'))} />
+        <Route path="/settings" component={Settings}>
+          <Route path="" component={ProviderList} />
+          <Route path="/provider/:providerId" component={ProviderDetail} />
+          <Route path="/mcp" component={McpServerList} />
+          <Route path="/skills" component={SkillList} />
+          <Route path="/account" component={AccountSettings} />
+          <Route path="/app" component={AppSettings} />
+        </Route>
       </Router>
     </Suspense>
   ),

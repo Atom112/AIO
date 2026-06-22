@@ -1,3 +1,8 @@
 node_modules
 dist
-src-tauri/resources/llama-backend/
+target/
+src-tauri/keys/
+src-tauri/target/
+src-tauri/undefined/
+*.key
+*.key.pub

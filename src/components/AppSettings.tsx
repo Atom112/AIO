@@ -1,61 +1,78 @@
-import { Component, createEffect, createMemo, createSignal, For, onMount, untrack } from 'solid-js';
+import { Component, createEffect, createMemo, createSignal, For, onMount, Show, untrack } from 'solid-js';
 import { open } from '@tauri-apps/plugin-shell';
-import { setThemeColor, themeColor } from '../store/store';
+import { invoke } from '@tauri-apps/api/core';
+import {
+    setThemeColor,
+    themeColor,
+    setAppUpdateAvailable,
+    setAppUpdateInfo,
+    setAppUpdateDismissed,
+} from '../store/store';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from './Icon';
 
 /**
+ * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）
+ * 用 `kind` 字段做 tag，前端按类别显示不同提示
+ */
+type CheckUpdateResult =
+    | { kind: 'up_to_date'; current_version: string }
+    | { kind: 'update_available'; info: { version: string; current_version: string; notes?: string; pub_date?: string } }
+    | { kind: 'service_not_ready'; current_version: string; endpoint: string; reason: string }
+    | { kind: 'network'; current_version: string; endpoint: string; reason: string }
+    | { kind: 'failed'; current_version: string; endpoint: string; reason: string };
+
+/**
  * 应用设置页面组件
- * 
- * @component
- * @description 提供应用配置界面，包括主题色彩自定义（HSL调色）、系统自启设置、
- *              版本信息展示和 GitHub 仓库链接。使用 Tauri API 与宿主系统交互。
- * 
  * @returns {JSX.Element} 应用设置页面的 JSX 元素
  */
 const AppSettings: Component = () => {
 
-    /** 色相 (Hue): 0-360 度，控制颜色的基本色调 */
-    const [h, setH] = createSignal(0);
-    /** 饱和度 (Saturation): 0-100%，控制颜色鲜艳程度 */
-    const [s, setS] = createSignal(0);
-    /** 亮度 (Lightness): 0-100%，控制颜色明暗（当前固定，未提供滑块调节） */
-    const [l, setL] = createSignal(0);
-    /** 开机自启开关状态：true 表示随系统启动 */
-    const [autoStart, setAutoStart] = createSignal(true);
-    /** 应用版本号，默认 1.0.0，挂载后从 Tauri API 获取真实版本 */
-    const [version, setVersion] = createSignal('');
+    const [h, setH] = createSignal(0); // 色相 (0-360 度)
+    const [s, setS] = createSignal(0); // 饱和度 (0-100%)
+    const [l, setL] = createSignal(0); // 亮度 (0-100%)
+    const [autoStart, setAutoStart] = createSignal(true); // 系统自启开关状态
+    const [version, setVersion] = createSignal(''); // 应用版本号
+    const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
+    const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
+    const [endpointDisplay, setEndpointDisplay] = createSignal<string>(''); // 调试展示用：当前 endpoint
 
     /**
-     * 组件挂载时执行：初始化 HSL 状态和获取应用版本
+     * 初始化 HSL 状态和获取应用版本
      */
     onMount(async () => {
-        // 将全局主题色（Hex）转换为 HSL，用于初始化滑块位置
         const initialHsl = hexToHsl(themeColor());
         setH(initialHsl.h);
         setS(initialHsl.s);
         setL(initialHsl.l);
 
-        // 获取应用版本号，失败时保持默认值并打印错误
         try {
             const v = await getVersion();
             setVersion(v);
         } catch (e) {
             console.error("获取版本失败", e);
         }
+
+        // 加载当前 endpoint 用于调试展示
+        try {
+            const eps = await invoke<string[]>('get_updater_endpoint');
+            setEndpointDisplay(eps.join(', '));
+        } catch (e) {
+            console.warn('获取 endpoint 失败:', e);
+        }
     });
 
+    /**
+     * 监听全局主题色变化，同步更新本地 HSL 状态
+     */
     createEffect(() => {
-        const currentHex = themeColor(); // 订阅全局主题色变化
+        const currentHex = themeColor();
 
-        // 使用 untrack 读取本地 h,s,l，防止创建循环依赖
-        // 比较当前 Hex 与本地 HSL 转换后的 Hex，判断是否需要更新
         const shouldUpdate = untrack(() => {
             const mappedHex = hslToHex(h(), s(), l());
             return currentHex.toLowerCase() !== mappedHex.toLowerCase();
         });
 
-        // 仅当外部主题色与本地状态不一致时才更新（避免覆盖用户正在拖动的滑块）
         if (shouldUpdate) {
             const currentHsl = hexToHsl(currentHex);
             setH(currentHsl.h);
@@ -65,11 +82,9 @@ const AppSettings: Component = () => {
     });
 
     /**
-     * 滑块更新处理器：处理色相/饱和度滑块的输入事件
-     * 
-     * @param {('h' | 's')} type - 滑块类型：'h' 色相 或 's' 饱和度
-     * @param {number} val - 滑块当前数值
-     * 
+     * 处理色相/饱和度/亮度滑块输入
+     * @param {('h' | 's' | 'l')} type - 滑块类型
+     * @param {number} val - 滑块数值
      */
     const handleSliderUpdate = (type: 'h' | 's' | 'l', val: number) => {
         let nextH = h();
@@ -92,10 +107,65 @@ const AppSettings: Component = () => {
     };
 
     /**
+     * 手动检查更新：调用后端 check_app_update，根据结构化结果更新 toast 状态和按钮提示
+     */
+    const handleManualCheck = async () => {
+        setCheckUpdating(true);
+        setCheckResult(null);
+        try {
+            const result = await invoke<CheckUpdateResult>('check_app_update');
+            setCheckResult(result);
+
+            switch (result.kind) {
+                case 'update_available':
+                    setAppUpdateInfo({
+                        version: result.info.version,
+                        currentVersion: result.info.current_version,
+                        notes: result.info.notes,
+                        pubDate: result.info.pub_date,
+                    });
+                    setAppUpdateDismissed(false);
+                    setAppUpdateAvailable(true);
+                    break;
+                case 'up_to_date':
+                case 'service_not_ready':
+                case 'network':
+                case 'failed':
+                    // 这几种情况都不弹左下角 Toast
+                    break;
+            }
+        } catch (e) {
+            console.error('手动检查更新失败:', e);
+            setCheckResult({
+                kind: 'failed',
+                current_version: version(),
+                endpoint: endpointDisplay(),
+                reason: typeof e === 'string' ? e : (e instanceof Error ? e.message : '未知错误'),
+            });
+        } finally {
+            setCheckUpdating(false);
+        }
+    };
+
+    /**
+     * 把结构化的检查结果翻译为显示在按钮旁的提示文字
+     */
+    const checkResultMessage = (): string => {
+        const r = checkResult();
+        if (!r) return '检查 AIO 是否有新版本发布';
+        switch (r.kind) {
+            case 'up_to_date':         return '当前已是最新版本';
+            case 'update_available':   return '已发现新版本，左下角查看详情';
+            case 'service_not_ready':  return '当前 release 尚未配置自动更新服务';
+            case 'network':            return '网络错误，无法连接更新服务器';
+            case 'failed':             return '检查失败，请稍后重试';
+        }
+    };
+
+    /**
      * Hex 颜色转 RGB 对象
-     * 
-     * @param {string} hex Hex 颜色字符串
-     * @returns {{r: number, g: number, b: number}} RGB 分量对象，解析失败返回 0
+     * @param {string} hex - Hex 颜色字符串
+     * @returns {{r: number, g: number, b: number}} RGB 分量对象
      */
     const hexToRgb = (hex: string) => {
         const r = parseInt(hex.slice(1, 3), 16) || 0;
@@ -106,24 +176,20 @@ const AppSettings: Component = () => {
 
     /**
      * Hex 颜色转 HSL 对象
-     * 
      * @param {string} hex - Hex 颜色字符串
      * @returns {{h: number, s: number, l: number}} HSL 分量对象（h:0-360, s/l:0-100）
      */
     const hexToHsl = (hex: string) => {
         let { r, g, b } = hexToRgb(hex);
-        // 归一化到 [0,1]
         r /= 255; g /= 255; b /= 255;
 
         const max = Math.max(r, g, b), min = Math.min(r, g, b);
         let h = 0, s = 0, l = (max + min) / 2;
 
-        // 非灰度色才计算色相和饱和度
         if (max !== min) {
             const d = max - min;
             s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
 
-            // 计算色相（0-6 范围，后续转角度）
             if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
             else if (max === g) h = (b - r) / d + 2;
             else h = (r - g) / d + 4;
@@ -131,7 +197,6 @@ const AppSettings: Component = () => {
             h /= 6;
         }
 
-        // 转换为标准 HSL 单位
         return {
             h: Math.round(h * 360),
             s: Math.round(s * 100),
@@ -140,11 +205,9 @@ const AppSettings: Component = () => {
     };
 
     /**
-     * 环形色盘交互处理器：将鼠标或触摸在色环上的位置映射为色相（Hue）角度并更新主题色
-     *
+     * 环形色盘交互处理：将鼠标/触摸位置映射为色相角度
      * @param {MouseEvent | TouchEvent} e - 鼠标或触摸事件
-     * @param {DOMRect} rect - 色环元素的边界（getBoundingClientRect()）
-     * @returns {void}
+     * @param {DOMRect} rect - 色环元素的边界
      */
     const handleRingInteraction = (e: MouseEvent | TouchEvent, rect: DOMRect) => {
         const centerX = rect.left + rect.width / 2;
@@ -157,36 +220,33 @@ const AppSettings: Component = () => {
         handleSliderUpdate('h', Math.round(degree));
     };
 
-    // 计算指示点的位置
+    /**
+     * 计算色环指示点位置（基于当前色相）
+     */
     const pointerStyle = createMemo(() => {
-        // 将色相值转换为弧度，减去 90 度是因为 conic-gradient 起点在 12 点方向
         const rad = ((h() - 90) * Math.PI) / 180;
         const radius = 102;
         const x = Math.cos(rad) * radius;
         const y = Math.sin(rad) * radius;
 
         return {
-            // 第一个 translate 处理环形位移，第二个 translate(-50%, -50%) 确保圆点中心对齐坐标
             transform: `translate(${x}px, ${y}px) translate(-50%, -50%)`
         };
     });
 
     /**
      * HSL 颜色转 Hex 字符串
-     *  
      * @param {number} h - 色相 (0-360)
      * @param {number} s - 饱和度 (0-100)
      * @param {number} l - 亮度 (0-100)
      * @returns {string} Hex 颜色字符串
      */
     const hslToHex = (h: number, s: number, l: number) => {
-        l /= 100; // 亮度归一化
-        // 计算色度相关参数
+        l /= 100;
         const a = (s * Math.min(l, 1 - l)) / 100;
 
-        // 辅助函数：根据角度偏移计算颜色通道
         const f = (n: number) => {
-            const k = (n + h / 30) % 12; // 每 30 度一个分段
+            const k = (n + h / 30) % 12;
             const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
             return Math.round(255 * color).toString(16).padStart(2, '0');
         };
@@ -194,30 +254,25 @@ const AppSettings: Component = () => {
         return `#${f(0)}${f(8)}${f(4)}`;
     };
 
-    /** 
-     * 记忆化 RGB 值：基于当前主题色自动计算 RGB 分量
-     * 用于 RGB 输入框展示
-     */
-    const rgb = createMemo(() => hexToRgb(themeColor()));
+    const rgb = createMemo(() => hexToRgb(themeColor())); // 当前主题色的 RGB 值
 
-    /** 预设主题列表：包含名称和 Hex 颜色值 */
     const presetThemes = [
-        { name: '极光青', color: '#90D0E0' },
-        { name: '樱花粉', color: '#F5BDE6' },
-        { name: '翡翠绿', color: '#A6DA95' },
-        { name: '紫罗兰', color: '#B0B0F0' },
-        { name: '夕阳橙', color: '#F5A97F' },
+        { name: '柔雾蓝', color: '#7c9abf' },
+        { name: '灰粉', color: '#b8929e' },
+        { name: '暖灰', color: '#a8a098' },
+        { name: '鼠尾绿', color: '#9aab9a' },
+        { name: '薰衣草', color: '#a89cc8' },
     ];
 
     return (
         <div class="flex flex-col gap-[15px] box-border">
-            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6 transition-colors duration-300">
+            <div class="rounded-xl p-6" style="background: rgba(18, 22, 35, 0.6); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class="m-0 text-base text-white">应用状态</h3>
                     <div class="flex items-center gap-2">
                         <span class="text-xs text-[#888] font-medium">版本号:</span>
-                        <div class="bg-[var(--primary-color,#08ddf9)] text-black text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
-                            style="font-family: 'JetBrains Mono', monospace;">
+                        <div class="text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
+                            style="background: rgba(124,154,191,0.15); color: rgba(255,255,255,0.8); font-family: 'JetBrains Mono', monospace;">
                             v{version()}
                         </div>
                     </div>
@@ -247,7 +302,8 @@ const AppSettings: Component = () => {
                     </div>
 
                     <div
-                        class="flex items-center gap-2 bg-pri-5 text-[#ccc] px-4 py-2 rounded-lg cursor-pointer border border-pri transition-all duration-200 hover:bg-pri-50 hover:text-black"
+                        class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
+                        style="background: rgba(124,154,191,0.08); color: rgba(255,255,255,0.5); border: 1px solid rgba(124,154,191,0.08);"
                         onClick={() => open('https://github.com/Atom112/AIO')}
                         title="访问 GitHub"
                     >
@@ -255,9 +311,69 @@ const AppSettings: Component = () => {
                         <span>GitHub</span>
                     </div>
                 </div>
+
+                <div class="flex justify-between items-center py-3">
+                    <div class="flex-1 min-w-0 pr-4">
+                        <span class="block text-[#eee] text-[14px]">版本更新</span>
+                        <p
+                            class="text-xs mt-1"
+                            style={{
+                                color: (() => {
+                                    const r = checkResult();
+                                    if (!r) return '#777';
+                                    if (r.kind === 'update_available') return 'var(--primary-color)';
+                                    if (r.kind === 'service_not_ready' || r.kind === 'failed' || r.kind === 'network') return '#d99';
+                                    return '#7c9abf';
+                                })(),
+                            }}
+                        >
+                            {checkResultMessage()}
+                        </p>
+                        <Show when={checkResult() && checkResult()!.kind !== 'update_available' && checkResult()!.kind !== 'up_to_date'}>
+                            <p class="text-[11px] text-[#666] mt-1 break-all leading-relaxed flex items-start gap-1">
+                                <Show when={checkResult()!.kind === 'service_not_ready'}>
+                                    <Icon name="lightbulb" size={11} class="text-yellow-300 shrink-0 mt-0.5" />
+                                </Show>
+                                <span>{(checkResult() as { reason?: string }).reason}</span>
+                            </p>
+                        </Show>
+                    </div>
+
+                    <button
+                        class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                        style={{
+                            background: 'rgba(var(--primary-rgb), 0.18)',
+                            color: 'var(--primary-color)',
+                            border: '1px solid rgba(var(--primary-rgb), 0.25)',
+                        }}
+                        disabled={checkUpdating()}
+                        onClick={handleManualCheck}
+                        title="手动检查更新"
+                    >
+                        <Icon src="/icons/app-logo/switch-arrows.svg" class="w-4 h-4" />
+                        <span class="text-sm font-medium">
+                            {checkUpdating() ? '检查中…' : '检查更新'}
+                        </span>
+                    </button>
+                </div>
+
+                <Show when={endpointDisplay()}>
+                    <div
+                        class="mt-2 px-3 py-2 rounded-lg text-[11px] font-mono leading-relaxed"
+                        style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            color: 'rgba(255, 255, 255, 0.45)',
+                            border: '1px solid rgba(255, 255, 255, 0.05)',
+                            'word-break': 'break-all',
+                        }}
+                        title="当前 tauri.conf.json 中配置的更新清单地址"
+                    >
+                        <span style="color: rgba(255,255,255,0.3)">endpoint:</span> {endpointDisplay()}
+                    </div>
+                </Show>
             </div>
 
-            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6 transition-colors duration-300">
+            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class='m-0 text-base text-white'>视觉主题</h3>
                 </div>

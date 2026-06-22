@@ -12,6 +12,9 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
+      # Each platform updates the shared latest.json asset. Running serially
+      # prevents parallel jobs from overwriting another platform's entries.
+      max-parallel: 1
       matrix:
         include:
           - platform: windows-latest

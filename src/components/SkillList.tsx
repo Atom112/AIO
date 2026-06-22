@@ -7,6 +7,37 @@ import type { MarketSkill, SkillConfig, SkillMarketCategory } from '../types/ski
 type MarketSort = 'all' | 'trending' | 'hot';
 type ViewMode = 'market' | 'downloaded';
 
+const MARKET_CACHE_KEY = 'aio-skill-market-cache-v1';
+const MARKET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+interface SkillMarketCache {
+    updatedAt: number;
+    categories: SkillMarketCategory[];
+    markets: Partial<Record<MarketSort, MarketSkill[]>>;
+    marketUpdatedAt: Partial<Record<MarketSort, number>>;
+}
+
+const readMarketCache = (): SkillMarketCache | null => {
+    try {
+        const raw = localStorage.getItem(MARKET_CACHE_KEY);
+        if (!raw) return null;
+        const cache = JSON.parse(raw) as SkillMarketCache;
+        if (!cache.updatedAt || !Array.isArray(cache.categories) || !cache.markets) return null;
+        cache.marketUpdatedAt ??= { all: cache.updatedAt };
+        return cache;
+    } catch {
+        return null;
+    }
+};
+
+const writeMarketCache = (cache: SkillMarketCache) => {
+    try {
+        localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+        // 缓存失败不应阻塞市场浏览。
+    }
+};
+
 const emptySkill = (): SkillConfig => ({
     id: `skill-${Date.now().toString(36)}`,
     name: '',
@@ -21,15 +52,18 @@ const formatInstalls = (value: number): string => {
 };
 
 const SkillList: Component = () => {
+    const initialCache = readMarketCache();
     const [view, setView] = createSignal<ViewMode>('market');
-    const [marketSkills, setMarketSkills] = createSignal<MarketSkill[]>([]);
-    const [categories, setCategories] = createSignal<SkillMarketCategory[]>([]);
+    const [marketSkills, setMarketSkills] = createSignal<MarketSkill[]>(initialCache?.markets.all ?? []);
+    const [categories, setCategories] = createSignal<SkillMarketCategory[]>(initialCache?.categories ?? []);
     const [sort, setSort] = createSignal<MarketSort>('all');
     const [category, setCategory] = createSignal('all');
     const [query, setQuery] = createSignal('');
-    const [loading, setLoading] = createSignal(false);
+    const [loading, setLoading] = createSignal(!initialCache?.markets.all);
     const [refreshing, setRefreshing] = createSignal(false);
-    const [lastRefreshedAt, setLastRefreshedAt] = createSignal<Date | null>(null);
+    const [lastRefreshedAt, setLastRefreshedAt] = createSignal<Date | null>(
+        initialCache ? new Date(initialCache.marketUpdatedAt.all ?? initialCache.updatedAt) : null,
+    );
     const [downloadingId, setDownloadingId] = createSignal<string | null>(null);
     const [editing, setEditing] = createSignal<SkillConfig | null>(null);
     const [isCreating, setIsCreating] = createSignal(false);
@@ -43,13 +77,33 @@ const SkillList: Component = () => {
         setLoading(true);
         setError(null);
         try {
+            const cache = readMarketCache();
+            if (!forceRefresh && nextCategory === 'all') {
+                const cachedList = cache?.markets[nextSort];
+                const cachedAt = cache?.marketUpdatedAt[nextSort] ?? 0;
+                const cacheIsFresh = Date.now() - cachedAt < MARKET_CACHE_TTL_MS;
+                if (cachedList && cacheIsFresh) {
+                    setMarketSkills(cachedList);
+                    setLastRefreshedAt(new Date(cachedAt));
+                    return;
+                }
+            }
             const list = await invoke<MarketSkill[]>('list_skill_market', {
                 sort: nextSort,
                 category: nextCategory === 'all' ? null : nextCategory,
                 forceRefresh,
             });
             setMarketSkills(list);
-            if (forceRefresh) setLastRefreshedAt(new Date());
+            if (nextCategory === 'all') {
+                const updatedAt = Date.now();
+                writeMarketCache({
+                    updatedAt,
+                    categories: categories(),
+                    markets: { ...(cache?.markets ?? {}), [nextSort]: list },
+                    marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [nextSort]: updatedAt },
+                });
+                setLastRefreshedAt(new Date(updatedAt));
+            }
         } catch (e) {
             setError(`加载 skills.sh 失败: ${e}`);
         } finally {
@@ -58,10 +112,16 @@ const SkillList: Component = () => {
     };
 
     onMount(async () => {
-        setLoading(true);
+        const cacheIsFresh = initialCache
+            && Date.now() - (initialCache.marketUpdatedAt.all ?? 0) < MARKET_CACHE_TTL_MS
+            && Date.now() - initialCache.updatedAt < MARKET_CACHE_TTL_MS;
+        setLoading(!initialCache?.markets.all);
         try {
-            const [localList, categoryList, marketList] = await Promise.all([
-                invoke<SkillConfig[]>('list_skills'),
+            const localList = await invoke<SkillConfig[]>('list_skills');
+            setSkills(Object.fromEntries(localList.map(skill => [skill.id, skill])));
+            if (cacheIsFresh) return;
+
+            const [categoryList, marketList] = await Promise.all([
                 invoke<SkillMarketCategory[]>('list_skill_market_categories', { forceRefresh: false }),
                 invoke<MarketSkill[]>('list_skill_market', {
                     sort: 'all',
@@ -69,9 +129,16 @@ const SkillList: Component = () => {
                     forceRefresh: false,
                 }),
             ]);
-            setSkills(Object.fromEntries(localList.map(skill => [skill.id, skill])));
             setCategories(categoryList);
             setMarketSkills(marketList);
+            const updatedAt = Date.now();
+            writeMarketCache({
+                updatedAt,
+                categories: categoryList,
+                markets: { ...(initialCache?.markets ?? {}), all: marketList },
+                marketUpdatedAt: { ...(initialCache?.marketUpdatedAt ?? {}), all: updatedAt },
+            });
+            setLastRefreshedAt(new Date(updatedAt));
         } catch (e) {
             setError(`加载 Skill 市场失败: ${e}`);
         } finally {
@@ -124,7 +191,15 @@ const SkillList: Component = () => {
             ]);
             setCategories(categoryList);
             setMarketSkills(marketList);
-            setLastRefreshedAt(new Date());
+            const updatedAt = Date.now();
+            const cache = readMarketCache();
+            writeMarketCache({
+                updatedAt,
+                categories: categoryList,
+                markets: { ...(cache?.markets ?? {}), [sort()]: marketList },
+                marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [sort()]: updatedAt },
+            });
+            setLastRefreshedAt(new Date(updatedAt));
         } catch (e) {
             setError(`更新 Skill 列表失败: ${e}`);
         } finally {

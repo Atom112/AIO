@@ -9,6 +9,7 @@ import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import { findModel, formatContextWindow } from '../utils/models';
 import { transportLabel, statusLabel, statusColor } from '../utils/mcp';
 import Icon from './Icon';
+import Switch from './Switch';
 
 interface AssistantSettingsModalProps {
     show: boolean;
@@ -325,14 +326,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                                     const checked = () => (asst()?.mcpServerIds ?? []).includes(server.id);
                                     const status = () => mcpServerStatus()[server.id]?.status ?? 'disconnected';
                                     return (
-                                        <label
-                                            class="flex items-center gap-3 rounded-md px-2.5 py-2 cursor-pointer transition-colors hover:bg-white/5"
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={checked()}
-                                                onChange={(e) => void handleToggleMcpServer(server.id, e.currentTarget.checked)}
-                                            />
+                                        <div class="flex items-center gap-3 rounded-md px-2.5 py-2 transition-colors hover:bg-white/5">
                                             <div class="flex-1 min-w-0">
                                                 <div class="text-sm text-white truncate">{server.displayName || server.id}</div>
                                                 <div class="text-[11px] truncate" style="color: rgba(255,255,255,0.4);">
@@ -345,7 +339,12 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                                             >
                                                 {statusLabel(status())}
                                             </span>
-                                        </label>
+                                            <Switch
+                                                checked={checked()}
+                                                label={`启用 ${server.displayName || server.id}`}
+                                                onChange={(enabled) => void handleToggleMcpServer(server.id, enabled)}
+                                            />
+                                        </div>
                                     );
                                 }}
                             </For>
@@ -370,22 +369,24 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                         </label>
                         <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
                             <For each={sortedSkills()}>
-                                {(skill) => (
-                                    <label class="flex items-start gap-3 rounded-md px-2.5 py-2 cursor-pointer transition-colors hover:bg-white/5">
-                                        <input
-                                            type="checkbox"
-                                            class="mt-1"
-                                            checked={(asst()?.skillIds ?? []).includes(skill.id)}
-                                            onChange={(e) => void handleToggleSkill(skill.id, e.currentTarget.checked)}
-                                        />
-                                        <div class="flex-1 min-w-0">
-                                            <div class="text-sm text-white truncate">{skill.name}</div>
-                                            <div class="text-[11px] line-clamp-2" style="color: rgba(255,255,255,0.4);">
-                                                {skill.description || skill.content}
+                                {(skill) => {
+                                    const checked = () => (asst()?.skillIds ?? []).includes(skill.id);
+                                    return (
+                                        <div class="flex items-center gap-3 rounded-md px-2.5 py-2 transition-colors hover:bg-white/5">
+                                            <div class="flex-1 min-w-0">
+                                                <div class="text-sm text-white truncate">{skill.name}</div>
+                                                <div class="text-[11px] line-clamp-2" style="color: rgba(255,255,255,0.4);">
+                                                    {skill.description || skill.content}
+                                                </div>
                                             </div>
+                                            <Switch
+                                                checked={checked()}
+                                                label={`启用 ${skill.name}`}
+                                                onChange={(enabled) => void handleToggleSkill(skill.id, enabled)}
+                                            />
                                         </div>
-                                    </label>
-                                )}
+                                    );
+                                }}
                             </For>
                             <Show when={sortedSkills().length === 0}>
                                 <div class="px-3 py-5 text-center text-xs" style="color: rgba(255,255,255,0.35);">

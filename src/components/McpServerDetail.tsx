@@ -1,7 +1,6 @@
 import { Component, createSignal, For, Show, createMemo, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../types/mcp';
-import { buildKeyringPlaceholder } from '../utils/mcp';
 
 interface Props {
     config: McpServerConfig;
@@ -61,13 +60,25 @@ const McpServerDetail: Component<Props> = (props) => {
         updateTransport({ ...t, env: { ...t.env, [key]: '' } });
     };
 
-    const updateEnvEntry = (key: string, value: string, isSecret: boolean) => {
+    const updateEnvEntry = (key: string, value: string) => {
         const t = config().transport;
         if (t.transport !== 'stdio') return;
-        const finalValue = isSecret ? buildKeyringPlaceholder(config().id, key) : value;
-        const newEnv = { ...t.env, [key]: finalValue };
+        const newEnv = { ...t.env, [key]: value };
         updateTransport({ ...t, env: newEnv });
-        if (isSecret) updateField('hasStoredSecret', true);
+    };
+
+    const storeEnvSecret = async (key: string, value: string) => {
+        if (!value || value.includes('${KEYRING:')) return;
+        const placeholder = await invoke<string>('save_mcp_server_secret', {
+            serverId: config().id,
+            target: 'env',
+            key,
+            value,
+        });
+        const t = config().transport;
+        if (t.transport !== 'stdio') return;
+        updateTransport({ ...t, env: { ...t.env, [key]: placeholder } });
+        updateField('hasStoredSecret', true);
     };
 
     const removeEnvEntry = (key: string) => {
@@ -223,14 +234,14 @@ const McpServerDetail: Component<Props> = (props) => {
                                                     class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
                                                     style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;"
                                                     value={v.includes('${KEYRING:') ? '[密钥·已存keyring]' : v}
-                                                    onInput={(e) => updateEnvEntry(k, e.currentTarget.value, false)}
+                                                    onInput={(e) => updateEnvEntry(k, e.currentTarget.value)}
                                                     placeholder="值"
                                                 />
                                                 <button
                                                     class="px-2 py-1 rounded text-xs whitespace-nowrap"
                                                     style="background: rgba(255,180,77,0.15); color: rgba(255,200,120,0.95);"
                                                     title="存到系统钥匙串（不再显示在 UI 中）"
-                                                    onClick={() => updateEnvEntry(k, '', true)}
+                                                    onClick={() => void storeEnvSecret(k, v)}
                                                 >存密钥</button>
                                                 <button
                                                     class="px-2 py-1 rounded text-xs"

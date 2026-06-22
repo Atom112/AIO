@@ -7,7 +7,9 @@
 //! Streamable SSE 长连接在 P2 完整实现。
 
 use super::error::{McpError, McpResult};
-use crate::core::models::{McpServerConfig, McpServerInfo, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{
+    McpServerConfig, McpServerInfo, ToolResult, ToolResultContent, ToolSpec,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -41,7 +43,11 @@ pub struct HttpTransportState {
 impl HttpTransportState {
     fn endpoint(&self) -> String {
         let trimmed = self.base_url.trim_end_matches('/');
-        format!("{}/mcp", trimmed)
+        if trimmed.ends_with("/mcp") || trimmed.ends_with("/sse") {
+            trimmed.to_string()
+        } else {
+            format!("{}/mcp", trimmed)
+        }
     }
 
     fn next_id(&self) -> u64 {
@@ -57,11 +63,13 @@ impl super::McpServerPlugin for HttpPlugin {
 
     async fn start(
         &self,
-        _app: AppHandle,
+        app: AppHandle,
         config: &McpServerConfig,
     ) -> McpResult<super::connection::McpConnection> {
         let (url, headers) = match &config.transport {
-            crate::core::models::McpTransport::Http { url, headers } => (url.clone(), headers.clone()),
+            crate::core::models::McpTransport::Http { url, headers } => {
+                (url.clone(), headers.clone())
+            }
             _ => {
                 return Err(McpError::Server(
                     "HttpPlugin 收到非 http transport 配置".into(),
@@ -79,6 +87,7 @@ impl super::McpServerPlugin for HttpPlugin {
         // HTTP transport 不需要 McpConnection 的 pending map 机制，
         // 但为了满足 trait，我们仍返回一个 dummy 连接。
         // 真实调用走 HttpTransportState 路径。
+        let headers = super::resolve_env_placeholders(&app, &config.id, &headers)?;
         let state = HttpTransportState {
             base_url: url,
             headers: Arc::new(headers),
@@ -100,7 +109,10 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<McpServerInfo> {
-        let state = HTTP_STATES.lock().get(&conn.server_id).cloned()
+        let state = HTTP_STATES
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
             .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
         let id = state.next_id();
         let body = json!({
@@ -115,12 +127,27 @@ impl super::McpServerPlugin for HttpPlugin {
         });
         let v = post_json(&state, &body).await?;
         // send notifications/initialized
-        let _ = post_json(&state, &json!({
-            "jsonrpc": "2.0", "method": "notifications/initialized"
-        })).await;
-        let info_val = v.get("result").and_then(|r| r.get("serverInfo")).cloned().unwrap_or(json!({}));
-        let name = info_val.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-        let version = info_val.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let _ = post_json(
+            &state,
+            &json!({
+                "jsonrpc": "2.0", "method": "notifications/initialized"
+            }),
+        )
+        .await;
+        let info_val = v
+            .get("result")
+            .and_then(|r| r.get("serverInfo"))
+            .cloned()
+            .unwrap_or(json!({}));
+        let name = info_val
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let version = info_val
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         Ok(McpServerInfo { name, version })
     }
 
@@ -128,18 +155,26 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<ToolSpec>> {
-        let state = HTTP_STATES.lock().get(&conn.server_id).cloned()
+        let state = HTTP_STATES
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
             .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
         let id = state.next_id();
         let body = json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}
         });
         let v = post_json(&state, &body).await?;
-        let tools = v.get("result").and_then(|r| r.get("tools"))
-            .and_then(|t| t.as_array()).cloned().unwrap_or_default();
+        let tools = v
+            .get("result")
+            .and_then(|r| r.get("tools"))
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
         // MCP 协议返回 { name, description, inputSchema }，需转换为 OpenAI
         // function calling 格式 { type: "function", function: { name, description, parameters } }
-        let specs: Vec<ToolSpec> = tools.into_iter()
+        let specs: Vec<ToolSpec> = tools
+            .into_iter()
             .filter_map(|t| {
                 let name = t.get("name")?.as_str()?.to_string();
                 let description = t.get("description")?.as_str()?.to_string();
@@ -165,7 +200,10 @@ impl super::McpServerPlugin for HttpPlugin {
         arguments: Value,
         timeout: Duration,
     ) -> McpResult<ToolResult> {
-        let state = HTTP_STATES.lock().get(&conn.server_id).cloned()
+        let state = HTTP_STATES
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
             .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
         let id = state.next_id();
         let body = json!({
@@ -180,12 +218,16 @@ impl super::McpServerPlugin for HttpPlugin {
         let result = v.get("result").cloned().unwrap_or(json!({}));
         let content_val = result.get("content").cloned().unwrap_or(json!([]));
         let content: Vec<ToolResultContent> = match content_val {
-            Value::Array(arr) => arr.into_iter()
+            Value::Array(arr) => arr
+                .into_iter()
                 .filter_map(|x| serde_json::from_value(x).ok())
                 .collect(),
             _ => vec![],
         };
-        let is_error = result.get("isError").and_then(|x| x.as_bool()).unwrap_or(false);
+        let is_error = result
+            .get("isError")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
         Ok(ToolResult { content, is_error })
     }
 
@@ -197,15 +239,17 @@ impl super::McpServerPlugin for HttpPlugin {
 
 /// 内部全局表：server_id → HttpTransportState
 /// 由于 start/list_tools 不在同一个 async 上下文，用 parking_lot::Mutex
-static HTTP_STATES: once_cell::sync::Lazy<parking_lot::Mutex<std::collections::HashMap<String, HttpTransportState>>> =
-    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+static HTTP_STATES: once_cell::sync::Lazy<
+    parking_lot::Mutex<std::collections::HashMap<String, HttpTransportState>>,
+> = once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
 
 async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value> {
     if state.closed.load(Ordering::SeqCst) {
         return Err(McpError::Server("HTTP transport 已关闭".into()));
     }
     let url = state.endpoint();
-    let mut req = state.client
+    let mut req = state
+        .client
         .post(&url)
         .header("Content-Type", "application/json")
         .header("Accept", "application/json, text/event-stream")
@@ -213,14 +257,28 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     for (k, v) in state.headers.iter() {
         req = req.header(k, v);
     }
-    let resp = req.send().await.map_err(|e| McpError::Server(format!("HTTP POST: {}", e)))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| McpError::Server(format!("HTTP POST: {}", e)))?;
     let status = resp.status();
-    let content_type = resp.headers().get("content-type")
-        .and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        let truncated = if body.len() > 512 { &body[..512] } else { &body };
-        return Err(McpError::Server(format!("MCP HTTP {}: {}", status, truncated)));
+        let truncated = if body.len() > 512 {
+            &body[..512]
+        } else {
+            &body
+        };
+        return Err(McpError::Server(format!(
+            "MCP HTTP {}: {}",
+            status, truncated
+        )));
     }
     if content_type.starts_with("text/event-stream") {
         // 简化：从 SSE 块中提取首个 "data:" 行的 JSON
@@ -245,7 +303,8 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         }
         Err(McpError::Server("SSE 流意外关闭".into()))
     } else {
-        resp.json::<Value>().await
+        resp.json::<Value>()
+            .await
             .map_err(|e| McpError::Server(format!("JSON 解析: {}", e)))
     }
 }
@@ -259,7 +318,9 @@ struct DummyHttpTransport {
 impl super::connection::McpTransport for DummyHttpTransport {
     async fn send(&self, _payload: &str) -> McpResult<()> {
         // HTTP 模式不走这里
-        Err(McpError::Unimplemented("HTTP 模式应直接走 HttpTransportState".into()))
+        Err(McpError::Unimplemented(
+            "HTTP 模式应直接走 HttpTransportState".into(),
+        ))
     }
     async fn close(&self) -> McpResult<()> {
         self.closed.store(true, Ordering::SeqCst);

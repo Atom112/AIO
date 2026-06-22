@@ -88,6 +88,50 @@ export interface McpServerConfig {
 export interface CatalogRef {
     catalogId: string;
     sourceId: string;
+    version?: string;
+    delivery?: string;
+}
+
+export interface McpCatalogInput {
+    name: string;
+    description: string;
+    required: boolean;
+    secret: boolean;
+    defaultValue: string;
+    target: 'env' | 'header';
+}
+
+export interface McpCatalogDelivery {
+    id: string;
+    kind: 'http' | 'npm' | 'pypi';
+    label: string;
+    command: string;
+    args: string[];
+    url: string;
+    inputs: McpCatalogInput[];
+}
+
+export interface McpCatalogServer {
+    id: string;
+    name: string;
+    displayName: string;
+    description: string;
+    version: string;
+    repositoryUrl: string;
+    websiteUrl: string;
+    deliveries: McpCatalogDelivery[];
+}
+
+export interface McpCatalogPage {
+    servers: McpCatalogServer[];
+    nextCursor?: string;
+}
+
+export interface McpCatalogInstallRequest {
+    server: McpCatalogServer;
+    deliveryId: string;
+    values: Record<string, string>;
+    secrets: Record<string, string>;
 }
 
 export type McpStatus = 'disconnected' | 'connecting' | 'connected' | 'error';

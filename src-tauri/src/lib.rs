@@ -11,18 +11,19 @@ mod core;
 mod plugins;
 mod utils;
 
-use std::sync::Arc;
-use crate::utils::process_file_content;
-use crate::core::state::{DbState, LocalEngineState, McpRequestManager, McpServerState, StreamManager};
+use crate::core::state::{
+    DbState, LocalEngineState, McpRequestManager, McpServerState, StreamManager,
+};
 use crate::plugins::engine::EngineManager;
 use crate::plugins::mcp::McpServerManager;
+use crate::utils::process_file_content;
+use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
 /// 初始化 tracing（生产默认 warn，调试可通过 RUST_LOG=info 开启）
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("warn,info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
@@ -106,6 +107,7 @@ pub fn run() {
             // MCP 服务器管理
             commands::mcp::list_mcp_servers,
             commands::mcp::add_mcp_server,
+            commands::mcp::save_mcp_server_secret,
             commands::mcp::remove_mcp_server,
             commands::mcp::start_mcp_server,
             commands::mcp::stop_mcp_server,
@@ -115,6 +117,9 @@ pub fn run() {
             commands::mcp::call_mcp_tool,
             commands::mcp::test_mcp_server_connection,
             commands::mcp::list_mcp_transports,
+            commands::mcp_catalog::list_mcp_catalog,
+            commands::mcp_catalog::check_mcp_catalog_runtime,
+            commands::mcp_catalog::install_mcp_catalog_server,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

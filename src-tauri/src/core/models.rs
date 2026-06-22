@@ -1,5 +1,4 @@
 /// 定义各种数据模型，包括激活模型配置、消息结构、对话主题、AI 助手预设、远程模型信息以及全局应用配置。
-
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -180,7 +179,11 @@ pub struct Assistant {
     pub model_id: Option<String>,
     /// 助手启用的 MCP server id 列表；空数组 = 该助手不使用任何 MCP 工具（opt-in 语义）。
     /// 旧数据库行 mcp_server_ids 列为 NULL → 反序列化为空 vec，等价于「未启用 MCP」。
-    #[serde(rename = "mcpServerIds", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "mcpServerIds",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub mcp_server_ids: Vec<String>,
     /// 助手启用的 Skill id 列表；空数组表示不注入任何 Skill 指令。
     #[serde(rename = "skillIds", default, skip_serializing_if = "Vec::is_empty")]
@@ -264,9 +267,84 @@ pub struct McpServerConfig {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct CatalogRef {
     pub catalog_id: String,
     pub source_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCatalogInput {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub secret: bool,
+    #[serde(default)]
+    pub default_value: String,
+    #[serde(default)]
+    pub target: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCatalogDelivery {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub inputs: Vec<McpCatalogInput>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCatalogServer {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub repository_url: String,
+    #[serde(default)]
+    pub website_url: String,
+    #[serde(default)]
+    pub deliveries: Vec<McpCatalogDelivery>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCatalogPage {
+    #[serde(default)]
+    pub servers: Vec<McpCatalogServer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCatalogInstallRequest {
+    pub server: McpCatalogServer,
+    pub delivery_id: String,
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
+    #[serde(default)]
+    pub secrets: BTreeMap<String, String>,
 }
 
 /// MCP server 运行时状态

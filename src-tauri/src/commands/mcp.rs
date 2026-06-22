@@ -14,7 +14,13 @@ use tauri::{AppHandle, Emitter, State};
 
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn emit_status(app: &AppHandle, id: &str, status: McpStatus, message: Option<String>, tool_count: usize) {
+fn emit_status(
+    app: &AppHandle,
+    id: &str,
+    status: McpStatus,
+    message: Option<String>,
+    tool_count: usize,
+) {
     let _ = app.emit(
         "mcp-server-status",
         McpServerStatusInfo {
@@ -36,6 +42,26 @@ pub async fn add_mcp_server(app: AppHandle, config: McpServerConfig) -> Result<(
     mcp::upsert_config(&app, config).map_err(|e| e.to_string())
 }
 
+/// Store one MCP environment variable or HTTP header secret in the system keyring.
+#[tauri::command]
+pub async fn save_mcp_server_secret(
+    app: AppHandle,
+    server_id: String,
+    target: String,
+    key: String,
+    value: String,
+) -> Result<String, String> {
+    if server_id.trim().is_empty() || key.trim().is_empty() || value.is_empty() {
+        return Err("服务器、密钥名称和值不能为空".into());
+    }
+    if target != "env" && target != "header" {
+        return Err("不支持的密钥目标".into());
+    }
+    let account = format!("mcp-server-{}-{}-{}", server_id, target, key);
+    secure_store::set(&app, &account, &value).map_err(|error| error.to_string())?;
+    Ok(format!("${{KEYRING:{}}}", account))
+}
+
 #[tauri::command]
 pub async fn remove_mcp_server(
     app: AppHandle,
@@ -49,10 +75,21 @@ pub async fn remove_mcp_server(
     }
     // 清理 keyring 中该 server 的所有 env 密钥
     if let Some(cfg) = mcp::get_config(&app, &id) {
-        if let crate::core::models::McpTransport::Stdio { env, .. } = &cfg.transport {
-            for key in env.keys() {
-                let account = secure_store::accounts::mcp_server_env(&id, key);
-                let _ = secure_store::delete(&app, &account);
+        let entries = match &cfg.transport {
+            crate::core::models::McpTransport::Stdio { env, .. } => Some(("env", env)),
+            crate::core::models::McpTransport::Http { headers, .. }
+            | crate::core::models::McpTransport::StreamableHttp { headers, .. } => {
+                Some(("header", headers))
+            }
+        };
+        if let Some((target, values)) = entries {
+            for (key, value) in values {
+                let legacy = secure_store::accounts::mcp_server_env(&id, key);
+                let _ = secure_store::delete(&app, &legacy);
+                if value.contains("${KEYRING:") {
+                    let account = format!("mcp-server-{}-{}-{}", id, target, key);
+                    let _ = secure_store::delete(&app, &account);
+                }
             }
         }
     }
@@ -70,8 +107,7 @@ pub async fn start_mcp_server(
 ) -> Result<Vec<ToolSpec>, String> {
     emit_status(&app, &id, McpStatus::Connecting, None, 0);
 
-    let config = mcp::get_config(&app, &id)
-        .ok_or_else(|| format!("未找到 MCP server: {}", id))?;
+    let config = mcp::get_config(&app, &id).ok_or_else(|| format!("未找到 MCP server: {}", id))?;
 
     let transport_id = match &config.transport {
         McpTransport::Stdio { .. } => "stdio",
@@ -186,7 +222,11 @@ pub async fn list_mcp_tools(
     };
 
     // 2) 收集 (id, conn, cfg, plugin) 全部准备好后再 await
-    let mut jobs: Vec<(McpServerConfig, Arc<dyn McpServerPlugin>, Arc<crate::plugins::mcp::connection::McpConnection>)> = Vec::new();
+    let mut jobs: Vec<(
+        McpServerConfig,
+        Arc<dyn McpServerPlugin>,
+        Arc<crate::plugins::mcp::connection::McpConnection>,
+    )> = Vec::new();
     for id in ids {
         let cfg = match mcp::get_config(&app, &id) {
             Some(c) => c,
@@ -197,7 +237,9 @@ pub async fn list_mcp_tools(
             McpTransport::Http { .. } => "http",
             McpTransport::StreamableHttp { .. } => "streamable_http",
         };
-        let Some(plugin) = mgr.get(transport_id) else { continue };
+        let Some(plugin) = mgr.get(transport_id) else {
+            continue;
+        };
         let conn = {
             let map = state.lock();
             map.get(&id).cloned()
@@ -241,7 +283,11 @@ pub async fn list_mcp_tools_for_assistant(
     mcp_server_ids: Vec<String>,
 ) -> Result<AssistantTools, String> {
     // 1) 收集入参 id 中已连接的 (cfg, plugin, conn)，先取出 conn 后立即释放锁
-    let mut jobs: Vec<(McpServerConfig, Arc<dyn McpServerPlugin>, Arc<crate::plugins::mcp::connection::McpConnection>)> = Vec::new();
+    let mut jobs: Vec<(
+        McpServerConfig,
+        Arc<dyn McpServerPlugin>,
+        Arc<crate::plugins::mcp::connection::McpConnection>,
+    )> = Vec::new();
     for id in mcp_server_ids {
         let cfg = match mcp::get_config(&app, &id) {
             Some(c) => c,
@@ -252,7 +298,9 @@ pub async fn list_mcp_tools_for_assistant(
             McpTransport::Http { .. } => "http",
             McpTransport::StreamableHttp { .. } => "streamable_http",
         };
-        let Some(plugin) = mgr.get(transport_id) else { continue };
+        let Some(plugin) = mgr.get(transport_id) else {
+            continue;
+        };
         let conn = {
             let map = state.lock();
             map.get(&id).cloned()
@@ -283,7 +331,10 @@ pub async fn list_mcp_tools_for_assistant(
             tools.extend(filtered);
         }
     }
-    Ok(AssistantTools { tools, tool_server_map })
+    Ok(AssistantTools {
+        tools,
+        tool_server_map,
+    })
 }
 
 #[tauri::command]
@@ -299,7 +350,10 @@ pub async fn call_mcp_tool(
     let cfg = mcp::get_config(&app, &server_id)
         .ok_or_else(|| format!("未找到 MCP server: {}", server_id))?;
     if !cfg.enabled_tools.is_empty() && !cfg.enabled_tools.contains(&tool_name) {
-        return Err(format!("工具 {} 不在 server {} 的白名单中", tool_name, server_id));
+        return Err(format!(
+            "工具 {} 不在 server {} 的白名单中",
+            tool_name, server_id
+        ));
     }
     let transport_id = match &cfg.transport {
         McpTransport::Stdio { .. } => "stdio",
@@ -330,7 +384,9 @@ pub async fn call_mcp_tool(
 
     // 取出并等待
     let entry = requests.0.remove(&call_id);
-    let handle: tokio::task::JoinHandle<std::result::Result<ToolResult, crate::plugins::mcp::error::McpError>> = match entry {
+    let handle: tokio::task::JoinHandle<
+        std::result::Result<ToolResult, crate::plugins::mcp::error::McpError>,
+    > = match entry {
         Some((_, h)) => h,
         None => return Err("调用已被中止".into()),
     };

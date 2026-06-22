@@ -267,6 +267,14 @@ return (
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
 
+        <UserDropdown
+          avatar={globalUserAvatar()}
+          isLoggedIn={datas.isLoggedIn}
+          onEditAvatar={handleEditAvatar}
+          onLoginClick={() => setIsLoginModalOpen(true)}
+          onLogout={handleLogout}
+        />
+
         <A 
           href="/settings" 
           title="设置" 
@@ -275,14 +283,6 @@ return (
         >
           <Icon src="/icons/app-logo/settings-gear.svg" class="w-6 h-6" />
         </A>
-
-        <UserDropdown
-          avatar={globalUserAvatar()}
-          isLoggedIn={datas.isLoggedIn}
-          onEditAvatar={handleEditAvatar}
-          onLoginClick={() => setIsLoginModalOpen(true)}
-          onLogout={handleLogout}
-        />
 
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
           <button class="win-ctrl-btn hover:bg-white/10" onClick={handleMinimize} title="最小化">

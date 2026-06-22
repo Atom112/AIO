@@ -16,6 +16,7 @@ import Icon from './Icon';
  * 用 `kind` 字段做 tag，前端按类别显示不同提示
  */
 type CheckUpdateResult =
+    | { kind: 'dev_mode'; current_version: string; reason: string }
     | { kind: 'up_to_date'; current_version: string }
     | { kind: 'update_available'; info: { version: string; current_version: string; notes?: string; pub_date?: string } }
     | { kind: 'service_not_ready'; current_version: string; endpoint: string; reason: string }
@@ -113,10 +114,20 @@ const AppSettings: Component = () => {
         setCheckUpdating(true);
         setCheckResult(null);
         try {
+            if (import.meta.env.DEV) {
+                setCheckResult({
+                    kind: 'dev_mode',
+                    current_version: version(),
+                    reason: '开发模式使用未签名调试包，已跳过生产自动更新检查；请在正式构建中验证更新服务。',
+                });
+                return;
+            }
             const result = await invoke<CheckUpdateResult>('check_app_update');
             setCheckResult(result);
 
             switch (result.kind) {
+                case 'dev_mode':
+                    break;
                 case 'update_available':
                     setAppUpdateInfo({
                         version: result.info.version,
@@ -154,6 +165,7 @@ const AppSettings: Component = () => {
         const r = checkResult();
         if (!r) return '检查 AIO 是否有新版本发布';
         switch (r.kind) {
+            case 'dev_mode':           return '开发模式不执行自动更新检查';
             case 'up_to_date':         return '当前已是最新版本';
             case 'update_available':   return '已发现新版本，左下角查看详情';
             case 'service_not_ready':  return '当前 release 尚未配置自动更新服务';

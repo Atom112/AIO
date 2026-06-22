@@ -79,7 +79,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: AIO v__VERSION__
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           args: >-

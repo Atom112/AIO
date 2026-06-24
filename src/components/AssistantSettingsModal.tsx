@@ -114,16 +114,28 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
     /** 推导 model 的 provider id（用于查 catalog 元数据，与 ModelDropdown 一致） */
     const getProviderIdFor = (model: ActivatedModel): string => {
         if ((model as any).provider_id) return (model as any).provider_id;
-        const url = (model.api_url || '').toLowerCase();
-        if (url.includes('api.openai.com')) return 'openai';
-        if (url.includes('api.anthropic.com')) return 'anthropic';
-        if (url.includes('generativelanguage')) return 'google';
-        if (url.includes('api.deepseek')) return 'deepseek';
-        if (url.includes('api.groq')) return 'groq';
-        if (url.includes('api.mistral')) return 'mistral';
-        if (url.includes('api.x.ai')) return 'xai';
-        if (url.includes('api.cohere')) return 'cohere';
-        if (url.includes('openrouter')) return 'openrouter';
+
+        const getHostname = (rawUrl: string): string => {
+            try {
+                return new URL(rawUrl).hostname.toLowerCase();
+            } catch {
+                return '';
+            }
+        };
+
+        const hostMatches = (host: string, allowedHost: string): boolean =>
+            host === allowedHost || host.endsWith(`.${allowedHost}`);
+
+        const host = getHostname(model.api_url || '');
+        if (hostMatches(host, 'api.openai.com')) return 'openai';
+        if (hostMatches(host, 'api.anthropic.com')) return 'anthropic';
+        if (hostMatches(host, 'generativelanguage.googleapis.com')) return 'google';
+        if (hostMatches(host, 'api.deepseek.com')) return 'deepseek';
+        if (hostMatches(host, 'api.groq.com')) return 'groq';
+        if (hostMatches(host, 'api.mistral.ai')) return 'mistral';
+        if (hostMatches(host, 'api.x.ai')) return 'xai';
+        if (hostMatches(host, 'api.cohere.ai')) return 'cohere';
+        if (hostMatches(host, 'openrouter.ai')) return 'openrouter';
         return 'openai';
     };
 

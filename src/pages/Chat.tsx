@@ -6,7 +6,8 @@ import {
   saveSingleAssistantToBackend, Assistant, Topic, Message, PendingAttachment, StoredAttachment, selectedModel, setSelectedModel,
   resolveAssistantModel, modelKey, reasoningLevel,
   pendingRenameRequest, setPendingRenameRequest,
-  mcpServers, mcpServerStatus, TOOL_CALL_MAX_ROUNDS, resolveAssistantSkills,
+  mcpServers, mcpServerStatus, CHAT_TOOL_CALL_MAX_ROUNDS, AGENT_TOOL_CALL_MAX_ROUNDS, resolveAssistantSkills,
+  currentProjectId, currentProject,
 } from '../store/store';
 import AssistantSidebar from '../components/AssistantSidebar';
 import AssistantSettingsModal from '../components/AssistantSettingsModal';
@@ -46,6 +47,7 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
   modelId: selectedModel() ? modelKey(selectedModel()!) : undefined,  // 继承当前生效模型（复合键）作为新助手默认模型
   mcpServerIds: [],
   skillIds: [],
+  projectId: currentProjectId() ?? undefined, // 关联当前项目
   topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
 });
 
@@ -382,15 +384,16 @@ const ChatPage: Component = () => {
       if (m.role === 'tool') return n + 1;
       return n;
     }, 0);
-    if (rounds >= TOOL_CALL_MAX_ROUNDS) {
-      // 标记为 error
+    const asstAgentMode = (asst as any).agentMode || 'off';
+    const maxRounds = asstAgentMode !== 'off' ? AGENT_TOOL_CALL_MAX_ROUNDS : CHAT_TOOL_CALL_MAX_ROUNDS;
+    if (rounds >= maxRounds) {
       setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
         'history', (h: any[]) => h.map((m: any) => {
           if (m.role === 'assistant' && m.toolCalls) {
             return {
               ...m,
               toolCalls: m.toolCalls.map((tc: any) =>
-                tc.id === toolCallId ? { ...tc, state: 'error', error: `已达工具调用上限 ${TOOL_CALL_MAX_ROUNDS} 轮` } : tc
+                tc.id === toolCallId ? { ...tc, state: 'error', error: `已达工具调用上限 ${maxRounds} 轮` } : tc
               ),
             };
           }
@@ -465,11 +468,13 @@ const ChatPage: Component = () => {
     let resultContent: any[] = [];
     let isError = false;
     let errorMsg = '';
+
     try {
       const result = await invoke<any>('call_mcp_tool', {
         serverId,
         toolName,
         arguments: args,
+        projectId: currentProjectId() ?? null,
       });
       resultContent = result.content || [];
       isError = !!result.isError;
@@ -518,18 +523,40 @@ const ChatPage: Component = () => {
 
     // 注入 MCP 工具列表（按助手勾选的 server 过滤，opt-in 语义）
     const asstMcpIds = (asst as any).mcpServerIds ?? [];
-    const { tools, toolServerMap: tsm } = asstMcpIds.length
-      ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', { mcpServerIds: asstMcpIds }).catch(() => ({ tools: [], toolServerMap: {} }))
+    const { tools: mcpToolsResult, toolServerMap: tsm } = asstMcpIds.length
+      ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', {
+          mcpServerIds: asstMcpIds,
+          projectId: currentProjectId(),
+        }).catch(() => ({ tools: [], toolServerMap: {} }))
       : { tools: [], toolServerMap: {} };
+    const tools = mcpToolsResult;
     setToolServerMap(tsm);
 
     // 构造传给 API 的 messages：清理 toolCalls 只保留 API 需要的字段
+    const agentMode2 = (asst as any).agentMode || 'off';
+    const pid2 = currentProjectId();
+    const agentSystemPrompt2 = (agentMode2 !== 'off' && pid2 && currentProject())
+      ? [{
+          role: 'system' as const,
+          content: [
+            `[Agent Mode] 你正在以 Agent 模式运行。`,
+            `工作目录: ${currentProject()!.path}`,
+            `你可以使用内置工具读取、搜索、修改项目文件。`,
+            ``,
+            agentMode2 === 'plan'
+              ? `当前是 Plan 模式：先列出计划（不要调用工具），等用户确认后再执行。`
+              : `当前是${agentMode2 === 'auto' ? '自动' : '普通'}模式：自主完成任务。`,
+            `所有文件路径相对于项目根目录，不可越界。`,
+          ].join('\n'),
+        }]
+      : [];
     const messagesForAI: any[] = [
       { role: 'system', content: asst.prompt },
       ...resolveAssistantSkills(asst).map(skill => ({
         role: 'system',
         content: `[Skill: ${skill.name}]\n${skill.content}`,
       })),
+      ...agentSystemPrompt2,
       ...(topic.summary ? [{ role: 'system', content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${topic.summary}` }] : []),
       ...topic.history.map((m: any) => {
         const obj: any = { role: m.role, content: m.content };
@@ -627,18 +654,64 @@ const ChatPage: Component = () => {
         }
     })();
 
+    const agentMode = currentAsst?.agentMode || 'off';
+    const pid = currentProjectId();
+    const agentSystemPrompt = (agentMode !== 'off' && pid && currentProject())
+      ? [{
+          role: 'system' as const,
+          content: [
+            `[Agent Mode] 你正在以 Agent 模式运行。`,
+            `工作目录: ${currentProject()!.path}`,
+            `你可以使用内置工具读取、搜索、修改项目文件。`,
+            ``,
+            `可用工具:`,
+            `- read_file(path) — 读取文件内容`,
+            `- write_file(path, content) — 创建或覆盖文件`,
+            `- list_directory(path?) — 列出目录`,
+            `- search_files(pattern, basePath?) — 按 glob 搜索文件`,
+            `- search_content(pattern, path?) — 搜索文件内容（正则）`,
+            `- delete_file(path) — 删除文件`,
+            `- make_directory(path) — 创建目录`,
+            ``,
+            agentMode === 'plan'
+              ? `当前是 Plan 模式：请先列出任务计划和涉及的文件（不要调用工具），等用户确认后再执行。`
+              : agentMode === 'normal'
+              ? `当前是普通模式：文件读取/搜索可以自由执行，写入/删除文件前需要用户确认。`
+              : `当前是自动模式：尽可能自主完成任务，仅在遇到无法处理的错误时才向用户求助。`,
+            ``,
+            `重要安全规则:`,
+            `- 所有文件路径都是相对于项目根目录的`,
+            `- 只能在项目目录内操作，不可越界`,
+            `- 如果需要访问项目目录外的文件，必须先向用户申请并得到同意`,
+            `- 完成多步任务后，总结你做了哪些修改`,
+          ].join('\n'),
+        }]
+      : [];
     const messagesForAI = [
       { role: 'system', content: currentAsst.prompt },
       ...resolveAssistantSkills(currentAsst).map(skill => ({
         role: 'system',
         content: `[Skill: ${skill.name}]\n${skill.content}`,
       })),
+      ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(currentTopic.summary ? [{
         role: 'system',
         content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
       }] : []),
-      ...currentTopic.history.map((m: any) => ({ role: m.role, content: m.content })),
+      ...currentTopic.history.map((m: any) => {
+        const obj: any = { role: m.role, content: m.content };
+        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
+        if (m.name) obj.name = m.name;
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          obj.tool_calls = m.toolCalls.map((tc: any) => ({
+            id: tc.id,
+            type: tc.type || 'function',
+            function: { name: tc.function?.name, arguments: tc.function?.arguments },
+          }));
+        }
+        return obj;
+      }),
       { role: 'user', content: newUserMsg.content }
     ];
 
@@ -676,9 +749,13 @@ const ChatPage: Component = () => {
     try {
       // 按助手勾选的 MCP server 列表拉取工具（opt-in：空列表 = 不注入任何工具）
       const asstMcpIds = currentAsst?.mcpServerIds ?? [];
-      const { tools: mcpTools, toolServerMap: tsm } = asstMcpIds.length
-        ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', { mcpServerIds: asstMcpIds }).catch(() => ({ tools: [], toolServerMap: {} }))
+      const { tools: mcpToolsResult, toolServerMap: tsm } = asstMcpIds.length
+        ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', {
+            mcpServerIds: asstMcpIds,
+            projectId: currentProjectId(),
+          }).catch(() => ({ tools: [], toolServerMap: {} }))
         : { tools: [], toolServerMap: {} };
+      const mcpTools = mcpToolsResult;
       setToolServerMap(tsm);
 
       // 调用 Tauri 后端流式接口（非阻塞，通过事件监听接收数据）

@@ -52,6 +52,9 @@ export interface Topic {
     renamed?: boolean;
 }
 
+/** Agent 执行模式 */
+export type AgentMode = 'off' | 'normal' | 'auto' | 'plan';
+
  /* 助手接口，定义 AI 助手的数据结构 */
 export interface Assistant {
     id: string;             // 助手唯一标识符
@@ -60,6 +63,8 @@ export interface Assistant {
     modelId?: string;       // 助手绑定的首选模型 ID；未设置时回退到全局默认模型
     mcpServerIds?: string[];// 助手启用的 MCP server id 列表；空/未设置 = 该助手不使用任何 MCP 工具（opt-in）
     skillIds?: string[];    // 助手启用的 Skill id 列表；空/未设置 = 不注入 Skill 指令
+    projectId?: string;     // 助手所属的项目 ID；未设置 = 全局助手
+    agentMode?: AgentMode;  // Agent 执行模式；'off' = 对话模式
     topics: Topic[];        // 助手关联的话题列表
 }
 
@@ -87,6 +92,38 @@ export interface User {
     nickname?: string;      // 用户昵称（可选）
     token: string;          // 用户身份验证令牌
 }
+
+ /** 项目接口 */
+export interface Project {
+    id: string;
+    name: string;
+    path: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** 当前活跃的项目 ID（null = 全局模式） */
+export const [currentProjectId, setCurrentProjectId] = createSignal<string | null>(null);
+
+/** 所有项目列表 */
+export const [projects, setProjects] = createSignal<Project[]>([]);
+
+/** 当前活跃项目的完整对象（派生） */
+export const currentProject = (): Project | null => {
+    const id = currentProjectId();
+    if (!id) return null;
+    return projects().find(p => p.id === id) ?? null;
+};
+
+/** 加载项目列表 */
+export const initProjects = async () => {
+    try {
+        const list = await invoke<Project[]>('list_projects');
+        setProjects(list);
+    } catch (e) {
+        console.warn('加载项目列表失败:', e);
+    }
+};
 
 /** 全局用户头像状态信号，默认使用系统默认头像 */
 export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-logo/user.svg');
@@ -478,15 +515,17 @@ export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({})
 /** LLM 工具调用事件总线（ChatPage 监听） */
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
 
-/** 工具调用轮数（防止死循环，5 轮上限） */
-export const TOOL_CALL_MAX_ROUNDS = 5;
+/** 对话模式工具调用上限 */
+export const CHAT_TOOL_CALL_MAX_ROUNDS = 5;
+/** Agent 模式工具调用上限 */
+export const AGENT_TOOL_CALL_MAX_ROUNDS = 25;
 
 /**
  * 加载并初始化 MCP 服务器列表 + 同步后端已连接状态 + 自动启动标记为 autoStart 的 server
  */
-export const initMcpServers = async () => {
+export const initMcpServers = async (projectId?: string | null) => {
     try {
-        const list = await invoke<McpServerConfig[]>('list_mcp_servers');
+        const list = await invoke<McpServerConfig[]>('list_mcp_servers', { projectId: projectId ?? null });
         const map: Record<string, McpServerConfig> = {};
         for (const cfg of list) map[cfg.id] = cfg;
         setMcpServers(map);
@@ -501,13 +540,20 @@ export const initMcpServers = async () => {
             setMcpServerStatus(prev => ({ ...prev, [info.id]: info }));
         });
 
+        // 监听 MCP server stderr 日志
+        listen<{ id: string; line: string }>('mcp-server-stderr', (event) => {
+            const { id, line } = event.payload;
+            console.log(`[mcp:${id}] ${line}`);
+        });
+
         // 自动启动标记为 autoStart 的 server
         // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）
         const autoStartIds = Object.values(map)
             .filter(cfg => cfg.autoStart)
             .map(cfg => cfg.id);
         if (autoStartIds.length > 0) {
-            await Promise.allSettled(autoStartIds.map(id => startMcpServerAndRefresh(id)));
+            const pid = projectId ?? null;
+            await Promise.allSettled(autoStartIds.map(id => startMcpServerAndRefresh(id, pid)));
         }
     } catch (e) {
         console.warn('加载 MCP server 列表失败:', e);
@@ -517,13 +563,13 @@ export const initMcpServers = async () => {
 /**
  * 启动一个 MCP server 并刷新工具缓存
  */
-export const startMcpServerAndRefresh = async (id: string): Promise<ToolSpec[]> => {
+export const startMcpServerAndRefresh = async (id: string, projectId?: string | null): Promise<ToolSpec[]> => {
     setMcpServerStatus(prev => ({
         ...prev,
         [id]: { id, status: 'connecting', toolCount: 0 },
     }));
     try {
-        const tools = await invoke<ToolSpec[]>('start_mcp_server', { id });
+        const tools = await invoke<ToolSpec[]>('start_mcp_server', { id, projectId: projectId ?? null });
         setMcpServerStatus(prev => ({
             ...prev,
             [id]: { id, status: 'connected', toolCount: tools.length },
@@ -542,7 +588,7 @@ export const startMcpServerAndRefresh = async (id: string): Promise<ToolSpec[]> 
 /** 重新拉取所有已连接 server 的工具，更新 mcpToolsCache（全局状态展示用） */
 export const refreshMcpToolsCache = async () => {
     try {
-        const tools = await invoke<ToolSpec[]>('list_mcp_tools');
+        const tools = await invoke<ToolSpec[]>('list_mcp_tools', { projectId: currentProjectId() ?? null });
         setMcpToolsCache(tools);
     } catch (e) {
         console.warn('刷新 MCP 工具缓存失败:', e);
@@ -730,10 +776,10 @@ export const updateTopicHistorySmoothly = (
     );
 };
 
-/** 从后端加载 Skill 配置。 */
-export const initSkills = async () => {
+/** 从后端加载 Skill 配置（支持项目级合并）。 */
+export const initSkills = async (projectId?: string | null) => {
     try {
-        const list = await invoke<SkillConfig[]>('list_skills');
+        const list = await invoke<SkillConfig[]>('list_skills', { projectId: projectId ?? null });
         setSkills(Object.fromEntries(list.map(skill => [skill.id, skill])));
     } catch (e) {
         console.warn('加载 Skill 列表失败:', e);

@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -33,13 +33,43 @@ fn emit_status(
 }
 
 #[tauri::command]
-pub async fn list_mcp_servers(app: AppHandle) -> Result<Vec<McpServerConfig>, String> {
-    Ok(mcp::list_configs(&app))
+pub async fn list_mcp_servers(
+    app: AppHandle,
+    project_id: Option<String>,
+) -> Result<Vec<McpServerConfig>, String> {
+    mcp::list_configs_merged(&app, project_id.as_deref()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn add_mcp_server(app: AppHandle, config: McpServerConfig) -> Result<(), String> {
-    mcp::upsert_config(&app, config).map_err(|e| e.to_string())
+pub async fn add_mcp_server(
+    app: AppHandle,
+    config: McpServerConfig,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path_mcp(&app, pid)?;
+            mcp::upsert_project_config(&project_path, config).map_err(|e| e.to_string())
+        }
+        None => mcp::upsert_config(&app, config).map_err(|e| e.to_string()),
+    }
+}
+
+/// MCP 专用的项目路径解析。
+fn resolve_project_path_mcp(app: &AppHandle, project_id: &str) -> Result<String, String> {
+    let idx_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取 AppData 目录失败: {}", e))?
+        .join("projects.json");
+    let content =
+        std::fs::read_to_string(&idx_path).map_err(|e| format!("读取项目索引失败: {}", e))?;
+    let file: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析项目索引失败: {}", e))?;
+    file["projects"][project_id]["path"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("项目 {} 不存在", project_id))
 }
 
 /// Store one MCP environment variable or HTTP header secret in the system keyring.
@@ -67,6 +97,7 @@ pub async fn remove_mcp_server(
     app: AppHandle,
     state: State<'_, McpServerState>,
     id: String,
+    project_id: Option<String>,
 ) -> Result<(), String> {
     // 先停掉连接
     {
@@ -74,7 +105,8 @@ pub async fn remove_mcp_server(
         map.remove(&id);
     }
     // 清理 keyring 中该 server 的所有 env 密钥
-    if let Some(cfg) = mcp::get_config(&app, &id) {
+    let cfg = mcp::get_config_merged(&app, &id, project_id.as_deref());
+    if let Some(cfg) = cfg {
         let entries = match &cfg.transport {
             crate::core::models::McpTransport::Stdio { env, .. } => Some(("env", env)),
             crate::core::models::McpTransport::Http { headers, .. }
@@ -93,7 +125,13 @@ pub async fn remove_mcp_server(
             }
         }
     }
-    mcp::remove_config(&app, &id).map_err(|e| e.to_string())?;
+    match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path_mcp(&app, pid)?;
+            mcp::remove_project_config(&project_path, &id).map_err(|e| e.to_string())?
+        }
+        None => mcp::remove_config(&app, &id).map_err(|e| e.to_string())?,
+    };
     emit_status(&app, &id, McpStatus::Disconnected, None, 0);
     Ok(())
 }
@@ -104,10 +142,12 @@ pub async fn start_mcp_server(
     mgr: State<'_, McpServerManager>,
     state: State<'_, McpServerState>,
     id: String,
+    project_id: Option<String>,
 ) -> Result<Vec<ToolSpec>, String> {
     emit_status(&app, &id, McpStatus::Connecting, None, 0);
 
-    let config = mcp::get_config(&app, &id).ok_or_else(|| format!("未找到 MCP server: {}", id))?;
+    let config = mcp::get_config_merged(&app, &id, project_id.as_deref())
+        .ok_or_else(|| format!("未找到 MCP server: {}", id))?;
 
     let transport_id = match &config.transport {
         McpTransport::Stdio { .. } => "stdio",
@@ -214,6 +254,7 @@ pub async fn list_mcp_tools(
     app: AppHandle,
     mgr: State<'_, McpServerManager>,
     state: State<'_, McpServerState>,
+    project_id: Option<String>,
 ) -> Result<Vec<ToolSpec>, String> {
     // 1) 取出所有 server_id 后立即释放锁
     let ids: Vec<String> = {
@@ -228,7 +269,7 @@ pub async fn list_mcp_tools(
         Arc<crate::plugins::mcp::connection::McpConnection>,
     )> = Vec::new();
     for id in ids {
-        let cfg = match mcp::get_config(&app, &id) {
+        let cfg = match mcp::get_config_merged(&app, &id, project_id.as_deref()) {
             Some(c) => c,
             None => continue,
         };
@@ -281,6 +322,7 @@ pub async fn list_mcp_tools_for_assistant(
     mgr: State<'_, McpServerManager>,
     state: State<'_, McpServerState>,
     mcp_server_ids: Vec<String>,
+    project_id: Option<String>,
 ) -> Result<AssistantTools, String> {
     // 1) 收集入参 id 中已连接的 (cfg, plugin, conn)，先取出 conn 后立即释放锁
     let mut jobs: Vec<(
@@ -289,7 +331,7 @@ pub async fn list_mcp_tools_for_assistant(
         Arc<crate::plugins::mcp::connection::McpConnection>,
     )> = Vec::new();
     for id in mcp_server_ids {
-        let cfg = match mcp::get_config(&app, &id) {
+        let cfg = match mcp::get_config_merged(&app, &id, project_id.as_deref()) {
             Some(c) => c,
             None => continue,
         };
@@ -346,8 +388,9 @@ pub async fn call_mcp_tool(
     server_id: String,
     tool_name: String,
     arguments: Value,
+    project_id: Option<String>,
 ) -> Result<ToolResult, String> {
-    let cfg = mcp::get_config(&app, &server_id)
+    let cfg = mcp::get_config_merged(&app, &server_id, project_id.as_deref())
         .ok_or_else(|| format!("未找到 MCP server: {}", server_id))?;
     if !cfg.enabled_tools.is_empty() && !cfg.enabled_tools.contains(&tool_name) {
         return Err(format!(

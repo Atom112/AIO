@@ -87,7 +87,7 @@ const Layout: Component<ParentProps> = (props) => {
             }
         }, 8000);
 
-        if (!import.meta.env.DEV) setTimeout(async () => {
+        setTimeout(async () => {
             try {
                 type CheckUpdateResult =
                     | { kind: 'up_to_date'; current_version: string }

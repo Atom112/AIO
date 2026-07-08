@@ -8,6 +8,7 @@
 mod cloud_backend;
 mod commands;
 mod core;
+pub mod mcp_fs_server;
 mod plugins;
 mod utils;
 
@@ -99,6 +100,14 @@ pub fn run() {
             commands::provider_config::fetch_provider_models,
             commands::provider_config::read_provider_api_key,
             commands::provider_config::delete_provider_api_key,
+            // 项目管理
+            commands::project::create_project,
+            commands::project::list_projects,
+            commands::project::update_project,
+            commands::project::delete_project,
+            commands::project::open_project_directory,
+            commands::project::get_project_by_path,
+            commands::project::validate_project_path,
             // Skill 管理
             commands::skill::list_skills,
             commands::skill::save_skill,
@@ -106,6 +115,9 @@ pub fn run() {
             commands::skill::list_skill_market_categories,
             commands::skill::list_skill_market,
             commands::skill::download_market_skill,
+            commands::skill::discover_npx_skills,
+            commands::skill::import_npx_skill,
+            commands::skill::refresh_npx_skill,
             // MCP 服务器管理
             commands::mcp::list_mcp_servers,
             commands::mcp::add_mcp_server,

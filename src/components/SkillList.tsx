@@ -1,11 +1,12 @@
 import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills } from '../store/store';
-import type { MarketSkill, SkillConfig, SkillMarketCategory } from '../types/skill';
+import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills, currentProjectId, currentProject } from '../store/store';
+import type { MarketSkill, SkillConfig, SkillMarketCategory, DiscoveredNpxSkill } from '../types/skill';
 
 type MarketSort = 'all' | 'trending' | 'hot';
-type ViewMode = 'market' | 'downloaded';
+type ViewMode = 'market' | 'downloaded' | 'npx';
+type ScopeMode = 'global' | 'project';
 
 const MARKET_CACHE_KEY = 'aio-skill-market-cache-v1';
 const MARKET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -54,6 +55,8 @@ const formatInstalls = (value: number): string => {
 const SkillList: Component = () => {
     const initialCache = readMarketCache();
     const [view, setView] = createSignal<ViewMode>('market');
+    const [scope, setScope] = createSignal<ScopeMode>(currentProjectId() ? 'project' : 'global');
+    const projectId = () => scope() === 'project' ? currentProjectId() : null;
     const [marketSkills, setMarketSkills] = createSignal<MarketSkill[]>(initialCache?.markets.all ?? []);
     const [categories, setCategories] = createSignal<SkillMarketCategory[]>(initialCache?.categories ?? []);
     const [sort, setSort] = createSignal<MarketSort>('all');
@@ -68,6 +71,61 @@ const SkillList: Component = () => {
     const [editing, setEditing] = createSignal<SkillConfig | null>(null);
     const [isCreating, setIsCreating] = createSignal(false);
     const [error, setError] = createSignal<string | null>(null);
+
+    // ====== npx 发现状态 ======
+    const [npxSkills, setNpxSkills] = createSignal<DiscoveredNpxSkill[]>([]);
+    const [npxLoading, setNpxLoading] = createSignal(false);
+    const [npxImportingId, setNpxImportingId] = createSignal<string | null>(null);
+    const [npxRefreshingId, setNpxRefreshingId] = createSignal<string | null>(null);
+
+    const discoverNpx = async () => {
+        setNpxLoading(true);
+        setError(null);
+        try {
+            const list = await invoke<DiscoveredNpxSkill[]>('discover_npx_skills');
+            setNpxSkills(list);
+        } catch (e) {
+            setError(`npx 扫描失败: ${e}`);
+        } finally {
+            setNpxLoading(false);
+        }
+    };
+
+    const importNpx = async (pkgName: string) => {
+        setNpxImportingId(pkgName);
+        setError(null);
+        try {
+            const imported = await invoke<SkillConfig>('import_npx_skill', {
+                packageName: pkgName,
+                projectId: projectId(),
+            });
+            setSkills({ ...skills(), [imported.id]: imported });
+            // 更新列表中的 alreadyImported 标记
+            setNpxSkills(prev =>
+                prev.map(s => s.packageName === pkgName ? { ...s, alreadyImported: true } : s)
+            );
+        } catch (e) {
+            setError(`导入失败: ${e}`);
+        } finally {
+            setNpxImportingId(null);
+        }
+    };
+
+    const refreshNpx = async (id: string) => {
+        setNpxRefreshingId(id);
+        setError(null);
+        try {
+            const updated = await invoke<SkillConfig>('refresh_npx_skill', {
+                id,
+                projectId: projectId(),
+            });
+            setSkills({ ...skills(), [updated.id]: updated });
+        } catch (e) {
+            setError(`刷新失败: ${e}`);
+        } finally {
+            setNpxRefreshingId(null);
+        }
+    };
 
     const loadMarket = async (
         nextSort = sort(),
@@ -215,6 +273,7 @@ const SkillList: Component = () => {
                 owner: skill.owner,
                 repo: skill.repo,
                 slug: skill.slug,
+                projectId: projectId(),
             });
             setSkills({ ...skills(), [downloaded.id]: downloaded });
         } catch (e) {
@@ -237,7 +296,7 @@ const SkillList: Component = () => {
             return;
         }
         try {
-            await invoke('save_skill', { skill });
+            await invoke('save_skill', { skill, projectId: projectId() });
             setSkills({ ...skills(), [skill.id]: skill });
             setEditing(null);
             setIsCreating(false);
@@ -249,7 +308,7 @@ const SkillList: Component = () => {
     const remove = async (id: string) => {
         if (!confirm('确定移除此 Skill？所有助手中的引用也会被移除。')) return;
         try {
-            await invoke('delete_skill', { id });
+            await invoke('delete_skill', { id, projectId: projectId() });
             const next = { ...skills() };
             delete next[id];
             setSkills(next);
@@ -290,17 +349,39 @@ const SkillList: Component = () => {
             </div>
 
             <div class="flex items-center justify-between gap-3 flex-wrap">
-                <div class="flex items-center gap-1 p-1 rounded-lg" style="background: rgba(255,255,255,0.04);">
-                    <button class="px-3 py-1.5 rounded-md text-sm"
-                        classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
-                        onClick={() => setView('market')}>
-                        市场
-                    </button>
-                    <button class="px-3 py-1.5 rounded-md text-sm"
-                        classList={{ 'bg-pri-20 text-pri': view() === 'downloaded' }}
-                        onClick={() => setView('downloaded')}>
-                        已下载 ({Object.keys(skills()).length})
-                    </button>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <div class="flex items-center gap-1 p-1 rounded-lg" style="background: rgba(255,255,255,0.04);">
+                        <button class="px-3 py-1.5 rounded-md text-sm"
+                            classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
+                            onClick={() => setView('market')}>
+                            市场
+                        </button>
+                        <button class="px-3 py-1.5 rounded-md text-sm"
+                            classList={{ 'bg-pri-20 text-pri': view() === 'downloaded' }}
+                            onClick={() => setView('downloaded')}>
+                            已下载 ({Object.keys(skills()).length})
+                        </button>
+                        <button class="px-3 py-1.5 rounded-md text-sm"
+                            classList={{ 'bg-pri-20 text-pri': view() === 'npx' }}
+                            onClick={() => { setView('npx'); discoverNpx(); }}>
+                            npx 发现
+                        </button>
+                    </div>
+                    {/* 在已下载模式下且存在活跃项目时，显示作用域切换 */}
+                    {view() === 'downloaded' && currentProjectId() && (
+                        <div class="flex items-center gap-1 p-1 rounded-lg" style="background: rgba(255,255,255,0.04);">
+                            <button class="px-2.5 py-1 rounded-md text-xs"
+                                classList={{ 'bg-pri-20 text-pri': scope() === 'global' }}
+                                onClick={() => setScope('global')}>
+                                全局
+                            </button>
+                            <button class="px-2.5 py-1 rounded-md text-xs"
+                                classList={{ 'bg-pri-20 text-pri': scope() === 'project' }}
+                                onClick={() => setScope('project')}>
+                                项目: {currentProject()?.name ?? ''}
+                            </button>
+                        </div>
+                    )}
                 </div>
                 <input
                     class="w-[280px] max-w-full px-3 py-2 rounded-lg text-sm outline-none"
@@ -473,6 +554,85 @@ const SkillList: Component = () => {
                                 </div>
                             )}
                         </For>
+                    </div>
+                </Show>
+
+                {/* npx 发现标签页 */}
+                <Show when={view() === 'npx'}>
+                    <div class="flex flex-col gap-3">
+                        <div class="flex items-center justify-between">
+                            <p class="text-xs" style="color: rgba(255,255,255,0.5);">
+                                扫描系统上的 Claude Code skill 包和全局 npm skill 包
+                            </p>
+                            <button
+                                class="px-3 py-1.5 rounded-md text-xs"
+                                style="background: rgba(255,255,255,0.05);"
+                                onClick={() => discoverNpx()}
+                                disabled={npxLoading()}
+                            >
+                                {npxLoading() ? '扫描中...' : '重新扫描'}
+                            </button>
+                        </div>
+
+                        <Show when={!npxLoading()} fallback={
+                            <div class="py-12 text-center text-sm" style="color: rgba(255,255,255,0.4);">
+                                正在扫描系统上的 npx skill...
+                            </div>
+                        }>
+                            <div class="flex flex-col gap-2">
+                                <For each={npxSkills()} fallback={
+                                    <div class="py-12 text-center text-sm" style="color: rgba(255,255,255,0.4);">
+                                        未发现可导入的 npx skill 包。请确保已用 npm 全局安装，或 Claude Code 已配置该 skill。
+                                    </div>
+                                }>
+                                    {(item) => (
+                                        <div class="flex items-center justify-between px-4 py-3 rounded-lg"
+                                            style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
+                                            <div class="flex-1 min-w-0">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium truncate text-sm">{item.packageName}</span>
+                                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50">
+                                                        v{item.version}
+                                                    </span>
+                                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-pri-10 text-pri">
+                                                        {item.sourceType === 'claude-skills-dir' ? 'Claude' : 'npm'}
+                                                    </span>
+                                                </div>
+                                                <Show when={item.description}>
+                                                    <div class="text-xs truncate mt-1" style="color: rgba(255,255,255,0.5);">
+                                                        {item.description}
+                                                    </div>
+                                                </Show>
+                                            </div>
+                                            <div class="flex gap-2 ml-3">
+                                                <Show when={item.alreadyImported} fallback={
+                                                    <button
+                                                        class="px-3 py-1 rounded text-xs bg-pri text-black disabled:opacity-50"
+                                                        onClick={() => importNpx(item.packageName)}
+                                                        disabled={npxImportingId() === item.packageName}
+                                                    >
+                                                        {npxImportingId() === item.packageName ? '导入中...' : '导入'}
+                                                    </button>
+                                                }>
+                                                    <span class="text-xs px-2 py-1 rounded"
+                                                        style="background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.5);">
+                                                        已导入
+                                                    </span>
+                                                    <button
+                                                        class="px-2 py-1 rounded text-xs"
+                                                        style="background: rgba(255,255,255,0.05);"
+                                                        onClick={() => refreshNpx(`npx-${item.packageName}`)}
+                                                        disabled={npxRefreshingId() === `npx-${item.packageName}`}
+                                                    >
+                                                        {npxRefreshingId() === `npx-${item.packageName}` ? '刷新中...' : '刷新'}
+                                                    </button>
+                                                </Show>
+                                            </div>
+                                        </div>
+                                    )}
+                                </For>
+                            </div>
+                        </Show>
                     </div>
                 </Show>
             </div>

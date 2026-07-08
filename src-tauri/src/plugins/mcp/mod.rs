@@ -140,13 +140,118 @@ pub fn save_mcp_servers(app: &AppHandle, file: &McpServersFile) -> McpResult<()>
     Ok(())
 }
 
-/// 列出当前配置文件中所有 server（按 id 排序）
+// ====== 项目级 MCP 文件操作 ======
+
+/// 加载项目级 mcp-servers.json（不存在则返回空）。
+pub fn load_project_mcp_servers(project_path: &str) -> McpServersFile {
+    let p = std::path::PathBuf::from(project_path)
+        .join(".aio")
+        .join("mcp-servers.json");
+    if !p.exists() {
+        return McpServersFile::default();
+    }
+    std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<McpServersFile>(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 保存项目级 mcp-servers.json。
+pub fn save_project_mcp_servers(project_path: &str, file: &McpServersFile) -> McpResult<()> {
+    let p = std::path::PathBuf::from(project_path)
+        .join(".aio")
+        .join("mcp-servers.json");
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(file)?;
+    std::fs::write(&p, json)?;
+    Ok(())
+}
+
+/// 合并全局 + 项目的 MCP configs（项目同 ID 覆盖全局）。
+pub fn merge_mcp_configs(global: &McpServersFile, project: &McpServersFile) -> BTreeMap<String, McpServerConfig> {
+    let mut merged = global.servers.clone();
+    for (id, cfg) in &project.servers {
+        merged.insert(id.clone(), cfg.clone());
+    }
+    merged
+}
+
+/// 列出当前配置文件中所有 server（按 id 排序），支持项目合并。
 pub fn list_configs(app: &AppHandle) -> Vec<McpServerConfig> {
     load_mcp_servers(app)
         .servers
         .values()
         .cloned()
         .collect()
+}
+
+/// 列出合并后的 server 列表（全局 + 项目，项目优先）。
+/// 自动注入内置 filesystem MCP server。
+pub fn list_configs_merged(app: &AppHandle, project_id: Option<&str>) -> McpResult<Vec<McpServerConfig>> {
+    let global = load_mcp_servers(app);
+    let project = match project_id {
+        Some(pid) => {
+            let project_path = resolve_project_path(app, pid)?;
+            load_project_mcp_servers(&project_path)
+        }
+        None => McpServersFile::default(),
+    };
+    let mut merged = merge_mcp_configs(&global, &project);
+
+    // 确保内置 filesystem MCP server 存在于合并结果中
+    let fs_id = "__aio-filesystem__".to_string();
+    if !merged.contains_key(&fs_id) {
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "aio".to_string());
+        // 优先用传入的 project_id
+        let path = project_id
+            .and_then(|pid| resolve_project_path(app, pid).ok());
+        // 缺失时遍历所有项目取第一个
+        let path = path.or_else(|| {
+            let idx_path = app.path().app_data_dir().ok()?.join("projects.json");
+            let content = std::fs::read_to_string(&idx_path).ok()?;
+            let file: serde_json::Value = serde_json::from_str(&content).ok()?;
+            file["projects"].as_object()?.values().next()?.get("path")?.as_str().map(|s| s.to_string())
+        });
+        if let Some(project_path) = path {
+            merged.insert(fs_id.clone(), McpServerConfig {
+                id: fs_id,
+                display_name: "项目文件系统 (AIO 内置)".into(),
+                transport: crate::core::models::McpTransport::Stdio {
+                    command: exe,
+                    args: vec!["--fs-server".into(), project_path],
+                    env: Default::default(),
+                    cwd: None,
+                },
+                enabled_tools: vec![],
+                auto_start: true,
+                has_stored_secret: false,
+                from_catalog: None,
+            });
+        }
+    }
+
+    Ok(merged.into_values().collect())
+}
+
+/// 通过 project_id 解析项目路径（复用 skill.rs 中的逻辑）。
+fn resolve_project_path(app: &AppHandle, project_id: &str) -> McpResult<String> {
+    let idx_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| McpError::Server(format!("获取 AppData 目录失败: {}", e)))?
+        .join("projects.json");
+    let content = std::fs::read_to_string(&idx_path)
+        .map_err(|e| McpError::Server(format!("读取项目索引失败: {}", e)))?;
+    let file: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| McpError::Server(format!("解析项目索引失败: {}", e)))?;
+    file["projects"][project_id]["path"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| McpError::Server(format!("项目 {} 不存在", project_id)))
 }
 
 pub fn upsert_config(app: &AppHandle, config: McpServerConfig) -> McpResult<()> {
@@ -156,6 +261,14 @@ pub fn upsert_config(app: &AppHandle, config: McpServerConfig) -> McpResult<()> 
     save_mcp_servers(app, &file)
 }
 
+/// Upsert 到项目级文件。
+pub fn upsert_project_config(project_path: &str, config: McpServerConfig) -> McpResult<()> {
+    let mut file = load_project_mcp_servers(project_path);
+    file.servers.insert(config.id.clone(), config);
+    file.updated_at = now_timestamp();
+    save_project_mcp_servers(project_path, &file)
+}
+
 pub fn remove_config(app: &AppHandle, id: &str) -> McpResult<()> {
     let mut file = load_mcp_servers(app);
     file.servers.remove(id);
@@ -163,8 +276,69 @@ pub fn remove_config(app: &AppHandle, id: &str) -> McpResult<()> {
     save_mcp_servers(app, &file)
 }
 
+/// 从项目级文件删除。
+pub fn remove_project_config(project_path: &str, id: &str) -> McpResult<()> {
+    let mut file = load_project_mcp_servers(project_path);
+    file.servers.remove(id);
+    file.updated_at = now_timestamp();
+    save_project_mcp_servers(project_path, &file)
+}
+
+/// 查找 MCP server 配置：先查项目级，再查全局。
 pub fn get_config(app: &AppHandle, id: &str) -> Option<McpServerConfig> {
     load_mcp_servers(app).servers.get(id).cloned()
+}
+
+/// 查找 MCP server 配置（合并视图：项目级优先）。
+/// 对于内置 `__aio-filesystem__`，project_id 缺失时自动遍历所有项目查找。
+pub fn get_config_merged(app: &AppHandle, id: &str, project_id: Option<&str>) -> Option<McpServerConfig> {
+    // 1. 有 project_id → 精确查找项目
+    if let Some(pid) = project_id {
+        if let Ok(project_path) = resolve_project_path(app, pid) {
+            let project = load_project_mcp_servers(&project_path);
+            if let Some(cfg) = project.servers.get(id) {
+                return Some(cfg.clone());
+            }
+        }
+    }
+    // 2. 全局查找
+    let global = load_mcp_servers(app);
+    if let Some(cfg) = global.servers.get(id) {
+        return Some(cfg.clone());
+    }
+    // 3. 内置 filesystem server：project_id 明确时直接注入；缺失时遍历所有项目找一个
+    if id == "__aio-filesystem__" {
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "aio".to_string());
+        // 优先用传入的 project_id
+        let path = project_id
+            .and_then(|pid| resolve_project_path(app, pid).ok());
+        // 如果没传 project_id，遍历所有项目取第一个（通常只有一个项目）
+        let path = path.or_else(|| {
+            let idx_path = app.path().app_data_dir().ok()?.join("projects.json");
+            let content = std::fs::read_to_string(&idx_path).ok()?;
+            let file: serde_json::Value = serde_json::from_str(&content).ok()?;
+            file["projects"].as_object()?.values().next()?.get("path")?.as_str().map(|s| s.to_string())
+        });
+        if let Some(project_path) = path {
+            return Some(McpServerConfig {
+                id: "__aio-filesystem__".into(),
+                display_name: "项目文件系统 (AIO 内置)".into(),
+                transport: crate::core::models::McpTransport::Stdio {
+                    command: exe,
+                    args: vec!["--fs-server".into(), project_path],
+                    env: Default::default(),
+                    cwd: None,
+                },
+                enabled_tools: vec![],
+                auto_start: true,
+                has_stored_secret: false,
+                from_catalog: None,
+            });
+        }
+    }
+    None
 }
 
 /// 轻量级时间戳（秒级 Unix time，不引入 chrono 依赖）

@@ -2,13 +2,15 @@ import { Component, For, Show, Setter, createSignal, createEffect } from 'solid-
 import Markdown from './Markdown';
 import ThinkBlock from './ThinkBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress } from '../store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, currentAssistantId, type AgentMode } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import Icon from './Icon';
 import ReasoningButton from './ReasoningButton';
 import ToolCallBubble from './ToolCallBubble';
+import AgentModeSelector from './AgentModeSelector';
+import ProjectSelector from './ProjectSelector';
 
 interface ChatInterfaceProps {
     activeTopic: Topic | null;
@@ -64,6 +66,14 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         return getLogoByIds(null, modelName);
     };
 
+    /** 当前助手的工作模式，用于控制工作目录选择器显隐 */
+    const currentAgentMode = (): AgentMode => {
+        const id = currentAssistantId();
+        if (!id) return 'off';
+        const asst = datas.assistants.find(a => a.id === id) as any;
+        return asst?.agentMode || 'off';
+    };
+
     return (
         <div class="flex flex-col flex-grow items-stretch rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full"
              style="background: rgba(18, 22, 35, 0.2); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.04);">
@@ -88,9 +98,26 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 <Show when={props.activeTopic}>
                     <For each={props.activeTopic?.history}>
                         {(msg: any, index) => (
-                            <div
-                                class={`flex flex-col mb-3 pointer-events-auto animate-message-in ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
-                            >
+                            <>
+                                <Show when={msg.role === 'tool'}>
+                                    {/* 紧凑左对齐工具结果日志条目 */}
+                                    <div class="flex items-center gap-1.5 pl-[52px] mb-2 pr-[10%] text-xs select-none" style="color: rgba(124,154,191,0.5);">
+                                        <span class="flex items-center justify-center w-[18px] h-[18px] rounded-full flex-shrink-0" style="background: rgba(124,154,191,0.08);">
+                                            <Icon src="/icons/app-logo/wrench.svg" class="w-[10px] h-[10px]" />
+                                        </span>
+                                        <span class="font-medium" style="color: rgba(255,255,255,0.55);">{msg.name}</span>
+                                        <span style="color: rgba(124,154,191,0.3);">→</span>
+                                        <span class="truncate min-w-0" style="color: rgba(124,154,191,0.4);">
+                                            {typeof msg.content === 'string'
+                                                ? (msg.content.length > 100 ? msg.content.slice(0, 100) + '...' : msg.content)
+                                                : '完成'}
+                                        </span>
+                                    </div>
+                                </Show>
+                                <Show when={msg.role !== 'tool'}>
+                                <div
+                                    class={`flex flex-col mb-3 pointer-events-auto animate-message-in ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                                >
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
                                         <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
@@ -140,21 +167,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             </Show>
 
                                             <div class="mt-1">
-                                                {/* role="tool" 消息：紧凑显示工具结果 */}
-                                                <Show when={msg.role === 'tool'}>
-                                                    <div
-                                                        class="rounded-md px-3 py-2 text-xs"
-                                                        style="background: rgba(124,154,191,0.06); border-left: 2px solid rgba(124,154,191,0.4); color: rgba(255,255,255,0.75);"
-                                                    >
-                                                        <div class="flex items-center gap-1.5 mb-1" style="color: rgba(124,154,191,0.8);">
-                                                            <Icon src="/icons/app-logo/wrench.svg" class="w-3 h-3" />
-                                                            <span>工具 {msg.name} 返回结果</span>
-                                                        </div>
-                                                        <pre class="whitespace-pre-wrap break-all max-h-32 overflow-y-auto" style="font-size: 11px;">
-                                                            {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
-                                                        </pre>
-                                                    </div>
-                                                </Show>
                                                 {/* assistant 原生思维链（reasoning_content）：折叠渲染于正文之上 */}
                                                 <Show when={msg.role === 'assistant' && msg.reasoning}>
                                                     <ThinkBlock
@@ -234,7 +246,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </Show>
                                 </div>
                             </div>
-                        )}
+                            </Show>
+                        </>
+                    )}
                     </For>
                 </Show>
             </div>
@@ -275,6 +289,27 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             </div>
 
             <div class="bg-transparent flex flex-col relative w-full z-10">
+                {/* Agent 模式状态栏 */}
+                <Show when={(() => {
+                  const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
+                  return asst?.agentMode && asst.agentMode !== 'off' && currentProjectId();
+                })()}>
+                  {(() => {
+                    const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
+                    const mode = asst?.agentMode || 'off';
+                    const project = currentProject();
+                    const modeLabel: string = { normal: '普通', auto: '自动', plan: 'Plan' }[mode as 'normal'|'auto'|'plan'] || mode;
+                    return (
+                      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
+                           style="background: rgba(124,154,191,0.12); border: 1px solid rgba(124,154,191,0.2);">
+                        <span style="color: #7c9abf;">🔧</span>
+                        <span style="color: rgba(255,255,255,0.7);">
+                          Agent · {modeLabel} · 项目: {project?.name ?? ''}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </Show>
                 <div class="rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 w-full"
                      style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.06);">
                     <textarea
@@ -306,6 +341,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <div class="flex items-center justify-between border-t pt-2" style="border-color: rgba(255,255,255,0.04);">
                         <div class="flex items-center gap-2">
                             <ModelSelector />
+                            <AgentModeSelector />
                             <ReasoningButton />
 
                             <button
@@ -346,6 +382,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             >
                                 <Icon src="/icons/app-logo/image-photo.svg" class="w-5 h-5" />
                             </button>
+
+                            <Show when={currentAgentMode() !== 'off'}>
+                                <ProjectSelector />
+                            </Show>
                         </div>
 
                         <div class="flex items-center gap-2">

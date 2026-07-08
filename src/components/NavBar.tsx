@@ -258,10 +258,10 @@ return (
         <div class="absolute left-[10px] top-1/2 -translate-y-1/2 flex items-center justify-center z-[1001] pointer-events-none">
           <img src="/icons/app-logo/logo.svg" alt="AIO" class="w-10 h-10 object-contain block [app-region:no-drag]" />
         </div>
-        <A 
-          href="/chat" 
-          title="对话" 
-          activeClass="!text-pri font-bold" 
+        <A
+          href="/chat"
+          title="对话"
+          activeClass="!text-pri font-bold"
           class="nav-icon-link [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />

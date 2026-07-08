@@ -1,9 +1,9 @@
 //! Skill 配置管理命令。
 
-use crate::core::models::{MarketSkill, SkillConfig, SkillMarketCategory, SkillsFile};
+use crate::core::models::{MarketSkill, ProjectsFile, SkillConfig, SkillMarketCategory, SkillsFile};
 use regex::Regex;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -76,6 +76,63 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
     }
     let content = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())
+}
+
+// ====== 项目级 Skill 文件操作 ======
+
+/// 加载项目级 skills.json（不存在则返回空）。
+fn load_project_file(project_path: &str) -> SkillsFile {
+    let path = crate::commands::project::project_skills_path(project_path);
+    if !path.exists() {
+        return SkillsFile::default();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default()
+}
+
+/// 保存项目级 skills.json。
+fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String> {
+    let path = crate::commands::project::project_skills_path(project_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+    std::fs::write(path, content).map_err(|e| e.to_string())
+}
+
+/// 通过 project_id 解析项目路径。
+fn resolve_project_path(app: &AppHandle, project_id: &str) -> Result<String, String> {
+    let file = load_projects_index(app);
+    file.projects
+        .get(project_id)
+        .map(|p| p.path.clone())
+        .ok_or_else(|| format!("项目 {} 不存在", project_id))
+}
+
+/// 加载项目索引文件。
+fn load_projects_index(app: &AppHandle) -> ProjectsFile {
+    let Ok(path) = app
+        .path()
+        .app_data_dir()
+        .map(|dir| dir.join("projects.json"))
+    else {
+        return ProjectsFile::default();
+    };
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default()
+}
+
+/// 合并全局和项目 Skill：项目同 ID 覆盖全局。
+fn merge_skills(global: BTreeMap<String, SkillConfig>, project: BTreeMap<String, SkillConfig>) -> BTreeMap<String, SkillConfig> {
+    let mut merged = global;
+    for (id, skill) in project {
+        merged.insert(id, skill);
+    }
+    merged
 }
 
 fn unix_timestamp() -> u64 {
@@ -336,31 +393,61 @@ fn parse_categories(html: &str) -> Vec<SkillMarketCategory> {
         .collect()
 }
 
-/// 返回全部 Skill 配置。
+/// 返回全部 Skill 配置。project_id 存在时合并全局 + 项目（项目优先）。
 #[tauri::command]
-pub fn list_skills(app: AppHandle) -> Result<Vec<SkillConfig>, String> {
-    Ok(load_file(&app).skills.into_values().collect())
+pub fn list_skills(app: AppHandle, project_id: Option<String>) -> Result<Vec<SkillConfig>, String> {
+    let global = load_file(&app).skills;
+    let project = match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path(&app, pid)?;
+            load_project_file(&project_path).skills
+        }
+        None => BTreeMap::new(),
+    };
+    Ok(merge_skills(global, project).into_values().collect())
 }
 
-/// 新增或更新一个 Skill。id、名称和指令内容不能为空。
+/// 新增或更新一个 Skill。project_id 存在时写入项目级文件。
 #[tauri::command]
-pub fn save_skill(app: AppHandle, skill: SkillConfig) -> Result<(), String> {
+pub fn save_skill(app: AppHandle, skill: SkillConfig, project_id: Option<String>) -> Result<(), String> {
     if skill.id.trim().is_empty() || skill.name.trim().is_empty() || skill.content.trim().is_empty() {
         return Err("Skill id、名称和指令内容不能为空".to_string());
     }
-    let mut file = load_file(&app);
-    file.skills.insert(skill.id.clone(), skill);
-    file.updated_at = now_timestamp();
-    save_file(&app, &file)
+    match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path(&app, pid)?;
+            let mut file = load_project_file(&project_path);
+            file.skills.insert(skill.id.clone(), skill);
+            file.updated_at = now_timestamp();
+            save_project_file(&project_path, &file)
+        }
+        None => {
+            let mut file = load_file(&app);
+            file.skills.insert(skill.id.clone(), skill);
+            file.updated_at = now_timestamp();
+            save_file(&app, &file)
+        }
+    }
 }
 
-/// 删除指定 Skill 配置。
+/// 删除指定 Skill 配置。project_id 存在时从项目级文件删除。
 #[tauri::command]
-pub fn delete_skill(app: AppHandle, id: String) -> Result<(), String> {
-    let mut file = load_file(&app);
-    file.skills.remove(&id);
-    file.updated_at = now_timestamp();
-    save_file(&app, &file)
+pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> Result<(), String> {
+    match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path(&app, pid)?;
+            let mut file = load_project_file(&project_path);
+            file.skills.remove(&id);
+            file.updated_at = now_timestamp();
+            save_project_file(&project_path, &file)
+        }
+        None => {
+            let mut file = load_file(&app);
+            file.skills.remove(&id);
+            file.updated_at = now_timestamp();
+            save_file(&app, &file)
+        }
+    }
 }
 
 /// 返回 skills.sh 官方分类。
@@ -413,13 +500,14 @@ pub async fn list_skill_market(
     Ok(skills)
 }
 
-/// 从 skills.sh 详情页下载 Skill 内容并保存到本地 Skill 库。
+/// 从 skills.sh 详情页下载 Skill 内容并保存到 Skill 库。project_id 存在时写入项目级。
 #[tauri::command]
 pub async fn download_market_skill(
     app: AppHandle,
     owner: String,
     repo: String,
     slug: String,
+    project_id: Option<String>,
 ) -> Result<SkillConfig, String> {
     if [&owner, &repo, &slug]
         .iter()
@@ -477,17 +565,278 @@ pub async fn download_market_skill(
         name,
         description,
         content,
+        source: crate::core::models::SkillSource::Market,
         source_url: Some(source_url),
         source_owner: Some(owner),
         source_repo: Some(repo),
         source_slug: Some(slug),
         installs,
+        npx_package: None,
+        npx_version: None,
+        npx_command: None,
     };
-    let mut file = load_file(&app);
-    file.skills.insert(skill.id.clone(), skill.clone());
-    file.updated_at = now_timestamp();
-    save_file(&app, &file)?;
+    match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path(&app, pid)?;
+            let mut file = load_project_file(&project_path);
+            file.skills.insert(skill.id.clone(), skill.clone());
+            file.updated_at = now_timestamp();
+            save_project_file(&project_path, &file)?;
+        }
+        None => {
+            let mut file = load_file(&app);
+            file.skills.insert(skill.id.clone(), skill.clone());
+            file.updated_at = now_timestamp();
+            save_file(&app, &file)?;
+        }
+    }
     Ok(skill)
+}
+
+// ====== npx Skill 发现与导入 ======
+
+/// 系统上检测到的 npx skill 包信息。
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct NpxSkillInfo {
+    pub package_name: String,
+    pub version: String,
+    pub description: String,
+    pub source_path: String,
+    pub source_type: String,
+    pub already_imported: bool,
+}
+
+/// 扫描系统上已安装的 npx skill 包。
+#[tauri::command]
+pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, String> {
+    let mut discovered: Vec<NpxSkillInfo> = Vec::new();
+    let existing = load_file(&app).skills;
+
+    // 1) 扫描 Claude Code 的 skill 注册目录
+    let claude_skills_dir = dirs::home_dir()
+        .map(|h| h.join(".claude").join("skills"))
+        .filter(|p| p.exists());
+    if let Some(ref dir) = claude_skills_dir {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let pkg_json = path.join("package.json");
+                    if let Ok(content) = std::fs::read_to_string(&pkg_json) {
+                        if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                            let name = pkg["name"].as_str().unwrap_or("").to_string();
+                            if name.is_empty() {
+                                continue;
+                            }
+                            let version = pkg["version"].as_str().unwrap_or("0.0.0").to_string();
+                            let description = pkg["description"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string();
+                            let already = existing.contains_key(&format!("npx-{}", name));
+                            discovered.push(NpxSkillInfo {
+                                package_name: name,
+                                version,
+                                description,
+                                source_path: path.to_string_lossy().to_string(),
+                                source_type: "claude-skills-dir".to_string(),
+                                already_imported: already,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2) 扫描全局 npm 包中带有 skill 特征的包
+    let npm_output = std::process::Command::new("npm")
+        .args(["list", "-g", "--depth=0", "--json"])
+        .output();
+    if let Ok(output) = npm_output {
+        if output.status.success() {
+            if let Ok(json) =
+                serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout))
+            {
+                if let Some(deps) = json.get("dependencies").and_then(|v| v.as_object()) {
+                    for (name, info) in deps {
+                        // 过滤：名称含 "skill" 或是常见 skill 前缀
+                        let is_skill_pkg = name.contains("skill")
+                            || name.starts_with("@anthropic-ai/skill-")
+                            || name.starts_with("@claude/");
+                        if !is_skill_pkg && !name.contains("skill") {
+                            continue;
+                        }
+                        let version = info["version"].as_str().unwrap_or("0.0.0").to_string();
+                        let description = info["description"].as_str().unwrap_or("").to_string();
+                        let already = existing.contains_key(&format!("npx-{}", name));
+                        // 避免重复（含 Claude dir 已找到的）
+                        if discovered.iter().any(|d| d.package_name == *name) {
+                            continue;
+                        }
+                        discovered.push(NpxSkillInfo {
+                            package_name: name.clone(),
+                            version,
+                            description,
+                            source_path: format!("global-npm:{}", name),
+                            source_type: "global-npm".to_string(),
+                            already_imported: already,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 按名称排序
+    discovered.sort_by(|a, b| a.package_name.cmp(&b.package_name));
+    Ok(discovered)
+}
+
+/// 导入一个 npx skill 包：执行 npx 获取内容，保存到 Skill 池。
+#[tauri::command]
+pub async fn import_npx_skill(
+    app: AppHandle,
+    package_name: String,
+    project_id: Option<String>,
+) -> Result<SkillConfig, String> {
+    if package_name.trim().is_empty() || package_name.contains("..") {
+        return Err("非法的包名".into());
+    }
+
+    // 执行 npx <package> 获取 skill 内容
+    let output = std::process::Command::new("npx")
+        .args([&package_name])
+        .output()
+        .map_err(|e| format!("执行 npx {} 失败: {}", package_name, e))?;
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+    if content.trim().is_empty() {
+        return Err(format!("npx {} 未返回任何内容", package_name));
+    }
+
+    // 尝试从 package.json 获取元数据
+    let (name, description, version) = try_read_package_meta(&package_name);
+
+    let skill = SkillConfig {
+        id: format!("npx-{}", package_name),
+        name: if name.is_empty() {
+            package_name.clone()
+        } else {
+            name
+        },
+        description,
+        content,
+        source: crate::core::models::SkillSource::Npx,
+        source_url: Some(format!("https://www.npmjs.com/package/{}", package_name)),
+        source_owner: None,
+        source_repo: None,
+        source_slug: None,
+        installs: 0,
+        npx_package: Some(package_name.clone()),
+        npx_version: Some(version),
+        npx_command: Some(package_name.clone()),
+    };
+
+    match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path(&app, pid)?;
+            let mut file = load_project_file(&project_path);
+            file.skills.insert(skill.id.clone(), skill.clone());
+            file.updated_at = now_timestamp();
+            save_project_file(&project_path, &file)?;
+        }
+        None => {
+            let mut file = load_file(&app);
+            file.skills.insert(skill.id.clone(), skill.clone());
+            file.updated_at = now_timestamp();
+            save_file(&app, &file)?;
+        }
+    }
+    Ok(skill)
+}
+
+/// 刷新一个已导入的 npx skill（重新执行 npx 拉取最新内容）。
+#[tauri::command]
+pub async fn refresh_npx_skill(
+    app: AppHandle,
+    id: String,
+    project_id: Option<String>,
+) -> Result<SkillConfig, String> {
+    // 查找已有 skill
+    let existing = match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path(&app, pid)?;
+            load_project_file(&project_path).skills.get(&id).cloned()
+        }
+        None => load_file(&app).skills.get(&id).cloned(),
+    }
+    .ok_or_else(|| format!("Skill {} 不存在", id))?;
+
+    let pkg_name = existing
+        .npx_package
+        .as_ref()
+        .ok_or_else(|| "该 Skill 不是 npx 来源".to_string())?;
+
+    // 重新执行 npx
+    let output = std::process::Command::new("npx")
+        .args([pkg_name])
+        .output()
+        .map_err(|e| format!("执行 npx {} 失败: {}", pkg_name, e))?;
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+    if content.trim().is_empty() {
+        return Err(format!("npx {} 未返回任何内容", pkg_name));
+    }
+
+    let (_, _, version) = try_read_package_meta(pkg_name);
+
+    let updated = SkillConfig {
+        content,
+        npx_version: Some(version),
+        ..existing.clone()
+    };
+
+    match project_id {
+        Some(ref pid) => {
+            let project_path = resolve_project_path(&app, pid)?;
+            let mut file = load_project_file(&project_path);
+            file.skills.insert(id, updated.clone());
+            file.updated_at = now_timestamp();
+            save_project_file(&project_path, &file)?;
+        }
+        None => {
+            let mut file = load_file(&app);
+            file.skills.insert(id, updated.clone());
+            file.updated_at = now_timestamp();
+            save_file(&app, &file)?;
+        }
+    }
+    Ok(updated)
+}
+
+/// 尝试读取 npm 全局包的 package.json 获取元数据。
+fn try_read_package_meta(package_name: &str) -> (String, String, String) {
+    let npm_output = std::process::Command::new("npm")
+        .args(["list", "-g", "--depth=0", "--json"])
+        .output();
+    if let Ok(output) = npm_output {
+        if output.status.success() {
+            if let Ok(json) =
+                serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout))
+            {
+                if let Some(dep) = json
+                    .get("dependencies")
+                    .and_then(|deps| deps.get(package_name))
+                {
+                    let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or(package_name).to_string();
+                    let desc = dep.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let ver = dep.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_string();
+                    return (name, desc, ver);
+                }
+            }
+        }
+    }
+    (String::new(), String::new(), "0.0.0".to_string())
 }
 
 #[cfg(test)]

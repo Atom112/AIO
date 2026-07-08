@@ -47,6 +47,7 @@ dependencies = [
  "dirs",
  "encoding_rs",
  "futures-util",
+ "glob",
  "keyring",
  "once_cell",
  "parking_lot",

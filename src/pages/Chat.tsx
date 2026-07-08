@@ -6,7 +6,7 @@ import {
   saveSingleAssistantToBackend, Assistant, Topic, Message, PendingAttachment, StoredAttachment, selectedModel, setSelectedModel,
   resolveAssistantModel, modelKey, reasoningLevel,
   pendingRenameRequest, setPendingRenameRequest,
-  mcpServers, mcpServerStatus, CHAT_TOOL_CALL_MAX_ROUNDS, AGENT_TOOL_CALL_MAX_ROUNDS, resolveAssistantSkills,
+  mcpServers, mcpServerStatus, resolveAssistantSkills,
   currentProjectId, currentProject,
 } from '../store/store';
 import AssistantSidebar from '../components/AssistantSidebar';
@@ -45,7 +45,8 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
   name: name || '新助手',                  // 默认助手名称
   prompt: '你是一个乐于助人的 AI 助手。',     // 默认系统提示词
   modelId: selectedModel() ? modelKey(selectedModel()!) : undefined,  // 继承当前生效模型（复合键）作为新助手默认模型
-  mcpServerIds: [],
+  // 有项目上下文时自动启用内置文件系统 MCP，让 agent 开箱即用
+  mcpServerIds: currentProjectId() ? ['__aio-filesystem__'] : [],
   skillIds: [],
   projectId: currentProjectId() ?? undefined, // 关联当前项目
   topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
@@ -79,6 +80,16 @@ const ChatPage: Component = () => {
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
   // 当前会话的 toolName → serverId 映射（由 list_mcp_tools_for_assistant 返回，供 call_mcp_tool 解析）
   const [toolServerMap, setToolServerMap] = createSignal<Record<string, string>>({});
+
+  /**
+   * 工具调用协调状态。
+   * 当 LLM 在一个响应中发出多个 tool_call 时，必须等待所有工具执行完毕
+   * 再统一调用 invokeLLMStreamWithHistory，确保 assistant 消息的 tool_calls 数组
+   * 与后续 tool 消息一一对应，符合 OpenAI API 约束。
+   */
+  let _pendingToolCallCount = 0;       // 当前轮次尚未完成执行的 tool 数量
+  let _toolCallRoundNeedsRecurse = false; // 当前轮 tool calls 的 llm-chunk(done) 已到达，等待全部工具完成后递归
+  let _thisRoundHasToolCalls = false;  // 当前轮次是否至少有一个 tool_call（区分普通完成与工具轮次完成）
 
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
@@ -379,29 +390,7 @@ const ChatPage: Component = () => {
     const topic = (asst?.topics as Topic[] | undefined)?.find((t: Topic) => t.id === topicId);
     if (!asst || !topic) return;
 
-    // 5 轮上限检查
-    const rounds = topic.history.reduce((n: number, m: any) => {
-      if (m.role === 'tool') return n + 1;
-      return n;
-    }, 0);
-    const asstAgentMode = (asst as any).agentMode || 'off';
-    const maxRounds = asstAgentMode !== 'off' ? AGENT_TOOL_CALL_MAX_ROUNDS : CHAT_TOOL_CALL_MAX_ROUNDS;
-    if (rounds >= maxRounds) {
-      setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
-        'history', (h: any[]) => h.map((m: any) => {
-          if (m.role === 'assistant' && m.toolCalls) {
-            return {
-              ...m,
-              toolCalls: m.toolCalls.map((tc: any) =>
-                tc.id === toolCallId ? { ...tc, state: 'error', error: `已达工具调用上限 ${maxRounds} 轮` } : tc
-              ),
-            };
-          }
-          return m;
-        })
-      );
-      return;
-    }
+		    // 工具调用无上限限制
 
     // 找到最后一条 assistant 消息，初始化/更新 toolCalls
     setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
@@ -507,9 +496,9 @@ const ChatPage: Component = () => {
       ]
     );
 
-    // 递归调用 LLM：把当前 history 重新发出去（带 tools）
-    await invokeLLMStreamWithHistory(asstId, topicId);
-  };
+	    // 不在此直接递归。由 llm-tool-call / llm-chunk 监听器协调，
+	    // 确保同一轮的所有 tool_call 结果都写入历史后再统一调用 invokeLLMStreamWithHistory。
+	  };
 
   /**
    * 用当前 history 重新调用 LLM（工具调用循环的驱动）。
@@ -897,6 +886,18 @@ const ChatPage: Component = () => {
       listen<any>('llm-chunk', (e) => {
         const { assistant_id, topic_id, content, done } = e.payload;
         if (done) {
+          // 工具调用协调：如果本轮有 tool_calls，等到全部工具执行完毕再递归
+          if (_thisRoundHasToolCalls) {
+            if (_pendingToolCallCount === 0) {
+              // 所有工具已完成，立即递归
+              _thisRoundHasToolCalls = false;
+              invokeLLMStreamWithHistory(assistant_id, topic_id);
+            } else {
+              // 仍有工具未完成，标记等待，由最后一个完成的 tool 触发递归
+              _toolCallRoundNeedsRecurse = true;
+              // 不 return：仍然执行下方的保存/重命名/总结
+            }
+          }
           setIsThinking(false);
           setTypingIndex(null);
           saveSingleAssistantToBackend(assistant_id);
@@ -930,10 +931,23 @@ const ChatPage: Component = () => {
             'history', lastIdx, 'reasoning', (old: string) => (old ?? '') + content);
         }
       }),
-      // LLM 工具调用事件：执行工具 → 追加 role="tool" 消息 → 递归 call_llm_stream
+      // LLM 工具调用事件：执行工具 → 追加 role="tool" 消息
+      // 协调多个并发 tool_call：使用计数确保所有工具结果都写入历史后再统一递归
       listen<any>('llm-tool-call', async (e) => {
         const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
-        await handleToolCall(assistant_id, topic_id, tool_call_id, name, argsJson);
+        _thisRoundHasToolCalls = true;
+        _pendingToolCallCount++;
+        try {
+          await handleToolCall(assistant_id, topic_id, tool_call_id, name, argsJson);
+        } finally {
+          _pendingToolCallCount--;
+          if (_pendingToolCallCount === 0 && _toolCallRoundNeedsRecurse) {
+            // 所有工具已完成且 llm-chunk(done) 已到达，触发递归
+            _toolCallRoundNeedsRecurse = false;
+            _thisRoundHasToolCalls = false;
+            await invokeLLMStreamWithHistory(assistant_id, topic_id);
+          }
+        }
       })
     ];
 

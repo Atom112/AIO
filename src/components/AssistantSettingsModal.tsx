@@ -4,6 +4,7 @@ import {
     allAvailableModels, isLocalModel, resolveAssistantModel, modelKey,
     ActivatedModel, modelsCatalog,
     mcpServers, mcpServerStatus, skills,
+    startMcpServerAndRefresh, currentProjectId,
 } from '../store/store';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import { findModel, formatContextWindow } from '../utils/models';
@@ -33,7 +34,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
 
     /** 当前编辑的助手对象（响应式） */
     const asst = () => datas.assistants.find((a: any) => a.id === props.assistantId) as
-        | { id: string; name: string; prompt: string; modelId?: string; mcpServerIds?: string[]; skillIds?: string[] } | undefined;
+        | { id: string; name: string; prompt: string; modelId?: string; mcpServerIds?: string[]; skillIds?: string[]; agentMode?: string } | undefined;
 
     /** 弹窗打开时同步名称与提示词到本地编辑态，并触发入场动画 */
     createEffect(() => {
@@ -80,7 +81,8 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
         void setAssistantModel(id, model);
     };
 
-    /** 为当前助手启用或停用一个 MCP server，并立即持久化。 */
+    /** 为当前助手启用或停用一个 MCP server，并立即持久化。
+     *  启用时若 server 未运行则自动启动。 */
     const handleToggleMcpServer = async (serverId: string, enabled: boolean) => {
         const id = props.assistantId;
         const current = asst()?.mcpServerIds ?? [];
@@ -91,6 +93,14 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
             : current.filter(existingId => existingId !== serverId);
         setDatas('assistants', a => a.id === id, 'mcpServerIds', next);
         await saveSingleAssistantToBackend(id);
+
+        // 启用时若 server 未运行，自动启动它
+        if (enabled) {
+            const status = mcpServerStatus()[serverId]?.status;
+            if (!status || status === 'disconnected' || status === 'error') {
+                void startMcpServerAndRefresh(serverId, currentProjectId());
+            }
+        }
     };
 
     const sortedMcpServers = () =>

@@ -25,6 +25,33 @@ pub struct StreamPayload {
     pub topic_id: String,
     pub content: String,
     pub done: bool,
+    /// done=true 时携带的错误信息（整轮因错误/取消结束时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。
+#[derive(Serialize, Clone)]
+pub struct RoundStartPayload {
+    pub assistant_id: String,
+    pub topic_id: String,
+    /// 第几轮（从 1 开始）
+    pub round: u32,
+}
+
+/// 单个工具执行结果（后端执行完 MCP 工具后 emit，前端据此更新气泡状态并追加 role:tool 消息）。
+#[derive(Serialize, Clone)]
+pub struct ToolResultPayload {
+    pub assistant_id: String,
+    pub topic_id: String,
+    pub tool_call_id: String,
+    pub name: String,
+    /// 给前端展示用的纯文本结果
+    pub content: String,
+    /// 原始结构化结果（ToolResultContent 数组）
+    pub result: serde_json::Value,
+    /// 是否为错误
+    pub is_error: bool,
 }
 
 /// 从 provider 实时拉取的单个模型信息（OpenAI-兼容 /v1/models 或厂商自定义端点）。
@@ -134,6 +161,7 @@ pub struct AssistantTools {
 
 /// MCP 工具调用结果
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolResult {
     pub content: Vec<ToolResultContent>,
     #[serde(default)]

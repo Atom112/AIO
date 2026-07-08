@@ -1,5 +1,7 @@
 use crate::core::state::DbState;
 use crate::commands::attachment::sync_message_attachments;
+use crate::core::state::McpServerState;
+use crate::plugins::mcp::McpServerManager;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use crate::core::models::*;
@@ -7,19 +9,42 @@ use crate::core::state::StreamManager;
 use futures_util::StreamExt; // 用于处理流式数据
 use serde::Serialize;
 use serde_json::json;
-use std::time::Duration;
-use tauri::{Emitter, Window}; // Emitter 用于从后端向前端推送事件
+use std::collections::BTreeMap;
+use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
+use tokio_util::sync::CancellationToken;
 
 /// 构造带超时的 reqwest 客户端（防止 DoS）
+///
+/// 注意：流式请求**不设置总超时**（仅保留 connect_timeout）。
+/// 旧的 `.timeout(60s)` 是从连接到响应体结束的总时长，会杀死任何超过 60s 的流
+/// （长推理模型 / 慢本地服务器），导致工具调用中途断流。
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(60))
+        .connect_timeout(std::time::Duration::from_secs(5))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// 流式 tool_call 累积载荷（发往前端用）
+/// 单轮流式调用后的累积结果。
+struct RoundResult {
+    /// 本轮 assistant 文本内容
+    content: String,
+    /// 本轮思维链内容（实时已通过 llm-reasoning 事件下发，此处仅留档供调试）
+    #[allow(dead_code)]
+    reasoning: String,
+    /// 本轮模型发起的工具调用（按 index 升序）
+    tool_calls: Vec<ToolCallAccum>,
+}
+
+/// 累积完成的单个工具调用。
+#[derive(Clone)]
+struct ToolCallAccum {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// 流式 tool_call 累积载荷（发往前端用，仅用于通知前端展示"调用中"气泡）
 #[derive(Serialize, Clone)]
 pub struct ToolCallPayload {
     pub assistant_id: String,
@@ -112,14 +137,303 @@ fn message_for_api(
     Ok(serde_json::Value::Object(object))
 }
 
-/// 核心函数：调用 LLM 并分块回传结果（流式输出）
-/// #[tauri::command] 允许前端通过 invoke 调用
+/// 防御性校验：扫描 messages 中的 assistant(tool_calls) 与 role:tool 的匹配情况，
+/// 发现缺失或不匹配时输出 warning 日志以便调试。
+fn verify_tool_messages(messages: &[serde_json::Value]) {
+    // 从前往后扫描，追踪每个 assistant 消息中声明的 tool_call_id
+    let mut pending_ids: Vec<String> = Vec::new();
+    let mut assistant_idx: Option<usize> = None;
+
+    for (i, msg) in messages.iter().enumerate() {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "assistant" {
+            if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+                if !tcs.is_empty() {
+                    // 新的 assistant(tool_calls) 开始，之前的 pending_ids 尚未匹配 → 缺失
+                    if !pending_ids.is_empty() {
+                        tracing::warn!(
+                            "[verify_tool_messages] assistant[{}] 的 tool_calls {:?} 缺少对应 tool 响应",
+                            assistant_idx.unwrap_or(0),
+                            pending_ids
+                        );
+                    }
+                    pending_ids = tcs
+                        .iter()
+                        .filter_map(|tc| tc.get("id").and_then(|v| v.as_str()).map(String::from))
+                        .collect();
+                    assistant_idx = Some(i);
+                }
+            }
+        } else if role == "tool" {
+            if let Some(tool_call_id) = msg.get("tool_call_id").and_then(|v| v.as_str()) {
+                if let Some(pos) = pending_ids.iter().position(|id| id == tool_call_id) {
+                    pending_ids.remove(pos);
+                } else {
+                    tracing::warn!(
+                        "[verify_tool_messages] tool[{}] 的 tool_call_id `{}` 在前一条 assistant 中未找到对应的 tool_call",
+                        i,
+                        tool_call_id
+                    );
+                }
+            }
+        }
+    }
+
+    // 扫描结束，仍有未匹配的 tool_call_id
+    if !pending_ids.is_empty() {
+        tracing::warn!(
+            "[verify_tool_messages] 扫描结束: assistant[{}] 的 tool_calls {:?} 缺少对应 tool 响应",
+            assistant_idx.unwrap_or(0),
+            pending_ids
+        );
+    }
+}
+
+/// 单轮流式请求：构造 body → POST → 解析 SSE → 累积 content/reasoning/tool_calls → emit 增量事件。
+///
+/// 与旧 `call_llm_stream` 的差异：
+/// - 累积器用 `BTreeMap`（按 index 升序），避免多工具乱序；
+/// - 用 `tokio::select!` 监听 `token.cancelled()`，取消时立即返回 `Err("cancelled")`，
+///   保证调用方能继续执行 epilogue；
+/// - **不** emit terminal `llm-chunk(done)`，由调用方（`run_agent_turn`）统一收尾；
+/// - tool_call 仅 emit `llm-tool-call`（通知前端展示"调用中"气泡），执行由循环主体负责。
+///
+/// 返回 `RoundResult`；若被取消返回 `Err("cancelled")`，其它错误原样上抛。
+async fn stream_one_round(
+    window: &Window,
+    token: &CancellationToken,
+    client: &reqwest::Client,
+    mut api_url: String,
+    api_key: &str,
+    model: &str,
+    messages: &[serde_json::Value],
+    tools: Option<&[ToolSpec]>,
+    assistant_id: &str,
+    topic_id: &str,
+) -> Result<RoundResult, String> {
+    api_url = api_url.trim_end_matches('/').to_string();
+    let final_url = if !api_url.ends_with("/chat/completions") {
+        format!("{}/chat/completions", api_url)
+    } else {
+        api_url
+    };
+
+    let mut body_map = serde_json::Map::new();
+    body_map.insert("model".into(), json!(model));
+    body_map.insert("messages".into(), json!(messages));
+    body_map.insert("stream".into(), json!(true));
+    if let Some(tools) = tools {
+        if !tools.is_empty() {
+            body_map.insert("tools".into(), json!(tools));
+            body_map.insert("tool_choice".into(), json!("auto"));
+        }
+    }
+    let body = serde_json::Value::Object(body_map);
+
+    let response = client
+        .post(&final_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body_text = response.text().await.unwrap_or_default();
+        let truncated = if body_text.len() > 512 { &body_text[..512] } else { &body_text };
+        return Err(format!("LLM API {}: {}", status, truncated));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut line_buffer = String::new();
+    // tool_call 累积：index → (id, name, arguments)，用 BTreeMap 保证按 index 升序 flush
+    let mut tc_accum: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
+
+    let mut content_buf = String::new();
+    let mut reasoning_buf = String::new();
+    let mut saw_done = false;
+
+    loop {
+        // 取消检查：select! 让 cancelled 与 stream.next 竞争
+        let next = tokio::select! {
+            _ = token.cancelled() => return Err("cancelled".to_string()),
+            item = stream.next() => item,
+        };
+
+        let chunk = match next {
+            Some(Ok(c)) => c,
+            Some(Err(e)) => return Err(e.to_string()),
+            None => break, // 流自然结束
+        };
+        line_buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(pos) = line_buffer.find('\n') {
+            let line = line_buffer[..pos].trim().to_string();
+            line_buffer.drain(..pos + 1);
+
+            if line.is_empty() {
+                continue;
+            }
+
+            if line == "data: [DONE]" {
+                saw_done = true;
+                break;
+            }
+
+            if line.starts_with("data: ") {
+                let json_str = &line[6..];
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
+                        content_buf.push_str(content);
+                        let _ = window.emit(
+                            "llm-chunk",
+                            StreamPayload {
+                                assistant_id: assistant_id.to_string(),
+                                topic_id: topic_id.to_string(),
+                                content: content.to_string(),
+                                done: false,
+                                error: None,
+                            },
+                        );
+                    }
+                    if let Some(reasoning) = val["choices"][0]["delta"]["reasoning_content"]
+                        .as_str()
+                        .or_else(|| val["choices"][0]["delta"]["reasoning"].as_str())
+                    {
+                        if !reasoning.is_empty() {
+                            reasoning_buf.push_str(reasoning);
+                            let _ = window.emit(
+                                "llm-reasoning",
+                                StreamPayload {
+                                    assistant_id: assistant_id.to_string(),
+                                    topic_id: topic_id.to_string(),
+                                    content: reasoning.to_string(),
+                                    done: false,
+                                    error: None,
+                                },
+                            );
+                        }
+                    }
+                    // tool_calls 累积
+                    if let Some(tcs) = val["choices"][0]["delta"]["tool_calls"].as_array() {
+                        for tc in tcs {
+                            let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            let entry = tc_accum.entry(index).or_insert_with(|| {
+                                (String::new(), String::new(), String::new())
+                            });
+                            if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                entry.0 = id.to_string();
+                            }
+                            if let Some(name) = tc
+                                .get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|v| v.as_str())
+                            {
+                                entry.1 = name.to_string();
+                            }
+                            if let Some(args) = tc
+                                .get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|v| v.as_str())
+                            {
+                                entry.2.push_str(args);
+                            }
+                        }
+                    }
+                    // finish_reason="tool_calls" 时不必立即 flush（累积器已存好），
+                    // 统一在末尾按 index 升序构造。这里仅触发提前 flush 事件通知前端。
+                    let finish = val["choices"][0]["finish_reason"].as_str().unwrap_or("");
+                    if finish == "tool_calls" {
+                        for (_idx, (id, name, args)) in tc_accum.iter() {
+                            if !id.is_empty() && !name.is_empty() {
+                                let _ = window.emit(
+                                    "llm-tool-call",
+                                    ToolCallPayload {
+                                        assistant_id: assistant_id.to_string(),
+                                        topic_id: topic_id.to_string(),
+                                        tool_call_id: id.clone(),
+                                        name: name.clone(),
+                                        arguments: args.clone(),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if saw_done {
+            break;
+        }
+    }
+
+    // 按 index 升序构造工具调用列表（若 finish_reason="tool_calls" 已 emit 过通知，这里不再重复 emit）
+    let mut tool_calls = Vec::new();
+    let need_emit = !saw_done; // 若未到 [DONE]，则此前可能未 emit tool-call 通知
+    for (_idx, (id, name, args)) in tc_accum.iter() {
+        if !id.is_empty() && !name.is_empty() {
+            tool_calls.push(ToolCallAccum {
+                id: id.clone(),
+                name: name.clone(),
+                arguments: args.clone(),
+            });
+        }
+    }
+    // 若 finish_reason="tool_calls" 路径未触发（某些 provider 只在末尾给 tool_calls delta），
+    // 这里补发 llm-tool-call 通知，确保前端展示。
+    if need_emit {
+        for tc in &tool_calls {
+            let _ = window.emit(
+                "llm-tool-call",
+                ToolCallPayload {
+                    assistant_id: assistant_id.to_string(),
+                    topic_id: topic_id.to_string(),
+                    tool_call_id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                },
+            );
+        }
+    }
+
+    Ok(RoundResult {
+        content: content_buf,
+        reasoning: reasoning_buf,
+        tool_calls,
+    })
+}
+
+/// 为助手构建本轮可用工具（复用 list_mcp_tools_for_assistant 核心逻辑）。
+///
+/// 返回 `(tools, tool_server_map)`。`plan` 模式或空 server 列表返回空（无工具注入）。
+async fn build_tools_for_assistant(
+    app: &AppHandle,
+    mgr: &McpServerManager,
+    state: &McpServerState,
+    mcp_server_ids: &[String],
+    project_id: Option<&str>,
+) -> (Vec<ToolSpec>, std::collections::HashMap<String, String>) {
+    if mcp_server_ids.is_empty() {
+        return (Vec::new(), std::collections::HashMap::new());
+    }
+    match crate::commands::mcp::list_mcp_tools_for_assistant_inner(app, mgr, state, mcp_server_ids.to_vec(), project_id.map(|s| s.to_string())).await {
+        Ok(at) => (at.tools, at.tool_server_map),
+        Err(_) => (Vec::new(), std::collections::HashMap::new()),
+    }
+}
+
+/// 核心函数：调用 LLM 并分块回传结果（流式输出）。
+///
+/// 注意：此命令保留用于命令稳定性，但前端新流程改用 [`run_agent_turn`]
+/// （后端单任务自驱循环）。本命令现在仅做单轮流式 + 终止 done，
+/// 不再做工具执行/递归——工具调用的通知事件仍会 emit（供调试/兼容）。
 #[tauri::command]
 pub async fn call_llm_stream(
     window: Window,                         // Tauri 窗口句柄，用于发送事件
     state: tauri::State<'_, StreamManager>, // 全局状态，用于管理正在进行的流任务
     db_state: tauri::State<'_, DbState>,
-    mut api_url: String,                    // API 地址
+    api_url: String,                        // API 地址
     api_key: String,                        // API 密钥
     model: String,                          // 模型名称（如 gpt-3.5-turbo）
     assistant_id: String,                   // 助手 ID（用于前端匹配消息）
@@ -130,9 +444,9 @@ pub async fn call_llm_stream(
     // 1. 生成唯一的任务 Key，格式为 "助手ID-话题ID"
     let task_key = format!("{}-{}", assistant_id, topic_id);
 
-    // 2. 如果当前 Key 已有任务在运行，先终止旧任务（防止一个对话框出现两个回复）
-    if let Some((_, old_handle)) = state.0.remove(&task_key) {
-        old_handle.abort();
+    // 2. 如果当前 Key 已有任务在运行，先取消旧任务（cancel 而非 abort，保证 epilogue）
+    if let Some((_, (_, old_token))) = state.0.remove(&task_key) {
+        old_token.cancel();
     }
 
     // 3. 克隆变量以便进入异步线程（move 闭包）
@@ -147,237 +461,72 @@ pub async fn call_llm_stream(
             .map(|message| message_for_api(&conn, message))
             .collect::<Result<Vec<_>, _>>()?
     };
+    let tools_slice = tools.map(|t| t); // 用于 as_slice()
+
+    // 防御性校验：检查 tool_calls 与 tool 响应是否匹配
+    verify_tool_messages(&messages_for_api);
+
+    let token = CancellationToken::new();
+    let token_inner = token.clone();
 
     // 4. 创建异步任务执行请求
     let handle = tokio::spawn(async move {
-        let result: Result<(), String> = async {
-            // 安全处理 URL，确保以 /chat/completions 结尾
-            api_url = api_url.trim_end_matches('/').to_string();
-            let final_url = if !api_url.ends_with("/chat/completions") {
-                format!("{}/chat/completions", api_url)
-            } else {
-                api_url
-            };
-
-            let client = http_client();
-
-            // 构造符合 OpenAI API 标准的消息格式
-            // 支持 role="tool"（带 tool_call_id）和 assistant 携带 tool_calls
-            // 构造请求体，开启 stream 模式
-            // 若传入 tools 且非空，则附加到 body
-            let mut body_map = serde_json::Map::new();
-            body_map.insert("model".into(), json!(model));
-            body_map.insert("messages".into(), json!(messages_for_api));
-            body_map.insert("stream".into(), json!(true));
-            if let Some(tools) = &tools {
-                if !tools.is_empty() {
-                    body_map.insert("tools".into(), json!(tools));
-                    body_map.insert("tool_choice".into(), json!("auto"));
-                }
-            }
-            let body = serde_json::Value::Object(body_map);
-
-            // 发送 POST 请求
-            let response = client
-                .post(&final_url)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // 检查 HTTP 状态码：非 2xx 时提前报错，避免对错误 JSON 走 SSE 解析
-            let status = response.status();
-            if !status.is_success() {
-                let body_text = response.text().await.unwrap_or_default();
-                let truncated = if body_text.len() > 512 { &body_text[..512] } else { &body_text };
-                return Err(format!("LLM API {}: {}", status, truncated));
-            }
-
-            // 获取响应字节流
-            let mut stream = response.bytes_stream();
-            let mut line_buffer = String::new(); // 用于累积不完整的字节分块
-
-            // tool_call 累积状态：按 index 维护 id/name/arguments
-            // index → (id, name, arguments)
-            let mut tc_accum: std::collections::HashMap<usize, (String, String, String)> =
-                std::collections::HashMap::new();
-
-            // 5. 循环处理流式返回的数据块
-            while let Some(item) = stream.next().await {
-                let chunk = item.map_err(|e| e.to_string())?;
-                line_buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                // LLM API 通常按行返回 (SSE 格式)
-                while let Some(pos) = line_buffer.find('\n') {
-                    let line = line_buffer[..pos].trim().to_string();
-                    line_buffer.drain(..pos + 1); // 从缓冲区移除已处理的行
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    // 检查是否流传输结束
-                    if line == "data: [DONE]" {
-                        // 在结束前 flush 累积中的 tool_calls
-                        for (_idx, (id, name, args)) in tc_accum.drain() {
-                            if !id.is_empty() && !name.is_empty() {
-                                let _ = window.emit(
-                                    "llm-tool-call",
-                                    ToolCallPayload {
-                                        assistant_id: assistant_id_c.clone(),
-                                        topic_id: topic_id_c.clone(),
-                                        tool_call_id: id,
-                                        name,
-                                        arguments: args,
-                                    },
-                                );
-                            }
-                        }
-                        let _ = window.emit(
-                            "llm-chunk",
-                            StreamPayload {
-                                assistant_id: assistant_id_c.clone(),
-                                topic_id: topic_id_c.clone(),
-                                content: "".into(),
-                                done: true,
-                            },
-                        );
-                        return Ok(());
-                    }
-
-                    // 解析每行数据: data: {"choices":[{"delta":{"content":"..."}}]}
-                    if line.starts_with("data: ") {
-                        let json_str = &line[6..];
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                            // 文本片段
-                            if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
-                                let _ = window.emit(
-                                    "llm-chunk",
-                                    StreamPayload {
-                                        assistant_id: assistant_id_c.clone(),
-                                        topic_id: topic_id_c.clone(),
-                                        content: content.to_string(),
-                                        done: false,
-                                    },
-                                );
-                            }
-                            // 思维链片段：GLM/DeepSeek-R1/Qwen3 等通过 reasoning_content 单独返回
-                            // 部分实现用 reasoning 作为别名，两者择一即可
-                            if let Some(reasoning) = val["choices"][0]["delta"]["reasoning_content"]
-                                .as_str()
-                                .or_else(|| val["choices"][0]["delta"]["reasoning"].as_str())
-                            {
-                                if !reasoning.is_empty() {
-                                    let _ = window.emit(
-                                        "llm-reasoning",
-                                        StreamPayload {
-                                            assistant_id: assistant_id_c.clone(),
-                                            topic_id: topic_id_c.clone(),
-                                            content: reasoning.to_string(),
-                                            done: false,
-                                        },
-                                    );
-                                }
-                            }
-                            // tool_calls 累积
-                            if let Some(tcs) = val["choices"][0]["delta"]["tool_calls"].as_array() {
-                                for tc in tcs {
-                                    let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                                    let entry = tc_accum.entry(index).or_insert_with(|| {
-                                        (String::new(), String::new(), String::new())
-                                    });
-                                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
-                                        entry.0 = id.to_string();
-                                    }
-                                    if let Some(name) = tc
-                                        .get("function")
-                                        .and_then(|f| f.get("name"))
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        entry.1 = name.to_string();
-                                    }
-                                    if let Some(args) = tc
-                                        .get("function")
-                                        .and_then(|f| f.get("arguments"))
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        entry.2.push_str(args);
-                                    }
-                                }
-                            }
-                            // finish_reason="tool_calls" 触发 flush
-                            let finish = val["choices"][0]["finish_reason"]
-                                .as_str()
-                                .unwrap_or("");
-                            if finish == "tool_calls" {
-                                for (_idx, (id, name, args)) in tc_accum.drain() {
-                                    if !id.is_empty() && !name.is_empty() {
-                                        let _ = window.emit(
-                                            "llm-tool-call",
-                                            ToolCallPayload {
-                                                assistant_id: assistant_id_c.clone(),
-                                                topic_id: topic_id_c.clone(),
-                                                tool_call_id: id,
-                                                name,
-                                                arguments: args,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // 流自然结束（未到 [DONE]）：flush 残余 tool_calls，然后 emit done
-            for (_idx, (id, name, args)) in tc_accum.drain() {
-                if !id.is_empty() && !name.is_empty() {
-                    let _ = window.emit(
-                        "llm-tool-call",
-                        ToolCallPayload {
-                            assistant_id: assistant_id_c.clone(),
-                            topic_id: topic_id_c.clone(),
-                            tool_call_id: id,
-                            name,
-                            arguments: args,
-                        },
-                    );
-                }
-            }
-            let _ = window.emit(
-                "llm-chunk",
-                StreamPayload {
-                    assistant_id: assistant_id_c.clone(),
-                    topic_id: topic_id_c.clone(),
-                    content: "".into(),
-                    done: true,
-                },
-            );
-            Ok(())
-        }
+        let client = http_client();
+        let tools_ref: Option<&[ToolSpec]> = tools_slice.as_ref().map(|v| v.as_slice());
+        let result = stream_one_round(
+            &window,
+            &token_inner,
+            &client,
+            api_url,
+            &api_key,
+            &model,
+            &messages_for_api,
+            tools_ref,
+            &assistant_id_c,
+            &topic_id_c,
+        )
         .await;
 
-        // 6. 错误处理：如果请求失败，发送错误信息给前端
-        if let Err(e) = result {
-            tracing::error!("Stream Error: {}", e);
-            let _ = window.emit(
-                "llm-chunk",
-                StreamPayload {
-                    assistant_id: assistant_id_c,
-                    topic_id: topic_id_c,
-                    content: format!("\n[Error: {}]", e),
-                    done: true,
-                },
-            );
+        // 收尾：无论成功/取消/错误都 emit terminal done，保证前端 isThinking 必复位
+        match result {
+            Ok(_round) => {
+                let _ = window.emit(
+                    "llm-chunk",
+                    StreamPayload {
+                        assistant_id: assistant_id_c.clone(),
+                        topic_id: topic_id_c.clone(),
+                        content: "".into(),
+                        done: true,
+                        error: None,
+                    },
+                );
+            }
+            Err(e) => {
+                tracing::error!("Stream Error: {}", e);
+                let is_cancel = e == "cancelled";
+                let _ = window.emit(
+                    "llm-chunk",
+                    StreamPayload {
+                        assistant_id: assistant_id_c.clone(),
+                        topic_id: topic_id_c.clone(),
+                        content: if is_cancel {
+                            "".into()
+                        } else {
+                            format!("\n[Error: {}]", e)
+                        },
+                        done: true,
+                        error: if is_cancel { None } else { Some(e) },
+                    },
+                );
+            }
         }
 
-        // 任务完成后，从全局状态中移除 handle
+        // 任务完成后，从全局状态中移除
         state_inner.remove(&task_key_inner);
     });
 
-    // 7. 将当前正在执行的任务句柄存入全局状态，以便后续可以“手动停止”
-    state.0.insert(task_key, handle);
+    // 5. 将当前正在执行的任务句柄与取消令牌存入全局状态
+    state.0.insert(task_key, (handle, token));
     Ok(())
 }
 
@@ -404,7 +553,11 @@ pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelI
     Ok(res_data.data)
 }
 
-/// 停止函数：用户点击“停止生成”时调用
+/// 停止函数：用户点击“停止生成”时调用。
+///
+/// 通过 `CancellationToken::cancel()` 通知任务优雅退出（而非 `abort()`），
+/// 任务在 `select!` 分支返回后仍能执行 epilogue（emit done + 移除自身），
+/// 保证前端的 `isThinking` 状态必然被复位。
 #[tauri::command]
 pub async fn stop_llm_stream(
     state: tauri::State<'_, StreamManager>,
@@ -413,10 +566,289 @@ pub async fn stop_llm_stream(
 ) -> Result<(), String> {
     let task_key = format!("{}-{}", assistant_id, topic_id);
 
-    // 从状态中取出对应的任务句柄并执行 abort() 强制停止任务
-    if let Some((_, handle)) = state.0.remove(&task_key) {
-        handle.abort();
+    // 取出取消令牌并触发 cancel；任务自身负责 emit done 与从状态中移除。
+    // 注意：这里只 cancel，不 abort，保证 epilogue 必达。
+    if let Some(entry) = state.0.get(&task_key) {
+        entry.1.cancel();
     }
+    Ok(())
+}
+
+/// 工具调用轮数上限：对话模式 5 轮，Agent 模式（normal/auto/plan）25 轮。
+const CHAT_TOOL_CALL_MAX_ROUNDS: u32 = 5;
+const AGENT_TOOL_CALL_MAX_ROUNDS: u32 = 25;
+
+/// Agent 自驱循环命令（前端新流程主入口）。
+///
+/// 在单个 tokio 任务内完成「流式 → 检测工具 → 权限/审批 → 执行 MCP → 回填结果 → 递归」，
+/// 直到模型不再发起工具调用或达到轮数上限。前端只需监听事件做纯渲染：
+/// - `llm-round-start`：push 空 assistant 占位消息
+/// - `llm-chunk`：追加文本 / `done:true` 表示整轮真正结束
+/// - `llm-reasoning`：追加思维链
+/// - `llm-tool-call`：展示"调用中"气泡（仅通知，执行由本命令完成）
+/// - `llm-tool-result`：更新气泡状态 + 追加 role:tool 消息
+/// - `tool-approval-requested`：审批请求
+///
+/// # 参数
+/// - `messages`：初始消息列表（含本轮 user 消息），由前端构造好 system/历史/user
+/// - `mcp_server_ids`：助手启用的 MCP server id 列表（opt-in，空 = 无工具）
+/// - `agent_mode`：Agent 执行模式，影响权限规则与工具注入（plan 整轮无工具）
+/// - `project_id`：项目 id（用于解析项目级权限规则）
+#[tauri::command]
+pub async fn run_agent_turn(
+    app: AppHandle,
+    window: Window,
+    db_state: tauri::State<'_, DbState>,
+    stream_mgr: tauri::State<'_, StreamManager>,
+    api_url: String,
+    api_key: String,
+    model: String,
+    assistant_id: String,
+    topic_id: String,
+    messages: Vec<Message>,
+    mcp_server_ids: Vec<String>,
+    agent_mode: AgentMode,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    let task_key = format!("{}-{}", assistant_id, topic_id);
+
+    // 取消同 topic 的旧任务（cancel 而非 abort）
+    if let Some((_, (_, old_token))) = stream_mgr.0.remove(&task_key) {
+        old_token.cancel();
+    }
+
+    // 预先把 messages 转为 API 格式（含附件 image 展开等），在持锁期间完成同步 I/O
+    let mut messages_for_api: Vec<serde_json::Value> = {
+        let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+        messages
+            .iter()
+            .map(|m| message_for_api(&conn, m))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    verify_tool_messages(&messages_for_api);
+
+    let is_agent_mode = agent_mode != AgentMode::Off;
+    let max_rounds = if is_agent_mode {
+        AGENT_TOOL_CALL_MAX_ROUNDS
+    } else {
+        CHAT_TOOL_CALL_MAX_ROUNDS
+    };
+
+    let token = CancellationToken::new();
+    let token_inner = token.clone();
+    let state_inner = stream_mgr.0.clone();
+    let task_key_inner = task_key.clone();
+    let assistant_id_c = assistant_id.clone();
+    let topic_id_c = topic_id.clone();
+    let app_c = app.clone();
+    let mcp_server_ids_c = mcp_server_ids.clone();
+    let project_id_c = project_id.clone();
+
+    let handle = tokio::spawn(async move {
+        let client = http_client();
+
+        // 构建工具：plan 模式整轮不注入工具（与首轮一致，消除旧实现首轮/递归自相矛盾）。
+        // 在 spawn 内通过 AppHandle 解析全局状态，避免 tauri::State 借用逃逸。
+        let tools_enabled = !mcp_server_ids_c.is_empty() && agent_mode != AgentMode::Plan;
+        let (tools, tool_server_map) = if tools_enabled {
+            let mgr = app_c.state::<McpServerManager>();
+            let mcp_state = app_c.state::<McpServerState>();
+            build_tools_for_assistant(
+                &app_c,
+                mgr.inner(),
+                mcp_state.inner(),
+                &mcp_server_ids_c,
+                project_id_c.as_deref(),
+            )
+            .await
+        } else {
+            (Vec::new(), std::collections::HashMap::new())
+        };
+        let tools_slice: Option<&[ToolSpec]> = if tools.is_empty() { None } else { Some(&tools) };
+
+        let mut round: u32 = 0;
+        let mut final_error: Option<String> = None;
+        let mut was_cancelled = false;
+
+        'outer: loop {
+            round += 1;
+            if token_inner.is_cancelled() {
+                was_cancelled = true;
+                break;
+            }
+
+            // 通知前端：新一轮开始，push 空 assistant 占位
+            let _ = window.emit(
+                "llm-round-start",
+                RoundStartPayload {
+                    assistant_id: assistant_id_c.clone(),
+                    topic_id: topic_id_c.clone(),
+                    round,
+                },
+            );
+
+            // 轮数上限：追加 system 提示，并以 tools=None 再跑最后一轮让模型总结，然后结束
+            let (round_msgs, round_tools) = if round > max_rounds {
+                messages_for_api.push(json!({
+                    "role": "system",
+                    "content": format!(
+                        "[System] 已达到最大工具调用轮数限制（{}轮）。请基于当前已有的工具执行结果总结回答，不要再调用工具。",
+                        max_rounds
+                    ),
+                }));
+                (messages_for_api.as_slice(), Option::<&[ToolSpec]>::None)
+            } else {
+                (messages_for_api.as_slice(), tools_slice)
+            };
+
+            let round_result = stream_one_round(
+                &window,
+                &token_inner,
+                &client,
+                api_url.clone(),
+                &api_key,
+                &model,
+                round_msgs,
+                round_tools,
+                &assistant_id_c,
+                &topic_id_c,
+            )
+            .await;
+
+            let round_result = match round_result {
+                Ok(r) => r,
+                Err(e) => {
+                    if e == "cancelled" {
+                        was_cancelled = true;
+                    } else {
+                        final_error = Some(e);
+                    }
+                    break 'outer;
+                }
+            };
+
+            // 把本轮 assistant 消息（含 tool_calls）append 到上下文
+            let mut asst_obj = serde_json::Map::new();
+            asst_obj.insert("role".into(), json!("assistant"));
+            asst_obj.insert(
+                "content".into(),
+                if round_result.content.is_empty() {
+                    json!(null)
+                } else {
+                    json!(round_result.content)
+                },
+            );
+            if !round_result.tool_calls.is_empty() {
+                let tcs: Vec<serde_json::Value> = round_result
+                    .tool_calls
+                    .iter()
+                    .map(|tc| {
+                        json!({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": { "name": tc.name, "arguments": tc.arguments },
+                        })
+                    })
+                    .collect();
+                asst_obj.insert("tool_calls".into(), json!(tcs));
+            }
+            messages_for_api.push(serde_json::Value::Object(asst_obj));
+
+            // 无工具调用 → 整轮结束
+            if round_result.tool_calls.is_empty() || round > max_rounds {
+                break 'outer;
+            }
+
+            // 执行每个工具调用（按 index 升序），回填 role:tool 消息
+            for tc in &round_result.tool_calls {
+                if token_inner.is_cancelled() {
+                    was_cancelled = true;
+                    break 'outer;
+                }
+                let server_id = tool_server_map.get(&tc.name).cloned();
+                let tool_result = match server_id {
+                    Some(sid) => {
+                        let args_val = serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
+                        crate::commands::mcp::execute_tool_call(
+                            &app_c,
+                            &sid,
+                            &tc.name,
+                            args_val,
+                            project_id_c.as_deref(),
+                            &agent_mode,
+                            &token_inner,
+                        )
+                        .await
+                    }
+                    None => Err(format!("未找到工具 {} 对应的 MCP server", tc.name)),
+                };
+
+                let (content_text, result_value, is_error) = match tool_result {
+                    Ok(tr) => {
+                        let text = tr
+                            .content
+                            .iter()
+                            .find(|c| c.kind == "text")
+                            .and_then(|c| c.data.get("text"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
+                        let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                        (text, result_value, tr.is_error)
+                    }
+                    Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                };
+
+                // emit 工具结果，前端据此更新气泡 + 追加 role:tool 消息
+                let _ = window.emit(
+                    "llm-tool-result",
+                    ToolResultPayload {
+                        assistant_id: assistant_id_c.clone(),
+                        topic_id: topic_id_c.clone(),
+                        tool_call_id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        content: content_text.clone(),
+                        result: result_value,
+                        is_error,
+                    },
+                );
+
+                // 追加 role:tool 消息到上下文（OpenAI 要求 tool_call_id 配对）
+                let mut tool_msg = serde_json::Map::new();
+                tool_msg.insert("role".into(), json!("tool"));
+                tool_msg.insert("content".into(), json!(content_text));
+                tool_msg.insert("tool_call_id".into(), json!(tc.id));
+                tool_msg.insert("name".into(), json!(tc.name));
+                messages_for_api.push(serde_json::Value::Object(tool_msg));
+            }
+        }
+
+        // ===== Epilogue（必达）：无论正常/取消/出错都 emit terminal done =====
+        let error_payload = if was_cancelled {
+            None
+        } else {
+            final_error.clone()
+        };
+        let _ = window.emit(
+            "llm-chunk",
+            StreamPayload {
+                assistant_id: assistant_id_c.clone(),
+                topic_id: topic_id_c.clone(),
+                content: if let Some(ref e) = final_error {
+                    format!("\n[Error: {}]", e)
+                } else {
+                    "".into()
+                },
+                done: true,
+                error: error_payload,
+            },
+        );
+
+        // 从全局状态移除自身
+        state_inner.remove(&task_key_inner);
+    });
+
+    stream_mgr.0.insert(task_key, (handle, token));
     Ok(())
 }
 
@@ -491,11 +923,13 @@ pub async fn append_message(
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let files_json = serde_json::to_string(&message.display_files).ok();
     let content_json = serde_json::to_string(&message.content).unwrap_or_default();
+    let tool_calls_json = serde_json::to_string(&message.tool_calls).ok();
 
     conn.execute(
         "INSERT INTO messages
-         (id, topic_id, role, content, model_id, display_files, display_text, reasoning)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
+          tool_call_id, name, tool_calls_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             message_id,
             topic_id,
@@ -504,7 +938,10 @@ pub async fn append_message(
             message.model_id,
             files_json,
             message.display_text,
-            message.reasoning
+            message.reasoning,
+            message.tool_call_id,
+            message.name,
+            tool_calls_json,
         ],
     ).map_err(|e| e.to_string())?;
     sync_message_attachments(&conn, &message_id, message.display_files.as_ref())?;

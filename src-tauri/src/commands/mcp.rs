@@ -3,14 +3,17 @@
 //! 提供前端调用的 9 个命令；MCP 运行时状态由 [`McpServerState`] 持有。
 
 use crate::core::models::*;
+use crate::core::permission::{self, PermissionAction};
 use crate::core::secure_store;
-use crate::core::state::{McpRequestManager, McpServerState};
+use crate::core::state::{McpRequestManager, McpServerState, PendingApprovals};
 use crate::plugins::mcp::{self, McpServerManager, McpServerPlugin};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::oneshot;
 
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -95,14 +98,27 @@ pub async fn save_mcp_server_secret(
 #[tauri::command]
 pub async fn remove_mcp_server(
     app: AppHandle,
+    mgr: State<'_, McpServerManager>,
     state: State<'_, McpServerState>,
+    requests: State<'_, McpRequestManager>,
     id: String,
     project_id: Option<String>,
 ) -> Result<(), String> {
-    // 先停掉连接
+    // 复用 stop_mcp_server 的清理逻辑：abort 在途调用 + plugin.stop（清理 HTTP_STATES）
     {
+        let prefix = format!("mcp:{}:", id);
+        requests.0.retain(|k, _| !k.starts_with(&prefix));
+    }
+    let conn_opt = {
         let mut map = state.lock();
-        map.remove(&id);
+        map.remove(&id)
+    };
+    if let Some(conn) = conn_opt {
+        let transport_id = conn.transport_kind.clone();
+        if let Some(plugin) = mgr.get(&transport_id) {
+            let conn_owned = Arc::try_unwrap(conn).unwrap_or_else(|arc| (*arc).clone());
+            let _ = plugin.stop(conn_owned).await;
+        }
     }
     // 清理 keyring 中该 server 的所有 env 密钥
     let cfg = mcp::get_config_merged(&app, &id, project_id.as_deref());
@@ -324,6 +340,17 @@ pub async fn list_mcp_tools_for_assistant(
     mcp_server_ids: Vec<String>,
     project_id: Option<String>,
 ) -> Result<AssistantTools, String> {
+    list_mcp_tools_for_assistant_inner(&app, mgr.inner(), state.inner(), mcp_server_ids, project_id).await
+}
+
+/// 内部实现：供 `run_agent_turn` 后端复用，避免再次走 Tauri State 解包。
+pub(crate) async fn list_mcp_tools_for_assistant_inner(
+    app: &AppHandle,
+    mgr: &McpServerManager,
+    state: &McpServerState,
+    mcp_server_ids: Vec<String>,
+    project_id: Option<String>,
+) -> Result<AssistantTools, String> {
     // 1) 收集入参 id 中已连接的 (cfg, plugin, conn)，先取出 conn 后立即释放锁
     let mut jobs: Vec<(
         McpServerConfig,
@@ -331,7 +358,7 @@ pub async fn list_mcp_tools_for_assistant(
         Arc<crate::plugins::mcp::connection::McpConnection>,
     )> = Vec::new();
     for id in mcp_server_ids {
-        let cfg = match mcp::get_config_merged(&app, &id, project_id.as_deref()) {
+        let cfg = match mcp::get_config_merged(app, &id, project_id.as_deref()) {
             Some(c) => c,
             None => continue,
         };
@@ -351,8 +378,6 @@ pub async fn list_mcp_tools_for_assistant(
             jobs.push((cfg, plugin, conn));
         }
     }
-    drop(state);
-    drop(mgr);
 
     // 2) 顺序拉取工具，应用白名单，构造 tools + tool_server_map
     let mut tools = Vec::new();
@@ -379,25 +404,100 @@ pub async fn list_mcp_tools_for_assistant(
     })
 }
 
+/// 修改 `call_mcp_tool` 以加入权限检查（防御层）。
+/// 前端应预先通过 `check_tool_permission` 检查权限，但后端也做二次检查确保安全。
 #[tauri::command]
 pub async fn call_mcp_tool(
     app: AppHandle,
-    mgr: State<'_, McpServerManager>,
-    state: State<'_, McpServerState>,
-    requests: State<'_, McpRequestManager>,
     server_id: String,
     tool_name: String,
     arguments: Value,
     project_id: Option<String>,
+    // 当前 agent 模式（如 "normal", "auto", "plan", "off"），提供则进行权限检查
+    agent_mode: Option<String>,
 ) -> Result<ToolResult, String> {
-    let cfg = mcp::get_config_merged(&app, &server_id, project_id.as_deref())
+    let mode = match agent_mode.as_deref() {
+        Some("normal") => AgentMode::Normal,
+        Some("auto") => AgentMode::Auto,
+        Some("plan") => AgentMode::Plan,
+        _ => AgentMode::Off,
+    };
+    // call_mcp_tool 路径无 CancellationToken，用一个新的（永不取消）
+    let token = tokio_util::sync::CancellationToken::new();
+    execute_tool_call(
+        &app,
+        &server_id,
+        &tool_name,
+        arguments,
+        project_id.as_deref(),
+        &mode,
+        &token,
+    )
+    .await
+}
+
+/// 执行单个 MCP 工具调用：白名单 → 权限/审批 → spawn 调用 → 取结果。
+///
+/// 供 `run_agent_turn`（带 CancellationToken，可被用户停止打断挂起审批）与
+/// `call_mcp_tool`（无取消，用独立 token）复用。MCP 全局状态通过 `AppHandle` 解析，
+/// 避免借用逃逸到 `tokio::spawn`。
+///
+/// - `call_id` 带 uuid，避免并发同名工具调用互相覆盖 handle（旧 bug：两个 `read_file` 共享 call_id
+///   导致一个报"已被中止"、一个泄漏）。
+/// - 审批等待用 `select!` 包 `request_tool_approval` 与 `token.cancelled()`，
+///   用户停止时立即打断挂起审批。
+pub(crate) async fn execute_tool_call(
+    app: &AppHandle,
+    server_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    project_id: Option<&str>,
+    agent_mode: &AgentMode,
+    token: &tokio_util::sync::CancellationToken,
+) -> Result<ToolResult, String> {
+    let mgr = app.state::<McpServerManager>();
+    let state = app.state::<McpServerState>();
+    let requests = app.state::<McpRequestManager>();
+    let pending = app.state::<PendingApprovals>();
+
+    let cfg = mcp::get_config_merged(app, server_id, project_id)
         .ok_or_else(|| format!("未找到 MCP server: {}", server_id))?;
-    if !cfg.enabled_tools.is_empty() && !cfg.enabled_tools.contains(&tool_name) {
+    if !cfg.enabled_tools.is_empty() && !cfg.enabled_tools.contains(&tool_name.to_string()) {
         return Err(format!(
             "工具 {} 不在 server {} 的白名单中",
             tool_name, server_id
         ));
     }
+
+    // 权限检查（后端防御层）
+    if *agent_mode != AgentMode::Off {
+        let project_path = project_id.and_then(|pid| resolve_project_path_mcp_opt(app, pid));
+        let custom_rules = project_path
+            .as_ref()
+            .map(|p| permission::load_permissions(Some(p)).rules)
+            .unwrap_or_default();
+        let action = permission::check_permission(tool_name, server_id, &arguments, agent_mode, &custom_rules);
+
+        match action {
+            PermissionAction::Deny => {
+                return Err(format!(
+                    "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
+                    tool_name
+                ));
+            }
+            PermissionAction::Ask => {
+                // 需要用户确认；用 select! 让取消可打断挂起审批
+                let reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
+                let approval_fut = request_tool_approval(app, pending.inner(), server_id, tool_name, &arguments, &reason);
+                tokio::select! {
+                    _ = token.cancelled() => return Err("cancelled".into()),
+                    res = approval_fut => res?,
+                }
+            }
+            PermissionAction::Allow => {}
+        }
+    }
+
     let transport_id = match &cfg.transport {
         McpTransport::Stdio { .. } => "stdio",
         McpTransport::Http { .. } => "http",
@@ -408,16 +508,16 @@ pub async fn call_mcp_tool(
         .ok_or_else(|| format!("未注册 transport: {}", transport_id))?;
     let conn = {
         let map = state.lock();
-        map.get(&server_id)
+        map.get(server_id)
             .cloned()
             .ok_or_else(|| format!("MCP server 未连接: {}", server_id))?
     };
 
-    // 用 call_id 跟踪；stop_mcp_server / 用户停止时可 abort
-    let call_id = format!("mcp:{}:{}", server_id, tool_name);
+    // 用 call_id 跟踪；带 uuid 保证唯一，避免并发同名调用互相覆盖 handle。
+    let call_id = format!("mcp:{}:{}:{}", server_id, tool_name, uuid::Uuid::new_v4());
     let plugin_arc = plugin.clone();
     let conn_arc = conn.clone();
-    let tool_for_task = tool_name.clone();
+    let tool_for_task = tool_name.to_string();
     let handle = tokio::spawn(async move {
         plugin_arc
             .call_tool(&conn_arc, &tool_for_task, arguments, TOOL_CALL_TIMEOUT)
@@ -425,7 +525,7 @@ pub async fn call_mcp_tool(
     });
     requests.0.insert(call_id.clone(), handle);
 
-    // 取出并等待
+    // 等待结果或取消
     let entry = requests.0.remove(&call_id);
     let handle: tokio::task::JoinHandle<
         std::result::Result<ToolResult, crate::plugins::mcp::error::McpError>,
@@ -433,9 +533,12 @@ pub async fn call_mcp_tool(
         Some((_, h)) => h,
         None => return Err("调用已被中止".into()),
     };
-    match handle.await {
-        Ok(res) => res.map_err(|e: crate::plugins::mcp::error::McpError| e.to_string()),
-        Err(e) => Err(format!("工具调用任务 join 失败: {}", e)),
+    tokio::select! {
+        _ = token.cancelled() => Err("cancelled".into()),
+        res = handle => match res {
+            Ok(r) => r.map_err(|e: crate::plugins::mcp::error::McpError| e.to_string()),
+            Err(e) => Err(format!("工具调用任务 join 失败: {}", e)),
+        },
     }
 }
 
@@ -462,6 +565,161 @@ pub async fn test_mcp_server_connection(
     // 测试完即关
     let _ = plugin.stop(conn).await;
     Ok(tools)
+}
+
+// ====== 权限检查 ======
+
+/// 权限检查结果（返回给前端）
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionCheckResult {
+    pub action: String, // "allow" | "ask" | "deny"
+    /// 当 action = "ask" 时，包含审批请求 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_id: Option<String>,
+    /// 拒绝/需要确认的原因说明
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// 检查工具调用的权限（预检）。
+///
+/// 前端在 `handleToolCall` 中先调用此命令，根据返回的 `action` 决定是否执行：
+/// - `"allow"` — 可直接调用 `call_mcp_tool`
+/// - `"ask"` — 需显示审批对话框，用户批准后再调用 `call_mcp_tool`
+/// - `"deny"` — 工具被禁止，跳过执行
+#[tauri::command]
+pub async fn check_tool_permission(
+    app: AppHandle,
+    tool_name: String,
+    server_id: String,
+    arguments: Value,
+    agent_mode: String,
+    project_id: Option<String>,
+) -> Result<PermissionCheckResult, String> {
+    let mode = match agent_mode.as_str() {
+        "normal" => AgentMode::Normal,
+        "auto" => AgentMode::Auto,
+        "plan" => AgentMode::Plan,
+        _ => AgentMode::Off,
+    };
+
+    // 加载项目级自定义规则
+    let project_path = project_id.as_ref().and_then(|pid| resolve_project_path_mcp_opt(&app, pid));
+    let custom_rules = project_path
+        .as_ref()
+        .map(|p| permission::load_permissions(Some(p)).rules)
+        .unwrap_or_default();
+
+    let action = permission::check_permission(&tool_name, &server_id, &arguments, &mode, &custom_rules);
+
+    match action {
+        PermissionAction::Deny => Ok(PermissionCheckResult {
+            action: "deny".into(),
+            approval_id: None,
+            reason: Some(format!("工具 '{}' 在当前模式下已被禁止执行", tool_name)),
+        }),
+        PermissionAction::Allow => Ok(PermissionCheckResult {
+            action: "allow".into(),
+            approval_id: None,
+            reason: None,
+        }),
+        PermissionAction::Ask => Ok(PermissionCheckResult {
+            action: "ask".into(),
+            approval_id: None,
+            reason: Some(format!("工具 '{}' 需要您的确认才能执行", tool_name)),
+        }),
+    }
+}
+
+/// 解析项目路径（返回 Option，不报错）。
+fn resolve_project_path_mcp_opt(app: &AppHandle, project_id: &str) -> Option<String> {
+    let idx_path = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("projects.json");
+    let content = std::fs::read_to_string(&idx_path).ok()?;
+    let file: serde_json::Value = serde_json::from_str(&content).ok()?;
+    file["projects"][project_id]["path"].as_str().map(|s| s.to_string())
+}
+
+/// 审批结果负载（发送给前端的事件）
+///
+/// 注意：字段名保持 **snake_case**，与其它 LLM 流式事件（`llm-tool-call`/`llm-chunk`）
+/// 保持一致。旧的 `rename_all="camelCase"` 会把 `approval_id` 序列化成 `approvalId`，
+/// 而前端按 `approval_id` 解构，导致全部 `undefined`、`respond_tool_approval` 永远失败、
+/// normal 模式每个写/删操作 60s 超时后报错。
+#[derive(Serialize, Clone, Debug)]
+pub struct ApprovalRequestPayload {
+    pub approval_id: String,
+    pub server_id: String,
+    pub tool_name: String,
+    pub arguments: Value,
+    pub reason: String,
+}
+
+/// 发起一个需要用户确认的工具调用。
+///
+/// 在 `execute_tool_call` 中检测到权限为 `Ask` 时，会通过此流程：
+/// 1. 发送 `tool-approval-requested` 事件到前端
+/// 2. 阻塞等待前端调用 `respond_tool_approval`
+/// 3. 用户批准 → 继续执行；用户拒绝 → 返回错误
+///
+/// 超时分支会从 `PendingApprovals` 移除 sender，避免泄漏（旧 bug：超时后 sender 永留 map）。
+pub(crate) async fn request_tool_approval(
+    app: &AppHandle,
+    pending: &PendingApprovals,
+    server_id: &str,
+    tool_name: &str,
+    arguments: &Value,
+    reason: &str,
+) -> Result<(), String> {
+    let (tx, rx) = oneshot::channel::<bool>();
+    let approval_id = pending.insert(tx);
+
+    // 发送事件到前端
+    let _ = app.emit(
+        "tool-approval-requested",
+        ApprovalRequestPayload {
+            approval_id: approval_id.clone(),
+            server_id: server_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: arguments.clone(),
+            reason: reason.to_string(),
+        },
+    );
+
+    // 等待前端响应（60s 超时）；超时/通道关闭时移除泄漏的 sender
+    match tokio::time::timeout(Duration::from_secs(60), rx).await {
+        Ok(Ok(true)) => Ok(()),       // 用户批准
+        Ok(Ok(false)) => {
+            // 拒绝：sender 已被消费，无需移除
+            Err("用户已拒绝此操作".into())
+        }
+        Ok(Err(_)) => {
+            // channel 关闭：移除泄漏的 sender
+            pending.remove(&approval_id);
+            Err("审批通道意外关闭".into())
+        }
+        Err(_) => {
+            // 超时：移除泄漏的 sender，否则永久驻留 PendingApprovals
+            pending.remove(&approval_id);
+            Err("等待用户确认超时（60s）".into())
+        }
+    }
+}
+
+/// 前端调用此命令来响应工具调用审批。
+#[tauri::command]
+pub async fn respond_tool_approval(
+    pending: State<'_, PendingApprovals>,
+    approval_id: String,
+    approved: bool,
+) -> Result<(), String> {
+    let tx = pending.remove(&approval_id)
+        .ok_or_else(|| format!("审批请求 {} 不存在或已过期", approval_id))?;
+    tx.send(approved).map_err(|_| "发送审批结果失败".into())
 }
 
 /// 测试用：列出已注册 transport 插件 identifier

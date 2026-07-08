@@ -916,3 +916,125 @@ input[type="range"]::-webkit-slider-thumb:active {
     color: rgba(255, 255, 255, 0.95);
     display: block;
 }
+
+/* ====== 工具调用审批气泡 ====== */
+
+.tool-approval-bubble {
+    background: rgba(22, 28, 46, 0.95);
+    border: 1px solid rgba(124, 154, 191, 0.15);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 4px 0;
+    max-width: 420px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    animation: tool-approval-in 0.2s ease-out;
+}
+
+.tool-approval-bubble.is-dangerous {
+    border-color: rgba(255, 77, 77, 0.25);
+}
+
+@keyframes tool-approval-in {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.tool-approval-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.tool-approval-icon {
+    color: rgba(124, 154, 191, 0.6);
+    flex-shrink: 0;
+}
+
+.tool-approval-toolname {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: monospace;
+}
+
+.tool-approval-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 77, 77, 0.15);
+    color: rgba(255, 77, 77, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.tool-approval-args {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-approval-args code {
+    font-family: monospace;
+    font-size: 11px;
+}
+
+.tool-approval-reason {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.45);
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+
+.tool-approval-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.tool-approval-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tool-approval-btn-reject {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.tool-approval-btn-reject:hover {
+    background: rgba(255, 77, 77, 0.15);
+    color: rgba(255, 77, 77, 0.8);
+}
+
+.tool-approval-btn-approve {
+    background: rgba(74, 249, 8, 0.1);
+    color: rgba(74, 249, 8, 0.7);
+}
+
+.tool-approval-btn-approve:hover {
+    background: rgba(74, 249, 8, 0.2);
+    color: rgba(74, 249, 8, 0.9);
+}
+

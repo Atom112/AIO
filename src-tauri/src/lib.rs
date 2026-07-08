@@ -13,7 +13,7 @@ mod plugins;
 mod utils;
 
 use crate::core::state::{
-    DbState, LocalEngineState, McpRequestManager, McpServerState, StreamManager,
+    DbState, LocalEngineState, McpRequestManager, McpServerState, PendingApprovals, StreamManager,
 };
 use crate::plugins::engine::EngineManager;
 use crate::plugins::mcp::McpServerManager;
@@ -51,6 +51,7 @@ pub fn run() {
         .manage(McpServerManager::builtin())
         .manage(McpServerState::default())
         .manage(McpRequestManager::new())
+        .manage(PendingApprovals::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
@@ -65,6 +66,7 @@ pub fn run() {
             commands::attachment::discard_chat_attachment,
             commands::llm::call_llm_stream,
             commands::llm::stop_llm_stream,
+            commands::llm::run_agent_turn,
             commands::llm::fetch_models,
             commands::engine::start_local_server,
             commands::engine::stop_local_server,
@@ -130,6 +132,8 @@ pub fn run() {
             commands::mcp::list_mcp_tools_for_assistant,
             commands::mcp::call_mcp_tool,
             commands::mcp::test_mcp_server_connection,
+            commands::mcp::check_tool_permission,
+            commands::mcp::respond_tool_approval,
             commands::mcp::list_mcp_transports,
             commands::mcp_catalog::list_mcp_catalog,
             commands::mcp_catalog::check_mcp_catalog_runtime,
@@ -146,6 +150,12 @@ pub fn run() {
                 if let Some(mut child) = child_opt {
                     let _ = child.kill();
                 }
+                // 清理活跃 LLM 流任务：cancel 所有 token（任务自身负责 emit done + 移除）
+                let stream_mgr = window.state::<StreamManager>();
+                for entry in stream_mgr.0.iter() {
+                    entry.value().1.cancel();
+                }
+                stream_mgr.0.clear();
                 // 清理 MCP 状态（在途调用 abort + 连接池清空）
                 let req_mgr = window.state::<McpRequestManager>();
                 req_mgr.abort_all();

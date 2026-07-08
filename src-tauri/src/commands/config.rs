@@ -165,8 +165,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. 加载历史消息
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话）
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -181,6 +181,11 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     let content_value = serde_json::from_str(&content_json)
                         .unwrap_or(serde_json::Value::String(content_json));
 
+                    // 提取 tool_calls_json (在 index 9)
+                    let tool_calls_json: Option<String> = row.get(9)?;
+                    let tool_calls = tool_calls_json
+                        .and_then(|s| serde_json::from_str::<Vec<ToolCall>>(&s).ok());
+
                     Ok(Message {
                         id: row.get(0)?,           // index 0: id
                         role: row.get(1)?,         // index 1: role
@@ -188,9 +193,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         model_id: row.get(3)?,     // index 3: model_id
                         display_files,             // 已经解析好的 files
                         display_text: row.get(5)?, // index 5: display_text
-                        tool_call_id: None,
-                        name: None,
-                        tool_calls: None,
+                        tool_call_id: row.get(7)?, // index 7: tool_call_id
+                        name: row.get(8)?,         // index 8: name
+                        tool_calls,                // index 9: tool_calls_json（已解析）
                         reasoning: row.get(6)?,    // index 6: reasoning
                     })
                 })
@@ -304,12 +309,22 @@ pub async fn save_assistant(
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let files_json = serde_json::to_string(&msg.display_files).ok();
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
+            let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
+            // 写入 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话。
+            // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                 ON CONFLICT(id) DO NOTHING", // 关键：已存在的 ID 不再重复写入
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning],
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id) DO UPDATE SET
+                   content = excluded.content,
+                   reasoning = excluded.reasoning,
+                   tool_call_id = excluded.tool_call_id,
+                   name = excluded.name,
+                   tool_calls_json = excluded.tool_calls_json,
+                   display_files = excluded.display_files,
+                   display_text = excluded.display_text",
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
         }

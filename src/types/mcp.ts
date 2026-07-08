@@ -144,14 +144,52 @@ export interface McpServerStatusInfo {
 }
 
 // ===== 流式事件 =====
+// 注意：后端流式事件 payload 使用 snake_case（与 llm-chunk/llm-reasoning/llm-tool-call 一致）。
 
-/** LLM 工具调用事件负载 */
+/** LLM 文本/思维链条目负载（llm-chunk / llm-reasoning） */
+export interface LlmStreamPayload {
+    assistant_id: string;
+    topic_id: string;
+    content: string;
+    done: boolean;
+    /** done=true 时的错误信息 */
+    error?: string;
+}
+
+/** 新一轮开始负载（llm-round-start） */
+export interface LlmRoundStartPayload {
+    assistant_id: string;
+    topic_id: string;
+    round: number;
+}
+
+/** LLM 工具调用通知负载（llm-tool-call，仅通知前端展示"调用中"气泡） */
 export interface LlmToolCallPayload {
-    assistantId: string;
-    topicId: string;
-    toolCallId: string;
+    assistant_id: string;
+    topic_id: string;
+    tool_call_id: string;
     name: string;
     arguments: string;
+}
+
+/** 工具执行结果负载（llm-tool-result） */
+export interface LlmToolResultPayload {
+    assistant_id: string;
+    topic_id: string;
+    tool_call_id: string;
+    name: string;
+    content: string;
+    result: any;
+    is_error: boolean;
+}
+
+/** 工具审批请求负载（tool-approval-requested，snake_case） */
+export interface ToolApprovalRequestPayload {
+    approval_id: string;
+    server_id: string;
+    tool_name: string;
+    arguments: any;
+    reason: string;
 }
 
 // ===== 扩展 Message =====

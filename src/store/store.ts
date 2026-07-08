@@ -10,12 +10,29 @@ import type { SkillConfig } from '../types/skill';
 // 接口定义
  /* 消息项接口，定义聊天消息的数据结构 */
 export interface Message {
-    role: 'user' | 'assistant';         // 消息发送者角色：'user' 表示用户，'assistant' 表示 AI 助手
+    id?: string;                        // 消息唯一 ID（工具消息/assistant 消息持久化需要）
+    role: 'user' | 'assistant' | 'tool' | 'system';  // 消息发送者角色：'tool' 为工具执行结果，'system' 为系统指令
     content: any;                       // 消息内容，支持文本或多模态内容（使用 any 类型以兼容不同格式）
     modelId?: string;                   // 生成回复的模型标识符，仅在 AI 助手回复时存在
     displayFiles?: AttachmentMeta[];    // 消息关联的附件元数据
     displayText?: string;               // 用于界面显示的纯文本内容（已脱敏或解析处理）
     reasoning?: string;                 // 模型原生思维链（reasoning_content），仅 assistant 消息可能携带
+    toolCallId?: string;                // role="tool" 时对应触发的 tool_call id（OpenAI API 要求配对）
+    name?: string;                      // role="tool" 时为被调用的函数名；role="assistant" 携带 tool_calls 时为 "assistant"
+    toolCalls?: ToolCallDisplay[];      // role="assistant" 时携带模型发起的工具调用请求（含前端 UI 状态 state/result/error）
+}
+
+/** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */
+export interface ToolCallDisplay {
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+    /** UI 状态：calling / success / error */
+    state?: 'calling' | 'success' | 'error';
+    /** 工具返回的结构化结果 */
+    result?: any;
+    /** 错误信息（state=error 时） */
+    error?: string;
 }
 
 export interface AttachmentMeta {
@@ -554,11 +571,6 @@ export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({})
 
 /** LLM 工具调用事件总线（ChatPage 监听） */
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
-
-/** 对话模式工具调用上限 */
-export const CHAT_TOOL_CALL_MAX_ROUNDS = 5;
-/** Agent 模式工具调用上限 */
-export const AGENT_TOOL_CALL_MAX_ROUNDS = 25;
 
 /**
  * 加载并初始化 MCP 服务器列表 + 同步后端已连接状态 + 自动启动标记为 autoStart 的 server

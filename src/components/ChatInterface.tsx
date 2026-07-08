@@ -9,6 +9,7 @@ import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import Icon from './Icon';
 import ReasoningButton from './ReasoningButton';
 import ToolCallBubble from './ToolCallBubble';
+import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
 import AgentModeSelector from './AgentModeSelector';
 import ProjectSelector from './ProjectSelector';
 
@@ -26,6 +27,8 @@ interface ChatInterfaceProps {
     handleSendMessage: () => void;
     handleStopGeneration: () => void;
     handleFileUpload: (path: string, type: 'file' | 'image') => Promise<void>;
+    pendingApprovals: PendingApproval[];
+    onResolveApproval: (approvalId: string) => void;
 }
 
 const UserMessageAvatar: Component = () => {
@@ -180,7 +183,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                         {(tc: any) => (
                                                             <ToolCallBubble
                                                                 toolCall={tc}
-                                                                state={tc.state ?? 'success'}
+                                                                state={tc.state ?? 'calling'}
                                                                 result={tc.result}
                                                                 error={tc.error}
                                                             />
@@ -250,6 +253,20 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         </>
                     )}
                     </For>
+                </Show>
+
+                {/* 工具调用审批气泡 */}
+                <Show when={props.pendingApprovals.length > 0}>
+                    <div class="mb-3 space-y-2">
+                        <For each={props.pendingApprovals}>
+                            {(approval) => (
+                                <ToolApprovalBubble
+                                    approval={approval}
+                                    onResolved={props.onResolveApproval}
+                                />
+                            )}
+                        </For>
+                    </div>
                 </Show>
             </div>
 

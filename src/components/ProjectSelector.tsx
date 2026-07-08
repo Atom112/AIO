@@ -16,6 +16,7 @@ import {
     saveLastAgentProjectId,
 } from '../store/store';
 import ProjectCreateModal from './ProjectCreateModal';
+import Icon from './Icon';
 
 let ref: HTMLDivElement | undefined;
 
@@ -48,20 +49,14 @@ export default function ProjectSelector() {
         <>
             <div class="relative" ref={ref}>
                 <button
-                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm
-                           bg-white/10 hover:bg-white/20 text-white/90 transition-colors
-                           border border-white/10 hover:border-white/20"
+                    type="button"
+                    class="reasoning-trigger"
+                    classList={{ 'is-active': !!currentProject() }}
                     onClick={() => setOpen(!open())}
                     title={currentProject() ? `项目: ${currentProject()!.name} (${currentProject()!.path})` : '选择工作目录'}
                 >
-                    <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                    </svg>
-                    <span class="max-w-[100px] truncate">{currentProject()?.name ?? '选择目录...'}</span>
-                    <svg class="w-3 h-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                    </svg>
+                    <Icon name="folder" size={15} class="reasoning-trigger-icon" />
+                    <span class="reasoning-trigger-label max-w-[100px] truncate">{currentProject()?.name ?? '选择目录'}</span>
                 </button>
 
                 <Show when={open()}>

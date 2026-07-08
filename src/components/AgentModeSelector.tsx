@@ -36,13 +36,6 @@ const MODE_COLORS: Record<string, string> = {
     plan:   'rgba(160,124,217,0.7)',
 };
 
-const MODE_BG: Record<string, string> = {
-    off:    'rgba(124,154,191,0.08)',
-    normal: 'rgba(124,217,160,0.08)',
-    auto:   'rgba(224,192,96,0.08)',
-    plan:   'rgba(160,124,217,0.08)',
-};
-
 const AgentModeSelector: Component = () => {
     const [open, setOpen] = createSignal(false);
     let containerRef: HTMLDivElement | undefined;
@@ -98,11 +91,10 @@ const AgentModeSelector: Component = () => {
         <div ref={containerRef} class="relative inline-block">
             <button
                 type="button"
-                class="flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer text-xs transition-all duration-200 select-none whitespace-nowrap"
+                class="reasoning-trigger"
+                classList={{ 'is-active': currentMode() !== 'off' }}
                 style={{
-                    background: MODE_BG[currentMode()] || MODE_BG.off,
-                    color: MODE_COLORS[currentMode()] || MODE_COLORS.off,
-                    border: currentMode() === 'off' ? '1px solid rgba(124,154,191,0.08)' : '1px solid transparent',
+                    color: currentMode() !== 'off' ? (MODE_COLORS[currentMode()] || MODE_COLORS.off) : undefined,
                     opacity: isDisabled() ? 0.4 : 1,
                 }}
                 title={isDisabled() ? '请先选择助手' : activeOption().desc}
@@ -111,17 +103,9 @@ const AgentModeSelector: Component = () => {
                     e.stopPropagation();
                     setOpen(!open());
                 }}
-                onMouseEnter={(e) => {
-                    if (!isDisabled()) e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-                }}
-                onMouseLeave={(e) => {
-                    if (!isDisabled()) {
-                        e.currentTarget.style.background = MODE_BG[currentMode()] || MODE_BG.off;
-                    }
-                }}
             >
-                <Icon name={activeOption().icon} size={13} />
-                <span>{activeOption().label}</span>
+                <Icon name={activeOption().icon} size={15} class="reasoning-trigger-icon" />
+                <span class="reasoning-trigger-label">{activeOption().label}</span>
             </button>
 
             {/* 下拉面板 */}

@@ -1,7 +1,10 @@
+use crate::core::permission::{self, PermissionAction};
 use crate::core::state::DbState;
+use crate::core::state::PendingApprovals;
 use crate::commands::attachment::sync_message_attachments;
 use crate::core::state::McpServerState;
 use crate::plugins::mcp::McpServerManager;
+use crate::utils::file_tools;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use crate::core::models::*;
@@ -574,9 +577,62 @@ pub async fn stop_llm_stream(
     Ok(())
 }
 
-/// 工具调用轮数上限：对话模式 5 轮，Agent 模式（normal/auto/plan）25 轮。
-const CHAT_TOOL_CALL_MAX_ROUNDS: u32 = 5;
-const AGENT_TOOL_CALL_MAX_ROUNDS: u32 = 25;
+
+/// 执行内置文件工具（in-process 直接调用，含权限检查和审批）。
+///
+/// 原 `mcp_fs_server.rs` 通过 stdio JSON-RPC 子进程提供文件工具，
+/// 但子进程断连导致 Agent 操作频繁失败。本函数跳过 MCP 通道，
+/// 直接调用 `file_tools::execute_file_tool`，权限模型与 `execute_tool_call` 保持一致。
+async fn execute_builtin_tool(
+    app: &AppHandle,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    project_id: Option<&str>,
+    agent_mode: &AgentMode,
+    token: &CancellationToken,
+) -> Result<ToolResult, String> {
+    let project_root = file_tools::resolve_project_root(app, project_id)?;
+
+    // 权限检查（与 execute_tool_call 保持一致，server_id 沿用 "__aio-filesystem__" 以兼容已有规则）
+    if *agent_mode != AgentMode::Off {
+        let custom_rules = permission::load_permissions(Some(&project_root)).rules;
+        let action = permission::check_permission(
+            tool_name,
+            "__aio-filesystem__",
+            arguments,
+            agent_mode,
+            &custom_rules,
+        );
+
+        match action {
+            PermissionAction::Deny => {
+                return Err(format!(
+                    "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
+                    tool_name
+                ));
+            }
+            PermissionAction::Ask => {
+                let pending = app.state::<PendingApprovals>();
+                let reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
+                let approval_fut = crate::commands::mcp::request_tool_approval(
+                    app,
+                    pending.inner(),
+                    "__aio-filesystem__",
+                    tool_name,
+                    arguments,
+                    &reason,
+                );
+                tokio::select! {
+                    _ = token.cancelled() => return Err("cancelled".into()),
+                    res = approval_fut => res?,
+                }
+            }
+            PermissionAction::Allow => {}
+        }
+    }
+
+    Ok(file_tools::execute_file_tool(tool_name, arguments, &project_root))
+}
 
 /// Agent 自驱循环命令（前端新流程主入口）。
 ///
@@ -628,11 +684,6 @@ pub async fn run_agent_turn(
     verify_tool_messages(&messages_for_api);
 
     let is_agent_mode = agent_mode != AgentMode::Off;
-    let max_rounds = if is_agent_mode {
-        AGENT_TOOL_CALL_MAX_ROUNDS
-    } else {
-        CHAT_TOOL_CALL_MAX_ROUNDS
-    };
 
     let token = CancellationToken::new();
     let token_inner = token.clone();
@@ -647,20 +698,33 @@ pub async fn run_agent_turn(
     let handle = tokio::spawn(async move {
         let client = http_client();
 
-        // 构建工具：plan 模式整轮不注入工具（与首轮一致，消除旧实现首轮/递归自相矛盾）。
+        // 构建工具：仅 Agent 模式（非 Off）且非 Plan 时才注入工具。
+        // Off（纯对话）模式绝不向模型暴露工具，避免模型擅自调用；Plan 模式整轮不注入工具。
+        // 内置文件工具始终注入（in-process 直接调用，无需 MCP 子进程连接）。
         // 在 spawn 内通过 AppHandle 解析全局状态，避免 tauri::State 借用逃逸。
-        let tools_enabled = !mcp_server_ids_c.is_empty() && agent_mode != AgentMode::Plan;
+        let tools_enabled = is_agent_mode && agent_mode != AgentMode::Plan;
         let (tools, tool_server_map) = if tools_enabled {
-            let mgr = app_c.state::<McpServerManager>();
-            let mcp_state = app_c.state::<McpServerState>();
-            build_tools_for_assistant(
-                &app_c,
-                mgr.inner(),
-                mcp_state.inner(),
-                &mcp_server_ids_c,
-                project_id_c.as_deref(),
-            )
-            .await
+            let (mut mcp_tools, mut mcp_map) = if !mcp_server_ids_c.is_empty() {
+                let mgr = app_c.state::<McpServerManager>();
+                let mcp_state = app_c.state::<McpServerState>();
+                build_tools_for_assistant(
+                    &app_c,
+                    mgr.inner(),
+                    mcp_state.inner(),
+                    &mcp_server_ids_c,
+                    project_id_c.as_deref(),
+                )
+                .await
+            } else {
+                (Vec::new(), std::collections::HashMap::new())
+            };
+            // 始终注入内置文件工具（in-process，跳过 MCP 子进程）
+            let file_specs = file_tools::get_file_tool_specs();
+            for spec in &file_specs {
+                mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
+            }
+            mcp_tools.extend(file_specs);
+            (mcp_tools, mcp_map)
         } else {
             (Vec::new(), std::collections::HashMap::new())
         };
@@ -687,19 +751,9 @@ pub async fn run_agent_turn(
                 },
             );
 
-            // 轮数上限：追加 system 提示，并以 tools=None 再跑最后一轮让模型总结，然后结束
-            let (round_msgs, round_tools) = if round > max_rounds {
-                messages_for_api.push(json!({
-                    "role": "system",
-                    "content": format!(
-                        "[System] 已达到最大工具调用轮数限制（{}轮）。请基于当前已有的工具执行结果总结回答，不要再调用工具。",
-                        max_rounds
-                    ),
-                }));
-                (messages_for_api.as_slice(), Option::<&[ToolSpec]>::None)
-            } else {
-                (messages_for_api.as_slice(), tools_slice)
-            };
+            // 不设轮数硬上限：复杂任务可能需要多轮工具调用，循环仅在模型不再发起工具调用
+            // （任务完成）或用户点停止（token 取消）时自然结束。
+            let (round_msgs, round_tools) = (messages_for_api.as_slice(), tools_slice);
 
             let round_result = stream_one_round(
                 &window,
@@ -754,8 +808,8 @@ pub async fn run_agent_turn(
             }
             messages_for_api.push(serde_json::Value::Object(asst_obj));
 
-            // 无工具调用 → 整轮结束
-            if round_result.tool_calls.is_empty() || round > max_rounds {
+            // 无工具调用 → 任务完成，整轮结束
+            if round_result.tool_calls.is_empty() {
                 break 'outer;
             }
 
@@ -766,21 +820,35 @@ pub async fn run_agent_turn(
                     break 'outer;
                 }
                 let server_id = tool_server_map.get(&tc.name).cloned();
-                let tool_result = match server_id {
-                    Some(sid) => {
-                        let args_val = serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
-                        crate::commands::mcp::execute_tool_call(
-                            &app_c,
-                            &sid,
-                            &tc.name,
-                            args_val,
-                            project_id_c.as_deref(),
-                            &agent_mode,
-                            &token_inner,
-                        )
-                        .await
+                let args_val: serde_json::Value =
+                    serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
+                let tool_result = if server_id.as_deref() == Some("__builtin__") {
+                    // 内置文件工具：in-process 直接执行，含权限检查和审批
+                    execute_builtin_tool(
+                        &app_c,
+                        &tc.name,
+                        &args_val,
+                        project_id_c.as_deref(),
+                        &agent_mode,
+                        &token_inner,
+                    )
+                    .await
+                } else {
+                    match server_id {
+                        Some(sid) => {
+                            crate::commands::mcp::execute_tool_call(
+                                &app_c,
+                                &sid,
+                                &tc.name,
+                                args_val,
+                                project_id_c.as_deref(),
+                                &agent_mode,
+                                &token_inner,
+                            )
+                            .await
+                        }
+                        None => Err(format!("未找到工具 {} 对应的 MCP server", tc.name)),
                     }
-                    None => Err(format!("未找到工具 {} 对应的 MCP server", tc.name)),
                 };
 
                 let (content_text, result_value, is_error) = match tool_result {

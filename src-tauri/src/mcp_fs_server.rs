@@ -1,5 +1,10 @@
 //! 内置文件系统 MCP Server — 直接实现 MCP JSON-RPC over stdio。
 //!
+//! ⚠ **已废弃（2025-07）**：Agent 模式现在通过 `utils/file_tools.rs` 直接 in-process 调用文件工具，
+//! 不再通过 stdio 子进程。本文件保留仅用于：
+//! 1. 外部 MCP 客户端通过 `--fs-server <path>` 启动独立文件系统 server
+//! 2. 向后兼容：已有脚本/配置可能直接调用 `aio --fs-server <path>`
+//!
 //! MCP 协议本身很简单（JSON-RPC 2.0 over stdin/stdout），
 //! 手写实现比引入 rmcp 更轻量，且避免了 rmcp 版本 API 兼容问题。
 
@@ -260,7 +265,7 @@ pub fn run(allowed_dir: String) {
     let server = FileServer { dir: allowed_dir };
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    let mut initialized = false;
+    let mut _initialized = false;
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -296,7 +301,7 @@ pub fn run(allowed_dir: String) {
             "notifications/initialized" => {
                 // 客户端发来的 initialized 通知，不需要回复
                 eprintln!("[aio-fs-server] received initialized notification");
-                initialized = true;
+                _initialized = true;
             }
             "tools/list" => {
                 let resp = respond(req.id.clone(), tools_list());

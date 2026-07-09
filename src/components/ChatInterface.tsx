@@ -1,4 +1,4 @@
-import { Component, For, Show, Setter, createSignal, createEffect, createMemo } from 'solid-js';
+import { Component, For, Show, Setter, createSignal, createEffect, createMemo, onCleanup, on } from 'solid-js';
 import Markdown from './Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
@@ -64,10 +64,162 @@ const UserMessageAvatar: Component = () => {
 
 const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     let textareaRef: HTMLTextAreaElement | undefined;
+    let scrollContainerRef: HTMLDivElement | undefined;
+    const [autoScroll, setAutoScroll] = createSignal(true);
+    // 抑制程序滚动触发的 scroll 事件，避免误判为用户滚动
+    let suppressScroll = false;
+    // 平滑滚动动画的 rAF ID
+    let smoothScrollRAF: number | undefined;
+    // 上一次记录到的历史消息数量，用于判断是否新增了消息
+    let lastHistoryLen = 0;
 
     const getModelLogo = (modelName: string) => {
         return getLogoByIds(null, modelName);
     };
+
+    /** 检测是否已滚动到底部（阈值 50px） */
+    const isAtBottom = () => {
+        if (!scrollContainerRef) return true;
+        const el = scrollContainerRef;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    };
+
+    /** 鼠标滚轮向上：立即停止自动滚动并取消进行中的平滑滚动 */
+    const handleWheel = (e: WheelEvent) => {
+        if (e.deltaY < 0) {
+            if (smoothScrollRAF !== undefined) {
+                cancelAnimationFrame(smoothScrollRAF);
+                smoothScrollRAF = undefined;
+            }
+            suppressScroll = false;
+            setAutoScroll(false);
+        }
+    };
+
+    /** 滚动事件：区分用户滚动与程序滚动 */
+    const handleScroll = () => {
+        if (suppressScroll) {
+            suppressScroll = false;
+            return;
+        }
+        setAutoScroll(isAtBottom());
+    };
+
+    /** 瞬时滚动到底部（流式期间使用，抑制 scroll 事件） */
+    const snapToBottom = () => {
+        if (!scrollContainerRef) return;
+        const el = scrollContainerRef;
+        const target = el.scrollHeight - el.clientHeight;
+        if (el.scrollTop < target) {
+            suppressScroll = true;
+            el.scrollTop = el.scrollHeight;
+        }
+    };
+
+    /** 平滑滚动到底部（rAF 动画，用于非流式场景） */
+    const smoothScrollToBottom = () => {
+        if (!scrollContainerRef) return;
+        const el = scrollContainerRef;
+        const target = el.scrollHeight - el.clientHeight;
+        const start = el.scrollTop;
+        const distance = target - start;
+        if (Math.abs(distance) < 2) {
+            el.scrollTop = target;
+            return;
+        }
+        if (smoothScrollRAF !== undefined) cancelAnimationFrame(smoothScrollRAF);
+        const duration = 300;
+        const startTime = performance.now();
+        const animate = (now: number) => {
+            if (!scrollContainerRef || !autoScroll()) {
+                smoothScrollRAF = undefined;
+                return;
+            }
+            const elapsed = now - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            suppressScroll = true;
+            scrollContainerRef.scrollTop = start + distance * eased;
+            if (progress < 1) {
+                smoothScrollRAF = requestAnimationFrame(animate);
+            } else {
+                smoothScrollRAF = undefined;
+            }
+        };
+        smoothScrollRAF = requestAnimationFrame(animate);
+    };
+
+    /** 切换话题时重置自动滚动与历史长度基线 */
+    createEffect(on(() => props.activeTopic?.id, () => {
+        setAutoScroll(true);
+        lastHistoryLen = props.activeTopic?.history?.length ?? 0;
+    }));
+
+    /** 生成状态变化：开始时重置自动滚动，结束时做一次收尾平滑滚动 */
+    createEffect(on(() => props.isThinking, (thinking, prev) => {
+        if (thinking && !prev) {
+            // 用户发送新消息，开始生成
+            setAutoScroll(true);
+        } else if (!thinking && prev) {
+            // 生成刚结束：内容可能刚刚完成渲染，做一次最终滚动后即停止
+            if (autoScroll() && scrollContainerRef) {
+                requestAnimationFrame(() => {
+                    if (autoScroll() && scrollContainerRef && !props.isThinking) {
+                        smoothScrollToBottom();
+                    }
+                });
+            }
+        }
+    }));
+
+    /** 非流式场景：仅在消息数量增加（新增消息）时平滑滚动，避免生成结束后内容重排反复吸附 */
+    createEffect(() => {
+        const history = props.activeTopic?.history;
+        const len = history?.length ?? 0;
+        const tid = props.activeTopic?.id;
+        void tid;
+
+        if (props.isThinking) {
+            lastHistoryLen = len;
+            return;
+        }
+        if (!autoScroll() || !scrollContainerRef) {
+            lastHistoryLen = len;
+            return;
+        }
+        if (len > lastHistoryLen) {
+            requestAnimationFrame(() => {
+                if (autoScroll() && !props.isThinking && scrollContainerRef) {
+                    smoothScrollToBottom();
+                }
+            });
+        }
+        lastHistoryLen = len;
+    });
+
+    /** 流式输出期间：rAF 循环跟随内容增长平滑滚动 */
+    createEffect(() => {
+        if (!props.isThinking || !autoScroll() || !scrollContainerRef) return;
+
+        let running = true;
+        const scroll = () => {
+            if (!running || !autoScroll()) return;
+            snapToBottom();
+            requestAnimationFrame(scroll);
+        };
+        const frameId = requestAnimationFrame(scroll);
+        onCleanup(() => {
+            running = false;
+            cancelAnimationFrame(frameId);
+        });
+    });
+
+    /** 组件销毁时清理平滑滚动动画 */
+    onCleanup(() => {
+        if (smoothScrollRAF !== undefined) {
+            cancelAnimationFrame(smoothScrollRAF);
+        }
+    });
 
     /** 计算最后一条用户消息的索引，用于显示"重新发送"等按钮 */
     const lastUserMsgIndex = createMemo(() => {
@@ -92,6 +244,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         <div class="flex flex-col flex-grow items-stretch rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full"
              style="background: rgba(18, 22, 35, 0.2); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.04);">
             <div
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
+                onWheel={handleWheel}
                 class={`flex-grow overflow-y-auto pb-[15px] transition-opacity duration-200 ease-out z-[1] ${props.isChangingTopic ? 'opacity-0' : 'opacity-100'}`}
             >
                 <Show when={isStartingLocalModel()}>

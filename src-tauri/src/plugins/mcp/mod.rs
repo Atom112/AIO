@@ -188,7 +188,6 @@ pub fn list_configs(app: &AppHandle) -> Vec<McpServerConfig> {
 }
 
 /// 列出合并后的 server 列表（全局 + 项目，项目优先）。
-/// 自动注入内置 filesystem MCP server。
 pub fn list_configs_merged(app: &AppHandle, project_id: Option<&str>) -> McpResult<Vec<McpServerConfig>> {
     let global = load_mcp_servers(app);
     let project = match project_id {
@@ -198,42 +197,7 @@ pub fn list_configs_merged(app: &AppHandle, project_id: Option<&str>) -> McpResu
         }
         None => McpServersFile::default(),
     };
-    let mut merged = merge_mcp_configs(&global, &project);
-
-    // 确保内置 filesystem MCP server 存在于合并结果中
-    let fs_id = "__aio-filesystem__".to_string();
-    if !merged.contains_key(&fs_id) {
-        let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "aio".to_string());
-        // 优先用传入的 project_id
-        let path = project_id
-            .and_then(|pid| resolve_project_path(app, pid).ok());
-        // 缺失时遍历所有项目取第一个
-        let path = path.or_else(|| {
-            let idx_path = app.path().app_data_dir().ok()?.join("projects.json");
-            let content = std::fs::read_to_string(&idx_path).ok()?;
-            let file: serde_json::Value = serde_json::from_str(&content).ok()?;
-            file["projects"].as_object()?.values().next()?.get("path")?.as_str().map(|s| s.to_string())
-        });
-        if let Some(project_path) = path {
-            merged.insert(fs_id.clone(), McpServerConfig {
-                id: fs_id,
-                display_name: "项目文件系统 (AIO 内置)".into(),
-                transport: crate::core::models::McpTransport::Stdio {
-                    command: exe,
-                    args: vec!["--fs-server".into(), project_path],
-                    env: Default::default(),
-                    cwd: None,
-                },
-                enabled_tools: vec![],
-                auto_start: true,
-                has_stored_secret: false,
-                from_catalog: None,
-            });
-        }
-    }
-
+    let merged = merge_mcp_configs(&global, &project);
     Ok(merged.into_values().collect())
 }
 
@@ -290,7 +254,6 @@ pub fn get_config(app: &AppHandle, id: &str) -> Option<McpServerConfig> {
 }
 
 /// 查找 MCP server 配置（合并视图：项目级优先）。
-/// 对于内置 `__aio-filesystem__`，project_id 缺失时自动遍历所有项目查找。
 pub fn get_config_merged(app: &AppHandle, id: &str, project_id: Option<&str>) -> Option<McpServerConfig> {
     // 1. 有 project_id → 精确查找项目
     if let Some(pid) = project_id {
@@ -303,42 +266,7 @@ pub fn get_config_merged(app: &AppHandle, id: &str, project_id: Option<&str>) ->
     }
     // 2. 全局查找
     let global = load_mcp_servers(app);
-    if let Some(cfg) = global.servers.get(id) {
-        return Some(cfg.clone());
-    }
-    // 3. 内置 filesystem server：project_id 明确时直接注入；缺失时遍历所有项目找一个
-    if id == "__aio-filesystem__" {
-        let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "aio".to_string());
-        // 优先用传入的 project_id
-        let path = project_id
-            .and_then(|pid| resolve_project_path(app, pid).ok());
-        // 如果没传 project_id，遍历所有项目取第一个（通常只有一个项目）
-        let path = path.or_else(|| {
-            let idx_path = app.path().app_data_dir().ok()?.join("projects.json");
-            let content = std::fs::read_to_string(&idx_path).ok()?;
-            let file: serde_json::Value = serde_json::from_str(&content).ok()?;
-            file["projects"].as_object()?.values().next()?.get("path")?.as_str().map(|s| s.to_string())
-        });
-        if let Some(project_path) = path {
-            return Some(McpServerConfig {
-                id: "__aio-filesystem__".into(),
-                display_name: "项目文件系统 (AIO 内置)".into(),
-                transport: crate::core::models::McpTransport::Stdio {
-                    command: exe,
-                    args: vec!["--fs-server".into(), project_path],
-                    env: Default::default(),
-                    cwd: None,
-                },
-                enabled_tools: vec![],
-                auto_start: true,
-                has_stored_secret: false,
-                from_catalog: None,
-            });
-        }
-    }
-    None
+    global.servers.get(id).cloned()
 }
 
 /// 轻量级时间戳（秒级 Unix time，不引入 chrono 依赖）

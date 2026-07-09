@@ -486,19 +486,30 @@ const ChatPage: Component = () => {
 	        role: 'system',
 	        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
 	      }] : []),
-	      ...currentTopic.history.map((m: any) => {
-	        const obj: any = { role: m.role, content: m.content };
-	        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
-	        if (m.name) obj.name = m.name;
-	        if (m.toolCalls && m.toolCalls.length > 0) {
-	          obj.tool_calls = m.toolCalls.map((tc: any) => ({
-	            id: tc.id,
-	            type: tc.type || 'function',
-	            function: { name: tc.function?.name, arguments: tc.function?.arguments },
-	          }));
-	        }
-	        return obj;
-	      }),
+		      ...currentTopic.history.flatMap((m: any) => {
+		        const obj: any = { role: m.role, content: m.content };
+		        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
+		        if (m.name) obj.name = m.name;
+		        if (m.toolCalls && m.toolCalls.length > 0) {
+		          obj.tool_calls = m.toolCalls.map((tc: any) => ({
+		            id: tc.id,
+		            type: tc.type || 'function',
+		            function: { name: tc.function?.name, arguments: tc.function?.arguments },
+		          }));
+		          // 从 toolCalls 元数据重建 role:tool 消息，使 API 上下文中每个 tool_call 都有配对响应。
+		          // 前端历史不单独存储 role:tool 消息，工具结果保存在 toolCall 的 content/error 字段中。
+		          const toolMsgs = m.toolCalls
+		            .filter((tc: any) => tc.state === 'success' || tc.state === 'error')
+		            .map((tc: any) => ({
+		              role: 'tool' as const,
+		              tool_call_id: tc.id,
+		              name: tc.function?.name,
+		              content: tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? ''),
+		            }));
+		          return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
+		        }
+		        return [obj];
+		      }),
 	      { role: 'user', content: newUserMsg.content }
 	    ];
 	    // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
@@ -802,7 +813,8 @@ const ChatPage: Component = () => {
           }
         );
       }),
-      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态（不再追加 role:tool 消息）
+      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与文本结果
+      // （content 文本用于后续构建 messagesForAI 时重建 role:tool 消息）
       listen<any>('llm-tool-result', (e) => {
         const { assistant_id, topic_id, tool_call_id, content, result, is_error } = e.payload;
         setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
@@ -812,7 +824,7 @@ const ChatPage: Component = () => {
                 ...m,
                 toolCalls: m.toolCalls.map((tc: any) =>
                   tc.id === tool_call_id
-                    ? { ...tc, state: is_error ? 'error' : 'success', result, error: is_error ? content : undefined }
+                    ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined }
                     : tc
                 ),
               };

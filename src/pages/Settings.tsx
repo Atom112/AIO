@@ -67,7 +67,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
             </Show>
 
             {/* 主内容区 */}
-            <div class="flex-1 overflow-hidden min-w-0">
+            <div class="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
                 {props.children}
             </div>
         </div>

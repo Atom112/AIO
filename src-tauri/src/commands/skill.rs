@@ -677,34 +677,96 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
     let mut discovered: Vec<NpxSkillInfo> = Vec::new();
     let existing = load_file(&app).skills;
 
-    // 1) 扫描 Claude Code 的 skill 注册目录
-    let claude_skills_dir = dirs::home_dir()
-        .map(|h| h.join(".claude").join("skills"))
-        .filter(|p| p.exists());
-    if let Some(ref dir) = claude_skills_dir {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    let pkg_json = path.join("package.json");
-                    if let Ok(content) = std::fs::read_to_string(&pkg_json) {
-                        if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
-                            let name = pkg["name"].as_str().unwrap_or("").to_string();
-                            if name.is_empty() {
+    // 1) 主要方式：通过 `npx skills list --json` 获取已安装 skill 列表
+    let skills_cli_output = std::process::Command::new("npx")
+        .args(["--yes", "skills", "list", "-g", "--json"])
+        .output();
+    if let Ok(output) = skills_cli_output {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json_list) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                for entry in &json_list {
+                    let name = entry["name"].as_str().unwrap_or("").to_string();
+                    let path_str = entry["path"].as_str().unwrap_or("").to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    // 从 skill 目录下的 package.json 获取版本和描述
+                    let skill_dir = std::path::Path::new(&path_str);
+                    let (version, description) = try_read_package_meta_from_dir(skill_dir);
+                    let already = existing.contains_key(&format!("npx-{}", name));
+                    if discovered.iter().any(|d| d.package_name == name) {
+                        continue;
+                    }
+                    discovered.push(NpxSkillInfo {
+                        package_name: name,
+                        version,
+                        description,
+                        source_path: path_str,
+                        source_type: "skills-cli".to_string(),
+                        already_imported: already,
+                    });
+                }
+            }
+        }
+    }
+
+    // 如果 skills CLI 没有返回结果，回退到目录扫描
+    if discovered.is_empty() {
+        // 2) 扫描已知的 skill 注册目录：~/.claude/skills/ 和 ~/.agents/skills/
+        let skill_dirs: Vec<std::path::PathBuf> = dirs::home_dir()
+            .into_iter()
+            .flat_map(|h| {
+                vec![
+                    h.join(".claude").join("skills"),
+                    h.join(".agents").join("skills"),
+                ]
+            })
+            .filter(|p| p.exists())
+            .collect();
+
+        for dir in &skill_dirs {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Some(info) = read_skill_dir_info(&path, &existing, &discovered) {
+                            discovered.push(info);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3) 扫描全局 npm 包中带有 skill 特征的包（回退方案）
+        let npm_output = std::process::Command::new("npm")
+            .args(["list", "-g", "--depth=0", "--json"])
+            .output();
+        if let Ok(output) = npm_output {
+            if output.status.success() {
+                if let Ok(json) =
+                    serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout))
+                {
+                    if let Some(deps) = json.get("dependencies").and_then(|v| v.as_object()) {
+                        for (name, info) in deps {
+                            let is_skill_pkg = name.contains("skill")
+                                || name.starts_with("@anthropic-ai/skill-")
+                                || name.starts_with("@claude/");
+                            if !is_skill_pkg {
                                 continue;
                             }
-                            let version = pkg["version"].as_str().unwrap_or("0.0.0").to_string();
-                            let description = pkg["description"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string();
+                            let version = info["version"].as_str().unwrap_or("0.0.0").to_string();
+                            let description = info["description"].as_str().unwrap_or("").to_string();
                             let already = existing.contains_key(&format!("npx-{}", name));
+                            if discovered.iter().any(|d| d.package_name == *name) {
+                                continue;
+                            }
                             discovered.push(NpxSkillInfo {
-                                package_name: name,
+                                package_name: name.clone(),
                                 version,
                                 description,
-                                source_path: path.to_string_lossy().to_string(),
-                                source_type: "claude-skills-dir".to_string(),
+                                source_path: format!("global-npm:{}", name),
+                                source_type: "global-npm".to_string(),
                                 already_imported: already,
                             });
                         }
@@ -714,48 +776,53 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         }
     }
 
-    // 2) 扫描全局 npm 包中带有 skill 特征的包
-    let npm_output = std::process::Command::new("npm")
-        .args(["list", "-g", "--depth=0", "--json"])
-        .output();
-    if let Ok(output) = npm_output {
-        if output.status.success() {
-            if let Ok(json) =
-                serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout))
-            {
-                if let Some(deps) = json.get("dependencies").and_then(|v| v.as_object()) {
-                    for (name, info) in deps {
-                        // 过滤：名称含 "skill" 或是常见 skill 前缀
-                        let is_skill_pkg = name.contains("skill")
-                            || name.starts_with("@anthropic-ai/skill-")
-                            || name.starts_with("@claude/");
-                        if !is_skill_pkg && !name.contains("skill") {
-                            continue;
-                        }
-                        let version = info["version"].as_str().unwrap_or("0.0.0").to_string();
-                        let description = info["description"].as_str().unwrap_or("").to_string();
-                        let already = existing.contains_key(&format!("npx-{}", name));
-                        // 避免重复（含 Claude dir 已找到的）
-                        if discovered.iter().any(|d| d.package_name == *name) {
-                            continue;
-                        }
-                        discovered.push(NpxSkillInfo {
-                            package_name: name.clone(),
-                            version,
-                            description,
-                            source_path: format!("global-npm:{}", name),
-                            source_type: "global-npm".to_string(),
-                            already_imported: already,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
     // 按名称排序
     discovered.sort_by(|a, b| a.package_name.cmp(&b.package_name));
     Ok(discovered)
+}
+
+/// 从 skill 目录的 package.json 读取版本和描述。
+fn read_skill_dir_info(
+    path: &std::path::Path,
+    existing: &std::collections::BTreeMap<String, SkillConfig>,
+    discovered: &[NpxSkillInfo],
+) -> Option<NpxSkillInfo> {
+    let pkg_json = path.join("package.json");
+    let content = std::fs::read_to_string(&pkg_json).ok()?;
+    let pkg: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let name = pkg["name"].as_str().unwrap_or("").to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let version = pkg["version"].as_str().unwrap_or("0.0.0").to_string();
+    let description = pkg["description"].as_str().unwrap_or("").to_string();
+    let already = existing.contains_key(&format!("npx-{}", name));
+    if discovered.iter().any(|d| d.package_name == name) {
+        return None;
+    }
+    Some(NpxSkillInfo {
+        package_name: name,
+        version,
+        description,
+        source_path: path.to_string_lossy().to_string(),
+        source_type: "skill-dir".to_string(),
+        already_imported: already,
+    })
+}
+
+/// 从 skill 目录的 package.json 读取版本和描述（用于 skills CLI JSON 结果）。
+fn try_read_package_meta_from_dir(dir: &std::path::Path) -> (String, String) {
+    let pkg_json = dir.join("package.json");
+    match std::fs::read_to_string(&pkg_json) {
+        Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(pkg) => (
+                pkg["version"].as_str().unwrap_or("0.0.0").to_string(),
+                pkg["description"].as_str().unwrap_or("").to_string(),
+            ),
+            Err(_) => ("0.0.0".to_string(), String::new()),
+        },
+        Err(_) => ("0.0.0".to_string(), String::new()),
+    }
 }
 
 /// 导入一个 npx skill 包：执行 npx 获取内容，保存到 Skill 池。

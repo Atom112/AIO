@@ -38,7 +38,9 @@ const MODE_COLORS: Record<string, string> = {
 
 const AgentModeSelector: Component = () => {
     const [open, setOpen] = createSignal(false);
+    const [showAutoWarning, setShowAutoWarning] = createSignal(false);
     let containerRef: HTMLDivElement | undefined;
+    let autoModeConfirmed = false; // 会话内记住，确认一次后不再弹窗
 
     const asst = () => datas.assistants.find(a => a.id === currentAssistantId()) as any;
     const currentMode = (): AgentMode => asst()?.agentMode || 'off';
@@ -57,6 +59,13 @@ const AgentModeSelector: Component = () => {
     onCleanup(() => document.removeEventListener('mousedown', onDocClick));
 
     const choose = async (mode: AgentMode) => {
+        // 切换到自动模式时，先展示风险提醒弹窗
+        if (mode === 'auto' && !autoModeConfirmed) {
+            setOpen(false);
+            setShowAutoWarning(true);
+            return;
+        }
+
         const id = currentAssistantId();
         if (!id) return;
         setDatas('assistants', a => a.id === id, 'agentMode', mode);
@@ -146,6 +155,64 @@ const AgentModeSelector: Component = () => {
                                 </button>
                             )}
                         </For>
+                    </div>
+                </div>
+            </Show>
+
+            {/* 自动模式风险提醒弹窗 */}
+            <Show when={showAutoWarning()}>
+                <div
+                    class="modal-overlay"
+                    style="z-index: 2100;"
+                    onClick={() => setShowAutoWarning(false)}
+                >
+                    <div
+                        class="modal-panel bg-dark-500 p-6 rounded-lg max-w-[420px] w-full"
+                        style="background: rgba(18,22,35,0.96); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(20px); box-shadow: 0 8px 32px rgba(0,0,0,0.5);"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div class="flex items-center gap-3 mb-4">
+                            <span style="font-size: 1.5rem;">⚠️</span>
+                            <h2 style="color: rgba(224,192,96,0.9); font-size: 1.1rem; font-weight: 600; margin: 0;">
+                                自动模式风险提醒
+                            </h2>
+                        </div>
+
+                        <div style="color: rgba(255,255,255,0.7); font-size: 0.875rem; line-height: 1.7; margin-bottom: 1.5rem;">
+                            <p style="margin: 0 0 0.75rem 0;">
+                                自动模式下，AI 将<strong style="color: rgba(224,192,96,0.9);">自主执行命令和文件操作</strong>，无需逐条您的确认。
+                            </p>
+                            <p style="margin: 0 0 0.75rem 0;">
+                                包括但不限于：执行系统命令、读取/修改/删除文件、调用 MCP 工具等。
+                            </p>
+                            <p style="margin: 0;">
+                                请确保你<strong style="color: rgba(255,255,255,0.85);">信任当前的工作目录内容</strong>，并了解 AI 可能产生的副作用。
+                            </p>
+                        </div>
+
+                        <div class="flex justify-end gap-3">
+                            <button
+                                type="button"
+                                class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-none"
+                                style="background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5);"
+                                onClick={() => setShowAutoWarning(false)}
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="button"
+                                class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-none"
+                                style="background: rgba(224,192,96,0.2); color: rgba(224,192,96,0.9); border: 1px solid rgba(224,192,96,0.3);"
+                                onClick={async () => {
+                                    autoModeConfirmed = true;
+                                    setShowAutoWarning(false);
+                                    // 执行实际的模式切换
+                                    await choose('auto');
+                                }}
+                            >
+                                我已知晓，进入自动模式
+                            </button>
+                        </div>
                     </div>
                 </div>
             </Show>

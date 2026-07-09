@@ -5,6 +5,7 @@ use crate::commands::attachment::sync_message_attachments;
 use crate::core::state::McpServerState;
 use crate::plugins::mcp::McpServerManager;
 use crate::utils::file_tools;
+use crate::utils::shell_tools;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use crate::core::models::*;
@@ -578,11 +579,10 @@ pub async fn stop_llm_stream(
 }
 
 
-/// 执行内置文件工具（in-process 直接调用，含权限检查和审批）。
+/// 执行内置工具（in-process 直接调用，含权限检查和审批）。
 ///
-/// 原 `mcp_fs_server.rs` 通过 stdio JSON-RPC 子进程提供文件工具，
-/// 但子进程断连导致 Agent 操作频繁失败。本函数跳过 MCP 通道，
-/// 直接调用 `file_tools::execute_file_tool`，权限模型与 `execute_tool_call` 保持一致。
+/// 覆盖文件工具（file_tools）和命令执行工具（shell_tools），跳过 MCP 通道。
+/// 权限模型与 `execute_tool_call` 保持一致。
 async fn execute_builtin_tool(
     app: &AppHandle,
     tool_name: &str,
@@ -613,7 +613,17 @@ async fn execute_builtin_tool(
             }
             PermissionAction::Ask => {
                 let pending = app.state::<PendingApprovals>();
-                let reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
+                let mut reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
+                // 命令执行：危险命令标注
+                if tool_name == "execute_command" {
+                    if let Some(cmd) = arguments["command"].as_str() {
+                        if let Some(risk) = shell_tools::check_dangerous_command(cmd) {
+                            reason = format!("⚠️ {risk}\n\n命令: {cmd}\n\n工具 '{}' 需要您的确认才能执行", tool_name);
+                        } else {
+                            reason = format!("命令: {cmd}\n\n工具 '{}' 需要您的确认才能执行", tool_name);
+                        }
+                    }
+                }
                 let approval_fut = crate::commands::mcp::request_tool_approval(
                     app,
                     pending.inner(),
@@ -631,7 +641,14 @@ async fn execute_builtin_tool(
         }
     }
 
-    Ok(file_tools::execute_file_tool(tool_name, arguments, &project_root))
+    // 分发执行
+    if tool_name == "execute_command" {
+        let command = arguments["command"].as_str().unwrap_or("");
+        let timeout = arguments["timeout"].as_u64();
+        Ok(shell_tools::execute_command(command, &project_root, timeout))
+    } else {
+        Ok(file_tools::execute_file_tool(tool_name, arguments, &project_root))
+    }
 }
 
 /// Agent 自驱循环命令（前端新流程主入口）。
@@ -718,12 +735,16 @@ pub async fn run_agent_turn(
             } else {
                 (Vec::new(), std::collections::HashMap::new())
             };
-            // 始终注入内置文件工具（in-process，跳过 MCP 子进程）
+            // 始终注入内置工具（in-process，跳过 MCP 子进程）
             let file_specs = file_tools::get_file_tool_specs();
             for spec in &file_specs {
                 mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
             }
             mcp_tools.extend(file_specs);
+            // 注入命令执行工具
+            let cmd_spec = shell_tools::get_command_tool_spec();
+            mcp_map.insert(cmd_spec.function.name.clone(), "__builtin__".into());
+            mcp_tools.push(cmd_spec);
             (mcp_tools, mcp_map)
         } else {
             (Vec::new(), std::collections::HashMap::new())

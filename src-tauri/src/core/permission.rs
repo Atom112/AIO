@@ -243,6 +243,16 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 path_pattern: None,
                 priority: 10,
             },
+            // 命令执行：自动允许（Auto 模式下无需逐条确认，进入前已有风险提醒）
+            PermissionRule {
+                id: "builtin-auto-allow-command".into(),
+                tool_pattern: "execute_command".into(),
+                server_id: None,
+                modes: vec![AgentMode::Auto],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
             // 其他 MCP 工具：自动允许
             PermissionRule {
                 id: "builtin-auto-allow-other-tools".into(),

@@ -1,8 +1,8 @@
-import { Component, For, Show, Setter, createSignal, createEffect } from 'solid-js';
+import { Component, For, Show, Setter, createSignal, createEffect, createMemo } from 'solid-js';
 import Markdown from './Markdown';
-import ThinkBlock from './ThinkBlock';
+import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, currentAssistantId, type AgentMode } from '../store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, type AgentMode } from '../store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
@@ -69,6 +69,17 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         return getLogoByIds(null, modelName);
     };
 
+    /** 计算最后一条用户消息的索引，用于显示"重新发送"等按钮 */
+    const lastUserMsgIndex = createMemo(() => {
+        const history = props.activeTopic?.history;
+        if (!history || !Array.isArray(history)) return -1;
+        let lastIdx = -1;
+        for (let i = 0; i < history.length; i++) {
+            if (history[i]?.role === 'user') lastIdx = i;
+        }
+        return lastIdx;
+    });
+
     /** 当前助手的工作模式，用于控制工作目录选择器显隐 */
     const currentAgentMode = (): AgentMode => {
         const id = currentAssistantId();
@@ -100,24 +111,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
                 <Show when={props.activeTopic}>
                     <For each={props.activeTopic?.history}>
-                        {(msg: any, index) => (
-                            <>
-                                <Show when={msg.role === 'tool'}>
-                                    {/* 紧凑左对齐工具结果日志条目 */}
-                                    <div class="flex items-center gap-1.5 pl-[52px] mb-2 pr-[10%] text-xs select-none" style="color: rgba(124,154,191,0.5);">
-                                        <span class="flex items-center justify-center w-[18px] h-[18px] rounded-full flex-shrink-0" style="background: rgba(124,154,191,0.08);">
-                                            <Icon src="/icons/app-logo/wrench.svg" class="w-[10px] h-[10px]" />
-                                        </span>
-                                        <span class="font-medium" style="color: rgba(255,255,255,0.55);">{msg.name}</span>
-                                        <span style="color: rgba(124,154,191,0.3);">→</span>
-                                        <span class="truncate min-w-0" style="color: rgba(124,154,191,0.4);">
-                                            {typeof msg.content === 'string'
-                                                ? (msg.content.length > 100 ? msg.content.slice(0, 100) + '...' : msg.content)
-                                                : '完成'}
-                                        </span>
-                                    </div>
-                                </Show>
-                                <Show when={msg.role !== 'tool'}>
+                        {(msg: any, index) => {
+                            if (msg.role === 'tool') return null;
+                            const isStreaming = createMemo(() => index() === props.typingIndex && props.isThinking && !msg.content);
+                            const isActiveRound = createMemo(() => index() === props.typingIndex && props.isThinking);
+                            return (
                                 <div
                                     class={`flex flex-col mb-3 pointer-events-auto animate-message-in ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
                                 >
@@ -170,30 +168,20 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             </Show>
 
                                             <div class="mt-1">
-                                                {/* assistant 原生思维链（reasoning_content）：折叠渲染于正文之上 */}
-                                                <Show when={msg.role === 'assistant' && msg.reasoning}>
-                                                    <ThinkBlock
-                                                        content={msg.reasoning}
-                                                        isStreaming={index() === props.typingIndex && props.isThinking && !msg.content}
+                                                {/* Agent 工作过程：reasoning + toolCalls 统一折叠 */}
+                                                <Show when={msg.role === 'assistant' && (msg.reasoning || msg.interimContent || (msg as any).toolCalls?.length > 0)}>
+                                                    <AgentProcessBlock
+                                                        reasoning={msg.reasoning}
+                                                        toolCalls={(msg as any).toolCalls}
+                                                        interimContent={msg.interimContent}
+                                                        isActive={isActiveRound()}
+                                                        startTime={msg.agentStartTime}
                                                     />
                                                 </Show>
-                                                {/* assistant 携带 tool_calls：渲染 ToolCallBubble */}
-                                                <Show when={msg.role === 'assistant' && (msg as any).toolCalls && (msg as any).toolCalls.length > 0}>
-                                                    <For each={(msg as any).toolCalls}>
-                                                        {(tc: any) => (
-                                                            <ToolCallBubble
-                                                                toolCall={tc}
-                                                                state={tc.state ?? 'calling'}
-                                                                result={tc.result}
-                                                                error={tc.error}
-                                                            />
-                                                        )}
-                                                    </For>
-                                                </Show>
                                                 <Show
-                                                    when={msg.role === 'assistant' && !msg.content && !(msg as any).toolCalls && !msg.reasoning}
+                                                    when={msg.role === 'assistant' && !msg.content && !(msg as any).toolCalls?.length && !msg.reasoning}
                                                     fallback={
-                                                        <Show when={msg.role !== 'tool' && !(msg as any).toolCalls}>
+                                                        <Show when={msg.role !== 'tool'}>
                                                             <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
                                                         </Show>
                                                     }
@@ -212,35 +200,104 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             </div>
                                         </Show>
 
-                                        <div class={`flex mt-1 px-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-[5] ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}>
+                                        {/* 消息操作按钮组：始终可见 */}
+                                        <div class={`flex mt-1.5 px-[4px] z-[5] gap-1.5 flex-wrap ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}>
+                                            {/* 复制按钮（每条消息都有） */}
                                             <button
-                                                class="flex items-center gap-1 relative bg-transparent rounded-lg cursor-pointer text-[13px] px-3 py-1 transition-all duration-200"
-                                                style="border: 1px solid rgba(124,154,191,0.1); color: rgba(124,154,191,0.6);"
+                                                class="msg-action-btn"
+                                                style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
                                                 onClick={(e) => {
                                                     const currentBtn = e.currentTarget;
                                                     const text = msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content;
                                                     if (!text) return;
                                                     navigator.clipboard.writeText(text).then(() => {
-                                                        const label = currentBtn.querySelector('span');
+                                                        const label = currentBtn.querySelector('.action-label') as HTMLElement | null;
                                                         if (label) {
                                                             const originalText = label.innerText;
                                                             currentBtn.style.color = '#4af908';
                                                             currentBtn.style.borderColor = '#4af908';
+                                                            label.style.maxWidth = '60px';
+                                                            label.style.opacity = '1';
                                                             label.innerText = '已复制';
                                                             setTimeout(() => {
                                                                 currentBtn.style.color = '';
                                                                 currentBtn.style.borderColor = '';
+                                                                label.style.maxWidth = '';
+                                                                label.style.opacity = '';
                                                                 label.innerText = originalText;
                                                             }, 2000);
                                                         }
                                                     });
                                                 }}
-                                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(124,154,191,0.06)'; e.currentTarget.style.borderColor = 'rgba(124,154,191,0.2)'; }}
-                                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(124,154,191,0.1)'; }}
                                             >
-                                                <Icon src="/icons/app-logo/clipboard-copy.svg" class="w-[14px] h-[14px]" />
-                                                <span>复制</span>
+                                                <Icon src="/icons/app-logo/clipboard-copy.svg" class="w-[13px] h-[13px]" />
+                                                <span class="action-label">复制</span>
                                             </button>
+
+                                            {/* 最后一条用户消息：重新发送 + 编辑后重发 */}
+                                            <Show when={index() === lastUserMsgIndex() && msg.role === 'user' && (msg.content || msg.displayText)}>
+                                                <button
+                                                    class="msg-action-btn"
+                                                    style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
+                                                    onClick={async () => {
+                                                        const text = msg.displayText !== undefined ? msg.displayText : msg.content;
+                                                        if (!text) return;
+                                                        if (props.isThinking) {
+                                                            props.handleStopGeneration();
+                                                            await new Promise(r => setTimeout(r, 150));
+                                                        }
+                                                        const asstId = currentAssistantId();
+                                                        const tId = currentTopicId();
+                                                        if (asstId && tId && msg.id) {
+                                                            try {
+                                                                await invoke('delete_topic_message', { topicId: tId, messageId: msg.id });
+                                                            } catch (e) {
+                                                                console.error('删除消息失败:', e);
+                                                            }
+                                                            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== msg.id));
+                                                        }
+                                                        props.setInputMessage(text);
+                                                        setTimeout(() => props.handleSendMessage(), 0);
+                                                    }}
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-[13px] h-[13px]">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
+                                                    </svg>
+                                                    <span class="action-label">重新发送</span>
+                                                </button>
+                                                <button
+                                                    class="msg-action-btn"
+                                                    style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
+                                                    onClick={async () => {
+                                                        const text = msg.displayText !== undefined ? msg.displayText : msg.content;
+                                                        if (!text) return;
+                                                        if (props.isThinking) {
+                                                            props.handleStopGeneration();
+                                                            await new Promise(r => setTimeout(r, 150));
+                                                        }
+                                                        const asstId = currentAssistantId();
+                                                        const tId = currentTopicId();
+                                                        if (asstId && tId && msg.id) {
+                                                            try {
+                                                                await invoke('delete_topic_message', { topicId: tId, messageId: msg.id });
+                                                            } catch (e) {
+                                                                console.error('删除消息失败:', e);
+                                                            }
+                                                            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== msg.id));
+                                                        }
+                                                        props.setInputMessage(text);
+                                                        if (textareaRef) {
+                                                            textareaRef.focus();
+                                                            textareaRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                        }
+                                                    }}
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-[13px] h-[13px]">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                                                    </svg>
+                                                    <span class="action-label">编辑后重发</span>
+                                                </button>
+                                            </Show>
                                         </div>
                                     </div>
 
@@ -249,9 +306,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </Show>
                                 </div>
                             </div>
-                            </Show>
-                        </>
-                    )}
+                        );
+                    }}
                     </For>
                 </Show>
 

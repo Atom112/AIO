@@ -675,9 +675,39 @@ const ChatPage: Component = () => {
         setIsDragging(false);
         for (const p of e.payload.paths) await handleFileUpload(p, 'file');
       }),
-      // 新一轮 LLM 调用开始：push 空 assistant 占位消息（整轮多轮工具调用共享一条流）
+      // 新一轮 LLM 调用开始：多轮 Agent 工作时复用同一条 assistant 消息
       listen<any>('llm-round-start', (e) => {
-        const { assistant_id, topic_id } = e.payload;
+        const { assistant_id, topic_id, round } = e.payload;
+
+        // 后续轮次：将前一伦的 content + reasoning 累积到 interimContent，复用同一条消息
+        if (round > 1) {
+          const asst = datas.assistants.find(a => a.id === assistant_id);
+          const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
+          if (topic) {
+            const lastIdx = topic.history.length - 1;
+            const lastMsg = topic.history[lastIdx];
+            if (lastMsg?.role === 'assistant') {
+              let interim = lastMsg.interimContent || '';
+              if (lastMsg.reasoning?.trim()) {
+                interim += (interim ? '\n\n' : '') + lastMsg.reasoning.trim();
+              }
+              if (lastMsg.content?.trim()) {
+                interim += (interim ? '\n\n' : '') + lastMsg.content.trim();
+              }
+              setDatas('assistants', a => a.id === assistant_id,
+                'topics', t => t.id === topic_id,
+                'history', lastIdx, {
+                  interimContent: interim,
+                  content: '',
+                  reasoning: '',
+                });
+              // 打字机索引保持不变（仍指向同一条消息）
+              return;
+            }
+          }
+        }
+
+        // 第一轮：创建新 assistant 占位消息
         const currentMdl = selectedModel();
         setDatas('assistants', a => a.id === assistant_id, 'topics', t => t.id === topic_id,
           'history', h => [...h, {
@@ -686,6 +716,7 @@ const ChatPage: Component = () => {
             content: "",
             modelId: currentMdl?.model_id,
             reasoning: '',
+            agentStartTime: Date.now(),
           }]);
         // 设置打字机索引为新 assistant 消息位置
         const asst = datas.assistants.find(a => a.id === assistant_id);
@@ -771,26 +802,23 @@ const ChatPage: Component = () => {
           }
         );
       }),
-      // 工具执行结果：更新气泡状态 + 追加 role:tool 消息（由后端执行完后 emit）
+      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态（不再追加 role:tool 消息）
       listen<any>('llm-tool-result', (e) => {
-        const { assistant_id, topic_id, tool_call_id, name, content, result, is_error } = e.payload;
+        const { assistant_id, topic_id, tool_call_id, content, result, is_error } = e.payload;
         setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
-          'history', (h: any[]) => [
-            ...h.map((m: any) => {
-              if (m.role === 'assistant' && m.toolCalls) {
-                return {
-                  ...m,
-                  toolCalls: m.toolCalls.map((tc: any) =>
-                    tc.id === tool_call_id
-                      ? { ...tc, state: is_error ? 'error' : 'success', result, error: is_error ? content : undefined }
-                      : tc
-                  ),
-                };
-              }
-              return m;
-            }),
-            { id: crypto.randomUUID(), role: 'tool' as const, content, toolCallId: tool_call_id, name },
-          ]
+          'history', (h: any[]) => h.map((m: any) => {
+            if (m.role === 'assistant' && m.toolCalls) {
+              return {
+                ...m,
+                toolCalls: m.toolCalls.map((tc: any) =>
+                  tc.id === tool_call_id
+                    ? { ...tc, state: is_error ? 'error' : 'success', result, error: is_error ? content : undefined }
+                    : tc
+                ),
+              };
+            }
+            return m;
+          })
         );
       }),
       // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）

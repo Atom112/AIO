@@ -20,6 +20,8 @@ export interface Message {
     toolCallId?: string;                // role="tool" 时对应触发的 tool_call id（OpenAI API 要求配对）
     name?: string;                      // role="tool" 时为被调用的函数名；role="assistant" 携带 tool_calls 时为 "assistant"
     toolCalls?: ToolCallDisplay[];      // role="assistant" 时携带模型发起的工具调用请求（含前端 UI 状态 state/result/error）
+    agentStartTime?: number;             // Agent 轮次开始时间戳（ms），用于计算工作耗时
+    interimContent?: string;             // 多轮 Agent 工作中，中间轮次的阶段性总结文本累积
 }
 
 /** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */

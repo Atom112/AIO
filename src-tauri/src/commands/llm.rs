@@ -948,6 +948,20 @@ pub async fn append_message(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn delete_topic_message(
+    state: tauri::State<'_, DbState>,
+    topic_id: String,
+    message_id: String,
+) -> Result<(), String> {
+    let conn = (*state).0.lock().unwrap();
+    conn.execute(
+        "DELETE FROM messages WHERE id = ?1 AND topic_id = ?2",
+        params![message_id, topic_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 从消息内容中提取纯文本，多模态数组（OpenAI vision 格式）只保留 text 部分。
 fn extract_text_content(content: &serde_json::Value) -> String {
     match content {

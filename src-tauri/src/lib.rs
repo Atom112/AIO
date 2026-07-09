@@ -78,6 +78,7 @@ pub fn run() {
             commands::config::upload_avatar,
             commands::llm::summarize_history,
             commands::llm::append_message,
+            commands::llm::delete_topic_message,
             commands::llm::generate_topic_title,
             // 云端后端鉴权（集中在 cloud_backend 模块）
             cloud_backend::auth::login_to_backend,

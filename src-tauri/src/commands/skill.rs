@@ -27,10 +27,16 @@ struct MarketCacheEntry {
 }
 
 fn skills_file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
+    let dir = app.path()
         .app_data_dir()
-        .map(|dir| dir.join(SKILLS_FILE))
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            let msg = format!("app_data_dir 解析失败: {e}");
+            tracing::error!("[skills] {msg}");
+            msg
+        })?;
+    let path = dir.join(SKILLS_FILE);
+    tracing::info!("[skills] 数据文件路径: {}", path.display());
+    Ok(path)
 }
 
 fn market_cache_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -61,21 +67,52 @@ fn save_market_cache(app: &AppHandle, cache: &MarketCacheFile) -> Result<(), Str
 
 fn load_file(app: &AppHandle) -> SkillsFile {
     let Ok(path) = skills_file_path(app) else {
+        tracing::warn!("[skills] load_file: 路径解析失败，返回空配置");
         return SkillsFile::default();
     };
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
+    if !path.exists() {
+        tracing::info!("[skills] load_file: 文件不存在 ({})，返回空配置", path.display());
+        return SkillsFile::default();
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str::<SkillsFile>(&content) {
+            Ok(file) => {
+                tracing::info!("[skills] load_file: 加载 {} 条 skill (from {})", file.skills.len(), path.display());
+                file
+            }
+            Err(e) => {
+                tracing::error!("[skills] load_file: JSON 解析失败 ({}): {e}", path.display());
+                SkillsFile::default()
+            }
+        },
+        Err(e) => {
+            tracing::error!("[skills] load_file: 读取文件失败 ({}): {e}", path.display());
+            SkillsFile::default()
+        }
+    }
 }
 
 fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
     let path = skills_file_path(app)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            let msg = format!("创建目录失败: {e}");
+            tracing::error!("[skills] save_file: {msg} ({})", parent.display());
+            msg
+        })?;
     }
-    let content = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    let content = serde_json::to_string_pretty(file).map_err(|e| {
+        let msg = format!("序列化 skills 失败: {e}");
+        tracing::error!("[skills] save_file: {msg}");
+        msg
+    })?;
+    std::fs::write(&path, &content).map_err(|e| {
+        let msg = format!("写入文件失败: {e}");
+        tracing::error!("[skills] save_file: {msg} ({})", path.display());
+        msg
+    })?;
+    tracing::info!("[skills] save_file: 保存 {} 条 skill → {}", file.skills.len(), path.display());
+    Ok(())
 }
 
 // ====== 项目级 Skill 文件操作 ======
@@ -84,22 +121,49 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
 fn load_project_file(project_path: &str) -> SkillsFile {
     let path = crate::commands::project::project_skills_path(project_path);
     if !path.exists() {
+        tracing::info!("[skills] load_project_file: 文件不存在 ({})，返回空配置", path.display());
         return SkillsFile::default();
     }
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match serde_json::from_str::<SkillsFile>(&content) {
+            Ok(file) => {
+                tracing::info!("[skills] load_project_file: 加载 {} 条 skill (from {})", file.skills.len(), path.display());
+                file
+            }
+            Err(e) => {
+                tracing::error!("[skills] load_project_file: JSON 解析失败 ({}): {e}", path.display());
+                SkillsFile::default()
+            }
+        },
+        Err(e) => {
+            tracing::error!("[skills] load_project_file: 读取文件失败 ({}): {e}", path.display());
+            SkillsFile::default()
+        }
+    }
 }
 
 /// 保存项目级 skills.json。
 fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String> {
     let path = crate::commands::project::project_skills_path(project_path);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            let msg = format!("创建目录失败: {e}");
+            tracing::error!("[skills] save_project_file: {msg} ({})", parent.display());
+            msg
+        })?;
     }
-    let content = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    let content = serde_json::to_string_pretty(file).map_err(|e| {
+        let msg = format!("序列化 skills 失败: {e}");
+        tracing::error!("[skills] save_project_file: {msg}");
+        msg
+    })?;
+    std::fs::write(&path, &content).map_err(|e| {
+        let msg = format!("写入文件失败: {e}");
+        tracing::error!("[skills] save_project_file: {msg} ({})", path.display());
+        msg
+    })?;
+    tracing::info!("[skills] save_project_file: 保存 {} 条 skill → {}", file.skills.len(), path.display());
+    Ok(())
 }
 
 /// 通过 project_id 解析项目路径。

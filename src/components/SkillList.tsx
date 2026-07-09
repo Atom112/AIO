@@ -1,4 +1,4 @@
-import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { Component, For, Show, createMemo, createSignal, createEffect, on, onMount } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills, currentProjectId, currentProject } from '../store/store';
@@ -175,7 +175,7 @@ const SkillList: Component = () => {
             && Date.now() - initialCache.updatedAt < MARKET_CACHE_TTL_MS;
         setLoading(!initialCache?.markets.all);
         try {
-            const localList = await invoke<SkillConfig[]>('list_skills');
+            const localList = await invoke<SkillConfig[]>('list_skills', { projectId: projectId() });
             setSkills(Object.fromEntries(localList.map(skill => [skill.id, skill])));
             if (cacheIsFresh) return;
 
@@ -203,6 +203,16 @@ const SkillList: Component = () => {
             setLoading(false);
         }
     });
+
+    // 监听 scope 切换，自动重新加载对应范围的 Skill 列表
+    createEffect(on(projectId, async (pid) => {
+        try {
+            const list = await invoke<SkillConfig[]>('list_skills', { projectId: pid });
+            setSkills(Object.fromEntries(list.map(skill => [skill.id, skill])));
+        } catch (e) {
+            console.warn('切换 Skill 范围失败:', e);
+        }
+    }, { defer: true }));
 
     const filteredMarketSkills = createMemo(() => {
         const keyword = query().trim().toLowerCase();
@@ -367,8 +377,8 @@ const SkillList: Component = () => {
                             npx 发现
                         </button>
                     </div>
-                    {/* 在已下载模式下且存在活跃项目时，显示作用域切换 */}
-                    {view() === 'downloaded' && currentProjectId() && (
+                    {/* 存在活跃项目时，显示作用域切换（市场/已下载/npx 均可看到） */}
+                    {currentProjectId() && (
                         <div class="flex items-center gap-1 p-1 rounded-lg" style="background: rgba(255,255,255,0.04);">
                             <button class="px-2.5 py-1 rounded-md text-xs"
                                 classList={{ 'bg-pri-20 text-pri': scope() === 'global' }}

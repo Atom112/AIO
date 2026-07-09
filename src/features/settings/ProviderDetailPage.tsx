@@ -14,18 +14,18 @@ import {
     providerConfigs,
     setProviderConfigs,
     modelsCatalog,
-} from '../store/store';
-import { loadModelsCatalog } from '../utils/models';
+} from '../../core/store/store';
+import { loadModelsCatalog } from '../../core/utils/models';
 import {
     type ProviderConfig,
     type FetchedModel,
     type TestConnectionResult,
     listProviderModels,
-} from '../utils/models';
-import { getProviderLogo } from '../utils/modelLogo';
-import ModelRow from '../components/ModelRow';
-import Icon from '../components/Icon';
-import Dropdown from '../components/Dropdown';
+} from '../../core/utils/models';
+import { getProviderLogo } from '../../core/utils/modelLogo';
+import ModelRow from '../../shared/components/ModelRow';
+import Icon from '../../shared/components/Icon';
+import Dropdown from '../../shared/components/Dropdown';
 
 type SortKey = 'releaseDesc' | 'nameAsc';
 

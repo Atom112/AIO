@@ -7,7 +7,7 @@ import { Router, Route, Navigate } from '@solidjs/router';
 import { lazy, Suspense } from 'solid-js';
 import Layout from './Layout.tsx';
 import './index.css';
-import { initMcpServers, initSkills, initProjects } from './store/store';
+import { initMcpServers, initSkills, initProjects } from './core/store/store';
 
 // 应用启动时初始化项目列表
 initProjects();
@@ -15,20 +15,20 @@ initProjects();
 initMcpServers();
 initSkills();
 
-const Settings = lazy(() => import('./pages/Settings.tsx'));
-const ProviderList = lazy(() => import('./components/ProviderList.tsx'));
-const ProviderDetail = lazy(() => import('./pages/ProviderDetail.tsx'));
-const AccountSettings = lazy(() => import('./components/AccountSettings.tsx'));
-const AppSettings = lazy(() => import('./components/AppSettings.tsx'));
-const McpServerList = lazy(() => import('./components/McpServerList.tsx'));
-const SkillList = lazy(() => import('./components/SkillList.tsx'));
+const Settings = lazy(() => import('./features/settings/SettingsPage'));
+const ProviderList = lazy(() => import('./features/settings/components/ProviderList'));
+const ProviderDetail = lazy(() => import('./features/settings/ProviderDetailPage'));
+const AccountSettings = lazy(() => import('./features/settings/components/AccountSettings'));
+const AppSettings = lazy(() => import('./features/settings/components/AppSettings'));
+const McpServerList = lazy(() => import('./features/settings/components/McpServerList'));
+const SkillList = lazy(() => import('./features/settings/components/SkillList'));
 
 render(
   () => (
     <Suspense fallback={<div class="loading-container">Loading...</div>}>
       <Router root={Layout}>
         <Route path="/" component={() => <Navigate href="/chat" />} />
-        <Route path="/chat" component={lazy(() => import('./pages/Chat.tsx'))} />
+        <Route path="/chat" component={lazy(() => import('./features/chat/ChatPage'))} />
         <Route path="/settings" component={Settings}>
           <Route path="" component={ProviderList} />
           <Route path="/provider/:providerId" component={ProviderDetail} />

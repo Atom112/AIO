@@ -8,13 +8,13 @@ import {
   pendingRenameRequest, setPendingRenameRequest,
   mcpServers, mcpServerStatus, resolveAssistantSkills,
   currentProjectId, currentProject,
-} from '../store/store';
-import { buildAgentSystemPrompt } from '../core/agent-prompts';
-import AssistantSidebar from '../components/AssistantSidebar';
-import AssistantSettingsModal from '../components/AssistantSettingsModal';
-import ChatInterface from '../components/ChatInterface';
-import TopicSidebar from '../components/TopicSidebar';
-import type { PendingApproval } from '../components/ToolApprovalBubble';
+} from '../../core/store/store';
+import { buildAgentSystemPrompt } from '../../core/agent-prompts';
+import AssistantSidebar from './components/AssistantSidebar';
+import AssistantSettingsModal from './components/AssistantSettingsModal';
+import ChatInterface from './components/ChatInterface';
+import TopicSidebar from './components/TopicSidebar';
+import type { PendingApproval } from './components/ToolApprovalBubble';
 
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = "default-assistant-id";
@@ -690,7 +690,7 @@ const ChatPage: Component = () => {
       listen<any>('llm-round-start', (e) => {
         const { assistant_id, topic_id, round } = e.payload;
 
-        // 后续轮次：将前一伦的 content + reasoning 累积到 interimContent，复用同一条消息
+        // 后续轮次：关闭上一轮的步骤，准备新轮次（不再整体压扁到 interimContent）
         if (round > 1) {
           const asst = datas.assistants.find(a => a.id === assistant_id);
           const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
@@ -698,17 +698,20 @@ const ChatPage: Component = () => {
             const lastIdx = topic.history.length - 1;
             const lastMsg = topic.history[lastIdx];
             if (lastMsg?.role === 'assistant') {
-              let interim = lastMsg.interimContent || '';
-              if (lastMsg.reasoning?.trim()) {
-                interim += (interim ? '\n\n' : '') + lastMsg.reasoning.trim();
-              }
-              if (lastMsg.content?.trim()) {
-                interim += (interim ? '\n\n' : '') + lastMsg.content.trim();
-              }
+              // 关闭当前运行的步骤
+              const now = Date.now();
+              setDatas('assistants', a => a.id === assistant_id,
+                'topics', t => t.id === topic_id,
+                'history', lastIdx, 'agentSteps', (steps: any[] = []) => {
+                  if (steps.length === 0) return steps;
+                  const last = steps[steps.length - 1];
+                  if (last.status !== 'running') return steps;
+                  return [...steps.slice(0, -1), { ...last, status: 'complete', duration: now - last.timestamp }];
+                });
+              // 重置 content / reasoning，准备接收新轮次输出
               setDatas('assistants', a => a.id === assistant_id,
                 'topics', t => t.id === topic_id,
                 'history', lastIdx, {
-                  interimContent: interim,
                   content: '',
                   reasoning: '',
                 });
@@ -728,6 +731,7 @@ const ChatPage: Component = () => {
             modelId: currentMdl?.model_id,
             reasoning: '',
             agentStartTime: Date.now(),
+            agentSteps: [],
           }]);
         // 设置打字机索引为新 assistant 消息位置
         const asst = datas.assistants.find(a => a.id === assistant_id);
@@ -751,6 +755,24 @@ const ChatPage: Component = () => {
               }
             }
           }
+          // 关闭最后一个步骤
+          const finishTime = Date.now();
+          setDatas('assistants', (a: any) => a.id === assistant_id,
+            'topics', (t: any) => t.id === topic_id,
+            'history', (h: any[]) => {
+              const lastIdx = h.length - 1;
+              if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+              const steps: any[] = h[lastIdx].agentSteps || [];
+              if (steps.length === 0) return h;
+              return [...h.slice(0, lastIdx), {
+                ...h[lastIdx],
+                agentSteps: steps.map((s: any, i: number) =>
+                  i === steps.length - 1 && s.status === 'running'
+                    ? { ...s, status: 'complete', duration: finishTime - s.timestamp }
+                    : s
+                ),
+              }];
+            });
           setIsThinking(false);
           setTypingIndex(null);
           saveSingleAssistantToBackend(assistant_id);
@@ -768,13 +790,40 @@ const ChatPage: Component = () => {
         if (topic) {
           const lastIdx = topic.history.length - 1; // 最后一条消息（AI 回复）
           if (lastIdx >= 0) {
+            // 追加到 content 字段（保持向后兼容）
             setDatas('assistants', a => a.id === assistant_id,
               'topics', t => t.id === topic_id,
               'history', lastIdx, 'content', (old: string) => old + content);
+            // 构建 agentSteps 时间线：若最后一步不是 content 则新建，否则追加
+            setDatas('assistants', a => a.id === assistant_id,
+              'topics', t => t.id === topic_id,
+              'history', lastIdx, 'agentSteps', (steps: any[] = []) => {
+                const lastStep = steps[steps.length - 1];
+                if (lastStep && lastStep.type === 'content' && lastStep.status === 'running') {
+                  // 追加到当前 content 步骤
+                  return [...steps.slice(0, -1), {
+                    ...lastStep,
+                    contentText: (lastStep.contentText || '') + content,
+                  }];
+                }
+                // 关闭上一步（如果仍在运行），新建 content 步骤
+                const now = Date.now();
+                const closed = lastStep && lastStep.status === 'running'
+                  ? [...steps.slice(0, -1), { ...lastStep, status: 'complete', duration: now - lastStep.timestamp }]
+                  : steps;
+                return [...closed, {
+                  id: crypto.randomUUID(),
+                  type: 'content',
+                  timestamp: now,
+                  status: 'running',
+                  contentText: content,
+                }];
+              });
           }
         }
       }),
       // 思维链片段追加：原生 reasoning_content 流式累积到对应消息的 reasoning 字段
+      // 同时构建 agentSteps 时间线中的 thinking 步骤
       listen<any>('llm-reasoning', (e) => {
         const { assistant_id, topic_id, content } = e.payload;
         const asst = datas.assistants.find(a => a.id === assistant_id);
@@ -782,54 +831,105 @@ const ChatPage: Component = () => {
         if (topic) {
           const lastIdx = topic.history.length - 1;
           if (lastIdx >= 0) {
+            // 追加到 reasoning 字段（保持向后兼容）
             setDatas('assistants', a => a.id === assistant_id,
               'topics', t => t.id === topic_id,
               'history', lastIdx, 'reasoning', (old: string) => (old ?? '') + content);
+            // 构建 agentSteps 时间线：若最后一步不是 thinking 则新建，否则追加
+            setDatas('assistants', a => a.id === assistant_id,
+              'topics', t => t.id === topic_id,
+              'history', lastIdx, 'agentSteps', (steps: any[] = []) => {
+                const lastStep = steps[steps.length - 1];
+                if (lastStep && lastStep.type === 'thinking' && lastStep.status === 'running') {
+                  // 追加到当前 thinking 步骤
+                  return [...steps.slice(0, -1), {
+                    ...lastStep,
+                    thinkingText: (lastStep.thinkingText || '') + content,
+                  }];
+                }
+                // 关闭上一步（如果仍在运行），新建 thinking 步骤
+                const now = Date.now();
+                const closed = lastStep && lastStep.status === 'running'
+                  ? [...steps.slice(0, -1), { ...lastStep, status: 'complete', duration: now - lastStep.timestamp }]
+                  : steps;
+                return [...closed, {
+                  id: crypto.randomUUID(),
+                  type: 'thinking',
+                  timestamp: now,
+                  status: 'running',
+                  thinkingText: content,
+                }];
+              });
           }
         }
       }),
-      // LLM 工具调用事件：仅展示"调用中"气泡（执行由后端 run_agent_turn 完成）
+      // LLM 工具调用事件：展示"调用中"气泡并构建 agentSteps 时间线
       listen<any>('llm-tool-call', (e) => {
         const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
+        const newTc = { id: tool_call_id, type: 'function', function: { name, arguments: argsJson }, state: 'calling' };
         setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
           'history', (h: any[]) => {
             const lastIdx = h.length - 1;
             if (lastIdx >= 0 && h[lastIdx]?.role === 'assistant') {
-              const existing = h[lastIdx].toolCalls || [];
-              if (!existing.find((tc: any) => tc.id === tool_call_id)) {
-                return [
-                  ...h.slice(0, lastIdx),
-                  {
-                    ...h[lastIdx],
-                    toolCalls: [
-                      ...existing,
-                      { id: tool_call_id, type: 'function', function: { name, arguments: argsJson }, state: 'calling' }
-                    ]
-                  }
-                ];
-              }
+              const msg = h[lastIdx];
+              // 保持 toolCalls 数组（消息重建用）
+              const existing = msg.toolCalls || [];
+              if (existing.find((tc: any) => tc.id === tool_call_id)) return h;
+              const newToolCalls = [...existing, newTc];
+              // 构建 agentSteps：关闭上一步，新建 tool_call 步骤
+              const now = Date.now();
+              const steps: any[] = msg.agentSteps || [];
+              const lastStep = steps[steps.length - 1];
+              const closed = lastStep && lastStep.status === 'running'
+                ? [...steps.slice(0, -1), { ...lastStep, status: 'complete', duration: now - lastStep.timestamp }]
+                : steps;
+              const newSteps = [...closed, {
+                id: crypto.randomUUID(),
+                type: 'tool_call',
+                timestamp: now,
+                status: 'running',
+                toolCall: newTc,
+              }];
+              return [
+                ...h.slice(0, lastIdx),
+                { ...msg, toolCalls: newToolCalls, agentSteps: newSteps },
+              ];
             }
             return h;
           }
         );
       }),
-      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与文本结果
-      // （content 文本用于后续构建 messagesForAI 时重建 role:tool 消息）
+      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与 agentSteps 时间线
       listen<any>('llm-tool-result', (e) => {
         const { assistant_id, topic_id, tool_call_id, content, result, is_error } = e.payload;
         setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
           'history', (h: any[]) => h.map((m: any) => {
-            if (m.role === 'assistant' && m.toolCalls) {
-              return {
-                ...m,
-                toolCalls: m.toolCalls.map((tc: any) =>
-                  tc.id === tool_call_id
-                    ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined }
-                    : tc
-                ),
-              };
-            }
-            return m;
+            if (m.role !== 'assistant' || !m.toolCalls) return m;
+            const newToolCalls = m.toolCalls.map((tc: any) =>
+              tc.id === tool_call_id
+                ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined }
+                : tc
+            );
+            // 同步更新 agentSteps 中对应 tool_call 步骤
+            const now = Date.now();
+            const newSteps = (m.agentSteps || []).map((s: any) => {
+              if (s.type === 'tool_call' && s.toolCall?.id === tool_call_id) {
+                return {
+                  ...s,
+                  status: is_error ? 'error' : 'complete',
+                  duration: now - s.timestamp,
+                  toolCall: {
+                    ...s.toolCall,
+                    state: is_error ? 'error' : 'success',
+                    result,
+                    content,
+                    error: is_error ? content : undefined,
+                  },
+                };
+              }
+              return s;
+            });
+            return { ...m, toolCalls: newToolCalls, agentSteps: newSteps };
           })
         );
       }),

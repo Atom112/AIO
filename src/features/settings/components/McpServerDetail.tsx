@@ -1,6 +1,6 @@
 import { Component, createSignal, For, Show, createMemo, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import type { McpServerConfig, McpTransport, ToolSpec } from '../types/mcp';
+import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
 
 interface Props {
     config: McpServerConfig;

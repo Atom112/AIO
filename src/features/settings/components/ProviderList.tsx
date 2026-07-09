@@ -16,7 +16,7 @@ import { Component, createSignal, For, Show, onMount, createMemo, onCleanup, cre
 import { useNavigate } from '@solidjs/router';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import Icon from './Icon';
+import Icon from '../../../shared/components/Icon';
 import {
     providerConfigs,
     setProviderConfigs,
@@ -24,16 +24,16 @@ import {
     modelsCatalogSource,
     modelsCatalogVersion,
     modelsCatalogGeneratedAt,
-} from '../store/store';
+} from '../../../core/store/store';
 import {
     updateModelsCatalog,
     getCatalogUrl,
     formatRelativeTime,
     searchProviders,
     loadModelsCatalog,
-} from '../utils/models';
-import { getProviderLogo } from '../utils/modelLogo';
-import type { ProviderConfig, ProviderMeta } from '../utils/models';
+} from '../../../core/utils/models';
+import { getProviderLogo } from '../../../core/utils/modelLogo';
+import type { ProviderConfig, ProviderMeta } from '../../../core/utils/models';
 
 // ============== 本地模型子组件 (从 ProviderSettings.tsx 抽出) ==============
 

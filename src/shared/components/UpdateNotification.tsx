@@ -15,7 +15,7 @@ import {
     appUpdateReady,
     setAppUpdateReady,
     setIgnoredUpdateVersion,
-} from '../store/store';
+} from '../../core/store/store';
 
 /**
  * 左下角应用更新提示 Toast

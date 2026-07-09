@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId, currentProjectId, currentProject } from '../store/store';
-import Icon from './Icon';
+import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId, currentProjectId, currentProject } from '../../../core/store/store';
+import Icon from '../../../shared/components/Icon';
 
 interface AssistantSidebarProps {
     width: number;

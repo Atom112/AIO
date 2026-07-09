@@ -5,7 +5,7 @@
 import { createSignal } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { Project } from '../store/store';
+import type { Project } from '../../../core/store/store';
 
 interface Props {
     onClose: () => void;

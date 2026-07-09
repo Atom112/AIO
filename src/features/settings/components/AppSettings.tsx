@@ -7,9 +7,9 @@ import {
     setAppUpdateAvailable,
     setAppUpdateInfo,
     setAppUpdateDismissed,
-} from '../store/store';
+} from '../../../core/store/store';
 import { getVersion } from '@tauri-apps/api/app';
-import Icon from './Icon';
+import Icon from '../../../shared/components/Icon';
 
 /**
  * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）

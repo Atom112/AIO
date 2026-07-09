@@ -3,13 +3,13 @@
  * @description 应用的通用布局组件, 整窗为统一亚克力面板(NavBar + 页面共享同块玻璃),
  * 背景为静态多色渐变(不受主题色影响), 主题色仅作用于按钮/开关等交互元素.
  */
-import NavBar from "./components/NavBar";
-import UpdateNotification from "./components/UpdateNotification";
+import NavBar from "./shared/components/NavBar";
+import UpdateNotification from "./shared/components/UpdateNotification";
 import { Transition } from "solid-transition-group";
 import { Component, onCleanup, onMount, ParentProps } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from "./utils/models";
+import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from "./core/utils/models";
 import {
     appUpdateAvailable,
     setAppUpdateAvailable,
@@ -26,8 +26,8 @@ import {
     setModelsCatalogVersion,
     setModelsCatalogGeneratedAt,
     setProviderConfigs,
-} from "./store/store";
-import type { ProviderConfigFile } from "./utils/models";
+} from "./core/store/store";
+import type { ProviderConfigFile } from "./core/utils/models";
 
 /**
  * Layout 组件

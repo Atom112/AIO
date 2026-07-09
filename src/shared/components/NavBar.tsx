@@ -24,7 +24,7 @@ import {
   isLocalModel,
   startLocalEngineForAssistant,
   currentAssistantId,
-} from '../store/store';
+} from '../../core/store/store';
 
 /**
  * 初始化窗口实例

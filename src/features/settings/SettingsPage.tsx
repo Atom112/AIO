@@ -1,6 +1,6 @@
 import { Component, JSX, Show } from 'solid-js';
 import { A, useLocation } from '@solidjs/router';
-import Icon from '../components/Icon';
+import Icon from '../../shared/components/Icon';
 
 /**
  * 设置页面布局 (lobehub v2 嵌套路由)

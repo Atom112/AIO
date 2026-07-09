@@ -1,12 +1,12 @@
 import { Component, For, Show, Setter, createSignal, createEffect, createMemo, onCleanup, on } from 'solid-js';
-import Markdown from './Markdown';
+import Markdown from '../../../shared/components/Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, type AgentMode } from '../store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, type AgentMode } from '../../../core/store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { getLogo as getLogoByIds } from '../utils/modelLogo';
-import Icon from './Icon';
+import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
+import Icon from '../../../shared/components/Icon';
 import ReasoningButton from './ReasoningButton';
 import ToolCallBubble from './ToolCallBubble';
 import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
@@ -345,14 +345,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             </Show>
 
                                             <div class="mt-1">
-                                                {/* Agent 工作过程：reasoning + toolCalls 统一折叠 */}
-                                                <Show when={msg.role === 'assistant' && (msg.reasoning || msg.interimContent || (msg as any).toolCalls?.length > 0)}>
+                                                {/* Agent 工作过程：reasoning + toolCalls + agentSteps 统一折叠 */}
+                                                <Show when={msg.role === 'assistant' && (msg.reasoning || msg.interimContent || (msg as any).toolCalls?.length > 0 || (msg as any).agentSteps?.length > 0)}>
                                                     <AgentProcessBlock
                                                         reasoning={msg.reasoning}
                                                         toolCalls={(msg as any).toolCalls}
                                                         interimContent={msg.interimContent}
                                                         isActive={isActiveRound()}
                                                         startTime={msg.agentStartTime}
+                                                        agentSteps={(msg as any).agentSteps}
                                                     />
                                                 </Show>
                                                 <Show

@@ -3,8 +3,8 @@ import { Portal } from 'solid-js/web';
 import {
     Assistant, Topic, datas, setDatas, currentTopicId, setCurrentTopicId, saveSingleAssistantToBackend,
     requestRenameTopic
-} from '../store/store';
-import Icon from './Icon';
+} from '../../../core/store/store';
+import Icon from '../../../shared/components/Icon';
 
 interface TopicSidebarProps {
     width: number;

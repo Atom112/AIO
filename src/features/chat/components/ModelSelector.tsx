@@ -4,12 +4,12 @@
  * 列出全部可用模型（线上 / 本地）供快速切换。选中后绑定到当前助手并持久化。
  */
 import { Component, createSignal, Show, For } from 'solid-js';
-import Icon from './Icon';
+import Icon from '../../../shared/components/Icon';
 import {
     datas, currentAssistantId, allAvailableModels, isLocalModel,
     resolveAssistantModel, modelKey, setAssistantModel, ActivatedModel,
-} from '../store/store';
-import { getLogo as getLogoByIds } from '../utils/modelLogo';
+} from '../../../core/store/store';
+import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 
 const getModelLogo = (name: string) => getLogoByIds(null, name);
 

@@ -14,9 +14,9 @@ import {
     initMcpServers,
     currentProject,
     saveLastAgentProjectId,
-} from '../store/store';
+} from '../../../core/store/store';
 import ProjectCreateModal from './ProjectCreateModal';
-import Icon from './Icon';
+import Icon from '../../../shared/components/Icon';
 
 let ref: HTMLDivElement | undefined;
 

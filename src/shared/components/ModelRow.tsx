@@ -5,7 +5,7 @@
  */
 import { Component, Show } from 'solid-js';
 import type { ModelMeta } from '@aio/models-data';
-import { formatContextWindow, formatReleaseDate } from '../utils/models';
+import { formatContextWindow, formatReleaseDate } from '../../core/utils/models';
 import Icon from './Icon';
 
 const ModelRow: Component<{

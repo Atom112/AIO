@@ -1,8 +1,8 @@
 import { Component, For, Show, createMemo, createSignal, createEffect, on, onMount } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills, currentProjectId, currentProject } from '../store/store';
-import type { MarketSkill, SkillConfig, SkillMarketCategory, DiscoveredNpxSkill } from '../types/skill';
+import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills, currentProjectId, currentProject } from '../../../core/store/store';
+import type { MarketSkill, SkillConfig, SkillMarketCategory, DiscoveredNpxSkill } from '../../../core/types/skill';
 
 type MarketSort = 'all' | 'trending' | 'hot';
 type ViewMode = 'market' | 'downloaded' | 'npx';

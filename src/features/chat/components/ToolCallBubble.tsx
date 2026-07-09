@@ -1,6 +1,6 @@
 import { Component, createSignal, Show, For } from 'solid-js';
-import type { ToolCall, ToolResultContent } from '../types/mcp';
-import Icon from './Icon';
+import type { ToolCall, ToolResultContent } from '../../../core/types/mcp';
+import Icon from '../../../shared/components/Icon';
 
 interface Props {
     toolCall: ToolCall;

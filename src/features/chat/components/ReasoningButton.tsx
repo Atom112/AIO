@@ -5,8 +5,8 @@
  * 弹窗向上弹出 (避免被聊天区遮挡), 包含 4 个等级选项 (关/低/中/高).
  */
 import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
-import { reasoningLevel, persistReasoningLevel, type ReasoningLevel } from '../store/store';
-import Icon from './Icon';
+import { reasoningLevel, persistReasoningLevel, type ReasoningLevel } from '../../../core/store/store';
+import Icon from '../../../shared/components/Icon';
 
 interface LevelOption {
     value: ReasoningLevel;

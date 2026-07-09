@@ -5,12 +5,12 @@ import {
     datas, mcpServers, mcpServerStatus, saveSingleAssistantToBackend, setDatas,
     setMcpServers, setMcpServerStatus, startMcpServerAndRefresh,
     currentProjectId, currentProject,
-} from '../store/store';
+} from '../../../core/store/store';
 import type {
     McpCatalogDelivery, McpCatalogInstallRequest, McpCatalogPage,
     McpCatalogServer, McpServerConfig,
-} from '../types/mcp';
-import { emptyMcpServerConfig, statusColor, statusLabel, transportLabel } from '../utils/mcp';
+} from '../../../core/types/mcp';
+import { emptyMcpServerConfig, statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
 import McpServerDetail from './McpServerDetail';
 
 type ViewMode = 'market' | 'downloaded';

@@ -898,7 +898,8 @@ input[type="range"]::-webkit-slider-thumb:active {
     padding-bottom: 0;
 }
 .agent-process-block.is-open .agent-process-body {
-    max-height: 1600px;
+    max-height: 600px;
+    overflow-y: auto;
     opacity: 1;
     padding-top: 2px;
     padding-bottom: 12px;
@@ -970,6 +971,183 @@ input[type="range"]::-webkit-slider-thumb:active {
     border-radius: 3px;
 }
 .agent-process-interim-content::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* ========================================
+   Agent 时间线步骤卡片（新模式）
+   ======================================== */
+.agent-steps-timeline {
+    @apply flex flex-col gap-2;
+}
+
+/* 单步骤卡片 */
+.agent-step-card {
+    @apply rounded-md overflow-hidden;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-left: 2px solid var(--step-border-color, rgba(255, 255, 255, 0.12));
+    transition: border-color 0.3s, background 0.2s;
+}
+.agent-step-card:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.agent-step-card.is-running {
+    background: rgba(var(--primary-rgb), 0.03);
+    animation: stepCardPulse 2s ease-in-out infinite;
+}
+.agent-step-card.is-error {
+    border-left-color: rgba(224, 85, 85, 0.5);
+}
+@keyframes stepCardPulse {
+    0%, 100% { border-left-color: var(--step-border-color); }
+    50% { border-left-color: rgba(var(--primary-rgb), 0.8); }
+}
+
+/* 步骤卡片 header */
+.agent-step-header {
+    @apply flex items-center w-full gap-1.5 px-2.5 py-1.5 cursor-pointer select-none;
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 11px;
+    transition: color 0.2s;
+}
+.agent-step-header:hover {
+    color: rgba(255, 255, 255, 0.7);
+}
+.agent-step-card.is-running .agent-step-header {
+    color: rgba(255, 255, 255, 0.65);
+    cursor: default;
+}
+.agent-step-header:disabled {
+    cursor: default;
+}
+
+.agent-step-icon-wrap {
+    @apply flex items-center justify-center w-4 h-4 rounded;
+    background: rgba(255, 255, 255, 0.05);
+    color: inherit;
+    flex-shrink: 0;
+}
+.agent-step-card.is-running .agent-step-icon-wrap {
+    background: rgba(var(--primary-rgb), 0.12);
+}
+
+.agent-step-icon {
+    @apply w-3 h-3;
+}
+.agent-step-icon.is-spinning {
+    animation: agentProcessIconSpin 2.4s linear infinite;
+}
+
+.agent-step-title {
+    @apply font-medium;
+    flex: 0 0 auto;
+}
+
+.agent-step-tool-name {
+    @apply truncate;
+    color: rgba(255, 255, 255, 0.55);
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.agent-step-status-icon {
+    @apply flex items-center justify-center;
+    flex: 0 0 auto;
+    color: inherit;
+}
+.agent-step-card.is-error .agent-step-status-icon {
+    color: rgba(224, 85, 85, 0.8);
+}
+
+.agent-step-duration {
+    @apply font-mono;
+    color: rgba(255, 255, 255, 0.25);
+    font-size: 10px;
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+.agent-step-card.is-running .agent-step-duration {
+    color: rgba(var(--primary-rgb), 0.5);
+}
+
+.agent-step-chevron {
+    @apply flex items-center justify-center;
+    flex: 0 0 auto;
+    color: rgba(255, 255, 255, 0.2);
+    transition: transform 0.2s, color 0.2s;
+}
+.agent-step-card.is-running .agent-step-chevron {
+    display: none;
+}
+.agent-step-card:hover .agent-step-chevron {
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.agent-step-chevron-icon {
+    transform: rotate(-90deg);
+    transition: transform 0.2s;
+}
+.agent-step-card.is-expanded .agent-step-chevron-icon {
+    transform: rotate(0deg);
+}
+
+/* 步骤卡片 body */
+.agent-step-body {
+    @apply overflow-hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s, padding 0.25s;
+    padding: 0 10px;
+}
+.agent-step-card.is-expanded .agent-step-body {
+    max-height: 800px;
+    opacity: 1;
+    padding-top: 2px;
+    padding-bottom: 8px;
+}
+.agent-step-card.is-running .agent-step-body {
+    max-height: 800px;
+    opacity: 1;
+    padding-top: 2px;
+    padding-bottom: 8px;
+}
+
+/* 思考步骤内容 */
+.agent-step-thinking-content {
+    @apply text-[12px] leading-relaxed italic whitespace-pre-wrap break-words;
+    color: rgba(255, 255, 255, 0.5);
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.12);
+    max-height: 300px;
+    overflow-y: auto;
+}
+.agent-step-thinking-content::-webkit-scrollbar { width: 5px; }
+.agent-step-thinking-content::-webkit-scrollbar-track { background: transparent; }
+.agent-step-thinking-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+}
+
+/* 工具调用步骤内容 */
+.agent-step-tool-content {
+    @apply text-[12px];
+}
+
+/* content 步骤内容 */
+.agent-step-content-text {
+    @apply text-[13px] leading-relaxed break-words;
+    color: rgba(255, 255, 255, 0.65);
+    padding: 4px 4px;
+}
+.agent-step-content-text .markdown-body {
+    font-size: 13px;
+    line-height: 1.6;
+}
+.agent-step-content-text .markdown-body p:first-child { margin-top: 0; }
+.agent-step-content-text .markdown-body p:last-child { margin-bottom: 0; }
+
 
 /* ========================================
    Markdown 正文样式 (暗色主题)

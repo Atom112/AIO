@@ -12,8 +12,8 @@ import {
     projects, initProjects, initSkills, initMcpServers,
     getLastAgentProjectId, saveLastAgentProjectId,
     type AgentMode,
-} from '../store/store';
-import Icon, { type IconName } from './Icon';
+} from '../../../core/store/store';
+import Icon, { type IconName } from '../../../shared/components/Icon';
 
 interface ModeOption {
     value: AgentMode;

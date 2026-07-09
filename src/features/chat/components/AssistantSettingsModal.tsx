@@ -5,12 +5,12 @@ import {
     ActivatedModel, modelsCatalog,
     mcpServers, mcpServerStatus, skills,
     startMcpServerAndRefresh, currentProjectId,
-} from '../store/store';
-import { getLogo as getLogoByIds } from '../utils/modelLogo';
-import { findModel, formatContextWindow } from '../utils/models';
-import { transportLabel, statusLabel, statusColor } from '../utils/mcp';
-import Icon from './Icon';
-import Switch from './Switch';
+} from '../../../core/store/store';
+import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
+import { findModel, formatContextWindow } from '../../../core/utils/models';
+import { transportLabel, statusLabel, statusColor } from '../../../core/utils/mcp';
+import Icon from '../../../shared/components/Icon';
+import Switch from '../../../shared/components/Switch';
 
 interface AssistantSettingsModalProps {
     show: boolean;

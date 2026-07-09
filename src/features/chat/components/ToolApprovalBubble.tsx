@@ -6,7 +6,7 @@
  */
 import { Component, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import Icon from './Icon';
+import Icon from '../../../shared/components/Icon';
 
 export interface PendingApproval {
     approvalId: string;

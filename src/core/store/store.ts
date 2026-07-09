@@ -8,7 +8,23 @@ import type { McpServerConfig, McpServerStatusInfo, ToolSpec, LlmToolCallPayload
 import type { SkillConfig } from '../types/skill';
 
 // 接口定义
- /* 消息项接口，定义聊天消息的数据结构 */
+	/** Agent 工作过程时间线步骤 */
+	export interface AgentStep {
+	    id: string;
+	    type: 'thinking' | 'tool_call' | 'content';
+	    timestamp: number;
+	    status: 'running' | 'complete' | 'error';
+	    /** 步骤耗时（ms），步骤关闭时计算 */
+	    duration?: number;
+	    /** 思考步骤文本（仅 type=thinking） */
+	    thinkingText?: string;
+	    /** 工具调用详情（仅 type=tool_call） */
+	    toolCall?: ToolCallDisplay;
+	    /** 阶段性总结 / 回复文本（仅 type=content） */
+	    contentText?: string;
+	}
+
+	/* 消息项接口，定义聊天消息的数据结构 */
 export interface Message {
     id?: string;                        // 消息唯一 ID（工具消息/assistant 消息持久化需要）
     role: 'user' | 'assistant' | 'tool' | 'system';  // 消息发送者角色：'tool' 为工具执行结果，'system' 为系统指令
@@ -22,6 +38,7 @@ export interface Message {
     toolCalls?: ToolCallDisplay[];      // role="assistant" 时携带模型发起的工具调用请求（含前端 UI 状态 state/result/error）
     agentStartTime?: number;             // Agent 轮次开始时间戳（ms），用于计算工作耗时
     interimContent?: string;             // 多轮 Agent 工作中，中间轮次的阶段性总结文本累积
+    agentSteps?: AgentStep[];            // Agent 工作过程时间线（新），按时间顺序记录每个步骤
 }
 
 /** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */

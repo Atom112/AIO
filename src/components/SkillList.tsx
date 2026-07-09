@@ -77,6 +77,7 @@ const SkillList: Component = () => {
     const [npxLoading, setNpxLoading] = createSignal(false);
     const [npxImportingId, setNpxImportingId] = createSignal<string | null>(null);
     const [npxRefreshingId, setNpxRefreshingId] = createSignal<string | null>(null);
+    let npxScanned = false; // 首次进入 npx 标签自动扫描，之后缓存结果
 
     const discoverNpx = async () => {
         setNpxLoading(true);
@@ -84,6 +85,7 @@ const SkillList: Component = () => {
         try {
             const list = await invoke<DiscoveredNpxSkill[]>('discover_npx_skills');
             setNpxSkills(list);
+            npxScanned = true;
         } catch (e) {
             setError(`npx 扫描失败: ${e}`);
         } finally {
@@ -373,7 +375,7 @@ const SkillList: Component = () => {
                         </button>
                         <button class="px-3 py-1.5 rounded-md text-sm"
                             classList={{ 'bg-pri-20 text-pri': view() === 'npx' }}
-                            onClick={() => { setView('npx'); discoverNpx(); }}>
+                            onClick={() => { setView('npx'); if (!npxScanned) discoverNpx(); }}>
                             npx 发现
                         </button>
                     </div>

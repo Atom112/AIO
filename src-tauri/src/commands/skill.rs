@@ -676,43 +676,61 @@ pub struct NpxSkillInfo {
 pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, String> {
     let mut discovered: Vec<NpxSkillInfo> = Vec::new();
     let existing = load_file(&app).skills;
+    tracing::info!("[skills] discover_npx: 当前已导入 {} 条 skill（用于 already_imported 标记）", existing.len());
 
     // 1) 主要方式：通过 `npx skills list --json` 获取已安装 skill 列表
+    tracing::info!("[skills] discover_npx: 正在执行 npx --yes skills list -g --json ...");
     let skills_cli_output = std::process::Command::new("npx")
         .args(["--yes", "skills", "list", "-g", "--json"])
         .output();
-    if let Ok(output) = skills_cli_output {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Ok(json_list) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
-                for entry in &json_list {
-                    let name = entry["name"].as_str().unwrap_or("").to_string();
-                    let path_str = entry["path"].as_str().unwrap_or("").to_string();
-                    if name.is_empty() {
-                        continue;
+    match &skills_cli_output {
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                match serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                    Ok(json_list) => {
+                        tracing::info!("[skills] discover_npx: skills CLI 返回 {} 条 skill", json_list.len());
+                        for entry in &json_list {
+                            let name = entry["name"].as_str().unwrap_or("").to_string();
+                            let path_str = entry["path"].as_str().unwrap_or("").to_string();
+                            if name.is_empty() {
+                                continue;
+                            }
+                            let skill_dir = std::path::Path::new(&path_str);
+                            let (version, description) = try_read_package_meta_from_dir(skill_dir);
+                            let already = existing.contains_key(&format!("npx-{}", name));
+                            if discovered.iter().any(|d| d.package_name == name) {
+                                continue;
+                            }
+                            tracing::info!("[skills] discover_npx:   - {} (v{}, already_imported={})", name, version, already);
+                            discovered.push(NpxSkillInfo {
+                                package_name: name,
+                                version,
+                                description,
+                                source_path: path_str,
+                                source_type: "skills-cli".to_string(),
+                                already_imported: already,
+                            });
+                        }
                     }
-                    // 从 skill 目录下的 package.json 获取版本和描述
-                    let skill_dir = std::path::Path::new(&path_str);
-                    let (version, description) = try_read_package_meta_from_dir(skill_dir);
-                    let already = existing.contains_key(&format!("npx-{}", name));
-                    if discovered.iter().any(|d| d.package_name == name) {
-                        continue;
+                    Err(e) => {
+                        tracing::warn!("[skills] discover_npx: skills CLI JSON 解析失败: {e}");
+                        tracing::warn!("[skills] discover_npx: stdout 前 200 字符: {}", &stdout.chars().take(200).collect::<String>());
                     }
-                    discovered.push(NpxSkillInfo {
-                        package_name: name,
-                        version,
-                        description,
-                        source_path: path_str,
-                        source_type: "skills-cli".to_string(),
-                        already_imported: already,
-                    });
                 }
+            } else {
+                tracing::warn!("[skills] discover_npx: skills CLI 退出码非 0 (stderr: {})", stderr.trim());
             }
+        }
+        Err(e) => {
+            tracing::warn!("[skills] discover_npx: 无法启动 npx 命令: {e}");
         }
     }
 
     // 如果 skills CLI 没有返回结果，回退到目录扫描
     if discovered.is_empty() {
+        tracing::info!("[skills] discover_npx: skills CLI 无结果，回退到目录扫描");
         // 2) 扫描已知的 skill 注册目录：~/.claude/skills/ 和 ~/.agents/skills/
         let skill_dirs: Vec<std::path::PathBuf> = dirs::home_dir()
             .into_iter()
@@ -778,6 +796,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
 
     // 按名称排序
     discovered.sort_by(|a, b| a.package_name.cmp(&b.package_name));
+    tracing::info!("[skills] discover_npx: 最终发现 {} 条 npx skill", discovered.len());
     Ok(discovered)
 }
 

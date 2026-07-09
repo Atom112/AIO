@@ -680,7 +680,10 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
 
     // 1) 主要方式：通过 `npx skills list --json` 获取已安装 skill 列表
     tracing::info!("[skills] discover_npx: 正在执行 npx --yes skills list -g --json ...");
-    let skills_cli_output = std::process::Command::new("npx")
+
+    // Windows: npx 是 .cmd 脚本，Process::Command 不会按 PATHEXT 搜索，需要手动解析
+    let npx_cmd = resolve_command("npx");
+    let skills_cli_output = std::process::Command::new(&npx_cmd)
         .args(["--yes", "skills", "list", "-g", "--json"])
         .output();
     match &skills_cli_output {
@@ -987,6 +990,44 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
         }
     }
     (String::new(), String::new(), "0.0.0".to_string())
+}
+
+/// Windows: 将裸命令名（如 "npx"）解析为完整路径（如 "C:\...\npx.cmd"）。
+/// Process::Command 不会按 PATHEXT 扩展名搜索，需要手动处理。
+/// 非 Windows 直接返回原命令名。
+fn resolve_command(command: &str) -> String {
+    #[cfg(windows)]
+    {
+        use std::path::{Path, PathBuf};
+        let p = Path::new(command);
+        if p.extension().is_some() {
+            return command.to_string();
+        }
+        let file_name = match p.file_name() {
+            Some(f) => f.to_string_lossy(),
+            None => return command.to_string(),
+        };
+        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
+        let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
+        let dirs: Vec<PathBuf> = match p.parent() {
+            Some(d) if !d.as_os_str().is_empty() => vec![d.to_path_buf()],
+            _ => std::env::var("PATH")
+                .unwrap_or_default()
+                .split(';')
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .collect(),
+        };
+        for dir in dirs {
+            for ext in &exts {
+                let candidate = dir.join(format!("{}{}", file_name, ext));
+                if candidate.is_file() {
+                    return candidate.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+    command.to_string()
 }
 
 #[cfg(test)]

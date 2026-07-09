@@ -72,6 +72,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     let smoothScrollRAF: number | undefined;
     // 上一次记录到的历史消息数量，用于判断是否新增了消息
     let lastHistoryLen = 0;
+    // 用户手动上滚标志：直接可变变量，绕过 SolidJS 响应式延迟，确保 rAF 回调能同步感知
+    let userScrolledUp = false;
+    // 流式 rAF 循环的最新 ID，始终指向最后一个排期的帧，保证能正确取消
+    let streamRAFId: number | undefined;
 
     const getModelLogo = (modelName: string) => {
         return getLogoByIds(null, modelName);
@@ -87,6 +91,13 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     /** 鼠标滚轮向上：立即停止自动滚动并取消进行中的平滑滚动 */
     const handleWheel = (e: WheelEvent) => {
         if (e.deltaY < 0) {
+            // 直接可变标志：下个 rAF 帧立刻感知，零延迟停止跟底
+            userScrolledUp = true;
+            // 取消流式 rAF 循环的最新帧
+            if (streamRAFId !== undefined) {
+                cancelAnimationFrame(streamRAFId);
+                streamRAFId = undefined;
+            }
             if (smoothScrollRAF !== undefined) {
                 cancelAnimationFrame(smoothScrollRAF);
                 smoothScrollRAF = undefined;
@@ -102,7 +113,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             suppressScroll = false;
             return;
         }
-        setAutoScroll(isAtBottom());
+        const atBottom = isAtBottom();
+        setAutoScroll(atBottom);
+        // 用户手动滚回底部：清除上滚标志，恢复自动跟底
+        if (atBottom) {
+            userScrolledUp = false;
+        }
     };
 
     /** 瞬时滚动到底部（流式期间使用，抑制 scroll 事件） */
@@ -152,6 +168,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     /** 切换话题时重置自动滚动与历史长度基线 */
     createEffect(on(() => props.activeTopic?.id, () => {
         setAutoScroll(true);
+        userScrolledUp = false;
         lastHistoryLen = props.activeTopic?.history?.length ?? 0;
     }));
 
@@ -160,6 +177,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         if (thinking && !prev) {
             // 用户发送新消息，开始生成
             setAutoScroll(true);
+            userScrolledUp = false;
         } else if (!thinking && prev) {
             // 生成刚结束：内容可能刚刚完成渲染，做一次最终滚动后即停止
             if (autoScroll() && scrollContainerRef) {
@@ -199,18 +217,22 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
     /** 流式输出期间：rAF 循环跟随内容增长平滑滚动 */
     createEffect(() => {
-        if (!props.isThinking || !autoScroll() || !scrollContainerRef) return;
+        if (!props.isThinking || !scrollContainerRef) return;
 
         let running = true;
         const scroll = () => {
-            if (!running || !autoScroll()) return;
+            // userScrolledUp 为直接可变变量，确保滚轮事件后最速响应
+            if (!running || userScrolledUp || !autoScroll()) return;
             snapToBottom();
-            requestAnimationFrame(scroll);
+            streamRAFId = requestAnimationFrame(scroll);
         };
-        const frameId = requestAnimationFrame(scroll);
+        streamRAFId = requestAnimationFrame(scroll);
         onCleanup(() => {
             running = false;
-            cancelAnimationFrame(frameId);
+            if (streamRAFId !== undefined) {
+                cancelAnimationFrame(streamRAFId);
+                streamRAFId = undefined;
+            }
         });
     });
 
@@ -480,6 +502,25 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     </div>
                 </Show>
             </div>
+
+            {/* 滚动到底部按钮：用户上滚浏览历史后显示，点击回到最新消息 */}
+            <Show when={!autoScroll()}>
+                <button
+                    class="absolute bottom-[130px] right-[30px] z-[50] flex items-center justify-center w-9 h-9 rounded-full cursor-pointer
+                           animate-fade-in transition-all duration-200 hover:scale-110 active:scale-95"
+                    style="background: rgba(124,154,191,0.15); border: 1px solid rgba(124,154,191,0.25); color: rgba(124,154,191,0.7); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
+                    onClick={() => {
+                        userScrolledUp = false;
+                        setAutoScroll(true);
+                        smoothScrollToBottom();
+                    }}
+                    title="滚动到最新消息"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                </button>
+            </Show>
 
             <Show when={props.isProcessing}>
                 <div class="absolute inset-0 flex items-center justify-center z-[100]"

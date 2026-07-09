@@ -89,11 +89,16 @@ export default {
             transform: 'translateY(-8px) scale(0.95)',
           },
         },
+        'fade-in': {
+          '0%': { opacity: '0', transform: 'scale(0.9)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
       },
       animation: {
         'message-in': 'message-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
         'menu-enter': 'menuEnter 0.2s ease-out forwards',
         'menu-exit': 'menuExit 0.2s ease-in forwards',
+        'fade-in': 'fade-in 0.2s ease-out forwards',
       },
     },
   },

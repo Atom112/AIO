@@ -5,6 +5,27 @@
 本项目的所有显著更新将记录在此文件中。
 
 ---
+## [v0.6.0]
+<sup>Released on **2025-07-09**</sup>
+
+### ⚡️ Changed（变更）
+
+- **文件操作重构**：将 Agent 模式的文件系统工具从 MCP 子进程改为 in-process 原生调用，彻底解决子进程断连导致文件操作失败的问题。工具名和参数保持完全兼容，前端无需任何改动
+- 优化 Agent 工作过程折叠：多轮工具调用结果合并到一条消息气泡中，减少界面混乱
+
+### 🐛 Fixed（修复）
+
+- 修复 Agent 模式下三种模式（Normal/Auto/Plan）的中断与错误处理
+- 修复多个工具调用并发时结果批处理与递归 LLM 调用的协调问题
+- 修复 `call_mcp_tool` 和 `list_mcp_tools` 使用合并配置以支持动态 MCP server
+- 修复设置页「应用信息」子页面无法滚动的问题
+- 统一 AgentModeSelector 和 ProjectSelector 按钮样式
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.6.0]: https://github.com/Atom112/AIO/releases/tag/v0.6.0
+
+---
 ## [v0.3.1-Beta]
 <sup>Released on **2026-02-11**</sup>
 

@@ -7,6 +7,7 @@ pub mod engine;
 pub mod llm;
 pub mod mcp;
 pub mod mcp_catalog;
+pub mod project;
 pub mod provider_config;
 pub mod skill;
 pub mod update;

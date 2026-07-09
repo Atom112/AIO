@@ -107,11 +107,19 @@ const renderMarkdownHtml = (raw: string): string => {
     if (!raw.trim()) return '';
     const html = marked.parse(raw) as string;
     return DOMPurify.sanitize(html, {
-        ADD_TAGS: ['button', 'svg', 'path', 'span'],
+        ADD_TAGS: [
+            'button', 'svg', 'path', 'span',
+            // 表格标签
+            'table', 'thead', 'tbody', 'tfoot',
+            'tr', 'th', 'td', 'col', 'colgroup', 'caption'
+        ],
         ADD_ATTR: [
             'target', 'class', 'title', 'draggable',
             'viewBox', 'stroke-width', 'stroke', 'fill',
-            'd', 'stroke-linecap', 'stroke-linejoin'
+            'd', 'stroke-linecap', 'stroke-linejoin',
+            // 表格属性
+            'colspan', 'rowspan', 'align', 'valign',
+            'scope', 'headers'
         ],
         USE_PROFILES: { html: true, svg: true }
     });

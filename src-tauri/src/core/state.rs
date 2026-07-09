@@ -3,10 +3,13 @@
 use dashmap::DashMap;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 /// 管理活跃的 LLM 流式任务
 /// 键格式为 "{assistant_id}-{topic_id}"
-pub struct StreamManager(pub Arc<DashMap<String, JoinHandle<()>>>);
+/// 每个任务携带一个 CancellationToken：停止时调用 cancel()（而非 abort()），
+/// 保证任务能在 select! 分支优雅退出并执行 epilogue（emit done + 移除自身）。
+pub struct StreamManager(pub Arc<DashMap<String, (JoinHandle<()>, CancellationToken)>>);
 
 /// 包装 SQLite 数据库连接
 pub struct DbState(pub std::sync::Mutex<rusqlite::Connection>);
@@ -73,5 +76,28 @@ impl McpRequestManager {
             entry.value().abort();
         }
         self.0.clear();
+    }
+}
+
+/// 待处理的工具调用审批：approval_id → oneshot::Sender<bool>
+/// 前端调用 `respond_tool_approval(approval_id, approved)` 时触发对应 channel。
+use tokio::sync::oneshot;
+pub struct PendingApprovals(pub Arc<DashMap<String, oneshot::Sender<bool>>>);
+
+impl PendingApprovals {
+    pub fn new() -> Self {
+        Self(Arc::new(DashMap::new()))
+    }
+
+    /// 插入一个待审批项，返回 approval_id
+    pub fn insert(&self, tx: oneshot::Sender<bool>) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.0.insert(id.clone(), tx);
+        id
+    }
+
+    /// 移除并返回对应 channel（消费一次）
+    pub fn remove(&self, id: &str) -> Option<oneshot::Sender<bool>> {
+        self.0.remove(id).map(|(_, v)| v)
     }
 }

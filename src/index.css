@@ -793,6 +793,366 @@ input[type="range"]::-webkit-slider-thumb:active {
 .markdown-segment > :last-child { margin-bottom: 0 !important; }
 
 /* ========================================
+   Agent 工作过程折叠块
+   ======================================== */
+.agent-process-block {
+    @apply my-2 rounded-lg overflow-hidden;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background 0.2s, border-color 0.2s;
+}
+.agent-process-block:hover {
+    background: rgba(255, 255, 255, 0.035);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+.agent-process-block.is-active {
+    background: rgba(var(--primary-rgb), 0.04);
+    border-color: rgba(var(--primary-rgb), 0.12);
+}
+.agent-process-block.is-active:hover {
+    background: rgba(var(--primary-rgb), 0.06);
+}
+
+.agent-process-header {
+    @apply flex items-center w-full gap-2 px-3 py-2 cursor-pointer select-none;
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+    transition: color 0.2s;
+}
+.agent-process-header:hover {
+    color: rgba(255, 255, 255, 0.75);
+}
+.agent-process-block.is-active .agent-process-header {
+    color: rgba(var(--primary-rgb), 0.95);
+    cursor: default;
+}
+
+.agent-process-icon-wrap {
+    @apply flex items-center justify-center w-5 h-5 rounded;
+    background: rgba(255, 255, 255, 0.05);
+    color: inherit;
+    position: relative;
+}
+.agent-process-block.is-active .agent-process-icon-wrap {
+    background: rgba(var(--primary-rgb), 0.12);
+}
+.agent-process-icon {
+    @apply w-3.5 h-3.5;
+    animation: agentProcessIconPulse 2s ease-in-out infinite;
+}
+.agent-process-block.is-active .agent-process-icon {
+    animation: agentProcessIconSpin 2.4s linear infinite;
+}
+@keyframes agentProcessIconPulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+}
+@keyframes agentProcessIconSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.agent-process-title {
+    @apply font-medium;
+    flex: 0 0 auto;
+}
+.agent-process-duration {
+    @apply font-mono;
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 11px;
+    flex: 0 0 auto;
+    margin-left: 2px;
+}
+.agent-process-block.is-active .agent-process-duration {
+    color: rgba(var(--primary-rgb), 0.6);
+}
+
+.agent-process-chevron {
+    @apply flex items-center justify-center;
+    margin-left: auto;
+    color: rgba(255, 255, 255, 0.3);
+    transition: transform 0.2s, color 0.2s;
+}
+.agent-process-block:hover .agent-process-chevron {
+    color: rgba(255, 255, 255, 0.55);
+}
+.agent-process-chevron-icon {
+    transform: rotate(-90deg);
+    transition: transform 0.2s;
+}
+.agent-process-block.is-open .agent-process-chevron-icon {
+    transform: rotate(0deg);
+}
+.agent-process-block.is-active .agent-process-chevron {
+    display: none;
+}
+
+.agent-process-body {
+    @apply px-3 overflow-hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s, padding 0.28s;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+.agent-process-block.is-open .agent-process-body {
+    max-height: 1600px;
+    opacity: 1;
+    padding-top: 2px;
+    padding-bottom: 12px;
+}
+
+/* reasoning 在 AgentProcessBlock 内的渲染 */
+.agent-process-reasoning {
+    @apply mb-2;
+}
+.agent-process-reasoning-label {
+    @apply flex items-center text-[11px] font-medium mb-1;
+    color: rgba(255, 255, 255, 0.4);
+}
+.agent-process-reasoning-content {
+    @apply text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.15);
+    border-left: 2px solid rgba(255, 255, 255, 0.08);
+    max-height: 360px;
+    overflow-y: auto;
+}
+.agent-process-block.is-active .agent-process-reasoning-content {
+    color: rgba(255, 255, 255, 0.65);
+    border-left-color: rgba(var(--primary-rgb), 0.4);
+    background: rgba(0, 0, 0, 0.1);
+}
+
+/* reasoning 内容滚动条美化 */
+.agent-process-reasoning-content::-webkit-scrollbar { width: 6px; }
+.agent-process-reasoning-content::-webkit-scrollbar-track { background: transparent; }
+.agent-process-reasoning-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+.agent-process-reasoning-content::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* interimContent 在 AgentProcessBlock 内的渲染 */
+.agent-process-interim {
+    @apply mb-2;
+}
+.agent-process-interim-label {
+    @apply flex items-center text-[11px] font-medium mb-1;
+    color: rgba(255, 255, 255, 0.4);
+}
+.agent-process-interim-content {
+    @apply text-[13px] leading-relaxed break-words;
+    color: rgba(255, 255, 255, 0.7);
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.12);
+    border-left: 2px solid rgba(124, 154, 191, 0.2);
+    max-height: 400px;
+    overflow-y: auto;
+}
+.agent-process-interim-content .markdown-body {
+    font-size: 13px;
+    line-height: 1.6;
+}
+.agent-process-interim-content .markdown-body p:first-child { margin-top: 0; }
+.agent-process-interim-content .markdown-body p:last-child { margin-bottom: 0; }
+
+/* interimContent 内容滚动条美化 */
+.agent-process-interim-content::-webkit-scrollbar { width: 6px; }
+.agent-process-interim-content::-webkit-scrollbar-track { background: transparent; }
+.agent-process-interim-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+.agent-process-interim-content::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* ========================================
+   Markdown 正文样式 (暗色主题)
+   ======================================== */
+.markdown-body {
+    color: rgba(255, 255, 255, 0.87);
+    font-size: 14px;
+    line-height: 1.7;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* 段落间距 */
+.markdown-body p {
+    margin: 0.6em 0;
+}
+.markdown-body p:first-child { margin-top: 0; }
+.markdown-body p:last-child { margin-bottom: 0; }
+
+/* 标题 */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    margin: 0.8em 0 0.4em 0;
+    font-weight: 600;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.93);
+}
+.markdown-body h1 { font-size: 1.5em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.3em; }
+.markdown-body h2 { font-size: 1.3em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.25em; }
+.markdown-body h3 { font-size: 1.15em; }
+.markdown-body h4 { font-size: 1.05em; }
+.markdown-body h5 { font-size: 1em; }
+.markdown-body h6 { font-size: 0.9em; color: rgba(255, 255, 255, 0.6); }
+
+/* 链接 */
+.markdown-body a {
+    color: #7c9abf;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.15s;
+}
+.markdown-body a:hover {
+    border-bottom-color: rgba(124, 154, 191, 0.4);
+}
+
+/* 引用块 */
+.markdown-body blockquote {
+    margin: 0.6em 0;
+    padding: 0.4em 1em;
+    border-left: 3px solid rgba(124, 154, 191, 0.3);
+    color: rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 0 6px 6px 0;
+}
+.markdown-body blockquote > :first-child { margin-top: 0; }
+.markdown-body blockquote > :last-child { margin-bottom: 0; }
+
+/* 列表 */
+.markdown-body ul,
+.markdown-body ol {
+    margin: 0.4em 0;
+    padding-left: 1.6em;
+}
+.markdown-body li {
+    margin: 0.2em 0;
+}
+.markdown-body li > p { margin: 0.3em 0; }
+
+/* 水平分隔线 */
+.markdown-body hr {
+    margin: 1.2em 0;
+    border: none;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* 行内代码 */
+.markdown-body code:not(pre code) {
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.9);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+/* 加粗/斜体 */
+.markdown-body strong { font-weight: 600; color: rgba(255, 255, 255, 0.93); }
+.markdown-body em { font-style: italic; }
+
+/* ========================================
+   Markdown 表格样式 (暗色主题)
+   ======================================== */
+.markdown-body .table-wrapper {
+    overflow-x: auto;
+    margin: 0.8em 0;
+}
+.markdown-body table {
+    border-collapse: collapse;
+    border-spacing: 0;
+    width: 100%;
+    max-width: 100%;
+    font-size: 0.9em;
+    display: block;
+    overflow-x: auto;
+}
+.markdown-body table::-webkit-scrollbar { height: 4px; }
+.markdown-body table::-webkit-scrollbar-track { background: transparent; }
+.markdown-body table::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+}
+
+.markdown-body thead {
+    background: rgba(124, 154, 191, 0.1);
+}
+.markdown-body th {
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    white-space: nowrap;
+}
+.markdown-body td {
+    padding: 7px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.8);
+}
+.markdown-body tbody tr {
+    transition: background 0.1s;
+}
+.markdown-body tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+.markdown-body tbody tr:hover {
+    background: rgba(124, 154, 191, 0.06);
+}
+.markdown-body tfoot {
+    background: rgba(255, 255, 255, 0.03);
+}
+.markdown-body caption {
+    padding: 6px 8px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.85em;
+    caption-side: bottom;
+}
+
+/* ========================================
+   消息操作按钮：默认仅图标，hover 文字滑入
+   ======================================== */
+.msg-action-btn {
+    display: inline-flex;
+    align-items: center;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 6px;
+    transition: all 0.2s ease;
+}
+.msg-action-btn .action-label {
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 11px;
+    transition: max-width 0.2s ease, opacity 0.15s ease, margin 0.2s ease;
+}
+.msg-action-btn:hover .action-label {
+    max-width: 80px;
+    opacity: 1;
+}
+.msg-action-btn:hover {
+    background: rgba(124, 154, 191, 0.12) !important;
+    padding: 4px 8px;
+}
+
+/* ========================================
    推理强度按钮 + 弹窗 (LobeHub 风格)
    亚克力: 透明背景 + 软边框 (与输入框工具栏其它按钮统一配色)
    ======================================== */
@@ -916,3 +1276,125 @@ input[type="range"]::-webkit-slider-thumb:active {
     color: rgba(255, 255, 255, 0.95);
     display: block;
 }
+
+/* ====== 工具调用审批气泡 ====== */
+
+.tool-approval-bubble {
+    background: rgba(22, 28, 46, 0.95);
+    border: 1px solid rgba(124, 154, 191, 0.15);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 4px 0;
+    max-width: 420px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    animation: tool-approval-in 0.2s ease-out;
+}
+
+.tool-approval-bubble.is-dangerous {
+    border-color: rgba(255, 77, 77, 0.25);
+}
+
+@keyframes tool-approval-in {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.tool-approval-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.tool-approval-icon {
+    color: rgba(124, 154, 191, 0.6);
+    flex-shrink: 0;
+}
+
+.tool-approval-toolname {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: monospace;
+}
+
+.tool-approval-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 77, 77, 0.15);
+    color: rgba(255, 77, 77, 0.8);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.tool-approval-args {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-approval-args code {
+    font-family: monospace;
+    font-size: 11px;
+}
+
+.tool-approval-reason {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.45);
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+
+.tool-approval-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.tool-approval-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tool-approval-btn-reject {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.tool-approval-btn-reject:hover {
+    background: rgba(255, 77, 77, 0.15);
+    color: rgba(255, 77, 77, 0.8);
+}
+
+.tool-approval-btn-approve {
+    background: rgba(74, 249, 8, 0.1);
+    color: rgba(74, 249, 8, 0.7);
+}
+
+.tool-approval-btn-approve:hover {
+    background: rgba(74, 249, 8, 0.2);
+    color: rgba(74, 249, 8, 0.9);
+}
+

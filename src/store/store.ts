@@ -10,12 +10,31 @@ import type { SkillConfig } from '../types/skill';
 // 接口定义
  /* 消息项接口，定义聊天消息的数据结构 */
 export interface Message {
-    role: 'user' | 'assistant';         // 消息发送者角色：'user' 表示用户，'assistant' 表示 AI 助手
+    id?: string;                        // 消息唯一 ID（工具消息/assistant 消息持久化需要）
+    role: 'user' | 'assistant' | 'tool' | 'system';  // 消息发送者角色：'tool' 为工具执行结果，'system' 为系统指令
     content: any;                       // 消息内容，支持文本或多模态内容（使用 any 类型以兼容不同格式）
     modelId?: string;                   // 生成回复的模型标识符，仅在 AI 助手回复时存在
     displayFiles?: AttachmentMeta[];    // 消息关联的附件元数据
     displayText?: string;               // 用于界面显示的纯文本内容（已脱敏或解析处理）
     reasoning?: string;                 // 模型原生思维链（reasoning_content），仅 assistant 消息可能携带
+    toolCallId?: string;                // role="tool" 时对应触发的 tool_call id（OpenAI API 要求配对）
+    name?: string;                      // role="tool" 时为被调用的函数名；role="assistant" 携带 tool_calls 时为 "assistant"
+    toolCalls?: ToolCallDisplay[];      // role="assistant" 时携带模型发起的工具调用请求（含前端 UI 状态 state/result/error）
+    agentStartTime?: number;             // Agent 轮次开始时间戳（ms），用于计算工作耗时
+    interimContent?: string;             // 多轮 Agent 工作中，中间轮次的阶段性总结文本累积
+}
+
+/** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */
+export interface ToolCallDisplay {
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+    /** UI 状态：calling / success / error */
+    state?: 'calling' | 'success' | 'error';
+    /** 工具返回的结构化结果 */
+    result?: any;
+    /** 错误信息（state=error 时） */
+    error?: string;
 }
 
 export interface AttachmentMeta {
@@ -52,6 +71,9 @@ export interface Topic {
     renamed?: boolean;
 }
 
+/** Agent 执行模式 */
+export type AgentMode = 'off' | 'normal' | 'auto' | 'plan';
+
  /* 助手接口，定义 AI 助手的数据结构 */
 export interface Assistant {
     id: string;             // 助手唯一标识符
@@ -60,6 +82,8 @@ export interface Assistant {
     modelId?: string;       // 助手绑定的首选模型 ID；未设置时回退到全局默认模型
     mcpServerIds?: string[];// 助手启用的 MCP server id 列表；空/未设置 = 该助手不使用任何 MCP 工具（opt-in）
     skillIds?: string[];    // 助手启用的 Skill id 列表；空/未设置 = 不注入 Skill 指令
+    projectId?: string;     // 助手所属的项目 ID；未设置 = 全局助手
+    agentMode?: AgentMode;  // Agent 执行模式；'off' = 对话模式
     topics: Topic[];        // 助手关联的话题列表
 }
 
@@ -87,6 +111,78 @@ export interface User {
     nickname?: string;      // 用户昵称（可选）
     token: string;          // 用户身份验证令牌
 }
+
+ /** 项目接口 */
+export interface Project {
+    id: string;
+    name: string;
+    path: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** 当前活跃的项目 ID（null = 全局模式）。从 localStorage 持久化恢复。 */
+const SAVED_PROJECT_KEY = 'aio-current-project-id';
+const savedProjectId = (() => {
+    try {
+        return localStorage.getItem(SAVED_PROJECT_KEY);
+    } catch { return null; }
+})();
+export const [currentProjectId, setCurrentProjectId] = createSignal<string | null>(savedProjectId);
+
+/** 项目 ID 变更时自动持久化到 localStorage */
+createEffect(() => {
+    const id = currentProjectId();
+    try {
+        if (id) {
+            localStorage.setItem(SAVED_PROJECT_KEY, id);
+        } else {
+            localStorage.removeItem(SAVED_PROJECT_KEY);
+        }
+    } catch { /* ignore */ }
+});
+
+/** 上次 Agent 模式下使用的工作目录 ID（用于从对话模式切换到 Agent 时自动恢复） */
+const LAST_AGENT_PROJECT_KEY = 'aio-last-agent-project-id';
+export const getLastAgentProjectId = (): string | null => {
+    try {
+        return localStorage.getItem(LAST_AGENT_PROJECT_KEY);
+    } catch { return null; }
+};
+export const saveLastAgentProjectId = (id: string | null) => {
+    try {
+        if (id) {
+            localStorage.setItem(LAST_AGENT_PROJECT_KEY, id);
+        } else {
+            localStorage.removeItem(LAST_AGENT_PROJECT_KEY);
+        }
+    } catch { /* ignore */ }
+};
+
+/** 所有项目列表 */
+export const [projects, setProjects] = createSignal<Project[]>([]);
+
+/** 当前活跃项目的完整对象（派生） */
+export const currentProject = (): Project | null => {
+    const id = currentProjectId();
+    if (!id) return null;
+    return projects().find(p => p.id === id) ?? null;
+};
+
+/** 加载项目列表，恢复后验证持久化的项目 ID 仍然有效 */
+export const initProjects = async () => {
+    try {
+        const list = await invoke<Project[]>('list_projects');
+        setProjects(list);
+        // 验证持久化的 projectId 是否仍存在，不存在则回退全局模式
+        const saved = currentProjectId();
+        if (saved && !list.find(p => p.id === saved)) {
+            setCurrentProjectId(null);
+        }
+    } catch (e) {
+        console.warn('加载项目列表失败:', e);
+    }
+};
 
 /** 全局用户头像状态信号，默认使用系统默认头像 */
 export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-logo/user.svg');
@@ -478,15 +574,12 @@ export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({})
 /** LLM 工具调用事件总线（ChatPage 监听） */
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
 
-/** 工具调用轮数（防止死循环，5 轮上限） */
-export const TOOL_CALL_MAX_ROUNDS = 5;
-
 /**
  * 加载并初始化 MCP 服务器列表 + 同步后端已连接状态 + 自动启动标记为 autoStart 的 server
  */
-export const initMcpServers = async () => {
+export const initMcpServers = async (projectId?: string | null) => {
     try {
-        const list = await invoke<McpServerConfig[]>('list_mcp_servers');
+        const list = await invoke<McpServerConfig[]>('list_mcp_servers', { projectId: projectId ?? null });
         const map: Record<string, McpServerConfig> = {};
         for (const cfg of list) map[cfg.id] = cfg;
         setMcpServers(map);
@@ -501,13 +594,20 @@ export const initMcpServers = async () => {
             setMcpServerStatus(prev => ({ ...prev, [info.id]: info }));
         });
 
+        // 监听 MCP server stderr 日志
+        listen<{ id: string; line: string }>('mcp-server-stderr', (event) => {
+            const { id, line } = event.payload;
+            console.log(`[mcp:${id}] ${line}`);
+        });
+
         // 自动启动标记为 autoStart 的 server
         // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）
         const autoStartIds = Object.values(map)
             .filter(cfg => cfg.autoStart)
             .map(cfg => cfg.id);
         if (autoStartIds.length > 0) {
-            await Promise.allSettled(autoStartIds.map(id => startMcpServerAndRefresh(id)));
+            const pid = projectId ?? null;
+            await Promise.allSettled(autoStartIds.map(id => startMcpServerAndRefresh(id, pid)));
         }
     } catch (e) {
         console.warn('加载 MCP server 列表失败:', e);
@@ -517,13 +617,13 @@ export const initMcpServers = async () => {
 /**
  * 启动一个 MCP server 并刷新工具缓存
  */
-export const startMcpServerAndRefresh = async (id: string): Promise<ToolSpec[]> => {
+export const startMcpServerAndRefresh = async (id: string, projectId?: string | null): Promise<ToolSpec[]> => {
     setMcpServerStatus(prev => ({
         ...prev,
         [id]: { id, status: 'connecting', toolCount: 0 },
     }));
     try {
-        const tools = await invoke<ToolSpec[]>('start_mcp_server', { id });
+        const tools = await invoke<ToolSpec[]>('start_mcp_server', { id, projectId: projectId ?? null });
         setMcpServerStatus(prev => ({
             ...prev,
             [id]: { id, status: 'connected', toolCount: tools.length },
@@ -542,7 +642,7 @@ export const startMcpServerAndRefresh = async (id: string): Promise<ToolSpec[]> 
 /** 重新拉取所有已连接 server 的工具，更新 mcpToolsCache（全局状态展示用） */
 export const refreshMcpToolsCache = async () => {
     try {
-        const tools = await invoke<ToolSpec[]>('list_mcp_tools');
+        const tools = await invoke<ToolSpec[]>('list_mcp_tools', { projectId: currentProjectId() ?? null });
         setMcpToolsCache(tools);
     } catch (e) {
         console.warn('刷新 MCP 工具缓存失败:', e);
@@ -730,10 +830,10 @@ export const updateTopicHistorySmoothly = (
     );
 };
 
-/** 从后端加载 Skill 配置。 */
-export const initSkills = async () => {
+/** 从后端加载 Skill 配置（支持项目级合并）。 */
+export const initSkills = async (projectId?: string | null) => {
     try {
-        const list = await invoke<SkillConfig[]>('list_skills');
+        const list = await invoke<SkillConfig[]>('list_skills', { projectId: projectId ?? null });
         setSkills(Object.fromEntries(list.map(skill => [skill.id, skill])));
     } catch (e) {
         console.warn('加载 Skill 列表失败:', e);

@@ -110,11 +110,10 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
     // 1. 加载助手
     let mut stmt = conn
-        .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids FROM assistants ORDER BY id")
+        .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode FROM assistants ORDER BY id")
         .map_err(|e| e.to_string())?;
     let assistant_iter = stmt
         .query_map([], |row| {
-            // mcp_server_ids (index 4)：TEXT 列存 JSON 数组字符串，NULL → 空 vec
             let mcp_ids_json: Option<String> = row.get(4)?;
             let mcp_server_ids: Vec<String> = mcp_ids_json
                 .and_then(|s| serde_json::from_str(&s).ok())
@@ -123,6 +122,11 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
             let skill_ids: Vec<String> = skill_ids_json
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or_default();
+            let project_id: Option<String> = row.get(6)?;
+            let agent_mode_str: Option<String> = row.get(7)?;
+            let agent_mode = agent_mode_str
+                .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
+                .unwrap_or(crate::core::models::AgentMode::Off);
             Ok(Assistant {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -130,7 +134,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                 model_id: row.get(3)?,
                 mcp_server_ids,
                 skill_ids,
-                topics: vec![], // 后续填充
+                project_id,
+                agent_mode,
+                topics: vec![],
             })
         })
         .map_err(|e| e.to_string())?;
@@ -159,8 +165,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. 加载历史消息
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话）
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -175,6 +181,11 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     let content_value = serde_json::from_str(&content_json)
                         .unwrap_or(serde_json::Value::String(content_json));
 
+                    // 提取 tool_calls_json (在 index 9)
+                    let tool_calls_json: Option<String> = row.get(9)?;
+                    let tool_calls = tool_calls_json
+                        .and_then(|s| serde_json::from_str::<Vec<ToolCall>>(&s).ok());
+
                     Ok(Message {
                         id: row.get(0)?,           // index 0: id
                         role: row.get(1)?,         // index 1: role
@@ -182,9 +193,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         model_id: row.get(3)?,     // index 3: model_id
                         display_files,             // 已经解析好的 files
                         display_text: row.get(5)?, // index 5: display_text
-                        tool_call_id: None,
-                        name: None,
-                        tool_calls: None,
+                        tool_call_id: row.get(7)?, // index 7: tool_call_id
+                        name: row.get(8)?,         // index 8: name
+                        tool_calls,                // index 9: tool_calls_json（已解析）
                         reasoning: row.get(6)?,    // index 6: reasoning
                     })
                 })
@@ -221,15 +232,18 @@ pub async fn save_assistant(
     let conn = state.0.lock().unwrap();
 
     // 1. 保存/更新助手基本信息
-    // mcp_server_ids 以 JSON 数组字符串持久化；空列表存 "[]"
     let mcp_ids_json = serde_json::to_string(&assistant.mcp_server_ids)
         .unwrap_or_else(|_| "[]".to_string());
     let skill_ids_json = serde_json::to_string(&assistant.skill_ids)
         .unwrap_or_else(|_| "[]".to_string());
+    let agent_mode_str = serde_json::to_string(&assistant.agent_mode)
+        .unwrap_or_else(|_| "\"off\"".to_string())
+        .trim_matches('"')
+        .to_string();
     conn.execute(
-        "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4, mcp_server_ids=?5, skill_ids=?6",
-        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id, mcp_ids_json, skill_ids_json],
+        "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4, mcp_server_ids=?5, skill_ids=?6, project_id=?7, agent_mode=?8",
+        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id, mcp_ids_json, skill_ids_json, assistant.project_id, agent_mode_str],
     )
     .map_err(|e| e.to_string())?;
 
@@ -295,12 +309,22 @@ pub async fn save_assistant(
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let files_json = serde_json::to_string(&msg.display_files).ok();
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
+            let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
+            // 写入 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话。
+            // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                 ON CONFLICT(id) DO NOTHING", // 关键：已存在的 ID 不再重复写入
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning],
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id) DO UPDATE SET
+                   content = excluded.content,
+                   reasoning = excluded.reasoning,
+                   tool_call_id = excluded.tool_call_id,
+                   name = excluded.name,
+                   tool_calls_json = excluded.tool_calls_json,
+                   display_files = excluded.display_files,
+                   display_text = excluded.display_text",
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
         }

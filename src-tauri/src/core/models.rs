@@ -25,6 +25,33 @@ pub struct StreamPayload {
     pub topic_id: String,
     pub content: String,
     pub done: bool,
+    /// done=true 时携带的错误信息（整轮因错误/取消结束时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。
+#[derive(Serialize, Clone)]
+pub struct RoundStartPayload {
+    pub assistant_id: String,
+    pub topic_id: String,
+    /// 第几轮（从 1 开始）
+    pub round: u32,
+}
+
+/// 单个工具执行结果（后端执行完 MCP 工具后 emit，前端据此更新气泡状态并追加 role:tool 消息）。
+#[derive(Serialize, Clone)]
+pub struct ToolResultPayload {
+    pub assistant_id: String,
+    pub topic_id: String,
+    pub tool_call_id: String,
+    pub name: String,
+    /// 给前端展示用的纯文本结果
+    pub content: String,
+    /// 原始结构化结果（ToolResultContent 数组）
+    pub result: serde_json::Value,
+    /// 是否为错误
+    pub is_error: bool,
 }
 
 /// 从 provider 实时拉取的单个模型信息（OpenAI-兼容 /v1/models 或厂商自定义端点）。
@@ -134,6 +161,7 @@ pub struct AssistantTools {
 
 /// MCP 工具调用结果
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolResult {
     pub content: Vec<ToolResultContent>,
     #[serde(default)]
@@ -206,6 +234,16 @@ pub struct Assistant {
     /// 助手启用的 Skill id 列表；空数组表示不注入任何 Skill 指令。
     #[serde(rename = "skillIds", default, skip_serializing_if = "Vec::is_empty")]
     pub skill_ids: Vec<String>,
+    /// 助手所属的项目 ID。None = 全局助手（不属于任何项目）。
+    #[serde(
+        rename = "projectId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_id: Option<String>,
+    /// Agent 执行模式。Off = 对话模式。旧数据缺省反序列化为 Off。
+    #[serde(rename = "agentMode", default)]
+    pub agent_mode: AgentMode,
     #[serde(default)]
     pub topics: Vec<Topic>,
 }
@@ -414,6 +452,24 @@ impl Default for McpServersFile {
 
 // ====== Skill 配置 ======
 
+/// Skill 来源类型。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillSource {
+    /// 手动创建或旧数据（缺省值）
+    Local,
+    /// 从 skills.sh 市场下载
+    Market,
+    /// 从 npm/npx 生态导入
+    Npx,
+}
+
+impl Default for SkillSource {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
 /// 可复用的助手系统指令模块。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -423,6 +479,9 @@ pub struct SkillConfig {
     #[serde(default)]
     pub description: String,
     pub content: String,
+    /// Skill 来源。旧数据缺省反序列化为 Local。
+    #[serde(default)]
+    pub source: SkillSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,6 +492,15 @@ pub struct SkillConfig {
     pub source_slug: Option<String>,
     #[serde(default)]
     pub installs: u64,
+    /// npx 包名（source = Npx 时必填），如 "@anthropic-ai/skill-docx"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npx_package: Option<String>,
+    /// npx 包的已安装版本号
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npx_version: Option<String>,
+    /// npx 执行命令（默认等于 npx_package）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npx_command: Option<String>,
 }
 
 /// Skill 持久化文件。
@@ -488,6 +556,28 @@ pub struct SkillMarketCategory {
     pub skill_count: usize,
 }
 
+// ====== Agent 模式配置 ======
+
+/// Agent 执行模式。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentMode {
+    /// 对话模式（不使用 Agent 功能）
+    Off,
+    /// 普通模式：文件写入/删除需要用户确认
+    Normal,
+    /// 自动模式：跳过确认，自主执行
+    Auto,
+    /// 计划模式：先列出计划，用户确认后再执行
+    Plan,
+}
+
+impl Default for AgentMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 /// MCP server 初始化握手返回的服务端信息
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -495,4 +585,44 @@ pub struct McpServerInfo {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+}
+
+// ====== 项目配置 ======
+
+/// 项目定义：绑定到文件系统目录的逻辑分组单元。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    /// 绑定的文件系统目录绝对路径
+    pub path: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 项目持久化索引文件（app_data_dir/projects.json）。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectsFile {
+    pub version: u32,
+    pub updated_at: String,
+    pub projects: BTreeMap<String, Project>,
+}
+
+// ====== npx Skill 发现 ======
+
+/// npx skill 发现结果：系统上检测到的可导入 Skill 包。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredNpxSkill {
+    pub package_name: String,
+    pub version: String,
+    pub description: String,
+    /// 发现路径（Claude skills dir / global node_modules）
+    pub source_path: String,
+    /// 发现来源类型："claude-skills-dir" | "global-npm"
+    pub source_type: String,
+    /// AIO 中是否已导入该 skill
+    pub already_imported: bool,
 }

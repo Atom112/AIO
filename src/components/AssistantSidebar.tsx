@@ -1,6 +1,6 @@
-import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
+import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId } from '../store/store';
+import { datas, setDatas, currentAssistantId, setCurrentAssistantId, saveSingleAssistantToBackend, deleteAssistantFile, setCurrentTopicId, currentProjectId, currentProject } from '../store/store';
 import Icon from './Icon';
 
 interface AssistantSidebarProps {
@@ -27,6 +27,15 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
     });
 
     let menuCloseTimeoutId: any;
+
+    // 按项目过滤助手列表
+    const filteredAssistants = createMemo(() => {
+        const pid = currentProjectId();
+        if (!pid) return datas.assistants; // 全局模式：显示全部
+        return datas.assistants.filter(
+            a => !a.projectId || a.projectId === pid // 全局助手 + 当前项目助手
+        );
+    });
 
     onMount(() => {
         const handleClickOutside = () => {
@@ -83,7 +92,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                 class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
                 classList={{ "opacity-0 pointer-events-none overflow-hidden": props.isCollapsed }}
             >
-                <For each={datas.assistants}>
+                <For each={filteredAssistants()}>
                     {(assistant) => (
                         <div
                             class="group sidebar-item my-1"

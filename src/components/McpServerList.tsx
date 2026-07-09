@@ -4,6 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import {
     datas, mcpServers, mcpServerStatus, saveSingleAssistantToBackend, setDatas,
     setMcpServers, setMcpServerStatus, startMcpServerAndRefresh,
+    currentProjectId, currentProject,
 } from '../store/store';
 import type {
     McpCatalogDelivery, McpCatalogInstallRequest, McpCatalogPage,
@@ -32,7 +33,7 @@ const McpServerList: Component = () => {
     const [error, setError] = createSignal<string | null>(null);
 
     const loadLocal = async () => {
-        const list = await invoke<McpServerConfig[]>('list_mcp_servers');
+        const list = await invoke<McpServerConfig[]>('list_mcp_servers', { projectId: currentProjectId() });
         setMcpServers(Object.fromEntries(list.map(server => [server.id, server])));
     };
 
@@ -94,7 +95,7 @@ const McpServerList: Component = () => {
 
     const handleStart = async (id: string) => {
         try {
-            await startMcpServerAndRefresh(id);
+            await startMcpServerAndRefresh(id, currentProjectId());
         } catch (e) {
             setError(`启动失败: ${e}`);
         }
@@ -112,7 +113,7 @@ const McpServerList: Component = () => {
     const handleRemove = async (id: string) => {
         if (!confirm('确定删除此 MCP 服务器配置？此操作不可恢复。')) return;
         try {
-            await invoke('remove_mcp_server', { id });
+            await invoke('remove_mcp_server', { id, projectId: currentProjectId() });
             const next = { ...mcpServers() };
             delete next[id];
             setMcpServers(next);
@@ -133,7 +134,7 @@ const McpServerList: Component = () => {
 
     const handleSave = async (config: McpServerConfig) => {
         try {
-            await invoke('add_mcp_server', { config });
+            await invoke('add_mcp_server', { config, projectId: currentProjectId() });
             setMcpServers({ ...mcpServers(), [config.id]: config });
             setEditingConfig(null);
             setIsCreating(false);
@@ -199,7 +200,7 @@ const McpServerList: Component = () => {
             setInstalling(null);
             setView('downloaded');
             try {
-                await startMcpServerAndRefresh(config.id);
+                await startMcpServerAndRefresh(config.id, currentProjectId());
             } catch (e) {
                 setError(`已安装，但首次启动失败：${e}`);
             }

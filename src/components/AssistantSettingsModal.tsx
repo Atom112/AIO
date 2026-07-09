@@ -4,11 +4,13 @@ import {
     allAvailableModels, isLocalModel, resolveAssistantModel, modelKey,
     ActivatedModel, modelsCatalog,
     mcpServers, mcpServerStatus, skills,
+    startMcpServerAndRefresh, currentProjectId,
 } from '../store/store';
 import { getLogo as getLogoByIds } from '../utils/modelLogo';
 import { findModel, formatContextWindow } from '../utils/models';
 import { transportLabel, statusLabel, statusColor } from '../utils/mcp';
 import Icon from './Icon';
+import Switch from './Switch';
 
 interface AssistantSettingsModalProps {
     show: boolean;
@@ -32,7 +34,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
 
     /** 当前编辑的助手对象（响应式） */
     const asst = () => datas.assistants.find((a: any) => a.id === props.assistantId) as
-        | { id: string; name: string; prompt: string; modelId?: string; mcpServerIds?: string[]; skillIds?: string[] } | undefined;
+        | { id: string; name: string; prompt: string; modelId?: string; mcpServerIds?: string[]; skillIds?: string[]; agentMode?: string } | undefined;
 
     /** 弹窗打开时同步名称与提示词到本地编辑态，并触发入场动画 */
     createEffect(() => {
@@ -79,7 +81,8 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
         void setAssistantModel(id, model);
     };
 
-    /** 为当前助手启用或停用一个 MCP server，并立即持久化。 */
+    /** 为当前助手启用或停用一个 MCP server，并立即持久化。
+     *  启用时若 server 未运行则自动启动。 */
     const handleToggleMcpServer = async (serverId: string, enabled: boolean) => {
         const id = props.assistantId;
         const current = asst()?.mcpServerIds ?? [];
@@ -90,6 +93,14 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
             : current.filter(existingId => existingId !== serverId);
         setDatas('assistants', a => a.id === id, 'mcpServerIds', next);
         await saveSingleAssistantToBackend(id);
+
+        // 启用时若 server 未运行，自动启动它
+        if (enabled) {
+            const status = mcpServerStatus()[serverId]?.status;
+            if (!status || status === 'disconnected' || status === 'error') {
+                void startMcpServerAndRefresh(serverId, currentProjectId());
+            }
+        }
     };
 
     const sortedMcpServers = () =>
@@ -337,14 +348,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                                     const checked = () => (asst()?.mcpServerIds ?? []).includes(server.id);
                                     const status = () => mcpServerStatus()[server.id]?.status ?? 'disconnected';
                                     return (
-                                        <label
-                                            class="flex items-center gap-3 rounded-md px-2.5 py-2 cursor-pointer transition-colors hover:bg-white/5"
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={checked()}
-                                                onChange={(e) => void handleToggleMcpServer(server.id, e.currentTarget.checked)}
-                                            />
+                                        <div class="flex items-center gap-3 rounded-md px-2.5 py-2 transition-colors hover:bg-white/5">
                                             <div class="flex-1 min-w-0">
                                                 <div class="text-sm text-white truncate">{server.displayName || server.id}</div>
                                                 <div class="text-[11px] truncate" style="color: rgba(255,255,255,0.4);">
@@ -357,7 +361,12 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                                             >
                                                 {statusLabel(status())}
                                             </span>
-                                        </label>
+                                            <Switch
+                                                checked={checked()}
+                                                label={`启用 ${server.displayName || server.id}`}
+                                                onChange={(enabled) => void handleToggleMcpServer(server.id, enabled)}
+                                            />
+                                        </div>
                                     );
                                 }}
                             </For>
@@ -382,22 +391,24 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                         </label>
                         <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
                             <For each={sortedSkills()}>
-                                {(skill) => (
-                                    <label class="flex items-start gap-3 rounded-md px-2.5 py-2 cursor-pointer transition-colors hover:bg-white/5">
-                                        <input
-                                            type="checkbox"
-                                            class="mt-1"
-                                            checked={(asst()?.skillIds ?? []).includes(skill.id)}
-                                            onChange={(e) => void handleToggleSkill(skill.id, e.currentTarget.checked)}
-                                        />
-                                        <div class="flex-1 min-w-0">
-                                            <div class="text-sm text-white truncate">{skill.name}</div>
-                                            <div class="text-[11px] line-clamp-2" style="color: rgba(255,255,255,0.4);">
-                                                {skill.description || skill.content}
+                                {(skill) => {
+                                    const checked = () => (asst()?.skillIds ?? []).includes(skill.id);
+                                    return (
+                                        <div class="flex items-center gap-3 rounded-md px-2.5 py-2 transition-colors hover:bg-white/5">
+                                            <div class="flex-1 min-w-0">
+                                                <div class="text-sm text-white truncate">{skill.name}</div>
+                                                <div class="text-[11px] line-clamp-2" style="color: rgba(255,255,255,0.4);">
+                                                    {skill.description || skill.content}
+                                                </div>
                                             </div>
+                                            <Switch
+                                                checked={checked()}
+                                                label={`启用 ${skill.name}`}
+                                                onChange={(enabled) => void handleToggleSkill(skill.id, enabled)}
+                                            />
                                         </div>
-                                    </label>
-                                )}
+                                    );
+                                }}
                             </For>
                             <Show when={sortedSkills().length === 0}>
                                 <div class="px-3 py-5 text-center text-xs" style="color: rgba(255,255,255,0.35);">

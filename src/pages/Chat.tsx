@@ -6,12 +6,15 @@ import {
   saveSingleAssistantToBackend, Assistant, Topic, Message, PendingAttachment, StoredAttachment, selectedModel, setSelectedModel,
   resolveAssistantModel, modelKey, reasoningLevel,
   pendingRenameRequest, setPendingRenameRequest,
-  mcpServers, mcpServerStatus, TOOL_CALL_MAX_ROUNDS, resolveAssistantSkills,
+  mcpServers, mcpServerStatus, resolveAssistantSkills,
+  currentProjectId, currentProject,
 } from '../store/store';
+import { buildAgentSystemPrompt } from '../core/agent-prompts';
 import AssistantSidebar from '../components/AssistantSidebar';
 import AssistantSettingsModal from '../components/AssistantSettingsModal';
 import ChatInterface from '../components/ChatInterface';
 import TopicSidebar from '../components/TopicSidebar';
+import type { PendingApproval } from '../components/ToolApprovalBubble';
 
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = "default-assistant-id";
@@ -44,8 +47,10 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
   name: name || '新助手',                  // 默认助手名称
   prompt: '你是一个乐于助人的 AI 助手。',     // 默认系统提示词
   modelId: selectedModel() ? modelKey(selectedModel()!) : undefined,  // 继承当前生效模型（复合键）作为新助手默认模型
-  mcpServerIds: [],
+  // 有项目上下文时自动启用内置文件系统 MCP，让 agent 开箱即用
+  mcpServerIds: currentProjectId() ? ['__aio-filesystem__'] : [],
   skillIds: [],
+  projectId: currentProjectId() ?? undefined, // 关联当前项目
   topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
 });
 
@@ -75,8 +80,8 @@ const ChatPage: Component = () => {
   const [editingAsstId, setEditingAsstId] = createSignal<string | null>(null);    // 当前正在编辑名称的助手 ID，null 表示无编辑中
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
-  // 当前会话的 toolName → serverId 映射（由 list_mcp_tools_for_assistant 返回，供 call_mcp_tool 解析）
-  const [toolServerMap, setToolServerMap] = createSignal<Record<string, string>>({});
+  // 待用户审批的工具调用列表
+  const [pendingApprovals, setPendingApprovals] = createSignal<PendingApproval[]>([]);
 
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
@@ -359,225 +364,58 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 处理 LLM 工具调用事件（来自后端 llm-tool-call）：
-   *   1. 找到 tool_call_id 对应的 assistant 消息，标记 toolCall.state = 'calling'
-   *   2. 查找该工具对应的 MCP serverId
-   *   3. 调用 call_mcp_tool；标记 success / error
-   *   4. 追加 role="tool" 消息
-   *   5. 重新 invoke call_llm_stream 继续对话（5 轮上限）
+   * 确保 messagesForAI 中的所有 assistant(tool_calls) 都有对应的 role:tool 消息。
+   * 如果缺少某个 tool_call_id 的 tool 响应，自动补全占位消息，
+   * 防止 API 400 "insufficient tool messages" 错误。
    */
-  const handleToolCall = async (
-    asstId: string,
-    topicId: string,
-    toolCallId: string,
-    toolName: string,
-    argsJson: string,
-  ) => {
-    const asst = datas.assistants.find((a: any) => a.id === asstId);
-    const topic = (asst?.topics as Topic[] | undefined)?.find((t: Topic) => t.id === topicId);
-    if (!asst || !topic) return;
+  function ensureToolMessagesComplete(msgs: any[]): any[] {
+    const result: any[] = [];
+    let pendingToolCallIds: string[] = [];
 
-    // 5 轮上限检查
-    const rounds = topic.history.reduce((n: number, m: any) => {
-      if (m.role === 'tool') return n + 1;
-      return n;
-    }, 0);
-    if (rounds >= TOOL_CALL_MAX_ROUNDS) {
-      // 标记为 error
-      setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
-        'history', (h: any[]) => h.map((m: any) => {
-          if (m.role === 'assistant' && m.toolCalls) {
-            return {
-              ...m,
-              toolCalls: m.toolCalls.map((tc: any) =>
-                tc.id === toolCallId ? { ...tc, state: 'error', error: `已达工具调用上限 ${TOOL_CALL_MAX_ROUNDS} 轮` } : tc
-              ),
-            };
-          }
-          return m;
-        })
-      );
-      return;
-    }
+    for (const msg of msgs) {
+      result.push(msg);
 
-    // 找到最后一条 assistant 消息，初始化/更新 toolCalls
-    setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
-      'history', (h: any[]) => {
-        const lastIdx = h.length - 1;
-        if (h[lastIdx]?.role === 'assistant') {
-          const existing = h[lastIdx].toolCalls || [];
-          const hasTc = existing.find((tc: any) => tc.id === toolCallId);
-          if (!hasTc) {
-            // 首次收到此 tool_call：追加到 assistant message
-            return [
-              ...h.slice(0, lastIdx),
-              {
-                ...h[lastIdx],
-                toolCalls: [
-                  ...existing,
-                  { id: toolCallId, type: 'function', function: { name: toolName, arguments: argsJson } }
-                ]
-              }
-            ];
-          }
-          // 已存在：标记 calling
-          return [
-            ...h.slice(0, lastIdx),
-            {
-              ...h[lastIdx],
-              toolCalls: existing.map((tc: any) =>
-                tc.id === toolCallId ? { ...tc, state: 'calling' } : tc
-              )
-            }
-          ];
-        }
-        return h;
+      if (msg.role === 'assistant' && msg.tool_calls?.length) {
+        // 收集这条 assistant 消息声明的所有 tool_call_id
+        pendingToolCallIds = msg.tool_calls.map((tc: any) => tc.id);
+      } else if (msg.role === 'tool' && msg.tool_call_id) {
+        // 匹配到对应的 tool 响应，移除
+        const idx = pendingToolCallIds.indexOf(msg.tool_call_id);
+        if (idx !== -1) pendingToolCallIds.splice(idx, 1);
       }
-    );
 
-    // 找 server：由 list_mcp_tools_for_assistant 返回的 toolServerMap 确定地解析
-    const serverId = toolServerMap()[toolName] ?? null;
-    if (!serverId) {
-      // 标记 error，附 role=tool 错误消息
-      const errMsg = `未找到工具 ${toolName} 对应的 MCP server`;
-      setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
-        'history', (h: any[]) => [
-          ...h.map((m: any) => {
-            if (m.role === 'assistant' && m.toolCalls) {
-              return {
-                ...m,
-                toolCalls: m.toolCalls.map((tc: any) =>
-                  tc.id === toolCallId ? { ...tc, state: 'error', error: errMsg } : tc
-                ),
-              };
-            }
-            return m;
-          }),
-          { id: crypto.randomUUID(), role: 'tool' as const, content: `[Error] ${errMsg}`, toolCallId, name: toolName },
-        ]
-      );
-      return;
-    }
-
-    // 调用工具
-    let args: any = {};
-    try { args = JSON.parse(argsJson || '{}'); } catch { /* keep empty */ }
-    let resultContent: any[] = [];
-    let isError = false;
-    let errorMsg = '';
-    try {
-      const result = await invoke<any>('call_mcp_tool', {
-        serverId,
-        toolName,
-        arguments: args,
-      });
-      resultContent = result.content || [];
-      isError = !!result.isError;
-    } catch (e: any) {
-      isError = true;
-      errorMsg = String(e);
-    }
-
-    // 把结果写入 tool_call，并追加 role=tool 消息
-    const toolContentText = isError
-      ? `[Error] ${errorMsg}`
-      : (resultContent.find((c: any) => c.type === 'text')?.text || JSON.stringify(resultContent));
-
-    setDatas('assistants', (a: any) => a.id === asstId, 'topics', (t: Topic) => t.id === topicId,
-      'history', (h: any[]) => [
-        ...h.map((m: any) => {
-          if (m.role === 'assistant' && m.toolCalls) {
-            return {
-              ...m,
-              toolCalls: m.toolCalls.map((tc: any) =>
-                tc.id === toolCallId
-                  ? { ...tc, state: isError ? 'error' : 'success', result: resultContent, error: isError ? errorMsg : undefined }
-                  : tc
-              ),
-            };
-          }
-          return m;
-        }),
-        { id: crypto.randomUUID(), role: 'tool' as const, content: toolContentText, toolCallId, name: toolName },
-      ]
-    );
-
-    // 递归调用 LLM：把当前 history 重新发出去（带 tools）
-    await invokeLLMStreamWithHistory(asstId, topicId);
-  };
-
-  /**
-   * 用当前 history 重新调用 LLM（工具调用循环的驱动）。
-   * 复用 handleSendMessage 的消息构造逻辑但不发新 user 消息。
-   */
-  const invokeLLMStreamWithHistory = async (asstId: string, topicId: string) => {
-    const asst = datas.assistants.find((a: any) => a.id === asstId);
-    const topic = (asst?.topics as Topic[] | undefined)?.find((t: Topic) => t.id === topicId);
-    const currentMdl = selectedModel();
-    if (!asst || !topic || !currentMdl) return;
-
-    // 注入 MCP 工具列表（按助手勾选的 server 过滤，opt-in 语义）
-    const asstMcpIds = (asst as any).mcpServerIds ?? [];
-    const { tools, toolServerMap: tsm } = asstMcpIds.length
-      ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', { mcpServerIds: asstMcpIds }).catch(() => ({ tools: [], toolServerMap: {} }))
-      : { tools: [], toolServerMap: {} };
-    setToolServerMap(tsm);
-
-    // 构造传给 API 的 messages：清理 toolCalls 只保留 API 需要的字段
-    const messagesForAI: any[] = [
-      { role: 'system', content: asst.prompt },
-      ...resolveAssistantSkills(asst).map(skill => ({
-        role: 'system',
-        content: `[Skill: ${skill.name}]\n${skill.content}`,
-      })),
-      ...(topic.summary ? [{ role: 'system', content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${topic.summary}` }] : []),
-      ...topic.history.map((m: any) => {
-        const obj: any = { role: m.role, content: m.content };
-        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
-        if (m.name) obj.name = m.name;
-        if (m.toolCalls && m.toolCalls.length > 0) {
-          // 只保留 OpenAI API 认识的字段，去掉前端 UI 状态（state / result / error）
-          obj.tool_calls = m.toolCalls.map((tc: any) => ({
-            id: tc.id,
-            type: tc.type || 'function',
-            function: {
-              name: tc.function?.name,
-              arguments: tc.function?.arguments,
-            },
-          }));
+      // 遇到 user 或 assistant(无 tool_calls) 消息时，如果还有未匹配的 tool_call_id，
+      // 说明之前 assistant 的 tool_calls 缺少足够 tool 响应——补全占位消息
+      if ((msg.role === 'user' || (msg.role === 'assistant' && !msg.tool_calls?.length)) && pendingToolCallIds.length > 0) {
+        for (const id of pendingToolCallIds) {
+          console.warn(`[ensureToolMessages] 补全缺失的 tool 响应: ${id}`);
+          result.push({
+            role: 'tool' as const,
+            tool_call_id: id,
+            name: '__pending__',
+            content: '[System: tool result pending]',
+          });
         }
-        return obj;
-      }),
-    ];
-
-    // 预先添加空的 assistant 占位消息，流式数据才有地方追加
-    const newAssistantMsg = {
-      id: crypto.randomUUID(),
-      role: 'assistant' as const,
-      content: '',
-      modelId: currentMdl.model_id,
-    };
-    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-      'history', h => [...h, newAssistantMsg]);
-    setTypingIndex(topic.history.length); // 新 assistant 消息的位置
-    setIsThinking(true);
-
-    try {
-      await invoke('call_llm_stream', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        assistantId: asstId,
-        topicId,
-        messages: messagesForAI,
-        tools: tools.length > 0 ? tools : null,
-      });
-    } catch (err) {
-      setIsThinking(false);
-      setTypingIndex(null);
-      console.error('LLM 续接调用失败:', err);
+        pendingToolCallIds = [];
+      }
     }
-  };
+
+    // 收尾：如果数组结束时仍有未匹配的 tool_call_id，补全占位消息
+    if (pendingToolCallIds.length > 0) {
+      for (const id of pendingToolCallIds) {
+        console.warn(`[ensureToolMessages] 补全缺失的 tool 响应(收尾): ${id}`);
+        result.push({
+          role: 'tool' as const,
+          tool_call_id: id,
+          name: '__pending__',
+          content: '[System: tool result pending]',
+        });
+      }
+      pendingToolCallIds = [];
+    }
+
+    return result;
+  }
 
   /**
    * 处理发送消息的逻辑
@@ -596,11 +434,11 @@ const ChatPage: Component = () => {
     // 必须满足：有文本输入或有文件附件
     if (!userInput && files.length === 0) return;
 
-    const asstId = currentAssistantId();
-    const topicId = currentTopicId();
-    if (!asstId || !topicId) return;
+	    const asstId = currentAssistantId();
+	    const topicId = currentTopicId();
+	    if (!asstId || !topicId) return;
 
-    const newUserMsg = {
+	    const newUserMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
       content: userInput,
@@ -627,20 +465,55 @@ const ChatPage: Component = () => {
         }
     })();
 
-    const messagesForAI = [
-      { role: 'system', content: currentAsst.prompt },
-      ...resolveAssistantSkills(currentAsst).map(skill => ({
-        role: 'system',
-        content: `[Skill: ${skill.name}]\n${skill.content}`,
-      })),
-      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
-      ...(currentTopic.summary ? [{
-        role: 'system',
-        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
-      }] : []),
-      ...currentTopic.history.map((m: any) => ({ role: m.role, content: m.content })),
-      { role: 'user', content: newUserMsg.content }
-    ];
+	    const agentMode = currentAsst?.agentMode || 'off';
+	    const pid = currentProjectId();
+	    const projectInfo = pid && currentProject() ? { path: currentProject()!.path, name: currentProject()!.name } : null;
+	    const agentPromptContent = agentMode !== 'off' && projectInfo
+	      ? buildAgentSystemPrompt(agentMode as any, projectInfo)
+	      : null;
+	    const agentSystemPrompt = agentPromptContent
+	      ? [{ role: 'system' as const, content: agentPromptContent }]
+	      : [];
+		    let messagesForAI: any[] = [
+	      { role: 'system', content: currentAsst.prompt },
+	      ...resolveAssistantSkills(currentAsst).map(skill => ({
+	        role: 'system',
+	        content: `[Skill: ${skill.name}]\n${skill.content}`,
+	      })),
+	      ...agentSystemPrompt,
+	      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
+	      ...(currentTopic.summary ? [{
+	        role: 'system',
+	        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
+	      }] : []),
+		      ...currentTopic.history.flatMap((m: any) => {
+		        const obj: any = { role: m.role, content: m.content };
+		        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
+		        if (m.name) obj.name = m.name;
+		        if (m.toolCalls && m.toolCalls.length > 0) {
+		          obj.tool_calls = m.toolCalls.map((tc: any) => ({
+		            id: tc.id,
+		            type: tc.type || 'function',
+		            function: { name: tc.function?.name, arguments: tc.function?.arguments },
+		          }));
+		          // 从 toolCalls 元数据重建 role:tool 消息，使 API 上下文中每个 tool_call 都有配对响应。
+		          // 前端历史不单独存储 role:tool 消息，工具结果保存在 toolCall 的 content/error 字段中。
+		          const toolMsgs = m.toolCalls
+		            .filter((tc: any) => tc.state === 'success' || tc.state === 'error')
+		            .map((tc: any) => ({
+		              role: 'tool' as const,
+		              tool_call_id: tc.id,
+		              name: tc.function?.name,
+		              content: tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? ''),
+		            }));
+		          return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
+		        }
+		        return [obj];
+		      }),
+	      { role: 'user', content: newUserMsg.content }
+	    ];
+	    // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
+	    messagesForAI = ensureToolMessagesComplete(messagesForAI);
 
     const lastMsg = messagesForAI[messagesForAI.length - 1];
     if (lastMsg.role !== 'user') {
@@ -659,42 +532,37 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 更新本地 Store：添加用户消息和空的 AI 占位消息
+    // 更新本地 Store：添加用户消息（AI 占位消息由 llm-round-start 事件创建，
+    // 保证整轮多轮工具调用只有一条贯穿的 assistant 消息流）
     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
       ...h,
       newUserMsg,
-      { id: crypto.randomUUID(), role: 'assistant' as const, content: "", modelId: selectedModel()?.model_id, reasoning: '' }
     ]);
 
     // 清空输入状态和文件列表，设置生成中状态
     setInputMessage("");
     setPendingFiles([]);
     setIsThinking(true);
-    // 设置打字机效果索引为刚添加的 AI 消息位置
-    setTypingIndex(activeTopic()?.history.length! - 1);
 
-    try {
-      // 按助手勾选的 MCP server 列表拉取工具（opt-in：空列表 = 不注入任何工具）
-      const asstMcpIds = currentAsst?.mcpServerIds ?? [];
-      const { tools: mcpTools, toolServerMap: tsm } = asstMcpIds.length
-        ? await invoke<{ tools: any[]; toolServerMap: Record<string, string> }>('list_mcp_tools_for_assistant', { mcpServerIds: asstMcpIds }).catch(() => ({ tools: [], toolServerMap: {} }))
-        : { tools: [], toolServerMap: {} };
-      setToolServerMap(tsm);
-
-      // 调用 Tauri 后端流式接口（非阻塞，通过事件监听接收数据）
-      await invoke('call_llm_stream', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        assistantId: asstId,
-        topicId: topicId,
-        messages: messagesForAI,
-        tools: mcpTools.length > 0 ? mcpTools : null,
-      });
+	    try {
+	      // 后端 run_agent_turn 在单个任务内自驱完成「流式→检测工具→权限/审批→执行→回填→递归」，
+	      // 前端退化为纯渲染。工具/模式处理全部交给后端（plan 整轮无工具、轮数上限后端补总结轮）。
+	      await invoke('run_agent_turn', {
+	        apiUrl: currentMdl.api_url,
+	        apiKey: currentMdl.api_key,
+	        model: currentMdl.model_id,
+	        assistantId: asstId,
+	        topicId: topicId,
+	        messages: messagesForAI,
+	        mcpServerIds: currentAsst?.mcpServerIds ?? [],
+	        agentMode: agentMode,
+	        projectId: currentProjectId() ?? null,
+	      });
 
     } catch (err) {
       alert(err); // 调用失败时提示错误
       setIsThinking(false);
+      setTypingIndex(null);
     }
   };
 
@@ -706,8 +574,9 @@ const ChatPage: Component = () => {
       assistantId: currentAssistantId(),
       topicId: currentTopicId()
     });
-    setIsThinking(false);
-    setTypingIndex(null);
+    // 后端 cancel 后会 emit llm-chunk{done:true}，监听器会复位 isThinking；
+    // 这里同步清理审批气泡（取消时未决审批不再有效）。
+    setPendingApprovals([]);
   };
 
   /**
@@ -817,9 +686,71 @@ const ChatPage: Component = () => {
         setIsDragging(false);
         for (const p of e.payload.paths) await handleFileUpload(p, 'file');
       }),
-      listen<any>('llm-chunk', (e) => {
-        const { assistant_id, topic_id, content, done } = e.payload;
+      // 新一轮 LLM 调用开始：多轮 Agent 工作时复用同一条 assistant 消息
+      listen<any>('llm-round-start', (e) => {
+        const { assistant_id, topic_id, round } = e.payload;
+
+        // 后续轮次：将前一伦的 content + reasoning 累积到 interimContent，复用同一条消息
+        if (round > 1) {
+          const asst = datas.assistants.find(a => a.id === assistant_id);
+          const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
+          if (topic) {
+            const lastIdx = topic.history.length - 1;
+            const lastMsg = topic.history[lastIdx];
+            if (lastMsg?.role === 'assistant') {
+              let interim = lastMsg.interimContent || '';
+              if (lastMsg.reasoning?.trim()) {
+                interim += (interim ? '\n\n' : '') + lastMsg.reasoning.trim();
+              }
+              if (lastMsg.content?.trim()) {
+                interim += (interim ? '\n\n' : '') + lastMsg.content.trim();
+              }
+              setDatas('assistants', a => a.id === assistant_id,
+                'topics', t => t.id === topic_id,
+                'history', lastIdx, {
+                  interimContent: interim,
+                  content: '',
+                  reasoning: '',
+                });
+              // 打字机索引保持不变（仍指向同一条消息）
+              return;
+            }
+          }
+        }
+
+        // 第一轮：创建新 assistant 占位消息
+        const currentMdl = selectedModel();
+        setDatas('assistants', a => a.id === assistant_id, 'topics', t => t.id === topic_id,
+          'history', h => [...h, {
+            id: crypto.randomUUID(),
+            role: 'assistant' as const,
+            content: "",
+            modelId: currentMdl?.model_id,
+            reasoning: '',
+            agentStartTime: Date.now(),
+          }]);
+        // 设置打字机索引为新 assistant 消息位置
+        const asst = datas.assistants.find(a => a.id === assistant_id);
+        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
+        if (topic) setTypingIndex(topic.history.length - 1);
+      }),
+      listen<any>('llm-chunk', async (e) => {
+        const { assistant_id, topic_id, content, done, error } = e.payload;
         if (done) {
+          // 整轮真正结束（后端 run_agent_turn epilogue 唯一发出 done）
+          if (error) {
+            // 错误：追加错误文本到最后一条 assistant 消息
+            const asst = datas.assistants.find(a => a.id === assistant_id);
+            const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
+            if (topic) {
+              const lastIdx = topic.history.length - 1;
+              if (lastIdx >= 0) {
+                setDatas('assistants', a => a.id === assistant_id,
+                  'topics', t => t.id === topic_id,
+                  'history', lastIdx, 'content', (old: string) => (old ?? '') + content);
+              }
+            }
+          }
           setIsThinking(false);
           setTypingIndex(null);
           saveSingleAssistantToBackend(assistant_id);
@@ -836,9 +767,11 @@ const ChatPage: Component = () => {
         const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
         if (topic) {
           const lastIdx = topic.history.length - 1; // 最后一条消息（AI 回复）
-          setDatas('assistants', a => a.id === assistant_id,
-            'topics', t => t.id === topic_id,
-            'history', lastIdx, 'content', (old: string) => old + content);
+          if (lastIdx >= 0) {
+            setDatas('assistants', a => a.id === assistant_id,
+              'topics', t => t.id === topic_id,
+              'history', lastIdx, 'content', (old: string) => old + content);
+          }
         }
       }),
       // 思维链片段追加：原生 reasoning_content 流式累积到对应消息的 reasoning 字段
@@ -848,15 +781,68 @@ const ChatPage: Component = () => {
         const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
         if (topic) {
           const lastIdx = topic.history.length - 1;
-          setDatas('assistants', a => a.id === assistant_id,
-            'topics', t => t.id === topic_id,
-            'history', lastIdx, 'reasoning', (old: string) => (old ?? '') + content);
+          if (lastIdx >= 0) {
+            setDatas('assistants', a => a.id === assistant_id,
+              'topics', t => t.id === topic_id,
+              'history', lastIdx, 'reasoning', (old: string) => (old ?? '') + content);
+          }
         }
       }),
-      // LLM 工具调用事件：执行工具 → 追加 role="tool" 消息 → 递归 call_llm_stream
-      listen<any>('llm-tool-call', async (e) => {
+      // LLM 工具调用事件：仅展示"调用中"气泡（执行由后端 run_agent_turn 完成）
+      listen<any>('llm-tool-call', (e) => {
         const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
-        await handleToolCall(assistant_id, topic_id, tool_call_id, name, argsJson);
+        setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
+          'history', (h: any[]) => {
+            const lastIdx = h.length - 1;
+            if (lastIdx >= 0 && h[lastIdx]?.role === 'assistant') {
+              const existing = h[lastIdx].toolCalls || [];
+              if (!existing.find((tc: any) => tc.id === tool_call_id)) {
+                return [
+                  ...h.slice(0, lastIdx),
+                  {
+                    ...h[lastIdx],
+                    toolCalls: [
+                      ...existing,
+                      { id: tool_call_id, type: 'function', function: { name, arguments: argsJson }, state: 'calling' }
+                    ]
+                  }
+                ];
+              }
+            }
+            return h;
+          }
+        );
+      }),
+      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与文本结果
+      // （content 文本用于后续构建 messagesForAI 时重建 role:tool 消息）
+      listen<any>('llm-tool-result', (e) => {
+        const { assistant_id, topic_id, tool_call_id, content, result, is_error } = e.payload;
+        setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
+          'history', (h: any[]) => h.map((m: any) => {
+            if (m.role === 'assistant' && m.toolCalls) {
+              return {
+                ...m,
+                toolCalls: m.toolCalls.map((tc: any) =>
+                  tc.id === tool_call_id
+                    ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined }
+                    : tc
+                ),
+              };
+            }
+            return m;
+          })
+        );
+      }),
+      // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
+      listen<any>('tool-approval-requested', (e) => {
+        const { approval_id, server_id, tool_name, arguments: args, reason } = e.payload;
+        setPendingApprovals(prev => [...prev, {
+          approvalId: approval_id,
+          serverId: server_id,
+          toolName: tool_name,
+          arguments: args,
+          reason,
+        }]);
       })
     ];
 
@@ -961,6 +947,8 @@ const ChatPage: Component = () => {
         handleSendMessage={handleSendMessage}
         handleStopGeneration={handleStopGeneration}
         handleFileUpload={handleFileUpload}
+        pendingApprovals={pendingApprovals()}
+        onResolveApproval={(id) => setPendingApprovals(prev => prev.filter(a => a.approvalId !== id))}
       />
 
       <TopicSidebar

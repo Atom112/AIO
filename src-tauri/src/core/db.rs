@@ -129,6 +129,23 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     // 迁移：助手独立配置 Skill。旧助手默认不启用任何 Skill。
     add_column_if_missing(&conn, "assistants", "skill_ids", "TEXT")?;
 
+    // 迁移：项目系统 — 助手可属于项目（NULL = 全局助手）
+    add_column_if_missing(&conn, "assistants", "project_id", "TEXT")?;
+
+    // 迁移：Agent 模式开关（Off = 对话模式，旧数据缺省）
+    add_column_if_missing(&conn, "assistants", "agent_mode", "TEXT NOT NULL DEFAULT 'off'")?;
+
+    // 迁移：项目表（首次创建）
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );"
+    ).map_err(|e| e.to_string())?;
+
     Ok(conn)
 }
 

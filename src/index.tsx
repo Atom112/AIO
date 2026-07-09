@@ -7,8 +7,10 @@ import { Router, Route, Navigate } from '@solidjs/router';
 import { lazy, Suspense } from 'solid-js';
 import Layout from './Layout.tsx';
 import './index.css';
-import { initMcpServers, initSkills } from './store/store';
+import { initMcpServers, initSkills, initProjects } from './store/store';
 
+// 应用启动时初始化项目列表
+initProjects();
 // 应用启动时初始化 MCP 服务器（加载配置 + 自动连接标记为 autoStart 的 server）
 initMcpServers();
 initSkills();

@@ -8,11 +8,12 @@
 mod cloud_backend;
 mod commands;
 mod core;
+pub mod mcp_fs_server;
 mod plugins;
 mod utils;
 
 use crate::core::state::{
-    DbState, LocalEngineState, McpRequestManager, McpServerState, StreamManager,
+    DbState, LocalEngineState, McpRequestManager, McpServerState, PendingApprovals, StreamManager,
 };
 use crate::plugins::engine::EngineManager;
 use crate::plugins::mcp::McpServerManager;
@@ -50,6 +51,7 @@ pub fn run() {
         .manage(McpServerManager::builtin())
         .manage(McpServerState::default())
         .manage(McpRequestManager::new())
+        .manage(PendingApprovals::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
@@ -64,6 +66,7 @@ pub fn run() {
             commands::attachment::discard_chat_attachment,
             commands::llm::call_llm_stream,
             commands::llm::stop_llm_stream,
+            commands::llm::run_agent_turn,
             commands::llm::fetch_models,
             commands::engine::start_local_server,
             commands::engine::stop_local_server,
@@ -75,6 +78,7 @@ pub fn run() {
             commands::config::upload_avatar,
             commands::llm::summarize_history,
             commands::llm::append_message,
+            commands::llm::delete_topic_message,
             commands::llm::generate_topic_title,
             // 云端后端鉴权（集中在 cloud_backend 模块）
             cloud_backend::auth::login_to_backend,
@@ -99,6 +103,14 @@ pub fn run() {
             commands::provider_config::fetch_provider_models,
             commands::provider_config::read_provider_api_key,
             commands::provider_config::delete_provider_api_key,
+            // 项目管理
+            commands::project::create_project,
+            commands::project::list_projects,
+            commands::project::update_project,
+            commands::project::delete_project,
+            commands::project::open_project_directory,
+            commands::project::get_project_by_path,
+            commands::project::validate_project_path,
             // Skill 管理
             commands::skill::list_skills,
             commands::skill::save_skill,
@@ -106,6 +118,9 @@ pub fn run() {
             commands::skill::list_skill_market_categories,
             commands::skill::list_skill_market,
             commands::skill::download_market_skill,
+            commands::skill::discover_npx_skills,
+            commands::skill::import_npx_skill,
+            commands::skill::refresh_npx_skill,
             // MCP 服务器管理
             commands::mcp::list_mcp_servers,
             commands::mcp::add_mcp_server,
@@ -118,6 +133,8 @@ pub fn run() {
             commands::mcp::list_mcp_tools_for_assistant,
             commands::mcp::call_mcp_tool,
             commands::mcp::test_mcp_server_connection,
+            commands::mcp::check_tool_permission,
+            commands::mcp::respond_tool_approval,
             commands::mcp::list_mcp_transports,
             commands::mcp_catalog::list_mcp_catalog,
             commands::mcp_catalog::check_mcp_catalog_runtime,
@@ -134,6 +151,12 @@ pub fn run() {
                 if let Some(mut child) = child_opt {
                     let _ = child.kill();
                 }
+                // 清理活跃 LLM 流任务：cancel 所有 token（任务自身负责 emit done + 移除）
+                let stream_mgr = window.state::<StreamManager>();
+                for entry in stream_mgr.0.iter() {
+                    entry.value().1.cancel();
+                }
+                stream_mgr.0.clear();
                 // 清理 MCP 状态（在途调用 abort + 连接池清空）
                 let req_mgr = window.state::<McpRequestManager>();
                 req_mgr.abort_all();

@@ -6,7 +6,8 @@
 use super::connection::{McpConnection, McpTransport};
 use super::error::{McpError, McpResult};
 use crate::core::models::{
-    McpServerConfig, McpServerInfo, McpStatus, ToolResult, ToolResultContent, ToolSpec,
+    McpServerConfig, McpServerInfo, McpStatus, McpResource, McpPrompt,
+    ReadResourceResult, GetPromptResult, ToolResult, ToolResultContent, ToolSpec,
 };
 use crate::core::secure_store;
 use async_trait::async_trait;
@@ -150,7 +151,11 @@ impl super::McpServerPlugin for StdioPlugin {
             .get("version")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        Ok(McpServerInfo { name, version })
+        // 解析 capabilities
+        let capabilities = result
+            .get("capabilities")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+        Ok(McpServerInfo { name, version, capabilities })
     }
 
     async fn list_tools(
@@ -210,6 +215,72 @@ impl super::McpServerPlugin for StdioPlugin {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         Ok(ToolResult { content, is_error })
+    }
+
+    async fn list_resources(
+        &self,
+        conn: &McpConnection,
+    ) -> McpResult<Vec<McpResource>> {
+        let result = conn
+            .request("resources/list", Some(json!({})), Duration::from_secs(60))
+            .await?;
+        let resources = result
+            .get("resources")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let specs: Vec<McpResource> = resources
+            .into_iter()
+            .filter_map(|r| serde_json::from_value(r).ok())
+            .collect();
+        Ok(specs)
+    }
+
+    async fn read_resource(
+        &self,
+        conn: &McpConnection,
+        uri: &str,
+    ) -> McpResult<ReadResourceResult> {
+        let params = json!({ "uri": uri });
+        let result = conn
+            .request("resources/read", Some(params), Duration::from_secs(60))
+            .await?;
+        serde_json::from_value(result).map_err(McpError::from)
+    }
+
+    async fn list_prompts(
+        &self,
+        conn: &McpConnection,
+    ) -> McpResult<Vec<McpPrompt>> {
+        let result = conn
+            .request("prompts/list", Some(json!({})), Duration::from_secs(60))
+            .await?;
+        let prompts = result
+            .get("prompts")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let specs: Vec<McpPrompt> = prompts
+            .into_iter()
+            .filter_map(|p| serde_json::from_value(p).ok())
+            .collect();
+        Ok(specs)
+    }
+
+    async fn get_prompt(
+        &self,
+        conn: &McpConnection,
+        name: &str,
+        arguments: Option<Value>,
+    ) -> McpResult<GetPromptResult> {
+        let mut params = json!({ "name": name });
+        if let Some(args) = arguments {
+            params["arguments"] = args;
+        }
+        let result = conn
+            .request("prompts/get", Some(params), Duration::from_secs(60))
+            .await?;
+        serde_json::from_value(result).map_err(McpError::from)
     }
 
     async fn stop(&self, conn: McpConnection) -> McpResult<()> {

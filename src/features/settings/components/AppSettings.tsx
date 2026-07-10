@@ -1,4 +1,4 @@
-import { Component, createEffect, createMemo, createSignal, For, onMount, Show, untrack } from 'solid-js';
+import { Component, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { open } from '@tauri-apps/plugin-shell';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -8,6 +8,18 @@ import {
     setAppUpdateInfo,
     setAppUpdateDismissed,
 } from '../../../core/store/store';
+import {
+    getRegisteredCommands,
+    getShortcutKeys,
+    setShortcutBinding,
+    resetShortcutBinding,
+    resetAllShortcutBindings,
+    isShortcutModified,
+    getActionByKeys,
+    normalizeKeyCombo,
+    formatShortcutForDisplay,
+    type CommandAction,
+} from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
 
@@ -36,6 +48,16 @@ const AppSettings: Component = () => {
     const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
     const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
     const [endpointDisplay, setEndpointDisplay] = createSignal<string>(''); // 调试展示用：当前 endpoint
+
+    // ---- 快捷键设置状态 ----
+    const [recordingActionId, setRecordingActionId] = createSignal<string | null>(null); // 正在录制的命令 ID
+    const [conflictDialog, setConflictDialog] = createSignal<{
+        actionId: string;
+        newKeys: string;
+        conflictActionId: string;
+    } | null>(null); // 冲突确认对话框状态
+    const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // 重置全部确认状态
+    let recordingCleanup: (() => void) | null = null; // 录制模式清理函数
 
     /**
      * 初始化 HSL 状态和获取应用版本
@@ -255,6 +277,119 @@ const AppSettings: Component = () => {
     };
 
     const rgb = createMemo(() => hexToRgb(themeColor())); // 当前主题色的 RGB 值
+
+    // ---- 快捷键录制逻辑 ----
+
+    /** 开始录制快捷键 */
+    const startRecording = (actionId: string) => {
+        // 先清理之前的录制
+        if (recordingCleanup) {
+            recordingCleanup();
+            recordingCleanup = null;
+        }
+        setRecordingActionId(actionId);
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            const combo = normalizeKeyCombo(e);
+            if (!combo) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            // 检查冲突
+            const conflictId = getActionByKeys(combo);
+            if (conflictId && conflictId !== actionId) {
+                // 有冲突，弹确认框
+                setConflictDialog({
+                    actionId,
+                    newKeys: combo,
+                    conflictActionId: conflictId,
+                });
+            } else {
+                // 无冲突，直接设置
+                setShortcutBinding(actionId, combo);
+            }
+
+            // 停止录制
+            stopRecording();
+        };
+
+        document.addEventListener('keydown', onKeyDown, { capture: true });
+        recordingCleanup = () => {
+            document.removeEventListener('keydown', onKeyDown, { capture: true });
+        };
+    };
+
+    /** 停止录制 */
+    const stopRecording = () => {
+        setRecordingActionId(null);
+        if (recordingCleanup) {
+            recordingCleanup();
+            recordingCleanup = null;
+        }
+    };
+
+    /** 处理冲突确认：覆盖 */
+    const handleConflictOverride = () => {
+        const d = conflictDialog();
+        if (d) {
+            setShortcutBinding(d.actionId, d.newKeys);
+        }
+        setConflictDialog(null);
+    };
+
+    /** 处理冲突确认：取消 */
+    const handleConflictCancel = () => {
+        setConflictDialog(null);
+    };
+
+    // 点击页面其他地方取消录制
+    const onDocClick = (e: MouseEvent) => {
+        if (recordingActionId()) {
+            // 检查点击是否在快捷键徽章上
+            const target = e.target as HTMLElement;
+            if (!target.closest('.shortcut-badge')) {
+                stopRecording();
+            }
+        }
+    };
+
+    onMount(() => {
+        document.addEventListener('click', onDocClick);
+    });
+
+    onCleanup(() => {
+        document.removeEventListener('click', onDocClick);
+        if (recordingCleanup) recordingCleanup();
+    });
+
+    // 所有注册的命令（用于设置列表显示）
+    const allCommands = createMemo(() => getRegisteredCommands());
+
+    // 按类别分组
+    const groupedCommands = createMemo(() => {
+        const groups: { category: string; label: string; items: CommandAction[] }[] = [];
+        const seen = new Set<string>();
+        const CAT_LABELS: Record<string, string> = {
+            navigation: '导航',
+            chat: '聊天',
+            sidebar: '侧边栏',
+            global: '全局',
+        };
+
+        for (const cmd of allCommands()) {
+            if (!seen.has(cmd.category)) {
+                seen.add(cmd.category);
+                groups.push({
+                    category: cmd.category,
+                    label: CAT_LABELS[cmd.category] || cmd.category,
+                    items: [],
+                });
+            }
+            groups.find(g => g.category === cmd.category)!.items.push(cmd);
+        }
+        return groups;
+    });
 
     const presetThemes = [
         { name: '柔雾蓝', color: '#7c9abf' },
@@ -488,8 +623,156 @@ const AppSettings: Component = () => {
                     </div>
                 </div>
             </div>
+
+            {/* 快捷键设置面板 */}
+            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">
+                <div class="flex justify-between items-center mb-5">
+                    <div>
+                        <h3 class="m-0 text-base text-white">快捷键设置</h3>
+                        <p class="text-xs text-[#666] mt-1">点击快捷键区域可自定义按键组合</p>
+                    </div>
+                    <button
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-200"
+                        style={{
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            color: 'rgba(255, 255, 255, 0.45)',
+                            border: '1px solid rgba(255, 255, 255, 0.06)',
+                        }}
+                        onClick={() => setResetAllConfirm(true)}
+                        title="恢复全部默认快捷键"
+                    >
+                        <Icon name="refresh" size={12} />
+                        <span>恢复默认</span>
+                    </button>
+                </div>
+
+                {/* 恢复全部确认对话框 */}
+                <Show when={resetAllConfirm()}>
+                    <div class="shortcut-conflict-overlay" onClick={() => setResetAllConfirm(false)}>
+                        <div class="shortcut-conflict-dialog" onClick={e => e.stopPropagation()}>
+                            <p class="shortcut-conflict-text">确定要恢复所有快捷键为默认值吗？此操作不可撤销。</p>
+                            <div class="shortcut-conflict-actions">
+                                <button class="shortcut-conflict-btn cancel" onClick={() => setResetAllConfirm(false)}>取消</button>
+                                <button
+                                    class="shortcut-conflict-btn confirm"
+                                    onClick={() => { resetAllShortcutBindings(); setResetAllConfirm(false); }}
+                                >
+                                    确定恢复
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </Show>
+
+                {/* 冲突确认对话框 */}
+                <Show when={conflictDialog()}>
+                    <div class="shortcut-conflict-overlay" onClick={handleConflictCancel}>
+                        <div class="shortcut-conflict-dialog" onClick={e => e.stopPropagation()}>
+                            <p class="shortcut-conflict-text">
+                                该快捷键已用于「{getCommandLabel(conflictDialog()!.conflictActionId)}」，是否覆盖？
+                            </p>
+                            <div class="shortcut-conflict-actions">
+                                <button class="shortcut-conflict-btn cancel" onClick={handleConflictCancel}>取消</button>
+                                <button class="shortcut-conflict-btn confirm" onClick={handleConflictOverride}>覆盖</button>
+                            </div>
+                        </div>
+                    </div>
+                </Show>
+
+                {/* 快捷键列表（按类别分组） */}
+                <For each={groupedCommands()}>
+                    {(group) => (
+                        <div class="mb-4 last:mb-0">
+                            <div class="text-xs font-medium mb-2 uppercase tracking-wider"
+                                style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
+                                {group.label}
+                            </div>
+                            <For each={group.items}>
+                                {(cmd) => {
+                                    const keys = () => getShortcutKeys(cmd.id);
+                                    const modified = () => isShortcutModified(cmd.id);
+                                    const isRecording = () => recordingActionId() === cmd.id;
+
+                                    return (
+                                        <div class="flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors duration-150"
+                                            style={{
+                                                background: 'rgba(255, 255, 255, 0.02)',
+                                                border: '1px solid rgba(255, 255, 255, 0.03)',
+                                            }}>
+                                            <div class="flex-1 min-w-0 mr-4">
+                                                <span class="block text-[13px] text-[#ddd] font-medium">
+                                                    {cmd.label}
+                                                </span>
+                                                <span class="block text-[11px] text-[#666] mt-0.5 leading-relaxed">
+                                                    {cmd.description}
+                                                </span>
+                                            </div>
+                                            <div class="flex items-center gap-2 shrink-0">
+                                                {/* 快捷键徽章 */}
+                                                <div
+                                                    class={`shortcut-badge${isRecording() ? ' recording' : ''}${modified() ? ' modified' : ''}`}
+                                                    onClick={() => {
+                                                        if (isRecording()) {
+                                                            stopRecording();
+                                                        } else {
+                                                            startRecording(cmd.id);
+                                                        }
+                                                    }}
+                                                    title={isRecording() ? '正在录制...按 Esc 取消' : '点击修改快捷键'}
+                                                >
+                                                    <Show
+                                                        when={!isRecording()}
+                                                        fallback={<span class="shortcut-recording-text">按下快捷键...</span>}
+                                                    >
+                                                        <Show
+                                                            when={keys()}
+                                                            fallback={<span class="shortcut-none-text">未设置</span>}
+                                                        >
+                                                            <span class="shortcut-keys-text">
+                                                                {formatShortcutForDisplay(keys())}
+                                                            </span>
+                                                        </Show>
+                                                    </Show>
+                                                </div>
+
+                                                {/* 重置按钮（仅修改后显示） */}
+                                                <Show when={modified()}>
+                                                    <button
+                                                        class="shortcut-reset-btn"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            resetShortcutBinding(cmd.id);
+                                                        }}
+                                                        title="恢复默认"
+                                                    >
+                                                        <Icon name="refresh" size={11} />
+                                                    </button>
+                                                </Show>
+                                            </div>
+                                        </div>
+                                    );
+                                }}
+                            </For>
+                        </div>
+                    )}
+                </For>
+
+                {/* 无命令时的空状态 */}
+                <Show when={allCommands().length === 0}>
+                    <div class="text-center py-8 text-[13px]" style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
+                        暂无可用命令。请先打开聊天页面以加载命令。
+                    </div>
+                </Show>
+            </div>
         </div>
     );
 };
+
+/** 根据 actionId 获取命令标签（用于冲突提示） */
+function getCommandLabel(actionId: string): string {
+    const cmds = getRegisteredCommands();
+    const cmd = cmds.find(c => c.id === actionId);
+    return cmd?.label ?? actionId;
+}
 
 export default AppSettings;

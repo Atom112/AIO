@@ -56,6 +56,41 @@ pub trait McpServerPlugin: Send + Sync {
         timeout: Duration,
     ) -> McpResult<ToolResult>;
 
+    /// 获取 server 提供的资源列表
+    async fn list_resources(
+        &self,
+        _conn: &McpConnection,
+    ) -> McpResult<Vec<McpResource>> {
+        Ok(Vec::new())
+    }
+
+    /// 读取一个资源
+    async fn read_resource(
+        &self,
+        _conn: &McpConnection,
+        _uri: &str,
+    ) -> McpResult<ReadResourceResult> {
+        Err(McpError::Unimplemented("resources/read 未实现".into()))
+    }
+
+    /// 获取 server 提供的提示词列表
+    async fn list_prompts(
+        &self,
+        _conn: &McpConnection,
+    ) -> McpResult<Vec<McpPrompt>> {
+        Ok(Vec::new())
+    }
+
+    /// 获取一个提示词
+    async fn get_prompt(
+        &self,
+        _conn: &McpConnection,
+        _name: &str,
+        _arguments: Option<Value>,
+    ) -> McpResult<GetPromptResult> {
+        Err(McpError::Unimplemented("prompts/get 未实现".into()))
+    }
+
     /// 关闭连接
     async fn stop(&self, conn: McpConnection) -> McpResult<()>;
 }

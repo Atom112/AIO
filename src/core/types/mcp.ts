@@ -141,6 +141,52 @@ export interface McpServerStatusInfo {
     status: McpStatus;
     message?: string;
     toolCount: number;
+    resourceCount: number;
+    promptCount: number;
+}
+
+// ===== MCP Resources =====
+
+export interface McpResource {
+    uri: string;
+    name: string;
+    description?: string;
+    mimeType?: string;
+}
+
+export interface ReadResourceResult {
+    contents: ResourceContent[];
+}
+
+export interface ResourceContent {
+    uri: string;
+    mimeType?: string;
+    text?: string;
+    blob?: string;
+}
+
+// ===== MCP Prompts =====
+
+export interface McpPrompt {
+    name: string;
+    description?: string;
+    arguments?: PromptArgument[];
+}
+
+export interface PromptArgument {
+    name: string;
+    description?: string;
+    required?: boolean;
+}
+
+export interface GetPromptResult {
+    description?: string;
+    messages: PromptMessage[];
+}
+
+export interface PromptMessage {
+    role: string;
+    content: any;
 }
 
 // ===== 流式事件 =====

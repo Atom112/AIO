@@ -5,6 +5,8 @@
  */
 import NavBar from "./shared/components/NavBar";
 import UpdateNotification from "./shared/components/UpdateNotification";
+import GlobalKeyboardHandler from "./shared/components/GlobalKeyboardHandler";
+import CommandPalette from "./shared/components/CommandPalette";
 import { Transition } from "solid-transition-group";
 import { Component, onCleanup, onMount, ParentProps } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
@@ -134,6 +136,8 @@ const Layout: Component<ParentProps> = (props) => {
                 ].join(", "),
             }}
         >
+            <GlobalKeyboardHandler />
+            <CommandPalette />
             <NavBar />
             <main class="flex-1 relative overflow-hidden">
                 <Transition name="page-fade">

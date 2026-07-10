@@ -6,8 +6,11 @@ import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLo
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
+import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
+import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
 import Icon from '../../../shared/components/Icon';
 import ReasoningButton from './ReasoningButton';
+import WebSearchButton from './WebSearchButton';
 import ToolCallBubble from './ToolCallBubble';
 import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
 import AgentModeSelector from './AgentModeSelector';
@@ -72,10 +75,56 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     let smoothScrollRAF: number | undefined;
     // 上一次记录到的历史消息数量，用于判断是否新增了消息
     let lastHistoryLen = 0;
+    // 流式 rAF 循环的最新 ID，始终指向最后一个排期的帧，保证能正确取消
     // 用户手动上滚标志：直接可变变量，绕过 SolidJS 响应式延迟，确保 rAF 回调能同步感知
     let userScrolledUp = false;
+    // 已播放入场动画的消息 ID 集合，避免 agentSteps 更新时重复触发动画
+    let animatedMessageIds = new Set<string>();
     // 流式 rAF 循环的最新 ID，始终指向最后一个排期的帧，保证能正确取消
     let streamRAFId: number | undefined;
+
+    // ---- 注册快捷键命令 ----
+    const cmdFocusInput = registerCommand({
+        id: 'focus-input',
+        label: '聚焦输入框',
+        description: '将光标聚焦到消息输入框',
+        category: 'chat',
+        defaultKeys: 'Ctrl+I',
+        handler: () => {
+            if (textareaRef) {
+                textareaRef.focus();
+                textareaRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        },
+    });
+
+    const cmdUploadFile = registerCommand({
+        id: 'upload-file',
+        label: '上传文件',
+        description: '打开文件选择对话框上传文件',
+        category: 'chat',
+        defaultKeys: 'Ctrl+U',
+        handler: async () => {
+            try {
+                const selected = await open({
+                    multiple: false,
+                    filters: [{ name: '所有文件', extensions: ['*'] }],
+                });
+                if (selected) {
+                    const path = typeof selected === 'string' ? selected : selected.path;
+                    await props.handleFileUpload(path, 'file');
+                }
+            } catch (e) {
+                console.warn('[shortcut] 上传文件取消或失败:', e);
+            }
+        },
+    });
+
+    // 组件销毁时清理命令注册
+    onCleanup(() => {
+        unregisterCommand(cmdFocusInput);
+        unregisterCommand(cmdUploadFile);
+    });
 
     const getModelLogo = (modelName: string) => {
         return getLogoByIds(null, modelName);
@@ -169,6 +218,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     createEffect(on(() => props.activeTopic?.id, () => {
         setAutoScroll(true);
         userScrolledUp = false;
+        animatedMessageIds = new Set();
         lastHistoryLen = props.activeTopic?.history?.length ?? 0;
     }));
 
@@ -294,7 +344,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             const isActiveRound = createMemo(() => index() === props.typingIndex && props.isThinking);
                             return (
                                 <div
-                                    class={`flex flex-col mb-3 pointer-events-auto animate-message-in ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                                    ref={(el) => { if (msg.id) animatedMessageIds.add(msg.id); }}
+                                    class={`flex flex-col mb-3 pointer-events-auto ${msg.id && !animatedMessageIds.has(msg.id) ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
                                 >
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
@@ -607,12 +658,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             }
                         }}
                     />
+                    <SlashCommandMenu
+                        textareaRef={textareaRef}
+                        inputMessage={props.inputMessage}
+                        setInputMessage={props.setInputMessage}
+                    />
 
                     <div class="flex items-center justify-between border-t pt-2" style="border-color: rgba(255,255,255,0.04);">
                         <div class="flex items-center gap-2">
                             <ModelSelector />
                             <AgentModeSelector />
                             <ReasoningButton />
+                            <WebSearchButton />
 
                             <button
                                 class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"

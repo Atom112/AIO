@@ -215,6 +215,15 @@ export const persistReasoningLevel = (lvl: ReasoningLevel) => {
     setReasoningLevel(lvl);
     localStorage.setItem(REASONING_KEY, lvl);
 };
+/** 网页搜索开关 */
+const WEB_SEARCH_KEY = 'chat-web-search';
+export const [webSearchEnabled, setWebSearchEnabled] = createSignal<boolean>(
+    localStorage.getItem(WEB_SEARCH_KEY) === 'true'
+);
+export const persistWebSearch = (enabled: boolean) => {
+    setWebSearchEnabled(enabled);
+    localStorage.setItem(WEB_SEARCH_KEY, String(enabled));
+};
 /** 当前选中的模型信号，用于获取当前对话使用的 AI 配置 */
 export const [selectedModel, setSelectedModel] = createSignal<ActivatedModel | null>(null);
 /** 当前选中的助手 ID 信号，用于侧边栏助手切换 */

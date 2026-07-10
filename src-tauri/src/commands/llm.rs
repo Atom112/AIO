@@ -5,7 +5,9 @@ use crate::commands::attachment::sync_message_attachments;
 use crate::core::state::McpServerState;
 use crate::plugins::mcp::McpServerManager;
 use crate::utils::file_tools;
+use crate::utils::git_tools;
 use crate::utils::shell_tools;
+use crate::utils::web_tools;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use crate::core::models::*;
@@ -646,6 +648,16 @@ async fn execute_builtin_tool(
         let command = arguments["command"].as_str().unwrap_or("");
         let timeout = arguments["timeout"].as_u64();
         Ok(shell_tools::execute_command(command, &project_root, timeout))
+    } else if tool_name == "web_fetch" {
+        let url = arguments["url"].as_str().unwrap_or("");
+        let max_bytes = arguments["max_bytes"].as_u64();
+        Ok(web_tools::execute_web_fetch(url, max_bytes).await)
+    } else if tool_name == "web_search" {
+        let query = arguments["query"].as_str().unwrap_or("");
+        let count = arguments["count"].as_u64();
+        Ok(web_tools::execute_web_search(query, count).await)
+    } else if tool_name.starts_with("git_") {
+        Ok(git_tools::execute_git_tool(tool_name, arguments, &project_root))
     } else {
         Ok(file_tools::execute_file_tool(tool_name, arguments, &project_root))
     }
@@ -682,6 +694,7 @@ pub async fn run_agent_turn(
     mcp_server_ids: Vec<String>,
     agent_mode: AgentMode,
     project_id: Option<String>,
+    web_search_enabled: bool,
 ) -> Result<(), String> {
     let task_key = format!("{}-{}", assistant_id, topic_id);
 
@@ -720,6 +733,8 @@ pub async fn run_agent_turn(
         // 内置文件工具始终注入（in-process 直接调用，无需 MCP 子进程连接）。
         // 在 spawn 内通过 AppHandle 解析全局状态，避免 tauri::State 借用逃逸。
         let tools_enabled = is_agent_mode && agent_mode != AgentMode::Plan;
+        // 联网搜索开关：即使对话模式下也注入 web_fetch + web_search
+        let web_only = web_search_enabled && !tools_enabled;
         let (tools, tool_server_map) = if tools_enabled {
             let (mut mcp_tools, mut mcp_map) = if !mcp_server_ids_c.is_empty() {
                 let mgr = app_c.state::<McpServerManager>();
@@ -745,7 +760,27 @@ pub async fn run_agent_turn(
             let cmd_spec = shell_tools::get_command_tool_spec();
             mcp_map.insert(cmd_spec.function.name.clone(), "__builtin__".into());
             mcp_tools.push(cmd_spec);
+            // 注入 Web 工具
+            let web_specs = web_tools::get_web_tool_specs();
+            for spec in &web_specs {
+                mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
+            }
+            mcp_tools.extend(web_specs);
+            // 注入 Git 工具（仅当项目是 git 仓库时有效工具）
+            let git_specs = git_tools::get_git_tool_specs();
+            for spec in &git_specs {
+                mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
+            }
+            mcp_tools.extend(git_specs);
             (mcp_tools, mcp_map)
+        } else if web_only {
+            // 仅注入 Web 工具（对话模式下联网搜索）
+            let web_specs = web_tools::get_web_tool_specs();
+            let mut mcp_map = std::collections::HashMap::new();
+            for spec in &web_specs {
+                mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
+            }
+            (web_specs, mcp_map)
         } else {
             (Vec::new(), std::collections::HashMap::new())
         };

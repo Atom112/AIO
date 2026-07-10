@@ -1,15 +1,20 @@
 import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { useNavigate } from '@solidjs/router';
 import {
   datas, setDatas, currentAssistantId, setCurrentAssistantId, currentTopicId, setCurrentTopicId,
   saveSingleAssistantToBackend, Assistant, Topic, Message, PendingAttachment, StoredAttachment, selectedModel, setSelectedModel,
-  resolveAssistantModel, modelKey, reasoningLevel,
+  resolveAssistantModel, modelKey, reasoningLevel, setReasoningLevel, webSearchEnabled, setWebSearchEnabled,
   pendingRenameRequest, setPendingRenameRequest,
   mcpServers, mcpServerStatus, resolveAssistantSkills,
   currentProjectId, currentProject,
 } from '../../core/store/store';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
+import {
+  registerCommand,
+  unregisterCommand,
+} from '../../core/shortcuts';
 import AssistantSidebar from './components/AssistantSidebar';
 import AssistantSettingsModal from './components/AssistantSettingsModal';
 import ChatInterface from './components/ChatInterface';
@@ -482,6 +487,7 @@ const ChatPage: Component = () => {
 	      })),
 	      ...agentSystemPrompt,
 	      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
+      ...(webSearchEnabled() ? [{ role: 'system', content: '你可以使用 web_fetch(url) 获取网页内容（仅 HTTPS），以及 web_search(query, count?) 通过 DuckDuckGo 搜索网页。如有需要获取最新信息，请直接调用这些工具。' }] : []),
 	      ...(currentTopic.summary ? [{
 	        role: 'system',
 	        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
@@ -547,17 +553,18 @@ const ChatPage: Component = () => {
 	    try {
 	      // 后端 run_agent_turn 在单个任务内自驱完成「流式→检测工具→权限/审批→执行→回填→递归」，
 	      // 前端退化为纯渲染。工具/模式处理全部交给后端（plan 整轮无工具、轮数上限后端补总结轮）。
-	      await invoke('run_agent_turn', {
-	        apiUrl: currentMdl.api_url,
-	        apiKey: currentMdl.api_key,
-	        model: currentMdl.model_id,
-	        assistantId: asstId,
-	        topicId: topicId,
-	        messages: messagesForAI,
-	        mcpServerIds: currentAsst?.mcpServerIds ?? [],
-	        agentMode: agentMode,
-	        projectId: currentProjectId() ?? null,
-	      });
+      await invoke('run_agent_turn', {
+        apiUrl: currentMdl.api_url,
+        apiKey: currentMdl.api_key,
+        model: currentMdl.model_id,
+        assistantId: asstId,
+        topicId: topicId,
+        messages: messagesForAI,
+        mcpServerIds: currentAsst?.mcpServerIds ?? [],
+        agentMode: agentMode,
+        projectId: currentProjectId() ?? null,
+        webSearchEnabled: webSearchEnabled(),
+      });
 
     } catch (err) {
       alert(err); // 调用失败时提示错误
@@ -635,6 +642,226 @@ const ChatPage: Component = () => {
   };
 
   onMount(() => {
+    const navigate = useNavigate();
+
+    // ---- 注册快捷键命令 ----
+    const cmdToggleLeft = registerCommand({
+      id: 'toggle-left-sidebar',
+      label: '切换左侧边栏',
+      description: '显示或隐藏助手列表侧边栏',
+      category: 'navigation',
+      defaultKeys: 'Ctrl+B',
+      handler: () => {
+        const newState = !isLeftCollapsed();
+        setIsLeftCollapsed(newState);
+        localStorage.setItem('left-collapsed', String(newState));
+        if (!newState && leftPanelWidth() < 5) setLeftPanelWidth(18);
+      },
+    });
+
+    const cmdToggleRight = registerCommand({
+      id: 'toggle-right-sidebar',
+      label: '切换右侧边栏',
+      description: '显示或隐藏话题列表侧边栏',
+      category: 'navigation',
+      defaultKeys: 'Ctrl+Alt+B',
+      handler: () => {
+        const newState = !isRightCollapsed();
+        setIsRightCollapsed(newState);
+        localStorage.setItem('right-collapsed', String(newState));
+        if (!newState && rightPanelWidth() < 5) setRightPanelWidth(18);
+      },
+    });
+
+    const cmdNewTopic = registerCommand({
+      id: 'new-topic',
+      label: '新建话题',
+      description: '在当前助手中创建新的话题',
+      category: 'chat',
+      defaultKeys: 'Ctrl+N',
+      handler: () => { addTopic(); },
+    });
+
+    const cmdNewAssistant = registerCommand({
+      id: 'new-assistant',
+      label: '新建助手',
+      description: '创建新的 AI 助手',
+      category: 'chat',
+      defaultKeys: 'Ctrl+Shift+N',
+      handler: () => { addAssistant(); },
+    });
+
+    const cmdStopGen = registerCommand({
+      id: 'stop-generation',
+      label: '停止生成',
+      description: '停止当前 AI 回复的生成',
+      category: 'chat',
+      defaultKeys: 'Escape',
+      handler: () => {
+        if (isThinking()) handleStopGeneration();
+      },
+    });
+
+    const cmdPrevAsst = registerCommand({
+      id: 'prev-assistant',
+      label: '上一个助手',
+      description: '切换到上一个助手',
+      category: 'sidebar',
+      defaultKeys: 'Ctrl+[',
+      handler: () => {
+        const idx = datas.assistants.findIndex((a: any) => a.id === currentAssistantId());
+        if (idx > 0) {
+          setCurrentAssistantId(datas.assistants[idx - 1].id);
+          setCurrentTopicId(datas.assistants[idx - 1].topics[0]?.id ?? '');
+        }
+      },
+    });
+
+    const cmdNextAsst = registerCommand({
+      id: 'next-assistant',
+      label: '下一个助手',
+      description: '切换到下一个助手',
+      category: 'sidebar',
+      defaultKeys: 'Ctrl+]',
+      handler: () => {
+        const idx = datas.assistants.findIndex((a: any) => a.id === currentAssistantId());
+        if (idx >= 0 && idx < datas.assistants.length - 1) {
+          setCurrentAssistantId(datas.assistants[idx + 1].id);
+          setCurrentTopicId(datas.assistants[idx + 1].topics[0]?.id ?? '');
+        }
+      },
+    });
+
+    const cmdPrevTopic = registerCommand({
+      id: 'prev-topic',
+      label: '上一个话题',
+      description: '切换到上一个话题',
+      category: 'sidebar',
+      defaultKeys: 'Ctrl+Shift+[',
+      handler: () => {
+        const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
+        if (!asst) return;
+        const idx = asst.topics.findIndex((t: any) => t.id === currentTopicId());
+        if (idx > 0) setCurrentTopicId(asst.topics[idx - 1].id);
+      },
+    });
+
+    const cmdNextTopic = registerCommand({
+      id: 'next-topic',
+      label: '下一个话题',
+      description: '切换到下一个话题',
+      category: 'sidebar',
+      defaultKeys: 'Ctrl+Shift+]',
+      handler: () => {
+        const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
+        if (!asst) return;
+        const idx = asst.topics.findIndex((t: any) => t.id === currentTopicId());
+        if (idx >= 0 && idx < asst.topics.length - 1) setCurrentTopicId(asst.topics[idx + 1].id);
+      },
+    });
+
+    const cmdGoSettings = registerCommand({
+      id: 'go-to-settings',
+      label: '打开设置',
+      description: '导航到应用设置页面',
+      category: 'navigation',
+      defaultKeys: 'Ctrl+,',
+      handler: () => { navigate('/settings/app'); },
+    });
+
+    const cmdGoChat = registerCommand({
+      id: 'go-to-chat',
+      label: '回到聊天',
+      description: '导航到聊天页面',
+      category: 'navigation',
+      defaultKeys: 'Ctrl+1',
+      handler: () => { navigate('/chat'); },
+    });
+
+    const cmdToggleSearch = registerCommand({
+      id: 'toggle-web-search',
+      label: '切换联网搜索',
+      description: '开启或关闭联网搜索功能',
+      category: 'chat',
+      defaultKeys: 'Ctrl+Shift+S',
+      handler: () => {
+        const next = !webSearchEnabled();
+        setWebSearchEnabled(next);
+        localStorage.setItem('chat-web-search', String(next));
+      },
+    });
+
+    const cmdCycleReasoning = registerCommand({
+      id: 'cycle-reasoning',
+      label: '切换推理强度',
+      description: '循环切换推理深度：关闭 → 低 → 中 → 高',
+      category: 'chat',
+      defaultKeys: 'Ctrl+Shift+R',
+      handler: () => {
+        const levels: Array<'off' | 'low' | 'medium' | 'high'> = ['off', 'low', 'medium', 'high'];
+        const current = reasoningLevel();
+        const idx = levels.indexOf(current);
+        const next = levels[(idx + 1) % levels.length];
+        setReasoningLevel(next);
+        localStorage.setItem('chat-reasoning-level', next);
+      },
+    });
+
+    const cmdCycleAgent = registerCommand({
+      id: 'cycle-agent-mode',
+      label: '切换 Agent 模式',
+      description: '循环切换 Agent 执行模式：对话 → 普通 → 自动 → 计划',
+      category: 'chat',
+      defaultKeys: 'Ctrl+Shift+M',
+      handler: async () => {
+        const id = currentAssistantId();
+        if (!id) return;
+        const asst = datas.assistants.find((a: any) => a.id === id);
+        const current = (asst?.agentMode || 'off') as string;
+        const modes = ['off', 'normal', 'auto', 'plan'];
+        const idx = modes.indexOf(current);
+        const next = modes[(idx + 1) % modes.length];
+        setDatas('assistants', (a: any) => a.id === id, 'agentMode', next);
+        await saveSingleAssistantToBackend(id);
+      },
+    });
+
+    // ---- 斜杠命令处理器（覆盖 shortcuts.ts 中的 no-op） ----
+    const cmdSlashClear = registerCommand({
+      id: 'slash-clear',
+      handler: () => {
+        const asstId = currentAssistantId();
+        const topicId = currentTopicId();
+        if (!asstId || !topicId) return;
+        setDatas('assistants', (a: any) => a.id === asstId,
+          'topics', (t: any) => t.id === topicId,
+          'history', []);
+        saveSingleAssistantToBackend(asstId);
+      },
+    });
+
+    const cmdSlashCompact = registerCommand({
+      id: 'slash-compact',
+      handler: () => {
+        checkAndSummarize();
+      },
+    });
+
+    const cmdSlashSearch = registerCommand({
+      id: 'slash-search',
+      handler: () => {
+        const next = !webSearchEnabled();
+        setWebSearchEnabled(next);
+        localStorage.setItem('chat-web-search', String(next));
+      },
+    });
+
+    const cmdSlashSettings = registerCommand({
+      id: 'slash-settings',
+      handler: () => { navigate('/settings/app'); },
+    });
+
+    // ---- 原有初始化逻辑 ----
     // 首次进入：从 SQLite 加载所有助手数据
     invoke<Assistant[]>('load_assistants').then(async (loaded) => {
       let finalAssistants = [...loaded];
@@ -946,8 +1173,28 @@ const ChatPage: Component = () => {
       })
     ];
 
-    // 组件卸载时清理所有事件监听
-    onCleanup(() => unlistens.forEach(u => u.then(fn => fn())));
+    // 组件卸载时清理所有事件监听和命令注册
+    onCleanup(() => {
+      unlistens.forEach(u => u.then(fn => fn()));
+      unregisterCommand(cmdToggleLeft);
+      unregisterCommand(cmdToggleRight);
+      unregisterCommand(cmdNewTopic);
+      unregisterCommand(cmdNewAssistant);
+      unregisterCommand(cmdStopGen);
+      unregisterCommand(cmdPrevAsst);
+      unregisterCommand(cmdNextAsst);
+      unregisterCommand(cmdPrevTopic);
+      unregisterCommand(cmdNextTopic);
+      unregisterCommand(cmdGoSettings);
+      unregisterCommand(cmdGoChat);
+      unregisterCommand(cmdToggleSearch);
+      unregisterCommand(cmdCycleReasoning);
+      unregisterCommand(cmdCycleAgent);
+      unregisterCommand(cmdSlashClear);
+      unregisterCommand(cmdSlashCompact);
+      unregisterCommand(cmdSlashSearch);
+      unregisterCommand(cmdSlashSettings);
+    });
   });
 
   createEffect(() => {

@@ -160,6 +160,41 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null);
     const [expandedSteps, setExpandedSteps] = createSignal<Set<string>>(new Set());
 
+    // ---- 时间线自动滚动（复用 ChatInterface 模式） ----
+    let stepsContainerRef: HTMLDivElement | undefined;
+    const [autoScrollSteps, setAutoScrollSteps] = createSignal(true);
+    let userScrolledUpSteps = false;     // 纯变量：rAF 回调需同步感知
+    let suppressScrollSteps = false;     // 纯变量：抑制 programmatic scroll 事件
+    let streamScrollRafId: number | null = null;
+
+    const isStepsAtBottom = () => {
+        if (!stepsContainerRef) return true;
+        const el = stepsContainerRef;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    };
+
+    const snapStepsToBottom = () => {
+        if (!stepsContainerRef) return;
+        suppressScrollSteps = true;
+        stepsContainerRef.scrollTop = stepsContainerRef.scrollHeight;
+    };
+
+    const handleStepsWheel = (e: WheelEvent) => {
+        if (e.deltaY < 0) {
+            userScrolledUpSteps = true;
+            if (streamScrollRafId) { cancelAnimationFrame(streamScrollRafId); streamScrollRafId = null; }
+            suppressScrollSteps = false;
+            setAutoScrollSteps(false);
+        }
+    };
+
+    const handleStepsScroll = () => {
+        if (suppressScrollSteps) { suppressScrollSteps = false; return; }
+        const atBottom = isStepsAtBottom();
+        setAutoScrollSteps(atBottom);
+        if (atBottom) userScrolledUpSteps = false;
+    };
+
     // 工作中强制展开整体，完成后允许用户控制
     const isExpanded = () => {
         if (props.isActive) return true;
@@ -186,7 +221,19 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
         }
     });
 
-    onCleanup(() => { if (rafId) cancelAnimationFrame(rafId); });
+    onCleanup(() => { if (rafId) cancelAnimationFrame(rafId); if (streamScrollRafId) cancelAnimationFrame(streamScrollRafId); });
+
+    // 流式滚动：工作中每帧贴底
+    createEffect(() => {
+        if (props.isActive) {
+            const tick = () => {
+                if (!props.isActive || userScrolledUpSteps || !autoScrollSteps()) return;
+                snapStepsToBottom();
+                streamScrollRafId = requestAnimationFrame(tick);
+            };
+            streamScrollRafId = requestAnimationFrame(tick);
+        }
+    });
 
     const toggleOuter = () => {
         if (props.isActive) return;
@@ -211,6 +258,15 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     const hasSteps = () => !!(props.agentSteps && props.agentSteps.length > 0);
     const hasOldContent = () => !!(props.reasoning?.trim()) || !!(props.interimContent?.trim()) || !!(props.toolCalls && props.toolCalls.length > 0);
     const hasContent = () => hasSteps() || hasOldContent();
+
+    // 时间线步骤：排除最后一个 content 步骤（它是最终回复，已在下方 Markdown 气泡中显示）
+    const timelineSteps = () => {
+        const steps = props.agentSteps;
+        if (!steps || steps.length === 0) return [];
+        const last = steps[steps.length - 1];
+        if (last.type === 'content') return steps.slice(0, -1);
+        return steps;
+    };
 
     return (
         <Show when={hasContent()}>
@@ -247,8 +303,14 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                 <div class="agent-process-body">
                     {/* === 新模式：时间线卡片 === */}
                     <Show when={hasSteps()}>
-                        <div class="agent-steps-timeline">
-                            <For each={props.agentSteps}>
+                        <div
+                            ref={stepsContainerRef}
+                            class="agent-steps-timeline"
+                            style="max-height: 550px; overflow-y: auto;"
+                            onScroll={handleStepsScroll}
+                            onWheel={handleStepsWheel}
+                        >
+                            <For each={timelineSteps()}>
                                 {(step) => (
                                     <StepCard
                                         step={step}

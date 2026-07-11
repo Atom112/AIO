@@ -97,7 +97,7 @@ const CommandPalette: Component = () => {
     // 过滤结果
     const filteredCommands = createMemo(() => {
         const q = query();
-        return allCommands().filter(cmd => matchesQuery(q, cmd));
+        return allCommands().filter(cmd => !cmd.isSlashCommand && matchesQuery(q, cmd));
     });
 
     // 分组结果

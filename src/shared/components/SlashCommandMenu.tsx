@@ -111,53 +111,31 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
         setSelectedIndex(0);
     };
 
-    // 选中命令：有 promptBody 时注入文本，否则清空输入并调用 handler 执行操作
+    // 选中命令：在输入框放置 /commandName（保留用户已输入的参数），等待用户按 Enter 发送
     const selectCommand = (cmd: CommandAction) => {
         const ta = props.textareaRef;
+        if (!ta) return;
 
-        const body = cmd.promptBody || '';
+        const text = props.inputMessage;
+        const start = slashStartIdx();
+        const cursorPos = ta.selectionStart;
 
-        if (body) {
-            // 有 promptBody → 注入文本到输入框
-            if (!ta) return;
-            const args = slashArgs();
-            const resolvedBody = body.replace(/\$ARGUMENTS/g, args);
+        // 保留用户已输入的参数（/review src/main.rs → args = "src/main.rs"）
+        const args = slashArgs();
+        const cmdText = args ? `${cmd.label} ${args}` : cmd.label;
 
-            const text = props.inputMessage;
-            const start = slashStartIdx();
-            const cursorPos = ta.selectionStart;
+        const before = text.slice(0, start);
+        const after = text.slice(cursorPos);
+        const newText = before + cmdText + after;
 
-            const before = text.slice(0, start);
-            const after = text.slice(cursorPos);
-            const newText = before + resolvedBody + after;
+        props.setInputMessage(newText);
 
-            props.setInputMessage(newText);
-
-            const newCursorPos = before.length + resolvedBody.length;
-            requestAnimationFrame(() => {
-                ta.focus();
-                ta.setSelectionRange(newCursorPos, newCursorPos);
-            });
-        } else {
-            // 无 promptBody → 清空 /xxx 并执行 handler（如 /clear、/search）
-            if (!ta) return;
-            const text = props.inputMessage;
-            const start = slashStartIdx();
-            const cursorPos = ta.selectionStart;
-
-            const before = text.slice(0, start);
-            const after = text.slice(cursorPos);
-            props.setInputMessage(before + after);
-
-            // 延迟执行 handler，让菜单先关闭
-            setTimeout(() => {
-                cmd.handler();
-                if (ta) {
-                    ta.focus();
-                    ta.setSelectionRange(before.length, before.length);
-                }
-            }, 50);
-        }
+        // 焦点移到命令文本末尾
+        const newCursorPos = before.length + cmdText.length;
+        requestAnimationFrame(() => {
+            ta.focus();
+            ta.setSelectionRange(newCursorPos, newCursorPos);
+        });
 
         close();
     };

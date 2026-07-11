@@ -82,6 +82,39 @@ export function getCommandById(id: string): CommandAction | undefined {
     return commandMap.get(id);
 }
 
+/** 斜杠命令解析结果 */
+export interface ResolvedSlashCommand {
+    /** 匹配到的命令 */
+    command: CommandAction;
+    /** 命令名之后的参数文本（/review src/main.rs → "src/main.rs"） */
+    args: string;
+    /** promptBody 中 $ARGUMENTS 替换后的文本，仅当 promptBody 非空时有值 */
+    resolvedBody?: string;
+}
+
+/**
+ * 解析用户输入中的斜杠命令
+ * @returns 匹配结果；若非 / 开头或无匹配命令返回 null
+ */
+export function resolveSlashCommand(input: string): ResolvedSlashCommand | null {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('/')) return null;
+
+    const spaceIdx = trimmed.indexOf(' ');
+    const cmdName = spaceIdx > 0 ? trimmed.slice(0, spaceIdx) : trimmed;
+    const args = spaceIdx > 0 ? trimmed.slice(spaceIdx + 1).trim() : '';
+
+    const allSlash = getSlashCommands();
+    const cmd = allSlash.find(c => c.label === cmdName);
+    if (!cmd) return null;
+
+    const result: ResolvedSlashCommand = { command: cmd, args };
+    if (cmd.promptBody) {
+        result.resolvedBody = cmd.promptBody.replace(/\$ARGUMENTS/g, args);
+    }
+    return result;
+}
+
 // ---- 快捷键绑定管理 ----
 
 const STORAGE_KEY = 'aio-shortcut-bindings';
@@ -243,11 +276,21 @@ export function normalizeKeyCombo(event: KeyboardEvent): string | null {
 }
 
 /**
- * 解析快捷键字符串为可读形式（用于 UI 显示）
- * 目前直接返回原字符串，未来可加入平台适配（如 Mac 上将 Ctrl 显示为 ⌘）
+ * 将快捷键字符串转换为平台可读形式（用于 UI 显示）
+ * - macOS：将 Ctrl/Alt/Shift/Meta 替换为 ⌃⌥⇧⌘ 符号
+ * - Windows/Linux：将 Meta 替换为 Win，其余保持原样
  */
 export function formatShortcutForDisplay(keys: string): string {
-    return keys;
+    if (!keys) return keys;
+    const isMac = /Mac/i.test(navigator.userAgent);
+    if (isMac) {
+        return keys
+            .replace(/\bCtrl\b/g, '⌃')
+            .replace(/\bAlt\b/g, '⌥')
+            .replace(/\bShift\b/g, '⇧')
+            .replace(/\bMeta\b/g, '⌘');
+    }
+    return keys.replace(/\bMeta\b/g, 'Win');
 }
 
 // ---- 条件判断工具 ----
@@ -366,5 +409,11 @@ registerCommand({
 registerCommand({
     id: 'slash-settings', label: '/settings', description: '打开应用设置页面',
     category: 'navigation', defaultKeys: '', handler: NOOP_HANDLER,
+    isSlashCommand: true, promptBody: '', argumentHint: undefined,
+});
+
+registerCommand({
+    id: 'slash-help', label: '/help', description: '列出所有可用的斜杠命令',
+    category: 'chat', defaultKeys: '', handler: NOOP_HANDLER,
     isSlashCommand: true, promptBody: '', argumentHint: undefined,
 });

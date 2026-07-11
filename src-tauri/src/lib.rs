@@ -16,6 +16,7 @@ use crate::core::state::{
     DbState, LocalEngineState, McpRequestManager, McpServerState, PendingApprovals, StreamManager,
 };
 use crate::plugins::engine::EngineManager;
+use crate::plugins::lsp::LspManager;
 use crate::plugins::mcp::McpServerManager;
 use crate::utils::process_file_content;
 use std::sync::Arc;
@@ -49,6 +50,7 @@ pub fn run() {
         .manage(LocalEngineState::new())
         .manage(EngineManager::new())
         .manage(McpServerManager::builtin())
+        .manage(LspManager::new())
         .manage(McpServerState::default())
         .manage(McpRequestManager::new())
         .manage(PendingApprovals::new())
@@ -143,6 +145,15 @@ pub fn run() {
             commands::mcp_catalog::list_mcp_catalog,
             commands::mcp_catalog::check_mcp_catalog_runtime,
             commands::mcp_catalog::install_mcp_catalog_server,
+            // LSP 语言服务器管理
+            commands::lsp::start_lsp_server,
+            commands::lsp::stop_lsp_server,
+            commands::lsp::get_diagnostics,
+            commands::lsp::auto_detect_ls,
+            commands::lsp::list_supported_languages,
+            commands::lsp::stop_all_lsp_servers,
+            // Token 计数
+            utils::token_counter::count_tokens_cmd,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

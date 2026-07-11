@@ -6,6 +6,7 @@ use crate::core::state::McpServerState;
 use crate::plugins::mcp::McpServerManager;
 use crate::utils::file_tools;
 use crate::utils::git_tools;
+use crate::utils::lsp_tools;
 use crate::utils::shell_tools;
 use crate::utils::web_tools;
 use base64::{engine::general_purpose, Engine as _};
@@ -40,6 +41,10 @@ struct RoundResult {
     reasoning: String,
     /// 本轮模型发起的工具调用（按 index 升序）
     tool_calls: Vec<ToolCallAccum>,
+    /// 服务端返回的 prompt tokens（输入用量）
+    input_tokens: u32,
+    /// 服务端返回的 completion tokens（输出用量）
+    output_tokens: u32,
 }
 
 /// 累积完成的单个工具调用。
@@ -259,6 +264,9 @@ async fn stream_one_round(
     let mut content_buf = String::new();
     let mut reasoning_buf = String::new();
     let mut saw_done = false;
+    // 从 SSE 流末尾提取 token 用量（服务端返回）
+    let mut input_tokens: u32 = 0;
+    let mut output_tokens: u32 = 0;
 
     loop {
         // 取消检查：select! 让 cancelled 与 stream.next 竞争
@@ -300,6 +308,8 @@ async fn stream_one_round(
                                 content: content.to_string(),
                                 done: false,
                                 error: None,
+                                input_tokens: None,
+                                output_tokens: None,
                             },
                         );
                     }
@@ -317,6 +327,8 @@ async fn stream_one_round(
                                     content: reasoning.to_string(),
                                     done: false,
                                     error: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
                                 },
                             );
                         }
@@ -366,6 +378,15 @@ async fn stream_one_round(
                             }
                         }
                     }
+                    // 提取服务端返回的 token 用量（OpenAI 兼容 API 在最后一个 chunk 中附带 usage）
+                    if let Some(usage) = val.get("usage") {
+                        if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
+                            input_tokens = pt as u32;
+                        }
+                        if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
+                            output_tokens = ct as u32;
+                        }
+                    }
                 }
             }
         }
@@ -407,6 +428,8 @@ async fn stream_one_round(
         content: content_buf,
         reasoning: reasoning_buf,
         tool_calls,
+        input_tokens,
+        output_tokens,
     })
 }
 
@@ -495,7 +518,7 @@ pub async fn call_llm_stream(
 
         // 收尾：无论成功/取消/错误都 emit terminal done，保证前端 isThinking 必复位
         match result {
-            Ok(_round) => {
+            Ok(round) => {
                 let _ = window.emit(
                     "llm-chunk",
                     StreamPayload {
@@ -504,6 +527,8 @@ pub async fn call_llm_stream(
                         content: "".into(),
                         done: true,
                         error: None,
+                        input_tokens: Some(round.input_tokens),
+                        output_tokens: Some(round.output_tokens),
                     },
                 );
             }
@@ -522,6 +547,8 @@ pub async fn call_llm_stream(
                         },
                         done: true,
                         error: if is_cancel { None } else { Some(e) },
+                        input_tokens: None,
+                        output_tokens: None,
                     },
                 );
             }
@@ -656,6 +683,8 @@ async fn execute_builtin_tool(
         let query = arguments["query"].as_str().unwrap_or("");
         let count = arguments["count"].as_u64();
         Ok(web_tools::execute_web_search(query, count).await)
+    } else if tool_name == "read_lints" {
+        lsp_tools::execute(app, &project_root, arguments).await
     } else if tool_name.starts_with("git_") {
         Ok(git_tools::execute_git_tool(tool_name, arguments, &project_root))
     } else {
@@ -772,6 +801,10 @@ pub async fn run_agent_turn(
                 mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
             }
             mcp_tools.extend(git_specs);
+            // 注入 LSP 诊断工具
+            let lsp_spec = lsp_tools::tool_spec();
+            mcp_map.insert(lsp_spec.function.name.clone(), "__builtin__".into());
+            mcp_tools.push(lsp_spec);
             (mcp_tools, mcp_map)
         } else if web_only {
             // 仅注入 Web 工具（对话模式下联网搜索）
@@ -789,6 +822,9 @@ pub async fn run_agent_turn(
         let mut round: u32 = 0;
         let mut final_error: Option<String> = None;
         let mut was_cancelled = false;
+        // 跨轮累计 token 用量
+        let mut total_input_tokens: u32 = 0;
+        let mut total_output_tokens: u32 = 0;
 
         'outer: loop {
             round += 1;
@@ -836,6 +872,10 @@ pub async fn run_agent_turn(
                     break 'outer;
                 }
             };
+
+            // 累计 token 用量
+            total_input_tokens += round_result.input_tokens;
+            total_output_tokens += round_result.output_tokens;
 
             // 把本轮 assistant 消息（含 tool_calls）append 到上下文
             let mut asst_obj = serde_json::Map::new();
@@ -965,6 +1005,8 @@ pub async fn run_agent_turn(
                 },
                 done: true,
                 error: error_payload,
+                input_tokens: if total_input_tokens > 0 { Some(total_input_tokens) } else { None },
+                output_tokens: if total_output_tokens > 0 { Some(total_output_tokens) } else { None },
             },
         );
 

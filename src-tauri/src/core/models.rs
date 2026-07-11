@@ -28,6 +28,12 @@ pub struct StreamPayload {
     /// done=true 时携带的错误信息（整轮因错误/取消结束时填充）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// 本轮输入 tokens（服务端返回，仅 done=true 时有意义）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u32>,
+    /// 本轮输出 tokens（服务端返回，仅 done=true 时有意义）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u32>,
 }
 
 /// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。

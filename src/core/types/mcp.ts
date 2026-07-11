@@ -200,6 +200,10 @@ export interface LlmStreamPayload {
     done: boolean;
     /** done=true 时的错误信息 */
     error?: string;
+    /** 本轮输入 tokens（done=true 时由服务端返回） */
+    input_tokens?: number;
+    /** 本轮输出 tokens（done=true 时由服务端返回） */
+    output_tokens?: number;
 }
 
 /** 新一轮开始负载（llm-round-start） */

@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod config;
 pub mod engine;
 pub mod llm;
+pub mod lsp;
 pub mod mcp;
 pub mod mcp_catalog;
 pub mod project;

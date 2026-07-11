@@ -39,6 +39,8 @@ export interface Message {
     agentStartTime?: number;             // Agent 轮次开始时间戳（ms），用于计算工作耗时
     interimContent?: string;             // 多轮 Agent 工作中，中间轮次的阶段性总结文本累积
     agentSteps?: AgentStep[];            // Agent 工作过程时间线（新），按时间顺序记录每个步骤
+    inputTokens?: number;                // 本轮/本消息输入 tokens 用量（服务端返回）
+    outputTokens?: number;               // 本轮/本消息输出 tokens 用量（服务端返回）
 }
 
 /** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */

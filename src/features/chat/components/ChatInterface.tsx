@@ -13,6 +13,8 @@ import ReasoningButton from './ReasoningButton';
 import WebSearchButton from './WebSearchButton';
 import ToolCallBubble from './ToolCallBubble';
 import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
+import TokenStatsBar from './TokenStatsBar';
+import { totalErrors, totalWarnings, problemsPanelVisible, setProblemsPanelVisible, hasDiagnostics } from '../../../core/store/diagnostics';
 import AgentModeSelector from './AgentModeSelector';
 import ProjectSelector from './ProjectSelector';
 
@@ -423,9 +425,20 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             </div>
                                         </div>
 
-                                        <Show when={msg.role === 'assistant' && (msg.modelId || selectedModel()?.model_id)}>
-                                            <div style="color: rgba(255,255,255,0.3); font-family: monospace; font-size: 11px; margin-left: 4px; margin-top: 4px; opacity: 0.7; user-select: none; text-align: left;">
-                                                {msg.modelId || selectedModel()?.model_id}
+                                        <Show when={msg.role === 'assistant' && (msg.modelId || selectedModel()?.model_id || msg.inputTokens || msg.outputTokens)}>
+                                            <div style="color: rgba(255,255,255,0.3); font-family: monospace; font-size: 11px; margin-left: 4px; margin-top: 4px; opacity: 0.7; user-select: none; text-align: left; display: flex; align-items: center; gap: 8px;">
+                                                <Show when={msg.modelId || selectedModel()?.model_id}>
+                                                    <span>{msg.modelId || selectedModel()?.model_id}</span>
+                                                </Show>
+                                                <Show when={msg.inputTokens || msg.outputTokens}>
+                                                    <span style="color: rgba(255,255,255,0.2);">·</span>
+                                                    <Show when={msg.inputTokens}>
+                                                        <span title="输入 tokens">↗ {(msg.inputTokens! >= 1000) ? `${(msg.inputTokens! / 1000).toFixed(1)}K` : msg.inputTokens}</span>
+                                                    </Show>
+                                                    <Show when={msg.outputTokens}>
+                                                        <span title="输出 tokens">↘ {(msg.outputTokens! >= 1000) ? `${(msg.outputTokens! / 1000).toFixed(1)}K` : msg.outputTokens}</span>
+                                                    </Show>
+                                                </Show>
                                             </div>
                                         </Show>
 
@@ -710,12 +723,32 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 <Icon src="/icons/app-logo/image-photo.svg" class="w-5 h-5" />
                             </button>
 
+                            {/* LSP 问题面板切换 */}
+                            <Show when={hasDiagnostics()}>
+                                <button
+                                    class="relative flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
+                                    style="color: rgba(255,255,255,0.4);"
+                                    title={`${totalErrors()} 错误, ${totalWarnings()} 警告 — 点击切换问题面板`}
+                                    onClick={() => setProblemsPanelVisible(!problemsPanelVisible())}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; }}
+                                >
+                                    <span class="text-sm">📋</span>
+                                    <Show when={totalErrors() > 0}>
+                                        <span class="absolute -top-1 -right-1 text-[9px] px-1 rounded-full bg-red-500 text-white font-bold leading-tight">
+                                            {totalErrors()}
+                                        </span>
+                                    </Show>
+                                </button>
+                            </Show>
+
                             <Show when={currentAgentMode() !== 'off'}>
                                 <ProjectSelector />
                             </Show>
                         </div>
 
                         <div class="flex items-center gap-2">
+                            <TokenStatsBar />
                             <button
                                 class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95 ${props.isThinking ? 'bg-[#ff4d4d] text-white' : 'text-white'}`}
                                 style={!props.isThinking ? { background: 'rgba(124,154,191,0.3)' } : {}}

@@ -14,12 +14,16 @@ import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import {
   registerCommand,
   unregisterCommand,
+  resolveSlashCommand,
+  getSlashCommands,
 } from '../../core/shortcuts';
 import AssistantSidebar from './components/AssistantSidebar';
 import AssistantSettingsModal from './components/AssistantSettingsModal';
 import ChatInterface from './components/ChatInterface';
 import TopicSidebar from './components/TopicSidebar';
+import ProblemsPanel from './components/ProblemsPanel';
 import type { PendingApproval } from './components/ToolApprovalBubble';
+import { problemsPanelVisible, setProblemsPanelVisible, clearAllDiagnostics } from '../../core/store/diagnostics';
 
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = "default-assistant-id";
@@ -183,49 +187,71 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 检查并总结对话历史
-   * 当历史记录超过25条时，触发总结机制以压缩上下文
+   * 检查并总结对话历史（Token-based）
+   * 当会话累计 token 数超过模型上下文窗口的 75% 时，触发压缩。
    */
   const checkAndSummarize = async () => {
     const topic = activeTopic();
     const currentMdl = selectedModel();
-    if (!topic || !currentMdl || isThinking()) return;
-    // 当历史记录多于 25 条时触发总结机制
-    if (topic.history.length > 25) {
-      console.log("正在通过 SQLite 触发历史总结...");
-      // 取前 15 条消息进行总结（保留后 10 条保持上下文连贯性）
-      const messagesToSummarize = topic.history.slice(0, 15);
-      try {
-        // 调用后端 LLM 接口生成摘要
-        const newSummarySnippet = await invoke<string>('summarize_history', {
-          apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key,
-          model: currentMdl.model_id,
-          messages: messagesToSummarize
-        });
+    if (!topic || !currentMdl) return;
 
-        // 重新获取最新话题状态（防止期间已切换）
-        const latestTopic = activeTopic();
-        if (!latestTopic) return;
-
-        // 保留后半部分对话（索引 15 之后），前半部分进入 summary
-        const updatedHistory = latestTopic.history.slice(15);
-        // 合并历史摘要：若已有摘要则追加新摘要，否则直接使用新摘要
-        const combinedSummary = latestTopic.summary
-          ? `[历史背景]: ${latestTopic.summary}\n[近期增补]: ${newSummarySnippet}`
-          : newSummarySnippet;
-
-        // 同步更新全局状态（SolidJS Store 的嵌套更新语法）
-        setDatas('assistants', a => a.id === currentAssistantId(), 'topics', t => t.id === latestTopic.id, {
-          history: updatedHistory,
-          summary: combinedSummary
-        });
-
-        // 持久化到 SQLite 数据库
-        await saveSingleAssistantToBackend(currentAssistantId()!);
-      } catch (e) {
-        console.error("生成总结失败:", e);
+    // 获取当前模型的上下文窗口大小
+    let maxContext = 128_000; // 默认 128K
+    try {
+      const { getCachedCatalog } = await import('../../core/utils/models');
+      const cat = getCachedCatalog();
+      if (cat) {
+        const modelMeta = cat.models?.find((m: any) => m.id === currentMdl.model_id);
+        if (modelMeta?.contextWindow && modelMeta.contextWindow > 0) {
+          maxContext = modelMeta.contextWindow;
+        }
       }
+    } catch {}
+
+    // 统计累计 token 用量
+    let totalUsed = 0;
+    for (const msg of topic.history) {
+      if (msg.role === 'assistant') {
+        totalUsed += (msg.inputTokens || 0) + (msg.outputTokens || 0);
+      }
+    }
+    for (const msg of topic.history) {
+      if (msg.role === 'user') {
+        const text = typeof msg.content === 'string' ? msg.content : (msg.displayText || '');
+        totalUsed += Math.ceil(text.length / 4);
+      }
+    }
+
+    const usageRatio = maxContext > 0 ? totalUsed / maxContext : 0;
+    if (usageRatio < 0.75 || topic.history.length <= 10) return;
+
+    console.log(`[Context] 触发压缩: ${(usageRatio * 100).toFixed(0)}% (${totalUsed}/${maxContext} tokens, ${topic.history.length} 条消息)`);
+
+    const keepCount = Math.max(4, Math.floor(topic.history.length * 0.3));
+    const summarizeCount = topic.history.length - keepCount;
+    const messagesToSummarize = topic.history.slice(0, summarizeCount);
+
+    try {
+      const newSummarySnippet = await invoke<string>('summarize_history', {
+        apiUrl: currentMdl.api_url,
+        apiKey: currentMdl.api_key,
+        model: currentMdl.model_id,
+        messages: messagesToSummarize
+      });
+      const latestTopic = activeTopic();
+      if (!latestTopic) return;
+      const updatedHistory = latestTopic.history.slice(summarizeCount);
+      const combinedSummary = latestTopic.summary
+        ? `[历史背景]: ${latestTopic.summary}\n[近期增补]: ${newSummarySnippet}`
+        : newSummarySnippet;
+      setDatas('assistants', a => a.id === currentAssistantId(), 'topics', t => t.id === latestTopic.id, {
+        history: updatedHistory,
+        summary: combinedSummary
+      });
+      await saveSingleAssistantToBackend(currentAssistantId()!);
+      console.log('[Context] 压缩完成');
+    } catch (e) {
+      console.error("生成总结失败:", e);
     }
   };
 
@@ -423,6 +449,189 @@ const ChatPage: Component = () => {
   }
 
   /**
+   * 斜杠命令 — promptBody 类型（/review、/explain 等）
+   * 聊天显示原始命令文本，后台发送解析后的 promptBody 给 LLM
+   */
+  const handleSlashPromptMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
+    if (!resolved) return;
+    const asstId = currentAssistantId();
+    const topicId = currentTopicId();
+    if (!asstId || !topicId) return;
+
+    const currentMdl = selectedModel();
+    const currentAsst = currentAssistant();
+    const currentTopic = activeTopic();
+    if (!currentMdl || !currentAsst || !currentTopic) return;
+
+    const displayText = resolved.command.label + (resolved.args ? ` ${resolved.args}` : '');
+    let content = resolved.resolvedBody || resolved.command.label;
+
+    // 无参数时自动注入当前项目路径，给 LLM 提供上下文
+    if (!resolved.args) {
+      const project = currentProject();
+      if (project) {
+        content = `${content}\n\n当前项目路径: ${project.path}`;
+      }
+    }
+
+    const newUserMsg = {
+      id: crypto.randomUUID(),
+      role: 'user' as const,
+      content,
+      displayText,
+    };
+
+    // 构建完整消息数组（与普通发送流程一致）
+    const reasoningPrompt = (() => {
+      switch (reasoningLevel()) {
+        case 'low':    return '在回答前先进行简单思考. 用 <think> 标签包裹你的推理过程, 再给出最终回答. 控制思考长度, 简单问题不要过度展开.';
+        case 'medium': return '在回答前先进行中等深度的思考. 用 <think> 标签包裹你的推理过程 (分析问题、拆解步骤、对比方案), 再给出最终回答.';
+        case 'high':   return '在回答前进行深入的多步推理. 必须在 <think> 标签中详细分析问题、列出前提、考虑边界情况、对比多种方案, 再给出严谨的最终回答. 思考越充分越好.';
+        default:       return null;
+      }
+    })();
+
+    const agentMode = currentAsst?.agentMode || 'off';
+    const pid = currentProjectId();
+    const projectInfo = pid && currentProject() ? { path: currentProject()!.path, name: currentProject()!.name } : null;
+    const agentPromptContent = agentMode !== 'off' && projectInfo
+      ? buildAgentSystemPrompt(agentMode as any, projectInfo)
+      : null;
+    const agentSystemPrompt = agentPromptContent
+      ? [{ role: 'system' as const, content: agentPromptContent }]
+      : [];
+
+    let messagesForAI: any[] = [
+      { role: 'system', content: currentAsst.prompt },
+      ...resolveAssistantSkills(currentAsst).map(skill => ({
+        role: 'system',
+        content: `[Skill: ${skill.name}]\n${skill.content}`,
+      })),
+      ...agentSystemPrompt,
+      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
+      ...(webSearchEnabled() ? [{ role: 'system', content: '你可以使用 web_fetch(url) 获取网页内容（仅 HTTPS），以及 web_search(query, count?) 通过 DuckDuckGo 搜索网页。如有需要获取最新信息，请直接调用这些工具。' }] : []),
+      ...(currentTopic.summary ? [{
+        role: 'system',
+        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
+      }] : []),
+      ...currentTopic.history.flatMap((m: any) => {
+        const obj: any = { role: m.role, content: m.content };
+        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
+        if (m.name) obj.name = m.name;
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          obj.tool_calls = m.toolCalls.map((tc: any) => ({
+            id: tc.id,
+            type: tc.type || 'function',
+            function: { name: tc.function?.name, arguments: tc.function?.arguments },
+          }));
+          const toolMsgs = m.toolCalls
+            .filter((tc: any) => tc.state === 'success' || tc.state === 'error')
+            .map((tc: any) => ({
+              role: 'tool' as const,
+              tool_call_id: tc.id,
+              name: tc.function?.name,
+              content: tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? ''),
+            }));
+          return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
+        }
+        return [obj];
+      }),
+      { role: 'user', content: newUserMsg.content }
+    ];
+    messagesForAI = ensureToolMessagesComplete(messagesForAI);
+
+    // 持久化用户消息
+    try {
+      await invoke('append_message', { topicId, message: newUserMsg });
+    } catch (err) {
+      alert(`保存消息失败: ${err}`);
+      return;
+    }
+
+    // 更新本地状态
+    setDatas('assistants', (a: any) => a.id === asstId,
+      'topics', (t: any) => t.id === topicId,
+      'history', (h: any[]) => [...h, newUserMsg]);
+
+    // 调用 LLM
+    try {
+      setIsThinking(true);
+      await invoke('run_agent_turn', {
+        apiUrl: currentMdl.api_url,
+        apiKey: currentMdl.api_key,
+        model: currentMdl.model_id,
+        assistantId: asstId,
+        topicId: topicId,
+        messages: messagesForAI,
+        mcpServerIds: currentAsst?.mcpServerIds ?? [],
+        agentMode: agentMode,
+        projectId: currentProjectId() ?? null,
+        webSearchEnabled: webSearchEnabled(),
+      });
+    } catch (err) {
+      alert(err);
+      setIsThinking(false);
+      setTypingIndex(null);
+    }
+  };
+
+  /**
+   * 斜杠命令 — 纯操作类型（/compact、/clear、/search、/settings、/help）
+   * 聊天显示命令 + 执行 handler + 简短反馈
+   */
+  const handleSlashActionMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
+    if (!resolved) return;
+    const asstId = currentAssistantId();
+    const topicId = currentTopicId();
+    if (!asstId || !topicId) return;
+
+    const cmd = resolved.command;
+    const displayText = cmd.label;
+
+    // 添加用户消息
+    setDatas('assistants', (a: any) => a.id === asstId,
+      'topics', (t: any) => t.id === topicId,
+      'history', (h: any[]) => [...h, {
+        id: crypto.randomUUID(),
+        role: 'user' as const,
+        content: displayText,
+        displayText,
+      }]);
+
+    // 执行 handler
+    await cmd.handler();
+
+    // 根据命令类型给出反馈消息
+    let feedback = '';
+    if (cmd.id === 'slash-compact') {
+      feedback = '✅ /compact — 上下文已压缩';
+    } else if (cmd.id === 'slash-clear') {
+      // /clear handler 已清空历史，无需额外反馈
+      return;
+    } else if (cmd.id === 'slash-search') {
+      feedback = webSearchEnabled() ? '✅ 联网搜索已开启' : '✅ 联网搜索已关闭';
+    } else if (cmd.id === 'slash-help') {
+      // /help handler 已添加帮助信息，无需额外反馈
+      return;
+    } else if (cmd.id === 'slash-settings') {
+      // /settings handler 已跳转页面
+      return;
+    } else {
+      feedback = `✅ ${cmd.label} — 已执行`;
+    }
+
+    // 添加反馈消息
+    setDatas('assistants', (a: any) => a.id === asstId,
+      'topics', (t: any) => t.id === topicId,
+      'history', (h: any[]) => [...h, {
+        id: crypto.randomUUID(),
+        role: 'assistant' as const,
+        content: feedback,
+        displayText: feedback,
+      }]);
+  };
+
+  /**
    * 处理发送消息的逻辑
    * 包括文件处理、API调用和状态更新
    */
@@ -439,11 +648,46 @@ const ChatPage: Component = () => {
     // 必须满足：有文本输入或有文件附件
     if (!userInput && files.length === 0) return;
 
-	    const asstId = currentAssistantId();
-	    const topicId = currentTopicId();
-	    if (!asstId || !topicId) return;
+    // ---- 斜杠命令拦截 ----
+    if (userInput.startsWith('/')) {
+      const resolved = resolveSlashCommand(userInput);
+      if (resolved) {
+        if (resolved.resolvedBody) {
+          handleSlashPromptMessage(resolved);
+        } else {
+          handleSlashActionMessage(resolved);
+        }
+        setInputMessage('');
+        setPendingFiles([]);
+        return;
+      }
+      // 未识别的斜杠命令 — 给出反馈，阻止发送给 LLM
+      const unknownAsstId = currentAssistantId();
+      const unknownTopicId = currentTopicId();
+      if (unknownAsstId && unknownTopicId) {
+        setDatas('assistants', (a: any) => a.id === unknownAsstId,
+          'topics', (t: any) => t.id === unknownTopicId,
+          'history', (h: any[]) => [...h, {
+            id: crypto.randomUUID(),
+            role: 'user' as const,
+            content: userInput,
+            displayText: userInput,
+          }, {
+            id: crypto.randomUUID(),
+            role: 'assistant' as const,
+            content: `❌ 未知命令: \`${userInput}\`\n\n输入 **/help** 查看所有可用命令。`,
+          }]);
+      }
+      setInputMessage('');
+      setPendingFiles([]);
+      return;
+    }
 
-	    const newUserMsg = {
+    const asstId = currentAssistantId();
+    const topicId = currentTopicId();
+    if (!asstId || !topicId) return;
+
+    const newUserMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
       content: userInput,
@@ -470,56 +714,56 @@ const ChatPage: Component = () => {
         }
     })();
 
-	    const agentMode = currentAsst?.agentMode || 'off';
-	    const pid = currentProjectId();
-	    const projectInfo = pid && currentProject() ? { path: currentProject()!.path, name: currentProject()!.name } : null;
-	    const agentPromptContent = agentMode !== 'off' && projectInfo
-	      ? buildAgentSystemPrompt(agentMode as any, projectInfo)
-	      : null;
-	    const agentSystemPrompt = agentPromptContent
-	      ? [{ role: 'system' as const, content: agentPromptContent }]
-	      : [];
-		    let messagesForAI: any[] = [
-	      { role: 'system', content: currentAsst.prompt },
-	      ...resolveAssistantSkills(currentAsst).map(skill => ({
-	        role: 'system',
-	        content: `[Skill: ${skill.name}]\n${skill.content}`,
-	      })),
-	      ...agentSystemPrompt,
-	      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
+    const agentMode = currentAsst?.agentMode || 'off';
+    const pid = currentProjectId();
+    const projectInfo = pid && currentProject() ? { path: currentProject()!.path, name: currentProject()!.name } : null;
+    const agentPromptContent = agentMode !== 'off' && projectInfo
+      ? buildAgentSystemPrompt(agentMode as any, projectInfo)
+      : null;
+    const agentSystemPrompt = agentPromptContent
+      ? [{ role: 'system' as const, content: agentPromptContent }]
+      : [];
+    let messagesForAI: any[] = [
+        { role: 'system', content: currentAsst.prompt },
+        ...resolveAssistantSkills(currentAsst).map(skill => ({
+          role: 'system',
+          content: `[Skill: ${skill.name}]\n${skill.content}`,
+        })),
+        ...agentSystemPrompt,
+        ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(webSearchEnabled() ? [{ role: 'system', content: '你可以使用 web_fetch(url) 获取网页内容（仅 HTTPS），以及 web_search(query, count?) 通过 DuckDuckGo 搜索网页。如有需要获取最新信息，请直接调用这些工具。' }] : []),
-	      ...(currentTopic.summary ? [{
-	        role: 'system',
-	        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
-	      }] : []),
-		      ...currentTopic.history.flatMap((m: any) => {
-		        const obj: any = { role: m.role, content: m.content };
-		        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
-		        if (m.name) obj.name = m.name;
-		        if (m.toolCalls && m.toolCalls.length > 0) {
-		          obj.tool_calls = m.toolCalls.map((tc: any) => ({
-		            id: tc.id,
-		            type: tc.type || 'function',
-		            function: { name: tc.function?.name, arguments: tc.function?.arguments },
-		          }));
-		          // 从 toolCalls 元数据重建 role:tool 消息，使 API 上下文中每个 tool_call 都有配对响应。
-		          // 前端历史不单独存储 role:tool 消息，工具结果保存在 toolCall 的 content/error 字段中。
-		          const toolMsgs = m.toolCalls
-		            .filter((tc: any) => tc.state === 'success' || tc.state === 'error')
-		            .map((tc: any) => ({
-		              role: 'tool' as const,
-		              tool_call_id: tc.id,
-		              name: tc.function?.name,
-		              content: tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? ''),
-		            }));
-		          return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
-		        }
-		        return [obj];
-		      }),
-	      { role: 'user', content: newUserMsg.content }
-	    ];
-	    // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
-	    messagesForAI = ensureToolMessagesComplete(messagesForAI);
+        ...(currentTopic.summary ? [{
+          role: 'system',
+          content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
+        }] : []),
+      ...currentTopic.history.flatMap((m: any) => {
+            const obj: any = { role: m.role, content: m.content };
+            if (m.toolCallId) obj.tool_call_id = m.toolCallId;
+            if (m.name) obj.name = m.name;
+            if (m.toolCalls && m.toolCalls.length > 0) {
+              obj.tool_calls = m.toolCalls.map((tc: any) => ({
+                id: tc.id,
+                type: tc.type || 'function',
+                function: { name: tc.function?.name, arguments: tc.function?.arguments },
+              }));
+              // 从 toolCalls 元数据重建 role:tool 消息，使 API 上下文中每个 tool_call 都有配对响应。
+              // 前端历史不单独存储 role:tool 消息，工具结果保存在 toolCall 的 content/error 字段中。
+              const toolMsgs = m.toolCalls
+                .filter((tc: any) => tc.state === 'success' || tc.state === 'error')
+                .map((tc: any) => ({
+                  role: 'tool' as const,
+                  tool_call_id: tc.id,
+                  name: tc.function?.name,
+                  content: tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? ''),
+                }));
+              return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
+            }
+            return [obj];
+          }),
+        { role: 'user', content: newUserMsg.content }
+      ];
+      // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
+      messagesForAI = ensureToolMessagesComplete(messagesForAI);
 
     const lastMsg = messagesForAI[messagesForAI.length - 1];
     if (lastMsg.role !== 'user') {
@@ -550,9 +794,9 @@ const ChatPage: Component = () => {
     setPendingFiles([]);
     setIsThinking(true);
 
-	    try {
-	      // 后端 run_agent_turn 在单个任务内自驱完成「流式→检测工具→权限/审批→执行→回填→递归」，
-	      // 前端退化为纯渲染。工具/模式处理全部交给后端（plan 整轮无工具、轮数上限后端补总结轮）。
+      try {
+        // 后端 run_agent_turn 在单个任务内自驱完成「流式→检测工具→权限/审批→执行→回填→递归」，
+        // 前端退化为纯渲染。工具/模式处理全部交给后端（plan 整轮无工具、轮数上限后端补总结轮）。
       await invoke('run_agent_turn', {
         apiUrl: currentMdl.api_url,
         apiKey: currentMdl.api_key,
@@ -833,6 +1077,7 @@ const ChatPage: Component = () => {
         const asstId = currentAssistantId();
         const topicId = currentTopicId();
         if (!asstId || !topicId) return;
+        if (!confirm('确定要清空当前对话历史吗？此操作不可撤销。')) return;
         setDatas('assistants', (a: any) => a.id === asstId,
           'topics', (t: any) => t.id === topicId,
           'history', []);
@@ -842,8 +1087,13 @@ const ChatPage: Component = () => {
 
     const cmdSlashCompact = registerCommand({
       id: 'slash-compact',
-      handler: () => {
-        checkAndSummarize();
+      handler: async () => {
+        setIsThinking(true);
+        try {
+          await checkAndSummarize();
+        } finally {
+          setIsThinking(false);
+        }
       },
     });
 
@@ -859,6 +1109,25 @@ const ChatPage: Component = () => {
     const cmdSlashSettings = registerCommand({
       id: 'slash-settings',
       handler: () => { navigate('/settings/app'); },
+    });
+
+    const cmdSlashHelp = registerCommand({
+      id: 'slash-help',
+      handler: () => {
+        const asstId = currentAssistantId();
+        const topicId = currentTopicId();
+        if (!asstId || !topicId) return;
+        const allSlash = getSlashCommands();
+        const lines = allSlash.map(c => `- **${c.label}** — ${c.description}`);
+        const helpText = `## 可用斜杠命令\n\n${lines.join('\n')}`;
+        setDatas('assistants', (a: any) => a.id === asstId,
+          'topics', (t: any) => t.id === topicId,
+          'history', (h: any[]) => [...h, {
+            id: crypto.randomUUID(),
+            role: 'assistant' as const,
+            content: helpText,
+          }]);
+      },
     });
 
     // ---- 原有初始化逻辑 ----
@@ -966,7 +1235,7 @@ const ChatPage: Component = () => {
         if (topic) setTypingIndex(topic.history.length - 1);
       }),
       listen<any>('llm-chunk', async (e) => {
-        const { assistant_id, topic_id, content, done, error } = e.payload;
+        const { assistant_id, topic_id, content, done, error, input_tokens, output_tokens } = e.payload;
         if (done) {
           // 整轮真正结束（后端 run_agent_turn epilogue 唯一发出 done）
           if (error) {
@@ -990,9 +1259,15 @@ const ChatPage: Component = () => {
               const lastIdx = h.length - 1;
               if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
               const steps: any[] = h[lastIdx].agentSteps || [];
-              if (steps.length === 0) return h;
+              const updatedMsg: any = { ...h[lastIdx] };
+              // 保存 token 用量
+              if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
+              if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
+              if (steps.length === 0) {
+                return [...h.slice(0, lastIdx), updatedMsg];
+              }
               return [...h.slice(0, lastIdx), {
-                ...h[lastIdx],
+                ...updatedMsg,
                 agentSteps: steps.map((s: any, i: number) =>
                   i === steps.length - 1 && s.status === 'running'
                     ? { ...s, status: 'complete', duration: finishTime - s.timestamp }
@@ -1247,6 +1522,41 @@ const ChatPage: Component = () => {
     localStorage.setItem('chat-right-panel-width', rightPanelWidth().toString());
   });
 
+  // 项目切换时自动检测并启动语言服务器
+  createEffect(async () => {
+    const pid = currentProjectId();
+    if (!pid) {
+      // 没有打开项目，清除诊断
+      clearAllDiagnostics();
+      return;
+    }
+    const project = currentProject();
+    if (!project) return;
+
+    try {
+      // 自动检测语言
+      const result: any = await invoke('auto_detect_ls', {
+        projectPath: project.path,
+      });
+      const languages: Array<{ languageId: string }> = result?.languages || [];
+      
+      // 为检测到的每种语言启动语言服务器
+      for (const lang of languages) {
+        try {
+          await invoke('start_lsp_server', {
+            projectPath: project.path,
+            languageId: lang.languageId,
+          });
+        } catch (e) {
+          // 静默失败（语言服务器可能未安装）
+          console.debug(`[LSP] 无法启动 ${lang.languageId} 服务器:`, e);
+        }
+      }
+    } catch (e) {
+      console.debug('[LSP] 自动检测失败:', e);
+    }
+  });
+
   /**
    * 模型跟随当前助手：
    * 切换助手 / 助手绑定模型变化 / 可用模型列表变化时，
@@ -1315,6 +1625,8 @@ const ChatPage: Component = () => {
         assistantId={settingsAsstId()}
         onClose={() => setSettingsAsstId(null)}
       />
+
+      <ProblemsPanel />
     </div>
   );
 };

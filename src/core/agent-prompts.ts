@@ -43,6 +43,7 @@ export function buildAgentSystemPrompt(
         `- make_directory(path) — 创建目录`,
         `- web_fetch(url, max_bytes?) — 获取网页内容为纯文本`,
         `- web_search(query, count?) — 搜索网页（DuckDuckGo）`,
+        `- read_lints(paths?, severity?) — 读取项目中的 LSP 诊断（编译错误/类型错误/警告）`,
         `- git_status() — 查看 git 工作区和暂存区状态`,
         `- git_diff(staged?, path?) — 查看 git 差异对比`,
         `- git_log(count?, path?, oneline?) — 查看 git 提交历史`,

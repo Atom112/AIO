@@ -20,14 +20,31 @@ use std::collections::BTreeMap;
 use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
 use tokio_util::sync::CancellationToken;
 
-/// 构造带超时的 reqwest 客户端（防止 DoS）
+/// 流式 HTTP 客户端（LLM 推理专用）。
 ///
-/// 注意：流式请求**不设置总超时**（仅保留 connect_timeout）。
-/// 旧的 `.timeout(60s)` 是从连接到响应体结束的总时长，会杀死任何超过 60s 的流
-/// （长推理模型 / 慢本地服务器），导致工具调用中途断流。
-fn http_client() -> reqwest::Client {
+/// - connect_timeout(5s)：快速检测不可达服务器
+/// - timeout(600s)：10 分钟硬上限，防止极端慢推理导致无限流
+/// - tcp_keepalive(30s)：检测 TCP 层网络分区
+/// - http2_keep_alive_interval(30s)：检测 HTTP/2 连接静默断开
+///
+/// Chunk 级 inactivity 超时（120s）在 `stream_one_round()` 循环中独立处理。
+fn streaming_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(600))
+        .tcp_keepalive(std::time::Duration::from_secs(30))
+        .http2_keep_alive_interval(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// 非流式 HTTP 客户端（summarize / generate_title / fetch_models）。
+///
+/// 短请求应有短超时，60s 对非流式 LLM 调用绰绰有余。
+fn non_streaming_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
@@ -269,10 +286,13 @@ async fn stream_one_round(
     let mut output_tokens: u32 = 0;
 
     loop {
-        // 取消检查：select! 让 cancelled 与 stream.next 竞争
+        // 三重竞争：取消信号 / stream chunk / 120s inactivity 超时
         let next = tokio::select! {
             _ = token.cancelled() => return Err("cancelled".to_string()),
             item = stream.next() => item,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(120)) => {
+                return Err("LLM 流超时：120 秒未收到数据，连接可能已断开".to_string());
+            }
         };
 
         let chunk = match next {
@@ -470,6 +490,11 @@ pub async fn call_llm_stream(
     messages: Vec<Message>,                 // 历史上下文消息列表
     tools: Option<Vec<ToolSpec>>,           // 工具定义（MCP 工具，None 或空数组则不发送）
 ) -> Result<(), String> {
+    // SSRF 防护
+    crate::utils::url_validation::validate_http_url(
+        &api_url,
+        &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+    )?;
     // 1. 生成唯一的任务 Key，格式为 "助手ID-话题ID"
     let task_key = format!("{}-{}", assistant_id, topic_id);
 
@@ -500,7 +525,7 @@ pub async fn call_llm_stream(
 
     // 4. 创建异步任务执行请求
     let handle = tokio::spawn(async move {
-        let client = http_client();
+        let client = streaming_http_client();
         let tools_ref: Option<&[ToolSpec]> = tools_slice.as_ref().map(|v| v.as_slice());
         let result = stream_one_round(
             &window,
@@ -566,6 +591,11 @@ pub async fn call_llm_stream(
 /// 辅助函数：从服务商获取可用的模型列表
 #[tauri::command]
 pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelInfo>, String> {
+    // SSRF 防护
+    crate::utils::url_validation::validate_http_url(
+        &api_url,
+        &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+    )?;
     // 构造模型获取地址，通常是基础 URL 后接 /models
     let mut base_url = api_url.trim_end_matches('/').to_string();
     if base_url.ends_with("/chat/completions") {
@@ -573,13 +603,17 @@ pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelI
     }
     let final_url = format!("{}/models", base_url);
 
-    let client = http_client();
-    let response = client
-        .get(&final_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let client = non_streaming_http_client();
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        client
+            .get(&final_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send(),
+    )
+    .await
+    .map_err(|_| "获取模型列表超时（45s）".to_string())?
+    .map_err(|e| e.to_string())?;
 
     // 解析返回的模型 JSON 数据
     let res_data: ModelsResponse = response.json().await.map_err(|e| e.to_string())?;
@@ -646,8 +680,17 @@ async fn execute_builtin_tool(
                 // 命令执行：危险命令标注
                 if tool_name == "execute_command" {
                     if let Some(cmd) = arguments["command"].as_str() {
-                        if let Some(risk) = shell_tools::check_dangerous_command(cmd) {
-                            reason = format!("⚠️ {risk}\n\n命令: {cmd}\n\n工具 '{}' 需要您的确认才能执行", tool_name);
+                        if let Some(danger) = shell_tools::check_dangerous_command(cmd) {
+                            let prefix = match danger.category {
+                                shell_tools::DangerCategory::Critical => "🚨 严重危险",
+                                shell_tools::DangerCategory::High => "⚠️ 高风险",
+                                shell_tools::DangerCategory::Medium => "⚡ 中等风险",
+                            };
+                            reason = format!(
+                                "{prefix}\n\n{danger_desc}\n\n命令: {cmd}\n\n确认执行？",
+                                prefix = prefix,
+                                danger_desc = danger.risk,
+                            );
                         } else {
                             reason = format!("命令: {cmd}\n\n工具 '{}' 需要您的确认才能执行", tool_name);
                         }
@@ -672,9 +715,16 @@ async fn execute_builtin_tool(
 
     // 分发执行
     if tool_name == "execute_command" {
-        let command = arguments["command"].as_str().unwrap_or("");
+        let command = arguments["command"].as_str().unwrap_or("").to_string();
         let timeout = arguments["timeout"].as_u64();
-        Ok(shell_tools::execute_command(command, &project_root, timeout))
+        let root = project_root.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            shell_tools::execute_command(&command, &root, timeout)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            shell_tools::tool_err("命令执行线程 panic")
+        }))
     } else if tool_name == "web_fetch" {
         let url = arguments["url"].as_str().unwrap_or("");
         let max_bytes = arguments["max_bytes"].as_u64();
@@ -725,6 +775,11 @@ pub async fn run_agent_turn(
     project_id: Option<String>,
     web_search_enabled: bool,
 ) -> Result<(), String> {
+    // SSRF 防护
+    crate::utils::url_validation::validate_http_url(
+        &api_url,
+        &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+    )?;
     let task_key = format!("{}-{}", assistant_id, topic_id);
 
     // 取消同 topic 的旧任务（cancel 而非 abort）
@@ -755,7 +810,7 @@ pub async fn run_agent_turn(
     let project_id_c = project_id.clone();
 
     let handle = tokio::spawn(async move {
-        let client = http_client();
+        let client = streaming_http_client();
 
         // 构建工具：仅 Agent 模式（非 Off）且非 Plan 时才注入工具。
         // Off（纯对话）模式绝不向模型暴露工具，避免模型擅自调用；Plan 模式整轮不注入工具。
@@ -1025,7 +1080,12 @@ pub async fn summarize_history(
     model: String,
     messages: Vec<Message>,
 ) -> Result<String, String> {
-    let client = http_client();
+    // SSRF 防护
+    crate::utils::url_validation::validate_http_url(
+        &api_url,
+        &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+    )?;
+    let client = non_streaming_http_client();
 
     let mut messages_for_api: Vec<serde_json::Value> = messages
         .iter()
@@ -1049,13 +1109,17 @@ pub async fn summarize_history(
         .replace("/chat/completions", "");
     let endpoint = format!("{}/chat/completions", base_url);
 
-    let res = client
-        .post(endpoint)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let res = tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        client
+            .post(endpoint)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send(),
+    )
+    .await
+    .map_err(|_| "摘要请求超时（45s）".to_string())?
+    .map_err(|e| e.to_string())?;
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
 
@@ -1242,11 +1306,16 @@ pub async fn generate_topic_title(
     model: String,
     messages: Vec<Message>,
 ) -> Result<String, String> {
+    // SSRF 防护
+    crate::utils::url_validation::validate_http_url(
+        &api_url,
+        &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+    )?;
     if messages.is_empty() {
         return Err("生成标题需要至少一条消息".to_string());
     }
 
-    let client = http_client();
+    let client = non_streaming_http_client();
 
     // 消息顺序遵循 LLM 约定：system 指令 → 对话上下文 → user 明确任务请求
     // 将 system 放最前、user 任务请求放最后，能显著提升小模型 / 本地模型的格式遵循度
@@ -1291,13 +1360,17 @@ pub async fn generate_topic_title(
         .replace("/chat/completions", "");
     let endpoint = format!("{}/chat/completions", base_url);
 
-    let res = client
-        .post(endpoint)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let res = tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        client
+            .post(endpoint)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send(),
+    )
+    .await
+    .map_err(|_| "标题生成请求超时（45s）".to_string())?
+    .map_err(|e| e.to_string())?;
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
 

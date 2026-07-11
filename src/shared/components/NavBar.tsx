@@ -49,13 +49,12 @@ const NavBar: Component<NavBarProps> = () => {
    * @param {any} user - 后端返回的用户信息对象
    */
   const handleLoginSuccess = async (user: any) => {
-    console.log("登录成功:", user);
+    console.log("登录成功:", user.username || user.id);
     setDatas('user', user);
     setDatas('isLoggedIn', true);
 
-    if (user.token) {
-      localStorage.setItem('auth-token', user.token);
-    }
+    // H5: token 已由 Rust 侧 keyring 安全存储，前端不再写 localStorage
+    // （历史遗留的 localStorage.setItem('auth-token', ...) 已移除）
 
     if (user.avatar) {
       const avatarUrl = await loadAvatarFromPath(user.avatar);
@@ -68,6 +67,8 @@ const NavBar: Component<NavBarProps> = () => {
    */
   const handleLogout = async () => {
     await logout();
+    // H5 防御性清理：移除可能残留的旧 localStorage token（历史数据）
+    localStorage.removeItem('auth-token');
     setUserMenuVisible(false);
     const localSavedPath = localStorage.getItem('user-avatar-path');
     if (localSavedPath) {
@@ -150,7 +151,8 @@ const NavBar: Component<NavBarProps> = () => {
         try {
           await invoke('start_local_server', {
             modelPath: model.local_path, port: 8080, gpuLayers: 99,
-            engineType: model.engine_type || 'llama_cpp'
+            engineType: model.engine_type || 'llama_cpp',
+            trustRemoteCode: false,
           });
         } catch (e) { console.error("自动启动本地模型失败:", e); }
       }

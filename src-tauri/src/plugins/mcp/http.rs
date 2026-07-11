@@ -78,12 +78,12 @@ impl super::McpServerPlugin for HttpPlugin {
             }
         };
 
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            return Err(McpError::TransportStartup(format!(
-                "MCP HTTP server URL 协议非法: {}",
-                url
-            )));
-        }
+        // SSRF 防护：统一 URL 校验（MCP server 可能运行在本地，允许 localhost）
+        let url = crate::utils::url_validation::validate_http_url(
+            &url,
+            &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+        )
+        .map_err(|e| McpError::TransportStartup(format!("MCP HTTP server URL 非法: {e}")))?;
 
         // HTTP transport 不需要 McpConnection 的 pending map 机制，
         // 但为了满足 trait，我们仍返回一个 dummy 连接。

@@ -94,6 +94,12 @@ const SkillList: Component = () => {
     };
 
     const importNpx = async (pkgName: string) => {
+        // 安全确认：npx 导入会执行来自 npm 的未审查代码
+        const confirmed = window.confirm(
+            `⚠️ 安全警告\n\n即将从 npm 导入 "${pkgName}"。\n\n此操作将执行 ${pkgName} 包中的代码以提取 Skill 内容。\n该代码将以当前用户权限运行，可能存在安全风险。\n\n仅导入来自可信来源的 Skill。\n\n确认导入？`
+        );
+        if (!confirmed) return;
+
         setNpxImportingId(pkgName);
         setError(null);
         try {
@@ -114,6 +120,12 @@ const SkillList: Component = () => {
     };
 
     const refreshNpx = async (id: string) => {
+        // 安全确认
+        const confirmed = window.confirm(
+            '⚠️ 刷新 Skill 将重新执行 npm 包代码以获取最新内容。确认刷新？'
+        );
+        if (!confirmed) return;
+
         setNpxRefreshingId(id);
         setError(null);
         try {

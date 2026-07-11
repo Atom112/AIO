@@ -121,21 +121,14 @@ pub fn delete_provider_api_key(app: AppHandle, provider_id: String) -> Result<()
     secure_store::delete(&app, &key_name).map_err(|e| e.to_string())
 }
 
-/// 校验 API URL 协议合法（仅允许 http/https；M5 防护）
+/// 校验 API URL 安全性（SSRF 防护）。
+///
+/// 使用统一的 URL 校验模块，禁止内网地址和 cloud metadata 端点。
 pub fn validate_api_url(input: &str) -> Result<String, String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err("URL 不能为空".into());
-    }
-    let parsed = url::Url::parse(trimmed).map_err(|e| format!("URL 解析失败: {}", e))?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        s => return Err(format!("不支持的协议: {}（仅允许 http/https）", s)),
-    }
-    if parsed.host_str().is_none() {
-        return Err("URL 必须包含 host".into());
-    }
-    Ok(parsed.to_string())
+    crate::utils::url_validation::validate_http_url(
+        input,
+        &crate::utils::url_validation::HttpUrlOptions::default(),
+    )
 }
 
 /// 加载 provider 配置

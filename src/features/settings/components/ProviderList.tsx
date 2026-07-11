@@ -137,11 +137,22 @@ const LocalEngineSection: Component = () => {
                 await invoke('save_app_config', { config: { ...currentCfg, localModelPath: localModelPath() } });
                 setLocalSaveStatus('正在启动本地引擎...');
                 const engine = ENGINE_OPTIONS[0];
+                // vLLM: 用户确认 --trust-remote-code
+                let trustRemoteCode = false;
+                if (engine.id === 'vllm') {
+                    trustRemoteCode = window.confirm(
+                        '⚠️ 安全警告\n\nvLLM 的 --trust-remote-code 选项允许模型仓库中的\n' +
+                        'Python 代码以当前用户权限执行。\n\n' +
+                        '仅当你信任该模型来源时才启用此选项。\n\n' +
+                        '是否启用 --trust-remote-code？'
+                    );
+                }
                 const serverUrl: string = await invoke('start_local_server', {
                     modelPath: localModelPath(),
                     port: 8080,
                     gpuLayers: 99,
                     engineType: engine.id,
+                    trustRemoteCode,
                 });
                 setIsLocalRunning(true);
                 setLocalSaveStatus('本地引擎已就绪');

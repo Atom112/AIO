@@ -21,8 +21,10 @@ pub async fn start_local_server(
     port: u16,
     gpu_layers: i32,
     engine_type: Option<String>,
+    trust_remote_code: Option<bool>,
 ) -> Result<String, String> {
     let engine_id = engine_type.unwrap_or_else(|| "llama_cpp".to_string());
+    let trust_remote = trust_remote_code.unwrap_or(false);
 
     let plugin = engine_mgr
         .get(&engine_id)
@@ -37,7 +39,7 @@ pub async fn start_local_server(
 
     // 调用插件启动
     let url = plugin
-        .start(app, &state, safe_path.to_string_lossy().as_ref(), port, gpu_layers)
+        .start(app, &state, safe_path.to_string_lossy().as_ref(), port, gpu_layers, trust_remote)
         .await?;
 
     Ok(url)

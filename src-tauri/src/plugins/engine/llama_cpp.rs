@@ -100,6 +100,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
         model_path: &'a str,
         port: u16,
         gpu_layers: i32,
+        _trust_remote_code: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
             debug!(

@@ -59,23 +59,14 @@ fn http_client() -> reqwest::Client {
 // ====== SSRF 防护 ======
 
 /// 校验 URL 是否安全（HTTPS-only，非内网 IP）。
-/// 仅做基础的主机名检查，不做 DNS 解析。
+/// 委托给统一的 URL 校验模块；仅做静态 hostname 检查，不做 DNS 解析。
 fn is_safe_url(url_str: &str) -> Result<(), String> {
-    let parsed = url::Url::parse(url_str).map_err(|e| format!("无效 URL: {e}"))?;
-    if parsed.scheme() != "https" {
-        return Err("仅支持 HTTPS 协议".into());
-    }
-    let host = parsed.host_str().unwrap_or("");
-    // 屏蔽裸 IP（IPv4 / IPv6）
-    if host.parse::<std::net::Ipv4Addr>().is_ok() || host.parse::<std::net::Ipv6Addr>().is_ok() {
-        return Err("不允许直接访问 IP 地址".into());
-    }
-    // 屏蔽常见内网域名（防御 DNS rebinding）
-    let blocked = ["localhost", "127.0.0.1", "[::1]"];
-    if blocked.contains(&host.to_lowercase().as_str()) {
-        return Err("不允许访问内网地址".into());
-    }
-    Ok(())
+    crate::utils::url_validation::validate_http_url(
+        url_str,
+        &crate::utils::url_validation::HttpUrlOptions::https_only(),
+    )
+    .map(|_| ())
+    // 统一校验模块的错误消息已是中文，直接透传
 }
 
 // ====== HTML → 文本 ======

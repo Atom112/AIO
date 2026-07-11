@@ -168,11 +168,13 @@ pub fn load_models_catalog_full(app: tauri::AppHandle) -> Result<CatalogResponse
 
 /// 校验 URL 是否指向白名单 host（H7 SSRF 防护）
 fn validate_catalog_url(target: &str) -> Result<(), String> {
+    // 统一 SSRF 防护（HTTPS-only + IP/内网拒绝）
+    crate::utils::url_validation::validate_http_url(
+        target,
+        &crate::utils::url_validation::HttpUrlOptions::https_only(),
+    )?;
+    // 额外的 host 白名单（仅允许 raw.githubusercontent.com）
     let parsed = url::Url::parse(target).map_err(|e| format!("URL 解析失败: {}", e))?;
-    match parsed.scheme() {
-        "https" => {}
-        s => return Err(format!("catalog URL 必须为 HTTPS 协议，当前: {}", s)),
-    }
     let host = parsed.host_str().unwrap_or("").to_lowercase();
     if !ALLOWED_CATALOG_HOSTS.iter().any(|h| host == *h) {
         return Err(format!("catalog host 未在白名单内: {}", host));

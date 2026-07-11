@@ -392,7 +392,10 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
             modelPath: model.local_path,
             port: 8080,
             gpuLayers: 99,
-            engineType: model.engine_type || 'llama_cpp'
+            engineType: model.engine_type || 'llama_cpp',
+            trustRemoteCode: model.engine_type === 'vllm'
+                ? window.confirm('⚠️ vLLM 安全警告：是否启用 --trust-remote-code？\n\n该选项允许模型执行自定义 Python 代码。')
+                : false,
         });
 
         let attempts = 0;
@@ -622,10 +625,12 @@ export const initMcpServers = async (projectId?: string | null) => {
             setMcpServerStatus(prev => ({ ...prev, [info.id]: info }));
         });
 
-        // 监听 MCP server stderr 日志
+        // 监听 MCP server stderr 日志（仅 dev 模式，避免生产环境泄露密钥）
         listen<{ id: string; line: string }>('mcp-server-stderr', (event) => {
             const { id, line } = event.payload;
-            console.log(`[mcp:${id}] ${line}`);
+            if (import.meta.env.DEV) {
+                console.debug(`[mcp:${id}] ${line}`);
+            }
         });
 
         // 自动启动标记为 autoStart 的 server

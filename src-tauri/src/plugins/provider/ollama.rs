@@ -41,6 +41,7 @@ impl ProviderPlugin for OllamaProvider {
     ) -> Result<Client, String> {
         let mut b = Client::builder()
             .user_agent("AIO-Desktop/0.4 (ollama-provider)")
+            .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(timeout_secs));
         if let Some(p) = proxy_url {
             if !p.trim().is_empty() {

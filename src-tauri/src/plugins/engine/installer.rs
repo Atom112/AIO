@@ -10,6 +10,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 /// GitHub release 信息
@@ -99,6 +100,8 @@ impl EngineInstaller {
 
         let client = reqwest::Client::builder()
             .user_agent("AIO-App/0.3.1")
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
@@ -307,6 +310,8 @@ impl EngineInstaller {
         // 流式下载
         let client = reqwest::Client::builder()
             .user_agent("AIO-App/0.3.1")
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(1800))
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
@@ -328,8 +333,14 @@ impl EngineInstaller {
 
         let mut stream = resp.bytes_stream();
         use futures_util::StreamExt;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("下载数据流中断: {}", e))?;
+        while let Some(chunk_result) = tokio::time::timeout(
+            Duration::from_secs(120),
+            stream.next(),
+        )
+        .await
+        .map_err(|_| "下载超时：120 秒未收到数据，请检查网络连接".to_string())?
+        {
+            let chunk = chunk_result.map_err(|e| format!("下载数据流中断: {}", e))?;
             file.write_all(&chunk)
                 .map_err(|e| format!("写入临时文件失败: {}", e))?;
             downloaded += chunk.len() as u64;

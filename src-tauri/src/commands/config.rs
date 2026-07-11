@@ -400,32 +400,81 @@ fn attachment_ids_for_assistant(
     Ok(ids)
 }
 
-/// 保存“已激活模型”列表（用户在界面上勾选开启的模型）
+/// 保存"已激活模型"列表（api_key 剥离到系统 keyring，落盘不含明文密钥）
 #[tauri::command]
-pub fn save_activated_models(models: Vec<ActivatedModel>) -> Result<(), String> {
+pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
     let mut path = dirs::config_dir().unwrap();
     path.push("com.loch.aio");
     if !path.exists() {
         std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     }
     path.push("activated_models.json");
-    let json = serde_json::to_string_pretty(&models).map_err(|e| e.to_string())?;
+
+    // 剥离 api_key 到 secure_store，落盘模型不含明文密钥
+    let mut sanitized: Vec<serde_json::Value> = Vec::new();
+    for m in &models {
+        if !m.api_key.is_empty() && m.api_key != "local-no-key" {
+            let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
+            let _ = secure_store::set(&app, &account, &m.api_key);
+        }
+        // 序列化为 JSON Value，移除 api_key 字段
+        let mut v = serde_json::to_value(m).map_err(|e| e.to_string())?;
+        if let Some(obj) = v.as_object_mut() {
+            obj.remove("api_key");
+        }
+        sanitized.push(v);
+    }
+
+    let json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 加载“已激活模型”列表
+/// 加载"已激活模型"列表（从 keyring 恢复 api_key）
 #[tauri::command]
-pub fn load_activated_models() -> Result<Vec<ActivatedModel>, String> {
+pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
     let mut path = dirs::config_dir().unwrap();
     path.push("com.loch.aio");
     path.push("activated_models.json");
 
     if !path.exists() {
-        return Ok(vec![]); // 不存在则返回空列表
+        return Ok(vec![]);
     }
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let models: Vec<ActivatedModel> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut models: Vec<ActivatedModel> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+    // 从 secure_store 恢复 api_key，并自动迁移旧数据（含明文 api_key 的旧文件）
+    let mut needs_migration = false;
+    for m in &mut models {
+        // 检查是否为旧格式（JSON 中直接含有 api_key）
+        if !m.api_key.is_empty() && m.api_key != "local-no-key" {
+            let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
+            let _ = secure_store::set(&app, &account, &m.api_key);
+            needs_migration = true;
+        }
+
+        // 从 secure_store 恢复（覆盖旧 JSON 中的值，或补充新格式缺失的 key）
+        let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
+        if let Ok(Some(key)) = secure_store::get(&app, &account) {
+            m.api_key = key;
+        }
+    }
+
+    // 迁移：立即写回清理后的 JSON（剔除旧格式的明文 api_key）
+    if needs_migration {
+        let mut sanitized: Vec<serde_json::Value> = Vec::new();
+        for m in &models {
+            let mut v = serde_json::to_value(m).map_err(|e| e.to_string())?;
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("api_key");
+            }
+            sanitized.push(v);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&sanitized) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
     Ok(models)
 }
 

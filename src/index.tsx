@@ -22,6 +22,7 @@ const AccountSettings = lazy(() => import('./features/settings/components/Accoun
 const AppSettings = lazy(() => import('./features/settings/components/AppSettings'));
 const McpServerList = lazy(() => import('./features/settings/components/McpServerList'));
 const SkillList = lazy(() => import('./features/settings/components/SkillList'));
+const UsageSettings = lazy(() => import('./features/settings/components/UsageSettings'));
 
 render(
   () => (
@@ -34,6 +35,7 @@ render(
           <Route path="/provider/:providerId" component={ProviderDetail} />
           <Route path="/mcp" component={McpServerList} />
           <Route path="/skills" component={SkillList} />
+          <Route path="/usage" component={UsageSettings} />
           <Route path="/account" component={AccountSettings} />
           <Route path="/app" component={AppSettings} />
         </Route>

@@ -1,6 +1,6 @@
 [package]
 name = "aio"
-version = "0.6.1"
+version = "0.6.2"
 description = "A Tauri App"
 authors = ["Loch"]
 edition = "2021"

@@ -82,6 +82,8 @@ pub fn run() {
             commands::llm::append_message,
             commands::llm::delete_topic_message,
             commands::llm::generate_topic_title,
+            commands::llm::get_usage_summary,
+            commands::llm::get_usage_summary_by_model,
             // 云端后端鉴权（集中在 cloud_backend 模块）
             cloud_backend::auth::login_to_backend,
             cloud_backend::auth::register_to_backend,

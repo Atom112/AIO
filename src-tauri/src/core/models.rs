@@ -122,6 +122,12 @@ pub struct Message {
     /// 模型原生思维链（GLM/DeepSeek-R1/Qwen3 等的 reasoning_content），仅 assistant 消息可能携带
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// 本轮输入 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u32>,
+    /// 本轮输出 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u32>,
 }
 
 /// OpenAI 风格的工具调用（assistant 消息中）
@@ -722,4 +728,41 @@ pub struct DiscoveredNpxSkill {
     pub source_type: String,
     /// AIO 中是否已导入该 skill
     pub already_imported: bool,
+}
+
+// ====== Token 用量日志 ======
+
+/// 用量日志条目：每次 LLM 调用（单轮）产生一条不可变记录。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageLogEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub assistant_id: String,
+    pub topic_id: String,
+    pub model_id: String,
+    pub round: u32,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+/// 用量摘要：按天聚合的 token 用量。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummary {
+    /// 日期（YYYY-MM-DD）
+    pub date: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
+}
+
+/// 按模型聚合的用量摘要。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummaryByModel {
+    pub model_id: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
 }

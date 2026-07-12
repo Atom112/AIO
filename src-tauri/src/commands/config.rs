@@ -165,8 +165,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话）
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计）
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -197,6 +197,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         name: row.get(8)?,         // index 8: name
                         tool_calls,                // index 9: tool_calls_json（已解析）
                         reasoning: row.get(6)?,    // index 6: reasoning
+                        input_tokens: row.get(10)?,  // index 10: input_tokens
+                        output_tokens: row.get(11)?, // index 11: output_tokens
                     })
                 })
                 .map_err(|e| e.to_string())?;
@@ -311,11 +313,11 @@ pub async fn save_assistant(
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
             let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
-            // 写入 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话。
+            // 写入 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计。
             // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    reasoning = excluded.reasoning,
@@ -323,8 +325,10 @@ pub async fn save_assistant(
                    name = excluded.name,
                    tool_calls_json = excluded.tool_calls_json,
                    display_files = excluded.display_files,
-                   display_text = excluded.display_text",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json],
+                   display_text = excluded.display_text,
+                   input_tokens = excluded.input_tokens,
+                   output_tokens = excluded.output_tokens",
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
         }

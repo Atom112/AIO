@@ -219,6 +219,33 @@ fn verify_tool_messages(messages: &[serde_json::Value]) {
     }
 }
 
+/// 将单轮 LLM 调用的 token 用量写入 usage_log 表（不可变 append-only 记录）。
+///
+/// 跳过 input + output 均为 0 的空记录（本地引擎可能不返回 usage）。
+fn insert_usage_log(
+    app: &AppHandle,
+    assistant_id: &str,
+    topic_id: &str,
+    model_id: &str,
+    round: u32,
+    input_tokens: u32,
+    output_tokens: u32,
+) {
+    if input_tokens == 0 && output_tokens == 0 {
+        return;
+    }
+    let db = app.state::<DbState>();
+    let conn = match db.0.lock() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let id = uuid::Uuid::new_v4().to_string();
+    let _ = conn.execute(
+        "INSERT INTO usage_log (id, assistant_id, topic_id, model_id, round, input_tokens, output_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![id, assistant_id, topic_id, model_id, round, input_tokens, output_tokens],
+    );
+}
+
 /// 单轮流式请求：构造 body → POST → 解析 SSE → 累积 content/reasoning/tool_calls → emit 增量事件。
 ///
 /// 与旧 `call_llm_stream` 的差异：
@@ -531,6 +558,8 @@ pub async fn call_llm_stream(
 
     let token = CancellationToken::new();
     let token_inner = token.clone();
+    let app_handle = window.app_handle().clone();
+    let model_c = model.clone();
 
     // 4. 创建异步任务执行请求
     let handle = tokio::spawn(async move {
@@ -554,6 +583,16 @@ pub async fn call_llm_stream(
         // 收尾：无论成功/取消/错误都 emit terminal done，保证前端 isThinking 必复位
         match result {
             Ok(round) => {
+                // 持久化本轮 token 用量到 usage_log
+                insert_usage_log(
+                    &app_handle,
+                    &assistant_id_c,
+                    &topic_id_c,
+                    &model_c,
+                    1,
+                    round.input_tokens,
+                    round.output_tokens,
+                );
                 let _ = window.emit(
                     "llm-chunk",
                     StreamPayload {
@@ -1423,6 +1462,17 @@ pub async fn run_agent_turn(
             total_input_tokens += round_result.input_tokens;
             total_output_tokens += round_result.output_tokens;
 
+            // 持久化本轮 token 用量到 usage_log
+            insert_usage_log(
+                &app_c,
+                &assistant_id_c,
+                &topic_id_c,
+                &model,
+                round,
+                round_result.input_tokens,
+                round_result.output_tokens,
+            );
+
             // 把本轮 assistant 消息（含 tool_calls）append 到上下文
             let mut asst_obj = serde_json::Map::new();
             asst_obj.insert("role".into(), json!("assistant"));
@@ -1732,6 +1782,85 @@ pub async fn summarize_history(
     Ok(summary)
 }
 
+/// 查询最近 N 天的 token 用量摘要（按天聚合）。
+///
+/// 返回按日期降序排列的每日 input/output tokens 与请求次数。
+/// 用于前端用量面板展示（如"过去 7 天 / 30 天用量"）。
+#[tauri::command]
+pub fn get_usage_summary(
+    db_state: tauri::State<'_, DbState>,
+    days: u32,
+) -> Result<Vec<UsageSummary>, String> {
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT date(timestamp) as day,
+                    SUM(input_tokens) as total_input,
+                    SUM(output_tokens) as total_output,
+                    COUNT(*) as request_count
+             FROM usage_log
+             WHERE timestamp >= datetime('now', ?1)
+             GROUP BY day
+             ORDER BY day DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let days_param = format!("-{} days", days);
+    let rows = stmt
+        .query_map([&days_param], |row| {
+            Ok(UsageSummary {
+                date: row.get(0)?,
+                input_tokens: row.get(1)?,
+                output_tokens: row.get(2)?,
+                request_count: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut summaries = Vec::new();
+    for row in rows {
+        summaries.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(summaries)
+}
+
+/// 查询最近 N 天的 token 用量按模型聚合。
+///
+/// 返回按总 token 数降序排列的各模型用量，用于前端模型分布面板。
+#[tauri::command]
+pub fn get_usage_summary_by_model(
+    db_state: tauri::State<'_, DbState>,
+    days: u32,
+) -> Result<Vec<UsageSummaryByModel>, String> {
+    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT model_id,
+                    SUM(input_tokens) as total_input,
+                    SUM(output_tokens) as total_output,
+                    COUNT(*) as request_count
+             FROM usage_log
+             WHERE timestamp >= datetime('now', ?1)
+             GROUP BY model_id
+             ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let days_param = format!("-{} days", days);
+    let rows = stmt
+        .query_map([&days_param], |row| {
+            Ok(UsageSummaryByModel {
+                model_id: row.get(0)?,
+                input_tokens: row.get(1)?,
+                output_tokens: row.get(2)?,
+                request_count: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut summaries = Vec::new();
+    for row in rows {
+        summaries.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(summaries)
+}
+
 #[tauri::command]
 pub async fn append_message(
     state: tauri::State<'_, DbState>,
@@ -1750,8 +1879,8 @@ pub async fn append_message(
     conn.execute(
         "INSERT INTO messages
          (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
-          tool_call_id, name, tool_calls_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+          tool_call_id, name, tool_calls_json, input_tokens, output_tokens)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             message_id,
             topic_id,
@@ -1764,6 +1893,8 @@ pub async fn append_message(
             message.tool_call_id,
             message.name,
             tool_calls_json,
+            message.input_tokens,
+            message.output_tokens,
         ],
     ).map_err(|e| e.to_string())?;
     sync_message_attachments(&conn, &message_id, message.display_files.as_ref())?;

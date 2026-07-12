@@ -262,13 +262,13 @@ const ProviderDetail: Component = () => {
                         <h1 class="text-xl font-bold text-white truncate tracking-tight">{userCfg()?.displayName ?? providerMeta()?.name ?? providerId()}</h1>
                         <div class="text-xs text-[#888] font-mono mt-1 flex items-center gap-2 flex-wrap">
                             <Show when={isCustom()}>
-                                <span class="chip chip-info">自定义</span>
+                                <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] chip-info">自定义</span>
                             </Show>
                             <Show when={!isCustom()}>
                                 <span><span class="text-pri font-semibold">{modelGroups().enabled.length}</span><span class="text-[#666]"> / </span><span>{modelGroups().enabled.length + modelGroups().available.length}</span> 个模型已启用</span>
                                 <Show when={modelGroups().enabled.length > 0}>
                                     <span class="text-[#666]">·</span>
-                                    <span class="chip chip-ok">运行中</span>
+                                    <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-green-400/15 text-green-300 border border-green-400/20">运行中</span>
                                 </Show>
                             </Show>
                         </div>
@@ -298,7 +298,7 @@ const ProviderDetail: Component = () => {
                             <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>显示名称</label>
                             <input
                                 type="text"
-                                class="input-glass w-full px-3 py-2 text-sm"
+                                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm"
                                 value={userCfg()?.displayName ?? ''}
                                 onInput={(e) => updateField('displayName', e.currentTarget.value)}
                             />
@@ -307,7 +307,7 @@ const ProviderDetail: Component = () => {
                             <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>API URL</label>
                             <input
                                 type="text"
-                                class="input-glass w-full px-3 py-2 text-sm font-mono"
+                                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                                 value={userCfg()?.apiUrl ?? ''}
                                 onInput={(e) => updateField('apiUrl', e.currentTarget.value)}
                             />
@@ -317,7 +317,7 @@ const ProviderDetail: Component = () => {
                             <input
                                 type="password"
                                 placeholder="sk-..."
-                                class="input-glass w-full px-3 py-2 text-sm font-mono"
+                                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                                 value={userCfg()?.apiKey ?? ''}
                                 onInput={(e) => updateField('apiKey', e.currentTarget.value)}
                             />
@@ -329,7 +329,7 @@ const ProviderDetail: Component = () => {
                             <input
                                 type="text"
                                 placeholder="留空则不使用代理"
-                                class="input-glass w-full px-3 py-2 text-sm font-mono"
+                                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                                 value={userCfg()?.proxyUrl ?? ''}
                                 onInput={(e) => updateField('proxyUrl', e.currentTarget.value || undefined)}
                             />
@@ -347,7 +347,7 @@ const ProviderDetail: Component = () => {
                                 class="toggle-glass"
                                 classList={{ 'on': userCfg()?.enabled ?? false }}
                             >
-                                <span class="toggle-knob" />
+                                <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
                             </span>
                             <span class="text-sm text-white">启用此 provider</span>
                         </button>
@@ -388,11 +388,11 @@ const ProviderDetail: Component = () => {
                 {/* 测试/拉取反馈 */}
                 <Show when={testState().status !== 'idle'}>
                     <div
-                        class="feedback-bar mb-4 animate-row"
+                        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row"
                         classList={{
-                            'ok': testState().status === 'ok',
-                            'fail': testState().status === 'fail',
-                            'test': testState().status === 'testing',
+                            'bg-green-400/[0.08] border-green-400/25 text-green-300': testState().status === 'ok',
+                            'bg-red-400/[0.08] border-red-400/25 text-red-300': testState().status === 'fail',
+                            'bg-pri/5 border-pri text-pri': testState().status === 'testing',
                         }}
                     >
                         <Show when={testState().status === 'testing'} fallback={
@@ -410,7 +410,7 @@ const ProviderDetail: Component = () => {
                 </Show>
                 <Show when={fetchState().status !== 'idle'}>
                     <div
-                        class="feedback-bar mb-4 animate-row"
+                        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row"
                         classList={{
                             'ok': fetchState().status === 'ok',
                             'fail': fetchState().status === 'fail',
@@ -494,7 +494,7 @@ const ProviderDetail: Component = () => {
                                     <input
                                         type="text"
                                         placeholder="搜索模型..."
-                                        class="input-glass pl-7 pr-3 py-1 text-xs"
+                                        class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-7 pr-3 py-1 text-xs"
                                         style={{ 'width': '180px' }}
                                         value={search()}
                                         onInput={(e) => setSearch(e.currentTarget.value)}
@@ -556,7 +556,7 @@ const ProviderDetail: Component = () => {
                                 <For each={visibleOrphans()}>
                                     {(mid, i) => (
                                         <span
-                                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md chip chip-warn font-mono animate-row"
+                                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-yellow-400/[0.12] text-yellow-200 border border-yellow-400/20 font-mono animate-row"
                                             style={{ "animation-delay": `${i() * 30}ms` }}
                                         >
                                             <span class="truncate max-w-[200px]">{mid}</span>

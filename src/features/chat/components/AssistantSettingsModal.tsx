@@ -189,12 +189,12 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                 >
                     <div class="flex justify-between items-center border-b border-[#444] pb-3">
                         <h2 class='m-0 text-xl'>助手设置</h2>
-                        <button onClick={handleClose} class="close-btn">&times;</button>
+                        <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80">&times;</button>
                     </div>
 
                     {/* 名称 */}
                     <div class="flex flex-col gap-1.5">
-                        <label class="section-label">助手名称</label>
+                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">助手名称</label>
                         <input
                             value={nameText()}
                             onInput={(e) => setNameText(e.currentTarget.value)}
@@ -207,7 +207,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
 
                     {/* 模型 */}
                     <div class="flex flex-col gap-1.5">
-                        <label class="section-label">
+                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                             绑定模型
                             <Show when={activeModel()}>
                                 <span class="ml-2 text-[11px] font-normal" style="color: rgba(124,154,191,0.7);">
@@ -324,7 +324,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
 
                     {/* MCP 服务器 */}
                     <div class="flex flex-col gap-1.5">
-                        <label class="section-label">
+                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                             MCP 服务器
                             <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
                                 仅对当前助手生效
@@ -371,7 +371,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
 
                     {/* Skill */}
                     <div class="flex flex-col gap-1.5">
-                        <label class="section-label">
+                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                             Skill
                             <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
                                 仅对当前助手生效
@@ -411,7 +411,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
 
                     {/* 系统提示词 */}
                     <div class="flex flex-col gap-1.5">
-                        <label class="section-label">系统提示词</label>
+                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">系统提示词</label>
                         <textarea
                             rows={6}
                             value={promptText()}

@@ -158,7 +158,7 @@ const LoginModal: Component<LoginModalProps> = (props) => {
                         <h3 class="m-0 text-lg text-pri font-medium">
                             {isRegister() ? '新用户注册' : '账号登录'}
                         </h3>
-                        <button onClick={handleClose} class="close-btn">
+                        <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80">
                             &times;
                         </button>
                     </div>

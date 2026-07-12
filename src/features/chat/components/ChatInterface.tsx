@@ -17,6 +17,7 @@ import TokenStatsBar from './TokenStatsBar';
 import { totalErrors, totalWarnings, problemsPanelVisible, setProblemsPanelVisible, hasDiagnostics } from '../../../core/store/diagnostics';
 import AgentModeSelector from './AgentModeSelector';
 import ProjectSelector from './ProjectSelector';
+import WelcomeScreen from './WelcomeScreen';
 
 interface ChatInterfaceProps {
     activeTopic: Topic | null;
@@ -338,6 +339,21 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     </div>
                 </Show>
 
+                <Show when={!props.activeTopic || (props.activeTopic?.history?.length ?? 0) === 0}>
+                    <div class="min-h-full flex items-center justify-center">
+                        <WelcomeScreen
+                            isChangingTopic={props.isChangingTopic}
+                            onSuggestionClick={(text) => {
+                                props.setInputMessage(text);
+                                if (textareaRef) {
+                                    textareaRef.focus();
+                                    textareaRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                }
+                            }}
+                        />
+                    </div>
+                </Show>
+
                 <Show when={props.activeTopic}>
                     <For each={props.activeTopic?.history}>
                         {(msg: any, index) => {
@@ -446,7 +462,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                         <div class={`flex mt-1.5 px-[4px] z-[5] gap-1.5 flex-wrap ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}>
                                             {/* 复制按钮（每条消息都有） */}
                                             <button
-                                                class="msg-action-btn"
+                                                class="msg-action-btn inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200"
                                                 style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
                                                 onClick={(e) => {
                                                     const currentBtn = e.currentTarget;
@@ -479,7 +495,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             {/* 最后一条用户消息：重新发送 + 编辑后重发 */}
                                             <Show when={index() === lastUserMsgIndex() && msg.role === 'user' && (msg.content || msg.displayText)}>
                                                 <button
-                                                    class="msg-action-btn"
+                                                    class="msg-action-btn inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200"
                                                     style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
                                                     onClick={async () => {
                                                         const text = msg.displayText !== undefined ? msg.displayText : msg.content;
@@ -508,7 +524,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     <span class="action-label">重新发送</span>
                                                 </button>
                                                 <button
-                                                    class="msg-action-btn"
+                                                    class="msg-action-btn inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200"
                                                     style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
                                                     onClick={async () => {
                                                         const text = msg.displayText !== undefined ? msg.displayText : msg.content;

@@ -18,7 +18,7 @@ const ModelRow: Component<{
     const m = () => props.meta;
     const caps = () => m().capabilities ?? {};
     return (
-        <div class="model-row list-row flex items-center gap-3 px-3 py-2.5">
+        <div class="transition-all duration-200 hover:bg-pri-5 hover:border-pri relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5">
             <div class="grow min-w-0">
                 <div class="text-sm text-white truncate font-medium">
                     {m().displayName || m().id}
@@ -82,7 +82,7 @@ const ModelRow: Component<{
                 onClick={(e) => { e.stopPropagation(); props.onToggle(); }}
                 title={props.enabled ? '点击停用' : '点击启用'}
             >
-                <span class="toggle-knob" />
+                <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
             </button>
         </div>
     );

@@ -50,13 +50,12 @@ export default function ProjectSelector() {
             <div class="relative" ref={ref}>
                 <button
                     type="button"
-                    class="reasoning-trigger"
-                    classList={{ 'is-active': !!currentProject() }}
+                    class={`flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60 ${currentProject() ? 'text-white/55' : 'text-white/40'}`}
                     onClick={() => setOpen(!open())}
                     title={currentProject() ? `项目: ${currentProject()!.name} (${currentProject()!.path})` : '选择工作目录'}
                 >
-                    <Icon name="folder" size={15} class="reasoning-trigger-icon" />
-                    <span class="reasoning-trigger-label max-w-[100px] truncate">{currentProject()?.name ?? '选择目录'}</span>
+                    <Icon name="folder" size={15} class="flex items-center justify-center shrink-0" />
+                    <span class="leading-none max-w-[100px] truncate">{currentProject()?.name ?? '选择目录'}</span>
                 </button>
 
                 <Show when={open()}>

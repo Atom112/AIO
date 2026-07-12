@@ -264,7 +264,7 @@ return (
           href="/chat"
           title="对话"
           activeClass="!text-pri font-bold"
-          class="nav-icon-link [app-region:no-drag]"
+          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
@@ -281,17 +281,17 @@ return (
           href="/settings" 
           title="设置" 
           activeClass="!text-pri font-bold" 
-          class="nav-icon-link [app-region:no-drag]"
+          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/settings-gear.svg" class="w-6 h-6" />
         </A>
 
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
-          <button class="win-ctrl-btn hover:bg-white/10" onClick={handleMinimize} title="最小化">
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleMinimize} title="最小化">
             <Icon src="/icons/app-logo/minimize.svg" class="w-6 h-6" />
           </button>
 
-          <button class="win-ctrl-btn hover:bg-white/10" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
             {isMaximized() ? (
               <Icon src="/icons/app-logo/restore.svg" class="w-6 h-6" />
             ) : (
@@ -299,7 +299,7 @@ return (
             )}
           </button>
 
-          <button class="win-ctrl-btn hover:bg-danger" onClick={handleClose} title="关闭">
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-danger" onClick={handleClose} title="关闭">
             <Icon src="/icons/app-logo/close-x.svg" class="w-6 h-6" />
           </button>
         </div>

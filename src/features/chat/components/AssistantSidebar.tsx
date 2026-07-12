@@ -95,7 +95,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                 <For each={filteredAssistants()}>
                     {(assistant) => (
                         <div
-                            class="group sidebar-item my-1"
+                            class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                             classList={{
                                 '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': assistant.id === currentAssistantId()
                             }}
@@ -120,7 +120,7 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                             </Show>
 
                             <button
-                                class="dot-menu-btn"
+                                class="flex items-center justify-center w-[30px] h-[30px] border-none rounded cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
                                 onClick={(e) => openMenu(e as MouseEvent, assistant.id)}
                             >
                                 <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
@@ -149,16 +149,16 @@ const AssistantSidebar: Component<AssistantSidebarProps> = (props) => {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <button
-                            class="context-menu-item"
+                            class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white"
                             onClick={() => { const id = menuState().targetId; if (id) props.onOpenSettings(id); closeMenu(); }}
                         >设置</button>
                         <button
-                            class="context-menu-item disabled:opacity-30"
+                            class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white disabled:opacity-30"
                             disabled={menuState().targetId === "default-assistant-id"}
                             onClick={() => { props.setEditingAsstId(menuState().targetId); closeMenu(); }}
                         >重命名</button>
                         <button
-                            class="context-menu-item disabled:opacity-30"
+                            class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white disabled:opacity-30"
                             style="color: rgba(255,77,77,0.8);"
                             disabled={menuState().targetId === "default-assistant-id"}
                             onClick={() => removeAssistant(menuState().targetId)}

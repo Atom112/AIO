@@ -58,28 +58,28 @@ const ThinkBlock: Component<ThinkBlockProps> = (props) => {
 
     return (
         <div
-            class="think-block"
+            class="my-3 rounded-lg overflow-hidden bg-white/[0.025] border border-white/[0.05] transition-[background,border-color] duration-200 hover:bg-white/[0.04] hover:border-white/[0.08]"
             classList={{ 'is-open': isExpanded(), 'is-streaming': props.isStreaming }}
         >
             <button
                 type="button"
-                class="think-header"
+                class="flex items-center w-full gap-2 px-3 py-2 cursor-pointer select-none bg-transparent border-none text-white/50 text-xs transition-colors duration-200 hover:text-white/75"
                 onClick={toggle}
                 aria-expanded={isExpanded()}
             >
-                <span class="think-icon-wrap">
-                    <Icon name={props.isStreaming ? 'sparkles' : 'brain'} size={13} class="think-icon" />
+                <span class="flex items-center justify-center w-5 h-5 rounded bg-white/[0.05] relative">
+                    <Icon name={props.isStreaming ? 'sparkles' : 'brain'} size={13} class="w-3.5 h-3.5" />
                 </span>
-                <span class="think-title">
+                <span class="font-medium flex-none">
                     {props.isStreaming ? '正在思考' : '已思考'}
                 </span>
-                <span class="think-duration">{formatDuration(elapsedMs())}</span>
-                <span class="think-chevron" aria-hidden="true">
-                    <Icon name="arrow-left" size={11} class="think-chevron-icon" />
+                <span class="font-mono text-white/30 text-[11px] flex-none ml-0.5">{formatDuration(elapsedMs())}</span>
+                <span class="flex items-center justify-center ml-auto text-white/30 transition-[transform,color] duration-200" aria-hidden="true">
+                    <Icon name="arrow-left" size={11} class="-rotate-90 transition-transform duration-200" />
                 </span>
             </button>
-            <div class="think-body">
-                <div class="think-content">{props.content}</div>
+            <div class="px-3 overflow-hidden">
+                <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">{props.content}</div>
             </div>
         </div>
     );

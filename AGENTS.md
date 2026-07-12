@@ -92,6 +92,7 @@ src-tauri/src/
 - Store updates: use functional path syntax (`setDatas('assistants', a => a.id === id, 'name', value)`).
 - Avoid `any` in new code. Define interfaces in `core/types/`.
 - Utility functions go to `core/utils/`, never duplicate logic across components.
+- **样式统一使用 Tailwind CSS 工具类编写**，避免内联样式或自定义 CSS 文件，除非确有必要。
 
 ### Naming & Strings
 

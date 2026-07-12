@@ -38,13 +38,13 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
         class="absolute top-full left-1/2 -translate-x-1/2 mt-3 min-w-[140px] rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5"
         classList={{ 'invisible opacity-0': !isVisible(), 'visible opacity-100': isVisible() }}
         style="background: rgba(18, 22, 35, 0.85); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
-        <div class="user-menu-item" onClick={props.onEditAvatar}>
+        <div class="flex items-center gap-2.5 p-2.5 text-[13px] rounded-md transition-all text-white/70 hover:bg-pri-10 hover:text-white" onClick={props.onEditAvatar}>
           <Icon src="/icons/app-logo/camera.svg" class="w-4 h-4" />
           更换头像
         </div>
         <Show when={props.isLoggedIn}
-          fallback={<div class="user-menu-item" onClick={props.onLoginClick}><Icon src="/icons/app-logo/user-profile.svg" class="w-4 h-4" />登录账号</div>}>
-          <div class="user-menu-item" style="color: rgba(224,128,144,0.8);"
+          fallback={<div class="flex items-center gap-2.5 p-2.5 text-[13px] rounded-md transition-all text-white/70 hover:bg-pri-10 hover:text-white" onClick={props.onLoginClick}><Icon src="/icons/app-logo/user-profile.svg" class="w-4 h-4" />登录账号</div>}>
+          <div class="flex items-center gap-2.5 p-2.5 text-[13px] rounded-md transition-all text-white/70 hover:bg-pri-10 hover:text-white" style="color: rgba(224,128,144,0.8);"
             onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(224,128,144,0.1)'}
             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             onClick={props.onLogout}>

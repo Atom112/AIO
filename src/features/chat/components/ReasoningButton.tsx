@@ -50,42 +50,42 @@ const ReasoningButton: Component = () => {
         <div ref={containerRef} class="relative inline-block">
             <button
                 type="button"
-                class="reasoning-trigger"
+                class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/40 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
                 classList={{ 'is-active': isActive() }}
                 title="推理强度"
                 onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}
             >
-                <Icon name={current().iconName} size={15} class="reasoning-trigger-icon" />
-                <span class="reasoning-trigger-label">{current().label}</span>
+                <Icon name={current().iconName} size={15} class="flex items-center justify-center shrink-0" />
+                <span class="leading-none">{current().label}</span>
             </button>
 
             <Show when={open()}>
                 <div class="reasoning-popup" onClick={(e) => e.stopPropagation()}>
-                    <div class="reasoning-popup-header">
-                        <div class="reasoning-popup-title">
+                    <div class="px-3 pt-2 pb-2.5 border-b border-b-white/[0.05]">
+                        <div class="flex items-center gap-2 text-[13px] font-semibold mb-1 text-white/85">
                             <Icon name="brain" size={14} />
                             <span>推理强度</span>
                         </div>
-                        <div class="reasoning-popup-sub">控制模型是否以及如何深入思考后再回答</div>
+                        <div class="text-[11px] text-white/40 leading-[1.5] pl-[22px]">控制模型是否以及如何深入思考后再回答</div>
                     </div>
-                    <div class="reasoning-options">
+                    <div class="flex flex-col gap-0.5 pt-1.5 pb-1">
                         <For each={LEVELS}>
                             {(opt) => (
                                 <button
                                     type="button"
-                                    class="reasoning-option"
+                                    class="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md border-none cursor-pointer text-left transition-all duration-150 bg-transparent text-white/70 hover:bg-white/[0.05] hover:text-white/90"
                                     classList={{ 'is-selected': reasoningLevel() === opt.value }}
                                     onClick={() => choose(opt.value)}
                                 >
-                                    <span class="reasoning-option-icon">
+                                    <span class="flex items-center justify-center w-7 h-7 rounded-md shrink-0 bg-white/[0.05] text-white/60">
                                         <Icon name={opt.iconName} size={14} />
                                     </span>
-                                    <span class="reasoning-option-text">
-                                        <span class="reasoning-option-label">{opt.label}</span>
-                                        <span class="reasoning-option-desc">{opt.desc}</span>
+                                    <span class="flex flex-col grow min-w-0">
+                                        <span class="text-[12.5px] font-semibold leading-tight">{opt.label}</span>
+                                        <span class="text-[10.5px] text-white/40 leading-[1.4] mt-0.5">{opt.desc}</span>
                                     </span>
                                     <Show when={reasoningLevel() === opt.value}>
-                                        <Icon name="check" size={13} class="reasoning-option-check" />
+                                        <Icon name="check" size={13} class="shrink-0 text-white/95 block" />
                                     </Show>
                                 </button>
                             )}

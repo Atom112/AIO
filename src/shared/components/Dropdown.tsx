@@ -121,7 +121,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
                     <For each={props.options}>
                         {(opt) => (
                             <div
-                                class={`dropdown-item ${opt.value === props.value ? 'selected' : ''}`}
+                                class={`flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none ${opt.value === props.value ? 'selected' : ''}`}
                                 role="option"
                                 aria-selected={opt.value === props.value}
                                 classList={{ 'opacity-40 pointer-events-none': opt.disabled }}

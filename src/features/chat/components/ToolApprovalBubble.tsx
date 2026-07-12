@@ -91,23 +91,23 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
             class="tool-approval-bubble"
             classList={{ 'is-dangerous': isDangerous() }}
         >
-            <div class="tool-approval-header">
-                <Icon name={toolIcon() as any} size={15} class="tool-approval-icon" />
-                <span class="tool-approval-toolname">{props.approval.toolName}</span>
+            <div class="flex items-center gap-1.5 mb-1.5">
+                <Icon name={toolIcon() as any} size={15} class="text-[#7c9abf]/60 shrink-0" />
+                <span class="text-[13px] font-semibold text-white/85 font-mono">{props.approval.toolName}</span>
                 <Show when={isDangerous()}>
-                    <span class="tool-approval-badge">危险操作</span>
+                    <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[#ff4d4d]/15 text-[#ff4d4d]/80 uppercase tracking-[0.3px]">危险操作</span>
                 </Show>
             </div>
-            <div class="tool-approval-args">
+            <div class="text-[11px] text-white/55 bg-black/20 rounded-md px-2 py-1.5 mb-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
                 <code>{formatArgs()}</code>
             </div>
-            <div class="tool-approval-reason">
+            <div class="text-[11px] text-white/45 mb-2.5 leading-[1.4]">
                 {props.approval.reason}
             </div>
-            <div class="tool-approval-actions">
+            <div class="flex gap-2 justify-end">
                 <button
                     type="button"
-                    class="tool-approval-btn tool-approval-btn-reject"
+                    class="flex items-center gap-1 px-3 py-[5px] rounded-md text-xs font-medium border-none cursor-pointer transition-all duration-150 bg-white/[0.06] text-white/60 hover:bg-[#ff4d4d]/15 hover:text-[#ff4d4d]/80"
                     onClick={handleReject}
                 >
                     <Icon name="x" size={13} />
@@ -115,7 +115,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
                 </button>
                 <button
                     type="button"
-                    class="tool-approval-btn tool-approval-btn-approve"
+                    class="flex items-center gap-1 px-3 py-[5px] rounded-md text-xs font-medium border-none cursor-pointer transition-all duration-150 bg-[#4af908]/10 text-[#4af908]/70 hover:bg-[#4af908]/20 hover:text-[#4af908]/90"
                     onClick={handleApprove}
                 >
                     <Icon name="check" size={13} />

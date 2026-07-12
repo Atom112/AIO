@@ -348,7 +348,7 @@ const AppSettings: Component = () => {
         if (recordingActionId()) {
             // 检查点击是否在快捷键徽章上
             const target = e.target as HTMLElement;
-            if (!target.closest('.shortcut-badge')) {
+            if (!target.closest('.inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]')) {
                 stopRecording();
             }
         }
@@ -650,11 +650,11 @@ const AppSettings: Component = () => {
                 <Show when={resetAllConfirm()}>
                     <div class="shortcut-conflict-overlay" onClick={() => setResetAllConfirm(false)}>
                         <div class="shortcut-conflict-dialog" onClick={e => e.stopPropagation()}>
-                            <p class="shortcut-conflict-text">确定要恢复所有快捷键为默认值吗？此操作不可撤销。</p>
-                            <div class="shortcut-conflict-actions">
-                                <button class="shortcut-conflict-btn cancel" onClick={() => setResetAllConfirm(false)}>取消</button>
+                            <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">确定要恢复所有快捷键为默认值吗？此操作不可撤销。</p>
+                            <div class="flex justify-end gap-2">
+                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel" onClick={() => setResetAllConfirm(false)}>取消</button>
                                 <button
-                                    class="shortcut-conflict-btn confirm"
+                                    class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm"
                                     onClick={() => { resetAllShortcutBindings(); setResetAllConfirm(false); }}
                                 >
                                     确定恢复
@@ -668,12 +668,12 @@ const AppSettings: Component = () => {
                 <Show when={conflictDialog()}>
                     <div class="shortcut-conflict-overlay" onClick={handleConflictCancel}>
                         <div class="shortcut-conflict-dialog" onClick={e => e.stopPropagation()}>
-                            <p class="shortcut-conflict-text">
+                            <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">
                                 该快捷键已用于「{getCommandLabel(conflictDialog()!.conflictActionId)}」，是否覆盖？
                             </p>
-                            <div class="shortcut-conflict-actions">
-                                <button class="shortcut-conflict-btn cancel" onClick={handleConflictCancel}>取消</button>
-                                <button class="shortcut-conflict-btn confirm" onClick={handleConflictOverride}>覆盖</button>
+                            <div class="flex justify-end gap-2">
+                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel" onClick={handleConflictCancel}>取消</button>
+                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm" onClick={handleConflictOverride}>覆盖</button>
                             </div>
                         </div>
                     </div>
@@ -710,7 +710,7 @@ const AppSettings: Component = () => {
                                             <div class="flex items-center gap-2 shrink-0">
                                                 {/* 快捷键徽章 */}
                                                 <div
-                                                    class={`shortcut-badge${isRecording() ? ' recording' : ''}${modified() ? ' modified' : ''}`}
+                                                    class={`inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]${isRecording() ? ' recording' : ''}${modified() ? ' modified' : ''}`}
                                                     onClick={() => {
                                                         if (isRecording()) {
                                                             stopRecording();
@@ -726,9 +726,9 @@ const AppSettings: Component = () => {
                                                     >
                                                         <Show
                                                             when={keys()}
-                                                            fallback={<span class="shortcut-none-text">未设置</span>}
+                                                            fallback={<span class="text-[11px] text-white/25 italic">未设置</span>}
                                                         >
-                                                            <span class="shortcut-keys-text">
+                                                            <span class="text-xs font-medium text-white/70 tracking-[0.02em]">
                                                                 {formatShortcutForDisplay(keys())}
                                                             </span>
                                                         </Show>
@@ -738,7 +738,7 @@ const AppSettings: Component = () => {
                                                 {/* 重置按钮（仅修改后显示） */}
                                                 <Show when={modified()}>
                                                     <button
-                                                        class="shortcut-reset-btn"
+                                                        class="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[5px] border-none bg-white/[0.04] text-white/30 cursor-pointer transition-all duration-150 p-0 hover:bg-white/[0.08] hover:text-white/60"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             resetShortcutBinding(cmd.id);

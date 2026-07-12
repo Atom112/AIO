@@ -8,21 +8,45 @@ import type { McpServerConfig, McpServerStatusInfo, ToolSpec, LlmToolCallPayload
 import type { SkillConfig } from '../types/skill';
 
 // 接口定义
-	/** Agent 工作过程时间线步骤 */
-	export interface AgentStep {
-	    id: string;
-	    type: 'thinking' | 'tool_call' | 'content';
-	    timestamp: number;
-	    status: 'running' | 'complete' | 'error';
-	    /** 步骤耗时（ms），步骤关闭时计算 */
-	    duration?: number;
-	    /** 思考步骤文本（仅 type=thinking） */
-	    thinkingText?: string;
-	    /** 工具调用详情（仅 type=tool_call） */
-	    toolCall?: ToolCallDisplay;
-	    /** 阶段性总结 / 回复文本（仅 type=content） */
-	    contentText?: string;
-	}
+    /** Agent 工作过程时间线步骤 */
+    export interface AgentStep {
+        id: string;
+        type: 'thinking' | 'tool_call' | 'content' | 'subagent';
+        timestamp: number;
+        status: 'running' | 'complete' | 'error';
+        /** 步骤耗时（ms），步骤关闭时计算 */
+        duration?: number;
+        /** 思考步骤文本（仅 type=thinking） */
+        thinkingText?: string;
+        /** 工具调用详情（仅 type=tool_call） */
+        toolCall?: ToolCallDisplay;
+        /** 阶段性总结 / 回复文本（仅 type=content） */
+        contentText?: string;
+        // ===== 子智能体字段（仅 type=subagent） =====
+        /** 子智能体唯一 ID */
+        subagentId?: string;
+        /** 子智能体类型标识（explorer | coder | general） */
+        subagentProfile?: string;
+        /** 子智能体显示名称 */
+        subagentName?: string;
+        /** 子智能体的任务描述摘要 */
+        subagentTask?: string;
+        /** 子智能体内部的步骤时间线 */
+        subagentSteps?: SubagentStep[];
+        /** 子智能体完成的最终结果 */
+        subagentResult?: string;
+    }
+
+    /** 子智能体步骤（内部时间线，结构与 AgentStep 相同但不含嵌套子智能体） */
+    export interface SubagentStep {
+        id: string;
+        type: 'thinking' | 'tool_call' | 'content';
+        timestamp: number;
+        status: 'running' | 'complete' | 'error';
+        duration?: number;
+        summary?: string;
+        toolName?: string;
+    }
 
 	/* 消息项接口，定义聊天消息的数据结构 */
 export interface Message {

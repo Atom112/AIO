@@ -333,6 +333,19 @@ pub fn resolve_project_root(app: &tauri::AppHandle, project_id: Option<&str>) ->
         .map_err(|e| format!("解析项目索引失败: {e}"))?;
     file["projects"][pid]["path"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(|s| strip_windows_extended_prefix(s))
         .ok_or_else(|| format!("项目 {} 不存在", pid))
+}
+
+/// 去掉 Windows 扩展长度路径前缀 `\\?\`（由 `std::fs::canonicalize` 产生）。
+/// 该前缀对文件操作透明，但暴露给 LLM 时会造成困惑。
+fn strip_windows_extended_prefix(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        path.strip_prefix("\\\\?\\").unwrap_or(path).to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
 }

@@ -3,6 +3,7 @@ use crate::core::state::DbState;
 use crate::core::state::PendingApprovals;
 use crate::commands::attachment::sync_message_attachments;
 use crate::core::state::McpServerState;
+use crate::core::subagent;
 use crate::plugins::mcp::McpServerManager;
 use crate::utils::file_tools;
 use crate::utils::git_tools;
@@ -17,6 +18,7 @@ use futures_util::StreamExt; // 用于处理流式数据
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
 use tokio_util::sync::CancellationToken;
 
@@ -238,6 +240,7 @@ async fn stream_one_round(
     tools: Option<&[ToolSpec]>,
     assistant_id: &str,
     topic_id: &str,
+    suppress_events: bool,
 ) -> Result<RoundResult, String> {
     api_url = api_url.trim_end_matches('/').to_string();
     let final_url = if !api_url.ends_with("/chat/completions") {
@@ -320,18 +323,20 @@ async fn stream_one_round(
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         content_buf.push_str(content);
-                        let _ = window.emit(
-                            "llm-chunk",
-                            StreamPayload {
-                                assistant_id: assistant_id.to_string(),
-                                topic_id: topic_id.to_string(),
-                                content: content.to_string(),
-                                done: false,
-                                error: None,
-                                input_tokens: None,
-                                output_tokens: None,
-                            },
-                        );
+                        if !suppress_events {
+                            let _ = window.emit(
+                                "llm-chunk",
+                                StreamPayload {
+                                    assistant_id: assistant_id.to_string(),
+                                    topic_id: topic_id.to_string(),
+                                    content: content.to_string(),
+                                    done: false,
+                                    error: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                },
+                            );
+                        }
                     }
                     if let Some(reasoning) = val["choices"][0]["delta"]["reasoning_content"]
                         .as_str()
@@ -339,18 +344,20 @@ async fn stream_one_round(
                     {
                         if !reasoning.is_empty() {
                             reasoning_buf.push_str(reasoning);
-                            let _ = window.emit(
-                                "llm-reasoning",
-                                StreamPayload {
-                                    assistant_id: assistant_id.to_string(),
-                                    topic_id: topic_id.to_string(),
-                                    content: reasoning.to_string(),
-                                    done: false,
-                                    error: None,
-                                    input_tokens: None,
-                                    output_tokens: None,
-                                },
-                            );
+                            if !suppress_events {
+                                let _ = window.emit(
+                                    "llm-reasoning",
+                                    StreamPayload {
+                                        assistant_id: assistant_id.to_string(),
+                                        topic_id: topic_id.to_string(),
+                                        content: reasoning.to_string(),
+                                        done: false,
+                                        error: None,
+                                        input_tokens: None,
+                                        output_tokens: None,
+                                    },
+                                );
+                            }
                         }
                     }
                     // tool_calls 累积
@@ -383,18 +390,20 @@ async fn stream_one_round(
                     // 统一在末尾按 index 升序构造。这里仅触发提前 flush 事件通知前端。
                     let finish = val["choices"][0]["finish_reason"].as_str().unwrap_or("");
                     if finish == "tool_calls" {
-                        for (_idx, (id, name, args)) in tc_accum.iter() {
-                            if !id.is_empty() && !name.is_empty() {
-                                let _ = window.emit(
-                                    "llm-tool-call",
-                                    ToolCallPayload {
-                                        assistant_id: assistant_id.to_string(),
-                                        topic_id: topic_id.to_string(),
-                                        tool_call_id: id.clone(),
-                                        name: name.clone(),
-                                        arguments: args.clone(),
-                                    },
-                                );
+                        if !suppress_events {
+                            for (_idx, (id, name, args)) in tc_accum.iter() {
+                                if !id.is_empty() && !name.is_empty() {
+                                    let _ = window.emit(
+                                        "llm-tool-call",
+                                        ToolCallPayload {
+                                            assistant_id: assistant_id.to_string(),
+                                            topic_id: topic_id.to_string(),
+                                            tool_call_id: id.clone(),
+                                            name: name.clone(),
+                                            arguments: args.clone(),
+                                        },
+                                    );
+                                }
                             }
                         }
                     }
@@ -429,7 +438,7 @@ async fn stream_one_round(
     }
     // 若 finish_reason="tool_calls" 路径未触发（某些 provider 只在末尾给 tool_calls delta），
     // 这里补发 llm-tool-call 通知，确保前端展示。
-    if need_emit {
+    if need_emit && !suppress_events {
         for tc in &tool_calls {
             let _ = window.emit(
                 "llm-tool-call",
@@ -538,6 +547,7 @@ pub async fn call_llm_stream(
             tools_ref,
             &assistant_id_c,
             &topic_id_c,
+            false,
         )
         .await;
 
@@ -742,6 +752,482 @@ async fn execute_builtin_tool(
     }
 }
 
+/// 截断文本用于显示（保留前 max_len 字符并追加 "…"）
+fn truncate_for_display(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s.chars().take(max_len).collect::<String>())
+    }
+}
+
+/// 构建子 Agent 的消息列表（系统提示词 + 任务描述 + 上下文提示）
+fn build_subagent_messages(
+    profile: &subagent::SubagentProfile,
+    task_desc: &str,
+    context_files: &[String],
+    project_root: &str,
+) -> Vec<serde_json::Value> {
+    let system_prompt = format!(
+        concat!(
+            "你是 AIO 的子智能体，类型为「{}」。\n",
+            "工作目录: {}\n",
+            "请高效完成子任务并在最后总结工作成果。\n\n",
+            "{}\n\n",
+            "重要：完成任务后，请在回复末尾给出简洁的工作总结（含修改的文件路径和关键发现）。"
+        ),
+        profile.name,
+        project_root,
+        profile.system_prompt_extension,
+    );
+
+    let mut msgs: Vec<serde_json::Value> = vec![
+        json!({"role": "system", "content": system_prompt}),
+        json!({"role": "user", "content": format!("子任务:\n{}\n\n请开始执行。完成后在最后给出工作总结。", task_desc)}),
+    ];
+
+    if !context_files.is_empty() {
+        let files_hint = context_files
+            .iter()
+            .map(|f| format!("- {}", f))
+            .collect::<Vec<_>>()
+            .join("\n");
+        msgs.push(json!({
+            "role": "user",
+            "content": format!("提示：以下文件可能与任务相关，请根据需要读取：\n{}", files_hint)
+        }));
+    }
+
+    msgs
+}
+
+/// 构建子 Agent 的受限工具列表（根据 profile 过滤）
+fn build_subagent_tools(profile: &subagent::SubagentProfile, project_root: &str) -> (Vec<ToolSpec>, HashMap<String, String>) {
+    // 注入和主 Agent 相同的内置工具，但在执行时按 profile 过滤
+    let mut tools: Vec<ToolSpec> = Vec::new();
+    let mut tool_map: HashMap<String, String> = HashMap::new();
+
+    // 始终注入的文件工具（但 profile 会限制哪些可执行）
+    for spec in file_tools::get_file_tool_specs() {
+        if profile.is_tool_allowed(&spec.function.name) {
+            tool_map.insert(spec.function.name.clone(), "__builtin__".into());
+            tools.push(spec);
+        }
+    }
+    // 命令执行工具
+    if profile.is_tool_allowed("execute_command") {
+        let spec = shell_tools::get_command_tool_spec();
+        tool_map.insert(spec.function.name.clone(), "__builtin__".into());
+        tools.push(spec);
+    }
+    // Web 工具
+    for spec in web_tools::get_web_tool_specs() {
+        if profile.is_tool_allowed(&spec.function.name) {
+            tool_map.insert(spec.function.name.clone(), "__builtin__".into());
+            tools.push(spec);
+        }
+    }
+    // Git 工具
+    for spec in git_tools::get_git_tool_specs() {
+        if profile.is_tool_allowed(&spec.function.name) && is_git_repo(project_root) {
+            tool_map.insert(spec.function.name.clone(), "__builtin__".into());
+            tools.push(spec);
+        }
+    }
+    // LSP 工具
+    if profile.is_tool_allowed("read_lints") {
+        let spec = lsp_tools::tool_spec();
+        tool_map.insert(spec.function.name.clone(), "__builtin__".into());
+        tools.push(spec);
+    }
+
+    (tools, tool_map)
+}
+
+/// Helper: check if a directory is a git repo
+fn is_git_repo(dir: &str) -> bool {
+    std::path::Path::new(dir).join(".git").exists()
+}
+
+/// 处理 delegate_task 工具调用（从主 Agent 循环中调用）。
+///
+/// 解析参数、验证权限、获取 profile，然后委托给 execute_subagent 执行。
+async fn handle_delegate_task(
+    window: &Window,
+    app: &AppHandle,
+    client: &reqwest::Client,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    parent_assistant_id: &str,
+    parent_topic_id: &str,
+    arguments: &serde_json::Value,
+    project_id: Option<&str>,
+    agent_mode: &AgentMode,
+    token: &CancellationToken,
+) -> Result<ToolResult, String> {
+    // 解析参数
+    let profile_id = arguments["profile"].as_str().unwrap_or("general");
+    let task_desc = arguments["task"].as_str().unwrap_or("").to_string();
+    if task_desc.is_empty() {
+        return Err("delegate_task 缺少必填参数 'task'".into());
+    }
+
+    let profile = subagent::find_profile(profile_id)
+        .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general", profile_id))?;
+
+    let context_files: Vec<String> = arguments["context_files"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    // 解析项目根目录
+    let project_root = file_tools::resolve_project_root(app, project_id)?;
+
+    // 权限检查：非 Auto 模式下需要用户确认
+    if *agent_mode != AgentMode::Auto {
+        let custom_rules = permission::load_permissions(Some(&project_root)).rules;
+        let action = permission::check_permission(
+            "delegate_task",
+            "__aio-filesystem__",
+            arguments,
+            agent_mode,
+            &custom_rules,
+        );
+        match action {
+            PermissionAction::Deny => {
+                return Err("delegate_task 在当前模式下被安全策略禁止".into());
+            }
+            PermissionAction::Ask => {
+                let pending = app.state::<PendingApprovals>();
+                let reason = format!(
+                    "启动子智能体\n\n类型: {}\n任务: {}\n\n确认？",
+                    profile.name,
+                    truncate_for_display(&task_desc, 150),
+                );
+                let approval_fut = crate::commands::mcp::request_tool_approval(
+                    app,
+                    pending.inner(),
+                    "__aio-filesystem__",
+                    "delegate_task",
+                    arguments,
+                    &reason,
+                );
+                tokio::select! {
+                    _ = token.cancelled() => return Err("cancelled".into()),
+                    res = approval_fut => res?,
+                }
+            }
+            PermissionAction::Allow => {}
+        }
+    }
+
+    // 执行子 Agent
+    execute_subagent(
+        window,
+        app,
+        client,
+        api_url,
+        api_key,
+        model,
+        parent_assistant_id,
+        parent_topic_id,
+        &profile,
+        &task_desc,
+        &context_files,
+        &project_root,
+        project_id,
+        agent_mode,
+        token,
+    )
+    .await
+}
+
+/// 执行子 Agent 循环（从主 Agent 的工具执行循环中调用）。
+///
+/// 创建独立的 LLM 上下文，注入子 Agent 系统提示词 + 任务描述，
+/// 运行最多 `max_rounds` 轮流式调用 + 工具执行，完成后返回结果总结。
+async fn execute_subagent(
+    window: &Window,
+    app: &AppHandle,
+    client: &reqwest::Client,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    parent_assistant_id: &str,
+    parent_topic_id: &str,
+    profile: &subagent::SubagentProfile,
+    task_desc: &str,
+    context_files: &[String],
+    project_root: &str,
+    project_id: Option<&str>,
+    agent_mode: &AgentMode,
+    token: &CancellationToken,
+) -> Result<ToolResult, String> {
+    let subagent_id = uuid::Uuid::new_v4().to_string();
+    let model_to_use = profile.model_override.as_deref().unwrap_or(model);
+
+    // 通知前端：子 Agent 已启动
+    let _ = window.emit(
+        "subagent-start",
+        SubagentStartPayload {
+            parent_assistant_id: parent_assistant_id.to_string(),
+            parent_topic_id: parent_topic_id.to_string(),
+            subagent_id: subagent_id.clone(),
+            profile_id: profile.id.clone(),
+            profile_name: profile.name.clone(),
+            task_summary: truncate_for_display(task_desc, 150),
+        },
+    );
+
+    // 构建子 Agent 的独立消息上下文
+    let mut sub_msgs = build_subagent_messages(profile, task_desc, context_files, project_root);
+    let (sub_tools, _sub_tool_map) = build_subagent_tools(profile, project_root);
+    let tools_slice: Option<&[ToolSpec]> = if sub_tools.is_empty() { None } else { Some(&sub_tools) };
+
+    let mut round: usize = 0;
+    let mut final_text = String::new();
+
+    loop {
+        round += 1;
+        if token.is_cancelled() {
+            break;
+        }
+
+        // 流式调用前：发射心跳告知前端子 Agent 工作中
+        let _ = window.emit(
+            "subagent-step",
+            SubagentStepPayload {
+                parent_assistant_id: parent_assistant_id.to_string(),
+                parent_topic_id: parent_topic_id.to_string(),
+                subagent_id: subagent_id.clone(),
+                round: round as u32,
+                step_type: "streaming".to_string(),
+                summary: format!("第 {} 轮 LLM 调用中...", round),
+            },
+        );
+
+        // 流式调用一轮
+        let result = stream_one_round(
+            window,
+            token,
+            client,
+            api_url.to_string(),
+            api_key,
+            model_to_use,
+            &sub_msgs,
+            tools_slice,
+            parent_assistant_id,
+            parent_topic_id,
+            true, // suppress events for sub-agent (uses subagent-* events instead)
+        )
+        .await;
+
+        match result {
+            Ok(rr) => {
+                // 追加 assistant 消息到子 Agent 上下文
+                let mut asst_obj = serde_json::Map::new();
+                asst_obj.insert("role".into(), json!("assistant"));
+                asst_obj.insert("content".into(), json!(rr.content));
+                if !rr.tool_calls.is_empty() {
+                    let tcs: Vec<serde_json::Value> = rr
+                        .tool_calls
+                        .iter()
+                        .map(|tc| {
+                            json!({
+                                "id": tc.id,
+                                "type": "function",
+                                "function": { "name": tc.name, "arguments": tc.arguments },
+                            })
+                        })
+                        .collect();
+                    asst_obj.insert("tool_calls".into(), json!(tcs));
+                }
+                sub_msgs.push(serde_json::Value::Object(asst_obj));
+
+                // 发射子 Agent 步骤事件（通知前端）
+                let step_content = if rr.content.is_empty() {
+                    "[工具调用]".to_string()
+                } else {
+                    truncate_for_display(&rr.content, 300)
+                };
+                let _ = window.emit(
+                    "subagent-step",
+                    SubagentStepPayload {
+                        parent_assistant_id: parent_assistant_id.to_string(),
+                        parent_topic_id: parent_topic_id.to_string(),
+                        subagent_id: subagent_id.clone(),
+                        round: round as u32,
+                        step_type: if rr.tool_calls.is_empty() { "content".to_string() } else { "tool_call".to_string() },
+                        summary: step_content,
+                    },
+                );
+
+                // 无工具调用 → 子 Agent 完成
+                if rr.tool_calls.is_empty() {
+                    final_text = rr.content;
+                    break;
+                }
+
+                // 执行工具调用（内联，不通过 execute_builtin_tool，因为子 Agent 的工具受限）
+                for tc in &rr.tool_calls {
+                    if token.is_cancelled() {
+                        break;
+                    }
+                    let args_val: serde_json::Value =
+                        serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
+
+                    // 再次确认工具被允许（双重保险）
+                    if !profile.is_tool_allowed(&tc.name) {
+                        let err_text = format!("[已阻止] 子 Agent ({}) 不允许使用工具: {}", profile.id, tc.name);
+                        sub_msgs.push(json!({
+                            "role": "tool",
+                            "content": err_text,
+                            "tool_call_id": tc.id,
+                            "name": tc.name,
+                        }));
+                        continue;
+                    }
+
+                    let tool_result = execute_builtin_tool(
+                        app,
+                        &tc.name,
+                        &args_val,
+                        project_id,
+                        &AgentMode::Auto, // 子 Agent 内部固定 Auto，避免权限审批阻塞
+                        token,
+                    )
+                    .await;
+
+                    let (content_text, _result_value, _is_error) = match tool_result {
+                        Ok(tr) => {
+                            let text = tr
+                                .content
+                                .iter()
+                                .find(|c| c.kind == "text")
+                                .and_then(|c| c.data.get("text"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
+                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                            (text, result_value, tr.is_error)
+                        }
+                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                    };
+
+                    // 发射工具执行结果事件
+                    let _ = window.emit(
+                        "subagent-step",
+                        SubagentStepPayload {
+                            parent_assistant_id: parent_assistant_id.to_string(),
+                            parent_topic_id: parent_topic_id.to_string(),
+                            subagent_id: subagent_id.clone(),
+                            round: round as u32,
+                            step_type: format!("tool_result:{}", tc.name),
+                            summary: truncate_for_display(&content_text, 200),
+                        },
+                    );
+
+                    // 回填 tool 消息
+                    sub_msgs.push(json!({
+                        "role": "tool",
+                        "content": content_text,
+                        "tool_call_id": tc.id,
+                        "name": tc.name,
+                    }));
+                }
+            }
+            Err(e) => {
+                if e == "cancelled" {
+                    break;
+                }
+                // API 错误：记录并返回
+                let _ = window.emit(
+                    "subagent-error",
+                    SubagentErrorPayload {
+                        parent_assistant_id: parent_assistant_id.to_string(),
+                        parent_topic_id: parent_topic_id.to_string(),
+                        subagent_id: subagent_id.clone(),
+                        error: e.clone(),
+                    },
+                );
+                return Err(format!("子 Agent API 错误: {}", e));
+            }
+        }
+    }
+
+    // 子 Agent 完成：发射 done 事件
+    let result_text = if final_text.is_empty() {
+        "[子 Agent 未产出最终文本]".to_string()
+    } else {
+        final_text
+    };
+
+    let truncated = truncate_for_display(&result_text, 20000);
+
+    let _ = window.emit(
+        "subagent-done",
+        SubagentDonePayload {
+            parent_assistant_id: parent_assistant_id.to_string(),
+            parent_topic_id: parent_topic_id.to_string(),
+            subagent_id: subagent_id.clone(),
+            profile_name: profile.name.clone(),
+            result: truncated.clone(),
+        },
+    );
+
+    Ok(ToolResult {
+        content: vec![ToolResultContent {
+            kind: "text".into(),
+            data: json!({"text": format!(
+                "[子智能体「{}」工作报告]\n\n{}",
+                profile.name,
+                result_text,
+            )}),
+        }],
+        is_error: false,
+    })
+}
+
+// ===== 子 Agent 事件载荷定义 =====
+
+#[derive(Serialize, Clone)]
+struct SubagentStartPayload {
+    parent_assistant_id: String,
+    parent_topic_id: String,
+    subagent_id: String,
+    profile_id: String,
+    profile_name: String,
+    task_summary: String,
+}
+
+#[derive(Serialize, Clone)]
+struct SubagentStepPayload {
+    parent_assistant_id: String,
+    parent_topic_id: String,
+    subagent_id: String,
+    round: u32,
+    step_type: String,
+    summary: String,
+}
+
+#[derive(Serialize, Clone)]
+struct SubagentDonePayload {
+    parent_assistant_id: String,
+    parent_topic_id: String,
+    subagent_id: String,
+    profile_name: String,
+    result: String,
+}
+
+#[derive(Serialize, Clone)]
+struct SubagentErrorPayload {
+    parent_assistant_id: String,
+    parent_topic_id: String,
+    subagent_id: String,
+    error: String,
+}
+
 /// Agent 自驱循环命令（前端新流程主入口）。
 ///
 /// 在单个 tokio 任务内完成「流式 → 检测工具 → 权限/审批 → 执行 MCP → 回填结果 → 递归」，
@@ -860,6 +1346,10 @@ pub async fn run_agent_turn(
             let lsp_spec = lsp_tools::tool_spec();
             mcp_map.insert(lsp_spec.function.name.clone(), "__builtin__".into());
             mcp_tools.push(lsp_spec);
+            // 注入子智能体委托工具（仅 Agent 模式下可用）
+            let delegate_spec = subagent::delegate_task_tool_spec();
+            mcp_map.insert(delegate_spec.function.name.clone(), "__builtin__".into());
+            mcp_tools.push(delegate_spec);
             (mcp_tools, mcp_map)
         } else if web_only {
             // 仅注入 Web 工具（对话模式下联网搜索）
@@ -913,6 +1403,7 @@ pub async fn run_agent_turn(
                 round_tools,
                 &assistant_id_c,
                 &topic_id_c,
+                false,
             )
             .await;
 
@@ -964,81 +1455,182 @@ pub async fn run_agent_turn(
                 break 'outer;
             }
 
-            // 执行每个工具调用（按 index 升序），回填 role:tool 消息
-            for tc in &round_result.tool_calls {
+            // 执行工具调用：两阶段
+            // 阶段 1 — 收集 delegate_task futures + 顺序执行非 delegate 工具
+            // 阶段 2 — 并发等待所有子 Agent，然后按原顺序发射结果
+
+            // 用于记录每个工具的结果（按原始 index 排序）
+            #[derive(Default, Clone)]
+            struct ToolExecResult {
+                content_text: String,
+                result_value: serde_json::Value,
+                is_error: bool,
+            }
+            let mut exec_results: Vec<Option<ToolExecResult>> =
+                vec![None; round_result.tool_calls.len()];
+
+            // 收集 delegate_task 的 future 和对应的 index
+            let mut delegate_futures: Vec<(
+                usize,
+                futures_util::future::BoxFuture<'static, Result<ToolResult, String>>,
+            )> = Vec::new();
+
+            for (i, tc) in round_result.tool_calls.iter().enumerate() {
                 if token_inner.is_cancelled() {
                     was_cancelled = true;
-                    break 'outer;
+                    break;
                 }
                 let server_id = tool_server_map.get(&tc.name).cloned();
                 let args_val: serde_json::Value =
                     serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
-                let tool_result = if server_id.as_deref() == Some("__builtin__") {
-                    // 内置文件工具：in-process 直接执行，含权限检查和审批
-                    execute_builtin_tool(
-                        &app_c,
-                        &tc.name,
-                        &args_val,
-                        project_id_c.as_deref(),
-                        &agent_mode,
-                        &token_inner,
-                    )
-                    .await
+
+                if server_id.as_deref() == Some("__builtin__") && tc.name == "delegate_task" {
+                    // 子智能体委托：收集 future，稍后并行执行
+                    let window_clone = window.clone();
+                    let app_clone = app_c.clone();
+                    let client_clone = client.clone();
+                    let api_url_clone = api_url.clone();
+                    let api_key_clone = api_key.clone();
+                    let model_clone = model.clone();
+                    let assistant_id_clone = assistant_id_c.clone();
+                    let topic_id_clone = topic_id_c.clone();
+                    let args_val_clone = args_val.clone();
+                    let project_id_clone = project_id_c.clone();
+                    let agent_mode_clone = agent_mode.clone();
+                    let token_clone = token_inner.clone();
+
+                    let fut = Box::pin(async move {
+                        handle_delegate_task(
+                            &window_clone,
+                            &app_clone,
+                            &client_clone,
+                            &api_url_clone,
+                            &api_key_clone,
+                            &model_clone,
+                            &assistant_id_clone,
+                            &topic_id_clone,
+                            &args_val_clone,
+                            project_id_clone.as_deref(),
+                            &agent_mode_clone,
+                            &token_clone,
+                        )
+                        .await
+                    });
+                    delegate_futures.push((i, fut));
                 } else {
-                    match server_id {
-                        Some(sid) => {
-                            crate::commands::mcp::execute_tool_call(
-                                &app_c,
-                                &sid,
-                                &tc.name,
-                                args_val,
-                                project_id_c.as_deref(),
-                                &agent_mode,
-                                &token_inner,
-                            )
-                            .await
+                    // 非 delegate 工具：立即顺序执行
+                    let tool_result = if server_id.as_deref() == Some("__builtin__") {
+                        execute_builtin_tool(
+                            &app_c,
+                            &tc.name,
+                            &args_val,
+                            project_id_c.as_deref(),
+                            &agent_mode,
+                            &token_inner,
+                        )
+                        .await
+                    } else {
+                        match server_id {
+                            Some(sid) => {
+                                crate::commands::mcp::execute_tool_call(
+                                    &app_c,
+                                    &sid,
+                                    &tc.name,
+                                    args_val,
+                                    project_id_c.as_deref(),
+                                    &agent_mode,
+                                    &token_inner,
+                                )
+                                .await
+                            }
+                            None => Err(format!("未找到工具 {} 对应的 MCP server", tc.name)),
                         }
-                        None => Err(format!("未找到工具 {} 对应的 MCP server", tc.name)),
-                    }
-                };
+                    };
 
-                let (content_text, result_value, is_error) = match tool_result {
-                    Ok(tr) => {
-                        let text = tr
-                            .content
-                            .iter()
-                            .find(|c| c.kind == "text")
-                            .and_then(|c| c.data.get("text"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
-                        let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
-                        (text, result_value, tr.is_error)
-                    }
-                    Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
-                };
+                    let (content_text, result_value, is_error) = match tool_result {
+                        Ok(tr) => {
+                            let text = tr
+                                .content
+                                .iter()
+                                .find(|c| c.kind == "text")
+                                .and_then(|c| c.data.get("text"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
+                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                            (text, result_value, tr.is_error)
+                        }
+                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                    };
 
-                // emit 工具结果，前端据此更新气泡 + 追加 role:tool 消息
-                let _ = window.emit(
-                    "llm-tool-result",
-                    ToolResultPayload {
-                        assistant_id: assistant_id_c.clone(),
-                        topic_id: topic_id_c.clone(),
-                        tool_call_id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        content: content_text.clone(),
-                        result: result_value,
+                    exec_results[i] = Some(ToolExecResult {
+                        content_text,
+                        result_value,
                         is_error,
-                    },
-                );
+                    });
+                }
+            }
 
-                // 追加 role:tool 消息到上下文（OpenAI 要求 tool_call_id 配对）
-                let mut tool_msg = serde_json::Map::new();
-                tool_msg.insert("role".into(), json!("tool"));
-                tool_msg.insert("content".into(), json!(content_text));
-                tool_msg.insert("tool_call_id".into(), json!(tc.id));
-                tool_msg.insert("name".into(), json!(tc.name));
-                messages_for_api.push(serde_json::Value::Object(tool_msg));
+            // 阶段 2 — 并发执行所有子 Agent
+            if !delegate_futures.is_empty() {
+                let fut_count = delegate_futures.len();
+                let futs: Vec<_> = delegate_futures
+                    .iter_mut()
+                    .map(|(_, fut)| fut.as_mut())
+                    .collect();
+                let results = futures_util::future::join_all(futs).await;
+
+                for ((i, _), result) in delegate_futures.iter().zip(results) {
+                    let (content_text, result_value, is_error) = match result {
+                        Ok(tr) => {
+                            let text = tr
+                                .content
+                                .iter()
+                                .find(|c| c.kind == "text")
+                                .and_then(|c| c.data.get("text"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
+                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                            (text, result_value, tr.is_error)
+                        }
+                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                    };
+                    exec_results[*i] = Some(ToolExecResult {
+                        content_text,
+                        result_value,
+                        is_error,
+                    });
+                }
+            }
+
+            // 按原始 index 顺序发射结果 + 回填 role:tool 消息
+            for (i, tc) in round_result.tool_calls.iter().enumerate() {
+                if token_inner.is_cancelled() {
+                    was_cancelled = true;
+                    break;
+                }
+                if let Some(result) = exec_results[i].take() {
+                    let _ = window.emit(
+                        "llm-tool-result",
+                        ToolResultPayload {
+                            assistant_id: assistant_id_c.clone(),
+                            topic_id: topic_id_c.clone(),
+                            tool_call_id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            content: result.content_text.clone(),
+                            result: result.result_value,
+                            is_error: result.is_error,
+                        },
+                    );
+
+                    let mut tool_msg = serde_json::Map::new();
+                    tool_msg.insert("role".into(), json!("tool"));
+                    tool_msg.insert("content".into(), json!(result.content_text));
+                    tool_msg.insert("tool_call_id".into(), json!(tc.id));
+                    tool_msg.insert("name".into(), json!(tc.name));
+                    messages_for_api.push(serde_json::Value::Object(tool_msg));
+                }
             }
         }
 

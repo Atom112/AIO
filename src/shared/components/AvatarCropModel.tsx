@@ -121,7 +121,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
             >
                 <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-dark-300 text-pri font-bold">
                     <span>裁剪图片</span>
-                    <button onClick={handleClose} class="close-btn">
+                    <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80">
                         &times;
                     </button>
                 </div>

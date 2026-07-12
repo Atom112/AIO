@@ -168,7 +168,7 @@ const CommandPalette: Component = () => {
     // 滚动到选中项
     const scrollToSelected = () => {
         requestAnimationFrame(() => {
-            const selected = listRef?.querySelector('.command-palette-item.selected') as HTMLElement;
+            const selected = listRef?.querySelector('.flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors duration-100 gap-3.selected') as HTMLElement;
             selected?.scrollIntoView({ block: 'nearest' });
         });
     };
@@ -242,9 +242,9 @@ const CommandPalette: Component = () => {
                 {/* 卡片 */}
                 <div class="command-palette-card" onClick={e => e.stopPropagation()}>
                     {/* 搜索框 */}
-                    <div class="command-palette-input-wrapper">
+                    <div class="flex items-center gap-2.5 px-4 py-3.5 border-b border-b-white/[0.06]">
                         <svg
-                            class="command-palette-search-icon"
+                            class="text-white/25 shrink-0"
                             width="16"
                             height="16"
                             viewBox="0 0 24 24"
@@ -260,7 +260,7 @@ const CommandPalette: Component = () => {
                         <input
                             ref={inputRef}
                             type="text"
-                            class="command-palette-input"
+                            class="flex-1 bg-transparent border-none outline-none text-white/90 text-[15px] leading-[1.4]"
                             placeholder="输入命令名称搜索..."
                             value={query()}
                             onInput={e => {
@@ -271,20 +271,20 @@ const CommandPalette: Component = () => {
                     </div>
 
                     {/* 命令列表 */}
-                    <div ref={listRef} class="command-palette-list">
+                    <div ref={listRef} class="flex-1 overflow-y-auto p-2 max-h-[340px]">
                         <Show
                             when={flatIndex().length > 0}
                             fallback={
-                                <div class="command-palette-empty">
+                                <div class="py-8 px-4 text-center text-[13px] text-white/25">
                                     没有找到匹配的命令
                                 </div>
                             }
                         >
                             <For each={groupedCommands()}>
                                 {(group) => (
-                                    <div class="command-palette-group">
+                                    <div class="mb-1">
                                         <div
-                                            class="command-palette-category"
+                                            class="pt-1.5 pb-1 px-3 text-[10px] font-semibold tracking-[0.06em] uppercase"
                                             style={{ color: group.color }}
                                         >
                                             {group.label}
@@ -297,20 +297,20 @@ const CommandPalette: Component = () => {
 
                                                 return (
                                                     <div
-                                                        class={`command-palette-item${isSelected() ? ' selected' : ''}`}
+                                                        class={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors duration-100 gap-3${isSelected() ? ' selected' : ''}`}
                                                         onClick={() => execute(cmd.id)}
                                                         onMouseEnter={() => setSelectedIndex(globalIdx())}
                                                     >
-                                                        <div class="command-palette-item-left">
-                                                            <span class="command-palette-item-label">
+                                                        <div class="flex flex-col min-w-0 flex-1">
+                                                            <span class="text-[13px] font-medium text-white/85 leading-[1.3]">
                                                                 {cmd.label}
                                                             </span>
-                                                            <span class="command-palette-item-desc">
+                                                            <span class="text-[11px] text-white/30 leading-[1.3] mt-px whitespace-nowrap overflow-hidden text-ellipsis">
                                                                 {cmd.description}
                                                             </span>
                                                         </div>
                                                         <Show when={keys()}>
-                                                            <span class="command-palette-item-shortcut">
+                                                            <span class="text-[11px] font-medium text-white/35 bg-white/[0.05] border border-white/[0.06] rounded-[5px] px-[7px] py-0.5 whitespace-nowrap shrink-0 tracking-[0.02em]">
                                                                 {formatShortcutForDisplay(keys())}
                                                             </span>
                                                         </Show>
@@ -325,7 +325,7 @@ const CommandPalette: Component = () => {
                     </div>
 
                     {/* 底部提示 */}
-                    <div class="command-palette-footer">
+                    <div class="flex items-center justify-center gap-4 px-4 pt-2 pb-2.5 border-t border-t-white/[0.04] text-[10px] text-white/20">
                         <span><kbd>↑↓</kbd> 导航</span>
                         <span><kbd>Enter</kbd> 执行</span>
                         <span><kbd>Esc</kbd> 关闭</span>

@@ -164,7 +164,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                 <For each={asst().topics}>
                                     {(topic) => (
                                         <div
-                                            class="group sidebar-item"
+                                            class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06]"
                                             classList={{ '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': topic.id === currentTopicId() }}
                                             onClick={() => setCurrentTopicId(topic.id)}
                                         >
@@ -182,7 +182,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                                     onClick={(e) => e.stopPropagation()}
                                                 />
                                             </Show>
-                                            <button class="dot-menu-btn" onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}>
+                                            <button class="flex items-center justify-center w-[30px] h-[30px] border-none rounded cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10" onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}>
                                                 <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
                                             </button>
                                         </div>
@@ -202,11 +202,11 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         style={`top: ${topicMenuState().y}px; left: ${topicMenuState().x}px;`}
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <button class="context-menu-item" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>重命名</button>
+                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>重命名</button>
                         <Show when={!isMenuTargetDefault()}>
-                            <button class="context-menu-item" onClick={handleRegenerateTitle}>重新生成标题</button>
+                            <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={handleRegenerateTitle}>重新生成标题</button>
                         </Show>
-                        <button class="context-menu-item" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>删除话题</button>
+                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>删除话题</button>
                     </div>
                 </Portal>
             )}

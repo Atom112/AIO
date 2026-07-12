@@ -1445,7 +1445,120 @@ const ChatPage: Component = () => {
           arguments: args,
           reason,
         }]);
-      })
+      }),
+
+      // ===== 子智能体事件监听 =====
+
+      // 子智能体启动：在当前 assistant 消息的 agentSteps 中推入一个 subagent 步骤
+      listen<any>('subagent-start', (e) => {
+        const { parent_assistant_id, parent_topic_id, subagent_id, profile_id, profile_name, task_summary } = e.payload;
+        setDatas('assistants', (a: any) => a.id === parent_assistant_id,
+          'topics', (t: any) => t.id === parent_topic_id,
+          'history', (h: any[]) => {
+            const lastIdx = h.length - 1;
+            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+            const msg = h[lastIdx];
+            const steps: any[] = msg.agentSteps || [];
+            const newStep = {
+              id: `subagent-${subagent_id}`,
+              type: 'subagent',
+              timestamp: Date.now(),
+              status: 'running',
+              subagentId: subagent_id,
+              subagentProfile: profile_id,
+              subagentName: profile_name,
+              subagentTask: task_summary,
+              subagentSteps: [],
+              subagentResult: '',
+            };
+            return [...h.slice(0, lastIdx), { ...msg, agentSteps: [...steps, newStep] }];
+          });
+      }),
+
+      // 子智能体步骤更新：追加子 Agent 内部步骤
+      listen<any>('subagent-step', (e) => {
+        const { parent_assistant_id, parent_topic_id, subagent_id, round, step_type, summary } = e.payload;
+        setDatas('assistants', (a: any) => a.id === parent_assistant_id,
+          'topics', (t: any) => t.id === parent_topic_id,
+          'history', (h: any[]) => {
+            const lastIdx = h.length - 1;
+            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+            const msg = h[lastIdx];
+            const steps: any[] = msg.agentSteps || [];
+            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
+            if (subIdx < 0) return h;
+            const subStep = steps[subIdx];
+            const newSubStep = {
+              id: `substep-${round}-${Date.now()}`,
+              type: (step_type || '').startsWith('tool_result') ? 'tool_call' as const : step_type as any,
+              timestamp: Date.now(),
+              status: 'complete' as const,
+              summary: summary || '',
+              toolName: (step_type || '').startsWith('tool_result') ? (step_type as string).replace('tool_result:', '') : undefined,
+            };
+            const updatedSub = {
+              ...subStep,
+              subagentSteps: [...(subStep.subagentSteps || []), newSubStep],
+            };
+            return [...h.slice(0, lastIdx), {
+              ...msg,
+              agentSteps: steps.map((s: any, i: number) => i === subIdx ? updatedSub : s),
+            }];
+          });
+      }),
+
+      // 子智能体完成：标记 subagent 步骤为完成，记录结果
+      listen<any>('subagent-done', (e) => {
+        const { parent_assistant_id, parent_topic_id, subagent_id, profile_name, result } = e.payload;
+        const finishTime = Date.now();
+        setDatas('assistants', (a: any) => a.id === parent_assistant_id,
+          'topics', (t: any) => t.id === parent_topic_id,
+          'history', (h: any[]) => {
+            const lastIdx = h.length - 1;
+            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+            const msg = h[lastIdx];
+            const steps: any[] = msg.agentSteps || [];
+            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
+            if (subIdx < 0) return h;
+            const subStep = steps[subIdx];
+            const updatedSub = {
+              ...subStep,
+              status: 'complete',
+              duration: finishTime - subStep.timestamp,
+              subagentResult: result || '',
+            };
+            return [...h.slice(0, lastIdx), {
+              ...msg,
+              agentSteps: steps.map((s: any, i: number) => i === subIdx ? updatedSub : s),
+            }];
+          });
+      }),
+
+      // 子智能体出错
+      listen<any>('subagent-error', (e) => {
+        const { parent_assistant_id, parent_topic_id, subagent_id, error } = e.payload;
+        setDatas('assistants', (a: any) => a.id === parent_assistant_id,
+          'topics', (t: any) => t.id === parent_topic_id,
+          'history', (h: any[]) => {
+            const lastIdx = h.length - 1;
+            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+            const msg = h[lastIdx];
+            const steps: any[] = msg.agentSteps || [];
+            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
+            if (subIdx < 0) return h;
+            const subStep = steps[subIdx];
+            const updatedSub = {
+              ...subStep,
+              status: 'error',
+              duration: Date.now() - subStep.timestamp,
+              subagentResult: error || '子智能体执行出错',
+            };
+            return [...h.slice(0, lastIdx), {
+              ...msg,
+              agentSteps: steps.map((s: any, i: number) => i === subIdx ? updatedSub : s),
+            }];
+          });
+      }),
     ];
 
     // 组件卸载时清理所有事件监听和命令注册

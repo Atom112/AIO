@@ -100,7 +100,7 @@ const AgentModeSelector: Component = () => {
         <div ref={containerRef} class="relative inline-block">
             <button
                 type="button"
-                class="reasoning-trigger"
+                class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/40 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
                 classList={{ 'is-active': currentMode() !== 'off' }}
                 style={{
                     color: currentMode() !== 'off' ? (MODE_COLORS[currentMode()] || MODE_COLORS.off) : undefined,
@@ -113,8 +113,8 @@ const AgentModeSelector: Component = () => {
                     setOpen(!open());
                 }}
             >
-                <Icon name={activeOption().icon} size={15} class="reasoning-trigger-icon" />
-                <span class="reasoning-trigger-label">{activeOption().label}</span>
+                <Icon name={activeOption().icon} size={15} class="flex items-center justify-center shrink-0" />
+                <span class="leading-none">{activeOption().label}</span>
             </button>
 
             {/* 下拉面板 */}

@@ -187,14 +187,14 @@ const LocalEngineSection: Component = () => {
     };
 
     return (
-        <div class="glass-card mb-4 animate-row">
+        <div class="glass-card mb-4 animate-row-in">
             <div class="flex items-center justify-between mb-2.5">
                 <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-2">
                     <Icon name="cpu" class="text-pri" size={16} />
                     本地推理引擎
                 </h3>
                 <Show when={localSaveStatus()}>
-                    <span class="text-xs text-pri font-medium animate-row">{localSaveStatus()}</span>
+                    <span class="text-xs text-pri font-medium animate-row-in">{localSaveStatus()}</span>
                 </Show>
             </div>
             <div class="text-xs text-[#aaa] mb-3">
@@ -233,12 +233,12 @@ const LocalEngineSection: Component = () => {
                 </Show>
             </div>
             <Show when={localActivatedModels().length > 0}>
-                <div class="section-label mb-1.5">已激活的本地模型 ({localActivatedModels().length})</div>
+                <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">已激活的本地模型 ({localActivatedModels().length})</div>
                 <div class="flex flex-wrap gap-1.5">
                     <For each={localActivatedModels()}>
                         {(m, i) => (
                             <span
-                                class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md chip chip-info font-mono animate-row"
+                                class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] chip-info font-mono animate-row-in"
                                 style={{ "animation-delay": `${i() * 30}ms` }}
                             >
                                 <span class="truncate max-w-[200px]">{m.model_id}</span>
@@ -289,9 +289,9 @@ const CatalogStats: Component = () => {
     };
 
     return (
-        <div class="glass-card mb-4 flex items-center gap-4 flex-wrap animate-row" style={{ "animation-delay": "30ms" }}>
+        <div class="glass-card mb-4 flex items-center gap-4 flex-wrap animate-row-in" style={{ "animation-delay": "30ms" }}>
             <div class="grow min-w-0">
-                <div class="section-label mb-1.5 flex items-center gap-1.5">
+                <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5 flex items-center gap-1.5">
                     <Icon name="chart-bar" size={11} class="text-pri" /> 模型元数据库
                 </div>
                 <div class="text-xs text-[#ccc]">
@@ -322,7 +322,7 @@ const CatalogStats: Component = () => {
                 </button>
                 <Show when={updateResult()}>
                     <span
-                        class="text-[10px] animate-row"
+                        class="text-[10px] animate-row-in"
                         classList={{
                             'text-green-400': updateResult()!.ok,
                             'text-red-400': !updateResult()!.ok,
@@ -455,13 +455,13 @@ const ProviderList: Component = () => {
             <CatalogStats />
 
             {/* 搜索 */}
-            <div class="mb-3 flex items-center gap-2.5 animate-row" style={{ "animation-delay": "60ms" }}>
+            <div class="mb-3 flex items-center gap-2.5 animate-row-in" style={{ "animation-delay": "60ms" }}>
                 <div class="relative flex-1">
                     <Icon name="search" size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
                     <input
                         type="text"
                         placeholder="搜索 provider 或模型..."
-                        class="input-glass w-full pl-9 pr-3 py-1.5 text-sm"
+                        class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full pl-9 pr-3 py-1.5 text-sm"
                         value={search()}
                         onInput={(e) => setSearch(e.currentTarget.value)}
                     />
@@ -482,20 +482,20 @@ const ProviderList: Component = () => {
                         <h3 class="text-lg font-bold text-white mb-1">添加自定义 Provider</h3>
                         <p class="text-xs text-[#888] mb-5">通过 OpenAI-兼容端点接入任何 LLM 服务</p>
                         <div class="mb-3">
-                            <label class="block section-label mb-1.5">显示名称</label>
+                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">显示名称</label>
                             <input
                                 type="text"
-                                class="input-glass w-full px-3 py-2 text-sm"
+                                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm"
                                 placeholder="My OpenAI Gateway"
                                 value={newCustomName()}
                                 onInput={(e) => setNewCustomName(e.currentTarget.value)}
                             />
                         </div>
                         <div class="mb-5">
-                            <label class="block section-label mb-1.5">API URL</label>
+                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">API URL</label>
                             <input
                                 type="text"
-                                class="input-glass w-full px-3 py-2 text-sm font-mono"
+                                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                                 placeholder="https://my-gateway.example.com/v1"
                                 value={newCustomUrl()}
                                 onInput={(e) => setNewCustomUrl(e.currentTarget.value)}
@@ -538,18 +538,18 @@ const ProviderList: Component = () => {
 
                 {/* 自定义 provider 区 */}
                 <Show when={customProviders().length > 0}>
-                    <div class="section-label mt-5 mb-2">
+                    <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mt-5 mb-2">
                         自定义 Provider ({customProviders().length})
                     </div>
                     <div class="space-y-1.5">
                         <For each={customProviders()}>
                             {(cfg, i) => (
                                 <div
-                                    class="list-row flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row"
+                                    class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
                                     style={{ "animation-delay": `${(i() + 1) * 30}ms` }}
                                     onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
                                 >
-                                    <div class="logo-tile font-bold text-[15px]" style={{ color: '#1a1e2c' }}>
+                                    <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c] font-bold text-[15px]" style={{ color: '#1a1e2c' }}>
                                         {cfg.displayName.charAt(0).toUpperCase()}
                                     </div>
                                     <div class="grow min-w-0">
@@ -566,7 +566,7 @@ const ProviderList: Component = () => {
                                         onClick={(e) => { e.stopPropagation(); toggleEnabled(cfg.id, cfg.enabled); }}
                                         title={cfg.enabled ? '点击停用' : '点击启用'}
                                     >
-                                        <span class="toggle-knob" />
+                                        <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
                                     </button>
                                     <button
                                         type="button"
@@ -605,20 +605,20 @@ const ProviderRow: Component<{
     const isEnabled = () => cfg()?.enabled ?? false;
     const status = createMemo(() => {
         const c = cfg();
-        if (!c) return { label: '未配置', cls: 'chip-mute' };
-        if (isEnabled() && c.apiKey) return { label: '已配置', cls: 'chip-ok' };
-        if (c.apiKey) return { label: '已配置 · 禁用', cls: 'chip-warn' };
-        return { label: '未配置', cls: 'chip-mute' };
+        if (!c) return { label: '未配置', cls: 'bg-white/5 text-white/40 border border-white/[0.06]' };
+        if (isEnabled() && c.apiKey) return { label: '已配置', cls: 'bg-green-400/15 text-green-300 border border-green-400/20' };
+        if (c.apiKey) return { label: '已配置 · 禁用', cls: 'bg-yellow-400/[0.12] text-yellow-200 border border-yellow-400/20' };
+        return { label: '未配置', cls: 'bg-white/5 text-white/40 border border-white/[0.06]' };
     });
     const enabledCount = createMemo(() => cfg()?.enabledModels.length ?? 0);
 
     return (
         <div
-            class="list-row flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row"
+            class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
             style={props.style}
             onClick={props.onClick}
         >
-            <div class="logo-tile">
+            <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c]">
                 {getProviderLogo(props.provider.id)
                     ? <img src={getProviderLogo(props.provider.id)!} alt={props.provider.name} class="w-5 h-5 object-contain" />
                     : <span class="font-bold text-[15px]" style={{ color: '#1a1e2c' }}>{props.provider.name.charAt(0).toUpperCase()}</span>
@@ -627,9 +627,9 @@ const ProviderRow: Component<{
             <div class="grow min-w-0">
                 <div class="flex items-center gap-1.5">
                     <span class="text-sm text-white truncate font-medium">{props.provider.name}</span>
-                    <span class={`chip ${status().cls}`}>{status().label}</span>
+                    <span class={`inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] ${status().cls}`}>{status().label}</span>
                     <Show when={props.provider.isAggregator}>
-                        <span class="chip chip-info">聚合</span>
+                        <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] chip-info">聚合</span>
                     </Show>
                 </div>
                 <div class="text-[10px] text-[#888] font-mono mt-0.5">
@@ -649,7 +649,7 @@ const ProviderRow: Component<{
                 }}
                 title={isEnabled() ? '点击停用' : '点击启用'}
             >
-                <span class="toggle-knob" />
+                <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
             </button>
             <span class="text-[#666] text-lg transition-transform duration-200 group-hover:translate-x-0.5">›</span>
         </div>

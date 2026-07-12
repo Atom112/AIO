@@ -193,7 +193,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     // 滚动到选中项（仅垂直滚动，避免水平滚动）
     const scrollToSelected = () => {
         requestAnimationFrame(() => {
-            const el = menuRef?.querySelector('.slash-command-item.selected') as HTMLElement;
+            const el = menuRef?.querySelector('.flex items-center justify-between gap-3 px-2.5 py-[7px] rounded-md cursor-pointer transition-colors duration-[80ms].selected') as HTMLElement;
             el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         });
     };
@@ -275,17 +275,17 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
                         const isSelected = () => idx() === selectedIndex();
                         return (
                             <div
-                                class={`slash-command-item${isSelected() ? ' selected' : ''}`}
+                                class={`flex items-center justify-between gap-3 px-2.5 py-[7px] rounded-md cursor-pointer transition-colors duration-[80ms]${isSelected() ? ' selected' : ''}`}
                                 onClick={() => selectCommand(cmd)}
                                 onMouseEnter={() => setSelectedIndex(idx())}
                             >
-                                <div class="slash-command-left">
-                                    <span class="slash-command-name">{cmd.label}</span>
+                                <div class="flex items-center gap-1.5 min-w-0">
+                                    <span class="text-[13px] font-semibold text-white/85 whitespace-nowrap font-mono">{cmd.label}</span>
                                     <Show when={cmd.argumentHint}>
-                                        <span class="slash-command-arg">{cmd.argumentHint}</span>
+                                        <span class="text-[11px] text-white/30 italic whitespace-nowrap overflow-hidden text-ellipsis">{cmd.argumentHint}</span>
                                     </Show>
                                 </div>
-                                <span class="slash-command-desc">{cmd.description}</span>
+                                <span class="text-[11px] text-white/30 whitespace-nowrap overflow-hidden text-ellipsis shrink text-right">{cmd.description}</span>
                             </div>
                         );
                     }}

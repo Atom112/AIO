@@ -15,6 +15,7 @@ import type { AgentStep, ToolCallDisplay } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
 import ToolCallBubble from './ToolCallBubble';
 import Markdown from '../../../shared/components/Markdown';
+import SubagentBlock from './SubagentBlock';
 
 interface AgentProcessBlockProps {
     /** 模型原生思维链文本（旧模式） */
@@ -36,9 +37,11 @@ const STEP_CONFIG: Record<AgentStep['type'], { icon: string; label: string; bord
     thinking: { icon: 'brain', label: '思考过程', borderColor: 'rgba(124,154,191,0.55)' },
     tool_call: { icon: 'wrench', label: '工具调用', borderColor: 'rgba(240,160,64,0.55)' },
     content: { icon: 'document', label: '阶段性总结', borderColor: 'rgba(156,163,175,0.35)' },
+    subagent: { icon: 'sparkles', label: '子智能体', borderColor: 'rgba(140,120,220,0.55)' },
 };
 
 function getStepBorderColor(step: AgentStep): string {
+    if (step.type === 'subagent') return STEP_CONFIG[step.type].borderColor;
     if (step.type !== 'tool_call') return STEP_CONFIG[step.type].borderColor;
     if (step.status === 'running') return 'rgba(240,160,64,0.55)';
     if (step.status === 'error') return 'rgba(224,85,85,0.55)';
@@ -55,12 +58,14 @@ function formatDuration(ms: number): string {
 }
 
 function stepToolLabel(step: AgentStep): string {
+    if (step.type === 'subagent') return step.subagentProfile || 'subagent';
     const name = step.toolCall?.function?.name || 'unknown';
     // 截断过长的工具名
     return name.length > 28 ? name.slice(0, 26) + '…' : name;
 }
 
 function stepStatusIcon(step: AgentStep): string {
+    if (step.type === 'subagent') return step.status === 'running' ? 'spinner' : step.status === 'error' ? 'x' : 'check';
     if (step.type !== 'tool_call') return '';
     if (step.status === 'running') return 'spinner';
     if (step.status === 'error') return 'x';
@@ -90,24 +95,24 @@ const StepCard: Component<{
             {/* Header */}
             <button
                 type="button"
-                class="agent-step-header"
+                class="flex items-center w-full gap-1.5 px-2.5 py-1.5 cursor-pointer select-none bg-transparent border-none text-white/45 text-[11px] transition-colors duration-200 hover:text-white/70"
                 onClick={props.onToggle}
                 disabled={props.step.status === 'running'}
             >
-                <span class="agent-step-icon-wrap">
+                <span class="flex items-center justify-center w-4 h-4 rounded bg-white/[0.05] shrink-0">
                     <Icon
-                        name={cfg.icon}
+                        name={cfg.icon as any}
                         size={12}
-                        class="agent-step-icon"
+                        class="w-3 h-3"
                         classList={{ 'is-spinning': props.step.status === 'running' }}
                     />
                 </span>
-                <span class="agent-step-title">{cfg.label}</span>
+                <span class="font-medium flex-none">{cfg.label}</span>
                 {props.step.type === 'tool_call' && (
-                    <span class="agent-step-tool-name">· {stepToolLabel(props.step)}</span>
+                    <span class="truncate text-white/55 flex-initial min-w-0">· {stepToolLabel(props.step)}</span>
                 )}
                 {props.step.type === 'tool_call' && stepStatusIcon(props.step) && (
-                    <span class="agent-step-status-icon">
+                    <span class="flex items-center justify-center shrink-0">
                         <Icon
                             name={stepStatusIcon(props.step) as any}
                             size={10}
@@ -116,10 +121,10 @@ const StepCard: Component<{
                     </span>
                 )}
                 {durationMs !== undefined && (
-                    <span class="agent-step-duration">{formatDuration(durationMs)}</span>
+                    <span class="font-mono text-white/25 text-[10px] flex-none ml-auto">{formatDuration(durationMs)}</span>
                 )}
-                <span class="agent-step-chevron" aria-hidden="true">
-                    <Icon name="arrow-left" size={10} class="agent-step-chevron-icon" />
+                <span class="flex items-center justify-center shrink-0 text-white/20 transition-[transform,color] duration-200" aria-hidden="true">
+                    <Icon name="arrow-left" size={10} class="-rotate-90 transition-transform duration-200" />
                 </span>
             </button>
 
@@ -127,17 +132,17 @@ const StepCard: Component<{
             <div class="agent-step-body">
                 {/* 思考步骤：原始文本 */}
                 {props.step.type === 'thinking' && props.step.thinkingText && (
-                    <div class="agent-step-thinking-content">
+                    <div class="text-[12px] leading-relaxed italic whitespace-pre-wrap break-words text-white/50 px-2 py-1.5 rounded bg-black/[0.12] max-h-[300px] overflow-y-auto">
                         {props.step.thinkingText}
                     </div>
                 )}
 
                 {/* 工具调用步骤：复用 ToolCallBubble */}
                 {props.step.type === 'tool_call' && props.step.toolCall && (
-                    <div class="agent-step-tool-content">
+                    <div class="text-[12px]">
                         <ToolCallBubble
                             toolCall={props.step.toolCall}
-                            state={props.step.toolCall.state ?? props.step.status}
+                            state={(props.step.toolCall.state || (props.step.status === 'running' ? 'calling' : props.step.status === 'error' ? 'error' : 'success')) as 'calling' | 'success' | 'error'}
                             result={props.step.toolCall.result}
                             error={props.step.toolCall.error}
                         />
@@ -146,8 +151,20 @@ const StepCard: Component<{
 
                 {/* Content 步骤：Markdown 渲染的阶段性总结 */}
                 {props.step.type === 'content' && props.step.contentText && (
-                    <div class="agent-step-content-text">
+                    <div class="text-[13px] leading-relaxed break-words text-white/65 p-1">
                         <Markdown content={props.step.contentText} />
+                    </div>
+                )}
+
+                {/* 子智能体步骤：嵌套 SubagentBlock */}
+                {props.step.type === 'subagent' && (
+                    <div class="px-2 pb-2">
+                        <SubagentBlock
+                            step={props.step}
+                            isActive={props.isActive}
+                            expanded={props.expanded}
+                            onToggle={props.onToggle}
+                        />
                     </div>
                 )}
             </div>
@@ -271,45 +288,45 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     return (
         <Show when={hasContent()}>
             <div
-                class="agent-process-block"
+                class="my-2 rounded-lg overflow-hidden bg-white/[0.02] border border-white/[0.05] transition-[background,border-color] duration-200 hover:bg-white/[0.035] hover:border-white/[0.08]"
                 classList={{ 'is-open': isExpanded(), 'is-active': props.isActive }}
             >
                 {/* 外层 header */}
                 <button
                     type="button"
-                    class="agent-process-header"
+                    class="flex items-center w-full gap-2 px-3 py-2 cursor-pointer select-none bg-transparent border-none text-white/50 text-xs transition-colors duration-200 hover:text-white/75"
                     onClick={toggleOuter}
                     aria-expanded={isExpanded()}
                 >
-                    <span class="agent-process-icon-wrap">
+                    <span class="flex items-center justify-center w-5 h-5 rounded bg-white/[0.05] relative">
                         <Icon
                             name={props.isActive ? 'sparkles' : 'brain'}
                             size={13}
-                            class="agent-process-icon"
+                            class="w-3.5 h-3.5"
                         />
                     </span>
-                    <span class="agent-process-title">
+                    <span class="font-medium flex-none">
                         {props.isActive ? '正在工作' : '已工作'}
                     </span>
-                    <span class="agent-process-duration">
+                    <span class="font-mono text-white/30 text-[11px] flex-none ml-0.5">
                         {props.startTime ? formatDuration(elapsedMs()) : ''}
                     </span>
-                    <span class="agent-process-chevron" aria-hidden="true">
-                        <Icon name="arrow-left" size={11} class="agent-process-chevron-icon" />
+                    <span class="flex items-center justify-center ml-auto text-white/30 transition-[transform,color] duration-200" aria-hidden="true">
+                        <Icon name="arrow-left" size={11} class="-rotate-90 transition-transform duration-200" />
                     </span>
                 </button>
 
-                {/* Body */}
-                <div class="agent-process-body">
+                {/* Body：滚动放在外层，内部正常排列不压缩 */}
+                <div
+                    ref={stepsContainerRef}
+                    class="overflow-y-auto"
+                    style="max-height: 620px;"
+                    onScroll={handleStepsScroll}
+                    onWheel={handleStepsWheel}
+                >
                     {/* === 新模式：时间线卡片 === */}
                     <Show when={hasSteps()}>
-                        <div
-                            ref={stepsContainerRef}
-                            class="agent-steps-timeline"
-                            style="max-height: 550px; overflow-y: auto;"
-                            onScroll={handleStepsScroll}
-                            onWheel={handleStepsWheel}
-                        >
+                        <div class="flex flex-col gap-2 px-3">
                             <For each={timelineSteps()}>
                                 {(step) => (
                                     <StepCard
@@ -326,24 +343,24 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                     {/* === 旧模式（回退）：扁平三块 === */}
                     <Show when={!hasSteps() && hasOldContent()}>
                         <Show when={props.reasoning && props.reasoning.trim()}>
-                            <div class="agent-process-reasoning">
-                                <div class="agent-process-reasoning-label">
+                            <div class="mb-2">
+                                <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
                                     <Icon name="brain" size={11} class="mr-1.5 opacity-60" />
                                     思考过程
                                 </div>
-                                <div class="agent-process-reasoning-content">
+                                <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
                                     {props.reasoning}
                                 </div>
                             </div>
                         </Show>
 
                         <Show when={props.interimContent && props.interimContent.trim()}>
-                            <div class="agent-process-interim">
-                                <div class="agent-process-interim-label">
+                            <div class="mb-2">
+                                <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
                                     <Icon name="document" size={11} class="mr-1.5 opacity-60" />
                                     工作过程
                                 </div>
-                                <div class="agent-process-interim-content">
+                                <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
                                     <Markdown content={props.interimContent!} />
                                 </div>
                             </div>

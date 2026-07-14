@@ -904,6 +904,8 @@ async fn handle_delegate_task(
     project_id: Option<&str>,
     agent_mode: &AgentMode,
     token: &CancellationToken,
+    profile_model_overrides: &[ProfileModelOverride],
+    custom_profiles: &[crate::core::models::CustomSubagentProfile],
 ) -> Result<ToolResult, String> {
     // 解析参数
     let profile_id = arguments["profile"].as_str().unwrap_or("general");
@@ -911,9 +913,16 @@ async fn handle_delegate_task(
     if task_desc.is_empty() {
         return Err("delegate_task 缺少必填参数 'task'".into());
     }
+    let profile = subagent::find_profile(profile_id, custom_profiles)
+        .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, 或自定义角色 ID", profile_id))?;
 
-    let profile = subagent::find_profile(profile_id)
-        .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general", profile_id))?;
+    // 解析 per-profile 模型覆盖
+    let override_info = profile_model_overrides.iter().find(|o| o.profile_id == profile.id);
+    let (resolved_api_url, resolved_api_key, resolved_model) = if let Some(ov) = override_info {
+        (ov.api_url.as_str(), ov.api_key.as_str(), ov.model_id.as_str())
+    } else {
+        (api_url, api_key, model)
+    };
 
     let context_files: Vec<String> = arguments["context_files"]
         .as_array()
@@ -966,9 +975,9 @@ async fn handle_delegate_task(
         window,
         app,
         client,
-        api_url,
-        api_key,
-        model,
+        resolved_api_url,
+        resolved_api_key,
+        resolved_model,
         parent_assistant_id,
         parent_topic_id,
         &profile,
@@ -1299,6 +1308,8 @@ pub async fn run_agent_turn(
     agent_mode: AgentMode,
     project_id: Option<String>,
     web_search_enabled: bool,
+    profile_model_overrides: Vec<ProfileModelOverride>,
+    custom_subagent_profiles: Vec<crate::core::models::CustomSubagentProfile>,
 ) -> Result<(), String> {
     // SSRF 防护
     crate::utils::url_validation::validate_http_url(
@@ -1333,6 +1344,8 @@ pub async fn run_agent_turn(
     let app_c = app.clone();
     let mcp_server_ids_c = mcp_server_ids.clone();
     let project_id_c = project_id.clone();
+    let profile_overrides_c = profile_model_overrides.clone();
+    let custom_profiles_c = custom_subagent_profiles.clone();
 
     let handle = tokio::spawn(async move {
         let client = streaming_http_client();
@@ -1547,6 +1560,8 @@ pub async fn run_agent_turn(
                     let args_val_clone = args_val.clone();
                     let project_id_clone = project_id_c.clone();
                     let agent_mode_clone = agent_mode.clone();
+                    let profile_overrides_clone = profile_overrides_c.clone();
+                    let custom_profiles_clone = custom_profiles_c.clone();
                     let token_clone = token_inner.clone();
 
                     let fut = Box::pin(async move {
@@ -1563,6 +1578,8 @@ pub async fn run_agent_turn(
                             project_id_clone.as_deref(),
                             &agent_mode_clone,
                             &token_clone,
+                            &profile_overrides_clone,
+                            &custom_profiles_clone,
                         )
                         .await
                     });

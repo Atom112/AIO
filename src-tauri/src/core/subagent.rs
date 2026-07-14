@@ -1,9 +1,14 @@
 //! 子智能体（Sub-agent）配置文件与工具定义。
 //!
-//! 提供三种内置子智能体配置文件，每种限定不同的工具集和行为模式：
+//! 提供八种内置子智能体配置文件，每种限定不同的工具集和行为模式：
 //! - `explorer`：只读代码探索者，用于大规模文件检索和架构分析
 //! - `coder`：代码实现者，专注文件编写和修改
 //! - `general`：通用子智能体，拥有全部工具能力
+//! - `architect`：架构设计师，只读分析依赖与设计决策
+//! - `debugger`：问题诊断师，可运行命令查找根因但不能修改文件
+//! - `reviewer`：代码审查员，只读安全审计和代码质量评估
+//! - `writer`：文档撰写员，可读写文件产出文档
+//! - `tester`：测试工程师，可运行测试并编写测试文件
 //!
 //! 子智能体通过主 Agent 的 `delegate_task` 工具调用创建，每个子智能体
 //! 拥有独立的 LLM 上下文窗口，通过 Tauri 事件向前端报告进度。
@@ -11,12 +16,11 @@
 use serde::{Deserialize, Serialize};
 
 use super::models::ToolSpec;
-
 /// 子智能体配置文件
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentProfile {
-    /// 配置文件唯一标识（"explorer" | "coder" | "general"）
+    /// 配置文件唯一标识（"explorer" | "coder" | "general" | "architect" | "debugger" | "reviewer" | "writer" | "tester"）
     pub id: String,
     /// 显示名称
     pub name: String,
@@ -127,12 +131,164 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             .into(),
             model_override: None,
         },
+        SubagentProfile {
+            id: "architect".into(),
+            name: "架构设计师".into(),
+            description: "只读架构分析、依赖映射、设计决策评估与技术选型建议。不能修改任何文件。".into(),
+            allowed_tools: vec![
+                "read_file".into(),
+                "list_directory".into(),
+                "search_files".into(),
+                "search_content".into(),
+                "read_lints".into(),
+                "web_search".into(),
+                "web_fetch".into(),
+            ],
+            denied_tools: vec![
+                "write_file".into(),
+                "replace_in_file".into(),
+                "delete_file".into(),
+                "make_directory".into(),
+                "execute_command".into(),
+                "git_*".into(),
+                "delegate_task".into(),
+            ],
+            system_prompt_extension: concat!(
+                "你是架构设计师，只能分析代码架构和设计，不能修改任何文件。\n",
+                "你的任务是：分析项目结构、识别设计模式、评估技术决策、绘制依赖关系。\n",
+                "输出应包含：关键文件路径、模块依赖图、设计建议与潜在风险。\n",
+                "不要尝试修改文件、执行命令或进行写操作。"
+            )
+            .into(),
+            model_override: None,
+        },
+        SubagentProfile {
+            id: "debugger".into(),
+            name: "问题诊断师".into(),
+            description: "错误调查与根因分析，可运行命令复现问题但不能修改任何文件。".into(),
+            allowed_tools: vec![
+                "read_file".into(),
+                "list_directory".into(),
+                "search_files".into(),
+                "search_content".into(),
+                "read_lints".into(),
+                "execute_command".into(),
+                "web_search".into(),
+                "web_fetch".into(),
+            ],
+            denied_tools: vec![
+                "write_file".into(),
+                "replace_in_file".into(),
+                "delete_file".into(),
+                "make_directory".into(),
+                "git_*".into(),
+                "delegate_task".into(),
+            ],
+            system_prompt_extension: concat!(
+                "你是问题诊断师，可以运行命令来复现和分析错误，但不能修改任何文件。\n",
+                "你的任务是：定位错误根因、分析日志输出、复现问题、提出修复建议。\n",
+                "输出应包含：根因分析、复现步骤、建议的修复方案（仅建议，不执行修改）。\n",
+                "不要尝试修改文件、提交代码或进行写操作。"
+            )
+            .into(),
+            model_override: None,
+        },
+        SubagentProfile {
+            id: "reviewer".into(),
+            name: "代码审查员".into(),
+            description: "只读代码质量评估、安全审计与最佳实践检查。不能修改任何文件。".into(),
+            allowed_tools: vec![
+                "read_file".into(),
+                "list_directory".into(),
+                "search_files".into(),
+                "search_content".into(),
+                "read_lints".into(),
+                "web_search".into(),
+                "web_fetch".into(),
+            ],
+            denied_tools: vec![
+                "write_file".into(),
+                "replace_in_file".into(),
+                "delete_file".into(),
+                "make_directory".into(),
+                "execute_command".into(),
+                "git_*".into(),
+                "delegate_task".into(),
+            ],
+            system_prompt_extension: concat!(
+                "你是代码审查员，只能审查代码质量和安全性，不能修改任何文件。\n",
+                "你的任务是：评估代码质量、识别安全漏洞、检查最佳实践遵从度。\n",
+                "输出应包含：按严重性分级（严重/警告/建议）的审查意见，附文件路径和行号引用。\n",
+                "不要尝试修改文件、执行命令或进行写操作。"
+            )
+            .into(),
+            model_override: None,
+        },
+        SubagentProfile {
+            id: "writer".into(),
+            name: "文档撰写员".into(),
+            description: "编写文档、注释、README、变更日志与技术规范。可读写文件。".into(),
+            allowed_tools: vec![], // 空 = 全部允许
+            denied_tools: vec![
+                "delete_file".into(),
+                "make_directory".into(),
+                "execute_command".into(),
+                "git_*".into(),
+                "delegate_task".into(),
+            ],
+            system_prompt_extension: concat!(
+                "你是文档撰写员，专注于编写高质量的文档和注释。\n",
+                "你的任务是：生成 README、API 文档、变更日志、技术规范和内联注释。\n",
+                "输出应使用清晰的 Markdown 格式，结构良好，层次分明。\n",
+                "可以读取和写入文件，但不要执行 shell 命令或删除文件。"
+            )
+            .into(),
+            model_override: None,
+        },
+        SubagentProfile {
+            id: "tester".into(),
+            name: "测试工程师".into(),
+            description: "测试用例生成、覆盖率分析与测试执行。可运行测试并编写测试文件。".into(),
+            allowed_tools: vec![], // 空 = 全部允许
+            denied_tools: vec![
+                "delete_file".into(),
+                "make_directory".into(),
+                "git_*".into(),
+                "delegate_task".into(),
+            ],
+            system_prompt_extension: concat!(
+                "你是测试工程师，专注于测试的编写、执行和分析。\n",
+                "你的任务是：生成测试用例、执行测试、分析覆盖率、报告测试结果。\n",
+                "输出应包含：测试执行总结、覆盖率报告、失败的测试及其根因。\n",
+                "可以执行命令和写入测试文件，但不要提交代码或删除文件。"
+            )
+            .into(),
+            model_override: None,
+        },
     ]
 }
 
-/// 按 ID 查找配置文件
-pub fn find_profile(profile_id: &str) -> Option<SubagentProfile> {
-    builtin_profiles().into_iter().find(|p| p.id == profile_id)
+/// 按 ID 查找配置文件（先查内置，再查自定义）
+pub fn find_profile(profile_id: &str, custom_profiles: &[crate::core::models::CustomSubagentProfile]) -> Option<SubagentProfile> {
+    // 先查内置
+    if let Some(p) = builtin_profiles().into_iter().find(|p| p.id == profile_id) {
+        return Some(p);
+    }
+    // 再查自定义
+    for cp in custom_profiles {
+        if cp.id == profile_id {
+            return Some(SubagentProfile {
+                id: cp.id.clone(),
+                name: cp.name.clone(),
+                description: cp.description.clone(),
+                allowed_tools: cp.allowed_tools.clone(),
+                denied_tools: cp.denied_tools.clone(),
+                system_prompt_extension: cp.system_prompt_extension.clone(),
+                model_override: None,
+            });
+        }
+    }
+    None
 }
 
 /// 列出所有可用配置文件的摘要信息（供前端使用）
@@ -167,7 +323,13 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                 "当你面对复杂任务时，可以将任务拆分为子任务并委托给子智能体：\n",
                 "- 使用 explorer 子智能体搜索和探索代码库\n",
                 "- 使用 coder 子智能体编写或修改具体的代码文件\n",
-                "- 使用 general 子智能体处理需要完整能力的子任务\n\n",
+                "- 使用 general 子智能体处理需要完整能力的子任务\n",
+                "- 使用 architect 子智能体进行架构分析和设计评估\n",
+                "- 使用 debugger 子智能体进行错误调查和根因分析\n",
+                "- 使用 reviewer 子智能体进行代码审查和质量评估\n",
+                "- 使用 writer 子智能体撰写文档和注释\n",
+                "- 使用 tester 子智能体生成和执行测试\n\n",
+                "也可以使用用户自定义的子智能体角色 ID。\n",
                 "子智能体会独立执行并在完成后返回工作总结。你可以在同一轮中并行创建多个子智能体。"
             )
             .into(),
@@ -176,8 +338,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                 "properties": {
                     "profile": {
                         "type": "string",
-                        "enum": ["explorer", "coder", "general"],
-                        "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用全能力）"
+                        "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用全能力）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试执行），或任意自定义角色 ID"
                     },
                     "task": {
                         "type": "string",
@@ -201,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_explorer_profile_tool_restrictions() {
-        let explorer = find_profile("explorer").unwrap();
+        let explorer = find_profile("explorer", &[]).unwrap();
         assert!(explorer.is_tool_allowed("read_file"));
         assert!(explorer.is_tool_allowed("search_files"));
         assert!(explorer.is_tool_allowed("web_search"));
@@ -214,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_coder_profile_tool_restrictions() {
-        let coder = find_profile("coder").unwrap();
+        let coder = find_profile("coder", &[]).unwrap();
         assert!(coder.is_tool_allowed("read_file"));
         assert!(coder.is_tool_allowed("write_file"));
         assert!(!coder.is_tool_allowed("execute_command"));
@@ -223,10 +384,60 @@ mod tests {
 
     #[test]
     fn test_general_profile_no_recursion() {
-        let general = find_profile("general").unwrap();
+        let general = find_profile("general", &[]).unwrap();
         assert!(general.is_tool_allowed("read_file"));
         assert!(general.is_tool_allowed("execute_command"));
         assert!(!general.is_tool_allowed("delegate_task"));
+    }
+
+    #[test]
+    fn test_architect_profile_read_only() {
+        let architect = find_profile("architect", &[]).unwrap();
+        assert!(architect.is_tool_allowed("read_file"));
+        assert!(architect.is_tool_allowed("web_search"));
+        assert!(!architect.is_tool_allowed("write_file"));
+        assert!(!architect.is_tool_allowed("execute_command"));
+        assert!(!architect.is_tool_allowed("delegate_task"));
+    }
+
+    #[test]
+    fn test_debugger_profile_can_execute() {
+        let debugger = find_profile("debugger", &[]).unwrap();
+        assert!(debugger.is_tool_allowed("read_file"));
+        assert!(debugger.is_tool_allowed("execute_command"));
+        assert!(!debugger.is_tool_allowed("write_file"));
+        assert!(!debugger.is_tool_allowed("delegate_task"));
+    }
+
+    #[test]
+    fn test_reviewer_profile_read_only() {
+        let reviewer = find_profile("reviewer", &[]).unwrap();
+        assert!(reviewer.is_tool_allowed("read_file"));
+        assert!(reviewer.is_tool_allowed("read_lints"));
+        assert!(!reviewer.is_tool_allowed("write_file"));
+        assert!(!reviewer.is_tool_allowed("execute_command"));
+        assert!(!reviewer.is_tool_allowed("delegate_task"));
+    }
+
+    #[test]
+    fn test_writer_profile_can_write() {
+        let writer = find_profile("writer", &[]).unwrap();
+        assert!(writer.is_tool_allowed("read_file"));
+        assert!(writer.is_tool_allowed("write_file"));
+        assert!(writer.is_tool_allowed("replace_in_file"));
+        assert!(!writer.is_tool_allowed("execute_command"));
+        assert!(!writer.is_tool_allowed("delete_file"));
+        assert!(!writer.is_tool_allowed("delegate_task"));
+    }
+
+    #[test]
+    fn test_tester_profile_can_execute() {
+        let tester = find_profile("tester", &[]).unwrap();
+        assert!(tester.is_tool_allowed("read_file"));
+        assert!(tester.is_tool_allowed("write_file"));
+        assert!(tester.is_tool_allowed("execute_command"));
+        assert!(!tester.is_tool_allowed("delete_file"));
+        assert!(!tester.is_tool_allowed("delegate_task"));
     }
 
     #[test]

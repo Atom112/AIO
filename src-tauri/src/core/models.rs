@@ -766,3 +766,58 @@ pub struct UsageSummaryByModel {
     pub output_tokens: i64,
     pub request_count: i64,
 }
+// ====== Per-Profile Model Override ======
+
+/// 子智能体 profile 的模型覆盖配置。
+/// 允许为每个 profile（explorer / coder / general）独立指定模型及连接信息，
+/// 使子智能体可以使用与主 Agent 不同的 provider。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileModelOverride {
+    /// 子智能体 profile 标识（"explorer" | "coder" | "general"）
+    pub profile_id: String,
+    /// 覆盖的模型 ID
+    pub model_id: String,
+    /// 覆盖的 API 地址
+    pub api_url: String,
+    /// 覆盖的 API Key
+    pub api_key: String,
+}
+
+/// profile-model-overrides.json 的磁盘格式
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileModelOverridesFile {
+    pub version: u32,
+    pub updated_at: String,
+    pub overrides: Vec<ProfileModelOverride>,
+}
+
+// ====== Custom Subagent Profiles ======
+
+/// 用户自定义的子智能体配置文件（存储在 custom-subagent-profiles.json）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomSubagentProfile {
+    /// 用户指定的唯一标识（字母数字短横线）
+    pub id: String,
+    /// 显示名称
+    pub name: String,
+    /// 用途说明
+    pub description: String,
+    /// 允许的工具列表（glob 模式），空 = 全部
+    pub allowed_tools: Vec<String>,
+    /// 禁止的工具列表（glob 模式），空 = 无
+    pub denied_tools: Vec<String>,
+    /// 附加的系统提示词（追加到子 Agent 基础系统提示词之后）
+    pub system_prompt_extension: String,
+}
+
+/// custom-subagent-profiles.json 的磁盘格式
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomSubagentProfilesFile {
+    pub version: u32,
+    pub updated_at: String,
+    pub profiles: Vec<CustomSubagentProfile>,
+}

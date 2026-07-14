@@ -9,6 +9,7 @@ import {
   pendingRenameRequest, setPendingRenameRequest,
   mcpServers, mcpServerStatus, resolveAssistantSkills,
   currentProjectId, currentProject,
+  profileModelOverrides, allAvailableModels, resolveProfileModel, customSubagentProfiles,
 } from '../../core/store/store';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import {
@@ -797,6 +798,22 @@ const ChatPage: Component = () => {
       try {
         // 后端 run_agent_turn 在单个任务内自驱完成「流式→检测工具→权限/审批→执行→回填→递归」，
         // 前端退化为纯渲染。工具/模式处理全部交给后端（plan 整轮无工具、轮数上限后端补总结轮）。
+
+        // 解析 per-profile 模型覆盖
+        const resolvedOverrides: Array<{ profileId: string; modelId: string; apiUrl: string; apiKey: string }> = [];
+        for (const [profileId, mKey] of Object.entries(profileModelOverrides())) {
+          if (!mKey) continue;
+          const mdl = allAvailableModels().find(m => modelKey(m) === mKey);
+          if (mdl) {
+            resolvedOverrides.push({
+              profileId,
+              modelId: mKey,
+              apiUrl: mdl.api_url,
+              apiKey: mdl.api_key,
+            });
+          }
+        }
+
       await invoke('run_agent_turn', {
         apiUrl: currentMdl.api_url,
         apiKey: currentMdl.api_key,
@@ -808,6 +825,8 @@ const ChatPage: Component = () => {
         agentMode: agentMode,
         projectId: currentProjectId() ?? null,
         webSearchEnabled: webSearchEnabled(),
+        profileModelOverrides: resolvedOverrides,
+        customSubagentProfiles: customSubagentProfiles(),
       });
 
     } catch (err) {

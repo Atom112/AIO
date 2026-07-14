@@ -614,3 +614,187 @@ pub async fn read_avatar_source(path: String) -> Result<String, String> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
     Ok(format!("data:{};base64,{}", mime, b64))
 }
+
+// ====== Per-Profile Model Override Persistence ======
+
+///
+/// 从磁盘加载 profile-model-overrides.json 并返回覆盖配置列表。
+/// 文件不存在或损坏时返回空 vec（不视为错误，所有 profile 回退到父模型）。
+#[tauri::command]
+pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, String> {
+    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
+    path.push("com.loch.aio");
+    path.push("profile-model-overrides.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 profile-model-overrides.json 失败: {}", e))?;
+    let file: ProfileModelOverridesFile =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 profile-model-overrides.json 失败: {}", e))?;
+    Ok(file.overrides)
+}
+
+///
+/// 将子智能体 profile 的模型覆盖配置持久化到磁盘。
+#[tauri::command]
+pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Result<(), String> {
+    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
+    path.push("com.loch.aio");
+    if !path.exists() {
+        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    }
+    path.push("profile-model-overrides.json");
+    let file = ProfileModelOverridesFile {
+        version: 1,
+        updated_at: {
+            use std::time::SystemTime;
+            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let secs = dur.as_secs();
+            let tm = secs_to_date_parts(secs);
+            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+        },
+        overrides,
+    };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Basic epoch-to-(year,month,day,hour,min,sec) conversion.
+/// Approximate — good enough for file metadata.
+fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
+    const SECS_PER_DAY: u64 = 86400;
+    let days = secs / SECS_PER_DAY;
+    let time_secs = secs % SECS_PER_DAY;
+    let hours = time_secs / 3600;
+    let mins = (time_secs % 3600) / 60;
+    let s = time_secs % 60;
+    // Simple Gregorian: days since 1970-01-01
+    let mut y = 1970u64;
+    let mut remaining = days;
+    loop {
+        let days_in_year = if is_leap(y) { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let month_days = if is_leap(y) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut m = 1u64;
+    for &md in &month_days {
+        if remaining < md {
+            break;
+        }
+        remaining -= md;
+        m += 1;
+    }
+    (y, m, remaining + 1, hours, mins, s)
+}
+
+fn is_leap(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+}
+
+// ====== Custom Subagent Profiles (CRUD) ======
+use crate::core::models::CustomSubagentProfile;
+
+use crate::core::models::CustomSubagentProfilesFile;
+
+
+fn custom_profiles_path() -> Result<std::path::PathBuf, String> {
+    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
+    path.push("com.loch.aio");
+    path.push("custom-subagent-profiles.json");
+    Ok(path)
+}
+
+///
+/// 从磁盘加载所有自定义子智能体配置文件。
+/// 文件不存在或损坏时返回空 vec（不视为错误，仅无自定义配置）。
+#[tauri::command]
+pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, String> {
+    let path = custom_profiles_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+    let file: CustomSubagentProfilesFile =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    Ok(file.profiles)
+}
+
+///
+/// 保存（插入或更新）一个自定义子智能体配置文件。
+/// 按 id 去重：同名 id 覆盖，否则追加。
+#[tauri::command]
+pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<(), String> {
+    let path = custom_profiles_path()?;
+    let mut profiles: Vec<CustomSubagentProfile> = if path.exists() {
+        let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+        let file: CustomSubagentProfilesFile =
+            serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+        file.profiles
+    } else {
+        Vec::new()
+    };
+    // Upsert by id
+    if let Some(existing) = profiles.iter_mut().find(|p| p.id == profile.id) {
+        *existing = profile;
+    } else {
+        profiles.push(profile);
+    }
+    // Write back
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let file = CustomSubagentProfilesFile {
+        version: 1,
+        updated_at: {
+            use std::time::SystemTime;
+            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let secs = dur.as_secs();
+            let tm = secs_to_date_parts(secs);
+            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+        },
+        profiles,
+    };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+///
+/// 按 id 删除一个自定义子智能体配置文件。
+#[tauri::command]
+pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> {
+    let path = custom_profiles_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+    let file: CustomSubagentProfilesFile =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    let profiles: Vec<CustomSubagentProfile> = file.profiles.into_iter().filter(|p| p.id != profile_id).collect();
+    // Write back
+    let updated = CustomSubagentProfilesFile {
+        version: 1,
+        updated_at: {
+            use std::time::SystemTime;
+            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let secs = dur.as_secs();
+            let tm = secs_to_date_parts(secs);
+            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+        },
+        profiles,
+    };
+    let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}

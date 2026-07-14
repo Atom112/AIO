@@ -7,13 +7,17 @@ import { Router, Route, Navigate } from '@solidjs/router';
 import { lazy, Suspense } from 'solid-js';
 import Layout from './Layout.tsx';
 import './index.css';
-import { initMcpServers, initSkills, initProjects } from './core/store/store';
+import { initMcpServers, initSkills, initProjects, initProfileModelOverrides, initCustomSubagentProfiles } from './core/store/store';
 
 // 应用启动时初始化项目列表
 initProjects();
 // 应用启动时初始化 MCP 服务器（加载配置 + 自动连接标记为 autoStart 的 server）
 initMcpServers();
 initSkills();
+// 应用启动时初始化 per-profile 模型覆盖配置
+initProfileModelOverrides();
+// 应用启动时初始化自定义子智能体配置文件
+initCustomSubagentProfiles();
 
 const Settings = lazy(() => import('./features/settings/SettingsPage'));
 const ProviderList = lazy(() => import('./features/settings/components/ProviderList'));
@@ -22,6 +26,7 @@ const AccountSettings = lazy(() => import('./features/settings/components/Accoun
 const AppSettings = lazy(() => import('./features/settings/components/AppSettings'));
 const McpServerList = lazy(() => import('./features/settings/components/McpServerList'));
 const SkillList = lazy(() => import('./features/settings/components/SkillList'));
+const SubagentModelSettings = lazy(() => import('./features/settings/components/SubagentModelSettings'));
 const UsageSettings = lazy(() => import('./features/settings/components/UsageSettings'));
 
 render(
@@ -38,6 +43,7 @@ render(
           <Route path="/usage" component={UsageSettings} />
           <Route path="/account" component={AccountSettings} />
           <Route path="/app" component={AppSettings} />
+          <Route path="/subagent-models" component={SubagentModelSettings} />
         </Route>
       </Router>
     </Suspense>

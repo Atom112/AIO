@@ -154,6 +154,13 @@ pub fn run() {
             commands::lsp::auto_detect_ls,
             commands::lsp::list_supported_languages,
             commands::lsp::stop_all_lsp_servers,
+            // Per-Profile 模型覆盖
+            commands::config::load_profile_model_overrides,
+            commands::config::save_profile_model_overrides,
+            // 自定义子智能体配置文件
+            commands::config::list_custom_subagent_profiles,
+            commands::config::save_custom_subagent_profile,
+            commands::config::delete_custom_subagent_profile,
             // Token 计数
             utils::token_counter::count_tokens_cmd,
         ])

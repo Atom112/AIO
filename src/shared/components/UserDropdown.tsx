@@ -1,12 +1,9 @@
-import { Component, Show, createSignal, createEffect } from 'solid-js';
+import { Component, createSignal, createEffect } from 'solid-js';
 import Icon from './Icon';
 
 interface UserDropdownProps {
   avatar: string;
-  isLoggedIn: boolean;
   onEditAvatar: () => void;
-  onLoginClick: () => void;
-  onLogout: () => void;
 }
 
 const UserDropdown: Component<UserDropdownProps> = (props) => {
@@ -42,16 +39,6 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
           <Icon src="/icons/app-logo/camera.svg" class="w-4 h-4" />
           更换头像
         </div>
-        <Show when={props.isLoggedIn}
-          fallback={<div class="flex items-center gap-2.5 p-2.5 text-[13px] rounded-md transition-all text-white/70 hover:bg-pri-10 hover:text-white" onClick={props.onLoginClick}><Icon src="/icons/app-logo/user-profile.svg" class="w-4 h-4" />登录账号</div>}>
-          <div class="flex items-center gap-2.5 p-2.5 text-[13px] rounded-md transition-all text-white/70 hover:bg-pri-10 hover:text-white" style="color: rgba(224,128,144,0.8);"
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(224,128,144,0.1)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            onClick={props.onLogout}>
-            <Icon src="/icons/app-logo/logout.svg" class="w-4 h-4" />
-            退出登录
-          </div>
-        </Show>
       </div>
     </div>
   );

@@ -69,14 +69,6 @@ export default {
             filter: 'blur(0)'
           },
         },
-        menuEnter: {
-          '0%': { opacity: '0', transform: 'translateY(-8px) scale(0.95)' },
-          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
-        },
-        menuExit: {
-          '0%': { opacity: '1', transform: 'translateY(0) scale(1)' },
-          '100%': { opacity: '0', transform: 'translateY(-8px) scale(0.95)' },
-        },
         'fade-in': {
           '0%': { opacity: '0', transform: 'scale(0.9)' },
           '100%': { opacity: '1', transform: 'scale(1)' },
@@ -106,10 +98,6 @@ export default {
           from: { opacity: '0', transform: 'translateY(6px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
-        dropdownIn: {
-          from: { opacity: '0', transform: 'translateY(-6px) scale(0.96)' },
-          to: { opacity: '1', transform: 'translateY(0) scale(1)' },
-        },
         thinkIconPulse: {
           '0%, 100%': { opacity: '0.7' },
           '50%': { opacity: '1' },
@@ -129,10 +117,6 @@ export default {
         stepCardPulse: {
           '0%, 100%': { borderLeftColor: 'var(--step-border-color)' },
           '50%': { borderLeftColor: 'rgba(var(--primary-rgb), 0.8)' },
-        },
-        reasoningPopupIn: {
-          from: { opacity: '0', transform: 'translateY(6px) scale(0.96)' },
-          to: { opacity: '1', transform: 'translateY(0) scale(1)' },
         },
         toolApprovalIn: {
           from: { opacity: '0', transform: 'translateY(-8px)' },
@@ -169,8 +153,6 @@ export default {
       },
       animation: {
         'message-in': 'message-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
-        'menu-enter': 'menuEnter 0.2s ease-out forwards',
-        'menu-exit': 'menuExit 0.2s ease-in forwards',
         'fade-in': 'fade-in 0.2s ease-out forwards',
         // ======= Moved from index.css =======
         'context-menu-in': 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
@@ -179,13 +161,11 @@ export default {
         'modal-in': 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
         'toast-in': 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
         'row-in': 'rowIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) backwards',
-        'dropdown-in': 'dropdownIn 0.15s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
         'think-icon-pulse': 'thinkIconPulse 2s ease-in-out infinite',
         'think-icon-spin': 'thinkIconSpin 2.4s linear infinite',
         'agent-process-pulse': 'agentProcessIconPulse 2s ease-in-out infinite',
         'agent-process-spin': 'agentProcessIconSpin 2.4s linear infinite',
         'step-card-pulse': 'stepCardPulse 2s ease-in-out infinite',
-        'reasoning-popup-in': 'reasoningPopupIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
         'tool-approval-in': 'toolApprovalIn 0.2s ease-out',
         'cmd-palette-fade-in': 'commandPaletteFadeIn 0.12s ease-out',
         'cmd-palette-slide-in': 'commandPaletteSlideIn 0.15s cubic-bezier(0.16, 1, 0.3, 1)',

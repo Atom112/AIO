@@ -5,7 +5,6 @@
 //! 2. 注册暴露给前端调用的 Rust 命令（Commands）。
 //! 3. 监听程序窗口事件以执行清理任务（如关闭本地引擎进程）。
 
-mod cloud_backend;
 mod commands;
 mod core;
 pub mod mcp_fs_server;
@@ -84,13 +83,6 @@ pub fn run() {
             commands::llm::generate_topic_title,
             commands::llm::get_usage_summary,
             commands::llm::get_usage_summary_by_model,
-            // 云端后端鉴权（集中在 cloud_backend 模块）
-            cloud_backend::auth::login_to_backend,
-            cloud_backend::auth::register_to_backend,
-            cloud_backend::auth::validate_token,
-            cloud_backend::auth::sync_avatar_to_backend,
-            cloud_backend::auth::logout_clear,
-            cloud_backend::auth::read_auth_token,
             commands::config::clear_local_avatar_cache,
             commands::config::read_avatar_source,
             commands::update::check_app_update,

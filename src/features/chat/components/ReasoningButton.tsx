@@ -58,41 +58,46 @@ const ReasoningButton: Component = () => {
                 <Icon name={current().iconName} size={15} class="flex items-center justify-center shrink-0" />
                 <span class="leading-none">{current().label}</span>
             </button>
-
-            <Show when={open()}>
-                <div class="reasoning-popup" onClick={(e) => e.stopPropagation()}>
-                    <div class="px-3 pt-2 pb-2.5 border-b border-b-white/[0.05]">
-                        <div class="flex items-center gap-2 text-[13px] font-semibold mb-1 text-white/85">
-                            <Icon name="brain" size={14} />
-                            <span>推理强度</span>
-                        </div>
-                        <div class="text-[11px] text-white/40 leading-[1.5] pl-[22px]">控制模型是否以及如何深入思考后再回答</div>
+            <div
+                class="absolute left-0 bottom-full mb-2 w-[280px] rounded-xl p-1.5 z-[1500] transition-all duration-150 ease-out origin-bottom"
+                style="background: var(--acrylic-bg); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--acrylic-border); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);"
+                classList={{
+                    'invisible opacity-0 scale-95 -translate-y-1 pointer-events-none': !open(),
+                    'visible opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div class="px-3 pt-2 pb-2.5 border-b border-b-white/[0.05]">
+                    <div class="flex items-center gap-2 text-[13px] font-semibold mb-1 text-white/85">
+                        <Icon name="brain" size={14} />
+                        <span>推理强度</span>
                     </div>
-                    <div class="flex flex-col gap-0.5 pt-1.5 pb-1">
-                        <For each={LEVELS}>
-                            {(opt) => (
-                                <button
-                                    type="button"
-                                    class="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md border-none cursor-pointer text-left transition-all duration-150 bg-transparent text-white/70 hover:bg-white/[0.05] hover:text-white/90"
-                                    classList={{ 'is-selected': reasoningLevel() === opt.value }}
-                                    onClick={() => choose(opt.value)}
-                                >
-                                    <span class="flex items-center justify-center w-7 h-7 rounded-md shrink-0 bg-white/[0.05] text-white/60">
-                                        <Icon name={opt.iconName} size={14} />
-                                    </span>
-                                    <span class="flex flex-col grow min-w-0">
-                                        <span class="text-[12.5px] font-semibold leading-tight">{opt.label}</span>
-                                        <span class="text-[10.5px] text-white/40 leading-[1.4] mt-0.5">{opt.desc}</span>
-                                    </span>
-                                    <Show when={reasoningLevel() === opt.value}>
-                                        <Icon name="check" size={13} class="shrink-0 text-white/95 block" />
-                                    </Show>
-                                </button>
-                            )}
-                        </For>
-                    </div>
+                    <div class="text-[11px] text-white/40 leading-[1.5] pl-[22px]">控制模型是否以及如何深入思考后再回答</div>
                 </div>
-            </Show>
+                <div class="flex flex-col gap-0.5 pt-1.5 pb-1">
+                    <For each={LEVELS}>
+                        {(opt) => (
+                            <button
+                                type="button"
+                                class="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md border-none cursor-pointer text-left transition-all duration-150 bg-transparent text-white/70 hover:bg-white/[0.05] hover:text-white/90"
+                                classList={{ 'is-selected': reasoningLevel() === opt.value }}
+                                onClick={() => choose(opt.value)}
+                            >
+                                <span class="flex items-center justify-center w-7 h-7 rounded-md shrink-0 bg-white/[0.05] text-white/60">
+                                    <Icon name={opt.iconName} size={14} />
+                                </span>
+                                <span class="flex flex-col grow min-w-0">
+                                    <span class="text-[12.5px] font-semibold leading-tight">{opt.label}</span>
+                                    <span class="text-[10.5px] text-white/40 leading-[1.4] mt-0.5">{opt.desc}</span>
+                                </span>
+                                <Show when={reasoningLevel() === opt.value}>
+                                    <Icon name="check" size={13} class="shrink-0 text-white/95 block" />
+                                </Show>
+                            </button>
+                        )}
+                    </For>
+                </div>
+            </div>
         </div>
     );
 };

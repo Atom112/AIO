@@ -22,7 +22,6 @@ initCustomSubagentProfiles();
 const Settings = lazy(() => import('./features/settings/SettingsPage'));
 const ProviderList = lazy(() => import('./features/settings/components/ProviderList'));
 const ProviderDetail = lazy(() => import('./features/settings/ProviderDetailPage'));
-const AccountSettings = lazy(() => import('./features/settings/components/AccountSettings'));
 const AppSettings = lazy(() => import('./features/settings/components/AppSettings'));
 const McpServerList = lazy(() => import('./features/settings/components/McpServerList'));
 const SkillList = lazy(() => import('./features/settings/components/SkillList'));
@@ -41,7 +40,6 @@ render(
           <Route path="/mcp" component={McpServerList} />
           <Route path="/skills" component={SkillList} />
           <Route path="/usage" component={UsageSettings} />
-          <Route path="/account" component={AccountSettings} />
           <Route path="/app" component={AppSettings} />
           <Route path="/subagent-models" component={SubagentModelSettings} />
         </Route>

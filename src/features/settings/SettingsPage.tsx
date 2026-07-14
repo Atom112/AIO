@@ -1,5 +1,6 @@
 import { Component, JSX, Show } from 'solid-js';
 import { A, useLocation } from '@solidjs/router';
+import { Transition } from 'solid-transition-group';
 import Icon from '../../shared/components/Icon';
 
 /**
@@ -20,7 +21,6 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         { id: 'mcp', path: '/settings/mcp', label: 'MCP 服务器', icon: <Icon src="/icons/app-logo/mcp.svg" class="w-5 h-5" /> },
         { id: 'skills', path: '/settings/skills', label: 'Skill 管理', icon: <Icon src="/icons/app-logo/prompt.svg" class="w-5 h-5" /> },
         { id: 'usage', path: '/settings/usage', label: '使用量', icon: <Icon src="/icons/app-logo/chart.svg" class="w-5 h-5" /> },
-        { id: 'account', path: '/settings/account', label: '账号信息', icon: <Icon src="/icons/app-logo/account.svg" class="w-5 h-5" /> },
         { id: 'subagent-models', path: '/settings/subagent-models', label: '子智能体模型', icon: <Icon name="sparkles" class="w-5 h-5" /> },
         { id: 'app', path: '/settings/app', label: '应用信息', icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" /> },
     ];
@@ -69,9 +69,11 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
             </Show>
 
             {/* 主内容区 */}
-            <div class="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
-                {props.children}
-            </div>
+            <Transition name="subpage-fade">
+                <div class="flex-1 overflow-y-auto overflow-x-hidden min-w-0" key={location.pathname}>
+                    {props.children}
+                </div>
+            </Transition>
         </div>
     );
 };

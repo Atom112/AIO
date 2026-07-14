@@ -358,7 +358,6 @@ pub fn delete_matching(app: &AppHandle, prefix: &str) -> Result<()> {
 pub mod accounts {
     use sha2::{Digest, Sha256};
 
-    pub const AUTH_TOKEN: &str = "auth-token";
     pub const APP_API_KEY: &str = "app-api-key";
 
     pub fn provider_key(id: &str) -> String {

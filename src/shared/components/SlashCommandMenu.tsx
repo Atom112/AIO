@@ -263,13 +263,16 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     // ---- 渲染 ----
 
     return (
-        <Show when={open() && filteredCommands().length > 0}>
-            <Portal>
-                <div
-                    ref={menuRef}
-                    class="slash-command-menu"
-                    style={menuStyle()}
-                >
+        <Portal>
+            <div
+                ref={menuRef}
+                class="slash-command-menu transition-all duration-100 ease-out"
+                style={menuStyle()}
+                classList={{
+                    'invisible opacity-0 translate-y-1 pointer-events-none': !(open() && filteredCommands().length > 0),
+                    'visible opacity-100 translate-y-0 pointer-events-auto': open() && filteredCommands().length > 0,
+                }}
+            >
                 <For each={filteredCommands()}>
                     {(cmd, idx) => {
                         const isSelected = () => idx() === selectedIndex();
@@ -291,8 +294,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
                     }}
                 </For>
             </div>
-            </Portal>
-        </Show>
+        </Portal>
     );
 };
 

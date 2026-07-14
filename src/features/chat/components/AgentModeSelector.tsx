@@ -27,6 +27,7 @@ const MODES: ModeOption[] = [
     { value: 'normal', label: '普通',   desc: '修改文件前向用户确认',            icon: 'check-circle' },
     { value: 'auto',   label: '自动',   desc: '自主迭代直至目标完成',            icon: 'refresh' },
     { value: 'plan',   label: 'Plan',   desc: '先做调研，后列出实现方案',        icon: 'document' },
+    { value: 'workflow', label: '工作流', desc: '强制拆解任务为工作流并自动执行', icon: 'layers' },
 ];
 
 const MODE_COLORS: Record<string, string> = {
@@ -34,6 +35,7 @@ const MODE_COLORS: Record<string, string> = {
     normal: 'rgba(124,217,160,0.7)',
     auto:   'rgba(224,192,96,0.7)',
     plan:   'rgba(160,124,217,0.7)',
+    workflow: 'rgba(255,183,77,0.7)',
 };
 
 const AgentModeSelector: Component = () => {
@@ -41,6 +43,7 @@ const AgentModeSelector: Component = () => {
     const [showAutoWarning, setShowAutoWarning] = createSignal(false);
     let containerRef: HTMLDivElement | undefined;
     let autoModeConfirmed = false; // 会话内记住，确认一次后不再弹窗
+    let pendingMode: AgentMode = 'auto'; // 当前正在确认的模式
 
     const asst = () => datas.assistants.find(a => a.id === currentAssistantId()) as any;
     const currentMode = (): AgentMode => asst()?.agentMode || 'off';
@@ -57,10 +60,10 @@ const AgentModeSelector: Component = () => {
 
     onMount(() => document.addEventListener('mousedown', onDocClick));
     onCleanup(() => document.removeEventListener('mousedown', onDocClick));
-
     const choose = async (mode: AgentMode) => {
-        // 切换到自动模式时，先展示风险提醒弹窗
-        if (mode === 'auto' && !autoModeConfirmed) {
+        // 切换到自动模式或工作流模式时，先展示风险提醒弹窗
+        if ((mode === 'auto' || mode === 'workflow') && !autoModeConfirmed) {
+            pendingMode = mode;
             setOpen(false);
             setShowAutoWarning(true);
             return;
@@ -118,46 +121,48 @@ const AgentModeSelector: Component = () => {
             </button>
 
             {/* 下拉面板 */}
-            <Show when={open()}>
-                <div
-                    class="absolute bottom-full left-0 mb-2 z-[41] w-[260px] rounded-xl overflow-hidden"
-                    style="background: rgba(18,22,35,0.96); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(12px); box-shadow: 0 -8px 30px rgba(0,0,0,0.4);"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
-                        style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
-                        Agent 工作模式
-                    </div>
-                    <div class="py-1">
-                        <For each={MODES}>
-                            {(opt) => (
-                                <button
-                                    type="button"
-                                    class="w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer border-none"
-                                    style="color: rgba(255,255,255,0.75);"
-                                    classList={{ '!bg-[rgba(124,154,191,0.12)]': currentMode() === opt.value }}
-                                    onClick={() => choose(opt.value)}
-                                    onMouseEnter={(e) => {
-                                        if (currentMode() !== opt.value) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        if (currentMode() !== opt.value) e.currentTarget.style.background = 'transparent';
-                                    }}
-                                >
-                                    <Icon name={opt.icon} size={14} class="mt-0.5 shrink-0" style={`color: ${MODE_COLORS[opt.value]}`} />
-                                    <div class="flex-1 min-w-0">
-                                        <div class="text-sm font-medium">{opt.label}</div>
-                                        <div class="text-[11px] mt-0.5" style="color: rgba(255,255,255,0.35);">{opt.desc}</div>
-                                    </div>
-                                    <Show when={currentMode() === opt.value}>
-                                        <Icon name="check" size={13} class="shrink-0" style="color: rgba(124,154,191,0.8);" />
-                                    </Show>
-                                </button>
-                            )}
-                        </For>
-                    </div>
+            <div
+                class="absolute bottom-full left-0 mb-2 z-[41] w-[260px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
+                style="background: rgba(18,22,35,0.96); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(12px); box-shadow: 0 -8px 30px rgba(0,0,0,0.4);"
+                classList={{
+                    'invisible opacity-0 scale-95 -translate-y-1 pointer-events-none': !open(),
+                    'visible opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
+                    style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
+                    Agent 工作模式
                 </div>
-            </Show>
+                <div class="py-1">
+                    <For each={MODES}>
+                        {(opt) => (
+                            <button
+                                type="button"
+                                class="w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer border-none"
+                                style="color: rgba(255,255,255,0.75);"
+                                classList={{ '!bg-[rgba(124,154,191,0.12)]': currentMode() === opt.value }}
+                                onClick={() => choose(opt.value)}
+                                onMouseEnter={(e) => {
+                                    if (currentMode() !== opt.value) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (currentMode() !== opt.value) e.currentTarget.style.background = 'transparent';
+                                }}
+                            >
+                                <Icon name={opt.icon} size={14} class="mt-0.5 shrink-0" style={`color: ${MODE_COLORS[opt.value]}`} />
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm font-medium">{opt.label}</div>
+                                    <div class="text-[11px] mt-0.5" style="color: rgba(255,255,255,0.35);">{opt.desc}</div>
+                                </div>
+                                <Show when={currentMode() === opt.value}>
+                                    <Icon name="check" size={13} class="shrink-0" style="color: rgba(124,154,191,0.8);" />
+                                </Show>
+                            </button>
+                        )}
+                    </For>
+                </div>
+            </div>
 
             {/* 自动模式风险提醒弹窗 */}
             <Show when={showAutoWarning()}>
@@ -202,15 +207,14 @@ const AgentModeSelector: Component = () => {
                             <button
                                 type="button"
                                 class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-none"
-                                style="background: rgba(224,192,96,0.2); color: rgba(224,192,96,0.9); border: 1px solid rgba(224,192,96,0.3);"
                                 onClick={async () => {
                                     autoModeConfirmed = true;
                                     setShowAutoWarning(false);
                                     // 执行实际的模式切换
-                                    await choose('auto');
+                                    await choose(pendingMode);
                                 }}
                             >
-                                我已知晓，进入自动模式
+                                我已知晓，进入{ (pendingMode as AgentMode) === 'workflow' ? '工作流' : '自动' }模式
                             </button>
                         </div>
                     </div>

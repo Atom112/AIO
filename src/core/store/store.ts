@@ -115,7 +115,7 @@ export interface Topic {
 }
 
 /** Agent 执行模式 */
-export type AgentMode = 'off' | 'normal' | 'auto' | 'plan';
+export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
 
  /* 助手接口，定义 AI 助手的数据结构 */
 export interface Assistant {
@@ -147,13 +147,6 @@ export interface ActivatedModel {
     engine_type?: string;   // 本地推理引擎类型标识，如 "llama_cpp", "vllm"
 }
 
- /* 用户接口，定义用户账户信息 */
-export interface User {
-    id: string;             // 用户唯一标识符
-    username: string;       // 用户登录用户名
-    nickname?: string;      // 用户昵称（可选）
-    token: string;          // 用户身份验证令牌
-}
 
  /** 项目接口 */
 export interface Project {
@@ -701,14 +694,10 @@ export const loadAvatarFromPath = async (input: string): Promise<string> => {
  * 全局核心数据存储
  * @property assistants - 所有助手的数组
  * @property activatedModels - 当前激活的模型列表，用于模型选择器
- * @property user - 当前登录用户信息
- * @property isLoggedIn - 用户登录状态标志
  */
 export const [datas, setDatas] = createStore({
     assistants: [] as any[],
     activatedModels: [] as ActivatedModel[],
-    user: null as User | null,
-    isLoggedIn: false
 });
 
 // ====== MCP 状态 ======
@@ -915,29 +904,6 @@ export const deleteAssistantFile = async (id: string) => {
     }
 };
 
-/**
- * 清除用户登录状态
- * H5: token 已存于 Rust keyring，这里仅清前端 store
- */
-export const clearUserStatus = () => {
-    setDatas('user', null);
-    setDatas('isLoggedIn', false);
-};
-
-/**
- * 执行用户登出操作
- * H5: 同步清 Rust 侧 keyring
- */
-export const logout = async () => {
-    setDatas('user', null);
-    setDatas('isLoggedIn', false);
-    try {
-        await invoke('logout_clear');
-    } catch (e) {
-        console.warn('清 Rust 侧 token 失败:', e);
-    }
-    setGlobalUserAvatar('/icons/app-logo/user.svg');
-};
 
 // 监听主题颜色变化并同步到 CSS 变量和本地存储
 createEffect(() => {
@@ -1001,3 +967,27 @@ export const resolveAssistantSkills = (assistant: Assistant | undefined | null):
         .map(id => skillMap[id])
         .filter((skill): skill is SkillConfig => Boolean(skill));
 };
+
+
+// ====== 工作流状态（Workflow Visualization） ======
+
+/** 工作流步骤状态 */
+export interface WorkflowStepState {
+    stepId: string;
+    profileId: string;
+    name: string;
+    status: 'pending' | 'running' | 'completed' | 'failed';
+    startedAt?: number;
+    duration?: number;
+}
+
+/** 工作流整体状态 */
+export interface WorkflowState {
+    workflowId: string;
+    title: string;
+    steps: WorkflowStepState[];
+    active: boolean;
+}
+
+/** 当前活跃的工作流状态，null 表示无活跃工作流 */
+export const [workflowState, setWorkflowState] = createSignal<WorkflowState | null>(null);

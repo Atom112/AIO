@@ -127,6 +127,7 @@ export interface Assistant {
     skillIds?: string[];    // 助手启用的 Skill id 列表；空/未设置 = 不注入 Skill 指令
     projectId?: string;     // 助手所属的项目 ID；未设置 = 全局助手
     agentMode?: AgentMode;  // Agent 执行模式；'off' = 对话模式
+    assistantType?: 'chat' | 'project'; // 助理类型：chat = 聊天模式，project = 项目助理
     topics: Topic[];        // 助手关联的话题列表
 }
 
@@ -219,6 +220,38 @@ export const initProjects = async () => {
         console.warn('加载项目列表失败:', e);
     }
 };
+
+/** 判断当前是否是聊天模式（纯对话，无工具调用） */
+export const isChatMode = (): boolean => {
+  const asst = datas.assistants.find(a => a.id === currentAssistantId());
+  return asst?.agentMode === 'off' && !asst?.projectId;
+};
+
+/** 获取或创建项目对应的助理 ID */
+export const ensureProjectAssistant = async (projectId: string): Promise<string> => {
+  let asst = datas.assistants.find(a => a.projectId === projectId);
+  if (!asst) {
+    const project = projects().find(p => p.id === projectId);
+    if (!project) throw new Error('Project not found');
+    asst = {
+      id: `asst-${projectId}`,
+      name: project.name,
+      prompt: '',
+      agentMode: 'normal',
+      assistantType: 'project',
+      projectId,
+      mcpServerIds: ['__aio-filesystem__'],
+      skillIds: [],
+      topics: [{ id: Date.now().toString(), name: '默认话题', history: [], summary: '' }],
+    };
+    setDatas('assistants', prev => [...prev, asst!]);
+    await saveSingleAssistantToBackend(asst.id);
+  }
+  return asst.id;
+};
+
+/** 键盘快捷键触发的"新建项目"弹窗信号 */
+export const [showProjectCreateModal, setShowProjectCreateModal] = createSignal(false);
 
 /** 全局用户头像状态信号，默认使用系统默认头像 */
 export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-logo/user.svg');

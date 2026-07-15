@@ -168,6 +168,14 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         CREATE INDEX IF NOT EXISTS idx_usage_log_topic ON usage_log(topic_id);"
     ).map_err(|e| e.to_string())?;
 
+    // 迁移：助理类型（chat = 对话模式专属，project = 项目助理）
+    add_column_if_missing(&conn, "assistants", "assistant_type", "TEXT NOT NULL DEFAULT 'project'")?;
+    // 将 default-assistant-id 标记为 chat 类型
+    conn.execute(
+        "UPDATE assistants SET assistant_type = 'chat' WHERE id = 'default-assistant-id' AND (assistant_type IS NULL OR assistant_type != 'chat')",
+        [],
+    ).map_err(|e| e.to_string())?;
+
     Ok(conn)
 }
 

@@ -110,7 +110,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
     // 1. 加载助手
     let mut stmt = conn
-        .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode FROM assistants ORDER BY id")
+        .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type FROM assistants ORDER BY id")
         .map_err(|e| e.to_string())?;
     let assistant_iter = stmt
         .query_map([], |row| {
@@ -136,6 +136,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                 skill_ids,
                 project_id,
                 agent_mode,
+                assistant_type: row.get(8)?,
                 topics: vec![],
             })
         })
@@ -243,9 +244,9 @@ pub async fn save_assistant(
         .trim_matches('"')
         .to_string();
     conn.execute(
-        "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4, mcp_server_ids=?5, skill_ids=?6, project_id=?7, agent_mode=?8",
-        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id, mcp_ids_json, skill_ids_json, assistant.project_id, agent_mode_str],
+        "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4, mcp_server_ids=?5, skill_ids=?6, project_id=?7, agent_mode=?8, assistant_type=?9",
+        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id, mcp_ids_json, skill_ids_json, assistant.project_id, agent_mode_str, assistant.assistant_type],
     )
     .map_err(|e| e.to_string())?;
 

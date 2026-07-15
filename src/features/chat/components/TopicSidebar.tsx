@@ -116,7 +116,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
     return (
         <div
-            class="relative flex flex-col flex-shrink-0 min-w-0"
+            class="relative flex flex-col flex-shrink-0 min-w-0 z-10"
             style={`width: ${props.isCollapsed ? '0%' : `${props.width}%`}; padding: ${props.isCollapsed ? '0' : '15px'}; background: ${props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.25)'}; backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; -webkit-backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; border: ${props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.06)'}; border-radius: 12px; box-shadow: ${props.isCollapsed ? 'none' : '0 8px 32px rgba(0, 0, 0, 0.2)'}; transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
         >
             {/* 调整大小把手（左侧） */}
@@ -124,10 +124,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                 class="absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group"
                 onMouseDown={(e) => props.onResize(e as MouseEvent)}
             >
-                <div
-                    class="w-[3px] h-[calc(100%-40px)] rounded-full transition-all duration-300"
-                    style={`background: ${props.isResizing ? 'rgba(124,154,191,0.4)' : 'rgba(255,255,255,0.08)'}; box-shadow: ${props.isResizing ? '0 0 8px rgba(124,154,191,0.3)' : 'none'};`}
-                ></div>
                 <div
                     class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
                     style="background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"

@@ -2,7 +2,7 @@ import { Component, For, Show, Setter, createSignal, createEffect, createMemo, o
 import Markdown from '../../../shared/components/Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, type AgentMode } from '../../../core/store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, isChatMode, type AgentMode } from '../../../core/store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
@@ -16,7 +16,6 @@ import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
 import TokenStatsBar from './TokenStatsBar';
 import { totalErrors, totalWarnings, problemsPanelVisible, setProblemsPanelVisible, hasDiagnostics } from '../../../core/store/diagnostics';
 import AgentModeSelector from './AgentModeSelector';
-import ProjectSelector from './ProjectSelector';
 import WelcomeScreen from './WelcomeScreen';
 
 interface ChatInterfaceProps {
@@ -641,8 +640,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             <div class="bg-transparent flex flex-col relative w-full z-10">
                 {/* Agent 模式状态栏 */}
                 <Show when={(() => {
-                  const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
-                  return asst?.agentMode && asst.agentMode !== 'off' && currentProjectId();
+                  const asst = datas.assistants.find(a => a.id === currentAssistantId());
+                  return !isChatMode();
                 })()}>
                   {(() => {
                     const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
@@ -696,7 +695,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <div class="flex items-center justify-between border-t pt-2" style="border-color: rgba(255,255,255,0.04);">
                         <div class="flex items-center gap-2">
                             <ModelSelector />
-                            <AgentModeSelector />
+                            <Show when={!isChatMode()}>
+                              <AgentModeSelector />
+                            </Show>
                             <ReasoningButton />
                             <WebSearchButton />
 
@@ -756,10 +757,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                         </span>
                                     </Show>
                                 </button>
-                            </Show>
-
-                            <Show when={currentAgentMode() !== 'off'}>
-                                <ProjectSelector />
                             </Show>
                         </div>
 

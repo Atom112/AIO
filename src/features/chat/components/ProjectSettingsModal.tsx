@@ -12,23 +12,21 @@ import { transportLabel, statusLabel, statusColor } from '../../../core/utils/mc
 import Icon from '../../../shared/components/Icon';
 import Switch from '../../../shared/components/Switch';
 
-interface AssistantSettingsModalProps {
+interface ProjectSettingsModalProps {
     show: boolean;
     assistantId: string | null;
     onClose: () => void;
 }
 
 /**
- * 助手设置弹窗
- * 集中管理单个助手的：名称、绑定模型、系统提示词。
- * - 名称：blur/Enter 即时存（复用 AssistantSidebar 的 rename 模式）
+ * 项目设置弹窗
+ * 集中管理单个项目的：名称、绑定模型、MCP 服务器、Skill。
+ * - 名称：blur/Enter 即时存
  * - 模型：点击即时生效（setAssistantModel 立即同步 selectedModel + 持久化 + 必要时拉起本地引擎）
- * - 系统提示词：显式「保存」按钮持久化（沿用原 PromptModal 的交互习惯）
  */
-const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) => {
+const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
 
     const [nameText, setNameText] = createSignal<string>('');
-    const [promptText, setPromptText] = createSignal<string>('');
     const [isExiting, setIsExiting] = createSignal(false);
     const [isEntering, setIsEntering] = createSignal(true);
 
@@ -36,12 +34,11 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
     const asst = () => datas.assistants.find((a: any) => a.id === props.assistantId) as
         | { id: string; name: string; prompt: string; modelId?: string; mcpServerIds?: string[]; skillIds?: string[]; agentMode?: string } | undefined;
 
-    /** 弹窗打开时同步名称与提示词到本地编辑态，并触发入场动画 */
+    /** 弹窗打开时同步名称到本地编辑态，并触发入场动画 */
     createEffect(() => {
         if (props.show && props.assistantId) {
             const a = asst();
             setNameText(a?.name ?? '');
-            setPromptText(a?.prompt ?? '');
             setIsEntering(true);
             setTimeout(() => setIsEntering(false), 0);
         }
@@ -55,23 +52,13 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
         }, 300);
     };
 
-    /** 即时保存助手名称 */
+    /** 即时保存项目名称 */
     const saveName = async () => {
         const id = props.assistantId;
         const newName = nameText().trim();
         if (!id || !newName) return;
         setDatas('assistants', a => a.id === id, 'name', newName);
         await saveSingleAssistantToBackend(id);
-    };
-
-    /** 保存系统提示词并关闭 */
-    const handleSavePrompt = async () => {
-        const id = props.assistantId;
-        if (id) {
-            setDatas('assistants', a => a.id === id, 'prompt', promptText());
-            await saveSingleAssistantToBackend(id);
-        }
-        handleClose();
     };
 
     /** 选中某模型：立即绑定 + 同步全局 + 持久化（本地模型顺带拉起引擎） */
@@ -157,8 +144,6 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
      * 判断某模型是否为「当前选中」。
      * 统一用复合键 modelKey 精确匹配：助手绑定 modelId 时按其匹配，
      * 未绑定时回退到当前生效模型（resolveAssistantModel）的键。
-     * 复合键为 `model_id@api_url`（本地模型为纯 model_id），可区分同名异源模型，
-     * 彻底避免「选 B 后 A 仍高亮」的问题。
      */
     const isSelected = (model: ActivatedModel): boolean => {
         const bound = asst()?.modelId;
@@ -188,19 +173,19 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                     class="modal-panel bg-dark-500 text-[#e0e0e0] p-6 rounded-lg w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
                 >
                     <div class="flex justify-between items-center border-b border-[#444] pb-3">
-                        <h2 class='m-0 text-xl'>助手设置</h2>
+                        <h2 class='m-0 text-xl'>项目设置</h2>
                         <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80">&times;</button>
                     </div>
 
                     {/* 名称 */}
                     <div class="flex flex-col gap-1.5">
-                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">助手名称</label>
+                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">项目名称</label>
                         <input
                             value={nameText()}
                             onInput={(e) => setNameText(e.currentTarget.value)}
                             onBlur={() => saveName()}
                             onKeyDown={(e) => e.key === 'Enter' && saveName()}
-                            placeholder="例如：翻译助手"
+                            placeholder="例如：我的项目"
                             class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[#e0e0e0] text-sm focus:outline-none focus:border-pri-50"
                         />
                     </div>
@@ -327,7 +312,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                         <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                             MCP 服务器
                             <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
-                                仅对当前助手生效
+                                仅对当前项目生效
                             </span>
                         </label>
                         <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
@@ -364,9 +349,6 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                                 </div>
                             </Show>
                         </div>
-                        <div class="text-[11px]" style="color: rgba(255,255,255,0.35);">
-                            勾选决定该助手可使用哪些服务器；连接状态仍在 MCP 服务器管理页统一控制。
-                        </div>
                     </div>
 
                     {/* Skill */}
@@ -374,7 +356,7 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                         <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                             Skill
                             <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
-                                仅对当前助手生效
+                                仅对当前项目生效
                             </span>
                         </label>
                         <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
@@ -404,30 +386,11 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
                                 </div>
                             </Show>
                         </div>
-                        <div class="text-[11px]" style="color: rgba(255,255,255,0.35);">
-                            已启用 Skill 会作为额外系统指令注入当前助手的每次对话。
-                        </div>
-                    </div>
-
-                    {/* 系统提示词 */}
-                    <div class="flex flex-col gap-1.5">
-                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">系统提示词</label>
-                        <textarea
-                            rows={6}
-                            value={promptText()}
-                            onInput={(e) => setPromptText(e.currentTarget.value)}
-                            placeholder="例如：你是一个乐于助人的 AI 助手。"
-                            class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[#e0e0e0] text-base font-mono resize-y box-border focus:outline-none focus:border-pri-50"
-                            style="font-family: 'JetBrains Mono', Consolas, Monaco, 'Courier New', monospace !important;"
-                        />
                     </div>
 
                     <div class="flex justify-end gap-3">
                         <button onClick={handleClose} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-dark-100 text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-dark-50">
                             关闭
-                        </button>
-                        <button onClick={handleSavePrompt} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-pri text-black rounded-lg hover:scale-105 transition-all duration-200">
-                            保存
                         </button>
                     </div>
                 </div>
@@ -436,4 +399,4 @@ const AssistantSettingsModal: Component<AssistantSettingsModalProps> = (props) =
     );
 };
 
-export default AssistantSettingsModal;
+export default ProjectSettingsModal;

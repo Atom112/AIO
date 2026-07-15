@@ -74,7 +74,7 @@ export default function ProjectCreateModal(props: Props) {
 
     return (
         <div
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+            class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60"
             onClick={props.onClose}
         >
             <div

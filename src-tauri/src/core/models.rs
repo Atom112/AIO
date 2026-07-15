@@ -256,6 +256,10 @@ pub struct Assistant {
     /// Agent 执行模式。Off = 对话模式。旧数据缺省反序列化为 Off。
     #[serde(rename = "agentMode", default)]
     pub agent_mode: AgentMode,
+    /// 助理类型（chat = 对话模式专属，project = 项目助理）
+    /// 旧数据缺省反序列化为 "project"，再通过迁移将 default-assistant-id 修正为 "chat"。
+    #[serde(rename = "assistantType", default = "default_assistant_type")]
+    pub assistant_type: String,
     #[serde(default)]
     pub topics: Vec<Topic>,
 }
@@ -596,6 +600,11 @@ impl Default for AgentMode {
     }
 }
 
+/// 旧数据无 assistant_type 时默认为 "project"
+fn default_assistant_type() -> String {
+    "project".into()
+}
+
 /// MCP server 初始化握手返回的服务端信息
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -704,6 +713,9 @@ pub struct Project {
     pub path: String,
     pub created_at: String,
     pub updated_at: String,
+    /// 该项目的对应助理 ID（创建项目时自动生成）
+    #[serde(rename = "assistantId")]
+    pub assistant_id: String,
 }
 
 /// 项目持久化索引文件（app_data_dir/projects.json）。

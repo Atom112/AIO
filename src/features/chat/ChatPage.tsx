@@ -11,6 +11,7 @@ import {
   currentProjectId, currentProject,
   profileModelOverrides, allAvailableModels, resolveProfileModel, customSubagentProfiles,
   workflowState, setWorkflowState, type WorkflowState, type WorkflowStepState,
+  isChatMode, projects, ensureProjectAssistant, showProjectCreateModal, setShowProjectCreateModal,
 } from '../../core/store/store';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import {
@@ -19,10 +20,11 @@ import {
   resolveSlashCommand,
   getSlashCommands,
 } from '../../core/shortcuts';
-import AssistantSidebar from './components/AssistantSidebar';
-import AssistantSettingsModal from './components/AssistantSettingsModal';
+import ProjectSidebar from './components/ProjectSidebar';
+import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
 import TopicSidebar from './components/TopicSidebar';
+import { Portal } from 'solid-js/web';
 import ProblemsPanel from './components/ProblemsPanel';
 import WorkflowVisualization from './components/WorkflowVisualization';
 import type { PendingApproval } from './components/ToolApprovalBubble';
@@ -63,6 +65,7 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
   mcpServerIds: currentProjectId() ? ['__aio-filesystem__'] : [],
   skillIds: [],
   projectId: currentProjectId() ?? undefined, // 关联当前项目
+  assistantType: id === DEFAULT_ASST_ID ? 'chat' : 'project',
   topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
 });
 
@@ -89,7 +92,6 @@ const ChatPage: Component = () => {
   const [isDragging, setIsDragging] = createSignal(false);                        // 是否正在拖拽文件到窗口（控制拖拽状态样式）
   const [isChangingTopic, setIsChangingTopic] = createSignal(false);              // 是否正在切换话题（控制切换动画）
   const [typingIndex, setTypingIndex] = createSignal<number | null>(null);        // 当前正在打字机效果显示的消息索引，null 表示无打字效果
-  const [editingAsstId, setEditingAsstId] = createSignal<string | null>(null);    // 当前正在编辑名称的助手 ID，null 表示无编辑中
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
   // 待用户审批的工具调用列表
@@ -798,41 +800,51 @@ const ChatPage: Component = () => {
     setIsThinking(true);
 
       try {
-        // 后端 run_agent_turn 在单个任务内自驱完成「流式→检测工具→权限/审批→执行→回填→递归」，
-        // 前端退化为纯渲染。工具/模式处理全部交给后端（plan 整轮无工具、轮数上限后端补总结轮）。
-
-        // 解析 per-profile 模型覆盖
-        const resolvedOverrides: Array<{ profileId: string; modelId: string; apiUrl: string; apiKey: string }> = [];
-        for (const [profileId, mKey] of Object.entries(profileModelOverrides())) {
-          if (!mKey) continue;
-          const mdl = allAvailableModels().find(m => modelKey(m) === mKey);
-          if (mdl) {
-            resolvedOverrides.push({
-              profileId,
-              modelId: mKey,
-              apiUrl: mdl.api_url,
-              apiKey: mdl.api_key,
-            });
+        // 聊天模式：纯对话，直接调用 call_llm_stream（无 agent 循环、无工具调用）
+        // 项目模式/Agent 模式：调用 run_agent_turn（含工具调用、子智能体等）
+        if (isChatMode()) {
+          await invoke('call_llm_stream', {
+            apiUrl: currentMdl.api_url,
+            apiKey: currentMdl.api_key,
+            model: currentMdl.model_id,
+            assistantId: asstId,
+            topicId: topicId,
+            messages: messagesForAI,
+          });
+        } else {
+          // 解析 per-profile 模型覆盖（仅 agent 模式需要）
+          const resolvedOverrides: Array<{ profileId: string; modelId: string; apiUrl: string; apiKey: string }> = [];
+          for (const [profileId, mKey] of Object.entries(profileModelOverrides())) {
+            if (!mKey) continue;
+            const mdl = allAvailableModels().find(m => modelKey(m) === mKey);
+            if (mdl) {
+              resolvedOverrides.push({
+                profileId,
+                modelId: mKey,
+                apiUrl: mdl.api_url,
+                apiKey: mdl.api_key,
+              });
+            }
           }
+
+          await invoke('run_agent_turn', {
+            apiUrl: currentMdl.api_url,
+            apiKey: currentMdl.api_key,
+            model: currentMdl.model_id,
+            assistantId: asstId,
+            topicId: topicId,
+            messages: messagesForAI,
+            mcpServerIds: currentAsst?.mcpServerIds ?? [],
+            agentMode: agentMode,
+            projectId: currentProjectId() ?? null,
+            webSearchEnabled: webSearchEnabled(),
+            profileModelOverrides: resolvedOverrides,
+            customSubagentProfiles: customSubagentProfiles(),
+          });
         }
 
-      await invoke('run_agent_turn', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        assistantId: asstId,
-        topicId: topicId,
-        messages: messagesForAI,
-        mcpServerIds: currentAsst?.mcpServerIds ?? [],
-        agentMode: agentMode,
-        projectId: currentProjectId() ?? null,
-        webSearchEnabled: webSearchEnabled(),
-        profileModelOverrides: resolvedOverrides,
-        customSubagentProfiles: customSubagentProfiles(),
-      });
-
     } catch (err) {
-      alert(err); // 调用失败时提示错误
+      alert(err);
       setIsThinking(false);
       setTypingIndex(null);
     }
@@ -861,6 +873,29 @@ const ChatPage: Component = () => {
     setCurrentAssistantId(newAsst.id);
     setCurrentTopicId(newAsst.topics[0].id);
     await saveSingleAssistantToBackend(newAsst.id);
+  };
+
+  /** 切换到聊天模式 */
+  const switchToChat = () => {
+    setCurrentAssistantId(DEFAULT_ASST_ID);
+    const asst = datas.assistants.find(a => a.id === DEFAULT_ASST_ID);
+    if (asst?.topics?.length) {
+      setCurrentTopicId(asst.topics[0].id);
+    }
+  };
+
+  /** 切换到指定项目 */
+  const switchToProject = async (projectId: string) => {
+    try {
+      const asstId = await ensureProjectAssistant(projectId);
+      setCurrentAssistantId(asstId);
+      const asst = datas.assistants.find(a => a.id === asstId);
+      if (asst?.topics?.length) {
+        setCurrentTopicId(asst.topics[0].id);
+      }
+    } catch (e) {
+      console.error('切换项目失败:', e);
+    }
   };
 
   /**
@@ -947,13 +982,13 @@ const ChatPage: Component = () => {
       handler: () => { addTopic(); },
     });
 
-    const cmdNewAssistant = registerCommand({
-      id: 'new-assistant',
-      label: '新建助手',
-      description: '创建新的 AI 助手',
+    const cmdNewProject = registerCommand({
+      id: 'new-project',
+      label: '新建项目',
+      description: '创建新的项目',
       category: 'chat',
       defaultKeys: 'Ctrl+Shift+N',
-      handler: () => { addAssistant(); },
+      handler: () => { setShowProjectCreateModal(true); },
     });
 
     const cmdStopGen = registerCommand({
@@ -969,30 +1004,55 @@ const ChatPage: Component = () => {
 
     const cmdPrevAsst = registerCommand({
       id: 'prev-assistant',
-      label: '上一个助手',
-      description: '切换到上一个助手',
+      label: '上一个',
+      description: '切换到上一个聊天或项目',
       category: 'sidebar',
       defaultKeys: 'Ctrl+[',
       handler: () => {
-        const idx = datas.assistants.findIndex((a: any) => a.id === currentAssistantId());
-        if (idx > 0) {
-          setCurrentAssistantId(datas.assistants[idx - 1].id);
-          setCurrentTopicId(datas.assistants[idx - 1].topics[0]?.id ?? '');
+        // 构建顺序: [chat, ...projects]
+        const chatIdx = 0;
+        const projList = projects();
+        const currentProjId = currentAssistant()?.projectId;
+        if (!currentProjId) {
+          // 当前是聊天模式，上一个 = 最后一个项目
+          if (projList.length > 0) {
+            const lastProj = projList[projList.length - 1];
+            void switchToProject(lastProj.id);
+          }
+        } else {
+          const idx = projList.findIndex(p => p.id === currentProjId);
+          if (idx > 0) {
+            void switchToProject(projList[idx - 1].id);
+          } else {
+            // 第一个项目，上一个 = 聊天
+            switchToChat();
+          }
         }
       },
     });
 
     const cmdNextAsst = registerCommand({
       id: 'next-assistant',
-      label: '下一个助手',
-      description: '切换到下一个助手',
+      label: '下一个',
+      description: '切换到下一个聊天或项目',
       category: 'sidebar',
       defaultKeys: 'Ctrl+]',
       handler: () => {
-        const idx = datas.assistants.findIndex((a: any) => a.id === currentAssistantId());
-        if (idx >= 0 && idx < datas.assistants.length - 1) {
-          setCurrentAssistantId(datas.assistants[idx + 1].id);
-          setCurrentTopicId(datas.assistants[idx + 1].topics[0]?.id ?? '');
+        const projList = projects();
+        const currentProjId = currentAssistant()?.projectId;
+        if (!currentProjId) {
+          // 当前是聊天模式，下一个 = 第一个项目
+          if (projList.length > 0) {
+            void switchToProject(projList[0].id);
+          }
+        } else {
+          const idx = projList.findIndex(p => p.id === currentProjId);
+          if (idx >= 0 && idx < projList.length - 1) {
+            void switchToProject(projList[idx + 1].id);
+          } else {
+            // 最后一个项目，下一个 = 聊天
+            switchToChat();
+          }
         }
       },
     });
@@ -1613,7 +1673,7 @@ const ChatPage: Component = () => {
       unregisterCommand(cmdToggleLeft);
       unregisterCommand(cmdToggleRight);
       unregisterCommand(cmdNewTopic);
-      unregisterCommand(cmdNewAssistant);
+      unregisterCommand(cmdNewProject);
       unregisterCommand(cmdStopGen);
       unregisterCommand(cmdPrevAsst);
       unregisterCommand(cmdNextAsst);
@@ -1737,16 +1797,13 @@ const ChatPage: Component = () => {
   return (
     <div class="h-full flex gap-[3px] p-[1px]" style="background: transparent;"
       classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
-      <AssistantSidebar
+      <ProjectSidebar
         width={displayLeftWidth()}
         isCollapsed={isLeftCollapsed()}
         onToggle={toggleLeft}
         onResize={(e) => !isLeftCollapsed() && startResize(e, 'left')}
-        editingAsstId={editingAsstId()}
-        setEditingAsstId={setEditingAsstId}
-        addAssistant={addAssistant}
-        onOpenSettings={(id) => setSettingsAsstId(id)}
         isResizing={isResizing()}
+        onOpenSettings={(id) => setSettingsAsstId(id)}
       />
 
       <div class="flex-1 flex flex-col min-w-0 min-h-0">
@@ -1785,11 +1842,13 @@ const ChatPage: Component = () => {
         isResizing={isResizing()}
       />
 
-      <AssistantSettingsModal
-        show={settingsAsstId() !== null}
-        assistantId={settingsAsstId()}
-        onClose={() => setSettingsAsstId(null)}
-      />
+      <Portal>
+        <ProjectSettingsModal
+          show={settingsAsstId() !== null}
+          assistantId={settingsAsstId()}
+          onClose={() => setSettingsAsstId(null)}
+        />
+      </Portal>
 
       <ProblemsPanel />
     </div>

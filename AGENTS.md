@@ -93,6 +93,7 @@ src-tauri/src/
 - Avoid `any` in new code. Define interfaces in `core/types/`.
 - Utility functions go to `core/utils/`, never duplicate logic across components.
 - **样式统一使用 Tailwind CSS 工具类编写**，避免内联样式或自定义 CSS 文件，除非确有必要。
+- **严禁在代码中使用 Emoji 字符（包括 JSX 文本、模板字符串、配置对象）。一律使用 `<Icon name="..." />` 组件替换。对于字符串上下文（`confirm()`、`alert()`），使用纯文本等价符号（`✓` / `✗` / `[!]`）。**
 
 ### Naming & Strings
 

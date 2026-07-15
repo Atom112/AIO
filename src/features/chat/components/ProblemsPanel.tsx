@@ -21,12 +21,14 @@ import {
 } from '../../../core/store/diagnostics';
 import { invoke } from '@tauri-apps/api/core';
 
+import Icon, { type IconName } from '../../../shared/components/Icon';
+
 /** 诊断严重级别对应的图标和颜色 */
-const SEVERITY_CONFIG: Record<string, { icon: string; color: string; bgColor: string }> = {
-    error: { icon: '❌', color: 'text-red-500', bgColor: 'bg-red-500/10' },
-    warning: { icon: '⚠️', color: 'text-yellow-500', bgColor: 'bg-yellow-500/10' },
-    info: { icon: 'ℹ️', color: 'text-blue-500', bgColor: 'bg-blue-500/10' },
-    hint: { icon: '💡', color: 'text-gray-400', bgColor: 'bg-gray-500/10' },
+const SEVERITY_CONFIG: Record<string, { icon: IconName; color: string; bgColor: string }> = {
+    error: { icon: 'x-circle', color: 'text-red-500', bgColor: 'bg-red-500/10' },
+    warning: { icon: 'alert-triangle', color: 'text-yellow-500', bgColor: 'bg-yellow-500/10' },
+    info: { icon: 'info', color: 'text-blue-500', bgColor: 'bg-blue-500/10' },
+    hint: { icon: 'lightbulb', color: 'text-gray-400', bgColor: 'bg-gray-500/10' },
 };
 
 /** 过滤器选项 */
@@ -62,7 +64,7 @@ const ProblemsPanel: Component = () => {
             {/* 标题栏 */}
             <div class="flex items-center justify-between px-4 py-2 border-b border-gray-700/30">
                 <div class="flex items-center gap-3">
-                    <span class="text-sm font-medium text-gray-200">📋 问题</span>
+                    <span class="text-sm font-medium text-gray-200 inline-flex items-center gap-1"><Icon name="clipboard" size={14} />问题</span>
                     <Show when={totalErrors() > 0}>
                         <span class="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium">
                             {totalErrors()} 错误
@@ -109,7 +111,7 @@ const ProblemsPanel: Component = () => {
                     when={filteredFiles().length > 0}
                     fallback={
                         <div class="flex items-center justify-center py-8 text-gray-500 text-sm">
-                            <Show when={hasDiagnostics()} fallback="✅ 没有发现问题">
+                            <Show when={hasDiagnostics()} fallback="✓ 没有发现问题">
                                 当前过滤器下没有匹配的诊断
                             </Show>
                         </div>
@@ -124,7 +126,7 @@ const ProblemsPanel: Component = () => {
                                     onClick={() => openFileInEditor(file.filePath)}
                                     title={`打开 ${file.filePath}`}
                                 >
-                                    <span class="text-gray-500">📄</span>
+                                    <Icon name="file" size={14} />
                                     <span class="truncate">{file.filePath}</span>
                                     <span class="text-gray-500 ml-auto">
                                         {file.diagnostics.length}
@@ -146,7 +148,7 @@ const ProblemsPanel: Component = () => {
                                                     diag.severity === 'info' ? 'border-l-blue-500' :
                                                     'border-l-gray-500'
                                                 }`}>
-                                                    <span class="text-xs mt-0.5 shrink-0">{sev.icon}</span>
+                                                    <Icon name={sev.icon} size={14} class="text-xs mt-0.5 shrink-0" />
                                                     <div class="flex-1 min-w-0">
                                                         <span class="text-xs text-gray-300 break-all">{diag.message}</span>
                                                         <div class="flex items-center gap-2 mt-0.5">

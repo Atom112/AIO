@@ -540,7 +540,7 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
             gpuLayers: 99,
             engineType: model.engine_type || 'llama_cpp',
             trustRemoteCode: model.engine_type === 'vllm'
-                ? window.confirm('⚠️ vLLM 安全警告：是否启用 --trust-remote-code？\n\n该选项允许模型执行自定义 Python 代码。')
+                ? window.confirm('[!] vLLM 安全警告：是否启用 --trust-remote-code？\n\n该选项允许模型执行自定义 Python 代码。')
                 : false,
         });
 

@@ -5,17 +5,17 @@
  * 1. <Icon name="search" class="w-4 h-4" />            命名图标 (内联 SVG, 跟随 currentColor)
  * 2. <Icon src="/icons/app-logo/chat.svg" />            文件图标 (CSS mask-image, 历史用法)
  *
- * 风格: 1.5px 描边, 圆头线帽, currentColor 颜色, 24x24 viewBox
  */
 import { Component, JSX, splitProps, Show } from 'solid-js';
 
 export type IconName =
     | 'folder' | 'plus' | 'cpu' | 'refresh' | 'chart-bar' | 'search'
-    | 'check' | 'alert-triangle' | 'beaker' | 'download' | 'trash'
+    | 'check' | 'x-circle' | 'alert-triangle' | 'beaker' | 'download' | 'trash'
     | 'book' | 'arrow-left' | 'clock' | 'stop' | 'play' | 'bolt'
     | 'eye' | 'wrench' | 'brain' | 'x' | 'code' | 'lightbulb'
     | 'document' | 'check-circle' | 'image' | 'globe' | 'logo' | 'sparkles'
-    | 'gear' | 'chat' | 'send' | 'clip' | 'copy' | 'model' | 'user' | 'spinner' | 'file' | 'menu' | 'layers';
+    | 'gear' | 'chat' | 'send' | 'clip' | 'copy' | 'model' | 'user' | 'spinner' | 'file' | 'menu' | 'layers'
+    | 'info' | 'clipboard' | 'trending-up' | 'zap';
 
 /**
  * 图标路径工厂表。
@@ -33,6 +33,7 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     'chart-bar': () => <path d="M4 20h16M6 16v-4M11 16V8M16 16v-6M21 16V4" />,
     search: () => <><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>,
     check: () => <path d="m5 12 5 5L20 7" />,
+    'x-circle': () => <><circle cx="12" cy="12" r="9" /><path d="m8 8 8 8M16 8l-8 8" /></>,
     'check-circle': () => <><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></>,
     'alert-triangle': () => <><path d="M12 3 2 21h20L12 3Z" /><path d="M12 10v5M12 18v.5" /></>,
     beaker: () => <><path d="M9 3h6M10 3v6L4.5 18a2 2 0 0 0 1.7 3h11.6a2 2 0 0 0 1.7-3L14 9V3" /><path d="M7 14h10" /></>,
@@ -66,6 +67,10 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     file: () => <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" /><path d="M14 3v5h5" /></>,
     menu: () => <><circle cx="5" cy="6" r="1" /><circle cx="12" cy="6" r="1" /><circle cx="19" cy="6" r="1" /><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="18" r="1" /><circle cx="12" cy="18" r="1" /><circle cx="19" cy="18" r="1" /></>,
     layers: () => <><path d="m3 12 9-7 9 7-9 7-9-7Z" /><path d="m3 16 9 5 9-5" /><path d="m3 8 9 5 9-5" /></>,
+    info: () => <><circle cx="12" cy="12" r="9" /><path d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M12 8.25h.008v.008H12V8.25Z" /></>,
+    clipboard: () => <><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1M8 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M8 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m0 0h2a2 2 0 0 1 2 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></>,
+    'trending-up': () => <><path d="M22 7 14.5 14.5 11.5 11.5 2 20" /><path d="M17 7h5M22 7V2" /></>,
+    zap: () => <path d="M13 2 3 14h8l-2 8 11-14h-7l2-8Z" />,
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

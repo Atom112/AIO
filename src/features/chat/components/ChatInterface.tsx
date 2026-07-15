@@ -651,7 +651,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     return (
                       <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
                            style="background: rgba(124,154,191,0.12); border: 1px solid rgba(124,154,191,0.2);">
-                        <span style="color: #7c9abf;">🔧</span>
+                        <Icon name="wrench" size={14} />
                         <span style="color: rgba(255,255,255,0.7);">
                           Agent · {modeLabel} · 项目: {project?.name ?? ''}
                         </span>
@@ -750,7 +750,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; }}
                                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; }}
                                 >
-                                    <span class="text-sm">📋</span>
+                                    <Icon name="clipboard" size={14} />
                                     <Show when={totalErrors() > 0}>
                                         <span class="absolute -top-1 -right-1 text-[9px] px-1 rounded-full bg-red-500 text-white font-bold leading-tight">
                                             {totalErrors()}

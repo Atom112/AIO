@@ -9,11 +9,12 @@
 import { Component, Show, createMemo } from 'solid-js';
 import { selectedModel, modelsCatalog } from '../../../core/store/store';
 import { getCachedCatalog } from '../../../core/utils/models';
+import Icon from '../../../shared/components/Icon';
 
 /** 根据占用百分比返回颜色和提示 */
 function usageInfo(pct: number): { color: string; tip: string } {
-    if (pct > 0.95) return { color: '#ef4444', tip: '⚠️ 即将超出上下文窗口，建议立即压缩' };
-    if (pct > 0.85) return { color: '#f59e0b', tip: '⚡ 上下文压力较高，建议压缩' };
+    if (pct > 0.95) return { color: '#ef4444', tip: '[!] 即将超出上下文窗口，建议立即压缩' };
+    if (pct > 0.85) return { color: '#f59e0b', tip: '[!] 上下文压力较高，建议压缩' };
     if (pct > 0.70) return { color: '#eab308', tip: '上下文使用中' };
     if (pct > 0.40) return { color: '#22c55e', tip: '上下文使用正常' };
     return { color: '#22c55e', tip: '上下文充足' };
@@ -61,7 +62,7 @@ const TokenBar: Component<TokenBarProps> = (props) => {
                 style="background: rgba(0,0,0,0.15); border-bottom: 1px solid rgba(255,255,255,0.05);"
                 title={info().tip}
             >
-                <span class="text-gray-400 shrink-0">📊</span>
+                <Icon name="chart-bar" size={14} />
 
                 <div class="flex-1 h-1.5 rounded-full overflow-hidden" style="background: rgba(255,255,255,0.08);">
                     <div
@@ -82,10 +83,10 @@ const TokenBar: Component<TokenBarProps> = (props) => {
                 </span>
 
                 <Show when={pct() > 0.85}>
-                    <span class="text-yellow-400 text-xs" title={info().tip}>⚡</span>
+                    <Icon name="zap" size={14} class="text-yellow-400" />
                 </Show>
                 <Show when={pct() > 0.95}>
-                    <span class="text-red-400 text-xs animate-pulse" title={info().tip}>⚠️</span>
+                    <Icon name="alert-triangle" size={14} class="text-red-400 animate-pulse" />
                 </Show>
 
                 <Show when={props.messageCount > 0}>

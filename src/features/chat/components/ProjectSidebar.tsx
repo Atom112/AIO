@@ -169,7 +169,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
           onClick={switchToChat}
         >
           <span class="flex-grow text-[0.95rem] overflow-hidden pr-[10px] text-ellipsis whitespace-nowrap" style="color: rgba(255,255,255,0.85);">
-            💬 对话
+            <Icon name="chat" size={14} /> 对话
           </span>
         </div>
 
@@ -193,7 +193,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                 onClick={() => switchToProject(project.id)}
               >
                 <span class="flex-grow text-[0.95rem] overflow-hidden pr-[10px] text-ellipsis whitespace-nowrap" style="color: rgba(255,255,255,0.85);">
-                  📁 {project.name}
+                  <Icon name="folder" size={14} /> {project.name}
                 </span>
 
                 <button

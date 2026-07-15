@@ -141,7 +141,7 @@ const LocalEngineSection: Component = () => {
                 let trustRemoteCode = false;
                 if (engine.id === 'vllm') {
                     trustRemoteCode = window.confirm(
-                        '⚠️ 安全警告\n\nvLLM 的 --trust-remote-code 选项允许模型仓库中的\n' +
+                        '[!] 安全警告\n\nvLLM 的 --trust-remote-code 选项允许模型仓库中的\n' +
                         'Python 代码以当前用户权限执行。\n\n' +
                         '仅当你信任该模型来源时才启用此选项。\n\n' +
                         '是否启用 --trust-remote-code？'

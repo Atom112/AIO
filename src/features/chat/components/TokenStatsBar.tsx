@@ -9,6 +9,7 @@ import { Component, Show, createMemo } from 'solid-js';
 import { datas, currentAssistantId, currentTopicId, selectedModel } from '../../../core/store/store';
 import { getCachedCatalog } from '../../../core/utils/models';
 import type { Topic } from '../../../core/store/store';
+import Icon from '../../../shared/components/Icon';
 
 function fmt(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -88,8 +89,8 @@ const TokenStatsBar: Component = () => {
                 </span>
 
                 <Show when={stats().tools > 0}>
-                    <span class="whitespace-nowrap" style="color: rgba(255,255,255,0.22);">
-                        🔧{stats().tools}
+                    <span class="inline-flex items-center gap-1 whitespace-nowrap" style="color: rgba(255,255,255,0.22);">
+                        <Icon name="wrench" size={14} />{stats().tools}
                     </span>
                 </Show>
             </div>

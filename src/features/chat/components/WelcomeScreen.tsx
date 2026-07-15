@@ -1,4 +1,5 @@
 import { Component, For } from 'solid-js';
+import Icon from '../../../shared/components/Icon';
 
 interface WelcomeScreenProps {
     isChangingTopic: boolean;
@@ -13,22 +14,22 @@ interface Suggestion {
 
 const suggestions: Suggestion[] = [
     {
-        icon: '💡',
+        icon: 'lightbulb',
         text: '帮我写一段代码',
         prompt: '帮我写一段代码实现',
     },
     {
-        icon: '🌐',
+        icon: 'globe',
         text: '翻译文本内容',
         prompt: '请帮我把以下文本翻译成英文：',
     },
     {
-        icon: '📖',
+        icon: 'book',
         text: '解释一个概念',
         prompt: '请帮我解释一下什么是',
     },
     {
-        icon: '✨',
+        icon: 'sparkles',
         text: '生成创意想法',
         prompt: '请帮我头脑风暴一些关于',
     },
@@ -89,7 +90,7 @@ const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
                             }}
                             onClick={() => props.onSuggestionClick(item.prompt)}
                         >
-                            <span class="text-lg flex-shrink-0">{item.icon}</span>
+                            <Icon name={item.icon} size={14} />
                             <span
                                 class="text-[13px] font-medium whitespace-nowrap overflow-hidden text-ellipsis"
                                 style="color: rgba(255,255,255,0.75);"

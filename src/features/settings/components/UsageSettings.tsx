@@ -9,6 +9,7 @@ import UsageSummaryCards from './UsageSummaryCards';
 import type { UsageSummary, UsageSummaryByModel } from './UsageSummaryCards';
 import UsageHeatmap from './UsageHeatmap';
 import ModelBreakdown from './ModelBreakdown';
+import Icon from '../../../shared/components/Icon';
 
 type Range = { label: string; days: number };
 
@@ -109,7 +110,7 @@ const UsageSettings: Component = () => {
                     {/* 无数据占位 */}
                     <Show when={!hasData()}>
                         <div class="flex flex-col items-center justify-center py-16 gap-3">
-                            <span class="text-3xl">📊</span>
+                            <Icon name="chart-bar" size={30} />
                             <span class="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>暂无使用数据</span>
                             <span class="text-xs" style={{ color: 'rgba(255,255,255,0.15)' }}>开始对话后，Token 用量将自动记录于此</span>
                         </div>

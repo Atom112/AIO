@@ -609,12 +609,12 @@ const ChatPage: Component = () => {
     // 根据命令类型给出反馈消息
     let feedback = '';
     if (cmd.id === 'slash-compact') {
-      feedback = '✅ /compact — 上下文已压缩';
+      feedback = '✓ /compact — 上下文已压缩';
     } else if (cmd.id === 'slash-clear') {
       // /clear handler 已清空历史，无需额外反馈
       return;
     } else if (cmd.id === 'slash-search') {
-      feedback = webSearchEnabled() ? '✅ 联网搜索已开启' : '✅ 联网搜索已关闭';
+      feedback = webSearchEnabled() ? '✓ 联网搜索已开启' : '✓ 联网搜索已关闭';
     } else if (cmd.id === 'slash-help') {
       // /help handler 已添加帮助信息，无需额外反馈
       return;
@@ -622,7 +622,7 @@ const ChatPage: Component = () => {
       // /settings handler 已跳转页面
       return;
     } else {
-      feedback = `✅ ${cmd.label} — 已执行`;
+      feedback = `✓ ${cmd.label} — 已执行`;
     }
 
     // 添加反馈消息
@@ -680,7 +680,7 @@ const ChatPage: Component = () => {
           }, {
             id: crypto.randomUUID(),
             role: 'assistant' as const,
-            content: `❌ 未知命令: \`${userInput}\`\n\n输入 **/help** 查看所有可用命令。`,
+            content: `✗ 未知命令: \`${userInput}\`\n\n输入 **/help** 查看所有可用命令。`,
           }]);
       }
       setInputMessage('');

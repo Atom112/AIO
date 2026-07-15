@@ -177,7 +177,7 @@ const AgentModeSelector: Component = () => {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div class="flex items-center gap-3 mb-4">
-                            <span style="font-size: 1.5rem;">⚠️</span>
+                            <Icon name="alert-triangle" size={24} />
                             <h2 style="color: rgba(224,192,96,0.9); font-size: 1.1rem; font-weight: 600; margin: 0;">
                                 自动模式风险提醒
                             </h2>

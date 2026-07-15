@@ -586,6 +586,8 @@ pub enum AgentMode {
     Auto,
     /// 计划模式：先列出计划，用户确认后再执行
     Plan,
+    /// 工作流模式：强制拆解任务为工作流并自动执行
+    Workflow,
 }
 
 impl Default for AgentMode {
@@ -791,6 +793,55 @@ pub struct ProfileModelOverridesFile {
     pub version: u32,
     pub updated_at: String,
     pub overrides: Vec<ProfileModelOverride>,
+}
+
+// ====== Workflow (Agent Workflow) ======
+
+/// 工作流步骤状态
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkflowStepStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+/// 工作流中的一个步骤
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStep {
+    /// 步骤标识（"step-1", "step-2", ...）
+    pub step_id: String,
+    /// 子 Agent profile ID
+    pub profile_id: String,
+    /// 步骤显示名称
+    pub name: String,
+    /// 任务描述（给子 Agent 的输入）
+    pub task_description: String,
+    /// 当前状态
+    pub status: WorkflowStepStatus,
+    /// 步骤执行结果
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    /// 开始时间戳（ms）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    /// 耗时（ms）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u64>,
+}
+
+/// 完整工作流定义
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Workflow {
+    /// UUID
+    pub workflow_id: String,
+    /// 工作流标题
+    pub title: String,
+    /// 步骤列表（线性顺序）
+    pub steps: Vec<WorkflowStep>,
 }
 
 // ====== Custom Subagent Profiles ======

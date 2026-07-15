@@ -65,7 +65,7 @@ fn sz(b: u64) -> String {
     else { format!("{b}B") }
 }
 
-fn tool_ok(text: String) -> ToolResult {
+pub fn tool_ok(text: String) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
             kind: "text".into(),
@@ -75,7 +75,7 @@ fn tool_ok(text: String) -> ToolResult {
     }
 }
 
-fn tool_err(msg: &str) -> ToolResult {
+pub fn tool_err(msg: &str) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
             kind: "text".into(),

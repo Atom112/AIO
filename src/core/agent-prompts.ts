@@ -10,7 +10,7 @@ export interface ProjectInfo {
     name: string;
 }
 
-export type AgentMode = 'off' | 'normal' | 'auto' | 'plan';
+export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
 
 /**
  * 构建 Agent 模式系统提示词。
@@ -63,6 +63,15 @@ export function buildAgentSystemPrompt(
         `- 注意：并行子智能体之间无法通信，确保每个子任务是真正独立的`,
         `- 不要创建嵌套子智能体（子智能体不能再创建子智能体）`,
         ``,
+        `工作流使用指南:`,
+        `- 对于需要多个步骤按顺序完成的复杂任务，使用 create_workflow 工具创建顺序工作流`,
+        `- create_workflow 会按步骤顺序依次执行子智能体，每个步骤的输出自动传递给下一步`,
+        `- 推荐的工作流序列示例:`,
+        `  requirements → architect → coder → reviewer → tester  （全流程开发）`,
+        `  explorer → coder                                          （探索 + 实现）`,
+        `  debugger → coder                                          （诊断 + 修复）`,
+        `  explorer → writer                                         （探索 + 文档化）`,
+        `- 调用 create_workflow 后系统会自动执行所有步骤，你只需等待最终结果`,
     ];
 
     // 模式特定的行为指令
@@ -84,6 +93,16 @@ export function buildAgentSystemPrompt(
             lines.push(
                 `当前是 Plan 模式：请先列出任务计划和涉及的文件（不要调用工具），`,
                 `等用户确认后再执行。你的职责是分析需求、制定方案，而不是直接修改文件。`,
+            );
+            break;
+        case 'workflow':
+            lines.push(
+                `当前是工作流模式：请先分析用户请求，然后调用 create_workflow 工具创建按顺序执行的工作流。`,
+                `工作流会按步骤依次执行，每个步骤的输出自动传递给下一步。`,
+                `推荐的工作流序列：`,
+                `  requirements → coder → reviewer （分析 + 实现 + 审查）`,
+                `  explorer → coder （探索 + 实现）`,
+                `  debugger → coder （诊断 + 修复）`,
             );
             break;
     }
@@ -115,12 +134,24 @@ export function buildAgentRecursePrompt(
 ): string | null {
     if (mode === 'off') return null;
 
+    const modeLabel: Record<AgentMode, string> = {
+        off: '对话',
+        normal: '普通',
+        auto: '自动',
+        plan: 'Plan',
+        workflow: '工作流',
+    };
+    const modeHint: Record<AgentMode, string> = {
+        off: '',
+        normal: '普通模式：修改文件前需要用户确认。',
+        auto: '自动模式：自主完成任务。',
+        plan: 'Plan 模式：请继续制定计划，不要调用工具。',
+        workflow: '工作流模式：请执行分配给你的工作流步骤，完成后返回结果。',
+    };
     const lines: string[] = [
         `[Agent Mode] 工作目录: ${project.path}`,
-        `当前模式: ${mode === 'auto' ? '自动' : mode === 'normal' ? '普通' : 'Plan'}`,
-        mode === 'plan' ? `Plan 模式：请继续制定计划，不要调用工具。` :
-        mode === 'normal' ? `普通模式：修改文件前需要用户确认。` :
-        `自动模式：自主完成任务。`,
+        `当前模式: ${modeLabel[mode]}`,
+        modeHint[mode],
         `所有文件路径相对于项目根目录，不可越界。`,
     ];
 

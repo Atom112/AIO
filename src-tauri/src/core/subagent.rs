@@ -1,6 +1,6 @@
 //! 子智能体（Sub-agent）配置文件与工具定义。
 //!
-//! 提供八种内置子智能体配置文件，每种限定不同的工具集和行为模式：
+//! 提供九种内置子智能体配置文件，每种限定不同的工具集和行为模式：
 //! - `explorer`：只读代码探索者，用于大规模文件检索和架构分析
 //! - `coder`：代码实现者，专注文件编写和修改
 //! - `general`：通用子智能体，拥有全部工具能力
@@ -9,6 +9,7 @@
 //! - `reviewer`：代码审查员，只读安全审计和代码质量评估
 //! - `writer`：文档撰写员，可读写文件产出文档
 //! - `tester`：测试工程师，可运行测试并编写测试文件
+//! - `requirements`：需求分析员，只读分析用户请求并拆解为结构化工作流方案
 //!
 //! 子智能体通过主 Agent 的 `delegate_task` 工具调用创建，每个子智能体
 //! 拥有独立的 LLM 上下文窗口，通过 Tauri 事件向前端报告进度。
@@ -265,6 +266,43 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             .into(),
             model_override: None,
         },
+        SubagentProfile {
+            id: "requirements".into(),
+            name: "需求分析员".into(),
+            description: "用户需求分析，将用户输入拆解为结构化工作流方案。不能修改文件。".into(),
+            allowed_tools: vec![
+                "read_file".into(),
+                "list_directory".into(),
+                "search_files".into(),
+                "search_content".into(),
+                "read_lints".into(),
+            ],
+            denied_tools: vec![
+                "write_file".into(),
+                "replace_in_file".into(),
+                "delete_file".into(),
+                "make_directory".into(),
+                "execute_command".into(),
+                "git_*".into(),
+                "delegate_task".into(),
+                "web_search".into(),
+                "web_fetch".into(),
+            ],
+            system_prompt_extension: concat!(
+                "你是需求分析员，只能分析用户需求，不能修改任何文件。\n",
+                "你的任务是：理解用户的请求、识别核心需求、将复杂任务拆解为可独立执行的子任务。\n",
+                "如果用户的请求涉及多个步骤，建议以下工作流角色序列：\n",
+                "  - explorer：代码探索，搜索和分析现有代码\n",
+                "  - architect：架构设计，分析依赖和设计决策\n",
+                "  - coder：代码实现，编写或修改文件\n",
+                "  - reviewer：代码审查，检查质量和安全\n",
+                "  - tester：测试执行，验证功能\n",
+                "输出格式：清晰地列出分析结果和建议的子任务划分，每个子任务包含目标、推荐角色和预期产出。\n",
+                "不要调用 create_workflow 工具，你只负责分析需求。主 Agent 会根据你的分析结果决定是否创建工 作流。"
+            )
+            .into(),
+            model_override: None,
+        },
     ]
 }
 
@@ -328,7 +366,8 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                 "- 使用 debugger 子智能体进行错误调查和根因分析\n",
                 "- 使用 reviewer 子智能体进行代码审查和质量评估\n",
                 "- 使用 writer 子智能体撰写文档和注释\n",
-                "- 使用 tester 子智能体生成和执行测试\n\n",
+                "- 使用 tester 子智能体生成和执行测试\n",
+                "- 使用 requirements 子智能体分析用户需求并拆解任务\n\n",
                 "也可以使用用户自定义的子智能体角色 ID。\n",
                 "子智能体会独立执行并在完成后返回工作总结。你可以在同一轮中并行创建多个子智能体。"
             )
@@ -337,8 +376,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                 "type": "object",
                 "properties": {
                     "profile": {
-                        "type": "string",
-                        "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用全能力）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试执行），或任意自定义角色 ID"
+                        "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用全能力）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试执行）、requirements（需求分析），或任意自定义角色 ID"
                     },
                     "task": {
                         "type": "string",
@@ -351,6 +389,63 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                     }
                 },
                 "required": ["profile", "task"]
+            }),
+        },
+    }
+}
+
+/// 构造 `create_workflow` 工具的 ToolSpec。
+/// 此工具允许 LLM 创建一个按顺序执行的子智能体工作流。
+/// 适用场景：复杂任务需要多个子智能体分工协作、按序完成。
+pub fn create_workflow_tool_spec() -> ToolSpec {
+    ToolSpec {
+        kind: "function".into(),
+        function: super::models::ToolFunctionSpec {
+            name: "create_workflow".into(),
+            description: concat!(
+                "创建一个按顺序执行的子智能体工作流。\n\n",
+                "适用于复杂任务，需要多个子智能体分工协作、按序完成的场景。\n",
+                "调用此工具后，系统会按步骤顺序依次执行，每个步骤的输出会自动传递到下一步作为上下文。\n\n",
+                "典型工作流序列示例：\n",
+                "- requirements → architect → coder → reviewer → tester（全流程开发）\n",
+                "- explorer → coder（探索 + 实现）\n",
+                "- debugger → coder（诊断 + 修复）\n",
+                "- explorer → writer（探索 + 文档化）\n\n",
+                "注意：每个步骤是**顺序执行**的（非并行），前一步完成后下一步才开始。",
+            )
+            .into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "工作流的标题/目的简述"
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "profile": {
+                                    "type": "string",
+                                    "description": "子智能体类型：explorer、coder、general、architect、debugger、reviewer、writer、tester、requirements，或任意自定义角色 ID"
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "description": "步骤的简要名称（如\"代码探索\"、\"实现登录模块\"）"
+                                },
+                                "task": {
+                                    "type": "string",
+                                    "description": "分配给该子智能体执行的任务描述。应包含具体目标、预期产出和必要上下文。"
+                                }
+                            },
+                            "required": ["profile", "name", "task"]
+                        },
+                        "description": "工作流步骤列表（按顺序执行）",
+                        "min_items": 2
+                    }
+                },
+                "required": ["title", "steps"]
             }),
         },
     }
@@ -440,6 +535,22 @@ mod tests {
         assert!(!tester.is_tool_allowed("delegate_task"));
     }
 
+
+    #[test]
+    fn test_requirements_profile_read_only() {
+        let requirements = find_profile("requirements", &[]).unwrap();
+        assert!(requirements.is_tool_allowed("read_file"));
+        assert!(requirements.is_tool_allowed("search_files"));
+        assert!(requirements.is_tool_allowed("search_content"));
+        assert!(requirements.is_tool_allowed("read_lints"));
+        assert!(!requirements.is_tool_allowed("write_file"));
+        assert!(!requirements.is_tool_allowed("replace_in_file"));
+        assert!(!requirements.is_tool_allowed("delete_file"));
+        assert!(!requirements.is_tool_allowed("execute_command"));
+        assert!(!requirements.is_tool_allowed("web_search"));
+        assert!(!requirements.is_tool_allowed("web_fetch"));
+        assert!(!requirements.is_tool_allowed("delegate_task"));
+    }
     #[test]
     fn test_glob_match() {
         assert!(simple_glob_match("git_*", "git_status"));

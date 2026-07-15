@@ -648,7 +648,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
                     const mode = asst?.agentMode || 'off';
                     const project = currentProject();
-                    const modeLabel: string = { normal: '普通', auto: '自动', plan: 'Plan' }[mode as 'normal'|'auto'|'plan'] || mode;
+                    const modeLabel: string = { normal: '普通', auto: '自动', plan: 'Plan', workflow: '工作流' }[mode as 'normal'|'auto'|'plan'|'workflow'] || mode;
                     return (
                       <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
                            style="background: rgba(124,154,191,0.12); border: 1px solid rgba(124,154,191,0.2);">

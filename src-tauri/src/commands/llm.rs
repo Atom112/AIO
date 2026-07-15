@@ -15,6 +15,7 @@ use rusqlite::params;
 use crate::core::models::*;
 use crate::core::state::StreamManager;
 use futures_util::StreamExt; // 用于处理流式数据
+use futures_util::stream::FuturesUnordered;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -785,9 +786,27 @@ async fn execute_builtin_tool(
     } else if tool_name == "read_lints" {
         lsp_tools::execute(app, &project_root, arguments).await
     } else if tool_name.starts_with("git_") {
-        Ok(git_tools::execute_git_tool(tool_name, arguments, &project_root))
+        let tool_name_c = tool_name.to_string();
+        let arguments_c = arguments.clone();
+        let root_c = project_root.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            git_tools::execute_git_tool(&tool_name_c, &arguments_c, &root_c)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            git_tools::tool_err("Git 工具执行线程 panic")
+        }))
     } else {
-        Ok(file_tools::execute_file_tool(tool_name, arguments, &project_root))
+        let tool_name_c = tool_name.to_string();
+        let arguments_c = arguments.clone();
+        let root_c = project_root.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            file_tools::execute_file_tool(&tool_name_c, &arguments_c, &root_c)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            file_tools::tool_err("文件工具执行线程 panic")
+        }))
     }
 }
 
@@ -813,7 +832,7 @@ fn build_subagent_messages(
             "工作目录: {}\n",
             "请高效完成子任务并在最后总结工作成果。\n\n",
             "{}\n\n",
-            "重要：完成任务后，请在回复末尾给出简洁的工作总结（含修改的文件路径和关键发现）。"
+            "重要：请在回复末尾给出简洁的工作总结（含修改的文件路径和关键发现）。回复请保持精炼，重点突出核心成果，避免冗长叙述。"
         ),
         profile.name,
         project_root,
@@ -914,7 +933,7 @@ async fn handle_delegate_task(
         return Err("delegate_task 缺少必填参数 'task'".into());
     }
     let profile = subagent::find_profile(profile_id, custom_profiles)
-        .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, 或自定义角色 ID", profile_id))?;
+        .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
 
     // 解析 per-profile 模型覆盖
     let override_info = profile_model_overrides.iter().find(|o| o.profile_id == profile.id);
@@ -989,6 +1008,151 @@ async fn handle_delegate_task(
         token,
     )
     .await
+}
+
+/// 执行一个工作流（按顺序依次运行每个步骤的子智能体）。
+///
+/// 每个步骤独立调用 `handle_delegate_task`，前一步的输出作为上下文追加到下一步的任务描述中。
+/// 通过 Tauri 事件向前端推送工作流进度（workflow-start / workflow-step-start / workflow-step-complete / workflow-complete）。
+async fn execute_workflow(
+    window: &Window,
+    app: &AppHandle,
+    client: &reqwest::Client,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    parent_assistant_id: &str,
+    parent_topic_id: &str,
+    workflow: &Workflow,
+    project_id: Option<&str>,
+    custom_profiles: &[CustomSubagentProfile],
+    profile_model_overrides: &[ProfileModelOverride],
+    token: &CancellationToken,
+) -> Result<ToolResult, String> {
+    let total_steps = workflow.steps.len();
+
+    // 发射 workflow-start 事件
+    let _ = window.emit(
+        "workflow-start",
+        serde_json::json!({
+            "workflowId": workflow.workflow_id,
+            "title": workflow.title,
+            "steps": workflow.steps.iter().map(|s| serde_json::json!({
+                "stepId": s.step_id,
+                "profileId": s.profile_id,
+                "name": s.name,
+                "status": "pending",
+            })).collect::<Vec<_>>(),
+        }),
+    );
+
+    let mut context = String::new();
+    let mut all_results: Vec<String> = Vec::new();
+
+    for (idx, step) in workflow.steps.iter().enumerate() {
+        if token.is_cancelled() {
+            let _ = window.emit("workflow-complete", serde_json::json!({ "workflowId": workflow.workflow_id }));
+            return Err("工作流被用户取消".into());
+        }
+
+        // 发射 workflow-step-start 事件
+        let _ = window.emit("workflow-step-start", serde_json::json!({ "stepId": step.step_id }));
+
+        let start = std::time::Instant::now();
+
+        // 构建任务描述：基础任务 + 上下文
+        let mut task_desc = step.task_description.clone();
+        if !context.is_empty() {
+            task_desc.push_str("\n\n== 前期工作上下文 ==\n");
+            task_desc.push_str(&context);
+        }
+
+        // 构建 arguments JSON（与 delegate_task 格式一致）
+        let arguments = serde_json::json!({
+            "profile": step.profile_id,
+            "task": task_desc,
+        });
+
+        // 调用 handle_delegate_task 执行该步骤
+        let result = handle_delegate_task(
+            window,
+            app,
+            client,
+            api_url,
+            api_key,
+            model,
+            parent_assistant_id,
+            parent_topic_id,
+            &arguments,
+            project_id,
+            &AgentMode::Auto, // 工作流步骤以 Auto 模式执行（无需用户逐个确认）
+            token,
+            profile_model_overrides,
+            custom_profiles,
+        )
+        .await;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(tr) => {
+                let step_result_text = tr
+                    .content
+                    .iter()
+                    .find(|c| c.kind == "text")
+                    .and_then(|c| c.data.get("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(done)")
+                    .to_string();
+
+                // 追加到上下文
+                context.push_str(&format!("\n## 步骤 {} ({}): {}\n{}",
+                    idx + 1, step.name, step.profile_id, step_result_text));
+                all_results.push(format!("步骤 {} ({}): {}",
+                    idx + 1, step.name, step_result_text));
+
+                // 发射 workflow-step-complete 事件
+                let _ = window.emit("workflow-step-complete", serde_json::json!({
+                    "stepId": step.step_id,
+                    "status": "completed",
+                    "duration": duration_ms,
+                }));
+            }
+            Err(e) => {
+                context.push_str(&format!("\n## 步骤 {} ({}): [失败] {}", idx + 1, step.name, e));
+                all_results.push(format!("步骤 {} ({}): [失败] {}", idx + 1, step.name, e));
+
+                // 发射 workflow-step-complete 事件（失败）
+                let _ = window.emit("workflow-step-complete", serde_json::json!({
+                    "stepId": step.step_id,
+                    "status": "failed",
+                    "duration": duration_ms,
+                }));
+
+                // 步骤失败不中断整个工作流，继续执行后续步骤
+            }
+        }
+    }
+
+    // 发射 workflow-complete 事件
+    let _ = window.emit("workflow-complete", serde_json::json!({ "workflowId": workflow.workflow_id }));
+
+    // 构建最终结果
+    let summary = format!(
+        "工作流 '{}' 执行完成（{}/{} 步骤）\n\n{}",
+        workflow.title,
+        total_steps,
+        total_steps,
+        all_results.join("\n\n")
+    );
+
+    Ok(ToolResult {
+        content: vec![ToolResultContent {
+            kind: "text".into(),
+            data: serde_json::json!({ "text": summary }),
+        }],
+        is_error: false,
+    })
 }
 
 /// 执行子 Agent 循环（从主 Agent 的工具执行循环中调用）。
@@ -1211,8 +1375,6 @@ async fn execute_subagent(
         final_text
     };
 
-    let truncated = truncate_for_display(&result_text, 20000);
-
     let _ = window.emit(
         "subagent-done",
         SubagentDonePayload {
@@ -1220,7 +1382,7 @@ async fn execute_subagent(
             parent_topic_id: parent_topic_id.to_string(),
             subagent_id: subagent_id.clone(),
             profile_name: profile.name.clone(),
-            result: truncated.clone(),
+            result: result_text.clone(),
         },
     );
 
@@ -1402,6 +1564,10 @@ pub async fn run_agent_turn(
             let delegate_spec = subagent::delegate_task_tool_spec();
             mcp_map.insert(delegate_spec.function.name.clone(), "__builtin__".into());
             mcp_tools.push(delegate_spec);
+            // 注入工作流创建工具（仅 Agent 模式下可用）
+            let workflow_spec = subagent::create_workflow_tool_spec();
+            mcp_map.insert(workflow_spec.function.name.clone(), "__builtin__".into());
+            mcp_tools.push(workflow_spec);
             (mcp_tools, mcp_map)
         } else if web_only {
             // 仅注入 Web 工具（对话模式下联网搜索）
@@ -1419,9 +1585,31 @@ pub async fn run_agent_turn(
         let mut round: u32 = 0;
         let mut final_error: Option<String> = None;
         let mut was_cancelled = false;
+        // Workflow 模式：标记是否已调用 create_workflow
+        let mut workflow_called = false;
         // 跨轮累计 token 用量
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
+
+        // Workflow 模式：在 LLM 循环前注入强制系统消息
+        if agent_mode == AgentMode::Workflow {
+            messages_for_api.push(serde_json::json!({
+                "role": "system",
+                "content": concat!(
+                    "你正处于「工作流模式」。\n",
+                    "你的首要任务：分析用户请求 → 调用 `create_workflow` 工具来创建和执行工作流。\n",
+                    "不允许直接修改文件、执行命令或调用其他工具。\n",
+                    "必须使用 create_workflow 来组织多步骤任务。\n\n",
+                    "典型序列示例：\n",
+                    "- requirements → coder → reviewer（分析 + 实现 + 审查）\n",
+                    "- explorer → coder（探索 + 实现）\n",
+                    "- debugger → coder（诊断 + 修复）\n",
+                    "- requirements → architect → coder → tester（完整开发流程）\n\n",
+                    "如果用户请求很简单，可以只用一个步骤的工作流。\n",
+                    "请立即调用 create_workflow 来开始工作。"
+                )
+            }));
+        }
 
         'outer: loop {
             round += 1;
@@ -1515,6 +1703,14 @@ pub async fn run_agent_turn(
 
             // 无工具调用 → 任务完成，整轮结束
             if round_result.tool_calls.is_empty() {
+                if agent_mode == AgentMode::Workflow && !workflow_called {
+                    // Workflow 模式下不允许退出——注入强制消息后继续
+                    messages_for_api.push(serde_json::json!({
+                        "role": "system",
+                        "content": "【工作流模式强制指令】你尚未调用 create_workflow 工具。请立即分析用户请求并调用 create_workflow 来创建和执行工作流。"
+                    }));
+                    continue;
+                }
                 break 'outer;
             }
 
@@ -1584,6 +1780,86 @@ pub async fn run_agent_turn(
                         .await
                     });
                     delegate_futures.push((i, fut));
+                } else if server_id.as_deref() == Some("__builtin__") && tc.name == "create_workflow" {
+                    // 工作流创建：解析参数并顺序执行所有步骤
+                    workflow_called = true;
+                    let title = args_val["title"].as_str().unwrap_or("Workflow").to_string();
+                    let steps_raw = args_val["steps"].as_array();
+                    let tool_result = if let Some(steps_arr) = steps_raw {
+                        if steps_arr.is_empty() {
+                            Err("create_workflow: 'steps' 数组不能为空".to_string())
+                        } else {
+                            let mut workflow_steps: Vec<WorkflowStep> = Vec::new();
+                            let mut parse_error: Option<String> = None;
+                            for (idx, step) in steps_arr.iter().enumerate() {
+                                let profile = step["profile"].as_str().unwrap_or("general").to_string();
+                                let name = step["name"].as_str().unwrap_or("").to_string();
+                                let task = step["task"].as_str().unwrap_or("").to_string();
+                                if task.is_empty() {
+                                    parse_error = Some(format!("create_workflow: 步骤 {} 缺少 'task' 字段", idx + 1));
+                                    break;
+                                }
+                                workflow_steps.push(WorkflowStep {
+                                    step_id: format!("step-{}", idx + 1),
+                                    profile_id: profile,
+                                    name,
+                                    task_description: task,
+                                    status: WorkflowStepStatus::Pending,
+                                    result: None,
+                                    started_at: None,
+                                    duration: None,
+                                });
+                            }
+                            if let Some(err) = parse_error {
+                                Err(err)
+                            } else {
+                            let workflow = Workflow {
+                                workflow_id: uuid::Uuid::new_v4().to_string(),
+                                title,
+                                steps: workflow_steps,
+                            };
+                            execute_workflow(
+                                &window,
+                                &app_c,
+                                &client,
+                                &api_url,
+                                &api_key,
+                                &model,
+                                &assistant_id_c,
+                                &topic_id_c,
+                                &workflow,
+                                project_id_c.as_deref(),
+                                &custom_profiles_c,
+                                &profile_overrides_c,
+                                &token_inner,
+                            ).await
+                        }
+                        }
+                    } else {
+                        Err("create_workflow: 缺少 'steps' 数组".to_string())
+                    };
+
+                    let (content_text, result_value, is_error) = match tool_result {
+                        Ok(tr) => {
+                            let text = tr
+                                .content
+                                .iter()
+                                .find(|c| c.kind == "text")
+                                .and_then(|c| c.data.get("text"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
+                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                            (text, result_value, tr.is_error)
+                        }
+                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                    };
+
+                    exec_results[i] = Some(ToolExecResult {
+                        content_text,
+                        result_value,
+                        is_error,
+                    });
                 } else {
                     // 非 delegate 工具：立即顺序执行
                     let tool_result = if server_id.as_deref() == Some("__builtin__") {
@@ -1630,24 +1906,41 @@ pub async fn run_agent_turn(
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
                     };
 
-                    exec_results[i] = Some(ToolExecResult {
-                        content_text,
-                        result_value,
-                        is_error,
-                    });
+                    // 立即发射结果（不等待其他工具）
+                    let _ = window.emit(
+                        "llm-tool-result",
+                        ToolResultPayload {
+                            assistant_id: assistant_id_c.clone(),
+                            topic_id: topic_id_c.clone(),
+                            tool_call_id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            content: content_text.clone(),
+                            result: result_value.clone(),
+                            is_error,
+                        },
+                    );
+
+                    // 立即回填 role:tool 消息
+                    let mut tool_msg = serde_json::Map::new();
+                    tool_msg.insert("role".into(), json!("tool"));
+                    tool_msg.insert("content".into(), json!(content_text));
+                    tool_msg.insert("tool_call_id".into(), json!(tc.id));
+                    tool_msg.insert("name".into(), json!(tc.name));
+                    messages_for_api.push(serde_json::Value::Object(tool_msg));
                 }
             }
 
             // 阶段 2 — 并发执行所有子 Agent
             if !delegate_futures.is_empty() {
-                let fut_count = delegate_futures.len();
-                let futs: Vec<_> = delegate_futures
-                    .iter_mut()
-                    .map(|(_, fut)| fut.as_mut())
-                    .collect();
-                let results = futures_util::future::join_all(futs).await;
+                let mut unordered = FuturesUnordered::new();
+                for (i, fut) in delegate_futures {
+                    unordered.push(async move {
+                        let result = fut.await;
+                        (i, result)
+                    });
+                }
 
-                for ((i, _), result) in delegate_futures.iter().zip(results) {
+                while let Some((i, result)) = unordered.next().await {
                     let (content_text, result_value, is_error) = match result {
                         Ok(tr) => {
                             let text = tr
@@ -1663,11 +1956,29 @@ pub async fn run_agent_turn(
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
                     };
-                    exec_results[*i] = Some(ToolExecResult {
-                        content_text,
-                        result_value,
-                        is_error,
-                    });
+
+                    // 立即发射该 delegate 结果
+                    let tc = &round_result.tool_calls[i];
+                    let _ = window.emit(
+                        "llm-tool-result",
+                        ToolResultPayload {
+                            assistant_id: assistant_id_c.clone(),
+                            topic_id: topic_id_c.clone(),
+                            tool_call_id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            content: content_text.clone(),
+                            result: result_value.clone(),
+                            is_error,
+                        },
+                    );
+
+                    // 立即回填 role:tool 消息
+                    let mut tool_msg = serde_json::Map::new();
+                    tool_msg.insert("role".into(), json!("tool"));
+                    tool_msg.insert("content".into(), json!(content_text));
+                    tool_msg.insert("tool_call_id".into(), json!(tc.id));
+                    tool_msg.insert("name".into(), json!(tc.name));
+                    messages_for_api.push(serde_json::Value::Object(tool_msg));
                 }
             }
 

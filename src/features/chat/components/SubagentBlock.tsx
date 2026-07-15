@@ -52,6 +52,13 @@ const PROFILE_STYLES: Record<string, ProfileStyle> = {
         borderColor: 'rgba(186,104,200,0.25)',
         label: '通用',
     },
+    requirements: {
+        icon: 'lightbulb',
+        color: 'rgba(255, 183, 77, 0.85)',
+        bgColor: 'rgba(255, 183, 77, 0.08)',
+        borderColor: 'rgba(255, 183, 77, 0.25)',
+        label: '需求分析',
+    },
 };
 
 const DEFAULT_PROFILE: ProfileStyle = {

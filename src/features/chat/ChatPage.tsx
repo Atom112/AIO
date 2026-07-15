@@ -1,4 +1,4 @@
-import { Component, createSignal, onMount, onCleanup, createEffect } from 'solid-js';
+import { Component, createSignal, onMount, onCleanup, createEffect, Show } from 'solid-js';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useNavigate } from '@solidjs/router';
@@ -10,6 +10,7 @@ import {
   mcpServers, mcpServerStatus, resolveAssistantSkills,
   currentProjectId, currentProject,
   profileModelOverrides, allAvailableModels, resolveProfileModel, customSubagentProfiles,
+  workflowState, setWorkflowState, type WorkflowState, type WorkflowStepState,
 } from '../../core/store/store';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import {
@@ -23,6 +24,7 @@ import AssistantSettingsModal from './components/AssistantSettingsModal';
 import ChatInterface from './components/ChatInterface';
 import TopicSidebar from './components/TopicSidebar';
 import ProblemsPanel from './components/ProblemsPanel';
+import WorkflowVisualization from './components/WorkflowVisualization';
 import type { PendingApproval } from './components/ToolApprovalBubble';
 import { problemsPanelVisible, setProblemsPanelVisible, clearAllDiagnostics } from '../../core/store/diagnostics';
 
@@ -1578,6 +1580,31 @@ const ChatPage: Component = () => {
             }];
           });
       }),
+      // ---- 工作流事件 ----
+      listen<WorkflowState>('workflow-start', (e) => {
+        setWorkflowState({
+          workflowId: e.payload.workflowId,
+          title: e.payload.title,
+          steps: e.payload.steps.map(s => ({ ...s, status: 'pending' as const })),
+          active: true,
+        });
+      }),
+      listen<{ stepId: string }>('workflow-step-start', (e) => {
+        setWorkflowState(prev => prev ? {
+          ...prev,
+          steps: prev.steps.map(s => s.stepId === e.payload.stepId ? { ...s, status: 'running' as const, startedAt: Date.now() } : s),
+        } : null);
+      }),
+      listen<{ stepId: string; status: 'completed' | 'failed'; duration?: number }>('workflow-step-complete', (e) => {
+        setWorkflowState(prev => prev ? {
+          ...prev,
+          steps: prev.steps.map(s => s.stepId === e.payload.stepId ? { ...s, status: e.payload.status, duration: e.payload.duration } : s),
+        } : null);
+      }),
+      listen<{ workflowId: string }>('workflow-complete', () => {
+        setWorkflowState(prev => prev ? { ...prev, active: false } : null);
+        setTimeout(() => setWorkflowState(null), 5000);
+      }),
     ];
 
     // 组件卸载时清理所有事件监听和命令注册
@@ -1722,23 +1749,29 @@ const ChatPage: Component = () => {
         isResizing={isResizing()}
       />
 
-      <ChatInterface
-        activeTopic={activeTopic()}
-        isChangingTopic={isChangingTopic()}
-        isThinking={isThinking()}
-        isProcessing={isProcessing()}
-        isDragging={isDragging()}
-        typingIndex={typingIndex()}
-        inputMessage={inputMessage()}
-        setInputMessage={setInputMessage}
-        pendingFiles={pendingFiles()}
-        setPendingFiles={setPendingFiles}
-        handleSendMessage={handleSendMessage}
-        handleStopGeneration={handleStopGeneration}
-        handleFileUpload={handleFileUpload}
-        pendingApprovals={pendingApprovals()}
-        onResolveApproval={(id) => setPendingApprovals(prev => prev.filter(a => a.approvalId !== id))}
-      />
+      <div class="flex-1 flex flex-col min-w-0 min-h-0">
+        <Show when={workflowState()}>
+          <WorkflowVisualization />
+        </Show>
+
+        <ChatInterface
+          activeTopic={activeTopic()}
+          isChangingTopic={isChangingTopic()}
+          isThinking={isThinking()}
+          isProcessing={isProcessing()}
+          isDragging={isDragging()}
+          typingIndex={typingIndex()}
+          inputMessage={inputMessage()}
+          setInputMessage={setInputMessage}
+          pendingFiles={pendingFiles()}
+          setPendingFiles={setPendingFiles}
+          handleSendMessage={handleSendMessage}
+          handleStopGeneration={handleStopGeneration}
+          handleFileUpload={handleFileUpload}
+          pendingApprovals={pendingApprovals()}
+          onResolveApproval={(id) => setPendingApprovals(prev => prev.filter(a => a.approvalId !== id))}
+        />
+      </div>
 
       <TopicSidebar
         width={displayRightWidth()}

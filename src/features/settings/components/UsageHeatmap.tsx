@@ -158,26 +158,53 @@ const UsageHeatmap: Component<Props> = (props) => {
 
     return (
         <div class="heatmap-container relative select-none">
-            {/* 月份标签 */}
-            <div class="relative h-5 mb-1 ml-8">
-                <For each={gridData().monthLabels}>
-                    {({ col, label }) => {
-                        const left = 32 + col * 14;
-                        return (
-                            <span
-                                class="text-[9px] font-bold absolute top-0 whitespace-nowrap"
-                                style={{
-                                    left: `${left}px`,
-                                    color: 'rgba(255,255,255,0.25)',
-                                }}
-                            >
-                                {label}
-                            </span>
-                        );
-                    }}
-                </For>
+            {/* 年份 + 月份标签（两行：年份在上，月份在下） */}
+            <div class="relative ml-8" style="height: 28px; margin-bottom: 2px;">
+                {/* 年份行 */}
+                <div class="absolute top-0 left-0 w-full" style="height: 14px;">
+                    <For each={gridData().monthLabels}>
+                        {({ col, label }) => {
+                            if (!label.includes('年')) return null;
+                            const left = 32 + col * 14;
+                            return (
+                                <span
+                                    class="text-[9px] font-bold absolute whitespace-nowrap"
+                                    style={{
+                                        left: `${left}px`,
+                                        color: 'rgba(255,255,255,0.35)',
+                                        'line-height': '14px',
+                                    }}
+                                >
+                                    {label.replace(/\d+月$/, '')}
+                                </span>
+                            );
+                        }}
+                    </For>
+                </div>
+                {/* 月份行 */}
+                <div class="absolute bottom-0 left-0 w-full" style="height: 14px;">
+                    <For each={gridData().monthLabels}>
+                        {({ col, label }) => {
+                            const monthPart = label.includes('年')
+                                ? label.replace(/^\d{4}年/, '')
+                                : label;
+                            const left = 32 + col * 14;
+                            return (
+                                <span
+                                    class="text-[9px] font-bold absolute whitespace-nowrap"
+                                    style={{
+                                        left: `${left}px`,
+                                        color: 'rgba(255,255,255,0.25)',
+                                        'line-height': '14px',
+                                    }}
+                                >
+                                    {monthPart}
+                                </span>
+                            );
+                        }}
+                    </For>
+                </div>
             </div>
-
             <div class="flex gap-0.5">
                 {/* 星期标签 */}
                 <div class="flex flex-col gap-0.5 mr-1.5">

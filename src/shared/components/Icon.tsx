@@ -15,7 +15,7 @@ export type IconName =
     | 'book' | 'arrow-left' | 'clock' | 'stop' | 'play' | 'bolt'
     | 'eye' | 'wrench' | 'brain' | 'x' | 'code' | 'lightbulb'
     | 'document' | 'check-circle' | 'image' | 'globe' | 'logo' | 'sparkles'
-    | 'gear' | 'chat' | 'send' | 'clip' | 'copy' | 'model' | 'user' | 'spinner' | 'file' | 'menu';
+    | 'gear' | 'chat' | 'send' | 'clip' | 'copy' | 'model' | 'user' | 'spinner' | 'file' | 'menu' | 'layers';
 
 /**
  * 图标路径工厂表。
@@ -65,6 +65,7 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     spinner: () => <path d="M12 3a9 9 0 1 0 9 9" />,
     file: () => <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" /><path d="M14 3v5h5" /></>,
     menu: () => <><circle cx="5" cy="6" r="1" /><circle cx="12" cy="6" r="1" /><circle cx="19" cy="6" r="1" /><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="18" r="1" /><circle cx="12" cy="18" r="1" /><circle cx="19" cy="18" r="1" /></>,
+    layers: () => <><path d="m3 12 9-7 9 7-9 7-9-7Z" /><path d="m3 16 9 5 9-5" /><path d="m3 8 9 5 9-5" /></>,
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

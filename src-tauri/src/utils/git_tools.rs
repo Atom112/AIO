@@ -16,7 +16,7 @@ const MAX_COMMIT_MSG_BYTES: usize = 10_000;
 
 // ====== 辅助函数 ======
 
-fn tool_ok(text: String) -> ToolResult {
+pub fn tool_ok(text: String) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
             kind: "text".into(),
@@ -26,7 +26,7 @@ fn tool_ok(text: String) -> ToolResult {
     }
 }
 
-fn tool_err(msg: &str) -> ToolResult {
+pub fn tool_err(msg: &str) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
             kind: "text".into(),

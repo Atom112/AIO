@@ -1,7 +1,7 @@
 /**
  * SubagentModelSettings — Per-profile model override configuration.
  *
- * Each subagent profile (8 built-in + custom) can optionally use a
+ * Each subagent profile (9 built-in + custom) can optionally use a
  * different model/provider than the parent agent.  Only cloud models are
  * selectable because subagents run in the same process; a local model can
  * be used by leaving the override unset (falls back to parent model).
@@ -35,7 +35,7 @@ interface ProfileInfo {
 }
 
 const BUILTIN_PROFILE_IDS = new Set([
-    'explorer', 'coder', 'general', 'architect', 'debugger', 'reviewer', 'writer', 'tester',
+    'explorer', 'coder', 'general', 'architect', 'debugger', 'reviewer', 'writer', 'tester', 'requirements',
 ]);
 
 const BUILTIN_PROFILES: ProfileInfo[] = [
@@ -78,6 +78,12 @@ const BUILTIN_PROFILES: ProfileInfo[] = [
         id: 'tester',
         name: '测试工程师',
         description: '测试用例生成、覆盖率分析与测试执行。可运行测试并编写测试文件。',
+    },
+
+    {
+        id: 'requirements',
+        name: '需求分析员',
+        description: '用户需求分析，将用户输入拆解为结构化工作流方案。不能修改文件。',
     },
 ];
 

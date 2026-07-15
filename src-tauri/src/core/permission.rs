@@ -376,6 +376,102 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             },
         ],
 
+        AgentMode::Workflow => vec![
+            // 完全等同于 Auto 模式的权限规则：全自动允许，文件删除需确认
+            PermissionRule {
+                id: "builtin-workflow-allow-fs-read".into(),
+                tool_pattern: "read_file".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-workflow-allow-fs-list".into(),
+                tool_pattern: "list_directory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-workflow-allow-fs-write".into(),
+                tool_pattern: "write_file".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-workflow-allow-fs-edit".into(),
+                tool_pattern: "replace_in_file".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-workflow-allow-fs-glob".into(),
+                tool_pattern: "glob".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-workflow-allow-fs-search".into(),
+                tool_pattern: "search_*".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-workflow-allow-fs-mkdir".into(),
+                tool_pattern: "make_directory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            // 删除操作：需要确认（危险操作）
+            PermissionRule {
+                id: "builtin-workflow-ask-delete".into(),
+                tool_pattern: "delete_file".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Ask,
+                path_pattern: None,
+                priority: 10,
+            },
+            // 命令执行：自动允许
+            PermissionRule {
+                id: "builtin-workflow-allow-command".into(),
+                tool_pattern: "execute_command".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            // 其他 MCP 工具：自动允许
+            PermissionRule {
+                id: "builtin-workflow-allow-other-tools".into(),
+                tool_pattern: "*".into(),
+                server_id: None,
+                modes: vec![AgentMode::Workflow],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 0,
+            },
+        ],
         AgentMode::Plan => vec![
             // Plan 模式：只读，所有写/删操作拒绝
             PermissionRule {

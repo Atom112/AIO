@@ -128,6 +128,15 @@ pub struct Message {
     /// 本轮输出 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
+    /// Agent 工作过程步骤（JSON 序列化的 AgentStep[]），跨重启持久化
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_steps: Option<serde_json::Value>,
+    /// Agent 执行中的中间内容（流式文本暂存），跨重启持久化
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interim_content: Option<String>,
+    /// Agent 开始执行时间戳（毫秒），跨重启持久化
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_start_time: Option<i64>,
 }
 
 /// OpenAI 风格的工具调用（assistant 消息中）
@@ -137,6 +146,14 @@ pub struct ToolCall {
     #[serde(rename = "type")]
     pub kind: String,
     pub function: ToolCallFunction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

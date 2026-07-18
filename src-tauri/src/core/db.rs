@@ -150,6 +150,11 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     add_column_if_missing(&conn, "messages", "input_tokens", "INTEGER")?;
     add_column_if_missing(&conn, "messages", "output_tokens", "INTEGER")?;
 
+    // 迁移：Agent 工作过程持久化（跨重启保留 agent_steps / interim_content / agent_start_time）
+    add_column_if_missing(&conn, "messages", "agent_steps_json", "TEXT")?;
+    add_column_if_missing(&conn, "messages", "interim_content", "TEXT")?;
+    add_column_if_missing(&conn, "messages", "agent_start_time", "INTEGER")?;
+
     // 用量日志表：不可变 append-only 记录，每轮 LLM 调用一行
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS usage_log (

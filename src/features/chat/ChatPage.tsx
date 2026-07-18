@@ -92,6 +92,9 @@ const ChatPage: Component = () => {
   const [isDragging, setIsDragging] = createSignal(false);                        // 是否正在拖拽文件到窗口（控制拖拽状态样式）
   const [isChangingTopic, setIsChangingTopic] = createSignal(false);              // 是否正在切换话题（控制切换动画）
   const [typingIndex, setTypingIndex] = createSignal<number | null>(null);        // 当前正在打字机效果显示的消息索引，null 表示无打字效果
+  // setTimeout 批量流式内容合并（50ms 窗口），避免逐 token UI 更新（消除打字机效果）
+  let streamBatch: { assistant_id: string; topic_id: string; content: string; agentStepsContent: string; lastIdx: number } | null = null;
+  let streamBatchRAF: number | undefined;
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
   // 待用户审批的工具调用列表
@@ -728,6 +731,13 @@ const ChatPage: Component = () => {
     const agentSystemPrompt = agentPromptContent
       ? [{ role: 'system' as const, content: agentPromptContent }]
       : [];
+    // 截断过长的工具返回内容，防止 LLM 上下文膨胀。完整内容保留在 agentSteps 中供用户查看。
+    const truncateToolResult = (content: string): string => {
+      const MAX_LEN = 10000;
+      if (content.length <= MAX_LEN) return content;
+      return content.slice(0, MAX_LEN) + `\n\n... [已截断: 共${content.length}字符]`;
+    };
+
     let messagesForAI: any[] = [
         { role: 'system', content: currentAsst.prompt },
         ...resolveAssistantSkills(currentAsst).map(skill => ({
@@ -759,7 +769,7 @@ const ChatPage: Component = () => {
                   role: 'tool' as const,
                   tool_call_id: tc.id,
                   name: tc.function?.name,
-                  content: tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? ''),
+                  content: truncateToolResult(tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? '')),
                 }));
               return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
             }
@@ -787,17 +797,40 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 更新本地 Store：添加用户消息（AI 占位消息由 llm-round-start 事件创建，
-    // 保证整轮多轮工具调用只有一条贯穿的 assistant 消息流）
-    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
-      ...h,
-      newUserMsg,
-    ]);
+    // 更新本地 Store：添加用户消息，聊天模式下同时创建空 assistant 占位消息
+    // （项目/Agent 模式下占位消息由 llm-round-start 事件创建）
+    if (isChatMode()) {
+      setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
+        ...h,
+        newUserMsg,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant' as const,
+          content: '',
+          modelId: currentMdl?.model_id,
+          reasoning: '',
+          agentStartTime: Date.now(),
+          agentSteps: [] as any[],
+        },
+      ]);
+    } else {
+      setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId, 'history', h => [
+        ...h,
+        newUserMsg,
+      ]);
+    }
 
     // 清空输入状态和文件列表，设置生成中状态
     setInputMessage("");
     setPendingFiles([]);
     setIsThinking(true);
+
+    // 设置打字机索引（聊天模式下刚创建的 assistant 占位消息位置）
+    if (isChatMode()) {
+      const asst = datas.assistants.find(a => a.id === asstId);
+      const topic = asst?.topics.find((t: Topic) => t.id === topicId);
+      if (topic) setTypingIndex(topic.history.length - 1);
+    }
 
       try {
         // 聊天模式：纯对话，直接调用 call_llm_stream（无 agent 循环、无工具调用）
@@ -1318,6 +1351,18 @@ const ChatPage: Component = () => {
       listen<any>('llm-chunk', async (e) => {
         const { assistant_id, topic_id, content, done, error, input_tokens, output_tokens } = e.payload;
         if (done) {
+          // 刷新可能残余的 rAF 批量内容
+          if (streamBatchRAF !== undefined) {
+            clearTimeout(streamBatchRAF);
+            streamBatchRAF = undefined;
+          }
+          if (streamBatch) {
+            const batch = streamBatch;
+            streamBatch = null;
+            setDatas('assistants', a => a.id === batch.assistant_id,
+              'topics', t => t.id === batch.topic_id,
+              'history', batch.lastIdx, 'content', (old: string) => old + batch.content);
+          }
           // 整轮真正结束（后端 run_agent_turn epilogue 唯一发出 done）
           if (error) {
             // 错误：追加错误文本到最后一条 assistant 消息
@@ -1367,41 +1412,43 @@ const ChatPage: Component = () => {
           return;
         }
 
-        // 流式数据追加：查找对应消息并追加内容
+        // 流式数据追加：rAF 批量合并，避免逐 token 的打字机效果
         const asst = datas.assistants.find(a => a.id === assistant_id);
         const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
         if (topic) {
-          const lastIdx = topic.history.length - 1; // 最后一条消息（AI 回复）
+          const lastIdx = topic.history.length - 1;
           if (lastIdx >= 0) {
-            // 追加到 content 字段（保持向后兼容）
-            setDatas('assistants', a => a.id === assistant_id,
-              'topics', t => t.id === topic_id,
-              'history', lastIdx, 'content', (old: string) => old + content);
-            // 构建 agentSteps 时间线：若最后一步不是 content 则新建，否则追加
-            setDatas('assistants', a => a.id === assistant_id,
-              'topics', t => t.id === topic_id,
-              'history', lastIdx, 'agentSteps', (steps: any[] = []) => {
-                const lastStep = steps[steps.length - 1];
-                if (lastStep && lastStep.type === 'content' && lastStep.status === 'running') {
-                  // 追加到当前 content 步骤
-                  return [...steps.slice(0, -1), {
-                    ...lastStep,
-                    contentText: (lastStep.contentText || '') + content,
-                  }];
+            if (!streamBatch) {
+              streamBatch = { assistant_id, topic_id, content, agentStepsContent: content, lastIdx };
+              streamBatchRAF = window.setTimeout(() => {
+                const batch = streamBatch!;
+                streamBatch = null;
+                streamBatchRAF = undefined;
+                // 一次性应用批量内容（50ms 窗口内累积的所有 token）
+                setDatas('assistants', a => a.id === batch.assistant_id,
+                  'topics', t => t.id === batch.topic_id,
+                  'history', batch.lastIdx, 'content', (old: string) => old + batch.content);
+                if (batch.agentStepsContent) {
+                  const batchStepsContent = batch.agentStepsContent;
+                  setDatas('assistants', a => a.id === batch.assistant_id,
+                    'topics', t => t.id === batch.topic_id,
+                    'history', batch.lastIdx, 'agentSteps', (steps: any[] = []) => {
+                      const lastStep = steps[steps.length - 1];
+                      if (lastStep && lastStep.type === 'content' && lastStep.status === 'running') {
+                        return [...steps.slice(0, -1), { ...lastStep, contentText: (lastStep.contentText || '') + batchStepsContent }];
+                      }
+                      const now = Date.now();
+                      const closed = lastStep && lastStep.status === 'running'
+                        ? [...steps.slice(0, -1), { ...lastStep, status: 'complete', duration: now - lastStep.timestamp }]
+                        : steps;
+                      return [...closed, { id: crypto.randomUUID(), type: 'content', timestamp: now, status: 'running', contentText: batchStepsContent }];
+                    });
                 }
-                // 关闭上一步（如果仍在运行），新建 content 步骤
-                const now = Date.now();
-                const closed = lastStep && lastStep.status === 'running'
-                  ? [...steps.slice(0, -1), { ...lastStep, status: 'complete', duration: now - lastStep.timestamp }]
-                  : steps;
-                return [...closed, {
-                  id: crypto.randomUUID(),
-                  type: 'content',
-                  timestamp: now,
-                  status: 'running',
-                  contentText: content,
-                }];
-              });
+              }, 50) as unknown as number;
+            } else {
+              streamBatch.content += content;
+              streamBatch.agentStepsContent += content;
+            }
           }
         }
       }),
@@ -1691,22 +1738,6 @@ const ChatPage: Component = () => {
     });
   });
 
-  createEffect(() => {
-    const tId = currentTopicId();
-    if (tId) {
-      setIsChangingTopic(true);
-      setTimeout(() => setIsChangingTopic(false), 50); // 50ms 后恢复，触发过渡
-    }
-  });
-
-  createEffect(() => {
-    const tId = currentTopicId();
-    // 只有在非初次静默加载且 tId 真正存在时触发
-    if (tId && !isFirstAppLaunch) {
-      setIsChangingTopic(true);
-      setTimeout(() => setIsChangingTopic(false), 50);
-    }
-  });
 
   // 监听手动触发的"重新生成标题"请求（来自 TopicSidebar 右键菜单）
   // 消费后立即清空信号，避免后续误触发
@@ -1813,7 +1844,6 @@ const ChatPage: Component = () => {
 
         <ChatInterface
           activeTopic={activeTopic()}
-          isChangingTopic={isChangingTopic()}
           isThinking={isThinking()}
           isProcessing={isProcessing()}
           isDragging={isDragging()}

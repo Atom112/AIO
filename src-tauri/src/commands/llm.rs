@@ -907,6 +907,17 @@ fn is_git_repo(dir: &str) -> bool {
     std::path::Path::new(dir).join(".git").exists()
 }
 
+/// 截断过长的工具返回内容，防止 LLM 上下文膨胀。完整内容保留在 agentSteps 中供用户查看。
+/// MAX_LEN = 10000 字符，覆盖大多数工具返回（代码片段、文件列表、搜索结果），约占 ~2500 tokens。
+fn truncate_tool_result(s: &str) -> String {
+    const MAX_LEN: usize = 10000;
+    if s.len() <= MAX_LEN {
+        s.to_string()
+    } else {
+        format!("{}\n\n... [已截断: 共{}字符]", &s[..MAX_LEN], s.len())
+    }
+}
+
 /// 处理 delegate_task 工具调用（从主 Agent 循环中调用）。
 ///
 /// 解析参数、验证权限、获取 profile，然后委托给 execute_subagent 执行。
@@ -1905,7 +1916,6 @@ pub async fn run_agent_turn(
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
                     };
-
                     // 立即发射结果（不等待其他工具）
                     let _ = window.emit(
                         "llm-tool-result",
@@ -1923,7 +1933,7 @@ pub async fn run_agent_turn(
                     // 立即回填 role:tool 消息
                     let mut tool_msg = serde_json::Map::new();
                     tool_msg.insert("role".into(), json!("tool"));
-                    tool_msg.insert("content".into(), json!(content_text));
+                    tool_msg.insert("content".into(), json!(truncate_tool_result(&content_text)));
                     tool_msg.insert("tool_call_id".into(), json!(tc.id));
                     tool_msg.insert("name".into(), json!(tc.name));
                     messages_for_api.push(serde_json::Value::Object(tool_msg));
@@ -1956,7 +1966,6 @@ pub async fn run_agent_turn(
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
                     };
-
                     // 立即发射该 delegate 结果
                     let tc = &round_result.tool_calls[i];
                     let _ = window.emit(
@@ -1975,7 +1984,7 @@ pub async fn run_agent_turn(
                     // 立即回填 role:tool 消息
                     let mut tool_msg = serde_json::Map::new();
                     tool_msg.insert("role".into(), json!("tool"));
-                    tool_msg.insert("content".into(), json!(content_text));
+                    tool_msg.insert("content".into(), json!(truncate_tool_result(&content_text)));
                     tool_msg.insert("tool_call_id".into(), json!(tc.id));
                     tool_msg.insert("name".into(), json!(tc.name));
                     messages_for_api.push(serde_json::Value::Object(tool_msg));
@@ -2004,7 +2013,7 @@ pub async fn run_agent_turn(
 
                     let mut tool_msg = serde_json::Map::new();
                     tool_msg.insert("role".into(), json!("tool"));
-                    tool_msg.insert("content".into(), json!(result.content_text));
+                    tool_msg.insert("content".into(), json!(truncate_tool_result(&result.content_text)));
                     tool_msg.insert("tool_call_id".into(), json!(tc.id));
                     tool_msg.insert("name".into(), json!(tc.name));
                     messages_for_api.push(serde_json::Value::Object(tool_msg));
@@ -2207,8 +2216,9 @@ pub async fn append_message(
     conn.execute(
         "INSERT INTO messages
          (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
-          tool_call_id, name, tool_calls_json, input_tokens, output_tokens)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+          tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
+          agent_steps_json, interim_content, agent_start_time)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             message_id,
             topic_id,
@@ -2223,6 +2233,9 @@ pub async fn append_message(
             tool_calls_json,
             message.input_tokens,
             message.output_tokens,
+            serde_json::to_string(&message.agent_steps).ok(),
+            message.interim_content,
+            message.agent_start_time,
         ],
     ).map_err(|e| e.to_string())?;
     sync_message_attachments(&conn, &message_id, message.display_files.as_ref())?;

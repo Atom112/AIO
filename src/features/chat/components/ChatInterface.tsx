@@ -393,7 +393,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 msg.role === 'assistant'
                                                     ? 'rounded-tl-[2px] text-white'
                                                     : 'rounded-tr-[2px] text-white'
-                                            }`}
+                                            } ${isActiveRound() && msg.content ? 'message-streaming' : ''}`}
                                             style={`background: ${msg.role === 'assistant' ? 'rgba(255,255,255,0.04)' : 'rgba(124,154,191,0.08)'}; border: ${msg.role === 'assistant' ? '1px solid rgba(255,255,255,0.04)' : '1px solid rgba(124,154,191,0.06)'}; backdrop-filter: blur(8px);`}
                                         >
                                             <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
@@ -430,7 +430,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     when={msg.role === 'assistant' && !msg.content && !(msg as any).toolCalls?.length && !msg.reasoning}
                                                     fallback={
                                                         <Show when={msg.role !== 'tool'}>
-                                                            <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                                                            <div class={isActiveRound() && msg.content ? 'animate-stream-fade-in' : ''}>
+                                                                <Markdown content={msg.role === 'user' && msg.displayText !== undefined ? msg.displayText : msg.content} />
+                                                            </div>
                                                         </Show>
                                                     }
                                                 >

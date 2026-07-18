@@ -1444,7 +1444,7 @@ const ChatPage: Component = () => {
                       return [...closed, { id: crypto.randomUUID(), type: 'content', timestamp: now, status: 'running', contentText: batchStepsContent }];
                     });
                 }
-              }, 50) as unknown as number;
+              }, 80) as unknown as number;
             } else {
               streamBatch.content += content;
               streamBatch.agentStepsContent += content;

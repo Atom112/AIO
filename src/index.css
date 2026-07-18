@@ -565,6 +565,29 @@ input[type="range"]::-webkit-slider-thumb:active {
 }
 
 .command-palette-card {
+
+/* ====== Lobehub-style streaming shimmer ====== */
+.message-streaming::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+        105deg,
+        transparent 40%,
+        rgba(255, 255, 255, 0.03) 50%,
+        transparent 60%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.message-streaming > * {
+    position: relative;
+    z-index: 1;
+}
     @apply w-[600px] max-h-[460px] flex flex-col border border-white/[0.08] rounded-[14px] overflow-hidden;
     background: rgba(22, 26, 40, 0.95);
     box-shadow:

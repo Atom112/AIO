@@ -61,6 +61,14 @@ export default {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
         },
+        'shimmer': {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        'stream-fade-in': {
+          '0%': { opacity: '0.6' },
+          '100%': { opacity: '1' },
+        },
         'fade-in': {
           '0%': { opacity: '0', transform: 'scale(0.9)' },
           '100%': { opacity: '1', transform: 'scale(1)' },
@@ -144,14 +152,14 @@ export default {
         },
       },
       animation: {
-        'message-in': 'message-in 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) forwards',
+        'shimmer': 'shimmer 2s linear infinite',
+        'stream-fade-in': 'stream-fade-in 0.3s ease-out forwards',
         'fade-in': 'fade-in 0.2s ease-out forwards',
         // ======= Moved from index.css =======
         'context-menu-in': 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
         'context-menu-out': 'contextMenuOut 0.14s ease-in forwards',
         'modal-overlay-in': 'modalOverlayIn 0.2s ease forwards',
         'message-in': 'message-in 0.4s ease-out forwards',
-        'toast-in': 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
         'row-in': 'rowIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) backwards',
         'think-icon-pulse': 'thinkIconPulse 2s ease-in-out infinite',
         'think-icon-spin': 'thinkIconSpin 2.4s linear infinite',

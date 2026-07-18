@@ -2,7 +2,6 @@ import { Component, For } from 'solid-js';
 import Icon from '../../../shared/components/Icon';
 
 interface WelcomeScreenProps {
-    isChangingTopic: boolean;
     onSuggestionClick: (text: string) => void;
 }
 
@@ -39,11 +38,6 @@ const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
     return (
         <div
             class="flex flex-col items-center justify-center w-full pointer-events-auto select-none"
-            classList={{
-                'transition-opacity duration-200 ease-out': true,
-                'opacity-0': props.isChangingTopic,
-                'opacity-100': !props.isChangingTopic,
-            }}
         >
             {/* Logo with floating animation */}
             <div class="animate-welcome-logo-float mb-6">

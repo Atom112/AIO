@@ -288,7 +288,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     return (
         <Show when={hasContent()}>
             <div
-                class="my-2 rounded-lg overflow-hidden bg-white/[0.02] border border-white/[0.05] transition-[background,border-color] duration-200 hover:bg-white/[0.035] hover:border-white/[0.08]"
+                class="my-2"
                 classList={{ 'is-open': isExpanded(), 'is-active': props.isActive }}
             >
                 {/* 外层 header */}
@@ -298,25 +298,24 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                     onClick={toggleOuter}
                     aria-expanded={isExpanded()}
                 >
-                    <span class="flex items-center justify-center w-5 h-5 rounded bg-white/[0.05] relative">
-                        <Icon
-                            name={props.isActive ? 'sparkles' : 'brain'}
-                            size={13}
-                            class="w-3.5 h-3.5"
-                        />
-                    </span>
                     <span class="font-medium flex-none">
                         {props.isActive ? '正在工作' : '已工作'}
                     </span>
                     <span class="font-mono text-white/30 text-[11px] flex-none ml-0.5">
                         {props.startTime ? formatDuration(elapsedMs()) : ''}
                     </span>
-                    <span class="flex items-center justify-center ml-auto text-white/30 transition-[transform,color] duration-200" aria-hidden="true">
-                        <Icon name="arrow-left" size={11} class="-rotate-90 transition-transform duration-200" />
+                    <span class="flex items-center justify-center ml-auto w-5 h-5 rounded-full bg-white/[0.08] text-white/40 transition-colors duration-200" aria-hidden="true">
+                        <Icon
+                            name="arrow-left"
+                            size={16}
+                            classList={{ '-rotate-90': !isExpanded(), 'rotate-90': isExpanded() }}
+                            style="transition: transform 0.2s;"
+                        />
                     </span>
                 </button>
 
                 {/* Body：滚动放在外层，内部正常排列不压缩 */}
+                <div class="overflow-hidden transition-[max-height] duration-300 ease-in-out" style={isExpanded() ? 'max-height: 620px' : 'max-height: 0'}>
                 <div
                     ref={stepsContainerRef}
                     class="overflow-y-auto"
@@ -381,6 +380,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                             </div>
                         </Show>
                     </Show>
+                </div>
                 </div>
             </div>
         </Show>

@@ -91,7 +91,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
     };
 
     const sortedMcpServers = () =>
-        Object.values(mcpServers()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+        Object.values(mcpServers()).filter(s => s.id !== '__aio-filesystem__').sort((a, b) => a.displayName.localeCompare(b.displayName));
 
     /** 为当前助手启用或停用一个 Skill，并立即持久化。 */
     const handleToggleSkill = async (skillId: string, enabled: boolean) => {

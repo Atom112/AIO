@@ -2,7 +2,7 @@ import { Component, For, Show, Setter, createSignal, createEffect, createMemo, o
 import Markdown from '../../../shared/components/Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, isChatMode, type AgentMode } from '../../../core/store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, isChatMode, mcpServerStatus, type AgentMode } from '../../../core/store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
@@ -20,7 +20,6 @@ import WelcomeScreen from './WelcomeScreen';
 
 interface ChatInterfaceProps {
     activeTopic: Topic | null;
-    isChangingTopic: boolean;
     isThinking: boolean;
     isProcessing: boolean;
     isDragging: boolean;
@@ -113,7 +112,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     filters: [{ name: '所有文件', extensions: ['*'] }],
                 });
                 if (selected) {
-                    const path = typeof selected === 'string' ? selected : selected.path;
+                    const path = typeof selected === 'string'
+                        ? selected
+                        : 'path' in selected
+                            ? (selected as any).path
+                            : String(selected);
                     await props.handleFileUpload(path, 'file');
                 }
             } catch (e) {
@@ -316,12 +319,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
     return (
         <div class="flex flex-col flex-grow items-stretch rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full"
-             style="background: rgba(18, 22, 35, 0.2); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.04);">
+             style="background: rgba(18, 22, 35, 0.12); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 1px rgba(255,255,255,0.04);">
             <div
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
                 onWheel={handleWheel}
-                class={`flex-grow overflow-y-auto pb-[15px] transition-opacity duration-200 ease-out z-[1] ${props.isChangingTopic ? 'opacity-0' : 'opacity-100'}`}
+                class="flex-grow overflow-y-auto pb-[15px] z-[1]"
             >
                 <Show when={isStartingLocalModel()}>
                     <div class="w-full mb-4 p-4 rounded-lg" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);">
@@ -341,7 +344,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 <Show when={!props.activeTopic || (props.activeTopic?.history?.length ?? 0) === 0}>
                     <div class="min-h-full flex items-center justify-center">
                         <WelcomeScreen
-                            isChangingTopic={props.isChangingTopic}
                             onSuggestionClick={(text) => {
                                 props.setInputMessage(text);
                                 if (textareaRef) {
@@ -552,7 +554,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-[13px] h-[13px]">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
                                                     </svg>
-                                                    <span class="action-label">编辑后重发</span>
+                                                    <span class="action-label">编辑</span>
                                                 </button>
                                             </Show>
                                         </div>
@@ -649,12 +651,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     const project = currentProject();
                     const modeLabel: string = { normal: '普通', auto: '自动', plan: 'Plan', workflow: '工作流' }[mode as 'normal'|'auto'|'plan'|'workflow'] || mode;
                     return (
-                      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs"
+                      <div class="flex items-center gap-2 px-3 h-8 rounded-2xl text-xs"
                            style="background: rgba(124,154,191,0.12); border: 1px solid rgba(124,154,191,0.2);">
                         <Icon name="wrench" size={14} />
                         <span style="color: rgba(255,255,255,0.7);">
                           Agent · {modeLabel} · 项目: {project?.name ?? ''}
                         </span>
+                        <Show when={project}>
+                          <span class="w-2 h-2 rounded-full shrink-0" style={{ background: (() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? '#4ade80' : s === 'connecting' ? '#facc15' : '#f87171'; })() }} title={(() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? '文件系统正常' : s === 'connecting' ? '文件系统启动中' : '文件系统异常'; })()} />
+                        </Show>
                       </div>
                     );
                   })()}

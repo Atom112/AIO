@@ -60,13 +60,11 @@ export default {
         'message-in': {
           '0%': {
             opacity: '0',
-            transform: 'translateY(16px) scale(0.95)',
-            filter: 'blur(4px)'
+            transform: 'translateY(8px) scale(0.97)',
           },
           '100%': {
             opacity: '1',
             transform: 'translateY(0) scale(1)',
-            filter: 'blur(0)'
           },
         },
         'fade-in': {
@@ -152,7 +150,7 @@ export default {
         },
       },
       animation: {
-        'message-in': 'message-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
+        'message-in': 'message-in 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) forwards',
         'fade-in': 'fade-in 0.2s ease-out forwards',
         // ======= Moved from index.css =======
         'context-menu-in': 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',

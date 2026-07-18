@@ -66,7 +66,7 @@ const McpServerList: Component = () => {
     });
 
     const sortedServers = createMemo(() =>
-        Object.values(mcpServers()).sort((a, b) => a.displayName.localeCompare(b.displayName)),
+        Object.values(mcpServers()).filter(s => s.id !== '__aio-filesystem__').sort((a, b) => a.displayName.localeCompare(b.displayName)),
     );
     const installedSourceIds = createMemo(() =>
         new Set(Object.values(mcpServers()).map(server => server.fromCatalog?.sourceId).filter(Boolean)),

@@ -117,7 +117,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     return (
         <div
             class="relative flex flex-col flex-shrink-0 min-w-0 z-10"
-            style={`width: ${props.isCollapsed ? '0%' : `${props.width}%`}; padding: ${props.isCollapsed ? '0' : '15px'}; background: ${props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.25)'}; backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; -webkit-backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; border: ${props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.06)'}; border-radius: 12px; box-shadow: ${props.isCollapsed ? 'none' : '0 8px 32px rgba(0, 0, 0, 0.2)'}; transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
+            style={`width: ${props.isCollapsed ? '0%' : `${props.width}%`}; padding: ${props.isCollapsed ? '0' : '15px'}; background: ${props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.15)'}; backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; -webkit-backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; border: ${props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.08)'}; border-radius: 12px; box-shadow: ${props.isCollapsed ? 'none' : 'inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2)'}; transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
         >
             {/* 调整大小把手（左侧） */}
             <div
@@ -142,25 +142,20 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                 <Show when={props.currentAssistant}>
                     {(asst) => (
                         <div class="flex flex-col h-full">
-                            <div class="mb-4">
-                                <h3 style="color: rgba(255,255,255,0.85); font-size: 1rem; font-weight: 500;">
-                                    {asst().name} 的话题
-                                </h3>
-                            </div>
                             <button
-                                class="w-full px-3 py-2 rounded-lg cursor-pointer transition-all duration-300"
+                                class="w-full px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
                                 style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.6);"
                                 onClick={props.addTopic}
                                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(124,154,191,0.12)'}
                                 onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
                             >
-                                + 新建话题
+                                新建话题
                             </button>
                             <div class="mt-[15px] space-y-1">
                                 <For each={asst().topics}>
                                     {(topic) => (
                                         <div
-                                            class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06]"
+                                            class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06]"
                                             classList={{ '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': topic.id === currentTopicId() }}
                                             onClick={() => setCurrentTopicId(topic.id)}
                                         >
@@ -178,7 +173,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                                     onClick={(e) => e.stopPropagation()}
                                                 />
                                             </Show>
-                                            <button class="flex items-center justify-center w-[30px] h-[30px] border-none rounded cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10" onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}>
+                                            <button class="flex items-center justify-center w-[30px] h-[30px] border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10" onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}>
                                                 <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
                                             </button>
                                         </div>

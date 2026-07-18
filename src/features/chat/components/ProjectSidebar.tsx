@@ -2,8 +2,8 @@ import { Component, For, Show, createSignal, createMemo } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   datas, currentAssistantId, setCurrentAssistantId, setCurrentTopicId,
-  projects, ensureProjectAssistant, saveSingleAssistantToBackend,
-  setDatas, deleteAssistantFile,
+  projects, setProjects, setCurrentProjectId, ensureProjectAssistant, saveSingleAssistantToBackend,
+  setDatas, deleteAssistantFile, initMcpServers,
   showProjectCreateModal, setShowProjectCreateModal,
 } from '../../../core/store/store';
 import { invoke } from '@tauri-apps/api/core';
@@ -69,6 +69,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
 
   /** 切换到聊天模式 */
   const switchToChat = () => {
+    setCurrentProjectId(null);
     setCurrentAssistantId(DIALOG_ASST_ID);
     const asst = datas.assistants.find(a => a.id === DIALOG_ASST_ID);
     if (asst?.topics?.length) {
@@ -79,8 +80,10 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   /** 切换到某个项目 */
   const switchToProject = async (projectId: string) => {
     try {
+      setCurrentProjectId(projectId);
       const asstId = await ensureProjectAssistant(projectId);
       setCurrentAssistantId(asstId);
+      initMcpServers(projectId);
       const asst = datas.assistants.find(a => a.id === asstId);
       if (asst?.topics?.length) {
         setCurrentTopicId(asst.topics[0].id);
@@ -120,6 +123,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         setDatas('assistants', prev => prev.filter(a => a.id !== asst.id));
       }
       await invoke('delete_project', { id: projectId });
+      setProjects(prev => prev.filter(p => p.id !== projectId));
     } catch (e) {
       alert('删除项目失败: ' + e);
     }
@@ -154,7 +158,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   return (
     <div
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10"
-      style={`width: ${props.isCollapsed ? '0%' : `${props.width}%`}; padding: ${props.isCollapsed ? '0' : '15px'}; background: ${props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.25)'}; backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; -webkit-backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; border: ${props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.06)'}; border-radius: 12px; box-shadow: ${props.isCollapsed ? 'none' : '0 8px 32px rgba(0, 0, 0, 0.2)'}; transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
+      style={`width: ${props.isCollapsed ? '0%' : `${props.width}%`}; padding: ${props.isCollapsed ? '0' : '15px'}; background: ${props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.15)'}; backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; -webkit-backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; border: ${props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.08)'}; border-radius: 12px; box-shadow: ${props.isCollapsed ? 'none' : 'inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2)'}; transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
     >
       <div
         class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
@@ -162,14 +166,14 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       >
         {/* 聊天入口 */}
         <div
-          class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
+          class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
           classList={{
             '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': isChatActive(),
           }}
           onClick={switchToChat}
         >
-          <span class="flex-grow text-[0.95rem] overflow-hidden pr-[10px] text-ellipsis whitespace-nowrap" style="color: rgba(255,255,255,0.85);">
-            <Icon name="chat" size={14} /> 对话
+          <span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);">
+            <Icon name="chat" size={14} class="shrink-0" /> <span class="truncate">对话</span>
           </span>
         </div>
 
@@ -177,7 +181,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         <div class="my-3 border-t" style="border-color: rgba(255,255,255,0.06);" />
 
         {/* 项目区域 */}
-        <div class="text-[10px] uppercase tracking-[1.5px] font-semibold px-1 mb-2" style="color: rgba(255,255,255,0.35);">
+        <div class="flex items-center h-12 text-xs uppercase tracking-[1.5px] font-semibold px-3 mb-1" style="color: rgba(255,255,255,0.35);">
           项目
         </div>
 
@@ -186,18 +190,18 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             const isActive = () => activeProjectId() === project.id;
             return (
               <div
-                class="group flex items-center justify-between px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
+                class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                 classList={{
                   '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': isActive(),
                 }}
                 onClick={() => switchToProject(project.id)}
               >
-                <span class="flex-grow text-[0.95rem] overflow-hidden pr-[10px] text-ellipsis whitespace-nowrap" style="color: rgba(255,255,255,0.85);">
-                  <Icon name="folder" size={14} /> {project.name}
+                <span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);">
+                  <Icon name="folder" size={14} class="shrink-0" /> <span class="truncate">{project.name}</span>
                 </span>
 
                 <button
-                  class="flex items-center justify-center w-[30px] h-[30px] border-none rounded cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                  class="flex items-center justify-center w-[30px] h-[30px] border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
                   onClick={(e) => openMenu(e as MouseEvent, project.id)}
                 >
                   <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
@@ -209,13 +213,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
 
         {/* 新建项目按钮 */}
         <button
-          class="w-full mt-[10px] px-3 py-2 rounded-lg cursor-pointer transition-all duration-300"
+          class="w-full mt-[10px] px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
           style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.6);"
           onClick={() => setShowProjectCreateModal(true)}
           onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(124,154,191,0.12)')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
         >
-          + 新建项目
+          新建项目
         </button>
       </div>
 

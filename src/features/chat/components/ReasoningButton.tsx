@@ -22,6 +22,13 @@ const LEVELS: LevelOption[] = [
     { value: 'high', label: '深度', desc: '深度分析复杂问题', iconName: 'brain' },
 ];
 
+const LEVEL_COLORS: Record<ReasoningLevel, string> = {
+    off: 'rgba(255,255,255,0.55)',
+    low: 'rgba(144,200,144,0.85)',
+    medium: 'rgba(220,170,120,0.85)',
+    high: 'rgba(180,150,220,0.85)',
+};
+
 const ReasoningButton: Component = () => {
     const [open, setOpen] = createSignal(false);
     let containerRef: HTMLDivElement | undefined;
@@ -50,7 +57,8 @@ const ReasoningButton: Component = () => {
         <div ref={containerRef} class="relative inline-block">
             <button
                 type="button"
-                class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/40 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
+                class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/55 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
+                style={{ color: LEVEL_COLORS[reasoningLevel()] }}
                 classList={{ 'is-active': isActive() }}
                 title="推理强度"
                 onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}
@@ -60,7 +68,7 @@ const ReasoningButton: Component = () => {
             </button>
             <div
                 class="absolute left-0 bottom-full mb-2 w-[280px] rounded-xl p-1.5 z-[1500] transition-all duration-150 ease-out origin-bottom"
-                style="background: var(--acrylic-bg); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid var(--acrylic-border); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);"
+                style="background: rgba(18,22,35,0.96); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);"
                 classList={{
                     'invisible opacity-0 scale-95 -translate-y-1 pointer-events-none': !open(),
                     'visible opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),
@@ -80,10 +88,10 @@ const ReasoningButton: Component = () => {
                             <button
                                 type="button"
                                 class="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md border-none cursor-pointer text-left transition-all duration-150 bg-transparent text-white/70 hover:bg-white/[0.05] hover:text-white/90"
-                                classList={{ 'is-selected': reasoningLevel() === opt.value }}
+                                style={reasoningLevel() === opt.value ? { background: 'rgba(255,255,255,0.06)' } : {}}
                                 onClick={() => choose(opt.value)}
                             >
-                                <span class="flex items-center justify-center w-7 h-7 rounded-md shrink-0 bg-white/[0.05] text-white/60">
+                                <span class="flex items-center justify-center w-7 h-7 rounded-md shrink-0" style={{ background: 'rgba(255,255,255,0.05)', color: LEVEL_COLORS[opt.value] }}>
                                     <Icon name={opt.iconName} size={14} />
                                 </span>
                                 <span class="flex flex-col grow min-w-0">

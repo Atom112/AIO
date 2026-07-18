@@ -58,14 +58,8 @@ export default {
           '50%': { opacity: '0.8' },
         },
         'message-in': {
-          '0%': {
-            opacity: '0',
-            transform: 'translateY(8px) scale(0.97)',
-          },
-          '100%': {
-            opacity: '1',
-            transform: 'translateY(0) scale(1)',
-          },
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
         },
         'fade-in': {
           '0%': { opacity: '0', transform: 'scale(0.9)' },
@@ -156,7 +150,7 @@ export default {
         'context-menu-in': 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
         'context-menu-out': 'contextMenuOut 0.14s ease-in forwards',
         'modal-overlay-in': 'modalOverlayIn 0.2s ease forwards',
-        'modal-in': 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
+        'message-in': 'message-in 0.4s ease-out forwards',
         'toast-in': 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
         'row-in': 'rowIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) backwards',
         'think-icon-pulse': 'thinkIconPulse 2s ease-in-out infinite',

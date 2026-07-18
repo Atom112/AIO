@@ -335,13 +335,14 @@ input[type="range"]::-webkit-slider-thumb:active {
 .agent-step-card {
     @apply rounded-md overflow-hidden bg-white/[0.015] border border-white/[0.04] transition-[border-color,background] duration-[0.3s,0.2s];
     border-left: 2px solid var(--step-border-color, rgba(255, 255, 255, 0.12));
+    animation: stepSlideIn 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 .agent-step-card:hover {
     @apply bg-white/[0.03];
 }
 .agent-step-card.is-running {
     background: rgba(var(--primary-rgb), 0.03);
-    animation: stepCardPulse 2s ease-in-out infinite;
+    animation: stepSlideIn 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) backwards, stepCardPulse 2s ease-in-out infinite;
 }
 .agent-step-card.is-error {
     border-left-color: rgba(224, 85, 85, 0.5);

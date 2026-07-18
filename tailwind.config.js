@@ -118,6 +118,10 @@ export default {
           '0%, 100%': { borderLeftColor: 'var(--step-border-color)' },
           '50%': { borderLeftColor: 'rgba(var(--primary-rgb), 0.8)' },
         },
+        stepSlideIn: {
+          from: { opacity: '0', transform: 'translateX(-12px)' },
+          to: { opacity: '1', transform: 'translateX(0)' },
+        },
         toolApprovalIn: {
           from: { opacity: '0', transform: 'translateY(-8px)' },
           to: { opacity: '1', transform: 'translateY(0)' },

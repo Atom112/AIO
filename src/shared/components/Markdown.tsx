@@ -2,7 +2,7 @@
 import { marked, Tokens } from 'marked';
 import { markedHighlight } from "marked-highlight";
 import DOMPurify from 'dompurify';
-import { createMemo, Component, For } from 'solid-js';
+import { createMemo, Component, Index } from 'solid-js';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
 import ThinkBlock from './ThinkBlock';
@@ -171,13 +171,13 @@ const Markdown: Component<MarkdownProps> = (props) => {
 
     return (
         <div class="markdown-body" onClick={handleCopy}>
-            <For each={segments()}>
+            <Index each={segments()}>
                 {(seg) => (
-                    seg.type === 'think'
-                        ? <ThinkBlock content={seg.content} isStreaming={seg.isStreaming} />
-                        : <div class="markdown-segment" innerHTML={renderMarkdownHtml(seg.content)} />
+                    seg().type === 'think'
+                        ? <ThinkBlock content={seg().content} isStreaming={seg().isStreaming} />
+                        : <div class="markdown-segment" innerHTML={renderMarkdownHtml(seg().content)} />
                 )}
-            </For>
+            </Index>
         </div>
     );
 };

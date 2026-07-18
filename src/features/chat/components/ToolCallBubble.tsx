@@ -24,7 +24,7 @@ const ToolCallBubble: Component<Props> = (props) => {
 
     return (
         <div
-            class="mb-1.5 rounded-md overflow-hidden text-xs"
+            class="mb-1.5 rounded-md overflow-hidden text-xs animate-expand-width"
             style="border: 1px solid rgba(255,255,255,0.06);"
         >
             {/* 更紧凑的头部：无衬底背景，仅 hover 时交互 */}

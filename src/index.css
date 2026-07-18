@@ -140,6 +140,16 @@ html, body {
         border: 1px solid var(--acrylic-border);
     }
 
+    /* ——— 上下文菜单入场 / 出场 keyframes ——— */
+    @keyframes contextMenuIn {
+        from { opacity: 0; transform: scale(0.94) translateY(-4px); }
+        to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes contextMenuOut {
+        from { opacity: 1; transform: scale(1) translateY(0); }
+        to   { opacity: 0; transform: scale(0.96) translateY(-2px); }
+    }
+
     /* 右键上下文菜单容器 (亚克力主题) */
     .context-menu {
         @apply fixed z-[1500] min-w-[150px] rounded-lg shadow-xl py-1 origin-top-left;
@@ -331,18 +341,34 @@ input[type="range"]::-webkit-slider-thumb:active {
    Agent 时间线步骤卡片（新模式）
    ======================================== */
 
-/* 单步骤卡片 */
+/* 单步骤卡片 — 布局/交互样式 */
 .agent-step-card {
-    @apply rounded-md overflow-hidden bg-white/[0.015] border border-white/[0.04] transition-[border-color,background] duration-[0.3s,0.2s];
+    @apply rounded-md overflow-hidden bg-white/[0.015] border border-white/[0.04];
     border-left: 2px solid var(--step-border-color, rgba(255, 255, 255, 0.12));
-    animation: stepSlideIn 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+    transition: border-color 0.3s, background 0.2s;
+}
+/* 入场动画 keyframes（定义在 index.css 中，不依赖 Tailwind 摇树输出） */
+@keyframes stepSlideIn {
+    from { opacity: 0; transform: translateX(-12px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+@keyframes expand-width {
+    from { clip-path: inset(0 100% 0 0); }
+    to { clip-path: inset(0 0% 0 0); }
 }
 .agent-step-card:hover {
     @apply bg-white/[0.03];
 }
 .agent-step-card.is-running {
     background: rgba(var(--primary-rgb), 0.03);
-    animation: stepSlideIn 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) backwards, stepCardPulse 2s ease-in-out infinite;
+    animation: stepCardPulse 2s ease-in-out infinite;
+}
+/* 入场动画：与 .is-running 同级特异性 (0,2,0)，但源码顺序在后，
+   确保 running 状态的新步骤入场时 expand-width/stepSlideIn 覆盖 stepCardPulse 的 animation 简写。
+   动画结束后 JS 移除此类，is-running 的脉冲动画自动恢复。 */
+.agent-step-card.agent-step-card-entrance {
+    animation: stepSlideIn 0.6s cubic-bezier(0.22, 0.61, 0.36, 1) backwards,
+               expand-width 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.1s backwards;
 }
 .agent-step-card.is-error {
     border-left-color: rgba(224, 85, 85, 0.5);

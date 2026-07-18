@@ -370,7 +370,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let truncated = if body.len() > 512 {
-            &body[..512]
+            &body[..body.floor_char_boundary(512)]
         } else {
             &body
         };

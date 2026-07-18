@@ -118,9 +118,9 @@ export default {
           '0%, 100%': { borderLeftColor: 'var(--step-border-color)' },
           '50%': { borderLeftColor: 'rgba(var(--primary-rgb), 0.8)' },
         },
-        stepSlideIn: {
-          from: { opacity: '0', transform: 'translateX(-12px)' },
-          to: { opacity: '1', transform: 'translateX(0)' },
+        'expand-width': {
+          from: { clipPath: 'inset(0 100% 0 0)' },
+          to: { clipPath: 'inset(0 0% 0 0)' },
         },
         toolApprovalIn: {
           from: { opacity: '0', transform: 'translateY(-8px)' },
@@ -169,6 +169,7 @@ export default {
         'think-icon-spin': 'thinkIconSpin 2.4s linear infinite',
         'agent-process-pulse': 'agentProcessIconPulse 2s ease-in-out infinite',
         'agent-process-spin': 'agentProcessIconSpin 2.4s linear infinite',
+        'expand-width': 'expand-width 0.35s ease-out backwards',
         'step-card-pulse': 'stepCardPulse 2s ease-in-out infinite',
         'tool-approval-in': 'toolApprovalIn 0.2s ease-out',
         'cmd-palette-fade-in': 'commandPaletteFadeIn 0.12s ease-out',

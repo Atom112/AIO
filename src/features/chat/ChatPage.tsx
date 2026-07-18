@@ -402,6 +402,56 @@ const ChatPage: Component = () => {
     console.log(`话题已自动重命名: ${latestTopic.name} → ${newName}`);
   };
 
+  /** 中断/取消导致的工具调用占位结果文本（标记给模型看，保证上下文可理解） */
+  const TOOL_INTERRUPTED = '[Interrupted by user]';
+
+  /** 截断过长的工具返回内容，防止 LLM 上下文膨胀。完整内容保留在 agentSteps 中供用户查看。 */
+  const truncateToolResult = (content: string): string => {
+    const MAX_LEN = 10000;
+    if (content.length <= MAX_LEN) return content;
+    return content.slice(0, MAX_LEN) + `\n\n... [已截断: 共${content.length}字符]`;
+  };
+
+  /**
+   * 把一条历史消息展开为 API 载荷消息（可能 1 条或多条：assistant + 其 tool 结果）。
+   *
+   * 关键防御：state 停留在 'calling' 的孤儿 toolCall（用户中断 / 应用被杀 / 旧版本遗留），
+   * 就地合成为中断错误的 tool 结果消息，保证每个 tool_calls 都有配对的 role:tool 响应。
+   * 否则严格校验的 API 会返回 400（missing field tool_call_id / insufficient tool messages）。
+   */
+  function buildApiMessages(m: any): any[] {
+    const obj: any = { role: m.role, content: m.content };
+    if (m.toolCallId) obj.toolCallId = m.toolCallId;
+    if (m.name) obj.name = m.name;
+    if (!m.toolCalls || m.toolCalls.length === 0) return [obj];
+
+    // 缺 id 的条目无法配对，直接剔除（避免 JSON.stringify 丢弃 undefined 字段导致 400）
+    const validCalls = m.toolCalls.filter((tc: any) => tc.id != null);
+    if (validCalls.length === 0) return [obj];
+
+    obj.toolCalls = validCalls.map((tc: any) => ({
+      id: tc.id,
+      type: tc.type || 'function',
+      function: { name: tc.function?.name, arguments: tc.function?.arguments },
+    }));
+    const toolMsgs = validCalls.map((tc: any) => {
+      // 孤儿（calling / 无状态）：视为中断，合成错误结果
+      const interrupted = tc.state !== 'success' && tc.state !== 'error';
+      const raw = interrupted
+        ? TOOL_INTERRUPTED
+        : tc.state === 'error'
+          ? (tc.error ?? tc.content ?? '[Tool Error]')
+          : (tc.content ?? '');
+      return {
+        role: 'tool' as const,
+        toolCallId: tc.id,
+        name: tc.function?.name,
+        content: truncateToolResult(raw),
+      };
+    });
+    return [obj, ...toolMsgs];
+  }
+
   /**
    * 确保 messagesForAI 中的所有 assistant(tool_calls) 都有对应的 role:tool 消息。
    * 如果缺少某个 tool_call_id 的 tool 响应，自动补全占位消息，
@@ -411,47 +461,47 @@ const ChatPage: Component = () => {
     const result: any[] = [];
     let pendingToolCallIds: string[] = [];
 
-    for (const msg of msgs) {
-      result.push(msg);
-
-      if (msg.role === 'assistant' && msg.tool_calls?.length) {
-        // 收集这条 assistant 消息声明的所有 tool_call_id
-        pendingToolCallIds = msg.tool_calls.map((tc: any) => tc.id);
-      } else if (msg.role === 'tool' && msg.tool_call_id) {
-        // 匹配到对应的 tool 响应，移除
-        const idx = pendingToolCallIds.indexOf(msg.tool_call_id);
-        if (idx !== -1) pendingToolCallIds.splice(idx, 1);
-      }
-
-      // 遇到 user 或 assistant(无 tool_calls) 消息时，如果还有未匹配的 tool_call_id，
-      // 说明之前 assistant 的 tool_calls 缺少足够 tool 响应——补全占位消息
-      if ((msg.role === 'user' || (msg.role === 'assistant' && !msg.tool_calls?.length)) && pendingToolCallIds.length > 0) {
-        for (const id of pendingToolCallIds) {
-          console.warn(`[ensureToolMessages] 补全缺失的 tool 响应: ${id}`);
-          result.push({
-            role: 'tool' as const,
-            tool_call_id: id,
-            name: '__pending__',
-            content: '[System: tool result pending]',
-          });
-        }
-        pendingToolCallIds = [];
-      }
-    }
-
-    // 收尾：如果数组结束时仍有未匹配的 tool_call_id，补全占位消息
-    if (pendingToolCallIds.length > 0) {
+    // 补全 pending 中所有未配对 toolCallId 的占位 tool 消息
+    const flushPending = (target: any[]) => {
       for (const id of pendingToolCallIds) {
-        console.warn(`[ensureToolMessages] 补全缺失的 tool 响应(收尾): ${id}`);
-        result.push({
+        console.warn(`[ensureToolMessages] 补全缺失的 tool 响应: ${id}`);
+        target.push({
           role: 'tool' as const,
-          tool_call_id: id,
+          toolCallId: id,
           name: '__pending__',
           content: '[System: tool result pending]',
         });
       }
       pendingToolCallIds = [];
+    };
+
+    for (const msg of msgs) {
+      // 遇到新的 assistant(toolCalls) 时，先补全前一组未配对的 toolCallId，
+      // 避免连续多个 tool 调用回合时前一组 pending 被直接覆盖丢失
+      if (msg.role === 'assistant' && msg.toolCalls?.length && pendingToolCallIds.length > 0) {
+        flushPending(result);
+      }
+
+      result.push(msg);
+
+      if (msg.role === 'assistant' && msg.toolCalls?.length) {
+        // 收集这条 assistant 消息声明的所有 toolCallId
+        pendingToolCallIds = msg.toolCalls.map((tc: any) => tc.id);
+      } else if (msg.role === 'tool' && msg.toolCallId) {
+        // 匹配到对应的 tool 响应，移除
+        const idx = pendingToolCallIds.indexOf(msg.toolCallId);
+        if (idx !== -1) pendingToolCallIds.splice(idx, 1);
+      }
+
+      // 遇到 user 或 assistant(无 toolCalls) 消息时，如果还有未匹配的 toolCallId，
+      // 说明之前 assistant 的 toolCalls 缺少足够 tool 响应——补全占位消息
+      if ((msg.role === 'user' || (msg.role === 'assistant' && !msg.toolCalls?.length)) && pendingToolCallIds.length > 0) {
+        flushPending(result);
+      }
     }
+
+    // 收尾：如果数组结束时仍有未匹配的 toolCallId，补全占位消息
+    if (pendingToolCallIds.length > 0) flushPending(result);
 
     return result;
   }
@@ -522,28 +572,7 @@ const ChatPage: Component = () => {
         role: 'system',
         content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
       }] : []),
-      ...currentTopic.history.flatMap((m: any) => {
-        const obj: any = { role: m.role, content: m.content };
-        if (m.toolCallId) obj.tool_call_id = m.toolCallId;
-        if (m.name) obj.name = m.name;
-        if (m.toolCalls && m.toolCalls.length > 0) {
-          obj.tool_calls = m.toolCalls.map((tc: any) => ({
-            id: tc.id,
-            type: tc.type || 'function',
-            function: { name: tc.function?.name, arguments: tc.function?.arguments },
-          }));
-          const toolMsgs = m.toolCalls
-            .filter((tc: any) => tc.state === 'success' || tc.state === 'error')
-            .map((tc: any) => ({
-              role: 'tool' as const,
-              tool_call_id: tc.id,
-              name: tc.function?.name,
-              content: tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? ''),
-            }));
-          return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
-        }
-        return [obj];
-      }),
+      ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
       { role: 'user', content: newUserMsg.content }
     ];
     messagesForAI = ensureToolMessagesComplete(messagesForAI);
@@ -731,13 +760,6 @@ const ChatPage: Component = () => {
     const agentSystemPrompt = agentPromptContent
       ? [{ role: 'system' as const, content: agentPromptContent }]
       : [];
-    // 截断过长的工具返回内容，防止 LLM 上下文膨胀。完整内容保留在 agentSteps 中供用户查看。
-    const truncateToolResult = (content: string): string => {
-      const MAX_LEN = 10000;
-      if (content.length <= MAX_LEN) return content;
-      return content.slice(0, MAX_LEN) + `\n\n... [已截断: 共${content.length}字符]`;
-    };
-
     let messagesForAI: any[] = [
         { role: 'system', content: currentAsst.prompt },
         ...resolveAssistantSkills(currentAsst).map(skill => ({
@@ -751,30 +773,7 @@ const ChatPage: Component = () => {
           role: 'system',
           content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
         }] : []),
-      ...currentTopic.history.flatMap((m: any) => {
-            const obj: any = { role: m.role, content: m.content };
-            if (m.toolCallId) obj.tool_call_id = m.toolCallId;
-            if (m.name) obj.name = m.name;
-            if (m.toolCalls && m.toolCalls.length > 0) {
-              obj.tool_calls = m.toolCalls.map((tc: any) => ({
-                id: tc.id,
-                type: tc.type || 'function',
-                function: { name: tc.function?.name, arguments: tc.function?.arguments },
-              }));
-              // 从 toolCalls 元数据重建 role:tool 消息，使 API 上下文中每个 tool_call 都有配对响应。
-              // 前端历史不单独存储 role:tool 消息，工具结果保存在 toolCall 的 content/error 字段中。
-              const toolMsgs = m.toolCalls
-                .filter((tc: any) => tc.state === 'success' || tc.state === 'error')
-                .map((tc: any) => ({
-                  role: 'tool' as const,
-                  tool_call_id: tc.id,
-                  name: tc.function?.name,
-                  content: truncateToolResult(tc.state === 'error' ? (tc.error ?? tc.content ?? '[Tool Error]') : (tc.content ?? '')),
-                }));
-              return toolMsgs.length > 0 ? [obj, ...toolMsgs] : [obj];
-            }
-            return [obj];
-          }),
+      ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
         { role: 'user', content: newUserMsg.content }
       ];
       // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
@@ -1377,28 +1376,52 @@ const ChatPage: Component = () => {
               }
             }
           }
-          // 关闭最后一个步骤
+          // 关闭未完结状态：最后一个 running 步骤、以及中断产生的孤儿 toolCalls。
+          // 用户点停止时后端 cancel 直接 break，不会为在途工具发 llm-tool-result，
+          // 导致 msg.toolCalls 中残留 state==='calling' 的条目。下一次请求重建 API 载荷时，
+          // 这些条目会被 filter 跳过，assistant.tool_calls 失去配对的 role:tool 消息，
+          // 触发 API 400（missing field tool_call_id）。这里统一标记为 error 并写明中断原因，
+          // 重建逻辑会自动为它们生成配对的 tool 消息，模型也能感知“上次操作被中断”。
           const finishTime = Date.now();
           setDatas('assistants', (a: any) => a.id === assistant_id,
             'topics', (t: any) => t.id === topic_id,
             'history', (h: any[]) => {
               const lastIdx = h.length - 1;
               if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-              const steps: any[] = h[lastIdx].agentSteps || [];
-              const updatedMsg: any = { ...h[lastIdx] };
+              const msg = h[lastIdx];
+              const steps: any[] = msg.agentSteps || [];
+              const toolCalls: any[] = msg.toolCalls || [];
+              const updatedMsg: any = { ...msg };
               // 保存 token 用量
               if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
               if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
+              // 孤儿 toolCalls：仍为 calling 的条目标记为中断错误
+              if (toolCalls.some((tc: any) => tc.state === 'calling')) {
+                updatedMsg.toolCalls = toolCalls.map((tc: any) =>
+                  tc.state === 'calling' ? { ...tc, state: 'error', error: TOOL_INTERRUPTED } : tc
+                );
+              }
               if (steps.length === 0) {
                 return [...h.slice(0, lastIdx), updatedMsg];
               }
               return [...h.slice(0, lastIdx), {
                 ...updatedMsg,
-                agentSteps: steps.map((s: any, i: number) =>
-                  i === steps.length - 1 && s.status === 'running'
+                agentSteps: steps.map((s: any, i: number) => {
+                  if (s.status !== 'running') return s;
+                  // 中断的 tool_call 步骤与其 toolCall 状态保持一致（标记 error）；
+                  // 其余 running 步骤（含最后一个）按完成关闭
+                  if (s.type === 'tool_call' && s.toolCall?.state === 'calling') {
+                    return {
+                      ...s,
+                      status: 'error',
+                      duration: finishTime - s.timestamp,
+                      toolCall: { ...s.toolCall, state: 'error', error: TOOL_INTERRUPTED },
+                    };
+                  }
+                  return i === steps.length - 1
                     ? { ...s, status: 'complete', duration: finishTime - s.timestamp }
-                    : s
-                ),
+                    : s;
+                }),
               }];
             });
           setIsThinking(false);

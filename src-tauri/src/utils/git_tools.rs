@@ -40,7 +40,8 @@ fn truncate_output(s: &str, limit: usize) -> String {
     if s.len() <= limit {
         s.to_string()
     } else {
-        format!("{}\n\n⚠ 输出过长已截断 ({}B / {}B)", &s[..limit], limit, s.len())
+        let safe_end = s.floor_char_boundary(limit);
+        format!("{}\n\n⚠ 输出过长已截断 ({}B / {}B)", &s[..safe_end], limit, s.len())
     }
 }
 

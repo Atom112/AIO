@@ -58,7 +58,7 @@ const ThinkBlock: Component<ThinkBlockProps> = (props) => {
 
     return (
         <div
-            class="my-3 rounded-lg overflow-hidden bg-white/[0.025] border border-white/[0.05] transition-[background,border-color] duration-200 hover:bg-white/[0.04] hover:border-white/[0.08]"
+            class="my-3 rounded-lg overflow-hidden bg-white/[0.025] border border-white/[0.05] animate-expand-width transition-[background,border-color] duration-200 hover:bg-white/[0.04] hover:border-white/[0.08]"
             classList={{ 'is-open': isExpanded(), 'is-streaming': props.isStreaming }}
         >
             <button

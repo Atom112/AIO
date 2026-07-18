@@ -173,7 +173,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
 
     return (
         <div
-            class="subagent-block rounded-lg overflow-hidden border"
+            class="subagent-block rounded-lg overflow-hidden border animate-expand-width"
             style={{
                 '--sa-color': style.color,
                 '--sa-bg': style.bgColor,

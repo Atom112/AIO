@@ -300,7 +300,7 @@ async fn stream_one_round(
     let status = response.status();
     if !status.is_success() {
         let body_text = response.text().await.unwrap_or_default();
-        let truncated = if body_text.len() > 512 { &body_text[..512] } else { &body_text };
+        let truncated = if body_text.len() > 512 { &body_text[..body_text.floor_char_boundary(512)] } else { &body_text };
         return Err(format!("LLM API {}: {}", status, truncated));
     }
 
@@ -914,7 +914,8 @@ fn truncate_tool_result(s: &str) -> String {
     if s.len() <= MAX_LEN {
         s.to_string()
     } else {
-        format!("{}\n\n... [已截断: 共{}字符]", &s[..MAX_LEN], s.len())
+        let safe_end = s.floor_char_boundary(MAX_LEN);
+        format!("{}\n\n... [已截断: 共{}字符]", &s[..safe_end], s.len())
     }
 }
 

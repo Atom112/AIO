@@ -100,7 +100,7 @@ fn truncate(text: &str, max_bytes: u64) -> String {
     if text.len() as u64 <= max_bytes {
         return text.to_string();
     }
-    let end = max_bytes as usize;
+    let end = text.floor_char_boundary(max_bytes as usize);
     // 尽量在换行处截断
     let cut = if let Some(pos) = text[..end].rfind('\n') {
         pos

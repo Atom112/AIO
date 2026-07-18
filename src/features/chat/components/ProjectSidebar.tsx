@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, createMemo } from 'solid-js';
+import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   datas, currentAssistantId, setCurrentAssistantId, setCurrentTopicId,
@@ -36,6 +36,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   });
 
   let menuCloseTimeoutId: ReturnType<typeof setTimeout>;
+
+  // 点击菜单外部时自动关闭（与右侧话题栏"更多"按钮行为一致）
+  onMount(() => {
+    const handleClickOutside = () => { if (menuState().isOpen) closeMenu(); };
+    window.addEventListener('click', handleClickOutside);
+    onCleanup(() => window.removeEventListener('click', handleClickOutside));
+  });
 
   /** 当前助理 */
   const currentAsst = () => datas.assistants.find(a => a.id === currentAssistantId());

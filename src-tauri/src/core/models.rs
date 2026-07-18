@@ -100,6 +100,7 @@ pub struct StoredAttachment {
 
 /// 单条聊天消息模型。
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: Option<String>,
     pub role: String,

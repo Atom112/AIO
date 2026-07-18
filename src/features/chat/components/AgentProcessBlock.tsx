@@ -222,6 +222,22 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     const [elapsedMs, setElapsedMs] = createSignal(0);
     let rafId: number | null = null;
 
+    // 从 agentSteps 数据推导冻结耗时（不受 remount 影响，避免 Date.now() 漂移）
+    const frozenElapsed = (): number => {
+        if (!props.startTime) return 0;
+        const steps = props.agentSteps;
+        if (steps && steps.length > 0) {
+            const last = steps[steps.length - 1];
+            if (last.status === 'complete' && last.duration !== undefined) {
+                return last.timestamp + last.duration - props.startTime;
+            }
+            if (last.status !== 'running') {
+                return last.timestamp - props.startTime;
+            }
+        }
+        return 0;
+    };
+
     createEffect(() => {
         if (props.isActive && props.startTime) {
             const tick = () => {
@@ -232,7 +248,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
             rafId = requestAnimationFrame(tick);
         } else if (!props.isActive && props.startTime) {
             if (rafId) cancelAnimationFrame(rafId);
-            setElapsedMs(Date.now() - props.startTime);
+            setElapsedMs(frozenElapsed());
         } else {
             if (rafId) cancelAnimationFrame(rafId);
         }

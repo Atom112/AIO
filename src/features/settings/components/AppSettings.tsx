@@ -625,7 +625,7 @@ const AppSettings: Component = () => {
             </div>
 
             {/* 快捷键设置面板 */}
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ background: 'var(--acrylic-bg)', backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)' }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)' }}>
                 <div class="flex justify-between items-center mb-5">
                     <div>
                         <h3 class="m-0 text-base text-white">快捷键设置</h3>
@@ -694,7 +694,7 @@ const AppSettings: Component = () => {
                                     const isRecording = () => recordingActionId() === cmd.id;
 
                                     return (
-                                        <div class="flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors duration-150"
+                                        <div class="flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors duration-150 mb-[2px] last:mb-0"
                                             style={{
                                                 background: 'rgba(255, 255, 255, 0.02)',
                                                 border: '1px solid rgba(255, 255, 255, 0.03)',

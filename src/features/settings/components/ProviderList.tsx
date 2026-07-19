@@ -281,7 +281,7 @@ const CatalogStats: Component = () => {
 
     return (
         <div class="glass-card mb-4 flex items-center justify-between animate-row-in" style={{ "animation-delay": "30ms" }}>
-            <span class="text-base text-white uppercase tracking-[1.5px] font-semibold">模型供应商</span>
+            <span class="text-xl text-white uppercase tracking-[1.5px] font-semibold">模型供应商</span>
             <div class="flex items-center gap-3">
                 <Show when={result()}>
                     <span
@@ -453,6 +453,7 @@ const ProviderList: Component = () => {
     return (
         <div class="h-full overflow-y-auto pr-1">
             <LocalEngineSection />
+            <div class="border-t border-white/[0.06] my-4" />
             <CatalogStats />
 
             {/* 搜索 */}

@@ -11,6 +11,7 @@ import type {
     McpCatalogServer, McpServerConfig,
 } from '../../../core/types/mcp';
 import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
+import Icon from '../../../shared/components/Icon';
 import McpServerDetail from './McpServerDetail';
 
 type ViewMode = 'market' | 'downloaded';
@@ -225,22 +226,28 @@ const McpServerList: Component = () => {
                         onClick={() => setView('downloaded')}>已下载 ({sortedServers().length})</button>
                 </div>
                 <div class="flex gap-2">
-                    <input
-                        class="w-[280px] max-w-full px-3 py-2 rounded-lg text-sm outline-none"
-                        style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1);"
-                        value={query()}
-                        onInput={event => setQuery(event.currentTarget.value)}
-                        onKeyDown={event => event.key === 'Enter' && search()}
-                        placeholder="搜索 MCP 服务器"
-                    />
+                    <div class="relative">
+                        <Icon name="search" size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
+                        <input
+                            class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
+                            value={query()}
+                            onInput={event => setQuery(event.currentTarget.value)}
+                            onKeyDown={event => event.key === 'Enter' && search()}
+                            placeholder="搜索 MCP 服务器"
+                        />
+                    </div>
                     <Show when={view() === 'market'}>
-                        <button class="px-3 py-2 rounded-lg text-xs"
-                            style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);"
-                            onClick={search}>搜索</button>
-                        <button class="px-3 py-2 rounded-lg text-xs"
+                        <button
+                            type="button"
+                            class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50"
                             disabled={refreshing()}
-                            style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);"
-                            onClick={() => void refresh()}>{refreshing() ? '更新中…' : '刷新'}</button>
+                            onClick={() => void refresh()}
+                        >
+                            <Show when={refreshing()} fallback={<Icon name="refresh" size={11} />}>
+                                <Icon name="spinner" size={11} class="animate-spin" />
+                            </Show>
+                            {refreshing() ? '更新中…' : '刷新'}
+                        </button>
                     </Show>
                 </div>
             </div>

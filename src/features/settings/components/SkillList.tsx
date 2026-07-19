@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills, currentProjectId, currentProject } from '../../../core/store/store';
 import Dropdown from '../../../shared/components/Dropdown';
+import Icon from '../../../shared/components/Icon';
 import type { MarketSkill, SkillConfig, SkillMarketCategory, DiscoveredNpxSkill } from '../../../core/types/skill';
 
 type MarketSort = 'all' | 'trending' | 'hot';
@@ -396,13 +397,15 @@ const SkillList: Component = () => {
                         </div>
                     )}
                 </div>
-                <input
-                    class="w-[280px] max-w-full px-3 py-2 rounded-lg text-sm outline-none"
-                    style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1);"
-                    value={query()}
-                    onInput={(e) => setQuery(e.currentTarget.value)}
-                    placeholder="搜索 Skill、作者或仓库"
-                />
+                <div class="relative">
+                    <Icon name="search" size={13} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
+                    <input
+                        class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
+                        value={query()}
+                        onInput={(e) => setQuery(e.currentTarget.value)}
+                        placeholder="搜索 Skill、作者或仓库"
+                    />
+                </div>
             </div>
 
             <Show when={view() === 'market'}>
@@ -433,12 +436,15 @@ const SkillList: Component = () => {
                         {filteredMarketSkills().length} 个结果
                     </span>
                     <button
-                        class="px-3 py-1.5 rounded-md text-xs ml-auto"
-                        style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);"
+                        type="button"
+                        class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50 ml-auto"
                         disabled={refreshing()}
                         onClick={() => void refreshMarket()}
                     >
-                        {refreshing() ? '更新中…' : '手动更新'}
+                        <Show when={refreshing()} fallback={<Icon name="refresh" size={11} />}>
+                            <Icon name="spinner" size={11} class="animate-spin" />
+                        </Show>
+                        {refreshing() ? '更新中…' : '刷新'}
                     </button>
                     <Show when={refreshResult()}>
                         <span

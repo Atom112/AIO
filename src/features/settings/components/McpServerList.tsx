@@ -10,7 +10,7 @@ import type {
     McpCatalogDelivery, McpCatalogInstallRequest, McpCatalogPage,
     McpCatalogServer, McpServerConfig,
 } from '../../../core/types/mcp';
-import { emptyMcpServerConfig, statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
+import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
 import McpServerDetail from './McpServerDetail';
 
 type ViewMode = 'market' | 'downloaded';
@@ -24,7 +24,6 @@ const McpServerList: Component = () => {
     const [loadingMore, setLoadingMore] = createSignal(false);
     const [refreshing, setRefreshing] = createSignal(false);
     const [editingConfig, setEditingConfig] = createSignal<McpServerConfig | null>(null);
-    const [isCreating, setIsCreating] = createSignal(false);
     const [installing, setInstalling] = createSignal<McpCatalogServer | null>(null);
     const [selectedDeliveryId, setSelectedDeliveryId] = createSignal('');
     const [installValues, setInstallValues] = createSignal<Record<string, string>>({});
@@ -137,7 +136,6 @@ const McpServerList: Component = () => {
             await invoke('add_mcp_server', { config, projectId: currentProjectId() });
             setMcpServers({ ...mcpServers(), [config.id]: config });
             setEditingConfig(null);
-            setIsCreating(false);
         } catch (e) {
             setError(`保存失败: ${e}`);
         }
@@ -214,19 +212,7 @@ const McpServerList: Component = () => {
     return (
         <div class="flex flex-col h-full overflow-hidden p-6 gap-4" style="color: rgba(255,255,255,0.88);">
             <div class="flex items-start justify-between gap-4">
-                <div>
-                    <h2 class="text-xl font-semibold">MCP 服务器</h2>
-                    <p class="text-xs mt-1" style="color: rgba(255,255,255,0.5);">
-                        浏览 Official MCP Registry，安装后可在各助手设置中分别启用。
-                    </p>
-                </div>
-                <button
-                    class="px-3 py-1.5 rounded-md text-sm"
-                    style="background: rgba(124,154,191,0.2); border: 1px solid rgba(124,154,191,0.3);"
-                    onClick={() => { setIsCreating(true); setEditingConfig(emptyMcpServerConfig()); }}
-                >
-                    + 手动添加
-                </button>
+                <h2 class="text-xl font-semibold">MCP 服务器</h2>
             </div>
 
             <div class="flex items-center justify-between gap-3 flex-wrap">
@@ -375,7 +361,7 @@ const McpServerList: Component = () => {
                                                     onClick={() => void handleStop(config.id)}>停止</button>
                                             </Show>
                                             <button class="px-2 py-1 rounded text-xs" style="background: rgba(255,255,255,0.05);"
-                                                onClick={() => { setIsCreating(false); setEditingConfig({ ...config }); }}>编辑</button>
+                                                onClick={() => setEditingConfig({ ...config })}>编辑</button>
                                             <button class="px-2 py-1 rounded text-xs"
                                                 style="background: rgba(255,77,77,0.1); color: rgba(255,107,107,0.9);"
                                                 onClick={() => void handleRemove(config.id)}>删除</button>
@@ -461,9 +447,9 @@ const McpServerList: Component = () => {
             <Show when={editingConfig()}>
                 <McpServerDetail
                     config={editingConfig()!}
-                    isNew={isCreating()}
+                    isNew={false}
                     onSave={handleSave}
-                    onCancel={() => { setEditingConfig(null); setIsCreating(false); }}
+                    onCancel={() => setEditingConfig(null)}
                     onTest={handleTest}
                 />
             </Show>

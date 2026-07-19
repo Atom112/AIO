@@ -3,23 +3,23 @@
 @tailwind utilities;
 
 :root {
-  background-color: transparent;
+    background-color: transparent;
 
-  --primary-color: #7c9abf;
-  /* 供 rgba(var(--primary-rgb), 0.xx) 内联使用 */
-  --primary-rgb: 124, 154, 191;
-  /* 透明度变体（自动跟随主色变化） */
-  --primary-5: color-mix(in srgb, var(--primary-color), transparent 95%);
-  --primary-10: color-mix(in srgb, var(--primary-color), transparent 90%);
-  --primary-20: color-mix(in srgb, var(--primary-color), transparent 80%);
-  --primary-30: color-mix(in srgb, var(--primary-color), transparent 70%);
-  --primary-50: color-mix(in srgb, var(--primary-color), transparent 50%);
+    --primary-color: #7c9abf;
+    /* 供 rgba(var(--primary-rgb), 0.xx) 内联使用 */
+    --primary-rgb: 124, 154, 191;
+    /* 透明度变体（自动跟随主色变化） */
+    --primary-5: color-mix(in srgb, var(--primary-color), transparent 95%);
+    --primary-10: color-mix(in srgb, var(--primary-color), transparent 90%);
+    --primary-20: color-mix(in srgb, var(--primary-color), transparent 80%);
+    --primary-30: color-mix(in srgb, var(--primary-color), transparent 70%);
+    --primary-50: color-mix(in srgb, var(--primary-color), transparent 50%);
 
-  /* 亚克力材质变量 */
-  --acrylic-bg: rgba(18, 22, 35, 0.72);
-  --acrylic-border: rgba(255, 255, 255, 0.06);
-  --acrylic-blur: 40px;
-  --acrylic-radius: 12px;
+    /* 亚克力材质变量 */
+    --acrylic-bg: rgba(18, 22, 35, 0.72);
+    --acrylic-border: rgba(255, 255, 255, 0.06);
+    --acrylic-blur: 40px;
+    --acrylic-radius: 12px;
 }
 
 * {
@@ -45,249 +45,196 @@
     background-color: rgba(255, 255, 255, 0.25);
 }
 
-html, body {
-  @apply m-0 h-full overflow-hidden font-sans antialiased;
-  color: rgb(255 255 255 / 87%);
+html,
+body {
+    @apply m-0 h-full overflow-hidden font-sans antialiased text-white/[0.87];
 }
 
-/* 主题色切换时全局禁用过渡 (store.ts createEffect 触发) */
 [data-theme-changing] *,
 [data-theme-changing] *::before,
 [data-theme-changing] *::after {
-  transition-duration: 0s !important;
+    transition-duration: 0s !important;
 }
 
-/* ========== Solid Transition Group 动画 ========== */
 .page-fade-enter-active,
 .page-fade-exit-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+    transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 .page-fade-enter-from {
-  opacity: 0;
-  transform: translateX(20px);
-  z-index: 2;
+    opacity: 0;
+    transform: translateX(20px);
+    z-index: 2;
 }
 
 .page-fade-exit-to {
-  opacity: 0;
-  transform: translateX(-20px);
-  z-index: 1;
+    opacity: 0;
+    transform: translateX(-20px);
+    z-index: 1;
 }
 
-/* 设置子路由切换动画 */
+
 .subpage-fade-enter-active,
 .subpage-fade-exit-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
+    transition: opacity 0.25s ease, transform 0.25s ease;
 }
+
 .subpage-fade-enter-from {
-  opacity: 0;
-  transform: translateX(12px);
+    opacity: 0;
+    transform: translateX(12px);
 }
+
 .subpage-fade-exit-to {
-  opacity: 0;
-  transform: translateX(-12px);
+    opacity: 0;
+    transform: translateX(-12px);
 }
 
-/* 加载动画容器 */
-.loading-container {
-  @apply flex items-center justify-center h-screen w-screen text-white/40;
-}
-
-/* ========== 应用更新 Toast 动画 ========== */
 .update-toast-enter-active,
 .update-toast-exit-active {
-  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .update-toast-enter-from {
-  opacity: 0;
-  transform: translateY(20px) scale(0.95);
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
 }
 
 .update-toast-exit-to {
-  opacity: 0;
-  transform: translateY(20px) scale(0.95);
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
 }
 
-/* ========== 全局复用组件类 ========== */
 @layer components {
 
-    /* glow-border 保留别名，指向亚克力面板 */
-    .glow-border {
-        background: var(--acrylic-bg);
-        backdrop-filter: blur(var(--acrylic-blur));
-        -webkit-backdrop-filter: blur(var(--acrylic-blur));
-        border: 1px solid var(--acrylic-border);
-        border-radius: var(--acrylic-radius);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
-    }
-
-    /* 模态框遮罩层 */
-    .modal-overlay {
-        @apply fixed inset-0 z-[2000] flex items-center justify-center;
-        background: rgba(0, 0, 0, 0.5);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-    }
-
-    /* 模态框内容面板 */
-    .modal-panel {
-        @apply rounded-xl;
-        background: var(--acrylic-bg);
-        backdrop-filter: blur(var(--acrylic-blur));
-        -webkit-backdrop-filter: blur(var(--acrylic-blur));
-        border: 1px solid var(--acrylic-border);
-    }
-
-    /* ——— 上下文菜单入场 / 出场 keyframes ——— */
     @keyframes contextMenuIn {
-        from { opacity: 0; transform: scale(0.94) translateY(-4px); }
-        to   { opacity: 1; transform: scale(1) translateY(0); }
+        from {
+            opacity: 0;
+            transform: scale(0.94) translateY(-4px);
+        }
+
+        to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
     }
+
     @keyframes contextMenuOut {
-        from { opacity: 1; transform: scale(1) translateY(0); }
-        to   { opacity: 0; transform: scale(0.96) translateY(-2px); }
+        from {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
+
+        to {
+            opacity: 0;
+            transform: scale(0.96) translateY(-2px);
+        }
     }
 
-    /* 右键上下文菜单容器 (亚克力主题) */
-    .context-menu {
-        @apply fixed z-[1500] min-w-[150px] rounded-lg shadow-xl py-1 origin-top-left;
-        background: var(--acrylic-bg);
-        backdrop-filter: blur(40px) saturate(180%);
-        -webkit-backdrop-filter: blur(40px) saturate(180%);
-        border: 1px solid var(--acrylic-border);
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
-        animation: contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-    }
-    .context-menu.closing {
-        animation: contextMenuOut 0.14s ease-in forwards;
+    /* ——— 模态框入场 keyframes ——— */
+    @keyframes modalOverlayIn {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
     }
 
-    /* 状态徽章 (chip-info 保留 —— 含 CSS 变量) */
-    .chip-info { background: rgba(var(--primary-rgb), 0.15); color: rgba(var(--primary-rgb), 1); border: 1px solid rgba(var(--primary-rgb), 0.25); }
+    @keyframes modalPanelIn {
+        from {
+            opacity: 0;
+            transform: scale(0.92) translateY(12px);
+        }
 
-    /* 亚克力切换开关 (大号, 带发光) */
-    .toggle-glass {
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-        height: 22px;
-        width: 40px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        cursor: pointer;
-        transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease;
-        flex-shrink: 0;
-    }
-    .toggle-glass:focus { outline: none; }
-    .toggle-glass:focus-visible { box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.25); }
-    .toggle-glass.on {
-        background: rgba(var(--primary-rgb), 0.7);
-        border-color: rgba(var(--primary-rgb), 0.5);
-        box-shadow: 0 0 12px rgba(var(--primary-rgb), 0.35);
+        to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
     }
 
-    /* 模态框 (亚克力) */
-    .modal-glass {
-        background: rgba(18, 22, 35, 0.85);
-        backdrop-filter: blur(60px) saturate(180%);
-        -webkit-backdrop-filter: blur(60px) saturate(180%);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 16px;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
-    }
-    .modal-overlay-glass {
-        position: fixed;
-        inset: 0;
-        z-index: 50;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(0, 0, 0, 0.55);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        animation: modalOverlayIn 0.2s ease forwards;
-    }
-    .modal-content-glass {
-        animation: modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    @keyframes stepCardPulse {
+
+        0%,
+        100% {
+            opacity: 1;
+        }
+
+        50% {
+            opacity: 0.5;
+        }
     }
 
-    /* 浮窗 Toast */
-    .toast-glass {
-        background: rgba(18, 22, 35, 0.88);
-        backdrop-filter: blur(30px) saturate(180%);
-        -webkit-backdrop-filter: blur(30px) saturate(180%);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 10px 18px;
-        color: white;
-        font-size: 13px;
-        font-weight: 500;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-        animation: toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    @keyframes tool-approval-in {
+        from {
+            opacity: 0;
+            transform: translateY(4px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
 
-    /* ========== 自定义下拉 (亚克力) ========== */
-    /* 用于已用 appearance: none 的 <select> 触发器 */
-    .select-glass {
-        appearance: none;
-        -webkit-appearance: none;
-        -moz-appearance: none;
-        background-color: rgba(0, 0, 0, 0.25);
-        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
-        background-repeat: no-repeat;
-        background-position: right 8px center;
-        background-size: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 8px;
-        color: white;
-        padding-right: 28px !important;
-        cursor: pointer;
-        transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .select-glass:hover { border-color: rgba(255, 255, 255, 0.14); }
-    .select-glass:focus {
-        outline: none;
-        border-color: rgba(var(--primary-rgb), 0.55);
-        background-color: rgba(0, 0, 0, 0.35);
-        box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.12);
-    }
-    .select-glass option {
-        background: rgba(18, 22, 35, 0.95);
-        color: white;
-        padding: 4px 8px;
+    @keyframes command-palette-fade-in {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
     }
 
-    .dropdown-item:hover { background: rgba(var(--primary-rgb), 0.12); color: white; }
-    .dropdown-item.selected { background: rgba(var(--primary-rgb), 0.18); color: white; }
-    .dropdown-item.active { background: rgba(var(--primary-rgb), 0.1); color: white; }
+    @keyframes command-palette-slide-in {
+        from {
+            opacity: 0;
+            transform: scale(0.96) translateY(-8px);
+        }
 
-    /* ========================================
-       Markdown 代码块 —— 亚克力适配
-       ======================================== */
-
-    .code-wrapper:hover .copy-code-button {
-        opacity: 1;
+        to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
     }
 
-    .copy-code-button:hover {
-        color: rgba(255, 255, 255, 0.7);
-        background: rgba(255, 255, 255, 0.06);
-        border-color: rgba(255, 255, 255, 0.08);
+    @keyframes slash-menu-in {
+        from {
+            opacity: 0;
+            transform: scale(0.95);
+        }
+
+        to {
+            opacity: 1;
+            transform: scale(1);
+        }
     }
 
-    .copy-code-button:active {
-        transform: scale(0.96);
+    @keyframes toastIn {
+        from {
+            opacity: 0;
+            transform: translateY(8px) scale(0.95);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
     }
 
-    .copy-code-button.copied {
-        color: #3fb950;
-        border-color: rgba(63, 185, 80, 0.3);
-        background: rgba(46, 160, 67, 0.15);
-        opacity: 1;
+    @keyframes modalIn {
+        from {
+            opacity: 0;
+            transform: scale(0.92) translateY(8px);
+        }
+
+        to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+        }
     }
+
 
     .code-body pre {
         @apply m-0 p-4 rounded-none;
@@ -334,68 +281,36 @@ input[type="range"]::-webkit-slider-thumb:active {
 }
 
 /* markdown 段落间分隔 (think 块插入) */
-.markdown-segment > :first-child { margin-top: 0 !important; }
-.markdown-segment > :last-child { margin-bottom: 0 !important; }
-
-/* ========================================
-   Agent 时间线步骤卡片（新模式）
-   ======================================== */
-
-/* 单步骤卡片 — 布局/交互样式 */
-.agent-step-card {
-    @apply rounded-md overflow-hidden bg-white/[0.015] border border-white/[0.04];
-    border-left: 2px solid var(--step-border-color, rgba(255, 255, 255, 0.12));
-    transition: border-color 0.3s, background 0.2s;
+.markdown-segment> :first-child {
+    margin-top: 0 !important;
 }
-/* 入场动画 keyframes（定义在 index.css 中，不依赖 Tailwind 摇树输出） */
+
+.markdown-segment> :last-child {
+    margin-bottom: 0 !important;
+}
+
 @keyframes stepSlideIn {
-    from { opacity: 0; transform: translateX(-12px); }
-    to { opacity: 1; transform: translateX(0); }
+    from {
+        opacity: 0;
+        transform: translateX(-12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }
+
 @keyframes expand-width {
-    from { clip-path: inset(0 100% 0 0); }
-    to { clip-path: inset(0 0% 0 0); }
-}
-.agent-step-card:hover {
-    @apply bg-white/[0.03];
-}
-.agent-step-card.is-running {
-    background: rgba(var(--primary-rgb), 0.03);
-    animation: stepCardPulse 2s ease-in-out infinite;
-}
-/* 入场动画：与 .is-running 同级特异性 (0,2,0)，但源码顺序在后，
-   确保 running 状态的新步骤入场时 expand-width/stepSlideIn 覆盖 stepCardPulse 的 animation 简写。
-   动画结束后 JS 移除此类，is-running 的脉冲动画自动恢复。 */
-.agent-step-card.agent-step-card-entrance {
-    animation: stepSlideIn 0.6s cubic-bezier(0.22, 0.61, 0.36, 1) backwards,
-               expand-width 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.1s backwards;
-}
-.agent-step-card.is-error {
-    border-left-color: rgba(224, 85, 85, 0.5);
+    from {
+        clip-path: inset(0 100% 0 0);
+    }
+
+    to {
+        clip-path: inset(0 0% 0 0);
+    }
 }
 
-/* 步骤卡片 body */
-.agent-step-body {
-    @apply overflow-hidden opacity-0 max-h-0 px-2.5;
-    transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s, padding 0.25s;
-}
-.agent-step-card.is-expanded .agent-step-body {
-    max-height: 800px;
-    opacity: 1;
-    padding-top: 2px;
-    padding-bottom: 8px;
-}
-.agent-step-card.is-running .agent-step-body {
-    max-height: 800px;
-    opacity: 1;
-    padding-top: 2px;
-    padding-bottom: 8px;
-}
-
-
-/* ========================================
-   Markdown 正文样式 (暗色主题)
-   ======================================== */
 .markdown-body {
     color: rgba(255, 255, 255, 0.87);
     font-size: 14px;
@@ -408,8 +323,14 @@ input[type="range"]::-webkit-slider-thumb:active {
 .markdown-body p {
     margin: 0.6em 0;
 }
-.markdown-body p:first-child { margin-top: 0; }
-.markdown-body p:last-child { margin-bottom: 0; }
+
+.markdown-body p:first-child {
+    margin-top: 0;
+}
+
+.markdown-body p:last-child {
+    margin-bottom: 0;
+}
 
 /* 标题 */
 .markdown-body h1,
@@ -423,20 +344,41 @@ input[type="range"]::-webkit-slider-thumb:active {
     line-height: 1.35;
     color: rgba(255, 255, 255, 0.93);
 }
-.markdown-body h1 { font-size: 1.5em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.3em; }
-.markdown-body h2 { font-size: 1.3em; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.25em; }
-.markdown-body h3 { font-size: 1.15em; }
-.markdown-body h4 { font-size: 1.05em; }
-.markdown-body h5 { font-size: 1em; }
-.markdown-body h6 { font-size: 0.9em; color: rgba(255, 255, 255, 0.6); }
+
+.markdown-body h1 {
+    font-size: 1.5em;
+    @apply border-b border-white/[0.06] pb-[0.3em];
+}
+
+.markdown-body h2 {
+    font-size: 1.3em;
+    @apply border-b border-white/[0.06] pb-[0.25em];
+}
+
+.markdown-body h3 {
+    font-size: 1.15em;
+}
+
+.markdown-body h4 {
+    font-size: 1.05em;
+}
+
+.markdown-body h5 {
+    font-size: 1em;
+}
+
+.markdown-body h6 {
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.6);
+}
 
 /* 链接 */
 .markdown-body a {
-    color: #7c9abf;
-    text-decoration: none;
+    @apply text-[#7c9abf] no-underline;
     border-bottom: 1px solid transparent;
     transition: border-color 0.15s;
 }
+
 .markdown-body a:hover {
     border-bottom-color: rgba(124, 154, 191, 0.4);
 }
@@ -445,65 +387,76 @@ input[type="range"]::-webkit-slider-thumb:active {
 .markdown-body blockquote {
     margin: 0.6em 0;
     padding: 0.4em 1em;
+    @apply rounded-r-md bg-white/[0.03] text-white/60;
     border-left: 3px solid rgba(124, 154, 191, 0.3);
-    color: rgba(255, 255, 255, 0.6);
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 0 6px 6px 0;
 }
-.markdown-body blockquote > :first-child { margin-top: 0; }
-.markdown-body blockquote > :last-child { margin-bottom: 0; }
+
+.markdown-body blockquote> :first-child {
+    margin-top: 0;
+}
+
+.markdown-body blockquote> :last-child {
+    margin-bottom: 0;
+}
 
 /* 列表 */
 .markdown-body ul,
 .markdown-body ol {
     margin: 0.4em 0;
-    padding-left: 1.6em;
+    @apply pl-[1.6em];
 }
+
 .markdown-body li {
     margin: 0.2em 0;
 }
-.markdown-body li > p { margin: 0.3em 0; }
 
-/* 水平分隔线 */
-.markdown-body hr {
-    margin: 1.2em 0;
-    border: none;
-    height: 1px;
-    background: rgba(255, 255, 255, 0.08);
+.markdown-body li>p {
+    margin: 0.3em 0;
 }
 
-/* 行内代码 */
+.markdown-body hr {
+    margin: 1.2em 0;
+    @apply border-0 h-[1px] bg-white/[0.08];
+}
+
 .markdown-body code:not(pre code) {
-    background: rgba(255, 255, 255, 0.08);
-    padding: 0.15em 0.4em;
-    border-radius: 4px;
-    font-size: 0.9em;
-    color: rgba(255, 255, 255, 0.9);
+    @apply bg-white/[0.08] px-[0.4em] py-[0.15em] rounded text-[0.9em] text-white/90;
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
 
 /* 加粗/斜体 */
-.markdown-body strong { font-weight: 600; color: rgba(255, 255, 255, 0.93); }
-.markdown-body em { font-style: italic; }
+.markdown-body strong {
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.93);
+}
 
-/* ========================================
-   Markdown 表格样式 (暗色主题)
-   ======================================== */
+.markdown-body em {
+    font-style: italic;
+}
+
+
 .markdown-body .table-wrapper {
-    overflow-x: auto;
+    @apply overflow-x-auto;
     margin: 0.8em 0;
 }
+
 .markdown-body table {
-    border-collapse: collapse;
+    @apply border-collapse w-full;
     border-spacing: 0;
-    width: 100%;
     max-width: 100%;
     font-size: 0.9em;
     display: block;
     overflow-x: auto;
 }
-.markdown-body table::-webkit-scrollbar { height: 4px; }
-.markdown-body table::-webkit-scrollbar-track { background: transparent; }
+
+.markdown-body table::-webkit-scrollbar {
+    height: 4px;
+}
+
+.markdown-body table::-webkit-scrollbar-track {
+    background: transparent;
+}
+
 .markdown-body table::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 2px;
@@ -512,151 +465,53 @@ input[type="range"]::-webkit-slider-thumb:active {
 .markdown-body thead {
     background: rgba(124, 154, 191, 0.1);
 }
+
 .markdown-body th {
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
-    text-align: left;
-    padding: 8px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    white-space: nowrap;
+    @apply font-semibold text-white/90 text-left px-3 py-2 border border-white/[0.08] whitespace-nowrap;
 }
+
 .markdown-body td {
-    padding: 7px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.8);
+    @apply px-3 py-[7px] border border-white/[0.06] text-white/80;
 }
+
 .markdown-body tbody tr {
     transition: background 0.1s;
 }
+
 .markdown-body tbody tr:nth-child(even) {
-    background: rgba(255, 255, 255, 0.02);
+    @apply bg-white/[0.02];
 }
+
 .markdown-body tbody tr:hover {
     background: rgba(124, 154, 191, 0.06);
 }
+
 .markdown-body tfoot {
-    background: rgba(255, 255, 255, 0.03);
+    @apply bg-white/[0.03];
 }
+
 .markdown-body caption {
-    padding: 6px 8px;
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 0.85em;
-    caption-side: bottom;
+    @apply px-2 py-[6px] text-white/50 text-[0.85em] caption-bottom;
 }
 
-/* ========================================
-   消息操作按钮：默认仅图标，hover 文字滑入
-   ======================================== */
-.msg-action-btn {
-    @apply inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs px-1.5 py-1 transition-all duration-200;
-}
-.msg-action-btn .action-label {
-    @apply overflow-hidden whitespace-nowrap text-[11px];
-    max-width: 0;
-    opacity: 0;
-    transition: max-width 0.2s ease, opacity 0.15s ease, margin 0.2s ease;
-}
-.msg-action-btn:hover .action-label {
-    max-width: 80px;
-    opacity: 1;
-}
-.msg-action-btn:hover {
-    background: rgba(124, 154, 191, 0.12) !important;
-    padding: 4px 8px;
-}
-
-
-/* ====== 工具调用审批气泡 ====== */
-
-.tool-approval-bubble {
-    @apply rounded-[10px] px-3.5 py-3 my-1 max-w-[420px];
-    background: rgba(22, 28, 46, 0.95);
-    border: 1px solid rgba(124, 154, 191, 0.15);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    animation: tool-approval-in 0.2s ease-out;
-}
-
-.tool-approval-bubble.is-dangerous {
-    border-color: rgba(255, 77, 77, 0.25);
-}
-
-/* ============================================
-   命令面板 (Command Palette)
-   ============================================ */
-
-.command-palette-overlay {
-    @apply fixed inset-0 z-[9999] flex items-start justify-center pt-[18vh] bg-black/50;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    animation: command-palette-fade-in 0.12s ease-out;
-}
-
-.command-palette-card {
-
-/* ====== Lobehub-style streaming shimmer ====== */
 .message-streaming::after {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(
-        105deg,
-        transparent 40%,
-        rgba(255, 255, 255, 0.03) 50%,
-        transparent 60%
-    );
+    background: linear-gradient(105deg,
+            transparent 40%,
+            rgba(255, 255, 255, 0.03) 50%,
+            transparent 60%);
     background-size: 200% 100%;
     animation: shimmer 2s ease-in-out infinite;
     pointer-events: none;
     z-index: 0;
 }
 
-.message-streaming > * {
+.message-streaming>* {
     position: relative;
     z-index: 1;
-}
-    @apply w-[600px] max-h-[460px] flex flex-col border border-white/[0.08] rounded-[14px] overflow-hidden;
-    background: rgba(22, 26, 40, 0.95);
-    box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.04),
-        0 16px 48px rgba(0, 0, 0, 0.5);
-    animation: command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* ============================================
-   快捷键设置面板 (Shortcut Settings)
-   ============================================ */
-
-.shortcut-recording-text {
-    @apply text-[11px] font-medium;
-    color: var(--primary-color);
-}
-
-/* 冲突确认对话框 */
-.shortcut-conflict-overlay {
-    @apply fixed inset-0 z-[10000] flex items-center justify-center bg-black/40;
-    backdrop-filter: blur(3px);
-}
-
-.shortcut-conflict-dialog {
-    @apply rounded-xl px-6 py-5 max-w-[380px];
-    background: rgba(22, 26, 40, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-    animation: command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* ============================================
-   斜杠命令菜单 (Slash Command Menu)
-   ============================================ */
-
-.slash-command-menu {
-    @apply fixed z-[9998] max-h-[280px] overflow-y-auto border border-white/[0.08] rounded-[10px] p-1.5;
-    background: rgba(18, 22, 38, 0.96);
-    box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.04),
-        0 8px 32px rgba(0, 0, 0, 0.5);
-    animation: slash-menu-in 0.1s ease-out;
 }
 
 .slash-command-menu::-webkit-scrollbar {

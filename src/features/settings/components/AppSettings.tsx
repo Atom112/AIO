@@ -401,13 +401,13 @@ const AppSettings: Component = () => {
 
     return (
         <div class="flex flex-col gap-[15px] box-border">
-            <div class="rounded-xl p-6" style="background: rgba(18, 22, 35, 0.6); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);">
+            <div class="rounded-xl p-6" style="background: rgba(255, 255, 255, 0.035); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class="m-0 text-base text-white">应用状态</h3>
                     <div class="flex items-center gap-2">
                         <span class="text-xs text-[#888] font-medium">版本号:</span>
                         <div class="text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
-                            style="background: rgba(124,154,191,0.15); color: rgba(255,255,255,0.8); font-family: 'JetBrains Mono', monospace;">
+                            style="background: rgba(255, 255, 255, 0.035); color: rgba(255,255,255,0.8); font-family: 'JetBrains Mono', monospace;">
                             v{version()}
                         </div>
                     </div>
@@ -508,7 +508,7 @@ const AppSettings: Component = () => {
                 </Show>
             </div>
 
-            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)' }}>
                 <div class="flex justify-between items-center mb-5">
                     <h3 class='m-0 text-base text-white'>视觉主题</h3>
                 </div>
@@ -625,7 +625,7 @@ const AppSettings: Component = () => {
             </div>
 
             {/* 快捷键设置面板 */}
-            <div class="bg-[rgb(255_255_255/0.04)] glow-border rounded-xl p-6">
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ background: 'var(--acrylic-bg)', backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)' }}>
                 <div class="flex justify-between items-center mb-5">
                     <div>
                         <h3 class="m-0 text-base text-white">快捷键设置</h3>
@@ -648,8 +648,8 @@ const AppSettings: Component = () => {
 
                 {/* 恢复全部确认对话框 */}
                 <Show when={resetAllConfirm()}>
-                    <div class="shortcut-conflict-overlay" onClick={() => setResetAllConfirm(false)}>
-                        <div class="shortcut-conflict-dialog" onClick={e => e.stopPropagation()}>
+                    <div class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setResetAllConfirm(false)}>
+                        <div class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(22,26,40,0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]" style="animation: command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);" onClick={e => e.stopPropagation()}>
                             <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">确定要恢复所有快捷键为默认值吗？此操作不可撤销。</p>
                             <div class="flex justify-end gap-2">
                                 <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel" onClick={() => setResetAllConfirm(false)}>取消</button>
@@ -666,8 +666,8 @@ const AppSettings: Component = () => {
 
                 {/* 冲突确认对话框 */}
                 <Show when={conflictDialog()}>
-                    <div class="shortcut-conflict-overlay" onClick={handleConflictCancel}>
-                        <div class="shortcut-conflict-dialog" onClick={e => e.stopPropagation()}>
+                    <div class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={handleConflictCancel}>
+                        <div class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(22,26,40,0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]" style="animation: command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);" onClick={e => e.stopPropagation()}>
                             <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">
                                 该快捷键已用于「{getCommandLabel(conflictDialog()!.conflictActionId)}」，是否覆盖？
                             </p>
@@ -722,7 +722,7 @@ const AppSettings: Component = () => {
                                                 >
                                                     <Show
                                                         when={!isRecording()}
-                                                        fallback={<span class="shortcut-recording-text">按下快捷键...</span>}
+                                                        fallback={<span class="text-[11px] font-medium" style={{ color: 'var(--primary-color)' }}>按下快捷键...</span>}
                                                     >
                                                         <Show
                                                             when={keys()}

@@ -109,7 +109,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                 'opacity-0 pointer-events-none': isExiting() || isEntering(),
                 'opacity-100': !isExiting() && !isEntering(),
             }}
-            class="modal-overlay bg-black/85 z-[1000] transition-all duration-300 ease-out"
+            class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/85 backdrop-blur-[12px] transition-all duration-300 ease-out"
             onClick={(e) => e.target === e.currentTarget && handleClose()}
         >
             <div
@@ -117,7 +117,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                     'scale-95 opacity-0 translate-y-2': isExiting() || isEntering(),
                     'scale-100 opacity-100 translate-y-0': !isExiting() && !isEntering(),
                 }}
-                class="modal-panel bg-dark-850 w-[600px] overflow-hidden flex flex-col transition-all duration-250 ease-out transform"
+                class="bg-dark-850 w-[600px] overflow-hidden flex flex-col transition-all duration-250 ease-out transform" style={{ background: 'var(--acrylic-bg)', backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}
             >
                 <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-dark-300 text-pri font-bold">
                     <span>裁剪图片</span>

@@ -234,9 +234,16 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       {showMenuDiv() && (
         <Portal>
           <div
-            class="context-menu"
-            classList={{ closing: isMenuAnimatingOut() }}
-            style={`top: ${menuState().y}px; left: ${menuState().x}px;`}
+            class="fixed z-[1500] min-w-[150px] rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.35)] py-1 origin-top-left"
+            style={{
+              top: `${menuState().y}px`,
+              left: `${menuState().x}px`,
+              background: 'var(--acrylic-bg)',
+              'backdrop-filter': 'blur(40px) saturate(180%)',
+              '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+              border: '1px solid var(--acrylic-border)',
+              animation: isMenuAnimatingOut() ? 'contextMenuOut 0.14s ease-in forwards' : 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards'
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <button

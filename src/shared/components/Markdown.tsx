@@ -34,7 +34,7 @@ renderer.code = (token: Tokens.Code) => {
         <div class="my-5 rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.06]">
             <div class="flex items-center justify-between px-4 py-2.5 select-none bg-white/[0.03] border-b border-white/[0.05]">
                 <span class="text-xs font-mono tracking-wide text-white/35 lowercase">${lang}</span>
-                <button class="copy-code-button flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs cursor-pointer transition-all duration-200 text-white/35 bg-transparent border border-transparent opacity-0" title="复制代码" aria-label="Copy code">
+                <button class="copy-code-button flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs cursor-pointer transition-all duration-200 text-white/35 bg-transparent border border-transparent opacity-0 hover:text-white/70 hover:bg-white/[0.06] hover:border-white/[0.08] active:scale-[0.96]" title="复制代码" aria-label="Copy code">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
                     </svg>
@@ -156,11 +156,17 @@ const Markdown: Component<MarkdownProps> = (props) => {
                 if (span) {
                     const oldText = span.innerText || '';
                     span.innerText = '已复制!';
-                    btn.classList.add('copied');
+                    (btn as HTMLElement).style.color = '#3fb950';
+                    (btn as HTMLElement).style.borderColor = 'rgba(63,185,80,0.3)';
+                    (btn as HTMLElement).style.backgroundColor = 'rgba(46,160,67,0.15)';
+                    (btn as HTMLElement).style.opacity = '1';
 
                     setTimeout(() => {
                         span.innerText = oldText;
-                        btn.classList.remove('copied');
+                        (btn as HTMLElement).style.color = '';
+                        (btn as HTMLElement).style.borderColor = '';
+                        (btn as HTMLElement).style.backgroundColor = '';
+                        (btn as HTMLElement).style.opacity = '';
                     }, 2000);
                 }
             }).catch(err => {

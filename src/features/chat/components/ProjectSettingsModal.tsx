@@ -162,7 +162,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                     "opacity-0 pointer-events-none": isExiting() || isEntering(),
                     "opacity-100": !isExiting() && !isEntering()
                 }}
-                class="modal-overlay bg-black/60 z-[1000] rounded-lg transition-all duration-200 ease-out"
+                class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-[12px] rounded-lg transition-all duration-200 ease-out"
                 onClick={(e) => e.target === e.currentTarget && handleClose()}
             >
                 <div
@@ -170,7 +170,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                         "scale-95 opacity-0": isExiting() || isEntering(),
                         "scale-100 opacity-100": !isExiting() && !isEntering()
                     }}
-                    class="modal-panel bg-dark-500 text-[#e0e0e0] p-6 rounded-lg w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
+                    class="rounded-lg bg-dark-500 text-[#e0e0e0] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform" style={{ background: 'var(--acrylic-bg)', backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)' }}
                 >
                     <div class="flex justify-between items-center border-b border-[#444] pb-3">
                         <h2 class='m-0 text-xl'>项目设置</h2>

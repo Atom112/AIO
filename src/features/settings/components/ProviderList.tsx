@@ -21,13 +21,10 @@ import {
     providerConfigs,
     setProviderConfigs,
     modelsCatalog,
-    modelsCatalogSource,
-    modelsCatalogVersion,
     modelsCatalogGeneratedAt,
 } from '../../../core/store/store';
 import {
     updateModelsCatalog,
-    getCatalogUrl,
     formatRelativeTime,
     searchProviders,
     loadModelsCatalog,
@@ -238,8 +235,7 @@ const LocalEngineSection: Component = () => {
                     <For each={localActivatedModels()}>
                         {(m, i) => (
                             <span
-                                class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] chip-info font-mono animate-row-in"
-                                style={{ "animation-delay": `${i() * 30}ms` }}
+                                class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] font-mono animate-row-in" style={{ background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)', "animation-delay": `${i() * 30}ms` }}
                             >
                                 <span class="truncate max-w-[200px]">{m.model_id}</span>
                                 <span class="text-[#888]">({m.owned_by})</span>
@@ -263,78 +259,57 @@ const LocalEngineSection: Component = () => {
 
 const CatalogStats: Component = () => {
     const [updating, setUpdating] = createSignal(false);
-    const [updateResult, setUpdateResult] = createSignal<{ ok: boolean; msg: string } | null>(null);
-    const [endpoint, setEndpoint] = createSignal('');
-
-    onMount(async () => {
-        try { setEndpoint(await getCatalogUrl()); } catch (e) { /* ignore */ }
-    });
+    const [result, setResult] = createSignal<{ ok: boolean; msg: string } | null>(null);
 
     const handleSync = async () => {
         setUpdating(true);
-        setUpdateResult(null);
+        setResult(null);
         try {
             const r = await updateModelsCatalog();
             if (r.success) {
-                setUpdateResult({ ok: true, msg: `已更新 · v${r.version} · ${r.modelCount} 个模型 · ${(r.bytes / 1024).toFixed(0)} KB` });
+                await loadModelsCatalog();
+                setResult({ ok: true, msg: `已更新 ${r.modelCount} 个模型` });
             } else {
-                setUpdateResult({ ok: false, msg: r.error ?? '更新失败' });
+                setResult({ ok: false, msg: r.error ?? '同步失败' });
             }
-        } catch (e) {
-            setUpdateResult({ ok: false, msg: typeof e === 'string' ? e : String(e) });
-        } finally {
-            setUpdating(false);
-            setTimeout(() => setUpdateResult(null), 6000);
+        } catch {
+            setResult({ ok: false, msg: '网络错误' });
         }
+        setUpdating(false);
+        setTimeout(() => setResult(null), 3000);
     };
 
     return (
-        <div class="glass-card mb-4 flex items-center gap-4 flex-wrap animate-row-in" style={{ "animation-delay": "30ms" }}>
-            <div class="grow min-w-0">
-                <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5 flex items-center gap-1.5">
-                    <Icon name="chart-bar" size={11} class="text-pri" /> 模型元数据库
-                </div>
-                <div class="text-xs text-[#ccc]">
-                    <Show when={modelsCatalog()}>
-                        提供商 <span class="text-pri font-bold">{modelsCatalog()!.providerCount}</span> ·
-                        模型 <span class="text-pri font-bold">{modelsCatalog()!.modelCount}</span> ·
-                        来源 <span class="text-pri">{modelsCatalogSource()}</span> ·
-                        版本 <span class="font-mono">{modelsCatalogVersion() ?? '?'}</span> ·
-                        更新 <span>{formatRelativeTime(modelsCatalogGeneratedAt())}</span>
-                    </Show>
-                </div>
-                <Show when={endpoint()}>
-                    <div class="text-[10px] text-[#666] font-mono mt-1 truncate" title={endpoint()}>
-                        endpoint: {endpoint()}
-                    </div>
-                </Show>
-            </div>
-            <div class="flex flex-col items-end gap-1.5">
-                <button
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={updating()}
-                    onClick={handleSync}
-                >
-                    <Show when={updating()} fallback={<Icon name="refresh" size={12} class={updating() ? 'animate-spin' : ''} />}>
-                        <Icon name="spinner" size={12} class="animate-spin" />
-                    </Show>
-                    {updating() ? '同步中...' : '同步元数据'}
-                </button>
-                <Show when={updateResult()}>
+        <div class="glass-card mb-4 flex items-center justify-between animate-row-in" style={{ "animation-delay": "30ms" }}>
+            <span class="text-base text-white uppercase tracking-[1.5px] font-semibold">模型供应商</span>
+            <div class="flex items-center gap-3">
+                <Show when={result()}>
                     <span
-                        class="text-[10px] animate-row-in"
+                        class="text-[10px]"
                         classList={{
-                            'text-green-400': updateResult()!.ok,
-                            'text-red-400': !updateResult()!.ok,
+                            'text-green-300': result()!.ok,
+                            'text-red-300': !result()!.ok,
                         }}
-                    >{updateResult()!.msg}</span>
+                    >{result()!.msg}</span>
                 </Show>
+                <span class="text-[10px] text-white/30">
+                    更新于{formatRelativeTime(modelsCatalogGeneratedAt())}
+                </span>
+                <button
+                    type="button"
+                    class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50"
+                    onClick={handleSync}
+                    disabled={updating()}
+                >
+                    <Show when={updating()} fallback={<Icon name="refresh" size={11} />}>
+                        <Icon name="spinner" size={11} class="animate-spin" />
+                    </Show>
+                    {updating() ? '同步中...' : '同步'}
+                </button>
             </div>
         </div>
     );
 };
-
-// ============== Provider 列表 ==============
 
 const ProviderList: Component = () => {
     const navigate = useNavigate();
@@ -365,6 +340,32 @@ const ProviderList: Component = () => {
         const c = modelsCatalog();
         if (!c) return [] as ProviderMeta[];
         return searchProviders(c, search());
+    });
+
+    /** 搜索后的 catalog providers, 按字母排序, 启用的置顶 */
+    const sortedCatalog = createMemo(() => {
+        const providers = filteredCatalog();
+        const cfgs = providerConfigs();
+        const enabled: ProviderMeta[] = [];
+        const disabled: ProviderMeta[] = [];
+        for (const p of providers) {
+            (cfgs[p.id]?.enabled ? enabled : disabled).push(p);
+        }
+        const byName = (a: ProviderMeta, b: ProviderMeta) => a.name.localeCompare(b.name);
+        enabled.sort(byName);
+        disabled.sort(byName);
+        return { enabled, disabled };
+    });
+
+    /** custom providers 按字母排序, 启用的置顶 */
+    const sortedCustom = createMemo(() => {
+        const providers = customProviders();
+        const enabled = providers.filter(c => c.enabled);
+        const disabled = providers.filter(c => !c.enabled);
+        const byName = (a: ProviderConfig, b: ProviderConfig) => a.displayName.localeCompare(b.displayName);
+        enabled.sort(byName);
+        disabled.sort(byName);
+        return { enabled, disabled };
     });
 
     /** 通用持久化: 把 providers map 写盘 */
@@ -460,7 +461,7 @@ const ProviderList: Component = () => {
                     <Icon name="search" size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
                     <input
                         type="text"
-                        placeholder="搜索 provider 或模型..."
+                        placeholder="搜索供应商"
                         class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full pl-9 pr-3 py-1.5 text-sm"
                         value={search()}
                         onInput={(e) => setSearch(e.currentTarget.value)}
@@ -477,8 +478,8 @@ const ProviderList: Component = () => {
 
             {/* 自定义 provider 模态框 */}
             <Show when={showAddCustom()}>
-                <div class="modal-overlay-glass" onClick={() => setShowAddCustom(false)}>
-                    <div class="modal-glass modal-content-glass p-6 w-[440px] max-w-[90%]" onClick={(e) => e.stopPropagation()}>
+                <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur" style={{ animation: 'modalOverlayIn 0.2s ease forwards' }} onClick={() => setShowAddCustom(false)}>
+                    <div class="bg-[rgba(18,22,35,0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]" style={{ backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', animation: 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards' }} onClick={(e) => e.stopPropagation()}>
                         <h3 class="text-lg font-bold text-white mb-1">添加自定义 Provider</h3>
                         <p class="text-xs text-[#888] mb-5">通过 OpenAI-兼容端点接入任何 LLM 服务</p>
                         <div class="mb-3">
@@ -520,74 +521,170 @@ const ProviderList: Component = () => {
 
             {/* Provider 列表 (catalog) */}
             <Show when={catalogReady()} fallback={<div class="text-center text-[#888] py-8">加载 catalog 中...</div>}>
-                <Show when={filteredCatalog().length === 0}>
+                <Show when={sortedCatalog().enabled.length === 0 && sortedCatalog().disabled.length === 0}>
                     <div class="text-center text-[#666] py-8 italic text-sm">没有匹配的 provider</div>
                 </Show>
-                <div class="space-y-1.5">
-                    <For each={filteredCatalog()}>
-                        {(p, i) => (
-                            <ProviderRow
-                                provider={p}
-                                onToggleEnabled={toggleEnabled}
-                                onClick={() => navigate('/settings/provider/' + encodeURIComponent(p.id))}
-                                style={{ "animation-delay": `${(i() + 1) * 30}ms` }}
-                            />
-                        )}
-                    </For>
-                </div>
 
-                {/* 自定义 provider 区 */}
-                <Show when={customProviders().length > 0}>
-                    <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mt-5 mb-2">
-                        自定义 Provider ({customProviders().length})
-                    </div>
+                {/* 已启用 */}
+                <Show when={sortedCatalog().enabled.length > 0}>
                     <div class="space-y-1.5">
-                        <For each={customProviders()}>
-                            {(cfg, i) => (
-                                <div
-                                    class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
+                        <For each={sortedCatalog().enabled}>
+                            {(p, i) => (
+                                <ProviderRow
+                                    provider={p}
+                                    onToggleEnabled={toggleEnabled}
+                                    onClick={() => navigate('/settings/provider/' + encodeURIComponent(p.id))}
                                     style={{ "animation-delay": `${(i() + 1) * 30}ms` }}
-                                    onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
-                                >
-                                    <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c] font-bold text-[15px]" style={{ color: '#1a1e2c' }}>
-                                        {cfg.displayName.charAt(0).toUpperCase()}
-                                    </div>
-                                    <div class="grow min-w-0">
-                                        <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
-                                        <div class="text-[10px] text-[#888] font-mono truncate mt-0.5">
-                                            {cfg.apiUrl || '(未配置)'} · 自定义
-                                        </div>
-                                    </div>
-                                    <span class="text-[10px] text-[#666] hidden sm:inline">已启用 {cfg.enabledModels.length} 个</span>
-                                    <button
-                                        type="button"
-                                        class="toggle-glass"
-                                        classList={{ 'on': cfg.enabled }}
-                                        onClick={(e) => { e.stopPropagation(); toggleEnabled(cfg.id, cfg.enabled); }}
-                                        title={cfg.enabled ? '点击停用' : '点击启用'}
-                                    >
-                                        <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="px-2.5 py-1 text-[11px] rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95"
-                                        onClick={(e) => { e.stopPropagation(); removeCustomProvider(cfg.id); }}
-                                    >删除</button>
-                                </div>
+                                />
                             )}
                         </For>
                     </div>
+                </Show>
+
+                {/* 分隔线 */}
+                <Show when={sortedCatalog().enabled.length > 0 && sortedCatalog().disabled.length > 0}>
+                    <div class="flex items-center gap-3 my-4">
+                        <div class="flex-1 h-px bg-white/[0.06]" />
+                        <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">未启用</span>
+                        <div class="flex-1 h-px bg-white/[0.06]" />
+                    </div>
+                </Show>
+
+                {/* 未启用 */}
+                <Show when={sortedCatalog().disabled.length > 0}>
+                    <div class="space-y-1.5">
+                        <For each={sortedCatalog().disabled}>
+                            {(p, i) => (
+                                <ProviderRow
+                                    provider={p}
+                                    onToggleEnabled={toggleEnabled}
+                                    onClick={() => navigate('/settings/provider/' + encodeURIComponent(p.id))}
+                                    style={{ "animation-delay": `${(i() + 1) * 30}ms` }}
+                                />
+                            )}
+                        </For>
+                    </div>
+                </Show>
+
+                {/* 自定义 provider 区 */}
+                <Show when={sortedCustom().enabled.length > 0 || sortedCustom().disabled.length > 0}>
+                    <div class="flex items-center gap-3 mt-5 mb-2">
+                        <div class="flex-1 h-px bg-white/[0.06]" />
+                        <span class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold shrink-0">
+                            自定义 Provider ({customProviders().length})
+                        </span>
+                        <div class="flex-1 h-px bg-white/[0.06]" />
+                    </div>
+                    {/* 已启用 */}
+                    <Show when={sortedCustom().enabled.length > 0}>
+                        <div class="space-y-1.5">
+                            <For each={sortedCustom().enabled}>
+                                {(cfg, i) => (
+                                    <div
+                                        class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
+                                        style={{ "animation-delay": `${(i() + 1) * 30}ms` }}
+                                        onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
+                                    >
+                                        <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c] font-bold text-[15px]" style={{ color: '#1a1e2c' }}>
+                                            {cfg.displayName.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div class="grow min-w-0">
+                                            <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
+                                            <div class="text-[10px] text-[#888] font-mono truncate mt-0.5">
+                                                {cfg.apiUrl || '(未配置)'} · 自定义
+                                            </div>
+                                        </div>
+                                        <span class="text-[10px] text-[#666] hidden sm:inline">已启用 {cfg.enabledModels.length} 个</span>
+                                        <button
+                                            type="button"
+                                            class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
+                                            style={{
+                                                transition: 'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
+                                                ...(cfg.enabled ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
+                                            }}
+                                            onClick={(e) => { e.stopPropagation(); toggleEnabled(cfg.id, cfg.enabled); }}
+                                            title={cfg.enabled ? '点击停用' : '点击启用'}
+                                        >
+                                            <span
+                                                class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
+                                                style={{ transform: cfg.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
+                                            />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="px-2.5 py-1 text-[11px] rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95"
+                                            onClick={(e) => { e.stopPropagation(); removeCustomProvider(cfg.id); }}
+                                        >删除</button>
+                                    </div>
+                                )}
+                            </For>
+                        </div>
+                    </Show>
+                    {/* 自定义分隔线 */}
+                    <Show when={sortedCustom().enabled.length > 0 && sortedCustom().disabled.length > 0}>
+                        <div class="flex items-center gap-3 my-3">
+                            <div class="flex-1 h-px bg-white/[0.06]" />
+                            <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">未启用</span>
+                            <div class="flex-1 h-px bg-white/[0.06]" />
+                        </div>
+                    </Show>
+                    {/* 未启用 */}
+                    <Show when={sortedCustom().disabled.length > 0}>
+                        <div class="space-y-1.5">
+                            <For each={sortedCustom().disabled}>
+                                {(cfg, i) => (
+                                    <div
+                                        class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
+                                        style={{ "animation-delay": `${(i() + 1) * 30}ms` }}
+                                        onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
+                                    >
+                                        <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c] font-bold text-[15px]" style={{ color: '#1a1e2c' }}>
+                                            {cfg.displayName.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div class="grow min-w-0">
+                                            <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
+                                            <div class="text-[10px] text-[#888] font-mono truncate mt-0.5">
+                                                {cfg.apiUrl || '(未配置)'} · 自定义
+                                            </div>
+                                        </div>
+                                        <span class="text-[10px] text-[#666] hidden sm:inline">已启用 {cfg.enabledModels.length} 个</span>
+                                        <button
+                                            type="button"
+                                            class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
+                                            style={{
+                                                transition: 'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
+                                                ...(cfg.enabled ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
+                                            }}
+                                            onClick={(e) => { e.stopPropagation(); toggleEnabled(cfg.id, cfg.enabled); }}
+                                            title={cfg.enabled ? '点击停用' : '点击启用'}
+                                        >
+                                            <span
+                                                class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
+                                                style={{ transform: cfg.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
+                                            />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="px-2.5 py-1 text-[11px] rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95"
+                                            onClick={(e) => { e.stopPropagation(); removeCustomProvider(cfg.id); }}
+                                        >删除</button>
+                                    </div>
+                                )}
+                            </For>
+                        </div>
+                    </Show>
                 </Show>
             </Show>
 
             {/* Toast 提示 */}
             <Show when={toast()}>
                 <div
-                    class="toast-glass fixed bottom-6 left-1/2 z-50"
+                    class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"
                     classList={{
                         'text-green-300': toast()!.ok,
                         'text-red-300': !toast()!.ok,
                     }}
+                    style={{ background: 'rgba(18, 22, 35, 0.88)', backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
                 >{toast()!.msg}</div>
             </Show>
         </div>
@@ -629,7 +726,7 @@ const ProviderRow: Component<{
                     <span class="text-sm text-white truncate font-medium">{props.provider.name}</span>
                     <span class={`inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] ${status().cls}`}>{status().label}</span>
                     <Show when={props.provider.isAggregator}>
-                        <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] chip-info">聚合</span>
+                        <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6]" style={{ background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)' }}>聚合</span>
                     </Show>
                 </div>
                 <div class="text-[10px] text-[#888] font-mono mt-0.5">
@@ -641,15 +738,21 @@ const ProviderRow: Component<{
             </div>
             <button
                 type="button"
-                class="toggle-glass"
-                classList={{ 'on': isEnabled() }}
+                class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
+                style={{
+                    transition: 'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
+                    ...(isEnabled() ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
+                }}
                 onClick={(e) => {
                     e.stopPropagation();
                     props.onToggleEnabled(props.provider.id, isEnabled());
                 }}
                 title={isEnabled() ? '点击停用' : '点击启用'}
             >
-                <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
+                <span
+                    class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
+                    style={{ transform: isEnabled() ? 'translateX(21px)' : 'translateX(3px)' }}
+                />
             </button>
             <span class="text-[#666] text-lg transition-transform duration-200 group-hover:translate-x-0.5">›</span>
         </div>

@@ -81,7 +81,7 @@ const ModelBreakdown: Component<Props> = (props) => {
                 {(item, i) => (
                     <div
                         class="rounded-lg px-4 py-3 transition-colors duration-150 hover:bg-white/[0.02]"
-                        style="background: rgba(18,22,35,0.3); border: 1px solid rgba(255,255,255,0.04);"
+                        style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.04);"
                     >
                         {/* 主行：模型名 + 占比 + 条形图 */}
                         <div class="flex items-center gap-3">

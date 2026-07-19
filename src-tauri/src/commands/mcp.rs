@@ -225,7 +225,7 @@ pub async fn start_mcp_server(
             (Some(r), count)
         }
         Err(e) => {
-            tracing::warn!("MCP {} resources/list 失败（可能不支持）: {}", id, e);
+            tracing::info!("MCP {} resources/list 不支持（可选特性）: {}", id, e);
             (None, 0)
         }
     };
@@ -237,7 +237,7 @@ pub async fn start_mcp_server(
             (Some(p), count)
         }
         Err(e) => {
-            tracing::warn!("MCP {} prompts/list 失败（可能不支持）: {}", id, e);
+            tracing::info!("MCP {} prompts/list 不支持（可选特性）: {}", id, e);
             (None, 0)
         }
     };

@@ -131,7 +131,6 @@ const StepCard: Component<{
         if (!isNew || !entranceRef) return;
         // 入场动画总时长 ~0.9s（0.1s 延迟 + 0.8s expand-width），结束后移除类并解锁 expanded
         const timer = setTimeout(() => {
-            entranceRef?.classList.remove('agent-step-card-entrance');
             setEntranceDone(true);
         }, 920);
         onCleanup(() => clearTimeout(timer));
@@ -140,14 +139,20 @@ const StepCard: Component<{
     return (
         <div
             ref={entranceRef}
-            class="agent-step-card"
+            class="rounded-md overflow-hidden bg-white/[0.015] border border-white/[0.04] hover:bg-white/[0.03]"
             classList={{
-                'agent-step-card-entrance': isNew,
                 'is-running': props.step.status === 'running',
                 'is-error': props.step.status === 'error',
                 'is-expanded': effectiveExpanded(),
             }}
-            style={{ '--step-border-color': getStepBorderColor(props.step) }}
+            style={{
+                '--step-border-color': getStepBorderColor(props.step),
+                'border-left': `2px solid var(--step-border-color, rgba(255, 255, 255, 0.12))`,
+                transition: 'border-color 0.3s, background 0.2s',
+                ...(props.step.status === 'running' ? { background: 'rgba(var(--primary-rgb), 0.03)', animation: 'stepCardPulse 2s ease-in-out infinite' } : {}),
+                ...(props.step.status === 'error' ? { 'border-left-color': 'rgba(224, 85, 85, 0.5)' } : {}),
+                ...(isNew && !entranceDone() ? { animation: 'stepSlideIn 0.6s cubic-bezier(0.22, 0.61, 0.36, 1) backwards, expand-width 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.1s backwards' } : {})
+            }}
         >
             <button
                 type="button"
@@ -185,7 +190,15 @@ const StepCard: Component<{
             </button>
 
             {/* Body */}
-            <div class="agent-step-body">
+            <div class="overflow-hidden opacity-0 max-h-0 px-2.5" style={(() => {
+                const expanded = effectiveExpanded();
+                const running = props.step.status === 'running';
+                const open = expanded || running;
+                return {
+                    transition: 'max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s, padding 0.25s',
+                    ...(open ? { 'max-height': '800px', opacity: 1, 'padding-top': '2px', 'padding-bottom': '8px' } : {})
+                };
+            })()}>
                 {/* 思考步骤：原始文本 */}
                 {props.step.type === 'thinking' && props.step.thinkingText && (
                     <div class="text-[12px] leading-relaxed italic whitespace-pre-wrap break-words text-white/50 px-2 py-1.5 rounded bg-black/[0.12] max-h-[300px] overflow-y-auto">

@@ -167,13 +167,13 @@ const AgentModeSelector: Component = () => {
             {/* 自动模式风险提醒弹窗 */}
             <Show when={showAutoWarning()}>
                 <div
-                    class="modal-overlay"
-                    style="z-index: 2100;"
+                    class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-[12px]"
+                    style="z-index: 2100; animation: modalOverlayIn 0.2s ease-out both;"
                     onClick={() => setShowAutoWarning(false)}
                 >
                     <div
-                        class="modal-panel bg-dark-500 p-6 rounded-lg max-w-[420px] w-full"
-                        style="background: rgba(18,22,35,0.96); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(20px); box-shadow: 0 8px 32px rgba(0,0,0,0.5);"
+                        class="bg-dark-500 p-6 rounded-lg max-w-[420px] w-full"
+                        style="background: rgba(18,22,35,0.96); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(20px); box-shadow: 0 8px 32px rgba(0,0,0,0.5); animation: modalPanelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div class="flex items-center gap-3 mb-4">
@@ -206,7 +206,8 @@ const AgentModeSelector: Component = () => {
                             </button>
                             <button
                                 type="button"
-                                class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-none"
+                                class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-solid"
+                                style="background: rgba(224,192,96,0.1); color: rgba(224,192,96,0.95); border: 1.5px solid rgba(224,192,96,0.5);"
                                 onClick={async () => {
                                     autoModeConfirmed = true;
                                     setShowAutoWarning(false);

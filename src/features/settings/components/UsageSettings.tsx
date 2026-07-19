@@ -67,7 +67,7 @@ const UsageSettings: Component = () => {
         <div class="w-full h-full">
             <div
                 class="w-full h-full rounded-xl p-8 flex flex-col"
-                style="background: rgba(18, 22, 35, 0.6); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);"
+                style="background: transparent; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);"
             >
                 {/* 标题行 */}
                 <div class="flex items-center justify-between pb-3 mb-6 shrink-0" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
@@ -111,8 +111,8 @@ const UsageSettings: Component = () => {
                     <Show when={!hasData()}>
                         <div class="flex flex-col items-center justify-center py-16 gap-3">
                             <Icon name="chart-bar" size={30} />
-                            <span class="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>暂无使用数据</span>
-                            <span class="text-xs" style={{ color: 'rgba(255,255,255,0.15)' }}>开始对话后，Token 用量将自动记录于此</span>
+                            <span class="text-sm" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>暂无使用数据</span>
+                            <span class="text-xs" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>开始对话后，Token 用量将自动记录于此</span>
                         </div>
                     </Show>
 
@@ -124,7 +124,7 @@ const UsageSettings: Component = () => {
                             {/* 热力图 — 固定 365 天，不受时间范围影响 */}
                             <div
                                 class="rounded-xl p-5"
-                                style="background: rgba(18,22,35,0.3); border: 1px solid rgba(255,255,255,0.05);"
+                                style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05);"
                             >
                                 <div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
                                     每日活动
@@ -136,7 +136,7 @@ const UsageSettings: Component = () => {
                             <Show when={byModel().length > 0}>
                                 <div
                                     class="rounded-xl p-5"
-                                    style="background: rgba(18,22,35,0.3); border: 1px solid rgba(255,255,255,0.05);"
+                                    style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05);"
                                 >
                                     <div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
                                         模型分布

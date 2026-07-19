@@ -212,20 +212,6 @@ const ProviderDetail: Component = () => {
         }
     };
 
-    const handleDelete = async () => {
-        const u = userCfg();
-        if (!u) return;
-        if (!confirm(`确认删除 provider "${u.displayName}"？此操作不可撤销。`)) return;
-        const next = { ...providerConfigs() };
-        delete next[providerId()];
-        try {
-            await invoke('save_provider_configs', { file: { version: 2, updatedAt: String(Date.now()), providers: next } });
-            setProviderConfigs(next);
-            navigate('/settings');
-        } catch (e) {
-            alert('删除失败: ' + e);
-        }
-    };
 
     return (
         <div class="h-full overflow-y-auto">
@@ -252,7 +238,7 @@ const ProviderDetail: Component = () => {
                     class="glass-card mb-4 flex items-center gap-4 animate-row"
                     style={{ "animation-delay": "30ms" }}
                 >
-                    <div class="logo-tile w-12 h-12 text-2xl" style={{ 'width': '48px', 'height': '48px', color: '#1a1e2c' }}>
+                    <div class="flex items-center justify-center w-12 h-12 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 text-[#1a1e2c]">
                         {getProviderLogo(providerId())
                             ? <img src={getProviderLogo(providerId())!} alt={userCfg()?.displayName ?? providerId()} class="w-7 h-7 object-contain" />
                             : <span class="font-bold">{(userCfg()?.displayName ?? providerId()).charAt(0).toUpperCase()}</span>
@@ -262,13 +248,13 @@ const ProviderDetail: Component = () => {
                         <h1 class="text-xl font-bold text-white truncate tracking-tight">{userCfg()?.displayName ?? providerMeta()?.name ?? providerId()}</h1>
                         <div class="text-xs text-[#888] font-mono mt-1 flex items-center gap-2 flex-wrap">
                             <Show when={isCustom()}>
-                                <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] chip-info">自定义</span>
+                                <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6]" style={{ background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)' }}>自定义</span>
                             </Show>
                             <Show when={!isCustom()}>
                                 <span><span class="text-pri font-semibold">{modelGroups().enabled.length}</span><span class="text-[#666]"> / </span><span>{modelGroups().enabled.length + modelGroups().available.length}</span> 个模型已启用</span>
                                 <Show when={modelGroups().enabled.length > 0}>
                                     <span class="text-[#666]">·</span>
-                                    <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-green-400/15 text-green-300 border border-green-400/20">运行中</span>
+                                    <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-green-400/15 text-green-300 border border-green-400/20">已启用</span>
                                 </Show>
                             </Show>
                         </div>
@@ -344,10 +330,19 @@ const ProviderDetail: Component = () => {
                             onClick={() => toggleProviderEnabled(!(userCfg()?.enabled ?? false))}
                         >
                             <span
-                                class="toggle-glass"
-                                classList={{ 'on': userCfg()?.enabled ?? false }}
+                                class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
+                                style={(() => {
+                                    const on = userCfg()?.enabled ?? false;
+                                    return {
+                                        transition: 'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
+                                        ...(on ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
+                                    };
+                                })()}
                             >
-                                <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
+                                <span
+                                    class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
+                                    style={{ transform: (userCfg()?.enabled ?? false) ? 'translateX(21px)' : 'translateX(3px)' }}
+                                />
                             </span>
                             <span class="text-sm text-white">启用此 provider</span>
                         </button>
@@ -373,15 +368,6 @@ const ProviderDetail: Component = () => {
                             </Show>
                             {fetchState().status === 'fetching' ? '拉取中...' : '从 API 拉取模型'}
                         </button>
-                        <Show when={userCfg()}>
-                            <button
-                                type="button"
-                                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95 ml-auto"
-                                onClick={handleDelete}
-                            >
-                                <Icon name="trash" size={13} /> 删除
-                            </button>
-                        </Show>
                     </div>
                 </div>
 
@@ -504,11 +490,10 @@ const ProviderDetail: Component = () => {
                                     value={sortKey()}
                                     onChange={(v) => setSortKey(v as SortKey)}
                                     options={[
-                                        { value: 'releaseDesc', label: '发布日期 ↓' },
+                                        { value: 'releaseDesc', label: '发布日期' },
                                         { value: 'nameAsc', label: '名称 A-Z' },
                                     ]}
-                                    class="text-xs"
-                                />
+                                    class="text-xs" />
                             </div>
                         </div>
 
@@ -589,11 +574,12 @@ const ProviderDetail: Component = () => {
                 {/* Toast 提示 */}
                 <Show when={toast()}>
                     <div
-                        class="toast-glass fixed bottom-6 left-1/2 z-50"
+                        class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"
                         classList={{
                             'text-green-300': toast()!.ok,
                             'text-red-300': !toast()!.ok,
                         }}
+                        style={{ background: 'rgba(18, 22, 35, 0.88)', backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
                     >{toast()!.msg}</div>
                 </Show>
             </div>

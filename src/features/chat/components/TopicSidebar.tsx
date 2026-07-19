@@ -188,9 +188,16 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
             {showTopicMenuDiv() && (
                 <Portal>
                     <div
-                        class="context-menu"
-                        classList={{ closing: isTopicMenuAnimatingOut() }}
-                        style={`top: ${topicMenuState().y}px; left: ${topicMenuState().x}px;`}
+                        class="fixed z-[1500] min-w-[150px] rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.35)] py-1 origin-top-left"
+                        style={{
+                            top: `${topicMenuState().y}px`,
+                            left: `${topicMenuState().x}px`,
+                            background: 'var(--acrylic-bg)',
+                            'backdrop-filter': 'blur(40px) saturate(180%)',
+                            '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+                            border: '1px solid var(--acrylic-border)',
+                            animation: isTopicMenuAnimatingOut() ? 'contextMenuOut 0.14s ease-in forwards' : 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards'
+                        }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>重命名</button>

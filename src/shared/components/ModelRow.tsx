@@ -49,15 +49,16 @@ const ModelRow: Component<{
                     </Show>
                     <Show when={m().status && m().status !== 'active'}>
                         <span
-                            class="chip"
+                            class="chip rounded p-0.5"
                             classList={{
                                 'chip-warn': m().status === 'deprecated',
-                                'chip-info': m().status === 'preview' || m().status === 'beta',
                                 'chip': m().status === 'experimental' || m().status === 'alpha',
                             }}
-                            style={m().status === 'experimental' || m().status === 'alpha'
-                                ? 'background: rgba(168, 85, 247, 0.15); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.25);'
-                                : undefined}
+                            style={(() => {
+                                if (m().status === 'preview' || m().status === 'beta') return { background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)', borderRadius: '4px' };
+                                if (m().status === 'experimental' || m().status === 'alpha') return { background: 'rgba(168, 85, 247, 0.15)', color: '#d8b4fe', border: '1px solid rgba(168, 85, 247, 0.25)', borderRadius: '4px' };
+                                return undefined;
+                            })()}
                         >
                             {m().status}
                         </span>
@@ -77,12 +78,18 @@ const ModelRow: Component<{
             </div>
             <button
                 type="button"
-                class="toggle-glass"
-                classList={{ 'on': props.enabled }}
+                class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
+                style={{
+                    transition: 'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
+                    ...(props.enabled ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
+                }}
                 onClick={(e) => { e.stopPropagation(); props.onToggle(); }}
                 title={props.enabled ? '点击停用' : '点击启用'}
             >
-                <span class="inline-block h-4 w-4 rounded-full bg-white translate-x-[3px] transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]" />
+                <span
+                    class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
+                    style={{ transform: props.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
+                />
             </button>
         </div>
     );

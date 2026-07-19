@@ -72,7 +72,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
             {/* 总 Token */}
             <div
                 class="rounded-xl p-4 flex flex-col gap-1.5"
-                style="background: rgba(18,22,35,0.4); border: 1px solid rgba(255,255,255,0.06);"
+                style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
                 <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">总 Token</span>
                 <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{fmt(totalTokens())}</span>
@@ -85,7 +85,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
             {/* 总请求 */}
             <div
                 class="rounded-xl p-4 flex flex-col gap-1.5"
-                style="background: rgba(18,22,35,0.4); border: 1px solid rgba(255,255,255,0.06);"
+                style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
                 <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">总请求</span>
                 <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{totals().requests}</span>
@@ -95,7 +95,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
             {/* 预估费用 */}
             <div
                 class="rounded-xl p-4 flex flex-col gap-1.5"
-                style="background: rgba(18,22,35,0.4); border: 1px solid rgba(255,255,255,0.06);"
+                style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
                 <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">预估费用</span>
                 <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">
@@ -107,7 +107,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
             {/* 活跃天数 */}
             <div
                 class="rounded-xl p-4 flex flex-col gap-1.5"
-                style="background: rgba(18,22,35,0.4); border: 1px solid rgba(255,255,255,0.06);"
+                style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
                 <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">活跃天数</span>
                 <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{totals().activeDays}</span>

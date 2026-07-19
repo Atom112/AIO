@@ -30,7 +30,7 @@ const UsageSettings = lazy(() => import('./features/settings/components/UsageSet
 
 render(
   () => (
-    <Suspense fallback={<div class="loading-container">Loading...</div>}>
+    <Suspense fallback={<div class="flex items-center justify-center h-screen w-screen text-white/40">Loading...</div>}>
       <Router root={Layout}>
         <Route path="/" component={() => <Navigate href="/chat" />} />
         <Route path="/chat" component={lazy(() => import('./features/chat/ChatPage'))} />

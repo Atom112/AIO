@@ -238,9 +238,9 @@ const CommandPalette: Component = () => {
     return (
         <Show when={commandPaletteOpen()}>
             {/* 遮罩 */}
-            <div class="command-palette-overlay" onClick={onOverlayClick}>
+            <div class="fixed inset-0 z-[9999] flex items-start justify-center pt-[18vh] bg-black/50" style="backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: command-palette-fade-in 0.12s ease-out;" onClick={onOverlayClick}>
                 {/* 卡片 */}
-                <div class="command-palette-card" onClick={e => e.stopPropagation()}>
+                <div class="w-[600px] max-h-[460px] flex flex-col border border-white/[0.08] rounded-[14px] overflow-hidden" style="background: rgba(22, 26, 40, 0.95); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 16px 48px rgba(0, 0, 0, 0.5); animation: command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);" onClick={e => e.stopPropagation()}>
                     {/* 搜索框 */}
                     <div class="flex items-center gap-2.5 px-4 py-3.5 border-b border-b-white/[0.06]">
                         <svg

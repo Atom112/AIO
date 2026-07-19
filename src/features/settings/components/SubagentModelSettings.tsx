@@ -225,10 +225,10 @@ const SubagentModelSettings: Component = () => {
                     const builtin = isBuiltin(profile.id);
 
                     return (
-                        <div class="bg-[rgba(18,22,35,0.35)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden">
+                        <div class="bg-[rgba(255,255,255,0.035)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden">
                             {/* Profile header */}
                             <div class="p-4 flex items-center justify-between">
-                                <div class="flex-1 min-w-0">
+                                <div class="flex-1 min-w-0" >
                                     <div class="flex items-center gap-2">
                                         <Show when={builtin} fallback={
                                             <Icon name="user" size={14} class="text-white/40" />

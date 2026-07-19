@@ -2,6 +2,7 @@ import { Component, For, Show, createMemo, createSignal, createEffect, on, onMou
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills, currentProjectId, currentProject } from '../../../core/store/store';
+import Dropdown from '../../../shared/components/Dropdown';
 import type { MarketSkill, SkillConfig, SkillMarketCategory, DiscoveredNpxSkill } from '../../../core/types/skill';
 
 type MarketSort = 'all' | 'trending' | 'hot';
@@ -39,13 +40,6 @@ const writeMarketCache = (cache: SkillMarketCache) => {
     }
 };
 
-const emptySkill = (): SkillConfig => ({
-    id: `skill-${Date.now().toString(36)}`,
-    name: '',
-    description: '',
-    content: '',
-});
-
 const formatInstalls = (value: number): string => {
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
     if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
@@ -64,12 +58,12 @@ const SkillList: Component = () => {
     const [query, setQuery] = createSignal('');
     const [loading, setLoading] = createSignal(!initialCache?.markets.all);
     const [refreshing, setRefreshing] = createSignal(false);
+    const [refreshResult, setRefreshResult] = createSignal<{ ok: boolean; msg: string } | null>(null);
     const [lastRefreshedAt, setLastRefreshedAt] = createSignal<Date | null>(
         initialCache ? new Date(initialCache.marketUpdatedAt.all ?? initialCache.updatedAt) : null,
     );
     const [downloadingId, setDownloadingId] = createSignal<string | null>(null);
     const [editing, setEditing] = createSignal<SkillConfig | null>(null);
-    const [isCreating, setIsCreating] = createSignal(false);
     const [error, setError] = createSignal<string | null>(null);
 
     // ====== npx 发现状态 ======
@@ -249,6 +243,11 @@ const SkillList: Component = () => {
         );
     });
 
+    const categoryOptions = createMemo(() => [
+        { value: 'all', label: '全部分类' },
+        ...categories().map(item => ({ value: item.id, label: `${item.name} (${item.skillCount})` })),
+    ]);
+
     const selectSort = (value: MarketSort) => {
         setSort(value);
         void loadMarket(value, category());
@@ -262,6 +261,7 @@ const SkillList: Component = () => {
     const refreshMarket = async () => {
         setRefreshing(true);
         setError(null);
+        setRefreshResult(null);
         try {
             const [categoryList, marketList] = await Promise.all([
                 invoke<SkillMarketCategory[]>('list_skill_market_categories', { forceRefresh: true }),
@@ -282,10 +282,12 @@ const SkillList: Component = () => {
                 marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [sort()]: updatedAt },
             });
             setLastRefreshedAt(new Date(updatedAt));
+            setRefreshResult({ ok: true, msg: `已更新 ${marketList.length} 个 Skill` });
         } catch (e) {
-            setError(`更新 Skill 列表失败: ${e}`);
+            setRefreshResult({ ok: false, msg: '更新失败' });
         } finally {
             setRefreshing(false);
+            setTimeout(() => setRefreshResult(null), 3000);
         }
     };
 
@@ -323,7 +325,6 @@ const SkillList: Component = () => {
             await invoke('save_skill', { skill, projectId: projectId() });
             setSkills({ ...skills(), [skill.id]: skill });
             setEditing(null);
-            setIsCreating(false);
         } catch (e) {
             setError(`保存失败: ${e}`);
         }
@@ -357,19 +358,7 @@ const SkillList: Component = () => {
     return (
         <div class="flex flex-col h-full overflow-hidden p-6 gap-4" style="color: rgba(255,255,255,0.88);">
             <div class="flex items-start justify-between gap-4">
-                <div>
-                    <h2 class="text-xl font-semibold">Skill 市场</h2>
-                    <p class="text-xs mt-1" style="color: rgba(255,255,255,0.5);">
-                        浏览 skills.sh 社区 Skill，下载后可在各助手设置中分别启用。
-                    </p>
-                </div>
-                <button
-                    class="px-3 py-1.5 rounded-md text-sm cursor-pointer"
-                    style="background: rgba(124,154,191,0.2); border: 1px solid rgba(124,154,191,0.3);"
-                    onClick={() => { setIsCreating(true); setEditing(emptySkill()); }}
-                >
-                    + 创建本地 Skill
-                </button>
+                <h2 class="text-xl font-semibold">Skill 市场</h2>
             </div>
 
             <div class="flex items-center justify-between gap-3 flex-wrap">
@@ -434,17 +423,12 @@ const SkillList: Component = () => {
                             </button>
                         ))}
                     </div>
-                    <select
-                        class="px-3 py-1.5 rounded-md text-xs outline-none"
-                        style="background: rgba(22,26,40,0.95); border: 1px solid rgba(255,255,255,0.1);"
+                    <Dropdown
                         value={category()}
-                        onChange={(e) => selectCategory(e.currentTarget.value)}
-                    >
-                        <option value="all">全部分类</option>
-                        <For each={categories()}>
-                            {(item) => <option value={item.id}>{item.name} ({item.skillCount})</option>}
-                        </For>
-                    </select>
+                        onChange={(v) => selectCategory(v)}
+                        options={categoryOptions()}
+                        class="text-xs"
+                    />
                     <span class="text-xs" style="color: rgba(255,255,255,0.4);">
                         {filteredMarketSkills().length} 个结果
                     </span>
@@ -456,6 +440,15 @@ const SkillList: Component = () => {
                     >
                         {refreshing() ? '更新中…' : '手动更新'}
                     </button>
+                    <Show when={refreshResult()}>
+                        <span
+                            class="text-[10px]"
+                            classList={{
+                                'text-green-300': refreshResult()!.ok,
+                                'text-red-300': !refreshResult()!.ok,
+                            }}
+                        >{refreshResult()!.msg}</span>
+                    </Show>
                     <Show when={lastRefreshedAt()}>
                         <span class="text-[10px]" style="color: rgba(255,255,255,0.3);">
                             更新于 {lastRefreshedAt()!.toLocaleTimeString()}
@@ -566,7 +559,7 @@ const SkillList: Component = () => {
                                         </Show>
                                         <button class="px-2 py-1 rounded text-xs"
                                             style="background: rgba(255,255,255,0.05);"
-                                            onClick={() => { setIsCreating(false); setEditing({ ...skill }); }}>
+                                            onClick={() => setEditing({ ...skill })}>
                                             编辑
                                         </button>
                                         <button class="px-2 py-1 rounded text-xs"
@@ -667,7 +660,7 @@ const SkillList: Component = () => {
                     onClick={(e) => e.target === e.currentTarget && setEditing(null)}>
                     <div class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
                         style="background: rgba(18,22,35,0.98); border: 1px solid rgba(255,255,255,0.1);">
-                        <h3 class="text-base font-semibold">{isCreating() ? '创建本地 Skill' : '编辑 Skill'}</h3>
+                        <h3 class="text-base font-semibold">编辑 Skill</h3>
                         <label class="flex flex-col gap-1 text-xs">
                             名称
                             <input class="px-3 py-2 rounded text-sm outline-none"

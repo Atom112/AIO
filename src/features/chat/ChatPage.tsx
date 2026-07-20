@@ -104,9 +104,9 @@ const ChatPage: Component = () => {
   let chatPageRef: HTMLDivElement | undefined;
   /**
    * 计算左侧面板显示宽度
-   * @returns {number} 左侧面板宽度，如果折叠则返回0
+   * @returns {number} 左侧面板宽度（存储值，折叠模式下由子组件自行处理）
    */
-  const displayLeftWidth = () => isLeftCollapsed() ? 0 : leftPanelWidth();
+  const displayLeftWidth = () => leftPanelWidth();
   /**
    * 计算右侧面板显示宽度
    * @returns {number} 右侧面板宽度，如果折叠则返回0
@@ -1849,7 +1849,7 @@ const ChatPage: Component = () => {
   });
 
   return (
-    <div class="h-full flex gap-[3px] p-[1px]" style="background: transparent;"
+    <div class="h-full flex gap-[3px] px-[6px] pt-[1px] pb-[6px]" style="background: transparent;"
       classList={{ 'is-resizing': isResizing() }} ref={chatPageRef}>
       <ProjectSidebar
         width={displayLeftWidth()}

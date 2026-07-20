@@ -42,6 +42,15 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     const handleClickOutside = () => { if (menuState().isOpen) closeMenu(); };
     window.addEventListener('click', handleClickOutside);
     onCleanup(() => window.removeEventListener('click', handleClickOutside));
+
+    const handleContextMenuOutside = (e: MouseEvent) => {
+      if (menuState().isOpen) {
+        e.preventDefault();
+        closeMenu();
+      }
+    };
+    window.addEventListener('contextmenu', handleContextMenuOutside);
+    onCleanup(() => window.removeEventListener('contextmenu', handleContextMenuOutside));
   });
 
   /** 当前助理 */
@@ -51,17 +60,25 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   const isChatActive = () => currentAsst()?.assistantType === 'chat' || currentAsst()?.id === DIALOG_ASST_ID;
   /** 当前活跃的项目 ID（从助理反查） */
   const activeProjectId = () => currentAsst()?.projectId ?? null;
-
-  const openMenu = (e: MouseEvent, projectId: string) => {
+  const openMenu = (e: MouseEvent, projectId: string, isRightClick = false) => {
     e.stopPropagation();
+    if (isRightClick) e.preventDefault();
     if (menuState().isOpen && menuState().targetProjectId === projectId) {
       closeMenu();
       return;
     }
     setShowMenuDiv(true);
     setIsMenuAnimatingOut(false);
-    const rect = (e.currentTarget as Element).getBoundingClientRect();
-    setMenuState({ isOpen: true, x: rect.left, y: rect.top + rect.height, targetProjectId: projectId });
+    let x: number, y: number;
+    if (isRightClick) {
+      x = e.clientX;
+      y = e.clientY;
+    } else {
+      const rect = (e.currentTarget as Element).getBoundingClientRect();
+      x = rect.left;
+      y = rect.top + rect.height;
+    }
+    setMenuState({ isOpen: true, x, y, targetProjectId: projectId });
   };
 
   const closeMenu = () => {
@@ -165,12 +182,49 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   return (
     <div
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10"
-      style={`width: ${props.isCollapsed ? '0%' : `${props.width}%`}; padding: ${props.isCollapsed ? '0' : '15px'}; background: ${props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.15)'}; backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; -webkit-backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; border: ${props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.08)'}; border-radius: 12px; box-shadow: ${props.isCollapsed ? 'none' : 'inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2)'}; transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
+      style={`width: ${props.isCollapsed ? '48px' : `${props.width}%`}; padding: ${props.isCollapsed ? '6px 4px' : '15px'}; background: rgba(18, 22, 35, 0.15); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; box-shadow: inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2); transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
     >
-      <div
-        class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
-        classList={{ 'opacity-0 pointer-events-none overflow-hidden': props.isCollapsed }}
-      >
+      <Show when={!props.isCollapsed} fallback={
+        <div class="flex flex-col items-center gap-3 py-2 h-full">
+          <button
+            class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
+            style={isChatActive() ? "background: rgba(124,154,191,0.15);" : ""}
+            onClick={switchToChat}
+            title="对话"
+          >
+            <Icon name="chat" size={16} />
+          </button>
+          <div class="w-5 border-t" style="border-color: rgba(255,255,255,0.06);" />
+          <div class="flex flex-col items-center gap-1 flex-1 w-full overflow-y-auto">
+            <For each={projectList()}>
+              {(project) => {
+                const isActive = () => activeProjectId() === project.id;
+                return (
+                  <div
+                    class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
+                    style={isActive() ? "background: rgba(124,154,191,0.15);" : ""}
+                    onClick={() => switchToProject(project.id)}
+                    onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
+                    title={project.name}
+                  >
+                    <span class="text-xs font-semibold">
+                      {(project.name || '?').charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+          <button
+            class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-pri-10 hover:text-white"
+            onClick={() => setShowProjectCreateModal(true)}
+            title="新建项目"
+          >
+            <Icon name="plus" size={16} />
+          </button>
+        </div>
+      }>
+        <div class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300">
         {/* 聊天入口 */}
         <div
           class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
@@ -201,6 +255,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                 classList={{
                   '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': isActive(),
                 }}
+                onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                 onClick={() => switchToProject(project.id)}
               >
                 <span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);">
@@ -229,6 +284,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
           新建项目
         </button>
       </div>
+      </Show>
 
       {/* 上下文菜单 */}
       {showMenuDiv() && (
@@ -301,7 +357,6 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         <div
           class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
           style="background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
-          classList={{ '!opacity-100': props.isCollapsed }}
           title={props.isCollapsed ? '展开侧栏' : '折叠侧栏'}
           onClick={(e) => { e.stopPropagation(); props.onToggle(e); }}
         >

@@ -318,7 +318,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     };
 
     return (
-        <div class="flex flex-col flex-grow items-stretch rounded-lg box-border overflow-hidden p-[15px] pb-5 relative h-full"
+        <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full"
              style="background: rgba(18, 22, 35, 0.12); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 1px rgba(255,255,255,0.04);">
             <div
                 ref={scrollContainerRef}

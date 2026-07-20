@@ -127,7 +127,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                 <div
                     class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
                     style="background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
-                    classList={{ '!opacity-100': props.isCollapsed }}
                     title={props.isCollapsed ? "展开话题栏" : "折叠话题栏"}
                     onClick={(e) => { e.stopPropagation(); props.onToggle(e); }}
                 >

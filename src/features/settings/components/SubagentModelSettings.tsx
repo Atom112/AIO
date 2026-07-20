@@ -6,7 +6,7 @@
  * selectable because subagents run in the same process; a local model can
  * be used by leaving the override unset (falls back to parent model).
  */
-import { Component, createMemo, createSignal, For, Show } from 'solid-js';
+import { Component, createMemo, createSignal, For, Show, onMount, onCleanup } from 'solid-js';
 import {
     profileModelOverrides,
     setProfileModelOverrides,
@@ -20,6 +20,7 @@ import {
     setCustomSubagentProfiles,
     saveCustomSubagentProfile,
     deleteCustomSubagentProfile,
+    mcpToolsCache,
     type CustomSubagentProfile,
 } from '../../../core/store/store';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
@@ -41,49 +42,48 @@ const BUILTIN_PROFILE_IDS = new Set([
 const BUILTIN_PROFILES: ProfileInfo[] = [
     {
         id: 'explorer',
-        name: '代码探索者',
-        description: '只读搜索和分析，用于大规模代码探索、多文件检索、架构分析。不能修改任何文件。',
+        name: '文件浏览器',
+        description: '遍历代码库，搜索文件、符号和模式',
     },
     {
         id: 'coder',
-        name: '代码实现者',
-        description: '代码编写和修改，用于实现具体功能模块。禁止执行 shell 命令。',
+        name: '代码编辑器',
+        description: '执行代码编写、重构和优化任务',
     },
     {
         id: 'general',
-        name: '通用子智能体',
-        description: '全能力子智能体，拥有和主 Agent 完全相同的工具集。',
+        name: '通用助手',
+        description: '处理常规任务和对话',
     },
     {
         id: 'architect',
-        name: '架构设计师',
-        description: '只读架构分析、依赖映射、设计决策评估与技术选型建议。不能修改任何文件。',
+        name: '架构师',
+        description: '设计系统架构和技术方案',
     },
     {
         id: 'debugger',
-        name: '问题诊断师',
-        description: '错误调查与根因分析，可运行命令复现问题但不能修改任何文件。',
+        name: '调试器',
+        description: '分析和修复代码中的 bug',
     },
     {
         id: 'reviewer',
         name: '代码审查员',
-        description: '只读代码质量评估、安全审计与最佳实践检查。不能修改任何文件。',
+        description: '审查代码质量、安全性和最佳实践',
     },
     {
         id: 'writer',
-        name: '文档撰写员',
-        description: '编写文档、注释、README、变更日志与技术规范。可读写文件。',
+        name: '文档编写器',
+        description: '编写文档、注释和说明',
     },
     {
         id: 'tester',
         name: '测试工程师',
-        description: '测试用例生成、覆盖率分析与测试执行。可运行测试并编写测试文件。',
+        description: '编写和执行测试用例',
     },
-
     {
         id: 'requirements',
-        name: '需求分析员',
-        description: '用户需求分析，将用户输入拆解为结构化工作流方案。不能修改文件。',
+        name: '需求分析师',
+        description: '分析和整理项目需求',
     },
 ];
 
@@ -97,11 +97,13 @@ const slugify = (name: string): string =>
     || 'custom';
 
 const SubagentModelSettings: Component = () => {
-    /** Cloud models only (exclude local). */
-    const cloudModels = createMemo(() => allAvailableModels().filter(m => !isLocalModel(m)));
-
-    /** Which profile has its dropdown open (null = none). */
+    // --- Model override state ---
     const [openDropdown, setOpenDropdown] = createSignal<string | null>(null);
+
+    /** Cloud models only (exclude local models). */
+    const cloudModels = createMemo(() =>
+        allAvailableModels().filter(m => !isLocalModel(m)),
+    );
 
     /** Create custom profile form state */
     const [showCreateForm, setShowCreateForm] = createSignal(false);
@@ -109,8 +111,36 @@ const SubagentModelSettings: Component = () => {
     const [newName, setNewName] = createSignal('');
     const [newDescription, setNewDescription] = createSignal('');
     const [newAllowedTools, setNewAllowedTools] = createSignal('');
-    const [newDeniedTools, setNewDeniedTools] = createSignal('delegate_task');
+    const [newDeniedTools, setNewDeniedTools] = createSignal('');
     const [newSystemPrompt, setNewSystemPrompt] = createSignal('');
+
+    /** Derived sets for tool multi-select UI */
+    const allowedToolsSet = createMemo(() => new Set(newAllowedTools().split(',').map(s => s.trim()).filter(Boolean)));
+    const deniedToolsSet = createMemo(() => new Set(newDeniedTools().split(',').map(s => s.trim()).filter(Boolean)));
+    const toggleTool = (toolName: string, isAllowed: boolean) => {
+        const [getter, setter] = isAllowed
+            ? [newAllowedTools, setNewAllowedTools] as const
+            : [newDeniedTools, setNewDeniedTools] as const;
+        const current = new Set(getter().split(',').map(s => s.trim()).filter(Boolean));
+        current.has(toolName) ? current.delete(toolName) : current.add(toolName);
+        setter(Array.from(current).join(','));
+    };
+    const [allowedOpen, setAllowedOpen] = createSignal(false);
+    const [deniedOpen, setDeniedOpen] = createSignal(false);
+    const availableTools = createMemo(() => mcpToolsCache().map(t => t.function.name).sort());
+
+    /** Click outside closes tool dropdowns */
+    onMount(() => {
+        const handler = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            if (!target.closest('[data-tool-dropdown]')) {
+                setAllowedOpen(false);
+                setDeniedOpen(false);
+            }
+        };
+        document.addEventListener('click', handler);
+        onCleanup(() => document.removeEventListener('click', handler));
+    });
 
     /** Combined profiles: built-in first, then custom */
     const allProfiles = createMemo<ProfileInfo[]>(() => [
@@ -141,7 +171,10 @@ const SubagentModelSettings: Component = () => {
         return findModel(cat, getProviderIdFor(model), model.model_id);
     };
 
-    const getModelLogo = (modelName: string) => getLogoByIds(null, modelName);
+    const getModelLogo = (modelName: string) => {
+        const src = getLogoByIds(null, modelName);
+        return src ? <img src={src} class="w-4 h-4 object-contain" alt="" /> : null;
+    };
 
     /** Current override model for a profile (null = no override). */
     const overrideModel = (profileId: string): ActivatedModel | null => {
@@ -203,12 +236,12 @@ const SubagentModelSettings: Component = () => {
         setNewName('');
         setNewDescription('');
         setNewAllowedTools('');
-        setNewDeniedTools('delegate_task');
+        setNewDeniedTools('');
         setNewSystemPrompt('');
     };
 
     return (
-        <div class="space-y-5">
+        <div class="space-y-1">
             <div class="pb-3 border-b border-[rgba(255,255,255,0.06)]">
                 <h2 class="text-lg text-white font-semibold m-0">子智能体模型</h2>
                 <p class="text-xs text-white/35 mt-1.5 leading-relaxed">
@@ -222,76 +255,79 @@ const SubagentModelSettings: Component = () => {
                 {(profile) => {
                     const current = () => overrideModel(profile.id);
                     const isOpen = () => openDropdown() === profile.id;
-                    const builtin = isBuiltin(profile.id);
-
                     return (
                         <div class="bg-[rgba(255,255,255,0.035)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden">
                             {/* Profile header */}
                             <div class="p-4 flex items-center justify-between">
                                 <div class="flex-1 min-w-0" >
-                                    <div class="flex items-center gap-2">
-                                        <Show when={builtin} fallback={
-                                            <Icon name="user" size={14} class="text-white/40" />
-                                        }>
-                                            <Icon name="sparkles" size={14} class="text-pri" />
-                                        </Show>
+                                    <div class="flex items-center gap-1.5">
                                         <span class="text-sm font-semibold text-white">{profile.name}</span>
                                         <span class="text-[10px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-mono">{profile.id}</span>
                                     </div>
                                     <p class="text-xs text-white/40 mt-1">{profile.description}</p>
                                 </div>
-                                <div class="flex items-center gap-2">
-                                    <Show when={!builtin}>
-                                        <button
-                                            class="p-1.5 rounded-lg text-xs cursor-pointer transition-all text-white/25 hover:text-red-400 hover:bg-red-400/10"
-                                            title="删除自定义角色"
-                                            onClick={() => handleDeleteCustom(profile.id)}
-                                        >
-                                            <Icon name="x" size={14} />
-                                        </button>
-                                    </Show>
+                                <div class="flex items-center gap-2 ml-3 shrink-0">
                                     <button
-                                        class="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border select-none"
+                                        class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all border font-medium flex items-center gap-1.5"
                                         classList={{
                                             'bg-pri-20 border-pri-30 text-pri': !!current(),
                                             'bg-[rgba(255,255,255,0.04)] border-[rgba(255,255,255,0.08)] text-white/40 hover:text-white hover:bg-[rgba(255,255,255,0.06)]': !current(),
                                         }}
                                         onClick={() => setOpenDropdown(isOpen() ? null : profile.id)}
                                     >
-                                        <Show when={current()} fallback="使用主模型">
-                                            <span class="flex items-center gap-1.5">
-                                                <img src={getModelLogo(current()!.model_id)} alt="" class="w-3.5 h-3.5 rounded-full object-contain" />
-                                                {current()!.model_id}
-                                            </span>
-                                        </Show>
+                                        {current() ? getModelLogo(current()!.model_id) : null}
+                                        <span class="max-w-[140px] truncate">{current()?.model_id ?? '跟随主 Agent'}</span>
+                                        <span class="text-white/30 text-[10px]">&#9662;</span>
                                     </button>
+                                    <Show when={!isBuiltin(profile.id)}>
+                                        <button
+                                            class="w-6 h-6 rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent border-none text-white/25 hover:text-red-400 hover:bg-red-400/10"
+                                            onClick={() => void handleDeleteCustom(profile.id)}
+                                            title="删除自定义角色"
+                                        >
+                                            <Icon name="x" size={12} />
+                                        </button>
+                                    </Show>
                                 </div>
                             </div>
 
                             {/* Dropdown model picker */}
-                            <Show when={isOpen()}>
-                                <div class="border-t border-[rgba(255,255,255,0.04)] bg-[rgba(0,0,0,0.15)]">
-                                    <div class="max-h-[220px] overflow-y-auto p-2 scrollbar-thin">
+                            <div
+                                class="border-t border-[rgba(255,255,255,0.04)] bg-[rgba(0,0,0,0.15)] transition-all duration-200 ease-out origin-top overflow-hidden"
+                                classList={{
+                                    'invisible max-h-0 opacity-0': !isOpen(),
+                                    'visible max-h-[260px] opacity-100': isOpen(),
+                                }}
+                            >
+                                <div class="max-h-[220px] overflow-y-auto p-2 scrollbar-thin">
                                         {/* "Use parent model" option */}
                                         <div
                                             class="flex items-center gap-2.5 p-2.5 rounded-lg cursor-pointer select-none transition-all text-sm"
                                             classList={{
-                                                'bg-[rgba(124,154,191,0.1)] text-pri': !current(),
-                                                'text-white/40 hover:text-white': !!current(),
+                                                'text-white/50 hover:bg-white/[0.04] hover:text-white/80': !current(),
+                                                'text-pri bg-pri-10': !!current(),
                                             }}
-                                            onClick={() => handlePickModel(profile.id, null)}
+                                            onClick={() => void handlePickModel(profile.id, null)}
                                         >
-                                            <Icon name="refresh" size={16} class="text-white/30" />
-                                            <span>使用主模型（不覆盖）</span>
+                                            <span>跟随主 Agent 模型</span>
+                                            <Show when={!current()}>
+                                                <Icon name="arrow-left" size={13} class="text-white/30 ml-auto" />
+                                            </Show>
+                                            <Show when={current()}>
+                                                <Icon name="check" size={13} class="ml-auto" />
+                                            </Show>
                                         </div>
 
                                         <div class="my-1.5 mx-2 border-t border-[rgba(255,255,255,0.04)]" />
 
                                         <For each={cloudModels()}>
                                             {(model) => {
-                                                const meta = () => getMeta(model);
                                                 const selected = () => isModelSelectedForProfile(profile.id, model);
-                                                const noKey = () => !model.api_key;
+                                                const meta = () => getMeta(model);
+                                                const noKey = () => {
+                                                    const m = model as any;
+                                                    return !m.api_key && !m.is_remote;
+                                                };
                                                 return (
                                                     <div
                                                         class="flex items-center gap-2.5 p-2.5 text-sm rounded-lg cursor-pointer select-none transition-all"
@@ -314,7 +350,7 @@ const SubagentModelSettings: Component = () => {
                                                         }}
                                                     >
                                                         <div class="w-6 h-6 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm">
-                                                            <img src={getModelLogo(model.model_id)} alt="" class="w-4 h-4 object-contain" />
+                                                            {getModelLogo(model.model_id)}
                                                         </div>
                                                         <div class="flex-1 flex flex-col items-start justify-center overflow-hidden min-w-0">
                                                             <div class="max-w-[180px] text-[13px] text-white font-medium truncate">{model.model_id}</div>
@@ -333,6 +369,7 @@ const SubagentModelSettings: Component = () => {
                                                 );
                                             }}
                                         </For>
+
                                         <Show when={cloudModels().length === 0}>
                                             <div class="p-4 text-center text-[13px]" style={{ color: 'rgba(255,255,255,0.2)' }}>
                                                 <div>无云端模型</div>
@@ -343,8 +380,7 @@ const SubagentModelSettings: Component = () => {
                                             </div>
                                         </Show>
                                     </div>
-                                </div>
-                            </Show>
+                            </div>
                         </div>
                     );
                 }}
@@ -356,10 +392,10 @@ const SubagentModelSettings: Component = () => {
                     when={showCreateForm()}
                     fallback={
                         <button
-                            class="w-full py-3 rounded-xl border border-dashed border-[rgba(255,255,255,0.08)] text-xs text-white/30 hover:text-white/60 hover:border-[rgba(255,255,255,0.15)] transition-all cursor-pointer bg-transparent"
+                            class="w-full py-3 rounded-xl border border-[rgba(255,255,255,0.14)] text-sm text-white/45 hover:text-white/70 hover:border-[rgba(255,255,255,0.25)] transition-all cursor-pointer bg-transparent"
                             onClick={() => setShowCreateForm(true)}
                         >
-                            + 创建自定义角色
+                            创建自定义角色
                         </button>
                     }
                 >
@@ -400,28 +436,77 @@ const SubagentModelSettings: Component = () => {
                             />
                         </div>
 
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label class="block text-[11px] text-white/40 mb-1">允许的工具（逗号分隔，空=全部）</label>
-                                <input
-                                    type="text"
-                                    value={newAllowedTools()}
-                                    onInput={(e) => setNewAllowedTools(e.currentTarget.value)}
-                                    placeholder="read_file, search_files"
-                                    class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
-                                />
+                        {/* Tool multi-select dropdowns */}
+                        <Show when={availableTools().length > 0} fallback={
+                            <div class="text-[11px] text-white/25 py-3 text-center">暂无可选工具 — 请先在 MCP 设置中连接服务器</div>
+                        }>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-[11px] text-white/40 mb-1">允许的工具（空=全部）</label>
+                                    <div class="relative" data-tool-dropdown>
+                                        <button type="button"
+                                            class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[rgba(255,255,255,0.08)] transition-all duration-150 cursor-pointer"
+                                            style="background: rgba(0, 0, 0, 0.25);"
+                                            onClick={() => { setAllowedOpen(!allowedOpen()); setDeniedOpen(false); }}>
+                                            <span class={allowedToolsSet().size > 0 ? 'text-white/80' : 'text-white/35'}>
+                                                {allowedToolsSet().size > 0 ? `已选 ${allowedToolsSet().size} 项` : '选择工具...'}
+                                            </span>
+                                        </button>
+                                        <div
+                                            class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 max-h-[200px] overflow-y-auto transition-all duration-150 ease-out origin-top"
+                                            style="background: rgba(18, 22, 35, 0.92); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);"
+                                            classList={{
+                                                'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !allowedOpen(),
+                                                'visible opacity-100 scale-100 translate-y-0': allowedOpen(),
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}>
+                                            <For each={availableTools()}>{(toolName) => {
+                                                const sel = () => allowedToolsSet().has(toolName);
+                                                return (<div
+                                                    class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] cursor-pointer transition-[background,color] duration-[120ms] select-none"
+                                                    classList={{ 'text-pri bg-pri-10': sel(), 'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel() }}
+                                                    onClick={() => toggleTool(toolName, true)}>
+                                                    <Icon name={sel() ? 'check' : 'plus'} size={11} class={sel() ? 'text-pri' : 'text-white/25'} />
+                                                    <span class="truncate">{toolName}</span>
+                                                </div>);
+                                            }}</For>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] text-white/40 mb-1">禁止的工具</label>
+                                    <div class="relative" data-tool-dropdown>
+                                        <button type="button"
+                                            class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[rgba(255,255,255,0.08)] transition-all duration-150 cursor-pointer"
+                                            style="background: rgba(0, 0, 0, 0.25);"
+                                            onClick={() => { setDeniedOpen(!deniedOpen()); setAllowedOpen(false); }}>
+                                            <span class={deniedToolsSet().size > 0 ? 'text-white/80' : 'text-white/35'}>
+                                                {deniedToolsSet().size > 0 ? `已选 ${deniedToolsSet().size} 项` : '选择工具...'}
+                                            </span>
+                                        </button>
+                                        <div
+                                            class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 max-h-[200px] overflow-y-auto transition-all duration-150 ease-out origin-top"
+                                            style="background: rgba(18, 22, 35, 0.92); backdrop-filter: blur(40px) saturate(180%); -webkit-backdrop-filter: blur(40px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);"
+                                            classList={{
+                                                'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !deniedOpen(),
+                                                'visible opacity-100 scale-100 translate-y-0': deniedOpen(),
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}>
+                                            <For each={availableTools()}>{(toolName) => {
+                                                const sel = () => deniedToolsSet().has(toolName);
+                                                return (<div
+                                                    class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] cursor-pointer transition-[background,color] duration-[120ms] select-none"
+                                                    classList={{ 'text-[#ff8a8a] bg-[rgba(255,107,107,0.12)]': sel(), 'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel() }}
+                                                    onClick={() => toggleTool(toolName, false)}>
+                                                    <Icon name={sel() ? 'x-circle' : 'plus'} size={11} class={sel() ? 'text-[#ff8a8a]' : 'text-white/25'} />
+                                                    <span class="truncate">{toolName}</span>
+                                                </div>);
+                                            }}</For>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div>
-                                <label class="block text-[11px] text-white/40 mb-1">禁止的工具（逗号分隔）</label>
-                                <input
-                                    type="text"
-                                    value={newDeniedTools()}
-                                    onInput={(e) => setNewDeniedTools(e.currentTarget.value)}
-                                    placeholder="delegate_task"
-                                    class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
-                                />
-                            </div>
-                        </div>
+                        </Show>
 
                         <div>
                             <label class="block text-[11px] text-white/40 mb-1">系统提示词后缀</label>
@@ -443,7 +528,7 @@ const SubagentModelSettings: Component = () => {
                             </button>
                             <button
                                 class="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all bg-pri-20 border border-pri-30 text-pri hover:bg-pri-30"
-                                onClick={handleCreate}
+                                onClick={() => void handleCreate()}
                             >
                                 创建
                             </button>

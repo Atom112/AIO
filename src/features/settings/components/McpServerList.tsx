@@ -79,6 +79,8 @@ const McpServerList: Component = () => {
                 .toLowerCase().includes(keyword),
         );
     });
+
+    const resultCount = createMemo(() => view() === 'market' ? catalog().length : filteredLocal().length);
     const selectedDelivery = createMemo(() =>
         installing()?.deliveries.find(delivery => delivery.id === selectedDeliveryId()),
     );
@@ -236,6 +238,7 @@ const McpServerList: Component = () => {
                             placeholder="搜索 MCP 服务器"
                         />
                     </div>
+                    <span class="text-xs self-center" style="color: rgba(255,255,255,0.4);">{resultCount()}{nextCursor() ? '+' : ''} 个结果</span>
                     <Show when={view() === 'market'}>
                         <button
                             type="button"

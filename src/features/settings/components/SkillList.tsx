@@ -432,9 +432,6 @@ const SkillList: Component = () => {
                         options={categoryOptions()}
                         class="text-xs"
                     />
-                    <span class="text-xs" style="color: rgba(255,255,255,0.4);">
-                        {filteredMarketSkills().length} 个结果
-                    </span>
                     <button
                         type="button"
                         class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50 ml-auto"

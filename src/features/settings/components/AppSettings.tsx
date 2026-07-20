@@ -401,11 +401,11 @@ const AppSettings: Component = () => {
 
     return (
         <div class="flex flex-col gap-[15px] box-border">
-            <div class="rounded-xl p-6" style="background: rgba(255, 255, 255, 0.035); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);">
+            <div class="rounded-xl p-6" style="background: rgba(255, 255, 255, 0.035); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class="m-0 text-base text-white">应用状态</h3>
                     <div class="flex items-center gap-2">
-                        <span class="text-xs text-[#888] font-medium">版本号:</span>
+                        <span class="text-xs text-white/45 font-medium">版本号:</span>
                         <div class="text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
                             style="background: rgba(255, 255, 255, 0.035); color: rgba(255,255,255,0.8); font-family: 'JetBrains Mono', monospace;">
                             v{version()}
@@ -416,7 +416,7 @@ const AppSettings: Component = () => {
                 <div class="flex justify-between items-center py-3 border-b border-white/5">
                     <div>
                         <span class="block text-[#eee] text-[14px]">系统自启</span>
-                        <p class="text-xs text-[#777] mt-1">随系统启动自动运行应用</p>
+                        <p class="text-xs text-white/35 mt-1">随系统启动自动运行应用</p>
                     </div>
 
                     <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
@@ -433,7 +433,7 @@ const AppSettings: Component = () => {
                 <div class="flex justify-between items-center py-3 border-b border-white/5">
                     <div>
                         <span class="block text-[#eee] text-[14px]">开源主页</span>
-                        <p class="text-xs text-[#777] mt-1">访问 GitHub 仓库获取最新动态</p>
+                        <p class="text-xs text-white/35 mt-1">访问 GitHub 仓库获取最新动态</p>
                     </div>
 
                     <div
@@ -455,7 +455,7 @@ const AppSettings: Component = () => {
                             style={{
                                 color: (() => {
                                     const r = checkResult();
-                                    if (!r) return '#777';
+                                    if (!r) return 'rgba(255,255,255,0.35)';
                                     if (r.kind === 'update_available') return 'var(--primary-color)';
                                     if (r.kind === 'service_not_ready' || r.kind === 'failed' || r.kind === 'network') return '#d99';
                                     return '#7c9abf';
@@ -465,7 +465,7 @@ const AppSettings: Component = () => {
                             {checkResultMessage()}
                         </p>
                         <Show when={checkResult() && checkResult()!.kind !== 'update_available' && checkResult()!.kind !== 'up_to_date'}>
-                            <p class="text-[11px] text-[#666] mt-1 break-all leading-relaxed flex items-start gap-1">
+                            <p class="text-[11px] text-white/40 mt-1 break-all leading-relaxed flex items-start gap-1">
                                 <Show when={checkResult()!.kind === 'service_not_ready'}>
                                     <Icon name="lightbulb" size={11} class="text-yellow-300 shrink-0 mt-0.5" />
                                 </Show>
@@ -497,18 +497,18 @@ const AppSettings: Component = () => {
                         class="mt-2 px-3 py-2 rounded-lg text-[11px] font-mono leading-relaxed"
                         style={{
                             background: 'rgba(255, 255, 255, 0.03)',
-                            color: 'rgba(255, 255, 255, 0.45)',
+                            color: 'rgba(255, 255, 255, 0.40)',
                             border: '1px solid rgba(255, 255, 255, 0.05)',
                             'word-break': 'break-all',
                         }}
                         title="当前 tauri.conf.json 中配置的更新清单地址"
                     >
-                        <span style="color: rgba(255,255,255,0.3)">endpoint:</span> {endpointDisplay()}
+                        <span style="color: rgba(255,255,255,0.35)">endpoint:</span> {endpointDisplay()}
                     </div>
                 </Show>
             </div>
 
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)' }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}>
                 <div class="flex justify-between items-center mb-5">
                     <h3 class='m-0 text-base text-white'>视觉主题</h3>
                 </div>
@@ -521,15 +521,15 @@ const AppSettings: Component = () => {
                     <div class="grid grid-cols-[100px_240px_100px] gap-8 items-center justify-center py-5">
                         <div class="flex flex-col gap-3">
                             <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
-                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">R</span>
+                                <span class="block text-[16px] text-white/35 mb-2 font-bold">R</span>
                                 <div class="font-mono text-[16px] text-white font-bold">{rgb().r}</div>
                             </div>
                             <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
-                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">G</span>
+                                <span class="block text-[16px] text-white/35 mb-2 font-bold">G</span>
                                 <div class="font-mono text-[16px] text-white font-bold">{rgb().g}</div>
                             </div>
                             <div class="bg-white/5 border border-white/10 p-[10px] rounded-[10px] text-center">
-                                <span class="block text-[16px] text-gray-500 mb-2 font-bold">B</span>
+                                <span class="block text-[16px] text-white/35 mb-2 font-bold">B</span>
                                 <div class="font-mono text-[16px] text-white font-bold">{rgb().b}</div>
                             </div>
                         </div>
@@ -594,7 +594,7 @@ const AppSettings: Component = () => {
 
                     <div class="mt-[25px] px-[20px]">
                         <div class="mb-2">
-                            <label class="block text-[12px] text-[#666] mb-[10px] text-center">饱和度 (Saturation)</label>
+                            <label class="block text-[12px] text-white/40 mb-[10px] text-center">饱和度 (Saturation)</label>
                             <input
                                 type="range"
                                 min="0" max="100"
@@ -608,7 +608,7 @@ const AppSettings: Component = () => {
                         </div>
 
                         <div class="mb-2">
-                            <label class="block text-[12px] text-[#666] mb-[10px] text-center">亮度 (Lightness)</label>
+                            <label class="block text-[12px] text-white/40 mb-[10px] text-center">亮度 (Lightness)</label>
                             <input
                                 type="range"
                                 min="0" max="100"
@@ -625,17 +625,17 @@ const AppSettings: Component = () => {
             </div>
 
             {/* 快捷键设置面板 */}
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.25)' }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}>
                 <div class="flex justify-between items-center mb-5">
                     <div>
                         <h3 class="m-0 text-base text-white">快捷键设置</h3>
-                        <p class="text-xs text-[#666] mt-1">点击快捷键区域可自定义按键组合</p>
+                        <p class="text-xs text-white/35 mt-1">点击快捷键区域可自定义按键组合</p>
                     </div>
                     <button
                         class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-200"
                         style={{
                             background: 'rgba(255, 255, 255, 0.04)',
-                            color: 'rgba(255, 255, 255, 0.45)',
+                            color: 'rgba(255, 255, 255, 0.40)',
                             border: '1px solid rgba(255, 255, 255, 0.06)',
                         }}
                         onClick={() => setResetAllConfirm(true)}
@@ -683,8 +683,7 @@ const AppSettings: Component = () => {
                 <For each={groupedCommands()}>
                     {(group) => (
                         <div class="mb-4 last:mb-0">
-                            <div class="text-xs font-medium mb-2 uppercase tracking-wider"
-                                style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
+                            <div class="text-xs font-medium mb-2 uppercase tracking-wider text-white/30">
                                 {group.label}
                             </div>
                             <For each={group.items}>
@@ -694,16 +693,16 @@ const AppSettings: Component = () => {
                                     const isRecording = () => recordingActionId() === cmd.id;
 
                                     return (
-                                        <div class="flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors duration-150 mb-[2px] last:mb-0"
+                                        <div class="flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors duration-150 mb-[4px] last:mb-0"
                                             style={{
                                                 background: 'rgba(255, 255, 255, 0.02)',
                                                 border: '1px solid rgba(255, 255, 255, 0.03)',
                                             }}>
                                             <div class="flex-1 min-w-0 mr-4">
-                                                <span class="block text-[13px] text-[#ddd] font-medium">
+                                                <span class="block text-[13px] text-white/85 font-medium">
                                                     {cmd.label}
                                                 </span>
-                                                <span class="block text-[11px] text-[#666] mt-0.5 leading-relaxed">
+                                                <span class="block text-[11px] text-white/40 mt-0.5 leading-relaxed">
                                                     {cmd.description}
                                                 </span>
                                             </div>

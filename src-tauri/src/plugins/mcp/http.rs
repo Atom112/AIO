@@ -8,7 +8,8 @@
 
 use super::error::{McpError, McpResult};
 use crate::core::models::{
-    McpServerConfig, McpServerInfo, ToolResult, ToolResultContent, ToolSpec,
+    McpServerConfig, McpServerInfo, McpResource, McpPrompt,
+    ReadResourceResult, GetPromptResult, ToolResult, ToolResultContent, ToolSpec,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -77,12 +78,12 @@ impl super::McpServerPlugin for HttpPlugin {
             }
         };
 
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            return Err(McpError::TransportStartup(format!(
-                "MCP HTTP server URL 协议非法: {}",
-                url
-            )));
-        }
+        // SSRF 防护：统一 URL 校验（MCP server 可能运行在本地，允许 localhost）
+        let url = crate::utils::url_validation::validate_http_url(
+            &url,
+            &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+        )
+        .map_err(|e| McpError::TransportStartup(format!("MCP HTTP server URL 非法: {e}")))?;
 
         // HTTP transport 不需要 McpConnection 的 pending map 机制，
         // 但为了满足 trait，我们仍返回一个 dummy 连接。
@@ -148,7 +149,11 @@ impl super::McpServerPlugin for HttpPlugin {
             .get("version")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        Ok(McpServerInfo { name, version })
+        let capabilities = v
+            .get("result")
+            .and_then(|r| r.get("capabilities"))
+            .and_then(|c| serde_json::from_value(c.clone()).ok());
+        Ok(McpServerInfo { name, version, capabilities })
     }
 
     async fn list_tools(
@@ -231,6 +236,100 @@ impl super::McpServerPlugin for HttpPlugin {
         Ok(ToolResult { content, is_error })
     }
 
+    async fn list_resources(
+        &self,
+        conn: &super::connection::McpConnection,
+    ) -> McpResult<Vec<McpResource>> {
+        let state = HTTP_STATES
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let id = state.next_id();
+        let body = json!({ "jsonrpc": "2.0", "id": id, "method": "resources/list", "params": {} });
+        let v = post_json(&state, &body).await?;
+        let resources = v
+            .get("result")
+            .and_then(|r| r.get("resources"))
+            .and_then(|a| a.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let specs: Vec<McpResource> = resources
+            .into_iter()
+            .filter_map(|r| serde_json::from_value(r).ok())
+            .collect();
+        Ok(specs)
+    }
+
+    async fn read_resource(
+        &self,
+        conn: &super::connection::McpConnection,
+        uri: &str,
+    ) -> McpResult<ReadResourceResult> {
+        let state = HTTP_STATES
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let id = state.next_id();
+        let body = json!({
+            "jsonrpc": "2.0", "id": id, "method": "resources/read",
+            "params": { "uri": uri }
+        });
+        let v = post_json(&state, &body).await?;
+        let result = v.get("result").cloned().unwrap_or(json!({}));
+        serde_json::from_value(result).map_err(McpError::from)
+    }
+
+    async fn list_prompts(
+        &self,
+        conn: &super::connection::McpConnection,
+    ) -> McpResult<Vec<McpPrompt>> {
+        let state = HTTP_STATES
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let id = state.next_id();
+        let body = json!({ "jsonrpc": "2.0", "id": id, "method": "prompts/list", "params": {} });
+        let v = post_json(&state, &body).await?;
+        let prompts = v
+            .get("result")
+            .and_then(|r| r.get("prompts"))
+            .and_then(|a| a.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let specs: Vec<McpPrompt> = prompts
+            .into_iter()
+            .filter_map(|p| serde_json::from_value(p).ok())
+            .collect();
+        Ok(specs)
+    }
+
+    async fn get_prompt(
+        &self,
+        conn: &super::connection::McpConnection,
+        name: &str,
+        arguments: Option<Value>,
+    ) -> McpResult<GetPromptResult> {
+        let state = HTTP_STATES
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let id = state.next_id();
+        let mut params = json!({ "name": name });
+        if let Some(args) = arguments {
+            params["arguments"] = args;
+        }
+        let body = json!({
+            "jsonrpc": "2.0", "id": id, "method": "prompts/get", "params": params
+        });
+        let v = post_json(&state, &body).await?;
+        let result = v.get("result").cloned().unwrap_or(json!({}));
+        serde_json::from_value(result).map_err(McpError::from)
+    }
+
     async fn stop(&self, conn: super::connection::McpConnection) -> McpResult<()> {
         HTTP_STATES.lock().remove(&conn.server_id);
         Ok(())
@@ -271,7 +370,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let truncated = if body.len() > 512 {
-            &body[..512]
+            &body[..body.floor_char_boundary(512)]
         } else {
             &body
         };

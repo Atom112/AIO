@@ -28,6 +28,12 @@ pub struct StreamPayload {
     /// done=true 时携带的错误信息（整轮因错误/取消结束时填充）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// 本轮输入 tokens（服务端返回，仅 done=true 时有意义）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u32>,
+    /// 本轮输出 tokens（服务端返回，仅 done=true 时有意义）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u32>,
 }
 
 /// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。
@@ -94,6 +100,7 @@ pub struct StoredAttachment {
 
 /// 单条聊天消息模型。
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: Option<String>,
     pub role: String,
@@ -116,6 +123,21 @@ pub struct Message {
     /// 模型原生思维链（GLM/DeepSeek-R1/Qwen3 等的 reasoning_content），仅 assistant 消息可能携带
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// 本轮输入 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u32>,
+    /// 本轮输出 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u32>,
+    /// Agent 工作过程步骤（JSON 序列化的 AgentStep[]），跨重启持久化
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_steps: Option<serde_json::Value>,
+    /// Agent 执行中的中间内容（流式文本暂存），跨重启持久化
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interim_content: Option<String>,
+    /// Agent 开始执行时间戳（毫秒），跨重启持久化
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_start_time: Option<i64>,
 }
 
 /// OpenAI 风格的工具调用（assistant 消息中）
@@ -125,6 +147,14 @@ pub struct ToolCall {
     #[serde(rename = "type")]
     pub kind: String,
     pub function: ToolCallFunction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -244,6 +274,10 @@ pub struct Assistant {
     /// Agent 执行模式。Off = 对话模式。旧数据缺省反序列化为 Off。
     #[serde(rename = "agentMode", default)]
     pub agent_mode: AgentMode,
+    /// 助理类型（chat = 对话模式专属，project = 项目助理）
+    /// 旧数据缺省反序列化为 "project"，再通过迁移将 default-assistant-id 修正为 "chat"。
+    #[serde(rename = "assistantType", default = "default_assistant_type")]
+    pub assistant_type: String,
     #[serde(default)]
     pub topics: Vec<Topic>,
 }
@@ -429,6 +463,10 @@ pub struct McpServerStatusInfo {
     pub message: Option<String>,
     #[serde(default)]
     pub tool_count: usize,
+    #[serde(default)]
+    pub resource_count: usize,
+    #[serde(default)]
+    pub prompt_count: usize,
 }
 
 /// MCP server 持久化文件
@@ -570,12 +608,19 @@ pub enum AgentMode {
     Auto,
     /// 计划模式：先列出计划，用户确认后再执行
     Plan,
+    /// 工作流模式：强制拆解任务为工作流并自动执行
+    Workflow,
 }
 
 impl Default for AgentMode {
     fn default() -> Self {
         Self::Off
     }
+}
+
+/// 旧数据无 assistant_type 时默认为 "project"
+fn default_assistant_type() -> String {
+    "project".into()
 }
 
 /// MCP server 初始化握手返回的服务端信息
@@ -585,6 +630,93 @@ pub struct McpServerInfo {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// 服务端声明的能力（tools / resources / prompts）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<McpCapabilities>,
+}
+
+/// MCP 服务端能力声明（从 initialize 响应解析）
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCapabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<serde_json::Value>,
+}
+
+// ====== MCP Resources ======
+
+/// MCP 资源元数据（resources/list 返回条目）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResource {
+    pub uri: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// resources/read 返回值
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadResourceResult {
+    pub contents: Vec<ResourceContent>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceContent {
+    pub uri: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
+}
+
+// ====== MCP Prompts ======
+
+/// MCP 提示词元数据（prompts/list 返回条目）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpPrompt {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Vec<PromptArgument>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptArgument {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+}
+
+/// prompts/get 返回值
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GetPromptResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub messages: Vec<PromptMessage>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptMessage {
+    pub role: String,
+    pub content: serde_json::Value,
 }
 
 // ====== 项目配置 ======
@@ -599,6 +731,9 @@ pub struct Project {
     pub path: String,
     pub created_at: String,
     pub updated_at: String,
+    /// 该项目的对应助理 ID（创建项目时自动生成）
+    #[serde(rename = "assistantId")]
+    pub assistant_id: String,
 }
 
 /// 项目持久化索引文件（app_data_dir/projects.json）。
@@ -625,4 +760,145 @@ pub struct DiscoveredNpxSkill {
     pub source_type: String,
     /// AIO 中是否已导入该 skill
     pub already_imported: bool,
+}
+
+// ====== Token 用量日志 ======
+
+/// 用量日志条目：每次 LLM 调用（单轮）产生一条不可变记录。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageLogEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub assistant_id: String,
+    pub topic_id: String,
+    pub model_id: String,
+    pub round: u32,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+/// 用量摘要：按天聚合的 token 用量。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummary {
+    /// 日期（YYYY-MM-DD）
+    pub date: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
+}
+
+/// 按模型聚合的用量摘要。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummaryByModel {
+    pub model_id: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub request_count: i64,
+}
+// ====== Per-Profile Model Override ======
+
+/// 子智能体 profile 的模型覆盖配置。
+/// 允许为每个 profile（explorer / coder / general）独立指定模型及连接信息，
+/// 使子智能体可以使用与主 Agent 不同的 provider。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileModelOverride {
+    /// 子智能体 profile 标识（"explorer" | "coder" | "general"）
+    pub profile_id: String,
+    /// 覆盖的模型 ID
+    pub model_id: String,
+    /// 覆盖的 API 地址
+    pub api_url: String,
+    /// 覆盖的 API Key
+    pub api_key: String,
+}
+
+/// profile-model-overrides.json 的磁盘格式
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileModelOverridesFile {
+    pub version: u32,
+    pub updated_at: String,
+    pub overrides: Vec<ProfileModelOverride>,
+}
+
+// ====== Workflow (Agent Workflow) ======
+
+/// 工作流步骤状态
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkflowStepStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+/// 工作流中的一个步骤
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStep {
+    /// 步骤标识（"step-1", "step-2", ...）
+    pub step_id: String,
+    /// 子 Agent profile ID
+    pub profile_id: String,
+    /// 步骤显示名称
+    pub name: String,
+    /// 任务描述（给子 Agent 的输入）
+    pub task_description: String,
+    /// 当前状态
+    pub status: WorkflowStepStatus,
+    /// 步骤执行结果
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    /// 开始时间戳（ms）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    /// 耗时（ms）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<u64>,
+}
+
+/// 完整工作流定义
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Workflow {
+    /// UUID
+    pub workflow_id: String,
+    /// 工作流标题
+    pub title: String,
+    /// 步骤列表（线性顺序）
+    pub steps: Vec<WorkflowStep>,
+}
+
+// ====== Custom Subagent Profiles ======
+
+/// 用户自定义的子智能体配置文件（存储在 custom-subagent-profiles.json）
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomSubagentProfile {
+    /// 用户指定的唯一标识（字母数字短横线）
+    pub id: String,
+    /// 显示名称
+    pub name: String,
+    /// 用途说明
+    pub description: String,
+    /// 允许的工具列表（glob 模式），空 = 全部
+    pub allowed_tools: Vec<String>,
+    /// 禁止的工具列表（glob 模式），空 = 无
+    pub denied_tools: Vec<String>,
+    /// 附加的系统提示词（追加到子 Agent 基础系统提示词之后）
+    pub system_prompt_extension: String,
+}
+
+/// custom-subagent-profiles.json 的磁盘格式
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomSubagentProfilesFile {
+    pub version: u32,
+    pub updated_at: String,
+    pub profiles: Vec<CustomSubagentProfile>,
 }

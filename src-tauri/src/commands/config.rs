@@ -110,7 +110,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
     // 1. 加载助手
     let mut stmt = conn
-        .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode FROM assistants ORDER BY id")
+        .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type FROM assistants ORDER BY id")
         .map_err(|e| e.to_string())?;
     let assistant_iter = stmt
         .query_map([], |row| {
@@ -136,6 +136,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                 skill_ids,
                 project_id,
                 agent_mode,
+                assistant_type: row.get(8)?,
                 topics: vec![],
             })
         })
@@ -165,8 +166,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话）
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计）
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -197,6 +198,11 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         name: row.get(8)?,         // index 8: name
                         tool_calls,                // index 9: tool_calls_json（已解析）
                         reasoning: row.get(6)?,    // index 6: reasoning
+                        input_tokens: row.get(10)?,  // index 10: input_tokens
+                        output_tokens: row.get(11)?, // index 11: output_tokens
+                        agent_steps: row.get::<_, Option<String>>(12)?.and_then(|s| serde_json::from_str(&s).ok()),  // index 12: agent_steps_json
+                        interim_content: row.get(13)?,  // index 13: interim_content
+                        agent_start_time: row.get(14)?, // index 14: agent_start_time
                     })
                 })
                 .map_err(|e| e.to_string())?;
@@ -241,9 +247,9 @@ pub async fn save_assistant(
         .trim_matches('"')
         .to_string();
     conn.execute(
-        "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4, mcp_server_ids=?5, skill_ids=?6, project_id=?7, agent_mode=?8",
-        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id, mcp_ids_json, skill_ids_json, assistant.project_id, agent_mode_str],
+        "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(id) DO UPDATE SET name=?2, prompt=?3, model_id=?4, mcp_server_ids=?5, skill_ids=?6, project_id=?7, agent_mode=?8, assistant_type=?9",
+        params![assistant.id, assistant.name, assistant.prompt, assistant.model_id, mcp_ids_json, skill_ids_json, assistant.project_id, agent_mode_str, assistant.assistant_type],
     )
     .map_err(|e| e.to_string())?;
 
@@ -311,11 +317,11 @@ pub async fn save_assistant(
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
             let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
-            // 写入 tool_call_id / name / tool_calls_json，支持跨重启续接工具调用会话。
+            // 写入 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计。
             // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    reasoning = excluded.reasoning,
@@ -323,8 +329,13 @@ pub async fn save_assistant(
                    name = excluded.name,
                    tool_calls_json = excluded.tool_calls_json,
                    display_files = excluded.display_files,
-                   display_text = excluded.display_text",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json],
+                   display_text = excluded.display_text,
+                   input_tokens = excluded.input_tokens,
+                   output_tokens = excluded.output_tokens,
+                   agent_steps_json = excluded.agent_steps_json,
+                   interim_content = excluded.interim_content,
+                   agent_start_time = excluded.agent_start_time",
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
         }
@@ -400,32 +411,81 @@ fn attachment_ids_for_assistant(
     Ok(ids)
 }
 
-/// 保存“已激活模型”列表（用户在界面上勾选开启的模型）
+/// 保存"已激活模型"列表（api_key 剥离到系统 keyring，落盘不含明文密钥）
 #[tauri::command]
-pub fn save_activated_models(models: Vec<ActivatedModel>) -> Result<(), String> {
+pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
     let mut path = dirs::config_dir().unwrap();
     path.push("com.loch.aio");
     if !path.exists() {
         std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     }
     path.push("activated_models.json");
-    let json = serde_json::to_string_pretty(&models).map_err(|e| e.to_string())?;
+
+    // 剥离 api_key 到 secure_store，落盘模型不含明文密钥
+    let mut sanitized: Vec<serde_json::Value> = Vec::new();
+    for m in &models {
+        if !m.api_key.is_empty() && m.api_key != "local-no-key" {
+            let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
+            let _ = secure_store::set(&app, &account, &m.api_key);
+        }
+        // 序列化为 JSON Value，移除 api_key 字段
+        let mut v = serde_json::to_value(m).map_err(|e| e.to_string())?;
+        if let Some(obj) = v.as_object_mut() {
+            obj.remove("api_key");
+        }
+        sanitized.push(v);
+    }
+
+    let json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 加载“已激活模型”列表
+/// 加载"已激活模型"列表（从 keyring 恢复 api_key）
 #[tauri::command]
-pub fn load_activated_models() -> Result<Vec<ActivatedModel>, String> {
+pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
     let mut path = dirs::config_dir().unwrap();
     path.push("com.loch.aio");
     path.push("activated_models.json");
 
     if !path.exists() {
-        return Ok(vec![]); // 不存在则返回空列表
+        return Ok(vec![]);
     }
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let models: Vec<ActivatedModel> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut models: Vec<ActivatedModel> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+    // 从 secure_store 恢复 api_key，并自动迁移旧数据（含明文 api_key 的旧文件）
+    let mut needs_migration = false;
+    for m in &mut models {
+        // 检查是否为旧格式（JSON 中直接含有 api_key）
+        if !m.api_key.is_empty() && m.api_key != "local-no-key" {
+            let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
+            let _ = secure_store::set(&app, &account, &m.api_key);
+            needs_migration = true;
+        }
+
+        // 从 secure_store 恢复（覆盖旧 JSON 中的值，或补充新格式缺失的 key）
+        let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
+        if let Ok(Some(key)) = secure_store::get(&app, &account) {
+            m.api_key = key;
+        }
+    }
+
+    // 迁移：立即写回清理后的 JSON（剔除旧格式的明文 api_key）
+    if needs_migration {
+        let mut sanitized: Vec<serde_json::Value> = Vec::new();
+        for m in &models {
+            let mut v = serde_json::to_value(m).map_err(|e| e.to_string())?;
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("api_key");
+            }
+            sanitized.push(v);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&sanitized) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
     Ok(models)
 }
 
@@ -560,4 +620,188 @@ pub async fn read_avatar_source(path: String) -> Result<String, String> {
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+// ====== Per-Profile Model Override Persistence ======
+
+///
+/// 从磁盘加载 profile-model-overrides.json 并返回覆盖配置列表。
+/// 文件不存在或损坏时返回空 vec（不视为错误，所有 profile 回退到父模型）。
+#[tauri::command]
+pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, String> {
+    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
+    path.push("com.loch.aio");
+    path.push("profile-model-overrides.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 profile-model-overrides.json 失败: {}", e))?;
+    let file: ProfileModelOverridesFile =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 profile-model-overrides.json 失败: {}", e))?;
+    Ok(file.overrides)
+}
+
+///
+/// 将子智能体 profile 的模型覆盖配置持久化到磁盘。
+#[tauri::command]
+pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Result<(), String> {
+    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
+    path.push("com.loch.aio");
+    if !path.exists() {
+        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    }
+    path.push("profile-model-overrides.json");
+    let file = ProfileModelOverridesFile {
+        version: 1,
+        updated_at: {
+            use std::time::SystemTime;
+            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let secs = dur.as_secs();
+            let tm = secs_to_date_parts(secs);
+            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+        },
+        overrides,
+    };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Basic epoch-to-(year,month,day,hour,min,sec) conversion.
+/// Approximate — good enough for file metadata.
+fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
+    const SECS_PER_DAY: u64 = 86400;
+    let days = secs / SECS_PER_DAY;
+    let time_secs = secs % SECS_PER_DAY;
+    let hours = time_secs / 3600;
+    let mins = (time_secs % 3600) / 60;
+    let s = time_secs % 60;
+    // Simple Gregorian: days since 1970-01-01
+    let mut y = 1970u64;
+    let mut remaining = days;
+    loop {
+        let days_in_year = if is_leap(y) { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        y += 1;
+    }
+    let month_days = if is_leap(y) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut m = 1u64;
+    for &md in &month_days {
+        if remaining < md {
+            break;
+        }
+        remaining -= md;
+        m += 1;
+    }
+    (y, m, remaining + 1, hours, mins, s)
+}
+
+fn is_leap(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+}
+
+// ====== Custom Subagent Profiles (CRUD) ======
+use crate::core::models::CustomSubagentProfile;
+
+use crate::core::models::CustomSubagentProfilesFile;
+
+
+fn custom_profiles_path() -> Result<std::path::PathBuf, String> {
+    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
+    path.push("com.loch.aio");
+    path.push("custom-subagent-profiles.json");
+    Ok(path)
+}
+
+///
+/// 从磁盘加载所有自定义子智能体配置文件。
+/// 文件不存在或损坏时返回空 vec（不视为错误，仅无自定义配置）。
+#[tauri::command]
+pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, String> {
+    let path = custom_profiles_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+    let file: CustomSubagentProfilesFile =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    Ok(file.profiles)
+}
+
+///
+/// 保存（插入或更新）一个自定义子智能体配置文件。
+/// 按 id 去重：同名 id 覆盖，否则追加。
+#[tauri::command]
+pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<(), String> {
+    let path = custom_profiles_path()?;
+    let mut profiles: Vec<CustomSubagentProfile> = if path.exists() {
+        let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+        let file: CustomSubagentProfilesFile =
+            serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+        file.profiles
+    } else {
+        Vec::new()
+    };
+    // Upsert by id
+    if let Some(existing) = profiles.iter_mut().find(|p| p.id == profile.id) {
+        *existing = profile;
+    } else {
+        profiles.push(profile);
+    }
+    // Write back
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let file = CustomSubagentProfilesFile {
+        version: 1,
+        updated_at: {
+            use std::time::SystemTime;
+            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let secs = dur.as_secs();
+            let tm = secs_to_date_parts(secs);
+            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+        },
+        profiles,
+    };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+///
+/// 按 id 删除一个自定义子智能体配置文件。
+#[tauri::command]
+pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> {
+    let path = custom_profiles_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+    let file: CustomSubagentProfilesFile =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    let profiles: Vec<CustomSubagentProfile> = file.profiles.into_iter().filter(|p| p.id != profile_id).collect();
+    // Write back
+    let updated = CustomSubagentProfilesFile {
+        version: 1,
+        updated_at: {
+            use std::time::SystemTime;
+            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let secs = dur.as_secs();
+            let tm = secs_to_date_parts(secs);
+            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+        },
+        profiles,
+    };
+    let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
 }

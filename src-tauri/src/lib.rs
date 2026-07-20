@@ -5,7 +5,6 @@
 //! 2. 注册暴露给前端调用的 Rust 命令（Commands）。
 //! 3. 监听程序窗口事件以执行清理任务（如关闭本地引擎进程）。
 
-mod cloud_backend;
 mod commands;
 mod core;
 pub mod mcp_fs_server;
@@ -16,6 +15,7 @@ use crate::core::state::{
     DbState, LocalEngineState, McpRequestManager, McpServerState, PendingApprovals, StreamManager,
 };
 use crate::plugins::engine::EngineManager;
+use crate::plugins::lsp::LspManager;
 use crate::plugins::mcp::McpServerManager;
 use crate::utils::process_file_content;
 use std::sync::Arc;
@@ -49,6 +49,7 @@ pub fn run() {
         .manage(LocalEngineState::new())
         .manage(EngineManager::new())
         .manage(McpServerManager::builtin())
+        .manage(LspManager::new())
         .manage(McpServerState::default())
         .manage(McpRequestManager::new())
         .manage(PendingApprovals::new())
@@ -80,13 +81,8 @@ pub fn run() {
             commands::llm::append_message,
             commands::llm::delete_topic_message,
             commands::llm::generate_topic_title,
-            // 云端后端鉴权（集中在 cloud_backend 模块）
-            cloud_backend::auth::login_to_backend,
-            cloud_backend::auth::register_to_backend,
-            cloud_backend::auth::validate_token,
-            cloud_backend::auth::sync_avatar_to_backend,
-            cloud_backend::auth::logout_clear,
-            cloud_backend::auth::read_auth_token,
+            commands::llm::get_usage_summary,
+            commands::llm::get_usage_summary_by_model,
             commands::config::clear_local_avatar_cache,
             commands::config::read_avatar_source,
             commands::update::check_app_update,
@@ -136,9 +132,29 @@ pub fn run() {
             commands::mcp::check_tool_permission,
             commands::mcp::respond_tool_approval,
             commands::mcp::list_mcp_transports,
+            commands::mcp::list_mcp_resources,
+            commands::mcp::read_mcp_resource,
+            commands::mcp::list_mcp_prompts,
+            commands::mcp::get_mcp_prompt,
             commands::mcp_catalog::list_mcp_catalog,
             commands::mcp_catalog::check_mcp_catalog_runtime,
             commands::mcp_catalog::install_mcp_catalog_server,
+            // LSP 语言服务器管理
+            commands::lsp::start_lsp_server,
+            commands::lsp::stop_lsp_server,
+            commands::lsp::get_diagnostics,
+            commands::lsp::auto_detect_ls,
+            commands::lsp::list_supported_languages,
+            commands::lsp::stop_all_lsp_servers,
+            // Per-Profile 模型覆盖
+            commands::config::load_profile_model_overrides,
+            commands::config::save_profile_model_overrides,
+            // 自定义子智能体配置文件
+            commands::config::list_custom_subagent_profiles,
+            commands::config::save_custom_subagent_profile,
+            commands::config::delete_custom_subagent_profile,
+            // Token 计数
+            utils::token_counter::count_tokens_cmd,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

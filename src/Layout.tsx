@@ -3,13 +3,16 @@
  * @description 应用的通用布局组件, 整窗为统一亚克力面板(NavBar + 页面共享同块玻璃),
  * 背景为静态多色渐变(不受主题色影响), 主题色仅作用于按钮/开关等交互元素.
  */
-import NavBar from "./components/NavBar";
-import UpdateNotification from "./components/UpdateNotification";
+import NavBar from "./shared/components/NavBar";
+import UpdateNotification from "./shared/components/UpdateNotification";
+import GlobalKeyboardHandler from "./shared/components/GlobalKeyboardHandler";
+import CommandPalette from "./shared/components/CommandPalette";
 import { Transition } from "solid-transition-group";
 import { Component, onCleanup, onMount, ParentProps } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from "./utils/models";
+import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from "./core/utils/models";
 import {
     appUpdateAvailable,
     setAppUpdateAvailable,
@@ -26,8 +29,9 @@ import {
     setModelsCatalogVersion,
     setModelsCatalogGeneratedAt,
     setProviderConfigs,
-} from "./store/store";
-import type { ProviderConfigFile } from "./utils/models";
+} from "./core/store/store";
+import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from "./core/store/diagnostics";
+import type { ProviderConfigFile } from "./core/utils/models";
 
 /**
  * Layout 组件
@@ -35,6 +39,8 @@ import type { ProviderConfigFile } from "./utils/models";
  * @returns 返回一个包含通用导航和过渡动画的内容区域
  */
 const Layout: Component<ParentProps> = (props) => {
+    let unlistenDiagnostics: (() => void) | undefined;
+
     /**
      * 应用启动时自动检查更新
      * 流程：延迟 1.5s（避开首屏渲染高峰）→ 调用 check_app_update
@@ -49,6 +55,14 @@ const Layout: Component<ParentProps> = (props) => {
         setAppUpdateDownloading(false);
         setAppUpdateProgress(0);
         setAppUpdateReady(false);
+
+        // 监听 LSP 诊断更新事件
+        unlistenDiagnostics = await listen<LspDiagnosticsUpdatePayload>(
+            'lsp-diagnostics-updated',
+            (event) => {
+                updateDiagnostics(event.payload);
+            },
+        );
 
         // 异步加载模型目录（不阻塞首屏，由 settings 页面按需使用）
         setModelsCatalogStatus('loading');
@@ -120,7 +134,8 @@ const Layout: Component<ParentProps> = (props) => {
     });
 
     onCleanup(() => {
-        // 清理逻辑预留
+        // 清理 LSP 事件监听
+        unlistenDiagnostics?.();
     });
 
     return (
@@ -134,6 +149,8 @@ const Layout: Component<ParentProps> = (props) => {
                 ].join(", "),
             }}
         >
+            <GlobalKeyboardHandler />
+            <CommandPalette />
             <NavBar />
             <main class="flex-1 relative overflow-hidden">
                 <Transition name="page-fade">

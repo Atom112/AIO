@@ -24,6 +24,18 @@ fn emit_status(
     message: Option<String>,
     tool_count: usize,
 ) {
+    emit_status_full(app, id, status, message, tool_count, 0, 0);
+}
+
+fn emit_status_full(
+    app: &AppHandle,
+    id: &str,
+    status: McpStatus,
+    message: Option<String>,
+    tool_count: usize,
+    resource_count: usize,
+    prompt_count: usize,
+) {
     let _ = app.emit(
         "mcp-server-status",
         McpServerStatusInfo {
@@ -31,6 +43,8 @@ fn emit_status(
             status,
             message,
             tool_count,
+            resource_count,
+            prompt_count,
         },
     );
 }
@@ -204,12 +218,36 @@ pub async fn start_mcp_server(
             .collect()
     };
 
+    // 尝试拉取资源列表（不强制要求服务器支持）
+    let (_resources, resource_count) = match plugin.list_resources(&conn).await {
+        Ok(r) => {
+            let count = r.len();
+            (Some(r), count)
+        }
+        Err(e) => {
+            tracing::info!("MCP {} resources/list 不支持（可选特性）: {}", id, e);
+            (None, 0)
+        }
+    };
+
+    // 尝试拉取提示词列表
+    let (_prompts, prompt_count) = match plugin.list_prompts(&conn).await {
+        Ok(p) => {
+            let count = p.len();
+            (Some(p), count)
+        }
+        Err(e) => {
+            tracing::info!("MCP {} prompts/list 不支持（可选特性）: {}", id, e);
+            (None, 0)
+        }
+    };
+
     {
         let mut map = state.lock();
         map.insert(id.clone(), conn);
     }
 
-    emit_status(&app, &id, McpStatus::Connected, None, filtered.len());
+    emit_status_full(&app, &id, McpStatus::Connected, None, filtered.len(), resource_count, prompt_count);
     Ok(filtered)
 }
 
@@ -259,6 +297,8 @@ pub async fn list_mcp_server_status(
                 status: McpStatus::Connected,
                 message: None,
                 tool_count: 0,
+                resource_count: 0,
+                prompt_count: 0,
             },
         );
     }
@@ -720,6 +760,89 @@ pub async fn respond_tool_approval(
     let tx = pending.remove(&approval_id)
         .ok_or_else(|| format!("审批请求 {} 不存在或已过期", approval_id))?;
     tx.send(approved).map_err(|_| "发送审批结果失败".into())
+}
+
+/// 列出指定 MCP server 的资源列表。
+#[tauri::command]
+pub async fn list_mcp_resources(
+    mgr: State<'_, McpServerManager>,
+    state: State<'_, McpServerState>,
+    id: String,
+) -> Result<Vec<McpResource>, String> {
+    let conn = {
+        let map = state.lock();
+        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+    };
+    let plugin = mgr
+        .get(&conn.transport_kind)
+        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    plugin
+        .list_resources(&conn)
+        .await
+        .map_err(|e| format!("resources/list 失败: {}", e))
+}
+
+/// 读取指定 MCP server 的一个资源。
+#[tauri::command]
+pub async fn read_mcp_resource(
+    mgr: State<'_, McpServerManager>,
+    state: State<'_, McpServerState>,
+    id: String,
+    uri: String,
+) -> Result<ReadResourceResult, String> {
+    let conn = {
+        let map = state.lock();
+        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+    };
+    let plugin = mgr
+        .get(&conn.transport_kind)
+        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    plugin
+        .read_resource(&conn, &uri)
+        .await
+        .map_err(|e| format!("resources/read 失败: {}", e))
+}
+
+/// 列出指定 MCP server 的提示词列表。
+#[tauri::command]
+pub async fn list_mcp_prompts(
+    mgr: State<'_, McpServerManager>,
+    state: State<'_, McpServerState>,
+    id: String,
+) -> Result<Vec<McpPrompt>, String> {
+    let conn = {
+        let map = state.lock();
+        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+    };
+    let plugin = mgr
+        .get(&conn.transport_kind)
+        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    plugin
+        .list_prompts(&conn)
+        .await
+        .map_err(|e| format!("prompts/list 失败: {}", e))
+}
+
+/// 获取指定 MCP server 的一个提示词。
+#[tauri::command]
+pub async fn get_mcp_prompt(
+    mgr: State<'_, McpServerManager>,
+    state: State<'_, McpServerState>,
+    id: String,
+    name: String,
+    arguments: Option<Value>,
+) -> Result<GetPromptResult, String> {
+    let conn = {
+        let map = state.lock();
+        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+    };
+    let plugin = mgr
+        .get(&conn.transport_kind)
+        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    plugin
+        .get_prompt(&conn, &name, arguments)
+        .await
+        .map_err(|e| format!("prompts/get 失败: {}", e))
 }
 
 /// 测试用：列出已注册 transport 插件 identifier

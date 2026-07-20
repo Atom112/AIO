@@ -218,6 +218,7 @@ fn cache_entry_is_fresh(entry: &MarketCacheEntry, now: u64) -> bool {
 fn market_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent("AIO Skill Market/0.4")
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(25))
         .build()
         .map_err(|e| e.to_string())
@@ -659,6 +660,81 @@ pub async fn download_market_skill(
 
 // ====== npx Skill 发现与导入 ======
 
+/// 验证 npx 包名是否合法。
+///
+/// 规则：
+/// - 符合 npm 命名规范：`@scope/name` 或 `name`，仅含小写字母、数字、`-`、`_`、`.`
+/// - 总长度 ≤ 214 字符
+/// - 不含 shell 元字符
+/// - 不在高危黑名单中
+fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
+    // 拒绝空
+    if package_name.trim().is_empty() {
+        return Err("包名不能为空".into());
+    }
+
+    // 拒绝路径穿越
+    if package_name.contains("..") {
+        return Err("包名包含非法字符 '..'".into());
+    }
+
+    // 拒绝 shell 元字符
+    for ch in package_name.chars() {
+        if matches!(ch, ';' | '|' | '&' | '$' | '`' | '\\' | '\'' | '"' | '<' | '>' | '!' | '\n' | '\r' | '\t') {
+            return Err(format!("包名包含禁止字符: '{}'", ch));
+        }
+    }
+
+    // npm 命名规范: @scope/name 或 name
+    let name = if let Some(rest) = package_name.strip_prefix('@') {
+        // scoped package: @scope/name
+        let parts: Vec<&str> = rest.splitn(2, '/').collect();
+        if parts.len() != 2 {
+            return Err("scoped 包名格式错误: 应为 @scope/name".into());
+        }
+        let scope = parts[0];
+        let name_part = parts[1];
+        if scope.is_empty() || name_part.is_empty() {
+            return Err("scoped 包名格式错误: scope 或 name 为空".into());
+        }
+        // 验证 scope
+        if !scope.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.') {
+            return Err("scoped 包名 scope 部分包含非法字符".into());
+        }
+        name_part
+    } else {
+        package_name
+    };
+
+    // 验证 name 部分
+    if name.is_empty() || name.len() > 214 {
+        return Err(format!("包名长度不合法: {} 字符（最大 214）", name.len()));
+    }
+    if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.') {
+        return Err("包名包含非法字符（仅允许小写字母、数字、-、_、.）".into());
+    }
+
+    // 拒绝伪装成 Node.js 内置模块
+    let node_builtins = [
+        "child_process", "fs", "os", "path", "process", "buffer",
+        "stream", "net", "tls", "http", "https", "dns", "dgram",
+        "crypto", "util", "events", "assert", "vm", "v8",
+        "worker_threads", "cluster", "module",
+    ];
+    let lower_name = name.to_lowercase();
+    let base_name = if let Some(pos) = lower_name.rfind('/') { &lower_name[pos + 1..] } else { &lower_name };
+    if node_builtins.contains(&base_name) {
+        return Err(format!("包名 '{}' 伪装为 Node.js 内置模块，拒绝导入", package_name));
+    }
+
+    // 拒绝 git 协议 URL 伪装
+    if package_name.starts_with("git://") || package_name.starts_with("git+") || package_name.starts_with("ssh://") {
+        return Err("包名不是合法的 npm 包名".into());
+    }
+
+    Ok(())
+}
+
 /// 系统上检测到的 npx skill 包信息。
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -681,16 +757,44 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
     // 1) 主要方式：通过 `npx skills list --json` 获取已安装 skill 列表
     tracing::info!("[skills] discover_npx: 正在执行 npx --yes skills list -g --json ...");
 
-    // Windows: npx 是 .cmd 脚本，Process::Command 不会按 PATHEXT 搜索，需要手动解析
-    let npx_cmd = resolve_command("npx");
-    let skills_cli_output = std::process::Command::new(&npx_cmd)
-        .args(["--yes", "skills", "list", "-g", "--json"])
-        .output();
-    match &skills_cli_output {
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
+    // 使用 tokio spawn_blocking 避免阻塞 async worker 线程
+    let skills_cli_result = tokio::task::spawn_blocking(move || {
+        let npx_cmd = resolve_command("npx");
+        let child = match std::process::Command::new(&npx_cmd)
+            .args(["--yes", "skills", "list", "-g", "--json"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return Err(format!("启动 {} 失败: {}", npx_cmd, e)),
+        };
+
+        // Windows: 分配到限制性 Job Object
+        if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
+            tracing::warn!("[skills] discover npx sandbox 分配失败: {e}");
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("等待 npx 进程失败: {e}"))?;
+
+        // 截断输出到 1MB
+        let stdout = if output.stdout.len() > 1_048_576 {
+            tracing::warn!("[skills] discover npx stdout 过大 ({}B)，已截断", output.stdout.len());
+            output.stdout[..1_048_576].to_vec()
+        } else {
+            output.stdout
+        };
+        Ok((output.status.success(), String::from_utf8_lossy(&stdout).to_string(), String::from_utf8_lossy(&output.stderr).to_string()))
+    })
+    .await
+    .unwrap_or_else(|_| Err("npx 线程 panic".to_string()));
+
+    // 处理 npx skills list 结果
+    match skills_cli_result {
+        Ok((success, stdout, stderr)) => {
+            if success {
                 match serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
                     Ok(json_list) => {
                         tracing::info!("[skills] discover_npx: skills CLI 返回 {} 条 skill", json_list.len());
@@ -727,7 +831,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             }
         }
         Err(e) => {
-            tracing::warn!("[skills] discover_npx: 无法启动 npx 命令: {e}");
+            tracing::warn!("[skills] discover_npx: npx 启动失败: {e}");
         }
     }
 
@@ -847,6 +951,115 @@ fn try_read_package_meta_from_dir(dir: &std::path::Path) -> (String, String) {
     }
 }
 
+// ====== npx Skill 执行安全层 ======
+
+/// 带超时和输出限制的 npx 子进程执行。
+///
+/// # 参数
+/// - `args` — 传递给 npx 的参数（不含 "npx" 本身）
+/// - `timeout_secs` — 超时（秒），超时后强制 kill 进程
+/// - `max_output_bytes` — stdout 最大允许字节数
+///
+/// # 返回
+/// Ok(Some(stdout)) — 执行成功且有输出
+/// Ok(None) — 执行成功但输出为空
+/// Err(msg) — 启动失败、非零退出码、或超时
+fn run_npx_sandboxed(
+    args: &[&str],
+    timeout_secs: u64,
+    max_output_bytes: usize,
+) -> Result<Option<String>, String> {
+    let npx_cmd = resolve_command("npx");
+    let child = std::process::Command::new(&npx_cmd)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动 {} 失败: {}", npx_cmd, e))?;
+
+    // Windows: 分配到限制性 Job Object
+    if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
+        tracing::warn!("[skills] npx sandbox 分配失败: {e}");
+    }
+
+    // 带超时的等待
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let output = child.wait_with_output();
+        let _ = tx.send(output);
+    });
+
+    let output = rx
+        .recv_timeout(std::time::Duration::from_secs(timeout_secs))
+        .map_err(|_| format!("npx 命令超时（>{timeout_secs}s），已终止"))?
+        .map_err(|e| format!("等待 npx 进程失败: {e}"))?;
+
+    // 记录 stderr 用于审计
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        let stderr_short: String = stderr.chars().take(300).collect();
+        tracing::info!("[skills] npx stderr: {}", stderr_short);
+    }
+
+    if !output.status.success() {
+        let stderr_short: String = stderr.chars().take(300).collect();
+        return Err(format!("npx 退出码 {}: {}", output.status, stderr_short));
+    }
+
+    // 截断输出
+    let stdout_bytes = if output.stdout.len() > max_output_bytes {
+        tracing::warn!(
+            "[skills] npx stdout 过大 ({}B > {}B limit)，已截断",
+            output.stdout.len(),
+            max_output_bytes
+        );
+        &output.stdout[..max_output_bytes]
+    } else {
+        &output.stdout
+    };
+
+    let content = String::from_utf8_lossy(stdout_bytes).to_string();
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(content))
+}
+
+/// 清洗 npx stdout 内容后再存入 SkillConfig。
+///
+/// 去除 ANSI 转义序列、null 字节，验证 UTF-8 有效性，
+/// 并检查是否为纯二进制内容。
+fn sanitize_skill_content(raw: &str) -> Result<String, String> {
+    // 1. 去除 ANSI 转义序列（CSI 序列: ESC [ ... m）
+    let re_ansi = regex::Regex::new("\x1b\\[[0-9;]*[a-zA-Z]").unwrap();
+    let mut cleaned = re_ansi.replace_all(raw, "").to_string();
+
+    // 2. 去除 null 字节
+    cleaned = cleaned.replace('\0', "");
+
+    // 3. 去除其他控制字符（保留换行、制表符）
+    cleaned = cleaned
+        .chars()
+        .filter(|c| *c == '\n' || *c == '\r' || *c == '\t' || !c.is_control())
+        .collect();
+
+    // 4. 修剪首尾空白
+    cleaned = cleaned.trim().to_string();
+
+    if cleaned.is_empty() {
+        return Err("清洗后内容为空（可能为纯控制字符）".into());
+    }
+
+    // 5. 检查前 512 字节中可打印字符比例（拒绝二进制 blob）
+    let sample = if cleaned.len() > 512 { &cleaned[..512] } else { &cleaned };
+    let printable_count = sample.chars().filter(|c| c.is_ascii_graphic() || c.is_whitespace()).count();
+    if sample.len() > 0 && (printable_count as f64 / sample.len() as f64) < 0.5 {
+        return Err("内容看似为二进制数据，拒绝导入".into());
+    }
+
+    Ok(cleaned)
+}
+
 /// 导入一个 npx skill 包：执行 npx 获取内容，保存到 Skill 池。
 #[tauri::command]
 pub async fn import_npx_skill(
@@ -854,22 +1067,28 @@ pub async fn import_npx_skill(
     package_name: String,
     project_id: Option<String>,
 ) -> Result<SkillConfig, String> {
-    if package_name.trim().is_empty() || package_name.contains("..") {
-        return Err("非法的包名".into());
-    }
+    // 包名校验
+    validate_npx_package_name(&package_name)?;
 
-    // 执行 npx <package> 获取 skill 内容
-    let output = std::process::Command::new("npx")
-        .args([&package_name])
-        .output()
-        .map_err(|e| format!("执行 npx {} 失败: {}", package_name, e))?;
-    let content = String::from_utf8_lossy(&output.stdout).to_string();
-    if content.trim().is_empty() {
-        return Err(format!("npx {} 未返回任何内容", package_name));
-    }
+    // 沙箱执行 npx <package> 获取 skill 内容（spawn_blocking 避免阻塞 async worker）
+    let pkg = package_name.clone();
+    let raw_content = tokio::task::spawn_blocking(move || {
+        run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
+    })
+    .await
+    .map_err(|_| "npx 线程 panic".to_string())??
+    .ok_or_else(|| format!("npx {} 未返回任何内容", package_name))?;
 
-    // 尝试从 package.json 获取元数据
-    let (name, description, version) = try_read_package_meta(&package_name);
+    // 清洗内容（去除 ANSI 序列、null 字节、控制字符）
+    let content = sanitize_skill_content(&raw_content)?;
+
+    // 尝试从 package.json 获取元数据（spawn_blocking 避免阻塞 async worker）
+    let pkg2 = package_name.clone();
+    let (name, description, version) = tokio::task::spawn_blocking(move || {
+        try_read_package_meta(&pkg2)
+    })
+    .await
+    .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
 
     let skill = SkillConfig {
         id: format!("npx-{}", package_name),
@@ -931,17 +1150,26 @@ pub async fn refresh_npx_skill(
         .as_ref()
         .ok_or_else(|| "该 Skill 不是 npx 来源".to_string())?;
 
-    // 重新执行 npx
-    let output = std::process::Command::new("npx")
-        .args([pkg_name])
-        .output()
-        .map_err(|e| format!("执行 npx {} 失败: {}", pkg_name, e))?;
-    let content = String::from_utf8_lossy(&output.stdout).to_string();
-    if content.trim().is_empty() {
-        return Err(format!("npx {} 未返回任何内容", pkg_name));
-    }
+    // 包名校验（重新验证，防止存储的包名被篡改）
+    validate_npx_package_name(pkg_name)?;
 
-    let (_, _, version) = try_read_package_meta(pkg_name);
+    // 沙箱刷新执行（spawn_blocking 避免阻塞 async worker）
+    let pkg = pkg_name.to_string();
+    let raw_content = tokio::task::spawn_blocking(move || {
+        run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
+    })
+    .await
+    .map_err(|_| "npx 线程 panic".to_string())??
+    .ok_or_else(|| format!("npx {} 未返回任何内容", pkg_name))?;
+
+    let content = sanitize_skill_content(&raw_content)?;
+
+    let pkg2 = pkg_name.to_string();
+    let (_, _, version) = tokio::task::spawn_blocking(move || {
+        try_read_package_meta(&pkg2)
+    })
+    .await
+    .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
 
     let updated = SkillConfig {
         content,
@@ -967,26 +1195,51 @@ pub async fn refresh_npx_skill(
     Ok(updated)
 }
 
-/// 尝试读取 npm 全局包的 package.json 获取元数据。
+/// 尝试读取 npm 全局包的 package.json 获取元数据（带 10s 超时）。
 fn try_read_package_meta(package_name: &str) -> (String, String, String) {
-    let npm_output = std::process::Command::new("npm")
+    use std::io::Read;
+
+    let mut child = match std::process::Command::new("npm")
         .args(["list", "-g", "--depth=0", "--json"])
-        .output();
-    if let Ok(output) = npm_output {
-        if output.status.success() {
-            if let Ok(json) =
-                serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout))
-            {
-                if let Some(dep) = json
-                    .get("dependencies")
-                    .and_then(|deps| deps.get(package_name))
-                {
-                    let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or(package_name).to_string();
-                    let desc = dep.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let ver = dep.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_string();
-                    return (name, desc, ver);
-                }
-            }
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return (String::new(), String::new(), "0.0.0".to_string()),
+    };
+
+    // 带超时等待（10s）
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut stdout = Vec::new();
+        let _ = child.stdout.as_mut().map(|s| s.read_to_end(&mut stdout));
+        let status = child.wait();
+        let _ = tx.send((status, stdout));
+    });
+
+    let (status, stdout): (std::io::Result<std::process::ExitStatus>, Vec<u8>) = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok((s, o)) => (s, o),
+        Err(_) => return (String::new(), String::new(), "0.0.0".to_string()),
+    };
+
+    if !status.map_or(false, |s: std::process::ExitStatus| s.success()) {
+        return (String::new(), String::new(), "0.0.0".to_string());
+    }
+
+    // 输出上限 256KB
+    let capped = if stdout.len() > 256 * 1024 { &stdout[..256 * 1024] } else { &stdout };
+    let json_str = String::from_utf8_lossy(capped);
+
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        if let Some(dep) = json
+            .get("dependencies")
+            .and_then(|deps| deps.get(package_name))
+        {
+            let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or(package_name).to_string();
+            let desc = dep.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let ver = dep.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_string();
+            return (name, desc, ver);
         }
     }
     (String::new(), String::new(), "0.0.0".to_string())

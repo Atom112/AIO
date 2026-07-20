@@ -41,6 +41,7 @@ pub trait LocalEnginePlugin: Send + Sync {
         model_path: &'a str,
         port: u16,
         gpu_layers: i32,
+        trust_remote_code: bool,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
 
     /// 发送进度事件的事件名

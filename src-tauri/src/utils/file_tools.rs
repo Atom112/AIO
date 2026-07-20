@@ -65,7 +65,7 @@ fn sz(b: u64) -> String {
     else { format!("{b}B") }
 }
 
-fn tool_ok(text: String) -> ToolResult {
+pub fn tool_ok(text: String) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
             kind: "text".into(),
@@ -75,7 +75,7 @@ fn tool_ok(text: String) -> ToolResult {
     }
 }
 
-fn tool_err(msg: &str) -> ToolResult {
+pub fn tool_err(msg: &str) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
             kind: "text".into(),
@@ -144,6 +144,14 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
                 name: "make_directory".into(),
                 description: "创建目录".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"目录路径"}},"required":["path"]}),
+            },
+        },
+        ToolSpec {
+            kind: "function".into(),
+            function: ToolFunctionSpec {
+                name: "replace_in_file".into(),
+                description: "在文件中执行精确字符串替换（old_string → new_string）。old_string 必须在文件中恰好出现一次，否则会报错要求提供更多上下文使匹配唯一".into(),
+                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"old_string":{"type":"string","description":"要被替换的原始字符串（必须与文件内容精确匹配）"},"new_string":{"type":"string","description":"替换后的新字符串"}},"required":["path","old_string","new_string"]}),
             },
         },
     ]
@@ -255,6 +263,58 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if t.exists() { return tool_err(&format!("已存在: {path}")); }
             match std::fs::create_dir_all(&t) { Ok(_) => tool_ok(format!("✓ 创建 {path}")), Err(e) => tool_err(&format!("{e}")) }
         }
+        "replace_in_file" => {
+            let path = arguments["path"].as_str().unwrap_or("");
+            let old_s = arguments["old_string"].as_str().unwrap_or("");
+            let new_s = arguments["new_string"].as_str().unwrap_or("");
+            if path.is_empty() { return tool_err("缺少 path"); }
+            if old_s.is_empty() { return tool_err("old_string 不能为空（若要前置/追加内容，请包含周围的上下文行）"); }
+            let t = match safe_path(project_root, path, true) { Ok(t) => t, Err(e) => return tool_err(&e) };
+            if !t.is_file() { return tool_err(&format!("不是文件: {path}")); }
+            if is_binary(&t) { return tool_err(&format!("二进制文件: {path}")); }
+            let content = match std::fs::read_to_string(&t) {
+                Ok(c) => c,
+                Err(e) => return tool_err(&format!("读取失败: {e}")),
+            };
+            // 统计 old_string 出现次数及行号
+            let mut matches: Vec<usize> = Vec::new();
+            let mut pos = 0;
+            while let Some(found) = content[pos..].find(old_s) {
+                let abs_pos = pos + found;
+                let line = content[..abs_pos].chars().filter(|&c| c == '\n').count() + 1;
+                matches.push(line);
+                pos = abs_pos + 1;
+            }
+            match matches.len() {
+                0 => {
+                    tool_err(&format!(
+                        "未找到匹配的 old_string。请用 read_file 重新读取文件内容，确保 old_string 与文件中的文本完全一致（包括缩进和换行）。\n文件: {path}"
+                    ))
+                }
+                1 => {
+                    let new_content = content.replacen(old_s, new_s, 1);
+                    if new_content.len() as u64 > MAX_W {
+                        return tool_err(&format!("替换后内容过大 (>{MAX_W}B)"));
+                    }
+                    match std::fs::write(&t, &new_content) {
+                        Ok(_) => tool_ok(format!(
+                            "✓ 替换 {path}\n第 {} 行: {} 处匹配已替换",
+                            matches[0], 1
+                        )),
+                        Err(e) => tool_err(&format!("写入失败: {e}")),
+                    }
+                }
+                n => {
+                    let lines_str = matches.iter()
+                        .map(|l| l.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    tool_err(&format!(
+                        "old_string 在文件中出现了 {n} 次（行 {lines_str}）。请增加更多周围的上下文行使匹配唯一，然后重试。"
+                    ))
+                }
+            }
+        }
         _ => tool_err(&format!("未知工具: {name}")),
     }
 }
@@ -273,6 +333,19 @@ pub fn resolve_project_root(app: &tauri::AppHandle, project_id: Option<&str>) ->
         .map_err(|e| format!("解析项目索引失败: {e}"))?;
     file["projects"][pid]["path"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(|s| strip_windows_extended_prefix(s))
         .ok_or_else(|| format!("项目 {} 不存在", pid))
+}
+
+/// 去掉 Windows 扩展长度路径前缀 `\\?\`（由 `std::fs::canonicalize` 产生）。
+/// 该前缀对文件操作透明，但暴露给 LLM 时会造成困惑。
+fn strip_windows_extended_prefix(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        path.strip_prefix("\\\\?\\").unwrap_or(path).to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
 }

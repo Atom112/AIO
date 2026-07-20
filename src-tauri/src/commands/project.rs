@@ -3,7 +3,8 @@
 //! 项目是绑定到文件系统目录的逻辑分组单元，每个项目在 `<project_dir>/.aio/` 下
 //! 存放专属的 skills.json 和 mcp-servers.json。
 
-use crate::core::models::{Project, ProjectsFile};
+use crate::core::models::{Project, ProjectsFile, AgentMode};
+use crate::core::state::DbState;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -107,7 +108,7 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
 
 /// 创建新项目。
 #[tauri::command]
-pub fn create_project(app: AppHandle, name: String, path: String) -> Result<Project, String> {
+pub fn create_project(app: AppHandle, state: tauri::State<'_, DbState>, name: String, path: String) -> Result<Project, String> {
     if name.trim().is_empty() {
         return Err("项目名称不能为空".into());
     }
@@ -128,14 +129,29 @@ pub fn create_project(app: AppHandle, name: String, path: String) -> Result<Proj
     init_project_dir(&canonical_str)?;
 
     let id = uuid::Uuid::new_v4().to_string();
+    let assistant_id = format!("asst-{}", id);
     let ts = now_timestamp();
     let project = Project {
         id: id.clone(),
         name: name.trim().to_string(),
         path: canonical_str,
         created_at: ts.clone(),
-        updated_at: ts,
+        updated_at: ts.clone(),
+        assistant_id: assistant_id.clone(),
     };
+
+    // 创建对应助理记录
+    {
+        let conn = state.0.lock().unwrap();
+        let agent_mode_str = serde_json::to_string(&AgentMode::Normal)
+            .unwrap_or_else(|_| "\"normal\"".to_string())
+            .trim_matches('"')
+            .to_string();
+        conn.execute(
+            "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, '', NULL, '[\"__aio-filesystem__\"]', '[]', ?3, ?4, 'project')",
+            rusqlite::params![assistant_id, project.name, project.id, agent_mode_str],
+        ).map_err(|e| format!("创建项目助理失败: {}", e))?;
+    }
 
     file.projects.insert(id, project.clone());
     file.updated_at = now_timestamp();

@@ -146,6 +146,41 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         );"
     ).map_err(|e| e.to_string())?;
 
+    // 迁移：消息级 token 用量持久化（修复重启清零）
+    add_column_if_missing(&conn, "messages", "input_tokens", "INTEGER")?;
+    add_column_if_missing(&conn, "messages", "output_tokens", "INTEGER")?;
+
+    // 迁移：Agent 工作过程持久化（跨重启保留 agent_steps / interim_content / agent_start_time）
+    add_column_if_missing(&conn, "messages", "agent_steps_json", "TEXT")?;
+    add_column_if_missing(&conn, "messages", "interim_content", "TEXT")?;
+    add_column_if_missing(&conn, "messages", "agent_start_time", "INTEGER")?;
+
+    // 用量日志表：不可变 append-only 记录，每轮 LLM 调用一行
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS usage_log (
+            id TEXT PRIMARY KEY,
+            timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+            assistant_id TEXT NOT NULL,
+            topic_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            round INTEGER NOT NULL DEFAULT 1,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(assistant_id) REFERENCES assistants(id) ON DELETE CASCADE,
+            FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_log_timestamp ON usage_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_usage_log_topic ON usage_log(topic_id);"
+    ).map_err(|e| e.to_string())?;
+
+    // 迁移：助理类型（chat = 对话模式专属，project = 项目助理）
+    add_column_if_missing(&conn, "assistants", "assistant_type", "TEXT NOT NULL DEFAULT 'project'")?;
+    // 将 default-assistant-id 标记为 chat 类型
+    conn.execute(
+        "UPDATE assistants SET assistant_type = 'chat' WHERE id = 'default-assistant-id' AND (assistant_type IS NULL OR assistant_type != 'chat')",
+        [],
+    ).map_err(|e| e.to_string())?;
+
     Ok(conn)
 }
 

@@ -10,7 +10,7 @@ export interface ProjectInfo {
     name: string;
 }
 
-export type AgentMode = 'off' | 'normal' | 'auto' | 'plan';
+export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
 
 /**
  * 构建 Agent 模式系统提示词。
@@ -35,12 +35,43 @@ export function buildAgentSystemPrompt(
         `可用工具:`,
         `- read_file(path) — 读取文件内容`,
         `- write_file(path, content) — 创建或覆盖文件`,
+        `- replace_in_file(path, old_string, new_string) — 在文件中替换指定文本（需精确匹配，唯一匹配）`,
         `- list_directory(path?) — 列出目录`,
         `- search_files(pattern, basePath?) — 按 glob 搜索文件`,
         `- search_content(pattern, path?) — 搜索文件内容（正则）`,
         `- delete_file(path) — 删除文件`,
         `- make_directory(path) — 创建目录`,
+        `- web_fetch(url, max_bytes?) — 获取网页内容为纯文本`,
+        `- web_search(query, count?) — 搜索网页（DuckDuckGo）`,
+        `- read_lints(paths?, severity?) — 读取项目中的 LSP 诊断（编译错误/类型错误/警告）`,
+        `- git_status() — 查看 git 工作区和暂存区状态`,
+        `- git_diff(staged?, path?) — 查看 git 差异对比`,
+        `- git_log(count?, path?, oneline?) — 查看 git 提交历史`,
+        `- git_add(files?, all?) — 将文件添加到 git 暂存区`,
+        `- git_commit(message) — 创建 git 提交`,
+        `- delegate_task(profile, task, context_files?) — 创建子智能体执行独立子任务`,
         ``,
+        `子智能体使用指南:`,
+        `- 面对复杂任务时，先分析是否可以拆分为独立子任务`,
+        `- 同一轮中调用多个 delegate_task 时，子智能体会**并行执行**，同时工作`,
+        `- 识别可并行的独立子任务后，一次性创建多个子智能体以节省时间`,
+        `- 示例：搜索代码库 + 分析架构 → 同时创建多个 explorer 子智能体分别搜索不同模块`,
+        `- explorer（代码探索者）：只读搜索和分析代码，适合探索代码库、查找相关文件、分析架构`,
+        `- coder（代码实现者）：编写和修改代码，适合具体功能实现。禁止执行 shell 命令`,
+        `- general（通用子智能体）：全能力，适合需要混合操作的子任务`,
+        `- 子智能体独立执行，完成后返回工作总结供你参考`,
+        `- 注意：并行子智能体之间无法通信，确保每个子任务是真正独立的`,
+        `- 不要创建嵌套子智能体（子智能体不能再创建子智能体）`,
+        ``,
+        `工作流使用指南:`,
+        `- 对于需要多个步骤按顺序完成的复杂任务，使用 create_workflow 工具创建顺序工作流`,
+        `- create_workflow 会按步骤顺序依次执行子智能体，每个步骤的输出自动传递给下一步`,
+        `- 推荐的工作流序列示例:`,
+        `  requirements → architect → coder → reviewer → tester  （全流程开发）`,
+        `  explorer → coder                                          （探索 + 实现）`,
+        `  debugger → coder                                          （诊断 + 修复）`,
+        `  explorer → writer                                         （探索 + 文档化）`,
+        `- 调用 create_workflow 后系统会自动执行所有步骤，你只需等待最终结果`,
     ];
 
     // 模式特定的行为指令
@@ -62,6 +93,16 @@ export function buildAgentSystemPrompt(
             lines.push(
                 `当前是 Plan 模式：请先列出任务计划和涉及的文件（不要调用工具），`,
                 `等用户确认后再执行。你的职责是分析需求、制定方案，而不是直接修改文件。`,
+            );
+            break;
+        case 'workflow':
+            lines.push(
+                `当前是工作流模式：请先分析用户请求，然后调用 create_workflow 工具创建按顺序执行的工作流。`,
+                `工作流会按步骤依次执行，每个步骤的输出自动传递给下一步。`,
+                `推荐的工作流序列：`,
+                `  requirements → coder → reviewer （分析 + 实现 + 审查）`,
+                `  explorer → coder （探索 + 实现）`,
+                `  debugger → coder （诊断 + 修复）`,
             );
             break;
     }
@@ -93,12 +134,24 @@ export function buildAgentRecursePrompt(
 ): string | null {
     if (mode === 'off') return null;
 
+    const modeLabel: Record<AgentMode, string> = {
+        off: '对话',
+        normal: '普通',
+        auto: '自动',
+        plan: 'Plan',
+        workflow: '工作流',
+    };
+    const modeHint: Record<AgentMode, string> = {
+        off: '',
+        normal: '普通模式：修改文件前需要用户确认。',
+        auto: '自动模式：自主完成任务。',
+        plan: 'Plan 模式：请继续制定计划，不要调用工具。',
+        workflow: '工作流模式：请执行分配给你的工作流步骤，完成后返回结果。',
+    };
     const lines: string[] = [
         `[Agent Mode] 工作目录: ${project.path}`,
-        `当前模式: ${mode === 'auto' ? '自动' : mode === 'normal' ? '普通' : 'Plan'}`,
-        mode === 'plan' ? `Plan 模式：请继续制定计划，不要调用工具。` :
-        mode === 'normal' ? `普通模式：修改文件前需要用户确认。` :
-        `自动模式：自主完成任务。`,
+        `当前模式: ${modeLabel[mode]}`,
+        modeHint[mode],
         `所有文件路径相对于项目根目录，不可越界。`,
     ];
 

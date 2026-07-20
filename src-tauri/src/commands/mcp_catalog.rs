@@ -282,6 +282,7 @@ async fn fetch_page(
     }
     let response = reqwest::Client::builder()
         .user_agent("AIO MCP Registry/0.4")
+        .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(25))
         .build()
         .map_err(|error| error.to_string())?
@@ -421,11 +422,13 @@ pub async fn install_mcp_catalog_server(
 
     let transport = match delivery.kind.as_str() {
         "http" => {
-            if !(delivery.url.starts_with("https://") || delivery.url.starts_with("http://")) {
-                return Err("Registry 返回了非法的 HTTP 地址".into());
-            }
+            let url = crate::utils::url_validation::validate_http_url(
+                &delivery.url,
+                &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+            )
+            .map_err(|e| format!("Registry 返回了非法的 HTTP 地址: {e}"))?;
             McpTransport::Http {
-                url: delivery.url.clone(),
+                url,
                 headers,
             }
         }

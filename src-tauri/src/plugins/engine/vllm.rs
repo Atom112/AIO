@@ -154,6 +154,7 @@ impl LocalEnginePlugin for VllmPlugin {
         model_path: &'a str,
         port: u16,
         gpu_layers: i32,
+        trust_remote_code: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
             debug!(
@@ -167,11 +168,18 @@ impl LocalEnginePlugin for VllmPlugin {
 
             let _ = app.emit(self.progress_event_name(), 0.02);
 
-            let python = find_python()?;
+            // spawn_blocking: find_python 执行同步 subprocess（避免阻塞 async worker）
+            let python = tokio::task::spawn_blocking(find_python)
+                .await
+                .map_err(|_| "python 检测线程 panic".to_string())??;
 
             let _ = app.emit(self.progress_event_name(), 0.05);
 
-            if !check_vllm_installed() {
+            // spawn_blocking: check_vllm_installed 执行同步 subprocess
+            let installed = tokio::task::spawn_blocking(check_vllm_installed)
+                .await
+                .unwrap_or(false);
+            if !installed {
                 let resource_dir = app
                     .path()
                     .resolve("resources/engines/vllm", BaseDirectory::Resource)
@@ -191,7 +199,14 @@ impl LocalEnginePlugin for VllmPlugin {
                 }
 
                 let _ = app.emit(self.progress_event_name(), 0.1);
-                install_from_wheels(&python, &wheels)?;
+                // spawn_blocking: pip install 可能耗时数分钟
+                let wheels_clone = wheels.clone();
+                let python_clone = python.clone();
+                tokio::task::spawn_blocking(move || {
+                    install_from_wheels(&python_clone, &wheels_clone)
+                })
+                .await
+                .map_err(|_| "pip install 线程 panic".to_string())??;
             } else {
                 debug!("[vLLM] 检测到系统已安装 vllm 包");
             }
@@ -213,9 +228,11 @@ impl LocalEnginePlugin for VllmPlugin {
                     "auto",
                     "--max-model-len",
                     "4096",
-                    "--trust-remote-code",
                 ],
             );
+            if trust_remote_code {
+                cmd.arg("--trust-remote-code");
+            }
 
             let mut child = cmd.spawn().map_err(|e| {
                 format!(

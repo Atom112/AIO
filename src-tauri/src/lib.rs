@@ -107,6 +107,9 @@ pub fn run() {
             commands::project::open_project_directory,
             commands::project::get_project_by_path,
             commands::project::validate_project_path,
+            commands::git::get_git_branch,
+            commands::git::list_git_branches,
+            commands::git::switch_git_branch,
             // Skill 管理
             commands::skill::list_skills,
             commands::skill::save_skill,

@@ -76,6 +76,32 @@ fn is_git_repo(project_root: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 获取当前 Git 分支名称。如果不是 git 仓库则返回 None。
+pub fn get_current_branch(project_root: &str) -> Option<String> {
+    if !is_git_repo(project_root) {
+        return None;
+    }
+    run_git(project_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 列出所有本地分支名称。当前分支排在首位（带 `*` 标记）。
+pub fn list_branches(project_root: &str) -> Result<Vec<String>, String> {
+    if !is_git_repo(project_root) {
+        return Err("不是 git 仓库".into());
+    }
+    let out = run_git(project_root, &["branch", "--format=%(refname:short)"])?;
+    Ok(out.lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+}
+
+/// 切换到指定分支（git checkout）。成功返回 Ok(()).
+pub fn checkout_branch(project_root: &str, branch_name: &str) -> Result<String, String> {
+    run_git(project_root, &["checkout", branch_name])?;
+    Ok(format!("已切换到分支 {branch_name}"))
+}
+
 // ====== 工具定义 ======
 
 pub fn get_git_tool_specs() -> Vec<ToolSpec> {

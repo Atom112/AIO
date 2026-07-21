@@ -15,7 +15,7 @@ export type IconName =
     | 'eye' | 'wrench' | 'brain' | 'x' | 'code' | 'lightbulb'
     | 'document' | 'check-circle' | 'image' | 'globe' | 'logo' | 'sparkles'
     | 'gear' | 'chat' | 'send' | 'clip' | 'copy' | 'model' | 'user' | 'spinner' | 'file' | 'menu' | 'layers'
-    | 'info' | 'clipboard' | 'trending-up' | 'zap';
+    | 'info' | 'clipboard' | 'trending-up' | 'zap' | 'git-branch';
 
 /**
  * 图标路径工厂表。
@@ -71,6 +71,7 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     clipboard: () => <><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1M8 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M8 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m0 0h2a2 2 0 0 1 2 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></>,
     'trending-up': () => <><path d="M22 7 14.5 14.5 11.5 11.5 2 20" /><path d="M17 7h5M22 7V2" /></>,
     zap: () => <path d="M13 2 3 14h8l-2 8 11-14h-7l2-8Z" />,
+    'git-branch': () => <><path d="M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9v9a3 3 0 0 1-3 3h-3" /></>,
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

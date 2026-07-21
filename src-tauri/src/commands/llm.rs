@@ -1547,39 +1547,58 @@ pub async fn run_agent_turn(
                 (Vec::new(), std::collections::HashMap::new())
             };
             // 始终注入内置工具（in-process，跳过 MCP 子进程）
-            let file_specs = file_tools::get_file_tool_specs();
-            for spec in &file_specs {
-                mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
+            for spec in file_tools::get_file_tool_specs() {
+                let name = spec.function.name.clone();
+                if !mcp_map.contains_key(&name) {
+                    mcp_tools.push(spec);
+                }
+                mcp_map.insert(name, "__builtin__".into());
             }
-            mcp_tools.extend(file_specs);
             // 注入命令执行工具
             let cmd_spec = shell_tools::get_command_tool_spec();
-            mcp_map.insert(cmd_spec.function.name.clone(), "__builtin__".into());
-            mcp_tools.push(cmd_spec);
-            // 注入 Web 工具
-            let web_specs = web_tools::get_web_tool_specs();
-            for spec in &web_specs {
-                mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
+            let name = cmd_spec.function.name.clone();
+            if !mcp_map.contains_key(&name) {
+                mcp_tools.push(cmd_spec);
             }
-            mcp_tools.extend(web_specs);
+            mcp_map.insert(name, "__builtin__".into());
+            // 注入 Web 工具
+            for spec in web_tools::get_web_tool_specs() {
+                let name = spec.function.name.clone();
+                if !mcp_map.contains_key(&name) {
+                    mcp_tools.push(spec);
+                }
+                mcp_map.insert(name, "__builtin__".into());
+            }
             // 注入 Git 工具（仅当项目是 git 仓库时有效工具）
             let git_specs = git_tools::get_git_tool_specs();
-            for spec in &git_specs {
-                mcp_map.insert(spec.function.name.clone(), "__builtin__".into());
+            for spec in git_specs {
+                let name = spec.function.name.clone();
+                if !mcp_map.contains_key(&name) {
+                    mcp_tools.push(spec);
+                }
+                mcp_map.insert(name, "__builtin__".into());
             }
-            mcp_tools.extend(git_specs);
             // 注入 LSP 诊断工具
             let lsp_spec = lsp_tools::tool_spec();
-            mcp_map.insert(lsp_spec.function.name.clone(), "__builtin__".into());
-            mcp_tools.push(lsp_spec);
+            let name = lsp_spec.function.name.clone();
+            if !mcp_map.contains_key(&name) {
+                mcp_tools.push(lsp_spec);
+            }
+            mcp_map.insert(name, "__builtin__".into());
             // 注入子智能体委托工具（仅 Agent 模式下可用）
             let delegate_spec = subagent::delegate_task_tool_spec();
-            mcp_map.insert(delegate_spec.function.name.clone(), "__builtin__".into());
-            mcp_tools.push(delegate_spec);
+            let name = delegate_spec.function.name.clone();
+            if !mcp_map.contains_key(&name) {
+                mcp_tools.push(delegate_spec);
+            }
+            mcp_map.insert(name, "__builtin__".into());
             // 注入工作流创建工具（仅 Agent 模式下可用）
             let workflow_spec = subagent::create_workflow_tool_spec();
-            mcp_map.insert(workflow_spec.function.name.clone(), "__builtin__".into());
-            mcp_tools.push(workflow_spec);
+            let name = workflow_spec.function.name.clone();
+            if !mcp_map.contains_key(&name) {
+                mcp_tools.push(workflow_spec);
+            }
+            mcp_map.insert(name, "__builtin__".into());
             (mcp_tools, mcp_map)
         } else if web_only {
             // 仅注入 Web 工具（对话模式下联网搜索）

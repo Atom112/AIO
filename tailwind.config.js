@@ -61,6 +61,10 @@ export default {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
         },
+        'message-out': {
+          '0%': { opacity: '1', transform: 'scale(1) translateY(0)' },
+          '100%': { opacity: '0', transform: 'scale(0.96) translateY(-4px)' },
+        },
         'shimmer': {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
@@ -160,6 +164,7 @@ export default {
         'stream-fade-in': 'stream-fade-in 0.3s ease-out forwards',
         'fade-in': 'fade-in 0.2s ease-out forwards',
         // ======= Moved from index.css =======
+        'message-out': 'message-out 0.25s ease-in forwards',
         'context-menu-in': 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
         'context-menu-out': 'contextMenuOut 0.14s ease-in forwards',
         'modal-overlay-in': 'modalOverlayIn 0.2s ease forwards',

@@ -206,6 +206,51 @@ export const currentProject = (): Project | null => {
     return projects().find(p => p.id === id) ?? null;
 };
 
+/** 当前项目的 Git 分支名称（null = 非 git 仓库或尚未加载） */
+export const [gitBranch, setGitBranch] = createSignal<string | null>(null);
+
+// 当前项目变更时自动获取 Git 分支
+createEffect(() => {
+    const project = currentProject();
+    if (project?.path) {
+        invoke<string | null>('get_git_branch', { projectPath: project.path })
+            .then(branch => setGitBranch(branch ?? null))
+            .catch(() => setGitBranch(null));
+    } else {
+        setGitBranch(null);
+    }
+});
+
+/** 当前项目的所有 Git 本地分支列表（null = 非 git 仓库或尚未加载） */
+export const [gitBranches, setGitBranches] = createSignal<string[] | null>(null);
+
+// 当前项目变更时自动获取 Git 分支列表
+createEffect(() => {
+    const project = currentProject();
+    if (project?.path) {
+        invoke<string[]>('list_git_branches', { projectPath: project.path })
+            .then(branches => setGitBranches(branches ?? null))
+            .catch(() => setGitBranches(null));
+    } else {
+        setGitBranches(null);
+    }
+});
+
+/** 切换到指定 Git 分支并更新本地状态 */
+export const switchBranch = async (branchName: string): Promise<void> => {
+    const project = currentProject();
+    if (!project?.path) return;
+    try {
+        await invoke<string>('switch_git_branch', { projectPath: project.path, branchName });
+        // 切换成功后，立即更新当前分支名（不需要等待下一个 effect 周期）
+        setGitBranch(branchName);
+    } catch (e) {
+        // 切换失败时，通过控制台或 UI 反馈错误
+        console.error('切换分支失败:', e);
+        throw e; // 让调用方处理显示
+    }
+};
+
 /** 加载项目列表，恢复后验证持久化的项目 ID 仍然有效 */
 export const initProjects = async () => {
     try {

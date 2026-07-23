@@ -236,10 +236,7 @@ fn insert_usage_log(
         return;
     }
     let db = app.state::<DbState>();
-    let conn = match db.0.lock() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
+    let conn = db.0.lock();
     let id = uuid::Uuid::new_v4().to_string();
     let _ = conn.execute(
         "INSERT INTO usage_log (id, assistant_id, topic_id, model_id, round, input_tokens, output_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -548,7 +545,7 @@ pub async fn call_llm_stream(
     let assistant_id_c = assistant_id.clone();
     let topic_id_c = topic_id.clone();
     let messages_for_api = {
-        let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+        let conn = db_state.0.lock();
         messages
             .iter()
             .map(|message| message_for_api(&conn, message))
@@ -1503,7 +1500,7 @@ pub async fn run_agent_turn(
 
     // 预先把 messages 转为 API 格式（含附件 image 展开等），在持锁期间完成同步 I/O
     let mut messages_for_api: Vec<serde_json::Value> = {
-        let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+        let conn = db_state.0.lock();
         messages
             .iter()
             .map(|m| message_for_api(&conn, m))
@@ -2174,7 +2171,7 @@ pub fn get_usage_summary(
     db_state: tauri::State<'_, DbState>,
     days: u32,
 ) -> Result<Vec<UsageSummary>, String> {
-    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    let conn = db_state.0.lock();
     let mut stmt = conn
         .prepare(
             "SELECT date(timestamp) as day,
@@ -2212,36 +2209,67 @@ pub fn get_usage_summary(
 pub fn get_usage_summary_by_model(
     db_state: tauri::State<'_, DbState>,
     days: u32,
+    date: Option<String>,
 ) -> Result<Vec<UsageSummaryByModel>, String> {
-    let conn = db_state.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT model_id,
-                    SUM(input_tokens) as total_input,
-                    SUM(output_tokens) as total_output,
-                    COUNT(*) as request_count
-             FROM usage_log
-             WHERE timestamp >= datetime('now', ?1)
-             GROUP BY model_id
-             ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC",
-        )
-        .map_err(|e| e.to_string())?;
-    let days_param = format!("-{} days", days);
-    let rows = stmt
-        .query_map([&days_param], |row| {
-            Ok(UsageSummaryByModel {
-                model_id: row.get(0)?,
-                input_tokens: row.get(1)?,
-                output_tokens: row.get(2)?,
-                request_count: row.get(3)?,
+    let conn = db_state.0.lock();
+    if let Some(ref date_str) = date {
+        let mut stmt = conn
+            .prepare(
+                "SELECT model_id,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        COUNT(*) as request_count
+                 FROM usage_log
+                 WHERE date(timestamp) = ?1
+                 GROUP BY model_id
+                 ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([date_str.as_str()], |row| {
+                Ok(UsageSummaryByModel {
+                    model_id: row.get(0)?,
+                    input_tokens: row.get(1)?,
+                    output_tokens: row.get(2)?,
+                    request_count: row.get(3)?,
+                })
             })
-        })
-        .map_err(|e| e.to_string())?;
-    let mut summaries = Vec::new();
-    for row in rows {
-        summaries.push(row.map_err(|e| e.to_string())?);
+            .map_err(|e| e.to_string())?;
+        let mut summaries = Vec::new();
+        for row in rows {
+            summaries.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(summaries)
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT model_id,
+                        SUM(input_tokens) as total_input,
+                        SUM(output_tokens) as total_output,
+                        COUNT(*) as request_count
+                 FROM usage_log
+                 WHERE timestamp >= datetime('now', ?1)
+                 GROUP BY model_id
+                 ORDER BY (SUM(input_tokens) + SUM(output_tokens)) DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let days_param = format!("-{} days", days);
+        let rows = stmt
+            .query_map([&days_param], |row| {
+                Ok(UsageSummaryByModel {
+                    model_id: row.get(0)?,
+                    input_tokens: row.get(1)?,
+                    output_tokens: row.get(2)?,
+                    request_count: row.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let mut summaries = Vec::new();
+        for row in rows {
+            summaries.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(summaries)
     }
-    Ok(summaries)
 }
 
 #[tauri::command]
@@ -2250,7 +2278,7 @@ pub async fn append_message(
     topic_id: String,
     message: Message,
 ) -> Result<(), String> {
-    let conn = (*state).0.lock().unwrap();
+    let conn = (*state).0.lock();
     let message_id = message
         .id
         .clone()
@@ -2294,7 +2322,7 @@ pub async fn delete_topic_message(
     topic_id: String,
     message_id: String,
 ) -> Result<(), String> {
-    let conn = (*state).0.lock().unwrap();
+    let conn = (*state).0.lock();
     conn.execute(
         "DELETE FROM messages WHERE id = ?1 AND topic_id = ?2",
         params![message_id, topic_id],

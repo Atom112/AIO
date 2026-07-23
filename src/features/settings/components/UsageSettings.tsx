@@ -26,6 +26,7 @@ const UsageSettings: Component = () => {
     const [byModel, setByModel] = createSignal<UsageSummaryByModel[]>([]);
     // 热力图固定加载 365 天数据，不受时间范围影响
     const [heatmapSummary, setHeatmapSummary] = createSignal<UsageSummary[]>([]);
+    const [selectedDate, setSelectedDate] = createSignal<string | null>(null);
     const [loading, setLoading] = createSignal(true);
     const [error, setError] = createSignal<string | null>(null);
 
@@ -48,6 +49,22 @@ const UsageSettings: Component = () => {
         }
     };
 
+    // 按日期获取模型分布（热力图点击后调用）
+    const fetchModelByDate = async (date: string) => {
+        try {
+            const m = await invoke<UsageSummaryByModel[]>('get_usage_summary_by_model', { days: range().days, date });
+            setByModel(m);
+        } catch (e) {
+            console.error('获取单日模型分布失败:', e);
+        }
+    };
+
+    // 热力图日期点击回调
+    const handleDateSelect = (date: string) => {
+        setSelectedDate(date);
+        fetchModelByDate(date);
+    };
+
     // 初始化：同时加载热力图数据（固定365天）和时间范围数据
     createEffect(() => {
         // 加载热力图数据（只执行一次，因为不依赖 range）
@@ -56,9 +73,15 @@ const UsageSettings: Component = () => {
             .catch(console.error);
     });
 
-    // 时间范围变化时重新加载 summary 和 byModel
+    // 统一 Effect：日期选择模式 vs 时间范围模式
     createEffect(() => {
-        fetchRangeData(range().days);
+        if (selectedDate()) {
+            // 日期选择模式：仅刷新模型分布
+            fetchModelByDate(selectedDate()!);
+        } else {
+            // 普通模式：刷新 summary + byModel
+            fetchRangeData(range().days);
+        }
     });
 
     const hasData = createMemo(() => summary().length > 0 || byModel().length > 0);
@@ -82,7 +105,7 @@ const UsageSettings: Component = () => {
                                         background: r.days === range().days ? 'rgba(var(--primary-rgb), 0.2)' : 'transparent',
                                         color: r.days === range().days ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.4)',
                                     }}
-                                    onClick={() => setRange(r)}
+                                    onClick={() => { setSelectedDate(null); setRange(r); }}
                                 >
                                     {r.label}
                                 </button>
@@ -129,7 +152,7 @@ const UsageSettings: Component = () => {
                                 <div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
                                     每日活动
                                 </div>
-                                <UsageHeatmap summary={heatmapSummary()} />
+                                <UsageHeatmap summary={heatmapSummary()} onDateSelect={handleDateSelect} highlightDate={selectedDate() ?? undefined} />
                             </div>
 
                             {/* 模型分布 */}
@@ -138,9 +161,19 @@ const UsageSettings: Component = () => {
                                     class="rounded-xl p-5"
                                     style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05);"
                                 >
-                                    <div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
-                                        模型分布
-                                    </div>
+                                    <Show when={selectedDate()} fallback={<div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>模型分布</div>}>
+                                        <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                                            <span>{selectedDate()} 模型分布</span>
+                                            <button
+                                                class="border-none cursor-pointer flex items-center justify-center w-4 h-4 rounded-full hover:bg-white/[0.1] transition-colors"
+                                                style="color: rgba(255,255,255,0.4); font-size: 10px; line-height: 1;"
+                                                onClick={() => { setSelectedDate(null); fetchRangeData(range().days); }}
+                                                title="清除日期筛选"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+                                    </Show>
                                     <ModelBreakdown byModel={byModel()} />
                                 </div>
                             </Show>

@@ -196,7 +196,7 @@ pub async fn start_mcp_server(
     let conn = Arc::new(conn);
 
     // 协议握手
-    plugin
+    let server_info = plugin
         .initialize(&conn)
         .await
         .map_err(|e| format!("MCP initialize 失败: {}", e))?;
@@ -218,28 +218,36 @@ pub async fn start_mcp_server(
             .collect()
     };
 
-    // 尝试拉取资源列表（不强制要求服务器支持）
-    let (_resources, resource_count) = match plugin.list_resources(&conn).await {
-        Ok(r) => {
-            let count = r.len();
-            (Some(r), count)
+    // 仅当服务端声明了 resources 能力时才拉取资源列表
+    let (_resources, resource_count) = if server_info.capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
+        match plugin.list_resources(&conn).await {
+            Ok(r) => {
+                let count = r.len();
+                (Some(r), count)
+            }
+            Err(e) => {
+                tracing::debug!("MCP {} resources/list 失败: {}", id, e);
+                (None, 0)
+            }
         }
-        Err(e) => {
-            tracing::info!("MCP {} resources/list 不支持（可选特性）: {}", id, e);
-            (None, 0)
-        }
+    } else {
+        (None, 0)
     };
 
-    // 尝试拉取提示词列表
-    let (_prompts, prompt_count) = match plugin.list_prompts(&conn).await {
-        Ok(p) => {
-            let count = p.len();
-            (Some(p), count)
+    // 仅当服务端声明了 prompts 能力时才拉取提示词列表
+    let (_prompts, prompt_count) = if server_info.capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
+        match plugin.list_prompts(&conn).await {
+            Ok(p) => {
+                let count = p.len();
+                (Some(p), count)
+            }
+            Err(e) => {
+                tracing::debug!("MCP {} prompts/list 失败: {}", id, e);
+                (None, 0)
+            }
         }
-        Err(e) => {
-            tracing::info!("MCP {} prompts/list 不支持（可选特性）: {}", id, e);
-            (None, 0)
-        }
+    } else {
+        (None, 0)
     };
 
     {

@@ -17,6 +17,14 @@ function fmt(n: number): string {
     return String(n);
 }
 
+function fmtPrice(n: number): string {
+    if (n <= 0) return '$0';
+    if (n < 0.0001) return '<$0.0001';
+    if (n < 0.01) return `$${n.toFixed(4)}`;
+    if (n < 1) return `$${n.toFixed(3)}`;
+    return `$${n.toFixed(2)}`;
+}
+
 function usageColor(pct: number): string {
     if (pct > 0.95) return '#ef4444';
     if (pct > 0.85) return '#f59e0b';
@@ -28,7 +36,7 @@ const TokenStatsBar: Component = () => {
     const stats = createMemo(() => {
         const asst = datas.assistants.find(a => a.id === currentAssistantId());
         const topic = asst?.topics.find((t: Topic) => t.id === currentTopicId());
-        if (!topic) return { input: 0, output: 0, messages: 0, tools: 0, maxContext: 128_000, contextInput: 0 };
+        if (!topic) return { input: 0, output: 0, messages: 0, tools: 0, maxContext: 128_000, contextInput: 0, price: 0 };
         let input = 0, output = 0, tools = 0;
         let contextInput = 0;
         for (const msg of topic.history || []) {
@@ -36,18 +44,22 @@ const TokenStatsBar: Component = () => {
                 input += msg.inputTokens || 0;
                 output += msg.outputTokens || 0;
                 tools += msg.toolCalls?.length || 0;
-                // 上下文峰值：优先用 contextTokens（agent 模式），fallback 到 inputTokens（chat 模式）
                 contextInput = msg.contextTokens || msg.inputTokens || 0;
             }
         }
         let maxCtx = 128_000;
+        let price = 0;
         const cat = getCachedCatalog();
         const mdl = selectedModel();
         if (cat && mdl) {
             const meta = cat.models?.find((m: any) => m.id === mdl.model_id);
             if (meta?.contextWindow && meta.contextWindow > 0) maxCtx = meta.contextWindow;
+            const pricing = meta?.pricing;
+            if (pricing && pricing.input != null && pricing.output != null) {
+                price = (input * pricing.input + output * pricing.output) / 1_000_000;
+            }
         }
-        return { input, output, messages: topic.history?.length || 0, tools, maxContext: maxCtx, contextInput };
+        return { input, output, messages: topic.history?.length || 0, tools, maxContext: maxCtx, contextInput, price };
     });
 
     const total = () => stats().contextInput;
@@ -94,6 +106,13 @@ const TokenStatsBar: Component = () => {
                 <Show when={stats().tools > 0}>
                     <span class="inline-flex items-center gap-1 whitespace-nowrap" style="color: rgba(255,255,255,0.22);">
                         <Icon name="wrench" size={14} />{stats().tools}
+                    </span>
+                </Show>
+
+                <Show when={stats().price > 0}>
+                    <span style="color: rgba(255,255,255,0.10);">·</span>
+                    <span class="font-mono whitespace-nowrap" style="color: rgba(255,255,255,0.22);">
+                        {fmtPrice(stats().price)}
                     </span>
                 </Show>
             </div>

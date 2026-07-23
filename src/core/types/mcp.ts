@@ -231,6 +231,7 @@ export interface LlmToolResultPayload {
     content: string;
     result: any;
     is_error: boolean;
+    file_changes?: import('../../core/store/store').FileChangeInfo[];
 }
 
 /** 工具审批请求负载（tool-approval-requested，snake_case） */

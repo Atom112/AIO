@@ -22,16 +22,19 @@ function computeStats(messages: Message[]) {
     let totalInput = 0;
     let totalOutput = 0;
     let toolCallCount = 0;
+    let contextInput = 0;
 
     for (const msg of messages) {
         if (msg.role === 'assistant') {
             totalInput += msg.inputTokens || 0;
             totalOutput += msg.outputTokens || 0;
             toolCallCount += (msg.toolCalls?.length || 0);
+            // 上下文峰值：最后一个 assistant 消息的 contextTokens（或 inputTokens fallback）
+            contextInput = msg.contextTokens || msg.inputTokens || 0;
         }
     }
 
-    return { totalInput, totalOutput, toolCallCount };
+    return { totalInput, totalOutput, toolCallCount, contextInput };
 }
 
 /** 根据使用量返回颜色 */
@@ -57,7 +60,7 @@ const SessionStats: Component = () => {
         return 128_000;
     });
 
-    const totalUsed = createMemo(() => stats().totalInput + stats().totalOutput);
+    const totalUsed = createMemo(() => stats().contextInput);
     const color = createMemo(() => usageColor(totalUsed(), maxTokens()));
 
     return (

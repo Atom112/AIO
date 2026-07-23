@@ -3,7 +3,7 @@ import { Portal } from 'solid-js/web';
 import Markdown from '../../../shared/components/Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, isChatMode, mcpServerStatus, gitBranch, gitBranches, switchBranch, type AgentMode } from '../../../core/store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, isChatMode, mcpServerStatus, gitBranch, gitBranches, switchBranch, type AgentMode, type FileChangeInfo } from '../../../core/store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
@@ -18,6 +18,38 @@ import TokenStatsBar from './TokenStatsBar';
 import { totalErrors, totalWarnings, problemsPanelVisible, setProblemsPanelVisible, hasDiagnostics } from '../../../core/store/diagnostics';
 import AgentModeSelector from './AgentModeSelector';
 import WelcomeScreen from './WelcomeScreen';
+import DiffView from '../../../shared/components/DiffView';
+
+
+/** 聚合后的文件变更条目，与 FileChangeInfo 同形但条目唯一 */
+type AggregatedFileChange = FileChangeInfo;
+
+/** 从消息的 toolCalls 中聚合所有文件变更，按 filePath 去重 */
+function aggregateFileChanges(msg: any): AggregatedFileChange[] {
+    const toolCalls: any[] = msg.toolCalls || [];
+    const seen = new Map<string, FileChangeInfo>();
+    for (const tc of toolCalls) {
+        const changes: FileChangeInfo[] = tc.fileChanges || [];
+        for (const fc of changes) {
+            seen.set(fc.filePath, fc);
+        }
+    }
+    return Array.from(seen.values());
+}
+
+/** 从聚合的文件变更中计算增减行数统计 */
+function aggregateDiffStats(changes: AggregatedFileChange[]): { added: number; deleted: number } {
+    let added = 0;
+    let deleted = 0;
+    for (const c of changes) {
+        const m = c.summary.match(/\+(\d+)\s*-(\d+)/);
+        if (m) {
+            added += parseInt(m[1], 10);
+            deleted += parseInt(m[2], 10);
+        }
+    }
+    return { added, deleted };
+}
 
 interface ChatInterfaceProps {
     activeTopic: Topic | null;
@@ -89,6 +121,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     const [branchToast, setBranchToast] = createSignal<string | null>(null);
     // 消息 DOM 元素映射（id → HTMLElement），用于退场动画
     const messageEls = new Map<string, HTMLElement>();
+    // 已撤销的消息 ID 集合（本地信号，不持久化）
+    const [revertedMessages, setRevertedMessages] = createSignal<Set<string>>(new Set());
 
     // 点击外部关闭 Git 分支下拉
     const closeBranch = (e: MouseEvent) => {
@@ -389,6 +423,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             if (msg.role === 'tool') return null;
                             const isStreaming = createMemo(() => index() === props.typingIndex && props.isThinking && !msg.content);
                             const isActiveRound = createMemo(() => index() === props.typingIndex && props.isThinking);
+                            const fileChanges = (msg.role === 'assistant') ? aggregateFileChanges(msg) : [];
                             return (
                                 <div
                                     ref={(el) => { if (msg.id) { animatedMessageIds.add(msg.id); messageEls.set(msg.id, el); } }}
@@ -651,6 +686,100 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                         <UserMessageAvatar />
                                     </Show>
                                 </div>
+
+                                {/* File Changes box（仅 assistant 消息，有文件变更时显示）*/}
+                                <Show when={fileChanges.length > 0}>
+                                    {(() => {
+                                        const isReverted = () => revertedMessages().has(msg.id ?? String(index()));
+                                        const diffStats = () => aggregateDiffStats(fileChanges);
+                                        const showUndo = () => !isReverted() && !!currentProject()?.path && !!gitBranch();
+                                        const handleUndoAll = async () => {
+                                            const projectPath = currentProject()?.path;
+                                            if (!projectPath) return;
+                                            try {
+                                                await invoke('revert_file_changes_batch', {
+                                                    projectPath,
+                                                    filePaths: fileChanges.map((fc) => fc.filePath),
+                                                });
+                                                setRevertedMessages(prev => {
+                                                    const next = new Set(prev);
+                                                    next.add(msg.id ?? String(index()));
+                                                    return next;
+                                                });
+                                            } catch (err) {
+                                                console.error('批量撤销失败:', err);
+                                                alert('批量撤销失败，请确认项目是否为 Git 仓库且文件未被提交。');
+                                            }
+                                        };
+                                        return (
+                                            <div
+                                                class="rounded-lg overflow-hidden transition-opacity duration-300 w-[80%] self-center mt-3"
+                                                classList={{ 'opacity-40': isReverted() }}
+                                                style={{
+                                                    border: '1px solid rgba(255,255,255,0.06)',
+                                                    background: 'rgba(255,255,255,0.015)',
+                                                }}
+                                            >
+                                                <div
+                                                    class="flex items-center gap-2 px-3 py-1.5"
+                                                    style={{
+                                                        'border-bottom': '1px solid rgba(255,255,255,0.04)',
+                                                        color: 'rgba(255,255,255,0.4)',
+                                                        'font-size': '14px',
+                                                    }}
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4" style="opacity: 0.6;">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                                    </svg>
+                                                    <Show
+                                                        when={isReverted()}
+                                                        fallback={<span class="font-medium">文件更改</span>}
+                                                    >
+                                                        <span class="font-medium" style="text-decoration: line-through;">文件更改</span>
+                                                    </Show>
+                                                    <span style="color: rgba(255,255,255,0.25);">{fileChanges.length} 个文件</span>
+                                                    <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
+                                                        <span class="font-mono" style="color: rgba(255,255,255,0.18);">
+                                                            +{diffStats().added} -{diffStats().deleted}
+                                                        </span>
+                                                    </Show>
+                                                    <div class="flex-1" />
+                                                    <Show when={isReverted()}>
+                                                        <span
+                                                            class="px-1.5 py-px rounded text-[12px] font-medium"
+                                                            style={{
+                                                                color: 'rgba(80, 220, 100, 0.7)',
+                                                                background: 'rgba(80, 220, 100, 0.08)',
+                                                                border: '1px solid rgba(80, 220, 100, 0.15)',
+                                                            }}
+                                                        >
+                                                            已撤销
+                                                        </span>
+                                                    </Show>
+                                                    <Show when={showUndo()}>
+                                                        <button
+                                                            type="button"
+                                                            class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors hover:bg-white/[0.06] border-none cursor-pointer"
+                                                            style="color: rgba(255,255,255,0.35); background: transparent;"
+                                                            onClick={(e) => { e.stopPropagation(); handleUndoAll(); }}
+                                                            title="撤销此轮所有文件更改"
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5" style="opacity: 0.6;">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                                                            </svg>
+                                                            撤销全部
+                                                        </button>
+                                                    </Show>
+                                                </div>
+                                                <div class="p-2">
+                                                    <DiffView changes={fileChanges} allReverted={isReverted()} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </Show>
+
+
                             </div>
                         );
                     }}

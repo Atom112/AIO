@@ -28,13 +28,16 @@ const TokenStatsBar: Component = () => {
     const stats = createMemo(() => {
         const asst = datas.assistants.find(a => a.id === currentAssistantId());
         const topic = asst?.topics.find((t: Topic) => t.id === currentTopicId());
-        if (!topic) return { input: 0, output: 0, messages: 0, tools: 0, maxContext: 128_000 };
+        if (!topic) return { input: 0, output: 0, messages: 0, tools: 0, maxContext: 128_000, contextInput: 0 };
         let input = 0, output = 0, tools = 0;
+        let contextInput = 0;
         for (const msg of topic.history || []) {
             if (msg.role === 'assistant') {
                 input += msg.inputTokens || 0;
                 output += msg.outputTokens || 0;
                 tools += msg.toolCalls?.length || 0;
+                // 上下文峰值：优先用 contextTokens（agent 模式），fallback 到 inputTokens（chat 模式）
+                contextInput = msg.contextTokens || msg.inputTokens || 0;
             }
         }
         let maxCtx = 128_000;
@@ -44,10 +47,10 @@ const TokenStatsBar: Component = () => {
             const meta = cat.models?.find((m: any) => m.id === mdl.model_id);
             if (meta?.contextWindow && meta.contextWindow > 0) maxCtx = meta.contextWindow;
         }
-        return { input, output, messages: topic.history?.length || 0, tools, maxContext: maxCtx };
+        return { input, output, messages: topic.history?.length || 0, tools, maxContext: maxCtx, contextInput };
     });
 
-    const total = () => stats().input + stats().output;
+    const total = () => stats().contextInput;
     const pct = () => Math.min(total() / stats().maxContext, 1);
     const color = () => usageColor(pct());
 

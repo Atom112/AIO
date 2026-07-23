@@ -5,7 +5,7 @@
 //!
 //! 参考：Claude Code / Cursor 的 Git 工具设计。
 
-use crate::core::models::{ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
+use crate::core::models::{FileChange, ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -100,6 +100,40 @@ pub fn list_branches(project_root: &str) -> Result<Vec<String>, String> {
 pub fn checkout_branch(project_root: &str, branch_name: &str) -> Result<String, String> {
     run_git(project_root, &["checkout", branch_name])?;
     Ok(format!("已切换到分支 {branch_name}"))
+}
+
+/// 在指定项目的 git 仓库中捕获某个文件的最新差异。
+/// 在工具写入文件后调用，读取 git diff 获得 patch。
+/// 返回 None 表示非 git 仓库或没有变更。
+pub fn capture_file_diff(project_root: &str, file_path: &str) -> Option<FileChange> {
+    if !is_git_repo(project_root) {
+        return None;
+    }
+    let patch = run_git(project_root, &["diff", "--no-color", "--", file_path]).ok()?;
+    if patch.trim().is_empty() {
+        return None;
+    }
+    let action = if patch.contains("new file mode") {
+        "create"
+    } else if patch.contains("deleted file mode") {
+        "delete"
+    } else {
+        "modify"
+    };
+    let summary = format_diff_stats(&patch);
+    Some(FileChange {
+        file_path: file_path.to_string(),
+        action: action.to_string(),
+        diff: truncate_output(&patch, 100_000),
+        summary,
+    })
+}
+
+/// 从 unified diff 文本中解析 "+N -M" 统计
+fn format_diff_stats(patch: &str) -> String {
+    let added = patch.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
+    let removed = patch.lines().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+    format!("+{} -{}", added, removed)
 }
 
 // ====== 工具定义 ======

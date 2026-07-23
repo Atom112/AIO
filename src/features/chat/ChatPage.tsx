@@ -216,13 +216,17 @@ const ChatPage: Component = () => {
       }
     } catch {}
 
-    // 统计累计 token 用量
+    // 统计实际上下文占用（使用最后一条 assistant 消息的 contextTokens，不跨消息累加）
     let totalUsed = 0;
-    for (const msg of topic.history) {
+    // 找到最后一条 assistant 消息，取其上下文峰值
+    for (let i = topic.history.length - 1; i >= 0; i--) {
+      const msg = topic.history[i];
       if (msg.role === 'assistant') {
-        totalUsed += (msg.inputTokens || 0) + (msg.outputTokens || 0);
+        totalUsed = (msg.contextTokens || msg.inputTokens || 0) + (msg.outputTokens || 0);
+        break;
       }
     }
+    // 补充 user 消息的粗略估算（最后一条 assistant 未覆盖的部分）
     for (const msg of topic.history) {
       if (msg.role === 'user') {
         const text = typeof msg.content === 'string' ? msg.content : (msg.displayText || '');
@@ -1348,7 +1352,7 @@ const ChatPage: Component = () => {
         if (topic) setTypingIndex(topic.history.length - 1);
       }),
       listen<any>('llm-chunk', async (e) => {
-        const { assistant_id, topic_id, content, done, error, input_tokens, output_tokens } = e.payload;
+        const { assistant_id, topic_id, content, done, error, input_tokens, output_tokens, context_tokens } = e.payload;
         if (done) {
           // 刷新可能残余的 rAF 批量内容
           if (streamBatchRAF !== undefined) {
@@ -1395,6 +1399,7 @@ const ChatPage: Component = () => {
               // 保存 token 用量
               if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
               if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
+              if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
               // 孤儿 toolCalls：仍为 calling 的条目标记为中断错误
               if (toolCalls.some((tc: any) => tc.state === 'calling')) {
                 updatedMsg.toolCalls = toolCalls.map((tc: any) =>
@@ -1554,13 +1559,13 @@ const ChatPage: Component = () => {
       }),
       // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与 agentSteps 时间线
       listen<any>('llm-tool-result', (e) => {
-        const { assistant_id, topic_id, tool_call_id, content, result, is_error } = e.payload;
+        const { assistant_id, topic_id, tool_call_id, content, result, is_error, file_changes } = e.payload;
         setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
           'history', (h: any[]) => h.map((m: any) => {
             if (m.role !== 'assistant' || !m.toolCalls) return m;
             const newToolCalls = m.toolCalls.map((tc: any) =>
               tc.id === tool_call_id
-                ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined }
+                ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined, fileChanges: file_changes }
                 : tc
             );
             // 同步更新 agentSteps 中对应 tool_call 步骤
@@ -1577,6 +1582,7 @@ const ChatPage: Component = () => {
                     result,
                     content,
                     error: is_error ? content : undefined,
+                    fileChanges: file_changes,
                   },
                 };
               }

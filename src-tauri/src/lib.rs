@@ -110,6 +110,8 @@ pub fn run() {
             commands::git::get_git_branch,
             commands::git::list_git_branches,
             commands::git::switch_git_branch,
+            commands::git::revert_file_change,
+            commands::git::revert_file_changes_batch,
             // Skill 管理
             commands::skill::list_skills,
             commands::skill::save_skill,

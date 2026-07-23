@@ -63,8 +63,9 @@ export interface Message {
     agentStartTime?: number;             // Agent 轮次开始时间戳（ms），用于计算工作耗时
     interimContent?: string;             // 多轮 Agent 工作中，中间轮次的阶段性总结文本累积
     agentSteps?: AgentStep[];            // Agent 工作过程时间线（新），按时间顺序记录每个步骤
-    inputTokens?: number;                // 本轮/本消息输入 tokens 用量（服务端返回）
-    outputTokens?: number;               // 本轮/本消息输出 tokens 用量（服务端返回）
+    inputTokens?: number;                // 本轮/本消息输入 tokens 用量（跨轮累计，用于成本统计）
+    outputTokens?: number;               // 本轮/本消息输出 tokens 用量（跨轮累计，用于成本统计）
+    contextTokens?: number;              // 上下文峰值 tokens（最后一轮 API 调用的 input_tokens），用于上下文窗口进度条
 }
 
 /** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */
@@ -78,6 +79,20 @@ export interface ToolCallDisplay {
     result?: any;
     /** 错误信息（state=error 时） */
     error?: string;
+    /** 文件变更详情（写/替换/删文件时由后端提供） */
+    fileChanges?: FileChangeInfo[];
+}
+
+/** 单次文件修改记录 */
+export interface FileChangeInfo {
+    /** 文件路径（相对于项目根目录） */
+    filePath: string;
+    /** 操作类型: create | modify | delete */
+    action: 'create' | 'modify' | 'delete';
+    /** unified diff 文本 */
+    diff: string;
+    /** 增删行数概览 "+N -M" */
+    summary: string;
 }
 
 export interface AttachmentMeta {

@@ -362,6 +362,7 @@ async fn stream_one_round(
                                     error: None,
                                     input_tokens: None,
                                     output_tokens: None,
+                                    context_tokens: None,
                                 },
                             );
                         }
@@ -383,6 +384,7 @@ async fn stream_one_round(
                                         error: None,
                                         input_tokens: None,
                                         output_tokens: None,
+                                        context_tokens: None,
                                     },
                                 );
                             }
@@ -604,6 +606,7 @@ pub async fn call_llm_stream(
                         error: None,
                         input_tokens: Some(round.input_tokens),
                         output_tokens: Some(round.output_tokens),
+                        context_tokens: Some(round.input_tokens),
                     },
                 );
             }
@@ -624,6 +627,7 @@ pub async fn call_llm_stream(
                         error: if is_cancel { None } else { Some(e) },
                         input_tokens: None,
                         output_tokens: None,
+                        context_tokens: None,
                     },
                 );
             }
@@ -1618,9 +1622,11 @@ pub async fn run_agent_turn(
         let mut was_cancelled = false;
         // Workflow 模式：标记是否已调用 create_workflow
         let mut workflow_called = false;
-        // 跨轮累计 token 用量
+        // 跨轮累计 token 用量（用于成本统计）
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
+        // 上下文峰值 tokens：最后一轮 API 调用的 input_tokens（用于上下文窗口展示）
+        let mut context_input_tokens: u32 = 0;
 
         // Workflow 模式：在 LLM 循环前注入强制系统消息
         if agent_mode == AgentMode::Workflow {
@@ -1693,6 +1699,8 @@ pub async fn run_agent_turn(
             // 累计 token 用量
             total_input_tokens += round_result.input_tokens;
             total_output_tokens += round_result.output_tokens;
+            // 记录峰值上下文（最后一轮的 input_tokens）
+            context_input_tokens = round_result.input_tokens;
 
             // 持久化本轮 token 用量到 usage_log
             insert_usage_log(
@@ -1893,6 +1901,12 @@ pub async fn run_agent_turn(
                     });
                 } else {
                     // 非 delegate 工具：立即顺序执行
+                    // 在工具执行前提取文件路径（args_val 可能被 move 到 MCP 调用中）
+                    let file_path_for_diff: Option<String> = if ["write_file", "replace_in_file", "delete_file"].contains(&tc.name.as_str()) {
+                        args_val["path"].as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    };
                     let tool_result = if server_id.as_deref() == Some("__builtin__") {
                         execute_builtin_tool(
                             &app_c,
@@ -1936,6 +1950,14 @@ pub async fn run_agent_turn(
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
                     };
+                    // 对于文件修改工具，捕获 diff 供前端展示
+                    let file_changes = file_path_for_diff
+                        .and_then(|path| {
+                            file_tools::resolve_project_root(&app_c, project_id_c.as_deref())
+                                .ok()
+                                .and_then(|root| git_tools::capture_file_diff(&root, &path))
+                        })
+                        .map(|fc| vec![fc]);
                     // 立即发射结果（不等待其他工具）
                     let _ = window.emit(
                         "llm-tool-result",
@@ -1947,6 +1969,7 @@ pub async fn run_agent_turn(
                             content: content_text.clone(),
                             result: result_value.clone(),
                             is_error,
+                            file_changes,
                         },
                     );
 
@@ -1998,6 +2021,7 @@ pub async fn run_agent_turn(
                             content: content_text.clone(),
                             result: result_value.clone(),
                             is_error,
+                            file_changes: None,
                         },
                     );
 
@@ -2028,6 +2052,7 @@ pub async fn run_agent_turn(
                             content: result.content_text.clone(),
                             result: result.result_value,
                             is_error: result.is_error,
+                            file_changes: None,
                         },
                     );
 
@@ -2061,6 +2086,7 @@ pub async fn run_agent_turn(
                 error: error_payload,
                 input_tokens: if total_input_tokens > 0 { Some(total_input_tokens) } else { None },
                 output_tokens: if total_output_tokens > 0 { Some(total_output_tokens) } else { None },
+                context_tokens: if context_input_tokens > 0 { Some(context_input_tokens) } else { None },
             },
         );
 

@@ -357,7 +357,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
         function: super::models::ToolFunctionSpec {
             name: "delegate_task".into(),
             description: concat!(
-                "创建一个子智能体来执行独立的子任务。\n\n",
+                "【推荐方式】创建一个子智能体来执行独立的子任务。收到复杂任务时应优先使用此工具。\n\n",
                 "当你面对复杂任务时，可以将任务拆分为子任务并委托给子智能体：\n",
                 "- 使用 explorer 子智能体搜索和探索代码库\n",
                 "- 使用 coder 子智能体编写或修改具体的代码文件\n",

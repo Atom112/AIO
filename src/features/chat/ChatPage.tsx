@@ -1546,6 +1546,7 @@ const ChatPage: Component = () => {
       // 思维链片段追加：原生 reasoning_content 流式累积到对应消息的 reasoning 字段
       // 同时构建 agentSteps 时间线中的 thinking 步骤
       listen<any>('llm-reasoning', (e) => {
+        if (reasoningLevel() === 'off') return;
         const { assistant_id, topic_id, content } = e.payload;
         const asst = datas.assistants.find(a => a.id === assistant_id);
         const topic = asst?.topics.find((t: Topic) => t.id === topic_id);

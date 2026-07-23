@@ -25,6 +25,7 @@ import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
 import TopicSidebar from './components/TopicSidebar';
 import { Portal } from 'solid-js/web';
+import ShareModal from './components/ShareModal';
 import ProblemsPanel from './components/ProblemsPanel';
 import WorkflowVisualization from './components/WorkflowVisualization';
 import type { PendingApproval } from './components/ToolApprovalBubble';
@@ -98,8 +99,13 @@ const ChatPage: Component = () => {
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
   // 待用户审批的工具调用列表
+  /** 分享弹窗状态 */
+  const [showShareModal, setShowShareModal] = createSignal(false);
+  const [activeShareTopicId, setActiveShareTopicId] = createSignal<string | null>(null);
+  /** 消息级选择模式 */
+  const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
+  const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
   const [pendingApprovals, setPendingApprovals] = createSignal<PendingApproval[]>([]);
-
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
   /**
@@ -155,6 +161,61 @@ const ChatPage: Component = () => {
     const asst = currentAssistant();
     if (!asst) return null;
     return asst.topics.find((t: Topic) => t.id === currentTopicId()) || asst.topics[0] || null;
+  };
+
+  /** 分享弹窗展示的话题：优先使用来自 TopicSidebar 右键菜单指定的 ID，否则用当前活跃话题 */
+  const shareTopic = (): Topic | null => {
+    const asst = currentAssistant();
+    if (!asst) return null;
+    const sid = activeShareTopicId();
+    if (sid) return asst.topics.find((t: Topic) => t.id === sid) || null;
+    return activeTopic();
+  };
+
+  // -------- 消息级选择 --------
+
+  /** 进入选择模式 */
+  const enterSelectionMode = (topicId?: string | null) => {
+    if (topicId) {
+      setActiveShareTopicId(topicId);
+      setCurrentTopicId(topicId);
+    }
+    setSelectedMessageIds(new Set<string>());
+    setIsSelectingMessages(true);
+  };
+
+  /** 切换单条消息的选中状态 */
+  const handleToggleMessage = (msgId: string) => {
+    setSelectedMessageIds((prev) => {
+      const next = new Set<string>(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
+
+  /** 全选当前话题的可导出消息（排除 tool 消息） */
+  const handleSelectAll = () => {
+    const topic = activeTopic();
+    if (!topic) return;
+    const ids = new Set<string>();
+    for (const msg of topic.history) {
+      if (msg.role !== 'tool' && msg.id) ids.add(msg.id);
+    }
+    setSelectedMessageIds(ids);
+  };
+
+  /** 取消选择，退出选择模式 */
+  const handleCancelSelection = () => {
+    setIsSelectingMessages(false);
+    setSelectedMessageIds(new Set<string>());
+    setActiveShareTopicId(null);
+  };
+
+  /** 确认选择，打开分享弹窗 */
+  const handleConfirmSelection = () => {
+    setIsSelectingMessages(false);
+    setShowShareModal(true);
   };
 
   /**
@@ -890,12 +951,14 @@ const ChatPage: Component = () => {
    * 停止当前的AI生成过程
    */
   const handleStopGeneration = async () => {
-    await invoke('stop_llm_stream', {
-      assistantId: currentAssistantId(),
-      topicId: currentTopicId()
-    });
-    // 后端 cancel 后会 emit llm-chunk{done:true}，监听器会复位 isThinking；
-    // 这里同步清理审批气泡（取消时未决审批不再有效）。
+    try {
+      await invoke('stop_llm_stream', {
+        assistantId: currentAssistantId(),
+        topicId: currentTopicId()
+      });
+    } catch (err) {
+      console.error('stop_llm_stream 失败:', err);
+    }
     setPendingApprovals([]);
   };
 
@@ -1886,6 +1949,14 @@ const ChatPage: Component = () => {
           handleFileUpload={handleFileUpload}
           pendingApprovals={pendingApprovals()}
           onResolveApproval={(id) => setPendingApprovals(prev => prev.filter(a => a.approvalId !== id))}
+          canShare={!!activeTopic()}
+          onOpenShare={() => enterSelectionMode(null)}
+          isSelectingMessages={isSelectingMessages()}
+          selectedMessageIds={selectedMessageIds()}
+          onToggleMessage={handleToggleMessage}
+          onSelectAll={handleSelectAll}
+          onCancelSelection={handleCancelSelection}
+          onConfirmSelection={handleConfirmSelection}
         />
       </div>
 
@@ -1898,9 +1969,18 @@ const ChatPage: Component = () => {
         editingTopicId={editingTopicId()}
         setEditingTopicId={setEditingTopicId}
         addTopic={addTopic}
+        onExportTopic={(topicId) => enterSelectionMode(topicId)}
         isResizing={isResizing()}
       />
 
+      <Portal>
+        <ShareModal
+          open={showShareModal()}
+          onClose={() => { setShowShareModal(false); setActiveShareTopicId(null); setSelectedMessageIds(new Set<string>()); }}
+          topic={shareTopic()}
+          selectedMessageIds={selectedMessageIds().size > 0 ? selectedMessageIds() : undefined}
+        />
+      </Portal>
       <Portal>
         <ProjectSettingsModal
           show={settingsAsstId() !== null}

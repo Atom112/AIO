@@ -66,35 +66,40 @@ interface ChatInterfaceProps {
     handleFileUpload: (path: string, type: 'file' | 'image') => Promise<void>;
     pendingApprovals: PendingApproval[];
     onResolveApproval: (approvalId: string) => void;
+    /** 是否显示分享按钮（仅纯对话模式） */
+    canShare: boolean;
+    /** 打开分享弹窗的回调（进入消息选择模式） */
+    onOpenShare: () => void;
+    /** 消息选择模式 */
+    isSelectingMessages: boolean;
+    /** 当前选中的消息 ID 集合 */
+    selectedMessageIds: Set<string>;
+    /** 切换单条消息选中 */
+    onToggleMessage: (msgId: string) => void;
+    /** 全选 */
+    onSelectAll: () => void;
+    /** 取消选择 */
+    onCancelSelection: () => void;
+    /** 确认选择 */
+    onConfirmSelection: () => void;
 }
 
 const UserMessageAvatar: Component = () => {
-    const [isLoaded, setIsLoaded] = createSignal(false);
-    const [imgSrc, setImgSrc] = createSignal(globalUserAvatar());
-
-    createEffect(() => {
-        setImgSrc(globalUserAvatar());
-        setIsLoaded(false);
-    });
+    const avatarSrc = () => globalUserAvatar();
 
     return (
         <div class="relative flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
              style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
             <img
-                src={imgSrc()}
+                src={avatarSrc()}
                 alt="User"
-                class="w-full h-full object-cover transition-opacity duration-300"
-                classList={{ 'opacity-0': !isLoaded(), 'opacity-100': isLoaded() }}
-                onLoad={() => setIsLoaded(true)}
-                onError={() => setImgSrc('/icons/app-logo/user.svg')}
+                class="w-full h-full object-cover"
+                onError={(e) => { e.currentTarget.src = '/icons/app-logo/user.svg'; }}
             />
             <div
-                class="absolute inset-0 w-full h-full flex items-center justify-center transition-opacity duration-300 pointer-events-none"
-                style="background: rgba(255,255,255,0.06);"
-                classList={{ 'opacity-100': !isLoaded(), 'opacity-0': isLoaded() }}
-            >
-                <Icon src="/icons/app-logo/user.svg" class="w-5 h-5 opacity-50" />
-            </div>
+                class="absolute inset-0 w-full h-full flex items-center justify-center pointer-events-none"
+                style="background: rgba(255,255,255,0.02);"
+            />
         </div>
     );
 };
@@ -382,6 +387,62 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     return (
         <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full"
              style="background: rgba(18, 22, 35, 0.12); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 1px rgba(255,255,255,0.04);">
+            {/* 顶部操作栏 */}
+            <Show
+              when={props.isSelectingMessages}
+              fallback={
+                <div class="flex items-center justify-between px-1 pb-3 shrink-0">
+                  <span class="text-sm font-medium truncate" style="color: rgba(255,255,255,0.7);">
+                    {props.activeTopic?.name ?? ''}
+                  </span>
+                  <Show when={props.canShare && props.activeTopic}>
+                    <button
+                      class="group inline-flex items-center justify-center bg-transparent rounded-lg cursor-pointer w-8 h-8 hover:w-[68px] transition-all duration-200 hover:px-2 hover:bg-[rgba(255,255,255,0.06)]"
+                      style="border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.45);"
+                      onClick={() => props.onOpenShare()}
+                    >
+                      <Icon src="/icons/app-logo/share.svg" class="w-[15px] h-[15px] shrink-0" />
+                      <span class="overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100 group-hover:ml-1">分享</span>
+                    </button>
+                  </Show>
+                </div>
+              }
+            >
+              {/* 选择模式工具栏 */}
+              <div class="flex items-center justify-between px-1 pb-3 shrink-0 animate-fade-in">
+                <div class="flex items-center gap-2">
+                  <button
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
+                    onClick={props.onSelectAll}
+                  >
+                    全选
+                  </button>
+                  <button
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
+                    onClick={props.onCancelSelection}
+                  >
+                    取消
+                  </button>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="text-xs text-white/50">
+                    已选 {props.selectedMessageIds.size} 条
+                  </span>
+                  <button
+                    class="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200"
+                    classList={{
+                      'bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] hover:bg-[rgba(124,154,191,0.2)]': props.selectedMessageIds.size > 0,
+                      'bg-white/[0.02] border border-white/[0.04] text-white/25 cursor-not-allowed': props.selectedMessageIds.size === 0,
+                    }}
+                    disabled={props.selectedMessageIds.size === 0}
+                    onClick={props.onConfirmSelection}
+                  >
+                    确认
+                  </button>
+                </div>
+              </div>
+            </Show>
+
             <div
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
@@ -425,10 +486,30 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             const isActiveRound = createMemo(() => index() === props.typingIndex && props.isThinking);
                             const fileChanges = (msg.role === 'assistant') ? aggregateFileChanges(msg) : [];
                             return (
-                                <div
-                                    ref={(el) => { if (msg.id) { animatedMessageIds.add(msg.id); messageEls.set(msg.id, el); } }}
-                                    class={`flex flex-col mb-3 pointer-events-auto ${msg.id && !animatedMessageIds.has(msg.id) ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
-                                >
+                                <div class="flex items-start gap-2 mb-3">
+                                    {/* 选择模式：复选框 */}
+                                    <Show when={props.isSelectingMessages && msg.id}>
+                                      <div
+                                        class="flex-shrink-0 mt-1 cursor-pointer select-none"
+                                        onClick={() => props.onToggleMessage(msg.id!)}
+                                      >
+                                        <div
+                                          class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-150 hover:scale-110 active:scale-95"
+                                          classList={{
+                                            'bg-[rgba(124,154,191,0.25)] border-[rgba(124,154,191,0.5)]': props.selectedMessageIds.has(msg.id!),
+                                            'bg-transparent border-white/[0.15] hover:border-white/[0.35]': !props.selectedMessageIds.has(msg.id!),
+                                          }}
+                                        >
+                                          <Show when={props.selectedMessageIds.has(msg.id!)}>
+                                            <Icon name="check" class="w-3 h-3" style="color: rgba(124,154,191,0.9);" />
+                                          </Show>
+                                        </div>
+                                      </div>
+                                    </Show>
+                                    <div
+                                      ref={(el) => { if (msg.id) { animatedMessageIds.add(msg.id); messageEls.set(msg.id, el); } }}
+                                      class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                                    >
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
                                         <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
@@ -739,8 +820,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     </Show>
                                                     <span style="color: rgba(255,255,255,0.25);">{fileChanges.length} 个文件</span>
                                                     <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
-                                                        <span class="font-mono" style="color: rgba(255,255,255,0.18);">
-                                                            +{diffStats().added} -{diffStats().deleted}
+                                                        <span class="font-mono">
+                                                            {diffStats().added > 0 && <span style="color: #50dc64;">+{diffStats().added}</span>}
+                                                            {diffStats().added > 0 && diffStats().deleted > 0 && <span style="color: rgba(255,255,255,0.18);"> </span>}
+                                                            {diffStats().deleted > 0 && <span style="color: #ff5050;">-{diffStats().deleted}</span>}
                                                         </span>
                                                     </Show>
                                                     <div class="flex-1" />
@@ -780,7 +863,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 </Show>
 
 
-                            </div>
+                                    </div>
+                                </div>
                         );
                     }}
                     </For>
@@ -843,7 +927,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                         (pending, index) => index !== i() && pending.id === file.id
                                     );
                                     if (!duplicatePending) {
-                                        void invoke('discard_chat_attachment', { attachmentId: file.id });
+                                        void invoke('discard_chat_attachment', { attachmentId: file.id }).catch(console.error);
                                     }
                                     props.setPendingFiles(p => p.filter((_, idx) => idx !== i()));
                                 }}

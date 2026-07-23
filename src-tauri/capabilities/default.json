@@ -17,6 +17,7 @@
     "core:path:default",
     "dialog:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "shell:allow-open",
     "updater:default",
     "updater:allow-check",
@@ -49,6 +50,12 @@
         { "path": "$APPDATA/avatars/**" },
         { "path": "$APPDATA/models-catalog.json" },
         { "path": "$APPDATA/engines/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        { "path": "$HOME/**" }
       ]
     }
   ]

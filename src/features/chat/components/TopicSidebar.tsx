@@ -16,6 +16,8 @@ interface TopicSidebarProps {
     isCollapsed: boolean;
     onToggle: (e: MouseEvent) => void;
     isResizing: boolean;
+    /** 打开指定话题的导出弹窗 */
+    onExportTopic: (topicId: string) => void;
 }
 
 const createTopic = (name?: string): Topic => ({
@@ -203,6 +205,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         <Show when={!isMenuTargetDefault()}>
                             <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={handleRegenerateTitle}>重新生成标题</button>
                         </Show>
+                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={() => { props.onExportTopic(topicMenuState().targetTopicId!); closeTopicMenu(); }}>导出对话</button>
                         <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>删除话题</button>
                     </div>
                 </Portal>

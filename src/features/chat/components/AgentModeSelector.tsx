@@ -26,7 +26,7 @@ const MODES: ModeOption[] = [
     { value: 'off',    label: '对话',   desc: '纯对话，禁用工具调用',          icon: 'chat' },
     { value: 'normal', label: '普通',   desc: '修改文件前向用户确认',            icon: 'check-circle' },
     { value: 'auto',   label: '自动',   desc: '自主迭代直至目标完成',            icon: 'refresh' },
-    { value: 'plan',   label: 'Plan',   desc: '先做调研，后列出实现方案',        icon: 'document' },
+    { value: 'plan',   label: 'Plan',   desc: '研究需求并输出实现计划（不执行）', icon: 'document' },
     { value: 'workflow', label: '工作流', desc: '强制拆解任务为工作流并自动执行', icon: 'layers' },
 ];
 

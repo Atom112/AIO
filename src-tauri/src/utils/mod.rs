@@ -3,6 +3,8 @@ pub mod file_tools;
 pub mod git_tools;
 pub mod lsp_tools;
 pub mod lsp_agent_tools;
+pub mod project_map;
+pub mod think;
 pub mod knowledge;
 pub mod sandbox;
 pub mod shell_tools;

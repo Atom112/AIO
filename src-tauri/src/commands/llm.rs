@@ -2,9 +2,7 @@ use crate::core::permission::{self, PermissionAction};
 use crate::core::state::DbState;
 use crate::core::state::PendingApprovals;
 use crate::commands::attachment::sync_message_attachments;
-use crate::core::state::McpServerState;
 use crate::core::subagent;
-use crate::plugins::mcp::McpServerManager;
 use crate::utils::file_tools;
 use crate::utils::git_tools;
 use crate::utils::lsp_tools;
@@ -26,19 +24,6 @@ use std::future::Future;
 use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
 use tokio_util::sync::CancellationToken;
 
-/// 内置 profile 模型覆盖建议（仅当用户未在 profile-model-overrides.json 中设置时生效）。
-/// 只读 profile 使用快速模型，写入 profile 使用主模型。
-const DEFAULT_PROFILE_OVERRIDES: &[(&str, &str)] = &[
-    ("explorer", "fast"),
-    ("architect", "fast"),
-    ("reviewer", "fast"),
-    ("requirements", "fast"),
-    ("debugger", "main"),
-    ("coder", "main"),
-    ("tester", "main"),
-    ("writer", "main"),
-    ("general", "main"),
-];
 
 /// 流式 HTTP 客户端（LLM 推理专用）。
 ///
@@ -506,24 +491,6 @@ async fn stream_one_round(
     })
 }
 
-/// 为助手构建本轮可用工具（复用 list_mcp_tools_for_assistant 核心逻辑）。
-///
-/// 返回 `(tools, tool_server_map)`。`plan` 模式或空 server 列表返回空（无工具注入）。
-async fn build_tools_for_assistant(
-    app: &AppHandle,
-    mgr: &McpServerManager,
-    state: &McpServerState,
-    mcp_server_ids: &[String],
-    project_id: Option<&str>,
-) -> (Vec<ToolSpec>, std::collections::HashMap<String, String>) {
-    if mcp_server_ids.is_empty() {
-        return (Vec::new(), std::collections::HashMap::new());
-    }
-    match crate::commands::mcp::list_mcp_tools_for_assistant_inner(app, mgr, state, mcp_server_ids.to_vec(), project_id.map(|s| s.to_string())).await {
-        Ok(at) => (at.tools, at.tool_server_map),
-        Err(_) => (Vec::new(), std::collections::HashMap::new()),
-    }
-}
 
 /// 核心函数：调用 LLM 并分块回传结果（流式输出）。
 ///
@@ -819,6 +786,10 @@ async fn execute_builtin_tool(
         knowledge::execute_remember(&project_root, arguments)
     } else if tool_name == "recall" {
         knowledge::execute_recall(&project_root, arguments)
+    } else if tool_name == "think" {
+        Ok(crate::utils::think::execute(arguments))
+    } else if tool_name == "project_map" {
+        Ok(crate::utils::project_map::execute(&project_root))
     } else if tool_name.starts_with("git_") {
         let tool_name_c = tool_name.to_string();
         let arguments_c = arguments.clone();
@@ -1155,32 +1126,11 @@ async fn handle_delegate_task(
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
 
-    // 1. 用户配置的 profile-model-overrides.json
+    // 模型解析：per-profile override 优先，否则使用主模型
     let override_info = profile_model_overrides.iter().find(|o| o.profile_id == profile.id);
-    // 2. 内置默认覆盖（仅当用户未配置时）
-    let default_fast = override_info.is_none()
-        && DEFAULT_PROFILE_OVERRIDES.iter().any(|(pid, speed)| *pid == profile.id && *speed == "fast");
-
-    // 提前加载 AppConfig（如果需要快速模型配置），确保其生命周期足够长
-    let app_config = if default_fast {
-        crate::commands::config::load_app_config(app.clone()).ok()
-    } else {
-        None
-    };
 
     let (resolved_api_url, resolved_api_key, resolved_model) = if let Some(ov) = override_info {
         (ov.api_url.as_str(), ov.api_key.as_str(), ov.model_id.as_str())
-    } else if let Some(cfg) = &app_config {
-        // 尝试使用快速模型配置
-        if let (Some(fast_id), Some(fast_url), Some(fast_key)) = (
-            cfg.fast_model_id.as_deref(),
-            cfg.fast_model_api_url.as_deref(),
-            cfg.fast_model_api_key.as_deref(),
-        ) {
-            (fast_url, fast_key, fast_id)
-        } else {
-            (api_url, api_key, model)
-        }
     } else {
         (api_url, api_key, model)
     };
@@ -1695,8 +1645,8 @@ struct SubagentErrorPayload {
 ///
 /// # 参数
 /// - `messages`：初始消息列表（含本轮 user 消息），由前端构造好 system/历史/user
-/// - `mcp_server_ids`：助手启用的 MCP server id 列表（opt-in，空 = 无工具）
-/// - `agent_mode`：Agent 执行模式，影响权限规则与工具注入（plan 整轮无工具）
+/// - `mcp_server_ids`：保留参数（主 Agent 门控后不再注入 MCP 工具，子 Agent 自建工具集）
+/// - `agent_mode`：Agent 执行模式，影响权限规则与工具注入（Plan: 研究工具 / Normal/Auto/Workflow: 编排工具 / Off: 无工具）
 /// - `project_id`：项目 id（用于解析项目级权限规则）
 #[tauri::command]
 pub async fn run_agent_turn(
@@ -1748,7 +1698,6 @@ pub async fn run_agent_turn(
     let assistant_id_c = assistant_id.clone();
     let topic_id_c = topic_id.clone();
     let app_c = app.clone();
-    let mcp_server_ids_c = mcp_server_ids.clone();
     let project_id_c = project_id.clone();
     let profile_overrides_c = profile_model_overrides.clone();
     let custom_profiles_c = custom_subagent_profiles.clone();
@@ -1761,9 +1710,6 @@ pub async fn run_agent_turn(
                 api_key: String::new(),
                 default_model: String::new(),
                 local_model_path: String::new(),
-                fast_model_id: None,
-                fast_model_api_url: None,
-                fast_model_api_key: None,
                 auto_retry_enabled: true,
                 auto_retry_count: 2,
                 auto_retry_delay_ms: 500,
@@ -1773,95 +1719,66 @@ pub async fn run_agent_turn(
 
         let client = streaming_http_client();
 
-        // 构建工具：仅 Agent 模式（非 Off）且非 Plan 时才注入工具。
-        // Off（纯对话）模式绝不向模型暴露工具，避免模型擅自调用；Plan 模式整轮不注入工具。
-        // 内置文件工具始终注入（in-process 直接调用，无需 MCP 子进程连接）。
-        // 在 spawn 内通过 AppHandle 解析全局状态，避免 tauri::State 借用逃逸。
-        let tools_enabled = is_agent_mode && agent_mode != AgentMode::Plan;
-        // 联网搜索开关：即使对话模式下也注入 web_fetch + web_search
-        let web_only = web_search_enabled && !tools_enabled;
-        let (tools, tool_server_map) = if tools_enabled {
-            let (mut mcp_tools, mut mcp_map) = if !mcp_server_ids_c.is_empty() {
-                let mgr = app_c.state::<McpServerManager>();
-                let mcp_state = app_c.state::<McpServerState>();
-                build_tools_for_assistant(
-                    &app_c,
-                    mgr.inner(),
-                    mcp_state.inner(),
-                    &mcp_server_ids_c,
-                    project_id_c.as_deref(),
-                )
-                .await
-            } else {
-                (Vec::new(), std::collections::HashMap::new())
-            };
-            // 始终注入内置工具（in-process，跳过 MCP 子进程）
-            for spec in file_tools::get_file_tool_specs() {
-                let name = spec.function.name.clone();
-                if !mcp_map.contains_key(&name) {
-                    mcp_tools.push(spec);
-                }
-                mcp_map.insert(name, "__builtin__".into());
-            }
-            // 注入命令执行工具
-            let cmd_spec = shell_tools::get_command_tool_spec();
-            let name = cmd_spec.function.name.clone();
-            if !mcp_map.contains_key(&name) {
-                mcp_tools.push(cmd_spec);
-            }
-            mcp_map.insert(name, "__builtin__".into());
-            // 注入 Web 工具
+        // 工具选择：根据 Agent 模式注入不同工具集
+        // - Plan: 仅研究工具（think + project_map + web）
+        // - Normal/Auto/Workflow: 仅编排工具（delegate_task + create_workflow + think + web + project_map）
+        // - 对话 + 联网: 仅 web 工具
+        // - 纯对话: 无工具
+        let (tools, tool_server_map) = if agent_mode == AgentMode::Plan {
+            // Plan 模式：仅研究工具（think + project_map + web）
+            let mut plan_tools: Vec<ToolSpec> = Vec::new();
+            let mut plan_map: HashMap<String, String> = HashMap::new();
+
+            // think
+            let think_spec = crate::utils::think::tool_spec();
+            plan_map.insert(think_spec.function.name.clone(), "__builtin__".into());
+            plan_tools.push(think_spec);
+
+            // project_map
+            let pm_spec = crate::utils::project_map::tool_spec();
+            plan_map.insert(pm_spec.function.name.clone(), "__builtin__".into());
+            plan_tools.push(pm_spec);
+
+            // web tools
             for spec in web_tools::get_web_tool_specs() {
-                let name = spec.function.name.clone();
-                if !mcp_map.contains_key(&name) {
-                    mcp_tools.push(spec);
-                }
-                mcp_map.insert(name, "__builtin__".into());
+                plan_map.insert(spec.function.name.clone(), "__builtin__".into());
+                plan_tools.push(spec);
             }
-            // 注入 Git 工具（仅当项目是 git 仓库时有效工具）
-            let git_specs = git_tools::get_git_tool_specs();
-            for spec in git_specs {
-                let name = spec.function.name.clone();
-                if !mcp_map.contains_key(&name) {
-                    mcp_tools.push(spec);
-                }
-                mcp_map.insert(name, "__builtin__".into());
-            }
-            // 注入知识工具（跨 session 记忆）—— 仅当用户在设置中开启时
-            if app_config.knowledge_enabled {
-                let knowledge_specs = knowledge::get_knowledge_tool_specs();
-                for spec in knowledge_specs {
-                    let name = spec.function.name.clone();
-                    if !mcp_map.contains_key(&name) {
-                        mcp_tools.push(spec);
-                    }
-                    mcp_map.insert(name, "__builtin__".into());
-                }
-            }
-            // 注入所有 LSP 工具（定义跳转、引用查找、悬浮类型、符号列表、诊断）
-            for spec in lsp_agent_tools::get_all_lsp_tool_specs() {
-                let name = spec.function.name.clone();
-                if !mcp_map.contains_key(&name) {
-                    mcp_tools.push(spec);
-                }
-                mcp_map.insert(name, "__builtin__".into());
-            }
-            // 注入子智能体委托工具（仅 Agent 模式下可用）
+
+            (plan_tools, plan_map)
+        } else if is_agent_mode {
+            // Normal/Auto/Workflow: 仅编排工具
+            let mut orch_tools: Vec<ToolSpec> = Vec::new();
+            let mut orch_map: HashMap<String, String> = HashMap::new();
+
+            // delegate_task
             let delegate_spec = subagent::delegate_task_tool_spec();
-            let name = delegate_spec.function.name.clone();
-            if !mcp_map.contains_key(&name) {
-                mcp_tools.push(delegate_spec);
-            }
-            mcp_map.insert(name, "__builtin__".into());
-            // 注入工作流创建工具（仅 Agent 模式下可用）
+            orch_map.insert(delegate_spec.function.name.clone(), "__builtin__".into());
+            orch_tools.push(delegate_spec);
+
+            // create_workflow
             let workflow_spec = subagent::create_workflow_tool_spec();
-            let name = workflow_spec.function.name.clone();
-            if !mcp_map.contains_key(&name) {
-                mcp_tools.push(workflow_spec);
+            orch_map.insert(workflow_spec.function.name.clone(), "__builtin__".into());
+            orch_tools.push(workflow_spec);
+
+            // think
+            let think_spec = crate::utils::think::tool_spec();
+            orch_map.insert(think_spec.function.name.clone(), "__builtin__".into());
+            orch_tools.push(think_spec);
+
+            // web tools
+            for spec in web_tools::get_web_tool_specs() {
+                orch_map.insert(spec.function.name.clone(), "__builtin__".into());
+                orch_tools.push(spec);
             }
-            mcp_map.insert(name, "__builtin__".into());
-            (mcp_tools, mcp_map)
-        } else if web_only {
+
+            // project_map
+            let pm_spec = crate::utils::project_map::tool_spec();
+            orch_map.insert(pm_spec.function.name.clone(), "__builtin__".into());
+            orch_tools.push(pm_spec);
+
+            (orch_tools, orch_map)
+        } else if web_search_enabled {
             // 仅注入 Web 工具（对话模式下联网搜索）
             let web_specs = web_tools::get_web_tool_specs();
             let mut mcp_map = std::collections::HashMap::new();

@@ -4,6 +4,24 @@
 
 本项目的所有显著更新将记录在此文件中。
 
+## [v0.7.1]
+<sup>Released on **2026-07-25**</sup>
+
+### ✨ Added（新增）
+
+- **`delegate_tasks` 批量子智能体工具**：单次调用并行创建多个子智能体（1-10 个），支持 shared context 注入公共背景信息，总耗时约等于最慢的子任务
+- **子智能体并发上限控制**：新增 `maxConcurrentSubagents` 配置项（默认 5），通过 Tokio Semaphore 限制同时运行的子智能体数量
+- **批量委托一次审批**：`delegate_tasks` 整个批次仅需一次权限确认（非 Auto 模式），审批对话框汇总展示所有子任务
+
+### ⚡️ Changed（变更）
+
+- **`execute_single_delegate` 重构**：提取 `delegate_task` 和 `delegate_tasks` 共用的子智能体执行逻辑，消除代码重复
+- **系统提示词更新**：Agent 模式提示词中新增 `delegate_tasks` 工具说明和批量并行推荐
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.7.1]: https://github.com/Atom112/AIO/releases/tag/v0.7.1
+
 ---
 ## [v0.7.0]
 <sup>Released on **2026-07-20**</sup>

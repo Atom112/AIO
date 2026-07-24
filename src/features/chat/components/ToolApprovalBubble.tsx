@@ -14,6 +14,10 @@ export interface PendingApproval {
     toolName: string;
     arguments: any;
     reason: string;
+    /** 文件变更预览（unified diff） */
+    previewDiff?: string;
+    /** 受影响的文件路径 */
+    filePath?: string;
 }
 
 interface ToolApprovalBubbleProps {
@@ -105,6 +109,14 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
             <div class="text-[11px] text-white/45 mb-2.5 leading-[1.4]">
                 {props.approval.reason}
             </div>
+            <Show when={props.approval.previewDiff}>
+                <div class="mb-2.5 rounded-md overflow-hidden border border-white/[0.06]" style="background: rgba(0,0,0,0.3);">
+                    <div class="text-[10px] text-white/35 px-2 py-1 border-b border-white/[0.04]" style="font-family: monospace;">
+                        {props.approval.filePath || '文件变更预览'}
+                    </div>
+                    <pre class="text-[11px] leading-[1.5] p-2 m-0 overflow-x-auto text-white/60" style="font-family: 'JetBrains Mono', 'Fira Code', monospace; max-height: 200px;">{props.approval.previewDiff}</pre>
+                </div>
+            </Show>
             <div class="flex gap-2 justify-end">
                 <button
                     type="button"

@@ -66,6 +66,9 @@ pub struct ToolResultPayload {
     /// 本次工具调用产生的文件变更（write_file/replace_in_file/delete_file 时非空）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_changes: Option<Vec<FileChange>>,
+    /// 完整工具结果（前端 agentSteps 展示用，不截断）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_content: Option<String>,
 }
 
 /// 单次文件修改记录（供前端展示 diff 预览 + 跳转 + 回滚）
@@ -160,6 +163,15 @@ pub struct Message {
     /// Agent 开始执行时间戳（毫秒），跨重启持久化
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_start_time: Option<i64>,
+    /// 父消息 ID（用于会话分支树），NULL = 主题根消息
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_message_id: Option<String>,
+    /// 分支索引：从同一父消息分叉时递增（0 = 原始/主干）
+    #[serde(default)]
+    pub branch_index: i32,
+    /// 完整工具执行结果（LLM 上下文中只包含截断版），仅 role=tool 消息有效，会话级内存字段不持久化到 SQLite
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_tool_result: Option<String>,
 }
 
 /// OpenAI 风格的工具调用（assistant 消息中）
@@ -266,6 +278,12 @@ pub struct Topic {
     /// 由数据迁移在加载时统一修复。
     #[serde(default)]
     pub renamed: bool,
+    /// 分支来源消息 ID（此话题从哪条消息分支而来）
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "branchedFromMessageId")]
+    pub branched_from_message_id: Option<String>,
+    /// 父话题 ID（用于话题树结构）
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "parentTopicId")]
+    pub parent_topic_id: Option<String>,
 }
 
 /// AI 助手预设模型，包含系统提示词和相关的对话列表。
@@ -321,7 +339,7 @@ pub struct ModelsResponse {
 }
 
 /// 应用程序全局配置。
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppConfig {
     #[serde(rename = "apiUrl")]
     pub api_url: String,
@@ -331,7 +349,35 @@ pub struct AppConfig {
     pub default_model: String,
     #[serde(rename = "localModelPath", default)]
     pub local_model_path: String,
+    /// 快速模型 ID（用于 explorer/reviewer/architect 等只读子智能体）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_model_id: Option<String>,
+    /// 快速模型 API 地址（同 provider 时可省略）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_model_api_url: Option<String>,
+    /// 快速模型 API Key（同 provider 时可省略）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_model_api_key: Option<String>,
+    /// 工具调用失败时是否自动重试（默认 true）
+    #[serde(default = "default_auto_retry_enabled")]
+    pub auto_retry_enabled: bool,
+    /// 自动重试次数上限（默认 2）
+    #[serde(default = "default_auto_retry_count")]
+    pub auto_retry_count: u32,
+    /// 每次重试间隔（毫秒，默认 500）
+    #[serde(default = "default_auto_retry_delay_ms")]
+    pub auto_retry_delay_ms: u64,
+    /// 跨会话记忆（项目知识持久化）。默认关闭，用户可在设置中开启。
+    #[serde(default, rename = "knowledgeEnabled")]
+    pub knowledge_enabled: bool,
+    /// 系统自启。默认关闭。
+    #[serde(default, rename = "autoStartEnabled")]
+    pub auto_start_enabled: bool,
 }
+
+fn default_auto_retry_enabled() -> bool { true }
+fn default_auto_retry_count() -> u32 { 2 }
+fn default_auto_retry_delay_ms() -> u64 { 500 }
 
 // ====== MCP 服务器配置 ======
 

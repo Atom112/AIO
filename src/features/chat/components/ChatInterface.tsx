@@ -82,6 +82,8 @@ interface ChatInterfaceProps {
     onCancelSelection: () => void;
     /** 确认选择 */
     onConfirmSelection: () => void;
+    /** 从消息处分叉 */
+    onBranchFromMessage: (messageId: string) => void;
 }
 
 const UserMessageAvatar: Component = () => {
@@ -638,6 +640,21 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 <Icon src="/icons/app-logo/clipboard-copy.svg" class="w-[13px] h-[13px]" />
                                                 <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">复制</span>
                                             </button>
+
+                                            {/* 分支按钮（仅 assistant 消息） */}
+                                            <Show when={msg.role === 'assistant' && !!msg.id}>
+                                                <button
+                                                    class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(124,154,191,0.12)] hover:!p-[4px_8px]"
+                                                    style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
+                                                    onClick={() => {
+                                                        if (msg.id) props.onBranchFromMessage(msg.id);
+                                                    }}
+                                                    title="从此消息分叉出新话题"
+                                                >
+                                                    <Icon name="git-branch" size={13} style="display: inline; vertical-align: middle;" />
+                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">分支</span>
+                                                </button>
+                                            </Show>
 
 
                                             {/* 最后一条用户消息：重新发送 + 编辑后重发 */}

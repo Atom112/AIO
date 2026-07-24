@@ -536,7 +536,7 @@ pub(crate) async fn execute_tool_call(
             PermissionAction::Ask => {
                 // 需要用户确认；用 select! 让取消可打断挂起审批
                 let reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
-                let approval_fut = request_tool_approval(app, pending.inner(), server_id, tool_name, &arguments, &reason);
+                let approval_fut = request_tool_approval(app, pending.inner(), server_id, tool_name, &arguments, &reason, None, None);
                 tokio::select! {
                     _ = token.cancelled() => return Err("cancelled".into()),
                     res = approval_fut => res?,
@@ -705,6 +705,12 @@ pub struct ApprovalRequestPayload {
     pub tool_name: String,
     pub arguments: Value,
     pub reason: String,
+    /// 文件变更预览（unified diff），仅文件操作工具携带
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_diff: Option<String>,
+    /// 受影响的文件路径
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
 }
 
 /// 发起一个需要用户确认的工具调用。
@@ -722,6 +728,8 @@ pub(crate) async fn request_tool_approval(
     tool_name: &str,
     arguments: &Value,
     reason: &str,
+    preview_diff: Option<String>,
+    file_path: Option<String>,
 ) -> Result<(), String> {
     let (tx, rx) = oneshot::channel::<bool>();
     let approval_id = pending.insert(tx);
@@ -735,6 +743,8 @@ pub(crate) async fn request_tool_approval(
             tool_name: tool_name.to_string(),
             arguments: arguments.clone(),
             reason: reason.to_string(),
+            preview_diff,
+            file_path,
         },
     );
 

@@ -2,7 +2,7 @@ use crate::core::models::*;
 use crate::core::secure_store;
 use crate::core::state::DbState;
 use crate::commands::attachment::{
-    cleanup_attachment_ids, load_message_attachments, sync_message_attachments,
+    cleanup_attachment_ids, load_message_attachments_batch, sync_message_attachments,
 };
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
@@ -15,6 +15,16 @@ struct AppConfigDisk {
     api_url: String,
     default_model: String,
     local_model_path: String,
+    #[serde(default, rename = "knowledgeEnabled")]
+    knowledge_enabled: bool,
+    #[serde(default, rename = "autoStartEnabled")]
+    auto_start_enabled: bool,
+    #[serde(default, rename = "fastModelId")]
+    fast_model_id: Option<String>,
+    #[serde(default, rename = "fastModelApiUrl")]
+    fast_model_api_url: Option<String>,
+    #[serde(default, rename = "fastModelApiKey")]
+    fast_model_api_key: Option<String>,
 }
 
 /// 保存应用程序通用配置
@@ -27,6 +37,14 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
             .map_err(|e| e.to_string())?;
     } else {
         let _ = secure_store::delete(&app, secure_store::accounts::APP_API_KEY);
+    }
+
+    // 快速模型 api_key 同样走钥匙串
+    if let Some(ref fast_key) = config.fast_model_api_key {
+        if !fast_key.is_empty() {
+            secure_store::set(&app, secure_store::accounts::FAST_MODEL_API_KEY, fast_key)
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     // 1. 获取操作系统的用户配置目录 (如 Windows 的 AppData/Roaming 或 Linux 的 ~/.config)
@@ -45,9 +63,20 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
         api_url: config.api_url,
         default_model: config.default_model,
         local_model_path: config.local_model_path,
+        knowledge_enabled: config.knowledge_enabled,
+        auto_start_enabled: config.auto_start_enabled,
+        fast_model_id: config.fast_model_id.clone(),
+        fast_model_api_url: config.fast_model_api_url.clone(),
+        fast_model_api_key: None, // api_key 不入盘，走 keyring
     };
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())?;
+    // 原子写入
+    let tmp_path = path.with_extension("tmp");
+    use std::io::Write;
+    let mut f = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
+    f.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+    f.sync_all().map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -69,6 +98,14 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     api_key,
                     default_model: disk.default_model,
                     local_model_path: disk.local_model_path,
+                    fast_model_id: disk.fast_model_id,
+                    fast_model_api_url: disk.fast_model_api_url,
+                    fast_model_api_key: secure_store::get(&app, secure_store::accounts::FAST_MODEL_API_KEY).unwrap_or(None),
+                    auto_retry_enabled: true,
+                    auto_retry_count: 2,
+                    auto_retry_delay_ms: 500,
+                    knowledge_enabled: disk.knowledge_enabled,
+                    auto_start_enabled: disk.auto_start_enabled,
                 });
             }
             // 兼容旧 schema（含明文 api_key）：读出后迁出到 keyring
@@ -80,6 +117,11 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     api_url: legacy.api_url.clone(),
                     default_model: legacy.default_model.clone(),
                     local_model_path: legacy.local_model_path.clone(),
+                    knowledge_enabled: false,
+                    auto_start_enabled: false,
+                    fast_model_id: None,
+                    fast_model_api_url: None,
+                    fast_model_api_key: None,
                 };
                 disk.api_url = legacy.api_url;
                 disk.default_model = legacy.default_model;
@@ -90,6 +132,14 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     api_key: legacy.api_key,
                     default_model: disk.default_model,
                     local_model_path: disk.local_model_path,
+                    fast_model_id: None,
+                    fast_model_api_url: None,
+                    fast_model_api_key: None,
+                    auto_retry_enabled: true,
+                    auto_retry_count: 2,
+                    auto_retry_delay_ms: 500,
+                    knowledge_enabled: false,
+                    auto_start_enabled: false,
                 });
             }
         }
@@ -100,13 +150,21 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
         api_key: "".into(),
         default_model: "".into(),
         local_model_path: "".into(),
+        fast_model_id: None,
+        fast_model_api_url: None,
+        fast_model_api_key: None,
+        auto_retry_enabled: true,
+        auto_retry_count: 2,
+        auto_retry_delay_ms: 500,
+        knowledge_enabled: false,
+        auto_start_enabled: false,
     })
 }
 
 /// 异步加载所有已保存的 AI 助手配置
 #[tauri::command]
 pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Assistant>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock();
 
     // 1. 加载助手
     let mut stmt = conn
@@ -148,7 +206,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
         // 2. 为每个助手加载话题
         let mut t_stmt = conn
-            .prepare("SELECT id, name, summary, renamed FROM topics WHERE assistant_id = ?")
+            .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id FROM topics WHERE assistant_id = ?")
             .map_err(|e| e.to_string())?;
         let topic_iter = t_stmt
             .query_map([&asst.id], |row| {
@@ -158,7 +216,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     summary: row.get(2)?,
                     // SQLite INTEGER (0/1) → bool
                     renamed: row.get::<_, i64>(3)? != 0,
-                    history: vec![], // 大数据量下建议按需加载，此处暂时全量加载以兼容原有前端
+                    branched_from_message_id: row.get(4)?,
+                    parent_topic_id: row.get(5)?,
+                    history: vec![],
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -167,7 +227,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
             let mut topic = topic.map_err(|e| e.to_string())?;
 
             // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计）
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -203,21 +263,37 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         agent_steps: row.get::<_, Option<String>>(12)?.and_then(|s| serde_json::from_str(&s).ok()),  // index 12: agent_steps_json
                         interim_content: row.get(13)?,  // index 13: interim_content
                         agent_start_time: row.get(14)?, // index 14: agent_start_time
+                        parent_message_id: row.get(15)?, // index 15: parent_message_id
+                        branch_index: row.get(16)?,      // index 16: branch_index
+                        full_tool_result: None,           // 会话级内存字段，不持久化
                     })
                 })
                 .map_err(|e| e.to_string())?;
 
+            // 批量加载附件：先收集所有消息 ID，再一次性查询（修复 N+1 查询）
+            let mut messages: Vec<Message> = Vec::new();
+            let mut msg_ids: Vec<String> = Vec::new();
             for msg in msg_iter {
-                let mut message = msg.map_err(|e| e.to_string())?;
+                let message = msg.map_err(|e| e.to_string())?;
+                if let Some(mid) = &message.id {
+                    msg_ids.push(mid.clone());
+                }
+                messages.push(message);
+            }
+
+            let attachments_map = load_message_attachments_batch(&conn, &msg_ids)?;
+
+            for mut message in messages {
                 if let Some(message_id) = &message.id {
-                    let mut stored_files = load_message_attachments(&conn, message_id)?;
-                    if !stored_files.is_empty() {
-                        if let Some(display_files) = &message.display_files {
-                            for (stored, display) in stored_files.iter_mut().zip(display_files) {
-                                stored.name = display.name.clone();
+                    if let Some(mut stored_files) = attachments_map.get(message_id).cloned() {
+                        if !stored_files.is_empty() {
+                            if let Some(ref display_files) = message.display_files {
+                                for (stored, display) in stored_files.iter_mut().zip(display_files) {
+                                    stored.name = display.name.clone();
+                                }
                             }
+                            message.display_files = Some(stored_files);
                         }
-                        message.display_files = Some(stored_files);
                     }
                 }
                 topic.history.push(message);
@@ -235,7 +311,7 @@ pub async fn save_assistant(
     state: tauri::State<'_, DbState>,
     assistant: Assistant,
 ) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock();
 
     // 1. 保存/更新助手基本信息
     let mcp_ids_json = serde_json::to_string(&assistant.mcp_server_ids)
@@ -276,9 +352,9 @@ pub async fn save_assistant(
     // 3. 遍历话题执行增量同步
     for topic in assistant.topics {
         conn.execute(
-            "INSERT INTO topics (id, assistant_id, name, summary, renamed) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5",
-            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64],
+            "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7",
+            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -320,8 +396,8 @@ pub async fn save_assistant(
             // 写入 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计。
             // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    reasoning = excluded.reasoning,
@@ -334,8 +410,10 @@ pub async fn save_assistant(
                    output_tokens = excluded.output_tokens,
                    agent_steps_json = excluded.agent_steps_json,
                    interim_content = excluded.interim_content,
-                   agent_start_time = excluded.agent_start_time",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time],
+                   agent_start_time = excluded.agent_start_time,
+                   parent_message_id = excluded.parent_message_id,
+                   branch_index = excluded.branch_index",
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
         }
@@ -346,7 +424,7 @@ pub async fn save_assistant(
 
 #[tauri::command]
 pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock();
     let attachment_ids = attachment_ids_for_assistant(&conn, &id)?;
     // 由于设置了 ON DELETE CASCADE，会自动删除关联的话题和消息
     conn.execute("DELETE FROM assistants WHERE id = ?", params![id])
@@ -804,4 +882,285 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
     let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
     fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ====== 系统自启 ======
+
+/// 启用或禁用系统自启。
+/// - Windows: 注册表 HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+/// - macOS: ~/Library/LaunchAgents/com.loch.aio.plist
+/// - Linux: ~/.config/autostart/aio.desktop
+#[tauri::command]
+pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let app_name = "AIO";
+    // 获取当前可执行文件路径
+    let exe_path = std::env::current_exe().map_err(|e| format!("无法获取可执行文件路径: {}", e))?;
+    let exe_str = exe_path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if enabled {
+            let output = Command::new("reg")
+                .args([
+                    "add",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v", app_name,
+                    "/t", "REG_SZ",
+                    "/d", &exe_str,
+                    "/f",
+                ])
+                .output()
+                .map_err(|e| format!("执行注册表写入失败: {}", e))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("注册表写入失败: {}", stderr));
+            }
+        } else {
+            let output = Command::new("reg")
+                .args([
+                    "delete",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v", app_name,
+                    "/f",
+                ])
+                .output()
+                .map_err(|e| format!("执行注册表删除失败: {}", e))?;
+            // 删除不存在的键不算错误（reg delete /f 对不存在的键仍返回成功）
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // reg delete: "错误: 系统找不到指定的注册表项或值" 视为成功
+                if !stderr.contains("找不到") {
+                    return Err(format!("注册表删除失败: {}", stderr));
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist_dir = dirs::home_dir()
+            .ok_or_else(|| "无法获取用户主目录".to_string())?
+            .join("Library/LaunchAgents");
+        fs::create_dir_all(&plist_dir).map_err(|e| e.to_string())?;
+        let plist_path = plist_dir.join("com.loch.aio.plist");
+        if enabled {
+            let plist = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.loch.aio</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>"#,
+                exe_str
+            );
+            fs::write(&plist_path, plist).map_err(|e| format!("写入 LaunchAgent 失败: {}", e))?;
+        } else {
+            if plist_path.exists() {
+                fs::remove_file(&plist_path).map_err(|e| format!("删除 LaunchAgent 失败: {}", e))?;
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let autostart_dir = dirs::home_dir()
+            .ok_or_else(|| "无法获取用户主目录".to_string())?
+            .join(".config/autostart");
+        fs::create_dir_all(&autostart_dir).map_err(|e| e.to_string())?;
+        let desktop_path = autostart_dir.join("aio.desktop");
+        if enabled {
+            let desktop = format!(
+                r#"[Desktop Entry]
+Type=Application
+Name=AIO
+Exec={}
+Terminal=false
+X-GNOME-Autostart-enabled=true"#,
+                exe_str
+            );
+            fs::write(&desktop_path, desktop).map_err(|e| format!("写入 autostart 失败: {}", e))?;
+        } else {
+            if desktop_path.exists() {
+                fs::remove_file(&desktop_path).map_err(|e| format!("删除 autostart 失败: {}", e))?;
+            }
+        }
+    }
+
+    // 持久化状态
+    let mut config = load_app_config(app.clone())?;
+    config.auto_start_enabled = enabled;
+    save_app_config(app, config)
+}
+
+/// 查询系统自启是否已开启。
+#[tauri::command]
+pub fn is_auto_start_enabled(app: AppHandle) -> Result<bool, String> {
+    let config = load_app_config(app)?;
+    Ok(config.auto_start_enabled)
+}
+
+// ====== 会话分支 ======
+
+/// 从指定消息处分叉出新话题。
+/// - 将源话题中该消息及之前的所有消息复制到新话题
+/// - 新话题的 `branched_from_message_id` 设为源消息 ID
+/// - 新话题的 `parent_topic_id` 设为源话题 ID
+/// 返回新话题对象。
+#[tauri::command]
+pub async fn branch_topic(
+    state: tauri::State<'_, DbState>,
+    source_topic_id: String,
+    source_message_id: String,
+) -> Result<Topic, String> {
+    let conn = state.0.lock();
+
+    // 1. 查询源话题的 assistant_id
+    let assistant_id: String = conn
+        .query_row(
+            "SELECT assistant_id FROM topics WHERE id = ?1",
+            params![source_topic_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("查询源话题失败: {}", e))?;
+
+    // 2. 读取源话题的所有消息，截取到分支点（含）
+    let mut m_stmt = conn
+        .prepare(
+            "SELECT id, role, content, model_id, display_files, display_text, reasoning,
+             tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
+             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index
+             FROM messages WHERE topic_id = ?1 ORDER BY timestamp ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let all_msgs: Vec<Message> = m_stmt
+        .query_map(params![source_topic_id], |row| {
+            let display_files_json: Option<String> = row.get(4)?;
+            let content_json: String = row.get(2)?;
+            let tool_calls_json: Option<String> = row.get(9)?;
+            Ok(Message {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                content: serde_json::from_str(&content_json).unwrap_or(serde_json::Value::String(content_json)),
+                model_id: row.get(3)?,
+                display_files: display_files_json.and_then(|s| serde_json::from_str(&s).ok()),
+                display_text: row.get(5)?,
+                reasoning: row.get(6)?,
+                tool_call_id: row.get(7)?,
+                name: row.get(8)?,
+                tool_calls: tool_calls_json.and_then(|s| serde_json::from_str(&s).ok()),
+                input_tokens: row.get(10)?,
+                output_tokens: row.get(11)?,
+                agent_steps: row.get::<_, Option<String>>(12)?.and_then(|s| serde_json::from_str(&s).ok()),
+                interim_content: row.get(13)?,
+                agent_start_time: row.get(14)?,
+                parent_message_id: row.get(15)?,
+                branch_index: row.get(16)?,
+                full_tool_result: None,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    drop(m_stmt);
+
+    // 截取到分支点（含）
+    let branch_pos = all_msgs.iter().position(|m| m.id.as_deref() == Some(&source_message_id));
+    let history: Vec<Message> = match branch_pos {
+        Some(pos) => all_msgs.into_iter().take(pos + 1).collect(),
+        None => return Err(format!("消息 {} 不在话题 {} 中", source_message_id, source_topic_id)),
+    };
+
+    // 3. 创建新话题
+    let new_topic_id = uuid::Uuid::new_v4().to_string();
+    let source_topic_name: String = conn
+        .query_row(
+            "SELECT name FROM topics WHERE id = ?1",
+            params![source_topic_id],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "分支".into());
+
+    // 统计已有子话题数量（同一 parent_topic_id），自动编号
+    let sibling_count: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM topics WHERE parent_topic_id = ?1",
+            params![source_topic_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let branch_name = format!("{} - 分支 {}", source_topic_name, sibling_count + 1);
+
+    let new_topic = Topic {
+        id: new_topic_id.clone(),
+        name: branch_name,
+        history: history.clone(),
+        summary: None,
+        renamed: false,
+        branched_from_message_id: Some(source_message_id.clone()),
+        parent_topic_id: Some(source_topic_id.clone()),
+    };
+
+    // 4. 插入新话题
+    conn.execute(
+        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            new_topic_id,
+            assistant_id,
+            new_topic.name,
+            new_topic.summary,
+            new_topic.renamed as i64,
+            new_topic.branched_from_message_id,
+            new_topic.parent_topic_id,
+        ],
+    )
+    .map_err(|e| format!("创建分支话题失败: {}", e))?;
+
+    // 5. 插入复制的消息
+    for msg in &history {
+        let msg_id = uuid::Uuid::new_v4().to_string();
+        let files_json = serde_json::to_string(&msg.display_files).ok();
+        let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
+        let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
+        conn.execute(
+            "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
+             tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
+             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            params![
+                msg_id,
+                new_topic_id,
+                msg.role,
+                content_json,
+                msg.model_id,
+                files_json,
+                msg.display_text,
+                msg.reasoning,
+                msg.tool_call_id,
+                msg.name,
+                tool_calls_json,
+                msg.input_tokens,
+                msg.output_tokens,
+                serde_json::to_string(&msg.agent_steps).ok(),
+                msg.interim_content,
+                msg.agent_start_time,
+                msg.parent_message_id,
+                msg.branch_index,
+            ],
+        )
+        .map_err(|e| format!("插入分支消息失败: {}", e))?;
+    }
+
+    Ok(new_topic)
 }

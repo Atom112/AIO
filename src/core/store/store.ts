@@ -32,9 +32,10 @@ import type { SkillConfig } from '../types/skill';
         /** 子智能体的任务描述摘要 */
         subagentTask?: string;
         /** 子智能体内部的步骤时间线 */
-        subagentSteps?: SubagentStep[];
         /** 子智能体完成的最终结果 */
         subagentResult?: string;
+        /** 完整工具结果（不截断），仅 type=tool_call 时有效 */
+        fullResult?: string;
     }
 
     /** 子智能体步骤（内部时间线，结构与 AgentStep 相同但不含嵌套子智能体） */
@@ -66,6 +67,8 @@ export interface Message {
     inputTokens?: number;                // 本轮/本消息输入 tokens 用量（跨轮累计，用于成本统计）
     outputTokens?: number;               // 本轮/本消息输出 tokens 用量（跨轮累计，用于成本统计）
     contextTokens?: number;              // 上下文峰值 tokens（最后一轮 API 调用的 input_tokens），用于上下文窗口进度条
+    parentMessageId?: string;            // 父消息 ID（用于会话分支树）
+    branchIndex: number;                 // 分支索引（默认 0）
 }
 
 /** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */
@@ -81,6 +84,8 @@ export interface ToolCallDisplay {
     error?: string;
     /** 文件变更详情（写/替换/删文件时由后端提供） */
     fileChanges?: FileChangeInfo[];
+    /** 完整工具结果（未截断版）。content 是截断版（≤10000 字符）。 */
+    fullContent?: string;
 }
 
 /** 单次文件修改记录 */
@@ -127,6 +132,10 @@ export interface Topic {
      * - 缺省：兼容旧数据，等价于 false
      */
     renamed?: boolean;
+    /** 分支来源消息 ID（此话题从哪条消息分支而来） */
+    branchedFromMessageId?: string;
+    /** 父话题 ID（用于话题树结构） */
+    parentTopicId?: string;
 }
 
 /** Agent 执行模式 */

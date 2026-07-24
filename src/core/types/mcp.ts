@@ -232,6 +232,8 @@ export interface LlmToolResultPayload {
     result: any;
     is_error: boolean;
     file_changes?: import('../../core/store/store').FileChangeInfo[];
+    /** 完整工具结果（未截断），仅前端展示用 */
+    full_content?: string;
 }
 
 /** 工具审批请求负载（tool-approval-requested，snake_case） */

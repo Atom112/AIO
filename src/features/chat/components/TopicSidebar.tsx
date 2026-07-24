@@ -27,6 +27,22 @@ const createTopic = (name?: string): Topic => ({
     summary: ""
 });
 
+/** 根据 parentTopicId 构建话题树。返回 [根话题列表, 子话题映射(parentId → children)] */
+const buildTopicTree = (topics: Topic[]): { roots: Topic[]; children: Map<string, Topic[]> } => {
+    const children = new Map<string, Topic[]>();
+    const roots: Topic[] = [];
+    for (const t of topics) {
+        if (t.parentTopicId) {
+            const list = children.get(t.parentTopicId) || [];
+            list.push(t);
+            children.set(t.parentTopicId, list);
+        } else {
+            roots.push(t);
+        }
+    }
+    return { roots, children };
+};
+
 const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
     const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);
@@ -153,35 +169,53 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                 新建话题
                             </button>
                             <div class="mt-[15px] space-y-1">
-                                <For each={asst().topics}>
-                                    {(topic) => (
-                                        <div
-                                            class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06]"
-                                            classList={{ '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': topic.id === currentTopicId() }}
-                                            onClick={() => setCurrentTopicId(topic.id)}
-                                        >
-                                            <Show
-                                                when={props.editingTopicId === topic.id}
-                                                fallback={<span style="color: rgba(255,255,255,0.75); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; user-select: none;">{topic.name}</span>}
+                                {(() => {
+                                    const { roots, children } = buildTopicTree(asst().topics);
+                                    // 递归渲染话题树
+                                    const renderTopic = (topic: Topic, depth: number): any => {
+                                        const isChild = depth > 0;
+                                        return (
+                                        <>
+                                            <div
+                                                class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent border-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
+                                                classList={{ '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': topic.id === currentTopicId() }}
+                                                onClick={() => setCurrentTopicId(topic.id)}
                                             >
-                                                <input
-                                                    class="rounded px-2 py-0.5 text-[0.85rem] h-5 outline-none w-[80%]"
-                                                    style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.85);"
-                                                    value={topic.name}
-                                                    ref={(el) => { setTimeout(() => { el.focus(); el.select(); }, 0); }}
-                                                    onBlur={(e) => saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
-                                                    onKeyDown={(e) => e.key === 'Enter' && saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                />
-                                            </Show>
-                                            <button class="flex items-center justify-center w-[30px] h-[30px] border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10" onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}>
-                                                <Icon src="/icons/app-logo/dot-menu.svg" class="w-[18px] h-[18px]" />
-                                            </button>
-                                        </div>
-                                    )}
-                                </For>
+                                                {/* 子话题分支标记 */}
+                                                {isChild && (
+                                                    <span class="mr-1 shrink-0 leading-none" style="color: rgba(124,154,191,0.5); font-size: 9px;" title="分支话题">└</span>
+                                                )}
+                                                <Show
+                                                    when={props.editingTopicId === topic.id}
+                                                    fallback={<span style={`color: rgba(255,255,255,${isChild ? '0.45' : '0.75'}); font-size: ${isChild ? '0.78rem' : '0.9rem'}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; user-select: none;`}>{topic.name}</span>}
+                                                >
+                                                    <input
+                                                        class="rounded px-2 py-0.5 text-[0.85rem] h-5 outline-none w-[80%]"
+                                                        style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.85);"
+                                                        value={topic.name}
+                                                        ref={(el) => { setTimeout(() => { el.focus(); el.select(); }, 0); }}
+                                                        onBlur={(e) => saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                                                        onKeyDown={(e) => e.key === 'Enter' && saveTopicRename(asst().id, topic.id, e.currentTarget.value)}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    />
+                                                </Show>
+                                                <button class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                                                    style={`width:${isChild ? '22px' : '30px'}; height:${isChild ? '22px' : '30px'}`}
+                                                    onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}>
+                                                    <Icon src="/icons/app-logo/dot-menu.svg" class={isChild ? 'w-[13px] h-[13px]' : 'w-[18px] h-[18px]'} />
+                                                </button>
+                                            </div>
+                                            {/* 递归渲染子话题 — 更紧凑的间距 */}
+                                            <div class="space-y-0.5">
+                                                {children.get(topic.id)?.map(child => renderTopic(child, depth + 1))}
+                                            </div>
+                                        </>
+                                        );
+                                    };
+                                    return roots.map(root => renderTopic(root, 0));
+                                })()}
                             </div>
-                        </div>
+                            </div>
                     )}
                 </Show>
             </div>

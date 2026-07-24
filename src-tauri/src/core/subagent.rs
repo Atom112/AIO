@@ -386,6 +386,10 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "子任务相关的初始文件路径列表（相对于项目根目录）。子智能体会先读取这些文件再开始工作。"
+                    },
+                    "wait": {
+                        "type": "boolean",
+                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续。"
                     }
                 },
                 "required": ["profile", "task"]

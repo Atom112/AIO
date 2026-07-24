@@ -2,6 +2,8 @@ pub mod file_parser;
 pub mod file_tools;
 pub mod git_tools;
 pub mod lsp_tools;
+pub mod lsp_agent_tools;
+pub mod knowledge;
 pub mod sandbox;
 pub mod shell_tools;
 pub mod token_counter;

@@ -1011,6 +1011,28 @@ const ChatPage: Component = () => {
   };
 
   /**
+   * 从指定消息处分叉出新话题（会话分支）。
+   * 将当前话题中该消息及之前的所有消息复制到新话题，并导航过去。
+   * @param sourceMessageId - 分支点的消息 ID
+   */
+  const branchFromMessage = async (sourceMessageId: string) => {
+    const asstId = currentAssistantId();
+    const topicId = currentTopicId();
+    if (!asstId || !topicId) return;
+    try {
+      const newTopic: Topic = await invoke('branch_topic', {
+        sourceTopicId: topicId,
+        sourceMessageId,
+      });
+      setDatas('assistants', (a: any) => a.id === asstId, 'topics', (prev: Topic[]) => [...prev, newTopic]);
+      setCurrentTopicId(newTopic.id);
+      await saveSingleAssistantToBackend(asstId);
+    } catch (e) {
+      console.error('分支创建失败:', e);
+    }
+  };
+
+  /**
    * 拖拽调整面板宽度
    * @param e - MouseEvent 鼠标事件
    * @param type - 'left' 调整左面板，'right' 调整右面板
@@ -1623,13 +1645,13 @@ const ChatPage: Component = () => {
       }),
       // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与 agentSteps 时间线
       listen<any>('llm-tool-result', (e) => {
-        const { assistant_id, topic_id, tool_call_id, content, result, is_error, file_changes } = e.payload;
+        const { assistant_id, topic_id, tool_call_id, content, result, is_error, file_changes, full_content } = e.payload;
         setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
           'history', (h: any[]) => h.map((m: any) => {
             if (m.role !== 'assistant' || !m.toolCalls) return m;
             const newToolCalls = m.toolCalls.map((tc: any) =>
               tc.id === tool_call_id
-                ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined, fileChanges: file_changes }
+                ? { ...tc, state: is_error ? 'error' : 'success', result, content, fullContent: full_content ?? content, error: is_error ? content : undefined, fileChanges: file_changes }
                 : tc
             );
             // 同步更新 agentSteps 中对应 tool_call 步骤
@@ -1639,12 +1661,14 @@ const ChatPage: Component = () => {
                 return {
                   ...s,
                   status: is_error ? 'error' : 'complete',
+                  fullResult: full_content ?? s.fullResult,
                   duration: now - s.timestamp,
                   toolCall: {
                     ...s.toolCall,
                     state: is_error ? 'error' : 'success',
                     result,
                     content,
+                    fullContent: full_content ?? content,
                     error: is_error ? content : undefined,
                     fileChanges: file_changes,
                   },
@@ -1658,13 +1682,15 @@ const ChatPage: Component = () => {
       }),
       // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
       listen<any>('tool-approval-requested', (e) => {
-        const { approval_id, server_id, tool_name, arguments: args, reason } = e.payload;
+        const { approval_id, server_id, tool_name, arguments: args, reason, preview_diff, file_path } = e.payload;
         setPendingApprovals(prev => [...prev, {
           approvalId: approval_id,
           serverId: server_id,
           toolName: tool_name,
           arguments: args,
           reason,
+          previewDiff: preview_diff,
+          filePath: file_path,
         }]);
       }),
 
@@ -1955,10 +1981,11 @@ const ChatPage: Component = () => {
           isSelectingMessages={isSelectingMessages()}
           selectedMessageIds={selectedMessageIds()}
           onToggleMessage={handleToggleMessage}
-          onSelectAll={handleSelectAll}
-          onCancelSelection={handleCancelSelection}
-          onConfirmSelection={handleConfirmSelection}
-        />
+            onSelectAll={handleSelectAll}
+            onCancelSelection={handleCancelSelection}
+            onConfirmSelection={handleConfirmSelection}
+            onBranchFromMessage={branchFromMessage}
+          />
       </div>
 
       <TopicSidebar

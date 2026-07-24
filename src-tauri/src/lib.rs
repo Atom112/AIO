@@ -13,6 +13,7 @@ mod utils;
 
 use crate::core::state::{
     DbState, LocalEngineState, McpRequestManager, McpServerState, PendingApprovals, StreamManager,
+    SubagentHandles,
 };
 use crate::plugins::engine::EngineManager;
 use crate::plugins::lsp::LspManager;
@@ -38,7 +39,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let conn = core::db::init_db(app.handle())?;
-            app.manage(DbState(std::sync::Mutex::new(conn)));
+            app.manage(DbState(parking_lot::Mutex::new(conn)));
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -53,6 +54,7 @@ pub fn run() {
         .manage(McpServerState::default())
         .manage(McpRequestManager::new())
         .manage(PendingApprovals::new())
+        .manage(SubagentHandles::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
@@ -155,9 +157,12 @@ pub fn run() {
             commands::config::load_profile_model_overrides,
             commands::config::save_profile_model_overrides,
             // 自定义子智能体配置文件
-            commands::config::list_custom_subagent_profiles,
-            commands::config::save_custom_subagent_profile,
             commands::config::delete_custom_subagent_profile,
+            // 系统自启
+            commands::config::set_auto_start,
+            commands::config::is_auto_start_enabled,
+            // 会话分支
+            commands::config::branch_topic,
             // Token 计数
             utils::token_counter::count_tokens_cmd,
         ])

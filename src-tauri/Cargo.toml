@@ -57,3 +57,4 @@ async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 lsp-types = "0.97"
 tiktoken-rs = "0.6"
+auto-launch = "0.6"

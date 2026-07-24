@@ -43,7 +43,11 @@ const AppSettings: Component = () => {
     const [h, setH] = createSignal(0); // 色相 (0-360 度)
     const [s, setS] = createSignal(0); // 饱和度 (0-100%)
     const [l, setL] = createSignal(0); // 亮度 (0-100%)
-    const [autoStart, setAutoStart] = createSignal(true); // 系统自启开关状态
+    const [autoStart, setAutoStart] = createSignal(false);
+    const [knowledgeEnabled, setKnowledgeEnabled] = createSignal(false);
+    const [fastModelId, setFastModelId] = createSignal('');
+    const [fastModelApiUrl, setFastModelApiUrl] = createSignal('');
+    const [fastModelSaving, setFastModelSaving] = createSignal(false);
     const [version, setVersion] = createSignal(''); // 应用版本号
     const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
     const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
@@ -81,6 +85,25 @@ const AppSettings: Component = () => {
             setEndpointDisplay(eps.join(', '));
         } catch (e) {
             console.warn('获取 endpoint 失败:', e);
+        }
+
+        // 加载跨会话记忆 + 系统自启配置
+        try {
+            const cfg: Record<string, unknown> = await invoke('load_app_config');
+            if (typeof cfg?.knowledgeEnabled === 'boolean') {
+                setKnowledgeEnabled(cfg.knowledgeEnabled);
+            }
+            if (typeof cfg?.autoStartEnabled === 'boolean') {
+                setAutoStart(cfg.autoStartEnabled);
+            }
+            if (typeof cfg?.fastModelId === 'string') {
+                setFastModelId(cfg.fastModelId);
+            }
+            if (typeof cfg?.fastModelApiUrl === 'string') {
+                setFastModelApiUrl(cfg.fastModelApiUrl);
+            }
+        } catch (e) {
+            console.warn('加载应用配置失败:', e);
         }
     });
 
@@ -424,10 +447,90 @@ const AppSettings: Component = () => {
                             class="opacity-0 w-0 h-0 peer"
                             type="checkbox"
                             checked={autoStart()}
-                            onChange={(e) => setAutoStart(e.currentTarget.checked)}
+                            onChange={async (e) => {
+                                const val = e.currentTarget.checked;
+                                setAutoStart(val);
+                                try {
+                                    await invoke('set_auto_start', { enabled: val });
+                                } catch (err) {
+                                    console.warn('设置自启失败:', err);
+                                    setAutoStart(!val); // 回滚
+                                }
+                            }}
                         />
                         <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
                     </label>
+                </div>
+
+                <div class="flex justify-between items-center py-3 border-b border-white/5">
+                    <div>
+                        <span class="block text-[#eee] text-[14px]">跨会话记忆</span>
+                        <p class="text-xs text-white/35 mt-1">Agent 在对话中记住的项目知识（架构决策、代码约定等）将在新对话中自动注入。数据存储在项目根目录的 .aio/knowledge.json 中。</p>
+                    </div>
+
+                    <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
+                        <input
+                            class="opacity-0 w-0 h-0 peer"
+                            type="checkbox"
+                            checked={knowledgeEnabled()}
+                            onChange={async (e) => {
+                                const val = e.currentTarget.checked;
+                                setKnowledgeEnabled(val);
+                                try {
+                                    const cfg: any = await invoke('load_app_config').catch(() => null);
+                                    if (cfg) {
+                                        await invoke('save_app_config', { config: { ...cfg, knowledgeEnabled: val } });
+                                    }
+                                } catch (err) {
+                                    console.warn('保存 knowledge 配置失败:', err);
+                                }
+                            }}
+                        />
+                        <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
+                    </label>
+                </div>
+
+                {/* 快速模型配置 */}
+                <div class="py-3 border-b border-white/5">
+                    <div class="mb-2">
+                        <span class="block text-[#eee] text-[14px]">快速模型</span>
+                        <p class="text-xs text-white/35 mt-1">用于 explorer、architect 等只读子智能体。留空则与主模型一致。API Key 保存在系统钥匙串中。</p>
+                    </div>
+                    <div class="space-y-2">
+                        <input
+                            class="w-full px-3 py-1.5 rounded-lg text-[13px] outline-none transition-all duration-200"
+                            style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.85);"
+                            placeholder="模型 ID（如 gpt-4o-mini）"
+                            value={fastModelId()}
+                            onInput={(e) => setFastModelId(e.currentTarget.value)}
+                            onBlur={async () => {
+                                setFastModelSaving(true);
+                                try {
+                                    const cfg: Record<string, unknown> = await invoke('load_app_config').catch(() => null) as Record<string, unknown> || {};
+                                    await invoke('save_app_config', { config: { ...cfg, fastModelId: fastModelId(), fastModelApiUrl: fastModelApiUrl() } });
+                                } catch (err) { console.warn('保存快速模型失败:', err); }
+                                finally { setFastModelSaving(false); }
+                            }}
+                        />
+                        <input
+                            class="w-full px-3 py-1.5 rounded-lg text-[13px] outline-none transition-all duration-200"
+                            style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.85);"
+                            placeholder="API 地址（同主模型留空）"
+                            value={fastModelApiUrl()}
+                            onInput={(e) => setFastModelApiUrl(e.currentTarget.value)}
+                            onBlur={async () => {
+                                setFastModelSaving(true);
+                                try {
+                                    const cfg: Record<string, unknown> = await invoke('load_app_config').catch(() => null) as Record<string, unknown> || {};
+                                    await invoke('save_app_config', { config: { ...cfg, fastModelId: fastModelId(), fastModelApiUrl: fastModelApiUrl() } });
+                                } catch (err) { console.warn('保存快速模型失败:', err); }
+                                finally { setFastModelSaving(false); }
+                            }}
+                        />
+                        <Show when={fastModelSaving()}>
+                            <span class="text-[11px] text-white/30">已保存</span>
+                        </Show>
+                    </div>
                 </div>
 
                 <div class="flex justify-between items-center py-3 border-b border-white/5">

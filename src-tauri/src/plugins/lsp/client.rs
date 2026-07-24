@@ -12,6 +12,7 @@ use lsp_types::PublishDiagnosticsParams;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::str::FromStr;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -34,9 +35,6 @@ pub struct LspClient {
     pub project_root: PathBuf,
     pub(crate) inner: std::sync::Arc<LspClientInner>,
 }
-
-unsafe impl Send for LspClient {}
-unsafe impl Sync for LspClient {}
 
 pub(crate) struct LspClientInner {
     /// JSON-RPC 请求 id 生成器
@@ -378,6 +376,126 @@ impl LspClient {
         Ok(())
     }
 
+    // ====== Agent 工具方法 ======
+
+    /// Go-to-definition: 返回定义位置的 Location 或 null
+    pub async fn goto_definition(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> LspResult<Option<lsp_types::Location>> {
+        let uri = file_path_to_uri(&self.project_root, file_path)?;
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        });
+        let result = self
+            .request("textDocument/definition", Some(params), std::time::Duration::from_secs(10))
+            .await?;
+        if result.is_null() {
+            return Ok(None);
+        }
+        // Try Vec<Location> first (returns first definition), then single Location
+        if let Ok(mut locations) = serde_json::from_value::<Vec<lsp_types::Location>>(result.clone()) {
+            Ok(if locations.is_empty() { None } else { Some(locations.remove(0)) })
+        } else if let Ok(loc) = serde_json::from_value::<lsp_types::Location>(result) {
+            Ok(Some(loc))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Find all references: 返回所有引用位置
+    pub async fn find_references(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> LspResult<Vec<lsp_types::Location>> {
+        let uri = file_path_to_uri(&self.project_root, file_path)?;
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": true }
+        });
+        let result = self
+            .request("textDocument/references", Some(params), std::time::Duration::from_secs(10))
+            .await?;
+        if result.is_null() {
+            return Ok(Vec::new());
+        }
+        serde_json::from_value::<Vec<lsp_types::Location>>(result)
+            .map_err(|e| super::error::LspError::Protocol(format!("解析 references 响应失败: {}", e)))
+    }
+
+    /// Hover info: 返回 hover 内容的 markdown 字符串
+    pub async fn hover(
+        &self,
+        file_path: &str,
+        line: u32,
+        character: u32,
+    ) -> LspResult<Option<String>> {
+        let uri = file_path_to_uri(&self.project_root, file_path)?;
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        });
+        let result = self
+            .request("textDocument/hover", Some(params), std::time::Duration::from_secs(10))
+            .await?;
+        if result.is_null() {
+            return Ok(None);
+        }
+        let hover: lsp_types::Hover = serde_json::from_value(result)
+            .map_err(|e| super::error::LspError::Protocol(format!("解析 hover 响应失败: {}", e)))?;
+        let text = match hover.contents {
+            lsp_types::HoverContents::Scalar(s) => match s {
+                lsp_types::MarkedString::String(s) => s,
+                lsp_types::MarkedString::LanguageString(ls) => ls.value,
+            },
+            lsp_types::HoverContents::Markup(mc) => mc.value,
+            lsp_types::HoverContents::Array(arr) => arr
+                .iter()
+                .map(|s| match s {
+                    lsp_types::MarkedString::String(s) => s.clone(),
+                    lsp_types::MarkedString::LanguageString(ls) => ls.value.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        if text.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(text))
+        }
+    }
+
+    /// Document symbols: 返回文件中的所有符号
+    pub async fn document_symbols(
+        &self,
+        file_path: &str,
+    ) -> LspResult<Vec<lsp_types::SymbolInformation>> {
+        let uri = file_path_to_uri(&self.project_root, file_path)?;
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri }
+        });
+        let result = self
+            .request("textDocument/documentSymbol", Some(params), std::time::Duration::from_secs(10))
+            .await?;
+        if result.is_null() {
+            return Ok(Vec::new());
+        }
+        // 可能是 Vec<SymbolInformation> 或 Vec<DocumentSymbol>（层次结构）
+        if let Ok(symbols) = serde_json::from_value::<Vec<lsp_types::SymbolInformation>>(result.clone()) {
+            Ok(symbols)
+        } else if let Ok(doc_symbols) = serde_json::from_value::<Vec<lsp_types::DocumentSymbol>>(result) {
+            Ok(flatten_document_symbols(&doc_symbols))
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
     /// 处理从 stdout 读取到的单条消息
     pub(crate) fn dispatch_message(&self, line: &str) {
         let v: Value = match serde_json::from_str(line) {
@@ -434,8 +552,35 @@ fn file_path_to_uri(project_root: &PathBuf, file_path: &str) -> LspResult<String
     path_to_uri(&full)
 }
 
-// ====== stdout 读取循环 ======
+/// 将层次化 DocumentSymbol 展平为扁平的 SymbolInformation 列表
+fn flatten_document_symbols(symbols: &[lsp_types::DocumentSymbol]) -> Vec<lsp_types::SymbolInformation> {
+    let mut result = Vec::new();
+    for sym in symbols {
+        let uri_str = path_to_uri_for_symbol(sym);
+        result.push(lsp_types::SymbolInformation {
+            name: sym.name.clone(),
+            kind: sym.kind,
+            tags: sym.tags.clone(),
+            deprecated: None,
+            location: lsp_types::Location {
+                uri: uri_str.parse::<lsp_types::Uri>().unwrap_or_else(|_| {
+                    "file:///".parse::<lsp_types::Uri>().unwrap()
+                }),
+                range: sym.range,
+            },
+            container_name: None,
+        });
+        if let Some(children) = &sym.children {
+            result.extend(flatten_document_symbols(children));
+        }
+    }
+    result
+}
 
+fn path_to_uri_for_symbol(_sym: &lsp_types::DocumentSymbol) -> String {
+    // DocumentSymbol 不携带完整 URI；返回占位符
+    "file:///".to_string()
+}
 /// 在后台持续读取 stdout，每解析到一帧 LSP 消息就分发到 LspClient
 fn spawn_stdout_reader(
     client: LspClient,

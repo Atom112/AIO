@@ -18,6 +18,10 @@
 - **`execute_single_delegate` 重构**：提取 `delegate_task` 和 `delegate_tasks` 共用的子智能体执行逻辑，消除代码重复
 - **系统提示词更新**：Agent 模式提示词中新增 `delegate_tasks` 工具说明和批量并行推荐
 
+### 🐛 Fixed（修复）
+
+- **安全漏洞修复**：升级 `seroval`（critical CVE: Promise 反序列化类型混淆）、`postcss`（high: 路径遍历）、`dompurify`（low: 沙箱绕过）
+
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
 [v0.7.1]: https://github.com/Atom112/AIO/releases/tag/v0.7.1

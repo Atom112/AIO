@@ -47,7 +47,7 @@ pub async fn store_chat_attachment(
         .to_string();
 
     {
-        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        let conn = state.0.lock();
         if let Ok(mut existing) = conn.query_row(
             "SELECT id, file_name, mime_type, size, storage_path
              FROM attachments WHERE sha256 = ?1",
@@ -82,7 +82,7 @@ pub async fn store_chat_attachment(
     let id = uuid::Uuid::new_v4().to_string();
     let size = bytes.len() as u64;
     let storage_path = destination.to_string_lossy().to_string();
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = state.0.lock();
     conn.execute(
         "INSERT INTO attachments
          (id, sha256, file_name, mime_type, size, storage_path, extracted_text)
@@ -114,7 +114,7 @@ pub fn discard_chat_attachment(
     state: tauri::State<'_, DbState>,
     attachment_id: String,
 ) -> Result<(), String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let conn = state.0.lock();
     let referenced: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM message_attachments WHERE attachment_id = ?1",
@@ -220,4 +220,54 @@ pub fn load_message_attachments(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     Ok(files)
+}
+
+/// 批量加载多个消息的附件，返回 message_id → files 的映射。
+pub fn load_message_attachments_batch(
+    conn: &Connection,
+    msg_ids: &[String],
+) -> Result<std::collections::HashMap<String, Vec<FileMeta>>, String> {
+    let mut map: std::collections::HashMap<String, Vec<FileMeta>> = std::collections::HashMap::new();
+    if msg_ids.is_empty() {
+        return Ok(map);
+    }
+
+    // 构建 IN 子句的占位符
+    let placeholders: Vec<String> = msg_ids.iter().enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect();
+    let sql = format!(
+        "SELECT ma.message_id, a.id, a.file_name, a.mime_type, a.size
+         FROM message_attachments ma
+         JOIN attachments a ON a.id = ma.attachment_id
+         WHERE ma.message_id IN ({}) ORDER BY ma.sort_order",
+        placeholders.join(", ")
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+
+    let params: Vec<&dyn rusqlite::types::ToSql> = msg_ids.iter()
+        .map(|id| id as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let rows = stmt
+        .query_map(params.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,  // message_id
+                FileMeta {
+                    id: Some(row.get(1)?),
+                    name: row.get(2)?,
+                    mime_type: Some(row.get(3)?),
+                    size: Some(row.get::<_, i64>(4)? as u64),
+                },
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    for row in rows {
+        let (msg_id, file) = row.map_err(|e| e.to_string())?;
+        map.entry(msg_id).or_default().push(file);
+    }
+
+    Ok(map)
 }

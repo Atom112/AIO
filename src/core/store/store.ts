@@ -32,9 +32,10 @@ import type { SkillConfig } from '../types/skill';
         /** 子智能体的任务描述摘要 */
         subagentTask?: string;
         /** 子智能体内部的步骤时间线 */
-        subagentSteps?: SubagentStep[];
         /** 子智能体完成的最终结果 */
         subagentResult?: string;
+        /** 完整工具结果（不截断），仅 type=tool_call 时有效 */
+        fullResult?: string;
     }
 
     /** 子智能体步骤（内部时间线，结构与 AgentStep 相同但不含嵌套子智能体） */
@@ -63,8 +64,11 @@ export interface Message {
     agentStartTime?: number;             // Agent 轮次开始时间戳（ms），用于计算工作耗时
     interimContent?: string;             // 多轮 Agent 工作中，中间轮次的阶段性总结文本累积
     agentSteps?: AgentStep[];            // Agent 工作过程时间线（新），按时间顺序记录每个步骤
-    inputTokens?: number;                // 本轮/本消息输入 tokens 用量（服务端返回）
-    outputTokens?: number;               // 本轮/本消息输出 tokens 用量（服务端返回）
+    inputTokens?: number;                // 本轮/本消息输入 tokens 用量（跨轮累计，用于成本统计）
+    outputTokens?: number;               // 本轮/本消息输出 tokens 用量（跨轮累计，用于成本统计）
+    contextTokens?: number;              // 上下文峰值 tokens（最后一轮 API 调用的 input_tokens），用于上下文窗口进度条
+    parentMessageId?: string;            // 父消息 ID（用于会话分支树）
+    branchIndex: number;                 // 分支索引（默认 0）
 }
 
 /** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */
@@ -78,6 +82,22 @@ export interface ToolCallDisplay {
     result?: any;
     /** 错误信息（state=error 时） */
     error?: string;
+    /** 文件变更详情（写/替换/删文件时由后端提供） */
+    fileChanges?: FileChangeInfo[];
+    /** 完整工具结果（未截断版）。content 是截断版（≤10000 字符）。 */
+    fullContent?: string;
+}
+
+/** 单次文件修改记录 */
+export interface FileChangeInfo {
+    /** 文件路径（相对于项目根目录） */
+    filePath: string;
+    /** 操作类型: create | modify | delete */
+    action: 'create' | 'modify' | 'delete';
+    /** unified diff 文本 */
+    diff: string;
+    /** 增删行数概览 "+N -M" */
+    summary: string;
 }
 
 export interface AttachmentMeta {
@@ -112,6 +132,10 @@ export interface Topic {
      * - 缺省：兼容旧数据，等价于 false
      */
     renamed?: boolean;
+    /** 分支来源消息 ID（此话题从哪条消息分支而来） */
+    branchedFromMessageId?: string;
+    /** 父话题 ID（用于话题树结构） */
+    parentTopicId?: string;
 }
 
 /** Agent 执行模式 */
@@ -204,6 +228,51 @@ export const currentProject = (): Project | null => {
     const id = currentProjectId();
     if (!id) return null;
     return projects().find(p => p.id === id) ?? null;
+};
+
+/** 当前项目的 Git 分支名称（null = 非 git 仓库或尚未加载） */
+export const [gitBranch, setGitBranch] = createSignal<string | null>(null);
+
+// 当前项目变更时自动获取 Git 分支
+createEffect(() => {
+    const project = currentProject();
+    if (project?.path) {
+        invoke<string | null>('get_git_branch', { projectPath: project.path })
+            .then(branch => setGitBranch(branch ?? null))
+            .catch(() => setGitBranch(null));
+    } else {
+        setGitBranch(null);
+    }
+});
+
+/** 当前项目的所有 Git 本地分支列表（null = 非 git 仓库或尚未加载） */
+export const [gitBranches, setGitBranches] = createSignal<string[] | null>(null);
+
+// 当前项目变更时自动获取 Git 分支列表
+createEffect(() => {
+    const project = currentProject();
+    if (project?.path) {
+        invoke<string[]>('list_git_branches', { projectPath: project.path })
+            .then(branches => setGitBranches(branches ?? null))
+            .catch(() => setGitBranches(null));
+    } else {
+        setGitBranches(null);
+    }
+});
+
+/** 切换到指定 Git 分支并更新本地状态 */
+export const switchBranch = async (branchName: string): Promise<void> => {
+    const project = currentProject();
+    if (!project?.path) return;
+    try {
+        await invoke<string>('switch_git_branch', { projectPath: project.path, branchName });
+        // 切换成功后，立即更新当前分支名（不需要等待下一个 effect 周期）
+        setGitBranch(branchName);
+    } catch (e) {
+        // 切换失败时，通过控制台或 UI 反馈错误
+        console.error('切换分支失败:', e);
+        throw e; // 让调用方处理显示
+    }
 };
 
 /** 加载项目列表，恢复后验证持久化的项目 ID 仍然有效 */
@@ -429,7 +498,7 @@ export const saveProfileModelOverrides = async () => {
         if (model) {
             overrides.push({
                 profileId,
-                modelId: mKey,
+                modelId: model.model_id,
                 apiUrl: model.api_url,
                 apiKey: model.api_key,
             });

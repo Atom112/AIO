@@ -12,7 +12,6 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     if !app_dir.exists() {
         fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
     }
-    
     let db_path = app_dir.join("chat_history.db");
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
@@ -64,10 +63,11 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         FOREIGN KEY(attachment_id) REFERENCES attachments(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_messages_topic_id ON messages(topic_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_topics_assistant_id ON topics(assistant_id);
     CREATE INDEX IF NOT EXISTS idx_message_attachments_attachment_id
         ON message_attachments(attachment_id);"
 ).map_err(|e| e.to_string())?;
-
     // 上次异常退出可能留下尚未关联消息的临时上传；应用启动时安全清理。
     let mut orphan_stmt = conn
         .prepare(
@@ -181,17 +181,44 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         [],
     ).map_err(|e| e.to_string())?;
 
+    // 迁移：会话分支树 — 消息级父子关系
+    add_column_if_missing(&conn, "messages", "parent_message_id", "TEXT")?;
+    add_column_if_missing(&conn, "messages", "branch_index", "INTEGER NOT NULL DEFAULT 0")?;
+    // 为 parent_message_id 建立索引以加速分支查询
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id)",
+        [],
+    ).map_err(|e| e.to_string())?;
+
+    // 迁移：话题分支 — 话题级分支来源和树结构
+    add_column_if_missing(&conn, "topics", "branched_from_message_id", "TEXT")?;
+    add_column_if_missing(&conn, "topics", "parent_topic_id", "TEXT")?;
+
     Ok(conn)
 }
 
 /// 若指定表缺少指定列，则执行 ALTER TABLE ADD COLUMN。
 /// MCP 集成使用此为 messages 表增加 tool_call_id / name / tool_calls_json 三列。
+///
+/// # 安全
+/// table 和 column 参数仅允许字母、数字、下划线，拒绝任何特殊字符以防注入。
 fn add_column_if_missing(
     conn: &Connection,
     table: &str,
     column: &str,
     col_type: &str,
 ) -> Result<(), String> {
+    // 白名单校验：仅允许 SQL 标识符合法字符
+    fn is_valid_ident(s: &str) -> bool {
+        !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
+    if !is_valid_ident(table) {
+        return Err(format!("非法的表名: '{table}'"));
+    }
+    if !is_valid_ident(column) {
+        return Err(format!("非法的列名: '{column}'"));
+    }
+
     let exists: i32 = conn
         .query_row(
             &format!(

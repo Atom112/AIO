@@ -10,6 +10,7 @@
  * - 已完成步骤：默认折叠（仅显示 header），可单独点击展开
  * - 外层折叠按钮：整体收起 / 展开所有步骤
  */
+import DiffView from '../../../shared/components/DiffView';
 import { Component, createSignal, createMemo, Show, For, onCleanup, createEffect, onMount } from 'solid-js';
 import type { AgentStep, ToolCallDisplay } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
@@ -215,6 +216,13 @@ const StepCard: Component<{
                             result={props.step.toolCall.result}
                             error={props.step.toolCall.error}
                         />
+
+                {/* 文件变更 diff 预览 */}
+                {props.step.type === 'tool_call' && props.step.toolCall?.fileChanges?.length && (
+                    <div class="mt-1.5">
+                        <DiffView changes={props.step.toolCall.fileChanges} />
+                    </div>
+                )}
                     </div>
                 )}
 

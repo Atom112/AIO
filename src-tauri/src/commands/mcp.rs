@@ -196,7 +196,7 @@ pub async fn start_mcp_server(
     let conn = Arc::new(conn);
 
     // 协议握手
-    plugin
+    let server_info = plugin
         .initialize(&conn)
         .await
         .map_err(|e| format!("MCP initialize 失败: {}", e))?;
@@ -218,28 +218,36 @@ pub async fn start_mcp_server(
             .collect()
     };
 
-    // 尝试拉取资源列表（不强制要求服务器支持）
-    let (_resources, resource_count) = match plugin.list_resources(&conn).await {
-        Ok(r) => {
-            let count = r.len();
-            (Some(r), count)
+    // 仅当服务端声明了 resources 能力时才拉取资源列表
+    let (_resources, resource_count) = if server_info.capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
+        match plugin.list_resources(&conn).await {
+            Ok(r) => {
+                let count = r.len();
+                (Some(r), count)
+            }
+            Err(e) => {
+                tracing::debug!("MCP {} resources/list 失败: {}", id, e);
+                (None, 0)
+            }
         }
-        Err(e) => {
-            tracing::info!("MCP {} resources/list 不支持（可选特性）: {}", id, e);
-            (None, 0)
-        }
+    } else {
+        (None, 0)
     };
 
-    // 尝试拉取提示词列表
-    let (_prompts, prompt_count) = match plugin.list_prompts(&conn).await {
-        Ok(p) => {
-            let count = p.len();
-            (Some(p), count)
+    // 仅当服务端声明了 prompts 能力时才拉取提示词列表
+    let (_prompts, prompt_count) = if server_info.capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
+        match plugin.list_prompts(&conn).await {
+            Ok(p) => {
+                let count = p.len();
+                (Some(p), count)
+            }
+            Err(e) => {
+                tracing::debug!("MCP {} prompts/list 失败: {}", id, e);
+                (None, 0)
+            }
         }
-        Err(e) => {
-            tracing::info!("MCP {} prompts/list 不支持（可选特性）: {}", id, e);
-            (None, 0)
-        }
+    } else {
+        (None, 0)
     };
 
     {
@@ -528,7 +536,7 @@ pub(crate) async fn execute_tool_call(
             PermissionAction::Ask => {
                 // 需要用户确认；用 select! 让取消可打断挂起审批
                 let reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
-                let approval_fut = request_tool_approval(app, pending.inner(), server_id, tool_name, &arguments, &reason);
+                let approval_fut = request_tool_approval(app, pending.inner(), server_id, tool_name, &arguments, &reason, None, None);
                 tokio::select! {
                     _ = token.cancelled() => return Err("cancelled".into()),
                     res = approval_fut => res?,
@@ -697,6 +705,12 @@ pub struct ApprovalRequestPayload {
     pub tool_name: String,
     pub arguments: Value,
     pub reason: String,
+    /// 文件变更预览（unified diff），仅文件操作工具携带
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_diff: Option<String>,
+    /// 受影响的文件路径
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
 }
 
 /// 发起一个需要用户确认的工具调用。
@@ -714,6 +728,8 @@ pub(crate) async fn request_tool_approval(
     tool_name: &str,
     arguments: &Value,
     reason: &str,
+    preview_diff: Option<String>,
+    file_path: Option<String>,
 ) -> Result<(), String> {
     let (tx, rx) = oneshot::channel::<bool>();
     let approval_id = pending.insert(tx);
@@ -727,6 +743,8 @@ pub(crate) async fn request_tool_approval(
             tool_name: tool_name.to_string(),
             arguments: arguments.clone(),
             reason: reason.to_string(),
+            preview_diff,
+            file_path,
         },
     );
 

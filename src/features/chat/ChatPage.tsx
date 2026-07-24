@@ -25,6 +25,7 @@ import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
 import TopicSidebar from './components/TopicSidebar';
 import { Portal } from 'solid-js/web';
+import ShareModal from './components/ShareModal';
 import ProblemsPanel from './components/ProblemsPanel';
 import WorkflowVisualization from './components/WorkflowVisualization';
 import type { PendingApproval } from './components/ToolApprovalBubble';
@@ -98,8 +99,13 @@ const ChatPage: Component = () => {
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null);  // 当前正在编辑名称的话题 ID，null 表示无编辑中
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null);   // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
   // 待用户审批的工具调用列表
+  /** 分享弹窗状态 */
+  const [showShareModal, setShowShareModal] = createSignal(false);
+  const [activeShareTopicId, setActiveShareTopicId] = createSignal<string | null>(null);
+  /** 消息级选择模式 */
+  const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
+  const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
   const [pendingApprovals, setPendingApprovals] = createSignal<PendingApproval[]>([]);
-
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
   /**
@@ -155,6 +161,61 @@ const ChatPage: Component = () => {
     const asst = currentAssistant();
     if (!asst) return null;
     return asst.topics.find((t: Topic) => t.id === currentTopicId()) || asst.topics[0] || null;
+  };
+
+  /** 分享弹窗展示的话题：优先使用来自 TopicSidebar 右键菜单指定的 ID，否则用当前活跃话题 */
+  const shareTopic = (): Topic | null => {
+    const asst = currentAssistant();
+    if (!asst) return null;
+    const sid = activeShareTopicId();
+    if (sid) return asst.topics.find((t: Topic) => t.id === sid) || null;
+    return activeTopic();
+  };
+
+  // -------- 消息级选择 --------
+
+  /** 进入选择模式 */
+  const enterSelectionMode = (topicId?: string | null) => {
+    if (topicId) {
+      setActiveShareTopicId(topicId);
+      setCurrentTopicId(topicId);
+    }
+    setSelectedMessageIds(new Set<string>());
+    setIsSelectingMessages(true);
+  };
+
+  /** 切换单条消息的选中状态 */
+  const handleToggleMessage = (msgId: string) => {
+    setSelectedMessageIds((prev) => {
+      const next = new Set<string>(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
+
+  /** 全选当前话题的可导出消息（排除 tool 消息） */
+  const handleSelectAll = () => {
+    const topic = activeTopic();
+    if (!topic) return;
+    const ids = new Set<string>();
+    for (const msg of topic.history) {
+      if (msg.role !== 'tool' && msg.id) ids.add(msg.id);
+    }
+    setSelectedMessageIds(ids);
+  };
+
+  /** 取消选择，退出选择模式 */
+  const handleCancelSelection = () => {
+    setIsSelectingMessages(false);
+    setSelectedMessageIds(new Set<string>());
+    setActiveShareTopicId(null);
+  };
+
+  /** 确认选择，打开分享弹窗 */
+  const handleConfirmSelection = () => {
+    setIsSelectingMessages(false);
+    setShowShareModal(true);
   };
 
   /**
@@ -216,13 +277,17 @@ const ChatPage: Component = () => {
       }
     } catch {}
 
-    // 统计累计 token 用量
+    // 统计实际上下文占用（使用最后一条 assistant 消息的 contextTokens，不跨消息累加）
     let totalUsed = 0;
-    for (const msg of topic.history) {
+    // 找到最后一条 assistant 消息，取其上下文峰值
+    for (let i = topic.history.length - 1; i >= 0; i--) {
+      const msg = topic.history[i];
       if (msg.role === 'assistant') {
-        totalUsed += (msg.inputTokens || 0) + (msg.outputTokens || 0);
+        totalUsed = (msg.contextTokens || msg.inputTokens || 0) + (msg.outputTokens || 0);
+        break;
       }
     }
+    // 补充 user 消息的粗略估算（最后一条 assistant 未覆盖的部分）
     for (const msg of topic.history) {
       if (msg.role === 'user') {
         const text = typeof msg.content === 'string' ? msg.content : (msg.displayText || '');
@@ -852,7 +917,7 @@ const ChatPage: Component = () => {
             if (mdl) {
               resolvedOverrides.push({
                 profileId,
-                modelId: mKey,
+                modelId: mdl.model_id,
                 apiUrl: mdl.api_url,
                 apiKey: mdl.api_key,
               });
@@ -886,12 +951,14 @@ const ChatPage: Component = () => {
    * 停止当前的AI生成过程
    */
   const handleStopGeneration = async () => {
-    await invoke('stop_llm_stream', {
-      assistantId: currentAssistantId(),
-      topicId: currentTopicId()
-    });
-    // 后端 cancel 后会 emit llm-chunk{done:true}，监听器会复位 isThinking；
-    // 这里同步清理审批气泡（取消时未决审批不再有效）。
+    try {
+      await invoke('stop_llm_stream', {
+        assistantId: currentAssistantId(),
+        topicId: currentTopicId()
+      });
+    } catch (err) {
+      console.error('stop_llm_stream 失败:', err);
+    }
     setPendingApprovals([]);
   };
 
@@ -941,6 +1008,28 @@ const ChatPage: Component = () => {
     setDatas('assistants', a => a.id === asstId, 'topics', prev => [...prev, newT]);
     setCurrentTopicId(newT.id);
     await saveSingleAssistantToBackend(asstId);
+  };
+
+  /**
+   * 从指定消息处分叉出新话题（会话分支）。
+   * 将当前话题中该消息及之前的所有消息复制到新话题，并导航过去。
+   * @param sourceMessageId - 分支点的消息 ID
+   */
+  const branchFromMessage = async (sourceMessageId: string) => {
+    const asstId = currentAssistantId();
+    const topicId = currentTopicId();
+    if (!asstId || !topicId) return;
+    try {
+      const newTopic: Topic = await invoke('branch_topic', {
+        sourceTopicId: topicId,
+        sourceMessageId,
+      });
+      setDatas('assistants', (a: any) => a.id === asstId, 'topics', (prev: Topic[]) => [...prev, newTopic]);
+      setCurrentTopicId(newTopic.id);
+      await saveSingleAssistantToBackend(asstId);
+    } catch (e) {
+      console.error('分支创建失败:', e);
+    }
   };
 
   /**
@@ -1348,7 +1437,7 @@ const ChatPage: Component = () => {
         if (topic) setTypingIndex(topic.history.length - 1);
       }),
       listen<any>('llm-chunk', async (e) => {
-        const { assistant_id, topic_id, content, done, error, input_tokens, output_tokens } = e.payload;
+        const { assistant_id, topic_id, content, done, error, input_tokens, output_tokens, context_tokens } = e.payload;
         if (done) {
           // 刷新可能残余的 rAF 批量内容
           if (streamBatchRAF !== undefined) {
@@ -1395,6 +1484,7 @@ const ChatPage: Component = () => {
               // 保存 token 用量
               if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
               if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
+              if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
               // 孤儿 toolCalls：仍为 calling 的条目标记为中断错误
               if (toolCalls.some((tc: any) => tc.state === 'calling')) {
                 updatedMsg.toolCalls = toolCalls.map((tc: any) =>
@@ -1478,6 +1568,7 @@ const ChatPage: Component = () => {
       // 思维链片段追加：原生 reasoning_content 流式累积到对应消息的 reasoning 字段
       // 同时构建 agentSteps 时间线中的 thinking 步骤
       listen<any>('llm-reasoning', (e) => {
+        if (reasoningLevel() === 'off') return;
         const { assistant_id, topic_id, content } = e.payload;
         const asst = datas.assistants.find(a => a.id === assistant_id);
         const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
@@ -1554,13 +1645,13 @@ const ChatPage: Component = () => {
       }),
       // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与 agentSteps 时间线
       listen<any>('llm-tool-result', (e) => {
-        const { assistant_id, topic_id, tool_call_id, content, result, is_error } = e.payload;
+        const { assistant_id, topic_id, tool_call_id, content, result, is_error, file_changes, full_content } = e.payload;
         setDatas('assistants', (a: any) => a.id === assistant_id, 'topics', (t: Topic) => t.id === topic_id,
           'history', (h: any[]) => h.map((m: any) => {
             if (m.role !== 'assistant' || !m.toolCalls) return m;
             const newToolCalls = m.toolCalls.map((tc: any) =>
               tc.id === tool_call_id
-                ? { ...tc, state: is_error ? 'error' : 'success', result, content, error: is_error ? content : undefined }
+                ? { ...tc, state: is_error ? 'error' : 'success', result, content, fullContent: full_content ?? content, error: is_error ? content : undefined, fileChanges: file_changes }
                 : tc
             );
             // 同步更新 agentSteps 中对应 tool_call 步骤
@@ -1570,13 +1661,16 @@ const ChatPage: Component = () => {
                 return {
                   ...s,
                   status: is_error ? 'error' : 'complete',
+                  fullResult: full_content ?? s.fullResult,
                   duration: now - s.timestamp,
                   toolCall: {
                     ...s.toolCall,
                     state: is_error ? 'error' : 'success',
                     result,
                     content,
+                    fullContent: full_content ?? content,
                     error: is_error ? content : undefined,
+                    fileChanges: file_changes,
                   },
                 };
               }
@@ -1588,13 +1682,15 @@ const ChatPage: Component = () => {
       }),
       // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
       listen<any>('tool-approval-requested', (e) => {
-        const { approval_id, server_id, tool_name, arguments: args, reason } = e.payload;
+        const { approval_id, server_id, tool_name, arguments: args, reason, preview_diff, file_path } = e.payload;
         setPendingApprovals(prev => [...prev, {
           approvalId: approval_id,
           serverId: server_id,
           toolName: tool_name,
           arguments: args,
           reason,
+          previewDiff: preview_diff,
+          filePath: file_path,
         }]);
       }),
 
@@ -1880,7 +1976,16 @@ const ChatPage: Component = () => {
           handleFileUpload={handleFileUpload}
           pendingApprovals={pendingApprovals()}
           onResolveApproval={(id) => setPendingApprovals(prev => prev.filter(a => a.approvalId !== id))}
-        />
+          canShare={!!activeTopic()}
+          onOpenShare={() => enterSelectionMode(null)}
+          isSelectingMessages={isSelectingMessages()}
+          selectedMessageIds={selectedMessageIds()}
+          onToggleMessage={handleToggleMessage}
+            onSelectAll={handleSelectAll}
+            onCancelSelection={handleCancelSelection}
+            onConfirmSelection={handleConfirmSelection}
+            onBranchFromMessage={branchFromMessage}
+          />
       </div>
 
       <TopicSidebar
@@ -1892,9 +1997,18 @@ const ChatPage: Component = () => {
         editingTopicId={editingTopicId()}
         setEditingTopicId={setEditingTopicId}
         addTopic={addTopic}
+        onExportTopic={(topicId) => enterSelectionMode(topicId)}
         isResizing={isResizing()}
       />
 
+      <Portal>
+        <ShareModal
+          open={showShareModal()}
+          onClose={() => { setShowShareModal(false); setActiveShareTopicId(null); setSelectedMessageIds(new Set<string>()); }}
+          topic={shareTopic()}
+          selectedMessageIds={selectedMessageIds().size > 0 ? selectedMessageIds() : undefined}
+        />
+      </Portal>
       <Portal>
         <ProjectSettingsModal
           show={settingsAsstId() !== null}

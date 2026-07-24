@@ -8,3 +8,4 @@ src-tauri/undefined/
 *.key.pub
 .vscode/
 .claude/
+.temp/

@@ -89,6 +89,13 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
             if bytes.len() == AES_KEY_LEN {
                 let mut key = [0u8; AES_KEY_LEN];
                 key.copy_from_slice(&bytes);
+                // keyring 可用：清理残留的明文 fallback-key 文件
+                if let Some(kp) = fallback_key_path(app) {
+                    if kp.exists() {
+                        let _ = fs::remove_file(&kp);
+                        tracing::info!("[secure_store] keyring 已恢复，已删除残留的 fallback-key 文件");
+                    }
+                }
                 return Ok(key);
             }
         }
@@ -115,6 +122,10 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
 
         // 尝试存入 keyring
         if keyring_set_str(FALLBACK_KEY_ACCOUNT, &hex_key).is_ok() {
+            // keyring 写入成功：清理可能遗留的明文密钥文件
+            if path.exists() {
+                let _ = fs::remove_file(&path);
+            }
             return Ok(key);
         }
 
@@ -359,6 +370,7 @@ pub mod accounts {
     use sha2::{Digest, Sha256};
 
     pub const APP_API_KEY: &str = "app-api-key";
+
 
     pub fn provider_key(id: &str) -> String {
         format!("provider-{}-api-key", id)

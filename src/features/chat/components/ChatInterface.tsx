@@ -1,8 +1,9 @@
-import { Component, For, Show, Setter, createSignal, createEffect, createMemo, onCleanup, on } from 'solid-js';
+import { Component, For, Show, Setter, createSignal, createEffect, createMemo, onCleanup, onMount, on } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import Markdown from '../../../shared/components/Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
-import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, isChatMode, mcpServerStatus, type AgentMode } from '../../../core/store/store';
+import { Topic, PendingAttachment, globalUserAvatar, selectedModel, isStartingLocalModel, localModelStartProgress, currentProjectId, currentProject, datas, setDatas, currentAssistantId, currentTopicId, isChatMode, mcpServerStatus, gitBranch, gitBranches, switchBranch, type AgentMode, type FileChangeInfo } from '../../../core/store/store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
@@ -17,6 +18,38 @@ import TokenStatsBar from './TokenStatsBar';
 import { totalErrors, totalWarnings, problemsPanelVisible, setProblemsPanelVisible, hasDiagnostics } from '../../../core/store/diagnostics';
 import AgentModeSelector from './AgentModeSelector';
 import WelcomeScreen from './WelcomeScreen';
+import DiffView from '../../../shared/components/DiffView';
+
+
+/** 聚合后的文件变更条目，与 FileChangeInfo 同形但条目唯一 */
+type AggregatedFileChange = FileChangeInfo;
+
+/** 从消息的 toolCalls 中聚合所有文件变更，按 filePath 去重 */
+function aggregateFileChanges(msg: any): AggregatedFileChange[] {
+    const toolCalls: any[] = msg.toolCalls || [];
+    const seen = new Map<string, FileChangeInfo>();
+    for (const tc of toolCalls) {
+        const changes: FileChangeInfo[] = tc.fileChanges || [];
+        for (const fc of changes) {
+            seen.set(fc.filePath, fc);
+        }
+    }
+    return Array.from(seen.values());
+}
+
+/** 从聚合的文件变更中计算增减行数统计 */
+function aggregateDiffStats(changes: AggregatedFileChange[]): { added: number; deleted: number } {
+    let added = 0;
+    let deleted = 0;
+    for (const c of changes) {
+        const m = c.summary.match(/\+(\d+)\s*-(\d+)/);
+        if (m) {
+            added += parseInt(m[1], 10);
+            deleted += parseInt(m[2], 10);
+        }
+    }
+    return { added, deleted };
+}
 
 interface ChatInterfaceProps {
     activeTopic: Topic | null;
@@ -33,35 +66,42 @@ interface ChatInterfaceProps {
     handleFileUpload: (path: string, type: 'file' | 'image') => Promise<void>;
     pendingApprovals: PendingApproval[];
     onResolveApproval: (approvalId: string) => void;
+    /** 是否显示分享按钮（仅纯对话模式） */
+    canShare: boolean;
+    /** 打开分享弹窗的回调（进入消息选择模式） */
+    onOpenShare: () => void;
+    /** 消息选择模式 */
+    isSelectingMessages: boolean;
+    /** 当前选中的消息 ID 集合 */
+    selectedMessageIds: Set<string>;
+    /** 切换单条消息选中 */
+    onToggleMessage: (msgId: string) => void;
+    /** 全选 */
+    onSelectAll: () => void;
+    /** 取消选择 */
+    onCancelSelection: () => void;
+    /** 确认选择 */
+    onConfirmSelection: () => void;
+    /** 从消息处分叉 */
+    onBranchFromMessage: (messageId: string) => void;
 }
 
 const UserMessageAvatar: Component = () => {
-    const [isLoaded, setIsLoaded] = createSignal(false);
-    const [imgSrc, setImgSrc] = createSignal(globalUserAvatar());
-
-    createEffect(() => {
-        setImgSrc(globalUserAvatar());
-        setIsLoaded(false);
-    });
+    const avatarSrc = () => globalUserAvatar();
 
     return (
         <div class="relative flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
              style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
             <img
-                src={imgSrc()}
+                src={avatarSrc()}
                 alt="User"
-                class="w-full h-full object-cover transition-opacity duration-300"
-                classList={{ 'opacity-0': !isLoaded(), 'opacity-100': isLoaded() }}
-                onLoad={() => setIsLoaded(true)}
-                onError={() => setImgSrc('/icons/app-logo/user.svg')}
+                class="w-full h-full object-cover"
+                onError={(e) => { e.currentTarget.src = '/icons/app-logo/user.svg'; }}
             />
             <div
-                class="absolute inset-0 w-full h-full flex items-center justify-center transition-opacity duration-300 pointer-events-none"
-                style="background: rgba(255,255,255,0.06);"
-                classList={{ 'opacity-100': !isLoaded(), 'opacity-0': isLoaded() }}
-            >
-                <Icon src="/icons/app-logo/user.svg" class="w-5 h-5 opacity-50" />
-            </div>
+                class="absolute inset-0 w-full h-full flex items-center justify-center pointer-events-none"
+                style="background: rgba(255,255,255,0.02);"
+            />
         </div>
     );
 };
@@ -81,8 +121,29 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     let userScrolledUp = false;
     // 已播放入场动画的消息 ID 集合，避免 agentSteps 更新时重复触发动画
     let animatedMessageIds = new Set<string>();
+    // 重新发送/编辑时跳过消息动画（不播退场 + 不播入场）
+    const [skipMessageAnimation, setSkipMessageAnimation] = createSignal(false);
     // 流式 rAF 循环的最新 ID，始终指向最后一个排期的帧，保证能正确取消
     let streamRAFId: number | undefined;
+    // Git 分支下拉状态
+    const [branchOpen, setBranchOpen] = createSignal(false);
+    const [branchToast, setBranchToast] = createSignal<string | null>(null);
+    // 消息 DOM 元素映射（id → HTMLElement），用于退场动画
+    const messageEls = new Map<string, HTMLElement>();
+    // 已撤销的消息 ID 集合（本地信号，不持久化）
+    const [revertedMessages, setRevertedMessages] = createSignal<Set<string>>(new Set());
+
+    // 点击外部关闭 Git 分支下拉
+    const closeBranch = (e: MouseEvent) => {
+        if (branchOpen()) {
+            const target = e.target as HTMLElement;
+            if (!target.closest('.branch-dropdown-container')) {
+                setBranchOpen(false);
+            }
+        }
+    };
+    onMount(() => document.addEventListener('mousedown', closeBranch));
+    onCleanup(() => document.removeEventListener('mousedown', closeBranch));
 
     // ---- 注册快捷键命令 ----
     const cmdFocusInput = registerCommand({
@@ -309,6 +370,16 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         return lastIdx;
     });
 
+    /** 最后一条助手回复（紧接在最后一条用户消息之后），用于重发/编辑时一并删除 */
+    const lastAssistantReply = createMemo(() => {
+        const history = props.activeTopic?.history;
+        if (!history || !Array.isArray(history)) return null;
+        const lastUserIdx = lastUserMsgIndex();
+        if (lastUserIdx < 0 || lastUserIdx >= history.length - 1) return null;
+        const next = history[lastUserIdx + 1];
+        return next?.role === 'assistant' ? next : null;
+    });
+
     /** 当前助手的工作模式，用于控制工作目录选择器显隐 */
     const currentAgentMode = (): AgentMode => {
         const id = currentAssistantId();
@@ -320,6 +391,62 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     return (
         <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full"
              style="background: rgba(18, 22, 35, 0.12); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 1px rgba(255,255,255,0.04);">
+            {/* 顶部操作栏 */}
+            <Show
+              when={props.isSelectingMessages}
+              fallback={
+                <div class="flex items-center justify-between px-1 pb-3 shrink-0">
+                  <span class="text-sm font-medium truncate" style="color: rgba(255,255,255,0.7);">
+                    {props.activeTopic?.name ?? ''}
+                  </span>
+                  <Show when={props.canShare && props.activeTopic}>
+                    <button
+                      class="group inline-flex items-center justify-center bg-transparent rounded-lg cursor-pointer w-8 h-8 hover:w-[68px] transition-all duration-200 hover:px-2 hover:bg-[rgba(255,255,255,0.06)]"
+                      style="border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.45);"
+                      onClick={() => props.onOpenShare()}
+                    >
+                      <Icon src="/icons/app-logo/share.svg" class="w-[15px] h-[15px] shrink-0" />
+                      <span class="overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100 group-hover:ml-1">分享</span>
+                    </button>
+                  </Show>
+                </div>
+              }
+            >
+              {/* 选择模式工具栏 */}
+              <div class="flex items-center justify-between px-1 pb-3 shrink-0 animate-fade-in">
+                <div class="flex items-center gap-2">
+                  <button
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
+                    onClick={props.onSelectAll}
+                  >
+                    全选
+                  </button>
+                  <button
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
+                    onClick={props.onCancelSelection}
+                  >
+                    取消
+                  </button>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="text-xs text-white/50">
+                    已选 {props.selectedMessageIds.size} 条
+                  </span>
+                  <button
+                    class="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200"
+                    classList={{
+                      'bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] hover:bg-[rgba(124,154,191,0.2)]': props.selectedMessageIds.size > 0,
+                      'bg-white/[0.02] border border-white/[0.04] text-white/25 cursor-not-allowed': props.selectedMessageIds.size === 0,
+                    }}
+                    disabled={props.selectedMessageIds.size === 0}
+                    onClick={props.onConfirmSelection}
+                  >
+                    确认
+                  </button>
+                </div>
+              </div>
+            </Show>
+
             <div
                 ref={scrollContainerRef}
                 onScroll={handleScroll}
@@ -361,11 +488,32 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             if (msg.role === 'tool') return null;
                             const isStreaming = createMemo(() => index() === props.typingIndex && props.isThinking && !msg.content);
                             const isActiveRound = createMemo(() => index() === props.typingIndex && props.isThinking);
+                            const fileChanges = (msg.role === 'assistant') ? aggregateFileChanges(msg) : [];
                             return (
-                                <div
-                                    ref={(el) => { if (msg.id) animatedMessageIds.add(msg.id); }}
-                                    class={`flex flex-col mb-3 pointer-events-auto ${msg.id && !animatedMessageIds.has(msg.id) ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
-                                >
+                                <div class="flex items-start gap-2 mb-3">
+                                    {/* 选择模式：复选框 */}
+                                    <Show when={props.isSelectingMessages && msg.id}>
+                                      <div
+                                        class="flex-shrink-0 mt-1 cursor-pointer select-none"
+                                        onClick={() => props.onToggleMessage(msg.id!)}
+                                      >
+                                        <div
+                                          class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-150 hover:scale-110 active:scale-95"
+                                          classList={{
+                                            'bg-[rgba(124,154,191,0.25)] border-[rgba(124,154,191,0.5)]': props.selectedMessageIds.has(msg.id!),
+                                            'bg-transparent border-white/[0.15] hover:border-white/[0.35]': !props.selectedMessageIds.has(msg.id!),
+                                          }}
+                                        >
+                                          <Show when={props.selectedMessageIds.has(msg.id!)}>
+                                            <Icon name="check" class="w-3 h-3" style="color: rgba(124,154,191,0.9);" />
+                                          </Show>
+                                        </div>
+                                      </div>
+                                    </Show>
+                                    <div
+                                      ref={(el) => { if (msg.id) { animatedMessageIds.add(msg.id); messageEls.set(msg.id, el); } }}
+                                      class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) && !skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                                    >
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
                                         <div class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
@@ -495,6 +643,22 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">复制</span>
                                             </button>
 
+                                            {/* 分支按钮（仅 assistant 消息） */}
+                                            <Show when={msg.role === 'assistant' && !!msg.id}>
+                                                <button
+                                                    class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(124,154,191,0.12)] hover:!p-[4px_8px]"
+                                                    style="border: 1px solid rgba(124,154,191,0.5); color: rgba(124,154,191,0.9);"
+                                                    onClick={() => {
+                                                        if (msg.id) props.onBranchFromMessage(msg.id);
+                                                    }}
+                                                    title="从此消息分叉出新话题"
+                                                >
+                                                    <Icon name="git-branch" size={13} style="display: inline; vertical-align: middle;" />
+                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">分支</span>
+                                                </button>
+                                            </Show>
+
+
                                             {/* 最后一条用户消息：重新发送 + 编辑后重发 */}
                                             <Show when={index() === lastUserMsgIndex() && msg.role === 'user' && (msg.content || msg.displayText)}>
                                                 <button
@@ -509,13 +673,27 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                         }
                                                         const asstId = currentAssistantId();
                                                         const tId = currentTopicId();
-                                                        if (asstId && tId && msg.id) {
-                                                            try {
-                                                                await invoke('delete_topic_message', { topicId: tId, messageId: msg.id });
-                                                            } catch (e) {
-                                                                console.error('删除消息失败:', e);
+                                                        if (asstId && tId) {
+                                                            const reply = lastAssistantReply();
+                                                            // 跳过退场动画，直接删除；同时抑制新消息的入场动画
+                                                            setSkipMessageAnimation(true);
+                                                            setTimeout(() => setSkipMessageAnimation(false), 100);
+                                                            if (reply?.id) {
+                                                                try {
+                                                                    await invoke('delete_topic_message', { topicId: tId, messageId: reply.id });
+                                                                } catch (e) {
+                                                                    console.error('删除助手回复失败:', e);
+                                                                }
+                                                                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== reply.id));
                                                             }
-                                                            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== msg.id));
+                                                            if (msg.id) {
+                                                                try {
+                                                                    await invoke('delete_topic_message', { topicId: tId, messageId: msg.id });
+                                                                } catch (e) {
+                                                                    console.error('删除消息失败:', e);
+                                                                }
+                                                                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== msg.id));
+                                                            }
                                                         }
                                                         props.setInputMessage(text);
                                                         setTimeout(() => props.handleSendMessage(), 0);
@@ -538,13 +716,27 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                         }
                                                         const asstId = currentAssistantId();
                                                         const tId = currentTopicId();
-                                                        if (asstId && tId && msg.id) {
-                                                            try {
-                                                                await invoke('delete_topic_message', { topicId: tId, messageId: msg.id });
-                                                            } catch (e) {
-                                                                console.error('删除消息失败:', e);
+                                                        if (asstId && tId) {
+                                                            const reply = lastAssistantReply();
+                                                            // 跳过退场动画，直接删除；同时抑制新消息的入场动画
+                                                            setSkipMessageAnimation(true);
+                                                            setTimeout(() => setSkipMessageAnimation(false), 100);
+                                                            if (reply?.id) {
+                                                                try {
+                                                                    await invoke('delete_topic_message', { topicId: tId, messageId: reply.id });
+                                                                } catch (e) {
+                                                                    console.error('删除助手回复失败:', e);
+                                                                }
+                                                                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== reply.id));
                                                             }
-                                                            setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== msg.id));
+                                                            if (msg.id) {
+                                                                try {
+                                                                    await invoke('delete_topic_message', { topicId: tId, messageId: msg.id });
+                                                                } catch (e) {
+                                                                    console.error('删除消息失败:', e);
+                                                                }
+                                                                setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== msg.id));
+                                                            }
                                                         }
                                                         props.setInputMessage(text);
                                                         if (textareaRef) {
@@ -559,6 +751,32 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">编辑</span>
                                                 </button>
                                             </Show>
+
+                                            {/* 删除按钮（每条消息都有，置于最右侧） */}
+                                            <button
+                                                class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(248,113,113,0.1)] hover:!p-[4px_8px]"
+                                                style="border: 1px solid rgba(248,113,113,0.35); color: rgba(248,113,113,0.75);"
+                                                onClick={async () => {
+                                                    const asstId = currentAssistantId();
+                                                    const tId = currentTopicId();
+                                                    if (!asstId || !tId || !msg.id) return;
+                                                    // 直接在 DOM 上播退场动画，不触发响应式重渲染
+                                                    const el = messageEls.get(msg.id);
+                                                    if (el) el.classList.add('animate-message-out');
+                                                    await new Promise(r => setTimeout(r, 260));
+                                                    try {
+                                                        await invoke('delete_topic_message', { topicId: tId, messageId: msg.id });
+                                                    } catch (e) {
+                                                        console.error('删除消息失败:', e);
+                                                    }
+                                                    setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === tId, 'history', h => h.filter((m: any) => m.id !== msg.id));
+                                                }}
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-[13px] h-[13px]">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                                </svg>
+                                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[60px] group-hover:opacity-100">删除</span>
+                                            </button>
                                         </div>
                                     </div>
 
@@ -566,7 +784,104 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                         <UserMessageAvatar />
                                     </Show>
                                 </div>
-                            </div>
+
+                                {/* File Changes box（仅 assistant 消息，有文件变更时显示）*/}
+                                <Show when={fileChanges.length > 0}>
+                                    {(() => {
+                                        const isReverted = () => revertedMessages().has(msg.id ?? String(index()));
+                                        const diffStats = () => aggregateDiffStats(fileChanges);
+                                        const showUndo = () => !isReverted() && !!currentProject()?.path && !!gitBranch();
+                                        const handleUndoAll = async () => {
+                                            const projectPath = currentProject()?.path;
+                                            if (!projectPath) return;
+                                            try {
+                                                await invoke('revert_file_changes_batch', {
+                                                    projectPath,
+                                                    filePaths: fileChanges.map((fc) => fc.filePath),
+                                                });
+                                                setRevertedMessages(prev => {
+                                                    const next = new Set(prev);
+                                                    next.add(msg.id ?? String(index()));
+                                                    return next;
+                                                });
+                                            } catch (err) {
+                                                console.error('批量撤销失败:', err);
+                                                alert('批量撤销失败，请确认项目是否为 Git 仓库且文件未被提交。');
+                                            }
+                                        };
+                                        return (
+                                            <div
+                                                class="rounded-lg overflow-hidden transition-opacity duration-300 w-[80%] self-center mt-3"
+                                                classList={{ 'opacity-40': isReverted() }}
+                                                style={{
+                                                    border: '1px solid rgba(255,255,255,0.06)',
+                                                    background: 'rgba(255,255,255,0.015)',
+                                                }}
+                                            >
+                                                <div
+                                                    class="flex items-center gap-2 px-3 py-1.5"
+                                                    style={{
+                                                        'border-bottom': '1px solid rgba(255,255,255,0.04)',
+                                                        color: 'rgba(255,255,255,0.4)',
+                                                        'font-size': '14px',
+                                                    }}
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4" style="opacity: 0.6;">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                                    </svg>
+                                                    <Show
+                                                        when={isReverted()}
+                                                        fallback={<span class="font-medium">文件更改</span>}
+                                                    >
+                                                        <span class="font-medium" style="text-decoration: line-through;">文件更改</span>
+                                                    </Show>
+                                                    <span style="color: rgba(255,255,255,0.25);">{fileChanges.length} 个文件</span>
+                                                    <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
+                                                        <span class="font-mono">
+                                                            {diffStats().added > 0 && <span style="color: #50dc64;">+{diffStats().added}</span>}
+                                                            {diffStats().added > 0 && diffStats().deleted > 0 && <span style="color: rgba(255,255,255,0.18);"> </span>}
+                                                            {diffStats().deleted > 0 && <span style="color: #ff5050;">-{diffStats().deleted}</span>}
+                                                        </span>
+                                                    </Show>
+                                                    <div class="flex-1" />
+                                                    <Show when={isReverted()}>
+                                                        <span
+                                                            class="px-1.5 py-px rounded text-[12px] font-medium"
+                                                            style={{
+                                                                color: 'rgba(80, 220, 100, 0.7)',
+                                                                background: 'rgba(80, 220, 100, 0.08)',
+                                                                border: '1px solid rgba(80, 220, 100, 0.15)',
+                                                            }}
+                                                        >
+                                                            已撤销
+                                                        </span>
+                                                    </Show>
+                                                    <Show when={showUndo()}>
+                                                        <button
+                                                            type="button"
+                                                            class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors hover:bg-white/[0.06] border-none cursor-pointer"
+                                                            style="color: rgba(255,255,255,0.35); background: transparent;"
+                                                            onClick={(e) => { e.stopPropagation(); handleUndoAll(); }}
+                                                            title="撤销此轮所有文件更改"
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5" style="opacity: 0.6;">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                                                            </svg>
+                                                            撤销全部
+                                                        </button>
+                                                    </Show>
+                                                </div>
+                                                <div class="p-2">
+                                                    <DiffView changes={fileChanges} allReverted={isReverted()} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </Show>
+
+
+                                    </div>
+                                </div>
                         );
                     }}
                     </For>
@@ -629,7 +944,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                         (pending, index) => index !== i() && pending.id === file.id
                                     );
                                     if (!duplicatePending) {
-                                        void invoke('discard_chat_attachment', { attachmentId: file.id });
+                                        void invoke('discard_chat_attachment', { attachmentId: file.id }).catch(console.error);
                                     }
                                     props.setPendingFiles(p => p.filter((_, idx) => idx !== i()));
                                 }}
@@ -659,6 +974,68 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         <span style="color: rgba(255,255,255,0.7);">
                           Agent · {modeLabel} · 项目: {project?.name ?? ''}
                         </span>
+                        <Show when={gitBranch()}>
+                          <div class="branch-dropdown-container relative inline-block">
+                            <button
+                              type="button"
+                              class="flex items-center gap-0.5 cursor-pointer border-none rounded-md px-1.5 py-0.5 transition-colors duration-150 bg-[rgba(124,154,191,0.08)]"
+                              style="color: rgba(255,255,255,0.5); font-weight: 400;"
+                              classList={{ '!bg-[rgba(124,154,191,0.18)]': branchOpen() }}
+                              onClick={(e) => { e.stopPropagation(); setBranchOpen(!branchOpen()); }}
+                              onMouseEnter={(e) => { if (!branchOpen()) e.currentTarget.style.background = 'rgba(124,154,191,0.15)'; }}
+                              onMouseLeave={(e) => { if (!branchOpen()) e.currentTarget.style.background = 'rgba(124,154,191,0.08)'; }}
+                            >
+                              · <Icon name="git-branch" size={12} style="display: inline; vertical-align: middle;" /> {gitBranch()}
+                            </button>
+                            <Show when={branchOpen()}>
+                              <div
+                                ref={(el) => requestAnimationFrame(() => { el.classList.remove('opacity-0', 'scale-95'); el.classList.add('opacity-100', 'scale-100'); })}
+                                class="absolute bottom-full left-0 mb-2 z-[41] w-[200px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
+                                style="background: rgba(18,22,35,0.96); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(12px); box-shadow: 0 -8px 30px rgba(0,0,0,0.4);"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
+                                     style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
+                                  切换分支
+                                </div>
+                                <div class="py-1 max-h-[200px] overflow-y-auto">
+                                  <For each={gitBranches()}>
+                                    {(branch) => (
+                                      <button
+                                        type="button"
+                                        class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer border-none text-[13px]"
+                                        style="color: rgba(255,255,255,0.75);"
+                                        classList={{ '!bg-[rgba(124,154,191,0.12)]': branch === gitBranch() }}
+                                        onClick={async () => {
+                                          if (branch === gitBranch()) { setBranchOpen(false); return; }
+                                          try {
+                                            await switchBranch(branch);
+                                            setBranchOpen(false);
+                                          } catch (e) {
+                                            const msg = typeof e === 'string' ? e : '切换分支失败，请检查是否有未提交的更改';
+                                            setBranchToast(msg);
+                                            setTimeout(() => setBranchToast(null), 3000);
+                                          }
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          if (branch !== gitBranch()) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          if (branch !== gitBranch()) e.currentTarget.style.background = 'transparent';
+                                        }}
+                                      >
+                                        <span class="flex-1 truncate">{branch}</span>
+                                        <Show when={branch === gitBranch()}>
+                                          <Icon name="check" size={13} class="shrink-0" style="color: rgba(124,154,191,0.8);" />
+                                        </Show>
+                                      </button>
+                                    )}
+                                  </For>
+                                </div>
+                              </div>
+                            </Show>
+                          </div>
+                        </Show>
                         <Show when={project}>
                           <span class="w-2 h-2 rounded-full shrink-0" style={{ background: (() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? '#4ade80' : s === 'connecting' ? '#facc15' : '#f87171'; })() }} title={(() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? '文件系统正常' : s === 'connecting' ? '文件系统启动中' : '文件系统异常'; })()} />
                         </Show>
@@ -812,6 +1189,17 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         <div class="absolute inset-3 rounded-lg pointer-events-none" style="border: 1px dashed rgba(255,255,255,0.1);"></div>
                     </div>
                 </div>
+            </Show>
+
+            {/* Git 分支切换失败 Toast — Portal 到 body 避免被父容器包含块限制 */}
+            <Show when={branchToast()}>
+              <Portal>
+                <div
+                  class="fixed bottom-5 left-5 z-[9999] max-w-[25vw] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] select-none cursor-pointer"
+                  style="color: #fca5a5; background: rgba(18, 22, 35, 0.92); border: 1px solid rgba(248,113,113,0.2); backdrop-filter: blur(30px) saturate(180%); animation: toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;"
+                  onClick={() => setBranchToast(null)}
+                >{branchToast()}</div>
+              </Portal>
             </Show>
         </div>
     );

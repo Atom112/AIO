@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ActivatedModel {
     pub api_url: String,
+    #[serde(default)]
     pub api_key: String,
     pub model_id: String,
     pub owned_by: String,
@@ -34,6 +35,10 @@ pub struct StreamPayload {
     /// 本轮输出 tokens（服务端返回，仅 done=true 时有意义）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
+    /// 上下文峰值 tokens：最后一轮 API 调用的 input_tokens，代表实际上下文窗口使用量。
+    /// 用于前端进度条展示，区别于 input_tokens（跨轮累计，用于成本统计）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u32>,
 }
 
 /// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。
@@ -58,6 +63,26 @@ pub struct ToolResultPayload {
     pub result: serde_json::Value,
     /// 是否为错误
     pub is_error: bool,
+    /// 本次工具调用产生的文件变更（write_file/replace_in_file/delete_file 时非空）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_changes: Option<Vec<FileChange>>,
+    /// 完整工具结果（前端 agentSteps 展示用，不截断）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_content: Option<String>,
+}
+
+/// 单次文件修改记录（供前端展示 diff 预览 + 跳转 + 回滚）
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChange {
+    /// 文件路径（相对于项目根目录）
+    pub file_path: String,
+    /// 操作类型: create | modify | delete
+    pub action: String,
+    /// unified diff 字符串（git diff 格式，含行号上下文）
+    pub diff: String,
+    /// 受影响行数概览（"+N -M"）
+    pub summary: String,
 }
 
 /// 从 provider 实时拉取的单个模型信息（OpenAI-兼容 /v1/models 或厂商自定义端点）。
@@ -138,6 +163,15 @@ pub struct Message {
     /// Agent 开始执行时间戳（毫秒），跨重启持久化
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_start_time: Option<i64>,
+    /// 父消息 ID（用于会话分支树），NULL = 主题根消息
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_message_id: Option<String>,
+    /// 分支索引：从同一父消息分叉时递增（0 = 原始/主干）
+    #[serde(default)]
+    pub branch_index: i32,
+    /// 完整工具执行结果（LLM 上下文中只包含截断版），仅 role=tool 消息有效，会话级内存字段不持久化到 SQLite
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_tool_result: Option<String>,
 }
 
 /// OpenAI 风格的工具调用（assistant 消息中）
@@ -155,6 +189,9 @@ pub struct ToolCall {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "fileChanges")]
+    pub file_changes: Option<Vec<FileChange>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -241,6 +278,12 @@ pub struct Topic {
     /// 由数据迁移在加载时统一修复。
     #[serde(default)]
     pub renamed: bool,
+    /// 分支来源消息 ID（此话题从哪条消息分支而来）
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "branchedFromMessageId")]
+    pub branched_from_message_id: Option<String>,
+    /// 父话题 ID（用于话题树结构）
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "parentTopicId")]
+    pub parent_topic_id: Option<String>,
 }
 
 /// AI 助手预设模型，包含系统提示词和相关的对话列表。
@@ -296,7 +339,7 @@ pub struct ModelsResponse {
 }
 
 /// 应用程序全局配置。
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppConfig {
     #[serde(rename = "apiUrl")]
     pub api_url: String,
@@ -306,7 +349,29 @@ pub struct AppConfig {
     pub default_model: String,
     #[serde(rename = "localModelPath", default)]
     pub local_model_path: String,
+    /// 工具调用失败时是否自动重试（默认 true）
+    #[serde(default = "default_auto_retry_enabled")]
+    pub auto_retry_enabled: bool,
+    /// 自动重试次数上限（默认 2）
+    #[serde(default = "default_auto_retry_count")]
+    pub auto_retry_count: u32,
+    /// 每次重试间隔（毫秒，默认 500）
+    #[serde(default = "default_auto_retry_delay_ms")]
+    pub auto_retry_delay_ms: u64,
+    /// 跨会话记忆（项目知识持久化）。默认关闭，用户可在设置中开启。
+    #[serde(default, rename = "knowledgeEnabled")]
+    pub knowledge_enabled: bool,
+    /// 系统自启。默认关闭。
+    #[serde(default, rename = "autoStartEnabled")]
+    pub auto_start_enabled: bool,
+    /// 最大并发子智能体数量（None = 使用默认值 5）。用于限制 delegate_tasks 和多个 delegate_task 的并发数。
+    #[serde(default, rename = "maxConcurrentSubagents")]
+    pub max_concurrent_subagents: Option<u32>,
 }
+
+fn default_auto_retry_enabled() -> bool { true }
+fn default_auto_retry_count() -> u32 { 2 }
+fn default_auto_retry_delay_ms() -> u64 { 500 }
 
 // ====== MCP 服务器配置 ======
 

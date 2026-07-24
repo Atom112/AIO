@@ -48,6 +48,8 @@ function levelColor(level: number): string {
 
 interface Props {
     summary: UsageSummary[];
+    onDateSelect?: (date: string) => void;
+    highlightDate?: string;
 }
 
 const UsageHeatmap: Component<Props> = (props) => {
@@ -238,10 +240,14 @@ const UsageHeatmap: Component<Props> = (props) => {
                                         const lvl = getLevel(val, gridData().levels);
                                         return (
                                             <div
-                                                class="w-3 h-3 rounded-sm cursor-pointer transition-colors duration-150 hover:ring-1 hover:ring-white/30"
+                                                classList={{
+                                                    'w-3 h-3 rounded-sm cursor-pointer transition-colors duration-150 hover:ring-1 hover:ring-white/30': true,
+                                                    'ring-1 ring-white/60': props.highlightDate === key,
+                                                }}
                                                 style={{ background: levelColor(lvl) }}
                                                 onMouseMove={(e) => handleMove(d, e)}
                                                 onMouseLeave={handleLeave}
+                                                onClick={() => props.onDateSelect?.(key)}
                                             />
                                         );
                                     }}

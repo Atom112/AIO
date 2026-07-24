@@ -357,7 +357,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
         function: super::models::ToolFunctionSpec {
             name: "delegate_task".into(),
             description: concat!(
-                "创建一个子智能体来执行独立的子任务。\n\n",
+                "【推荐方式】创建一个子智能体来执行独立的子任务。收到复杂任务时应优先使用此工具。\n\n",
                 "当你面对复杂任务时，可以将任务拆分为子任务并委托给子智能体：\n",
                 "- 使用 explorer 子智能体搜索和探索代码库\n",
                 "- 使用 coder 子智能体编写或修改具体的代码文件\n",
@@ -386,9 +386,75 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "子任务相关的初始文件路径列表（相对于项目根目录）。子智能体会先读取这些文件再开始工作。"
+                    },
+                    "wait": {
+                        "type": "boolean",
+                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续。"
                     }
                 },
                 "required": ["profile", "task"]
+            }),
+        },
+    }
+}
+
+/// 构造 `delegate_tasks` 批量工具的 ToolSpec。
+/// 
+/// 此工具允许主 Agent 在单次调用中并行创建多个子智能体。
+/// 与 `delegate_task` 不同，所有子任务同时启动、并发执行。
+/// 共享 context 参数注入到每个子智能体的系统提示词中。
+pub fn delegate_tasks_tool_spec() -> ToolSpec {
+    ToolSpec {
+        kind: "function".into(),
+        function: super::models::ToolFunctionSpec {
+            name: "delegate_tasks".into(),
+            description: concat!(
+                "批量创建多个子智能体并行执行。所有子任务在同一轮启动，并发执行。\n\n",
+                "与逐个调用 delegate_task 相比，delegate_tasks 的优势：\n",
+                "- 所有子任务同时启动，总耗时约等于最慢的子任务\n",
+                "- context 参数注入公共背景信息，避免每个子任务重复描述\n",
+                "- 单次权限审批即可启动所有子智能体\n\n",
+                "适用场景：\n",
+                "- 同时探索多个独立目录或模块\n",
+                "- 并行执行代码实现和测试编写\n",
+                "- 多个独立的分析任务（如 review + explore 同时进行）\n",
+                "- 任何彼此独立、互不依赖的子任务组合"
+            )
+            .into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "context": {
+                        "type": "string",
+                        "description": "所有子任务共享的上下文信息（项目背景、约束、契约等），会注入到每个子智能体的系统提示词中。可选。"
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "description": "要并行执行的子任务列表。每个任务独立分配一个子智能体，任务间互不影响。",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "profile": {
+                                    "type": "string",
+                                    "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试）、requirements（需求分析）或自定义角色 ID"
+                                },
+                                "task": {
+                                    "type": "string",
+                                    "description": "分配给该子智能体的完整任务描述"
+                                },
+                                "context_files": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "该子任务相关的初始文件路径列表（相对于项目根目录）"
+                                }
+                            },
+                            "required": ["profile", "task"]
+                        },
+                        "minItems": 1,
+                        "maxItems": 10
+                    }
+                },
+                "required": ["tasks"]
             }),
         },
     }

@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "__aio-filesystem__": {
+      "autoStart": true,
+      "displayName": "项目文件系统 (AIO 内置)",
+      "enabledTools": [],
+      "hasStoredSecret": false,
+      "id": "__aio-filesystem__",
+      "transport": {
+        "args": [
+          "--fs-server",
+          "\\\\?\\D:\\base\\AIO"
+        ],
+        "command": "D:\\base\\AIO\\src-tauri\\target\\debug\\aio.exe",
+        "env": {},
+        "transport": "stdio"
+      }
+    }
+  },
+  "updatedAt": "",
+  "version": 1
+}

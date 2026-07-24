@@ -2,6 +2,7 @@ pub mod attachment;
 pub mod catalog;
 pub mod config;
 pub mod engine;
+pub mod git;
 pub mod llm;
 pub mod lsp;
 pub mod mcp;

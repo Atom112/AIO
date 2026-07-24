@@ -43,11 +43,11 @@ const AppSettings: Component = () => {
     const [h, setH] = createSignal(0); // 色相 (0-360 度)
     const [s, setS] = createSignal(0); // 饱和度 (0-100%)
     const [l, setL] = createSignal(0); // 亮度 (0-100%)
-    const [autoStart, setAutoStart] = createSignal(true); // 系统自启开关状态
+    const [autoStart, setAutoStart] = createSignal(false);
+    const [knowledgeEnabled, setKnowledgeEnabled] = createSignal(false);
     const [version, setVersion] = createSignal(''); // 应用版本号
     const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
     const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
-    const [endpointDisplay, setEndpointDisplay] = createSignal<string>(''); // 调试展示用：当前 endpoint
 
     // ---- 快捷键设置状态 ----
     const [recordingActionId, setRecordingActionId] = createSignal<string | null>(null); // 正在录制的命令 ID
@@ -75,12 +75,17 @@ const AppSettings: Component = () => {
             console.error("获取版本失败", e);
         }
 
-        // 加载当前 endpoint 用于调试展示
+        // 加载跨会话记忆 + 系统自启配置
         try {
-            const eps = await invoke<string[]>('get_updater_endpoint');
-            setEndpointDisplay(eps.join(', '));
+            const cfg: Record<string, unknown> = await invoke('load_app_config');
+            if (typeof cfg?.knowledgeEnabled === 'boolean') {
+                setKnowledgeEnabled(cfg.knowledgeEnabled);
+            }
+            if (typeof cfg?.autoStartEnabled === 'boolean') {
+                setAutoStart(cfg.autoStartEnabled);
+            }
         } catch (e) {
-            console.warn('获取 endpoint 失败:', e);
+            console.warn('加载应用配置失败:', e);
         }
     });
 
@@ -161,7 +166,7 @@ const AppSettings: Component = () => {
             setCheckResult({
                 kind: 'failed',
                 current_version: version(),
-                endpoint: endpointDisplay(),
+                endpoint: '',
                 reason: typeof e === 'string' ? e : (e instanceof Error ? e.message : '未知错误'),
             });
         } finally {
@@ -424,7 +429,44 @@ const AppSettings: Component = () => {
                             class="opacity-0 w-0 h-0 peer"
                             type="checkbox"
                             checked={autoStart()}
-                            onChange={(e) => setAutoStart(e.currentTarget.checked)}
+                            onChange={async (e) => {
+                                const val = e.currentTarget.checked;
+                                setAutoStart(val);
+                                try {
+                                    await invoke('set_auto_start', { enabled: val });
+                                } catch (err) {
+                                    console.warn('设置自启失败:', err);
+                                    setAutoStart(!val); // 回滚
+                                }
+                            }}
+                        />
+                        <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
+                    </label>
+                </div>
+
+                <div class="flex justify-between items-center py-3 border-b border-white/5">
+                    <div>
+                        <span class="block text-[#eee] text-[14px]">跨会话记忆</span>
+                        <p class="text-xs text-white/35 mt-1">Agent 在对话中记住的项目知识（架构决策、代码约定等）将在新对话中自动注入。数据存储在项目根目录的 .aio/knowledge.json 中。</p>
+                    </div>
+
+                    <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
+                        <input
+                            class="opacity-0 w-0 h-0 peer"
+                            type="checkbox"
+                            checked={knowledgeEnabled()}
+                            onChange={async (e) => {
+                                const val = e.currentTarget.checked;
+                                setKnowledgeEnabled(val);
+                                try {
+                                    const cfg: any = await invoke('load_app_config').catch(() => null);
+                                    if (cfg) {
+                                        await invoke('save_app_config', { config: { ...cfg, knowledgeEnabled: val } });
+                                    }
+                                } catch (err) {
+                                    console.warn('保存 knowledge 配置失败:', err);
+                                }
+                            }}
                         />
                         <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5"></span>
                     </label>
@@ -492,20 +534,6 @@ const AppSettings: Component = () => {
                     </button>
                 </div>
 
-                <Show when={endpointDisplay()}>
-                    <div
-                        class="mt-2 px-3 py-2 rounded-lg text-[11px] font-mono leading-relaxed"
-                        style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            color: 'rgba(255, 255, 255, 0.40)',
-                            border: '1px solid rgba(255, 255, 255, 0.05)',
-                            'word-break': 'break-all',
-                        }}
-                        title="当前 tauri.conf.json 中配置的更新清单地址"
-                    >
-                        <span style="color: rgba(255,255,255,0.35)">endpoint:</span> {endpointDisplay()}
-                    </div>
-                </Show>
             </div>
 
             <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}>

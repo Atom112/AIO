@@ -142,7 +142,7 @@ pub fn create_project(app: AppHandle, state: tauri::State<'_, DbState>, name: St
 
     // 创建对应助理记录
     {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock();
         let agent_mode_str = serde_json::to_string(&AgentMode::Normal)
             .unwrap_or_else(|_| "\"normal\"".to_string())
             .trim_matches('"')

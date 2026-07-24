@@ -498,7 +498,7 @@ export const saveProfileModelOverrides = async () => {
         if (model) {
             overrides.push({
                 profileId,
-                modelId: mKey,
+                modelId: model.model_id,
                 apiUrl: model.api_url,
                 apiKey: model.api_key,
             });

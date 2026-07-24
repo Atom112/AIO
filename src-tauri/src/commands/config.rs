@@ -19,12 +19,6 @@ struct AppConfigDisk {
     knowledge_enabled: bool,
     #[serde(default, rename = "autoStartEnabled")]
     auto_start_enabled: bool,
-    #[serde(default, rename = "fastModelId")]
-    fast_model_id: Option<String>,
-    #[serde(default, rename = "fastModelApiUrl")]
-    fast_model_api_url: Option<String>,
-    #[serde(default, rename = "fastModelApiKey")]
-    fast_model_api_key: Option<String>,
 }
 
 /// 保存应用程序通用配置
@@ -39,13 +33,6 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
         let _ = secure_store::delete(&app, secure_store::accounts::APP_API_KEY);
     }
 
-    // 快速模型 api_key 同样走钥匙串
-    if let Some(ref fast_key) = config.fast_model_api_key {
-        if !fast_key.is_empty() {
-            secure_store::set(&app, secure_store::accounts::FAST_MODEL_API_KEY, fast_key)
-                .map_err(|e| e.to_string())?;
-        }
-    }
 
     // 1. 获取操作系统的用户配置目录 (如 Windows 的 AppData/Roaming 或 Linux 的 ~/.config)
     let mut path = dirs::config_dir().ok_or_else(|| "无法获取系统配置目录".to_string())?;
@@ -65,9 +52,6 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
         local_model_path: config.local_model_path,
         knowledge_enabled: config.knowledge_enabled,
         auto_start_enabled: config.auto_start_enabled,
-        fast_model_id: config.fast_model_id.clone(),
-        fast_model_api_url: config.fast_model_api_url.clone(),
-        fast_model_api_key: None, // api_key 不入盘，走 keyring
     };
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
     // 原子写入
@@ -98,14 +82,12 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     api_key,
                     default_model: disk.default_model,
                     local_model_path: disk.local_model_path,
-                    fast_model_id: disk.fast_model_id,
-                    fast_model_api_url: disk.fast_model_api_url,
-                    fast_model_api_key: secure_store::get(&app, secure_store::accounts::FAST_MODEL_API_KEY).unwrap_or(None),
                     auto_retry_enabled: true,
                     auto_retry_count: 2,
                     auto_retry_delay_ms: 500,
                     knowledge_enabled: disk.knowledge_enabled,
                     auto_start_enabled: disk.auto_start_enabled,
+                    max_concurrent_subagents: None,
                 });
             }
             // 兼容旧 schema（含明文 api_key）：读出后迁出到 keyring
@@ -119,9 +101,6 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     local_model_path: legacy.local_model_path.clone(),
                     knowledge_enabled: false,
                     auto_start_enabled: false,
-                    fast_model_id: None,
-                    fast_model_api_url: None,
-                    fast_model_api_key: None,
                 };
                 disk.api_url = legacy.api_url;
                 disk.default_model = legacy.default_model;
@@ -132,14 +111,12 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     api_key: legacy.api_key,
                     default_model: disk.default_model,
                     local_model_path: disk.local_model_path,
-                    fast_model_id: None,
-                    fast_model_api_url: None,
-                    fast_model_api_key: None,
                     auto_retry_enabled: true,
                     auto_retry_count: 2,
                     auto_retry_delay_ms: 500,
                     knowledge_enabled: false,
                     auto_start_enabled: false,
+                    max_concurrent_subagents: None,
                 });
             }
         }
@@ -150,14 +127,12 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
         api_key: "".into(),
         default_model: "".into(),
         local_model_path: "".into(),
-        fast_model_id: None,
-        fast_model_api_url: None,
-        fast_model_api_key: None,
         auto_retry_enabled: true,
         auto_retry_count: 2,
         auto_retry_delay_ms: 500,
         knowledge_enabled: false,
         auto_start_enabled: false,
+        max_concurrent_subagents: None,
     })
 }
 

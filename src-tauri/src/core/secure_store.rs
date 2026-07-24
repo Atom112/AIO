@@ -370,8 +370,7 @@ pub mod accounts {
     use sha2::{Digest, Sha256};
 
     pub const APP_API_KEY: &str = "app-api-key";
-    /// 快速模型 API Key（可空：None 表示与主模型使用同一 key）
-    pub const FAST_MODEL_API_KEY: &str = "fast-model-api-key";
+
 
     pub fn provider_key(id: &str) -> String {
         format!("provider-{}-api-key", id)

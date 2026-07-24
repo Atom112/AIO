@@ -45,13 +45,9 @@ const AppSettings: Component = () => {
     const [l, setL] = createSignal(0); // 亮度 (0-100%)
     const [autoStart, setAutoStart] = createSignal(false);
     const [knowledgeEnabled, setKnowledgeEnabled] = createSignal(false);
-    const [fastModelId, setFastModelId] = createSignal('');
-    const [fastModelApiUrl, setFastModelApiUrl] = createSignal('');
-    const [fastModelSaving, setFastModelSaving] = createSignal(false);
     const [version, setVersion] = createSignal(''); // 应用版本号
     const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
     const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
-    const [endpointDisplay, setEndpointDisplay] = createSignal<string>(''); // 调试展示用：当前 endpoint
 
     // ---- 快捷键设置状态 ----
     const [recordingActionId, setRecordingActionId] = createSignal<string | null>(null); // 正在录制的命令 ID
@@ -79,14 +75,6 @@ const AppSettings: Component = () => {
             console.error("获取版本失败", e);
         }
 
-        // 加载当前 endpoint 用于调试展示
-        try {
-            const eps = await invoke<string[]>('get_updater_endpoint');
-            setEndpointDisplay(eps.join(', '));
-        } catch (e) {
-            console.warn('获取 endpoint 失败:', e);
-        }
-
         // 加载跨会话记忆 + 系统自启配置
         try {
             const cfg: Record<string, unknown> = await invoke('load_app_config');
@@ -95,12 +83,6 @@ const AppSettings: Component = () => {
             }
             if (typeof cfg?.autoStartEnabled === 'boolean') {
                 setAutoStart(cfg.autoStartEnabled);
-            }
-            if (typeof cfg?.fastModelId === 'string') {
-                setFastModelId(cfg.fastModelId);
-            }
-            if (typeof cfg?.fastModelApiUrl === 'string') {
-                setFastModelApiUrl(cfg.fastModelApiUrl);
             }
         } catch (e) {
             console.warn('加载应用配置失败:', e);
@@ -184,7 +166,7 @@ const AppSettings: Component = () => {
             setCheckResult({
                 kind: 'failed',
                 current_version: version(),
-                endpoint: endpointDisplay(),
+                endpoint: '',
                 reason: typeof e === 'string' ? e : (e instanceof Error ? e.message : '未知错误'),
             });
         } finally {
@@ -490,49 +472,6 @@ const AppSettings: Component = () => {
                     </label>
                 </div>
 
-                {/* 快速模型配置 */}
-                <div class="py-3 border-b border-white/5">
-                    <div class="mb-2">
-                        <span class="block text-[#eee] text-[14px]">快速模型</span>
-                        <p class="text-xs text-white/35 mt-1">用于 explorer、architect 等只读子智能体。留空则与主模型一致。API Key 保存在系统钥匙串中。</p>
-                    </div>
-                    <div class="space-y-2">
-                        <input
-                            class="w-full px-3 py-1.5 rounded-lg text-[13px] outline-none transition-all duration-200"
-                            style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.85);"
-                            placeholder="模型 ID（如 gpt-4o-mini）"
-                            value={fastModelId()}
-                            onInput={(e) => setFastModelId(e.currentTarget.value)}
-                            onBlur={async () => {
-                                setFastModelSaving(true);
-                                try {
-                                    const cfg: Record<string, unknown> = await invoke('load_app_config').catch(() => null) as Record<string, unknown> || {};
-                                    await invoke('save_app_config', { config: { ...cfg, fastModelId: fastModelId(), fastModelApiUrl: fastModelApiUrl() } });
-                                } catch (err) { console.warn('保存快速模型失败:', err); }
-                                finally { setFastModelSaving(false); }
-                            }}
-                        />
-                        <input
-                            class="w-full px-3 py-1.5 rounded-lg text-[13px] outline-none transition-all duration-200"
-                            style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.85);"
-                            placeholder="API 地址（同主模型留空）"
-                            value={fastModelApiUrl()}
-                            onInput={(e) => setFastModelApiUrl(e.currentTarget.value)}
-                            onBlur={async () => {
-                                setFastModelSaving(true);
-                                try {
-                                    const cfg: Record<string, unknown> = await invoke('load_app_config').catch(() => null) as Record<string, unknown> || {};
-                                    await invoke('save_app_config', { config: { ...cfg, fastModelId: fastModelId(), fastModelApiUrl: fastModelApiUrl() } });
-                                } catch (err) { console.warn('保存快速模型失败:', err); }
-                                finally { setFastModelSaving(false); }
-                            }}
-                        />
-                        <Show when={fastModelSaving()}>
-                            <span class="text-[11px] text-white/30">已保存</span>
-                        </Show>
-                    </div>
-                </div>
-
                 <div class="flex justify-between items-center py-3 border-b border-white/5">
                     <div>
                         <span class="block text-[#eee] text-[14px]">开源主页</span>
@@ -595,20 +534,6 @@ const AppSettings: Component = () => {
                     </button>
                 </div>
 
-                <Show when={endpointDisplay()}>
-                    <div
-                        class="mt-2 px-3 py-2 rounded-lg text-[11px] font-mono leading-relaxed"
-                        style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            color: 'rgba(255, 255, 255, 0.40)',
-                            border: '1px solid rgba(255, 255, 255, 0.05)',
-                            'word-break': 'break-all',
-                        }}
-                        title="当前 tauri.conf.json 中配置的更新清单地址"
-                    >
-                        <span style="color: rgba(255,255,255,0.35)">endpoint:</span> {endpointDisplay()}
-                    </div>
-                </Show>
             </div>
 
             <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}>

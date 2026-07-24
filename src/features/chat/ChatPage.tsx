@@ -917,7 +917,7 @@ const ChatPage: Component = () => {
             if (mdl) {
               resolvedOverrides.push({
                 profileId,
-                modelId: mKey,
+                modelId: mdl.model_id,
                 apiUrl: mdl.api_url,
                 apiKey: mdl.api_key,
               });

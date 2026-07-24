@@ -349,15 +349,6 @@ pub struct AppConfig {
     pub default_model: String,
     #[serde(rename = "localModelPath", default)]
     pub local_model_path: String,
-    /// 快速模型 ID（用于 explorer/reviewer/architect 等只读子智能体）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fast_model_id: Option<String>,
-    /// 快速模型 API 地址（同 provider 时可省略）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fast_model_api_url: Option<String>,
-    /// 快速模型 API Key（同 provider 时可省略）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fast_model_api_key: Option<String>,
     /// 工具调用失败时是否自动重试（默认 true）
     #[serde(default = "default_auto_retry_enabled")]
     pub auto_retry_enabled: bool,
@@ -373,6 +364,9 @@ pub struct AppConfig {
     /// 系统自启。默认关闭。
     #[serde(default, rename = "autoStartEnabled")]
     pub auto_start_enabled: bool,
+    /// 最大并发子智能体数量（None = 使用默认值 5）。用于限制 delegate_tasks 和多个 delegate_task 的并发数。
+    #[serde(default, rename = "maxConcurrentSubagents")]
+    pub max_concurrent_subagents: Option<u32>,
 }
 
 fn default_auto_retry_enabled() -> bool { true }

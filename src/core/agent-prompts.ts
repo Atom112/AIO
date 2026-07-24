@@ -49,11 +49,12 @@ export function buildAgentSystemPrompt(
         `- git_log(count?, path?, oneline?) — 查看 git 提交历史`,
         `- git_add(files?, all?) — 将文件添加到 git 暂存区`,
         `- git_commit(message) — 创建 git 提交`,
-        `- delegate_task(profile, task, context_files?) — 创建子智能体执行独立子任务`,
+        `- delegate_task(profile, task, context_files?, wait?) — 创建子智能体执行独立子任务`,
+        `- delegate_tasks(context?, [{profile, task, context_files?}]) — 批量创建多个子智能体并行执行`,
         ``,
         `子智能体使用规则（最高优先级，必须遵守）:`,
         ``,
-        `**核心原则：收到任何需要多步操作的任务，都必须委托给子智能体，禁止自己直接调用工具。**`,
+        `**核心原则：收到任何需要多步操作的任务，都必须委托给子智能体。多个独立子任务应在同一轮并行创建，而非逐个串行。**`,
         `自己直接调用工具仅限以下例外情况：`,
         `  - 读取一个已知路径的文件确认内容`,
         `  - 搜索一个特定的字符串（不超过 1 次 search_content）`,
@@ -63,13 +64,15 @@ export function buildAgentSystemPrompt(
         `  - 用户说「探索这个项目」→ delegate_task(profile="explorer", task="全面探索项目结构、技术栈、关键模块和入口点")`,
         `  - 用户说「看看这个文件在哪些地方被引用」→ delegate_task(profile="explorer", task="查找所有引用并分析依赖关系")`,
         `  - 用户说「review 一下代码」→ delegate_task(profile="reviewer", task="...")`,
-        `  - 用户说「修复这个 bug」→ delegate_task(profile="debugger", task="...诊断根因") 然后 delegate_task(profile="coder", ...)`,
+        `  - 用户说「修复这个 bug」→ 同时创建 debugger 和 explorer 并行诊断，而非先等一个再等另一个`,
         `  - 任何涉及多个文件、多个步骤、或需要上下文理解的任务 → 委托`,
         ``,
-        `委托优势:`,
-        `- 同一轮调用多个 delegate_task 会并行执行，速度远快于自己串行`,
-        `- 每个子智能体有独立上下文窗口，不会污染主 Agent 的上下文`,
-        `- 角色匹配保证任务由最适合的 profile 执行`,
+        `并行委托（重要！）:`,
+        `- delegate_tasks 是批量并行的首选方式：所有子任务同时启动，总耗时约等于最慢的子任务`,
+        `- context 参数可注入公共背景信息（项目结构、关键约束），避免每个子任务重复描述`,
+        `- 同一轮也可以调用多个 delegate_task，它们同样并行执行`,
+        `- 凡是彼此独立、互不依赖的子任务，务必在同一轮全部发出，不要等结果回来再发下一个`,
+        `- 例如「实现功能 X 并写测试」→ 同时创建 coder(实现) 和 tester(测试)，两个子智能体并行工作`,
         ``,
         `角色速查:`,
         `  explorer → 搜索文件/探索代码库/架构分析/依赖追踪（只读）`,
@@ -92,9 +95,10 @@ export function buildAgentSystemPrompt(
         case 'normal':
             lines.push(
                 `当前是普通模式：文件读取/搜索可自由执行，修改文件前需用户确认。`,
-                `**子智能体委托不需确认**：建议优先使用 delegate_task 委托子智能体执行任务，`,
+                `**子智能体委托不需确认**：建议优先使用 delegate_task 或 delegate_tasks 委托子智能体执行任务，`,
                 `委托操作本身不受「修改需确认」的限制（子智能体内部自行管理权限）。`,
                 `探索类请求（如「看看这个项目」）务必委托 explorer，不要自己逐文件读取。`,
+                `多个独立子任务推荐使用 delegate_tasks 批量并行启动，而不是逐个 delegate_task。`,
             );
             break;
         case 'auto':
@@ -102,6 +106,7 @@ export function buildAgentSystemPrompt(
                 `当前是自动模式：尽可能自主完成任务。`,
                 `**必须遵守子智能体使用规则**：优先委托子智能体，不要自己直接操作文件或执行多步探索。`,
                 `收到任何探索类请求（如「看看这个项目」「分析下代码结构」）→ 立即 delegate_task(profile="explorer", ...)。`,
+                `多个独立子任务推荐使用 delegate_tasks 批量并行启动，而不是逐个 delegate_task。`,
             );
             break;
         case 'plan':

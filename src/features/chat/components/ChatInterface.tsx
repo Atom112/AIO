@@ -121,6 +121,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     let userScrolledUp = false;
     // 已播放入场动画的消息 ID 集合，避免 agentSteps 更新时重复触发动画
     let animatedMessageIds = new Set<string>();
+    // 重新发送/编辑时跳过消息动画（不播退场 + 不播入场）
+    const [skipMessageAnimation, setSkipMessageAnimation] = createSignal(false);
     // 流式 rAF 循环的最新 ID，始终指向最后一个排期的帧，保证能正确取消
     let streamRAFId: number | undefined;
     // Git 分支下拉状态
@@ -510,7 +512,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </Show>
                                     <div
                                       ref={(el) => { if (msg.id) { animatedMessageIds.add(msg.id); messageEls.set(msg.id, el); } }}
-                                      class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                                      class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) && !skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
                                     >
                                 <div class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}>
                                     <Show when={msg.role === 'assistant'}>
@@ -673,10 +675,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                         const tId = currentTopicId();
                                                         if (asstId && tId) {
                                                             const reply = lastAssistantReply();
-                                                            // 直接在 DOM 上播退场动画
-                                                            if (reply?.id) { const el = messageEls.get(reply.id); if (el) el.classList.add('animate-message-out'); }
-                                                            if (msg.id) { const el = messageEls.get(msg.id); if (el) el.classList.add('animate-message-out'); }
-                                                            await new Promise(r => setTimeout(r, 260));
+                                                            // 跳过退场动画，直接删除；同时抑制新消息的入场动画
+                                                            setSkipMessageAnimation(true);
+                                                            setTimeout(() => setSkipMessageAnimation(false), 100);
                                                             if (reply?.id) {
                                                                 try {
                                                                     await invoke('delete_topic_message', { topicId: tId, messageId: reply.id });
@@ -717,10 +718,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                         const tId = currentTopicId();
                                                         if (asstId && tId) {
                                                             const reply = lastAssistantReply();
-                                                            // 直接在 DOM 上播退场动画
-                                                            if (reply?.id) { const el = messageEls.get(reply.id); if (el) el.classList.add('animate-message-out'); }
-                                                            if (msg.id) { const el = messageEls.get(msg.id); if (el) el.classList.add('animate-message-out'); }
-                                                            await new Promise(r => setTimeout(r, 260));
+                                                            // 跳过退场动画，直接删除；同时抑制新消息的入场动画
+                                                            setSkipMessageAnimation(true);
+                                                            setTimeout(() => setSkipMessageAnimation(false), 100);
                                                             if (reply?.id) {
                                                                 try {
                                                                     await invoke('delete_topic_message', { topicId: tId, messageId: reply.id });

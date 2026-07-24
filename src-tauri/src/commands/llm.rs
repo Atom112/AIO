@@ -23,6 +23,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
 use tokio_util::sync::CancellationToken;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 
 /// 流式 HTTP 客户端（LLM 推理专用）。
@@ -830,6 +832,7 @@ fn build_subagent_messages(
     task_desc: &str,
     context_files: &[String],
     project_root: &str,
+    extra_context: Option<&str>,
 ) -> Vec<serde_json::Value> {
     let system_prompt = format!(
         concat!(
@@ -859,6 +862,15 @@ fn build_subagent_messages(
             "role": "user",
             "content": format!("提示：以下文件可能与任务相关，请根据需要读取：\n{}", files_hint)
         }));
+    }
+
+    if let Some(ctx) = extra_context {
+        if !ctx.is_empty() {
+            msgs.push(json!({
+                "role": "user",
+                "content": format!("[共享上下文]\n{}", ctx)
+            }));
+        }
     }
 
     msgs
@@ -1126,14 +1138,6 @@ async fn handle_delegate_task(
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
 
-    // 模型解析：per-profile override 优先，否则使用主模型
-    let override_info = profile_model_overrides.iter().find(|o| o.profile_id == profile.id);
-
-    let (resolved_api_url, resolved_api_key, resolved_model) = if let Some(ov) = override_info {
-        (ov.api_url.as_str(), ov.api_key.as_str(), ov.model_id.as_str())
-    } else {
-        (api_url, api_key, model)
-    };
 
     let context_files: Vec<String> = arguments["context_files"]
         .as_array()
@@ -1184,6 +1188,66 @@ async fn handle_delegate_task(
     }
 
     // 执行子 Agent
+    execute_single_delegate(
+        window,
+        app,
+        client,
+        api_url,
+        api_key,
+        model,
+        parent_assistant_id,
+        parent_topic_id,
+        profile_id,
+        &task_desc,
+        &context_files,
+        None, // extra_context — 单数调用不注入共享上下文
+        project_id,
+        agent_mode,
+        token,
+        profile_model_overrides,
+        custom_profiles,
+    )
+    .await
+}
+
+
+/// 单个子智能体执行的核心逻辑（被 `handle_delegate_task` 和 `handle_delegate_tasks` 共用）。
+///
+/// 负责：解析 profile、模型覆盖、项目根目录，然后调用 execute_subagent。
+/// 不包含权限检查——由调用方负责。
+async fn execute_single_delegate(
+    window: &Window,
+    app: &AppHandle,
+    client: &reqwest::Client,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    parent_assistant_id: &str,
+    parent_topic_id: &str,
+    profile_id: &str,
+    task_desc: &str,
+    context_files: &[String],
+    extra_context: Option<&str>,
+    project_id: Option<&str>,
+    agent_mode: &AgentMode,
+    token: &CancellationToken,
+    profile_model_overrides: &[ProfileModelOverride],
+    custom_profiles: &[crate::core::models::CustomSubagentProfile],
+) -> Result<ToolResult, String> {
+    let profile = subagent::find_profile(profile_id, custom_profiles)
+        .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
+
+    // 模型解析：per-profile override 优先，否则使用主模型
+    let override_info = profile_model_overrides.iter().find(|o| o.profile_id == profile.id);
+    let (resolved_api_url, resolved_api_key, resolved_model) = if let Some(ov) = override_info {
+        (ov.api_url.as_str(), ov.api_key.as_str(), ov.model_id.as_str())
+    } else {
+        (api_url, api_key, model)
+    };
+
+    // 解析项目根目录
+    let project_root = file_tools::resolve_project_root(app, project_id)?;
+
     execute_subagent(
         window,
         app,
@@ -1194,8 +1258,9 @@ async fn handle_delegate_task(
         parent_assistant_id,
         parent_topic_id,
         &profile,
-        &task_desc,
-        &context_files,
+        task_desc,
+        context_files,
+        extra_context,
         &project_root,
         project_id,
         agent_mode,
@@ -1204,6 +1269,191 @@ async fn handle_delegate_task(
     .await
 }
 
+/// 处理 delegate_tasks 批量工具调用。
+///
+/// 解析 tasks 数组和可选的 context，整体检查一次权限，
+/// 然后使用 FuturesUnordered 并行执行所有子智能体。
+/// 返回所有子任务结果的汇总报告。
+async fn handle_delegate_tasks(
+    window: &Window,
+    app: &AppHandle,
+    client: &reqwest::Client,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    parent_assistant_id: &str,
+    parent_topic_id: &str,
+    arguments: &serde_json::Value,
+    project_id: Option<&str>,
+    agent_mode: &AgentMode,
+    token: &CancellationToken,
+    profile_model_overrides: &[ProfileModelOverride],
+    custom_profiles: &[crate::core::models::CustomSubagentProfile],
+    semaphore: Arc<Semaphore>,
+) -> Result<ToolResult, String> {
+    // 解析 tasks 数组
+    let tasks_array = arguments["tasks"].as_array()
+        .ok_or_else(|| "delegate_tasks 缺少必填参数 'tasks'（应为数组）".to_string())?;
+
+    if tasks_array.is_empty() {
+        return Err("delegate_tasks: 'tasks' 数组不能为空".into());
+    }
+    if tasks_array.len() > 10 {
+        return Err("delegate_tasks: 'tasks' 数组最多 10 个元素".into());
+    }
+
+    let shared_context = arguments["context"].as_str()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+
+    // 验证每个 task 的结构
+    for (idx, task_obj) in tasks_array.iter().enumerate() {
+        let profile = task_obj["profile"].as_str();
+        let task = task_obj["task"].as_str();
+        if profile.is_none() || profile.unwrap().is_empty() {
+            return Err(format!("delegate_tasks: 第 {} 个 task 缺少必填字段 'profile'", idx + 1));
+        }
+        if task.is_none() || task.unwrap().is_empty() {
+            return Err(format!("delegate_tasks: 第 {} 个 task 缺少必填字段 'task'", idx + 1));
+        }
+    }
+
+    // 权限检查：整个批量调用一次审批（非 Auto 模式）
+    if *agent_mode != AgentMode::Auto {
+        // 解析项目根目录用于加载权限规则
+        let project_root = file_tools::resolve_project_root(app, project_id)?;
+        let custom_rules = permission::load_permissions(Some(&project_root)).rules;
+        let action = permission::check_permission(
+            "delegate_tasks",
+            "__aio-filesystem__",
+            arguments,
+            agent_mode,
+            &custom_rules,
+        );
+        match action {
+            PermissionAction::Deny => {
+                return Err("delegate_tasks 在当前模式下被安全策略禁止".into());
+            }
+            PermissionAction::Ask => {
+                let pending = app.state::<PendingApprovals>();
+                let profiles_summary: Vec<String> = tasks_array.iter()
+                    .map(|t| format!("  - {}: {}", 
+                        t["profile"].as_str().unwrap_or("?"),
+                        truncate_for_display(t["task"].as_str().unwrap_or(""), 80)
+                    ))
+                    .collect();
+                let reason = format!(
+                    "批量启动 {} 个子智能体:\n{}\n\n确认？",
+                    tasks_array.len(),
+                    profiles_summary.join("\n"),
+                );
+                let approval_fut = crate::commands::mcp::request_tool_approval(
+                    app,
+                    pending.inner(),
+                    "__aio-filesystem__",
+                    "delegate_tasks",
+                    arguments,
+                    &reason,
+                    None,
+                    None,
+                );
+                tokio::select! {
+                    _ = token.cancelled() => return Err("cancelled".into()),
+                    res = approval_fut => res?,
+                }
+            }
+            PermissionAction::Allow => {}
+        }
+    }
+
+    // 并发执行所有子任务
+    let mut unordered = FuturesUnordered::new();
+
+    for (_idx, task_obj) in tasks_array.iter().enumerate() {
+        let profile_id = task_obj["profile"].as_str().unwrap_or("general").to_string();
+        let task_desc = task_obj["task"].as_str().unwrap_or("").to_string();
+        let task_context_files: Vec<String> = task_obj["context_files"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let extra_ctx = shared_context.clone();
+
+        let window_clone = window.clone();
+        let app_clone = app.clone();
+        let client_clone = client.clone();
+        let api_url_clone = api_url.to_string();
+        let api_key_clone = api_key.to_string();
+        let model_clone = model.to_string();
+        let parent_aid = parent_assistant_id.to_string();
+        let parent_tid = parent_topic_id.to_string();
+        let pid_clone = project_id.map(|s| s.to_string());
+        let agent_mode_clone = agent_mode.clone();
+        let token_clone = token.clone();
+        let overrides_clone = profile_model_overrides.to_vec();
+        let customs_clone = custom_profiles.to_vec();
+        let sem_clone = semaphore.clone();
+
+        unordered.push(async move {
+            let _permit = sem_clone.acquire().await.map_err(|_| "并发控制信号量已关闭".to_string())?;
+
+            execute_single_delegate(
+                &window_clone, &app_clone, &client_clone,
+                &api_url_clone, &api_key_clone, &model_clone,
+                &parent_aid, &parent_tid,
+                &profile_id, &task_desc, &task_context_files,
+                extra_ctx.as_deref(),
+                pid_clone.as_deref(),
+                &agent_mode_clone, &token_clone,
+                &overrides_clone, &customs_clone,
+            ).await
+        });
+    }
+
+    // 收集所有结果
+    let mut successes: Vec<String> = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
+
+    while let Some(result) = unordered.next().await {
+        match result {
+            Ok(tr) => {
+                let summary = tr.content.iter()
+                    .find(|c| c.kind == "text")
+                    .and_then(|c| c.data.get("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(done)");
+                successes.push(summary.to_string());
+            }
+            Err(e) => {
+                failures.push(e);
+            }
+        }
+    }
+
+    // 构造汇总报告
+    let total = successes.len() + failures.len();
+    let mut report = format!("[批量委托完成] 共 {} 个子任务", total);
+
+    if !successes.is_empty() {
+        report.push_str(&format!("\n\n成功 ({}):", successes.len()));
+        for (i, s) in successes.iter().enumerate() {
+            report.push_str(&format!("\n--- 子任务 {} ---\n{}\n", i + 1, s));
+        }
+    }
+    if !failures.is_empty() {
+        report.push_str(&format!("\n\n失败 ({}):", failures.len()));
+        for (i, f) in failures.iter().enumerate() {
+            report.push_str(&format!("\n- 子任务 {} 错误: {}", i + 1, f));
+        }
+    }
+
+    Ok(ToolResult {
+        content: vec![ToolResultContent {
+            kind: "text".into(),
+            data: json!({"text": report}),
+        }],
+        is_error: false,
+    })
+}
 /// 执行一个工作流（按顺序依次运行每个步骤的子智能体）。
 ///
 /// 每个步骤独立调用 `handle_delegate_task`，前一步的输出作为上下文追加到下一步的任务描述中。
@@ -1365,6 +1615,7 @@ async fn execute_subagent(
     profile: &subagent::SubagentProfile,
     task_desc: &str,
     context_files: &[String],
+    extra_context: Option<&str>,
     project_root: &str,
     project_id: Option<&str>,
     agent_mode: &AgentMode,
@@ -1386,8 +1637,7 @@ async fn execute_subagent(
         },
     );
 
-    // 构建子 Agent 的独立消息上下文
-    let mut sub_msgs = build_subagent_messages(profile, task_desc, context_files, project_root);
+    let mut sub_msgs = build_subagent_messages(profile, task_desc, context_files, project_root, extra_context);
     let (sub_tools, _sub_tool_map) = build_subagent_tools(profile, project_root);
     let tools_slice: Option<&[ToolSpec]> = if sub_tools.is_empty() { None } else { Some(&sub_tools) };
 
@@ -1715,7 +1965,12 @@ pub async fn run_agent_turn(
                 auto_retry_delay_ms: 500,
                 knowledge_enabled: false,
                 auto_start_enabled: false,
+                max_concurrent_subagents: None,
             });
+
+        // 子 Agent 并发上限控制
+        let max_concurrent = app_config.max_concurrent_subagents.unwrap_or(5).max(1) as usize;
+        let subagent_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         let client = streaming_http_client();
 
@@ -1755,6 +2010,11 @@ pub async fn run_agent_turn(
             let delegate_spec = subagent::delegate_task_tool_spec();
             orch_map.insert(delegate_spec.function.name.clone(), "__builtin__".into());
             orch_tools.push(delegate_spec);
+
+            // delegate_tasks（批量并行）
+            let delegate_batch_spec = subagent::delegate_tasks_tool_spec();
+            orch_map.insert(delegate_batch_spec.function.name.clone(), "__builtin__".into());
+            orch_tools.push(delegate_batch_spec);
 
             // create_workflow
             let workflow_spec = subagent::create_workflow_tool_spec();
@@ -2059,6 +2319,36 @@ pub async fn run_agent_turn(
                         });
                         delegate_futures.push((i, fut));
                     }
+                } else if server_id.as_deref() == Some("__builtin__") && tc.name == "delegate_tasks" {
+                    // 批量并行：收集一个 future，放入 delegate_futures
+                    let window_clone = window.clone();
+                    let app_clone = app_c.clone();
+                    let client_clone = client.clone();
+                    let api_url_clone = api_url.clone();
+                    let api_key_clone = api_key.clone();
+                    let model_clone = model.clone();
+                    let assistant_id_clone = assistant_id_c.clone();
+                    let topic_id_clone = topic_id_c.clone();
+                    let args_val_clone = args_val.clone();
+                    let project_id_clone = project_id_c.clone();
+                    let agent_mode_clone = agent_mode.clone();
+                    let profile_overrides_clone = profile_overrides_c.clone();
+                    let custom_profiles_clone = custom_profiles_c.clone();
+                    let semaphore_clone = subagent_semaphore.clone();
+                    let token_clone = token_inner.clone();
+
+                    let fut = Box::pin(async move {
+                        handle_delegate_tasks(
+                            &window_clone, &app_clone, &client_clone,
+                            &api_url_clone, &api_key_clone, &model_clone,
+                            &assistant_id_clone, &topic_id_clone,
+                            &args_val_clone, project_id_clone.as_deref(),
+                            &agent_mode_clone, &token_clone,
+                            &profile_overrides_clone, &custom_profiles_clone,
+                            semaphore_clone,
+                        ).await
+                    });
+                    delegate_futures.push((i, fut));
                 } else if server_id.as_deref() == Some("__builtin__") && tc.name == "create_workflow" {
                     // 工作流创建：解析参数并顺序执行所有步骤
                     workflow_called = true;

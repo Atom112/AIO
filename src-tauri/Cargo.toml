@@ -28,7 +28,7 @@ dirs = "6.0"
 reqwest = { version = "0.13", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
-pdf-extract = "0.10"
+pdf-extract = "0.12"
 zip = "4.6"
 xml-rs = "0.8"
 encoding_rs = "0.8"

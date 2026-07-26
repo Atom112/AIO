@@ -52,9 +52,7 @@ jobs:
           cache: npm
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+        uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'

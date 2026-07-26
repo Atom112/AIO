@@ -13,6 +13,8 @@
 
 ## 配置远程模型
 
+![Provider 设置](../assets/screenshots/provider-settings.webp)
+
 1. 打开“设置 → 供应商设置”。
 2. 选择目录中的供应商，或添加自定义 OpenAI-compatible 供应商。
 3. 填写 API URL 与 API Key。
@@ -45,4 +47,5 @@ API Key 会优先写入系统凭据库，不会与普通 Provider 配置一起�
 
 - 了解 Provider 和本地引擎：[供应商与模型](providers-and-models.md)
 - 为项目安装工具和提示能力：[MCP 与 Skill](mcp-and-skills.md)
+- 自定义更新、主题和快捷键：[应用设置与快捷键](app-settings-and-shortcuts.md)
 - 遇到连接或启动错误：[故障排查](../troubleshooting.md)

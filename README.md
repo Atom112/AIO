@@ -16,6 +16,10 @@
 
 ---
 
+![AIO 聊天工作区](docs/assets/screenshots/chat-overview.webp)
+
+---
+
 ## 🌟 核心特性 | Features
 
 ### 1. 💬 多模型对话 | Multi-Provider Chat
@@ -43,7 +47,7 @@
 ### 4. 📚 文件与扩展 | Files & Extensions
 
 - **常用文件解析**：支持图片、PDF、DOCX、PPTX 和多种文本格式。
-- **MCP 生态**：支持 stdio、HTTP、Catalog、Tools、Resources 与 Prompts。
+- **MCP 生态**：支持 stdio、HTTP、Streamable HTTP、Catalog、Tools、Resources 与 Prompts。
 - **Skill 管理**：可从市场下载，也可导入 NPX Skill，并按全局或项目范围启用。
 
 ### 5. ✨ 贴心体验 | Productivity
@@ -120,6 +124,7 @@ cargo check
 | Provider 与本地模型 | [供应商与模型](docs/usage/providers-and-models.md) |
 | 助手、项目、Agent 与子智能体 | [聊天与 Agent](docs/usage/chat-and-agent.md) |
 | MCP、Skill 与工具权限 | [MCP 与 Skill](docs/usage/mcp-and-skills.md) |
+| 主题、更新与快捷键 | [应用设置与快捷键](docs/usage/app-settings-and-shortcuts.md) |
 | 架构与扩展开发 | [开发指南](docs/README.md#开发指南) |
 | 连接、引擎或构建问题 | [故障排查](docs/troubleshooting.md) |
 

@@ -8,6 +8,7 @@
 2. [供应商与模型](usage/providers-and-models.md)：远程 Provider、模型目录和本地推理。
 3. [聊天与 Agent](usage/chat-and-agent.md)：助手、项目、工具模式、附件、分支和导出。
 4. [MCP 与 Skill](usage/mcp-and-skills.md)：扩展安装、项目绑定和工具审批。
+5. [应用设置与快捷键](usage/app-settings-and-shortcuts.md)：更新、自启、主题、项目记忆和快捷操作。
 
 ## 开发指南
 

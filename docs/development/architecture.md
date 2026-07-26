@@ -46,7 +46,7 @@ Rust commands
 
 - Provider：Google、Anthropic、Ollama 和 OpenAI-compatible。
 - Local Engine：llama.cpp 与 vLLM；当前 UI 仅开放 llama.cpp。
-- MCP Transport：stdio 与 HTTP。
+- MCP Transport：stdio、HTTP 与 Streamable HTTP。
 - LSP：管理不同语言服务器的启动、请求、诊断和关闭。
 
 Manager 在启动时注册插件，command 根据标识符查找实现。新增实现应复用现有 trait，不新增平行调度层。
@@ -59,6 +59,7 @@ Manager 在启动时注册插件，command 根据标识符查找实现。新增�
 - JSON：Provider、MCP、Skill、模型目录和应用设置；
 - 系统凭据库：API Key 与 MCP 密钥；
 - 项目 `.aio/`：项目级 MCP、Skill 和权限。
+- 项目 `.aio/knowledge.json`：可选的跨会话项目知识。
 
 运行时状态：
 
@@ -89,6 +90,24 @@ Manager 在启动时注册插件，command 根据标识符查找实现。新增�
 
 Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任务。子智能体使用受角色约束的工具集，不能再次委派。
 
+### 权限与重试
+
+权限模块先加载模式默认规则，再叠加 `.aio/permissions.json`。匹配会考虑工具名、Server、模式和路径；拒绝规则优先，之后按优先级选择。需要询问时，后端创建待审批请求并通过事件交给前端，收到允许或拒绝后恢复挂起调用。
+
+文件写入类工具会在审批前计算 Diff。执行成功后，Git 工具再次捕获实际变更并写入消息的 `fileChanges`，用于展开 Diff 和按文件/批量恢复。
+
+工具失败默认最多重试 2 次，间隔 500 毫秒。重试包装位于统一工具执行路径，避免各工具自行实现不同策略。
+
+### 子智能体与结果保全
+
+`delegate_task` 和 `delegate_tasks` 复用单任务执行函数。批量委托用 Tokio 并发执行 1–10 个任务，并由 Semaphore 将实际并发限制为默认 5；结果按子任务收集后一次回灌主 Agent。
+
+Agent 中止或流式事件失败时，已经产生的步骤、工具输出和文件变更仍会合并进当前助手消息并持久化，避免只保留空白最终回复。
+
+### 跨会话记忆
+
+启用 `knowledgeEnabled` 后，系统提示词注入 `.aio/knowledge.json` 中的现有条目，并向 Agent 增加 `remember`、`recall` 工具。知识按项目隔离、按 key 更新，最多保留 50 条。
+
 ## MCP 数据流
 
 1. 加载全局配置并叠加项目配置。
@@ -97,3 +116,12 @@ Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任
 4. 仅把当前助手启用的工具暴露给模型。
 5. 工具调用经过权限检查、审批和超时控制。
 6. 结果作为 tool 消息进入后续模型请求。
+
+## 更新数据流
+
+1. Tauri updater 根据 `tauri.conf.json` 的 endpoint 请求 GitHub Release 中的 `latest.json`。
+2. 后端把“最新、可更新、服务未就绪、网络或其他失败”转换为结构化结果。
+3. 前端展示版本和 Release notes；用户确认后下载签名产物并显示进度。
+4. 下载完成后由 updater 安装，应用通过重启命令重新启动。
+
+发布公钥固化在 Tauri 配置中，签名私钥只存在于发布环境；本地普通构建不能生成可替代正式 Release 的更新产物。

@@ -358,11 +358,11 @@ const SkillList: Component = () => {
 
     return (
         <div class="flex flex-col h-full overflow-hidden p-6 gap-4" style="color: rgba(255,255,255,0.88);">
-            <div class="flex items-start justify-between gap-4">
+            <div class="animate-row-in flex items-start justify-between gap-4">
                 <h2 class="text-xl font-semibold">Skill 市场</h2>
             </div>
 
-            <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="animate-row-in flex items-center justify-between gap-3 flex-wrap" style="animation-delay: 30ms;">
                 <div class="flex items-center gap-3 flex-wrap">
                     <div class="flex items-center gap-1 p-1 rounded-lg" style="background: rgba(255,255,255,0.04);">
                         <button class="px-3 py-1.5 rounded-md text-sm"
@@ -409,7 +409,7 @@ const SkillList: Component = () => {
             </div>
 
             <Show when={view() === 'market'}>
-                <div class="flex items-center gap-3 flex-wrap">
+                <div class="animate-row-in flex items-center gap-3 flex-wrap" style="animation-delay: 60ms;">
                     <div class="flex gap-1">
                         {([
                             ['all', '总热度'],
@@ -485,8 +485,8 @@ const SkillList: Component = () => {
                                 const downloaded = () => Boolean(skills()[skill.id]);
                                 const weekly = () => skill.weeklyInstalls[skill.weeklyInstalls.length - 1] ?? 0;
                                 return (
-                                    <div class="flex flex-col gap-3 rounded-xl p-4"
-                                        style="background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08);">
+                                    <div class="animate-row-in flex flex-col gap-3 rounded-xl p-4"
+                                        style={{ "animation-delay": `${(index() + 3) * 30}ms`, "background": "rgba(255,255,255,0.035)", "border": "1px solid rgba(255,255,255,0.08)" }}>
                                         <div class="flex items-start gap-3">
                                             <div class="w-8 text-center font-mono text-sm pt-0.5" style="color: rgba(255,255,255,0.35);">
                                                 #{index() + 1}
@@ -538,9 +538,9 @@ const SkillList: Component = () => {
                                 尚未下载 Skill。
                             </div>
                         }>
-                            {(skill) => (
-                                <div class="flex items-center justify-between px-4 py-3 rounded-lg"
-                                    style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
+                            {(skill, index) => (
+                                <div class="animate-row-in flex items-center justify-between px-4 py-3 rounded-lg"
+                                    style={{ "animation-delay": `${(index() + 3) * 30}ms`, "background": "rgba(255,255,255,0.03)", "border": "1px solid rgba(255,255,255,0.08)" }}>
                                     <div class="flex-1 min-w-0">
                                         <div class="flex items-center gap-2">
                                             <span class="font-medium truncate">{skill.name}</span>
@@ -579,7 +579,7 @@ const SkillList: Component = () => {
 
                 {/* npx 发现标签页 */}
                 <Show when={view() === 'npx'}>
-                    <div class="flex flex-col gap-3">
+                    <div class="animate-row-in flex flex-col gap-3" style="animation-delay: 30ms;">
                         <div class="flex items-center justify-between">
                             <p class="text-xs" style="color: rgba(255,255,255,0.5);">
                                 扫描系统上的 Claude Code skill 包和全局 npm skill 包

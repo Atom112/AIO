@@ -1,8 +1,8 @@
 /**
  * @file ProjectCreateModal.tsx
- * @description 新建项目弹窗：输入名称 + 选择目录。
+ * @description 新建项目弹窗：输入名称 + 选择目录。支持入场/退场过渡动画。
  */
-import { createSignal } from 'solid-js';
+import { createSignal, onMount } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { Project } from '../../../core/store/store';
@@ -17,6 +17,21 @@ export default function ProjectCreateModal(props: Props) {
     const [path, setPath] = createSignal('');
     const [error, setError] = createSignal('');
     const [loading, setLoading] = createSignal(false);
+    const [isExiting, setIsExiting] = createSignal(false);
+    const [isEntering, setIsEntering] = createSignal(true);
+
+    // 入场动画：下一帧移除 entering 状态
+    onMount(() => {
+        requestAnimationFrame(() => setIsEntering(false));
+    });
+
+    const handleClose = () => {
+        setIsExiting(true);
+        setTimeout(() => {
+            setIsExiting(false);
+            props.onClose();
+        }, 300);
+    };
 
     const handleSelectDir = async () => {
         try {
@@ -74,11 +89,19 @@ export default function ProjectCreateModal(props: Props) {
 
     return (
         <div
-            class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60"
-            onClick={props.onClose}
+            classList={{
+                'opacity-0 pointer-events-none': isExiting() || isEntering(),
+                'opacity-100': !isExiting() && !isEntering(),
+            }}
+            class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 transition-all duration-200 ease-out"
+            onClick={handleClose}
         >
             <div
-                class="bg-[#1a2540] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6"
+                classList={{
+                    'scale-95 opacity-0': isExiting() || isEntering(),
+                    'scale-100 opacity-100': !isExiting() && !isEntering(),
+                }}
+                class="bg-[#1a2540] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
                 onClick={(e) => e.stopPropagation()}
             >
                 <h2 class="text-lg font-semibold text-white mb-4">新建项目</h2>
@@ -128,7 +151,7 @@ export default function ProjectCreateModal(props: Props) {
                 <div class="flex justify-end gap-3">
                     <button
                         class="px-4 py-2 text-sm text-white/60 hover:text-white/90 transition-colors"
-                        onClick={props.onClose}
+                        onClick={handleClose}
                     >
                         取消
                     </button>

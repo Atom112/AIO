@@ -214,11 +214,11 @@ const McpServerList: Component = () => {
 
     return (
         <div class="flex flex-col h-full overflow-hidden p-6 gap-4" style="color: rgba(255,255,255,0.88);">
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex items-start justify-between gap-4 animate-row-in">
                 <h2 class="text-xl font-semibold">MCP 服务器</h2>
             </div>
 
-            <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-center justify-between gap-3 flex-wrap animate-row-in" style={{ "animation-delay": "30ms" }}>
                 <div class="flex items-center gap-1 p-1 rounded-lg" style="background: rgba(255,255,255,0.04);">
                     <button class="px-3 py-1.5 rounded-md text-sm"
                         classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
@@ -275,11 +275,11 @@ const McpServerList: Component = () => {
                                 没有匹配的 MCP 服务器。
                             </div>
                         }>
-                            {(server) => {
+                            {(server, index) => {
                                 const installed = () => installedSourceIds().has(server.name);
                                 return (
-                                    <div class="flex flex-col gap-3 rounded-xl p-4"
-                                        style="background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08);">
+                                    <div class="flex flex-col gap-3 rounded-xl p-4 animate-row-in"
+                                        style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)', "animation-delay": `${(index() + 2) * 30}ms` }}>
                                         <div class="flex items-start justify-between gap-3">
                                             <div class="min-w-0">
                                                 <div class="font-semibold truncate">{server.displayName}</div>

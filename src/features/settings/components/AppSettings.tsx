@@ -406,7 +406,7 @@ const AppSettings: Component = () => {
 
     return (
         <div class="flex flex-col gap-[15px] box-border">
-            <div class="rounded-xl p-6" style="background: rgba(255, 255, 255, 0.035); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
+            <div class="rounded-xl p-6 animate-row-in" style="background: rgba(255, 255, 255, 0.035); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
                 <div class="flex justify-between items-center mb-5">
                     <h3 class="m-0 text-base text-white">应用状态</h3>
                     <div class="flex items-center gap-2">
@@ -536,7 +536,7 @@ const AppSettings: Component = () => {
 
             </div>
 
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', "animation-delay": "30ms" }}>
                 <div class="flex justify-between items-center mb-5">
                     <h3 class='m-0 text-base text-white'>视觉主题</h3>
                 </div>
@@ -653,7 +653,7 @@ const AppSettings: Component = () => {
             </div>
 
             {/* 快捷键设置面板 */}
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', "animation-delay": "60ms" }}>
                 <div class="flex justify-between items-center mb-5">
                     <div>
                         <h3 class="m-0 text-base text-white">快捷键设置</h3>

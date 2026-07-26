@@ -5,6 +5,7 @@
 
 use crate::core::models::{Project, ProjectsFile, AgentMode};
 use crate::core::state::DbState;
+use crate::utils::file_tools::strip_windows_extended_prefix;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -117,7 +118,7 @@ pub fn create_project(app: AppHandle, state: tauri::State<'_, DbState>, name: St
         return Err("项目路径不能为空".into());
     }
     let canonical = std::fs::canonicalize(&path_clean).map_err(|e| format!("路径无效: {}", e))?;
-    let canonical_str = canonical.to_string_lossy().to_string();
+    let canonical_str = strip_windows_extended_prefix(&canonical.to_string_lossy());
 
     // 检查路径是否已被其他项目使用
     let mut file = load_projects_file(&app);
@@ -230,7 +231,7 @@ pub fn open_project_directory(_app: AppHandle, path: String) -> Result<(), Strin
 #[tauri::command]
 pub fn get_project_by_path(app: AppHandle, path: String) -> Result<Option<Project>, String> {
     let canonical = std::fs::canonicalize(&path).map_err(|e| format!("路径无效: {}", e))?;
-    let canonical_str = canonical.to_string_lossy().to_string();
+    let canonical_str = strip_windows_extended_prefix(&canonical.to_string_lossy());
     let file = load_projects_file(&app);
     Ok(file
         .projects
@@ -242,7 +243,7 @@ pub fn get_project_by_path(app: AppHandle, path: String) -> Result<Option<Projec
 #[tauri::command]
 pub fn validate_project_path(app: AppHandle, path: String) -> Result<serde_json::Value, String> {
     let canonical = match std::fs::canonicalize(&path) {
-        Ok(c) => c.to_string_lossy().to_string(),
+        Ok(c) => strip_windows_extended_prefix(&c.to_string_lossy()),
         Err(e) => {
             return Ok(serde_json::json!({
                 "valid": false,

@@ -5,8 +5,7 @@
 use crate::core::models::*;
 use crate::core::permission::{self, PermissionAction};
 use crate::core::secure_store;
-use crate::core::state::{McpRequestManager, McpServerState, PendingApprovals};
-use crate::plugins::mcp::{self, McpServerManager, McpServerPlugin};
+use crate::plugins::mcp::{self, McpServerManager, McpServerPlugin, McpRequestManager, McpServerState, PendingApprovals};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -74,19 +73,12 @@ pub async fn add_mcp_server(
 
 /// MCP 专用的项目路径解析。
 fn resolve_project_path_mcp(app: &AppHandle, project_id: &str) -> Result<String, String> {
-    let idx_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("获取 AppData 目录失败: {}", e))?
-        .join("projects.json");
-    let content =
-        std::fs::read_to_string(&idx_path).map_err(|e| format!("读取项目索引失败: {}", e))?;
-    let file: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析项目索引失败: {}", e))?;
-    file["projects"][project_id]["path"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| format!("项目 {} 不存在", project_id))
+    mcp::resolve_project_path(app, project_id).map_err(|e| e.to_string())
+}
+
+/// 解析项目路径（返回 Option，不报错）。
+fn resolve_project_path_mcp_opt(app: &AppHandle, project_id: &str) -> Option<String> {
+    mcp::resolve_project_path(app, project_id).ok()
 }
 
 /// Store one MCP environment variable or HTTP header secret in the system keyring.
@@ -680,17 +672,7 @@ pub async fn check_tool_permission(
     }
 }
 
-/// 解析项目路径（返回 Option，不报错）。
-fn resolve_project_path_mcp_opt(app: &AppHandle, project_id: &str) -> Option<String> {
-    let idx_path = app
-        .path()
-        .app_data_dir()
-        .ok()?
-        .join("projects.json");
-    let content = std::fs::read_to_string(&idx_path).ok()?;
-    let file: serde_json::Value = serde_json::from_str(&content).ok()?;
-    file["projects"][project_id]["path"].as_str().map(|s| s.to_string())
-}
+
 
 /// 审批结果负载（发送给前端的事件）
 ///

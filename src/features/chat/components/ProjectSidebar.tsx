@@ -36,6 +36,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   });
 
   let menuCloseTimeoutId: ReturnType<typeof setTimeout>;
+  const [editingProjectId, setEditingProjectId] = createSignal<string | null>(null);
 
   // 点击菜单外部时自动关闭（与右侧话题栏"更多"按钮行为一致）
   onMount(() => {
@@ -161,7 +162,6 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     // 重新加载项目列表
     try {
       const list = await invoke<Array<{ id: string; name: string; path: string; createdAt: string; updatedAt: string; assistantId: string }>>('list_projects');
-      const { setProjects } = await import('../../../core/store/store');
       setProjects(list.map((p: Record<string, string>) => ({
         id: p.id,
         name: p.name,
@@ -184,6 +184,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     <div
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10 h-full"
       style={`width: ${props.isCollapsed ? '48px' : `${props.width}%`}; padding: ${props.isCollapsed ? '6px 4px' : '15px'}; background: rgba(18, 22, 35, 0.15); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; box-shadow: inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2); transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
+      onContextMenu={(e) => e.preventDefault()}
     >
       <div class="relative flex-1 min-h-0">
         {/* 展开状态 — 折叠时淡出 */}
@@ -196,7 +197,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
               classList={{
-                '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': isChatActive(),
+                '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]': isChatActive(),
               }}
               onClick={switchToChat}
             >
@@ -220,14 +221,24 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   <div
                     class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                     classList={{
-                      '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': isActive(),
+                      '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]': isActive(),
                     }}
                     onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                     onClick={() => switchToProject(project.id)}
                   >
-                    <span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);">
-                      <Icon name="folder" size={14} class="shrink-0" /> <span class="truncate">{project.name}</span>
-                    </span>
+                    <Show when={editingProjectId() === project.id}
+                      fallback={<span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);"><Icon name="folder" size={14} class="shrink-0" /> <span class="truncate">{project.name}</span></span>}
+                    >
+                      <input
+                        class="flex-grow rounded px-2 py-0.5 text-[0.85rem] h-6 outline-none mx-1"
+                        style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.85);"
+                        value={project.name}
+                        ref={(el) => { setTimeout(() => { el.focus(); el.select(); }, 0); }}
+                        onBlur={(e) => { renameProject(project.id, e.currentTarget.value); setEditingProjectId(null); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { renameProject(project.id, e.currentTarget.value); setEditingProjectId(null); } else if (e.key === 'Escape') setEditingProjectId(null); }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Show>
 
                     <button
                       class="flex items-center justify-center w-[30px] h-[30px] border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
@@ -261,7 +272,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
           <div class="flex flex-col items-center gap-3 py-2 h-full">
             <button
               class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
-              style={isChatActive() ? "background: rgba(124,154,191,0.15);" : ""}
+              style={isChatActive() ? "background: rgba(124,154,191,0.30);" : ""}
               onClick={switchToChat}
               title="对话"
             >
@@ -275,7 +286,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   return (
                     <div
                       class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
-                      style={isActive() ? "background: rgba(124,154,191,0.15);" : ""}
+                      style={isActive() ? "background: rgba(124,154,191,0.30);" : ""}
                       onClick={() => switchToProject(project.id)}
                       onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                       title={project.name}
@@ -332,10 +343,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white"
               onClick={() => {
                 const pid = menuState().targetProjectId;
-                if (pid) {
-                  const newName = prompt('新项目名称:', projects().find(p => p.id === pid)?.name ?? '');
-                  if (newName) renameProject(pid, newName);
-                }
+                if (pid) setEditingProjectId(pid);
                 closeMenu();
               }}
             >

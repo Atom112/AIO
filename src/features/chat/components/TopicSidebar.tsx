@@ -136,6 +136,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         <div
             class="relative flex flex-col flex-shrink-0 min-w-0 z-10"
             style={`width: ${props.isCollapsed ? '0%' : `${props.width}%`}; padding: ${props.isCollapsed ? '0' : '15px'}; background: ${props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.15)'}; backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; -webkit-backdrop-filter: ${props.isCollapsed ? 'none' : 'blur(30px)'}; border: ${props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.08)'}; border-radius: 12px; box-shadow: ${props.isCollapsed ? 'none' : 'inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2)'}; transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
+            onContextMenu={(e) => e.preventDefault()}
         >
             {/* 调整大小把手（左侧） */}
             <div
@@ -178,7 +179,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                         <>
                                             <div
                                                 class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent border-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
-                                                classList={{ '!bg-[rgba(124,154,191,0.15)] !border-[rgba(124,154,191,0.15)]': topic.id === currentTopicId() }}
+                                                classList={{ '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]': topic.id === currentTopicId() }}
                                                 onClick={() => setCurrentTopicId(topic.id)}
                                             >
                                                 {/* 子话题分支标记 */}

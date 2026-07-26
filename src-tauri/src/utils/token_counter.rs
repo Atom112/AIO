@@ -83,7 +83,6 @@ pub fn count_chat_tokens(model: &str, messages: &[serde_json::Value]) -> Result<
 // ====== Tauri 命令 ======
 
 /// 估算文本的 token 数（供前端输入框实时预览）
-#[tauri::command]
 pub fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
     count_tokens(&model, &text)
 }

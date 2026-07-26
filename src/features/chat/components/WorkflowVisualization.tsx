@@ -7,26 +7,9 @@
  * 数据来源：store 中 workflowState 信号（由后端 Tauri 事件驱动更新）。
  */
 import { Component, createSignal, Show, For } from 'solid-js';
-import { workflowState } from '../../../core/store/store';
+import { workflowState, type WorkflowState, type WorkflowStepState } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
 
-/** 工作流步骤状态（本地 fallback 定义，待 store 收敛后移除） */
-interface WorkflowStepState {
-    stepId: string;
-    profileId: string;
-    name: string;
-    status: 'pending' | 'running' | 'completed' | 'failed';
-    startedAt?: number;
-    duration?: number;
-}
-
-/** 工作流整体状态（本地 fallback 定义，待 store 收敛后移除） */
-interface WorkflowState {
-    workflowId: string;
-    title: string;
-    steps: WorkflowStepState[];
-    active: boolean;
-}
 
 /** 步骤状态 → Tailwind 圆点颜色 */
 const STATUS_DOT: Record<string, string> = {

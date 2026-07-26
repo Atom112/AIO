@@ -11,4 +11,3 @@ pub mod shell_tools;
 pub mod token_counter;
 pub mod url_validation;
 pub mod web_tools;
-pub use file_parser::process_file_content;

@@ -106,7 +106,7 @@ const McpServerList: Component = () => {
     const handleStop = async (id: string) => {
         try {
             await invoke('stop_mcp_server', { id });
-            setMcpServerStatus({ ...mcpServerStatus(), [id]: { id, status: 'disconnected', toolCount: 0 } });
+            setMcpServerStatus({ ...mcpServerStatus(), [id]: { id, status: 'disconnected', toolCount: 0, resourceCount: 0, promptCount: 0 } });
         } catch (e) {
             setError(`停止失败: ${e}`);
         }

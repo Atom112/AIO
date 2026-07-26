@@ -10,7 +10,7 @@ export interface ProjectInfo {
     name: string;
 }
 
-export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
+import type { AgentMode } from './store/store';
 
 /**
  * 构建 Agent 模式系统提示词。

@@ -402,7 +402,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               fallback={
                 <div class="flex items-center justify-between px-1 pb-3 shrink-0">
                   <span class="text-sm font-medium truncate" style="color: rgba(255,255,255,0.7);">
-                    {props.activeTopic?.name ?? ''}
+                    {(currentProject()?.name || props.activeTopic?.name) ?? ''}
                   </span>
                   <Show when={props.canShare && props.activeTopic}>
                     <button

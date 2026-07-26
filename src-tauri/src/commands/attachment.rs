@@ -271,3 +271,10 @@ pub fn load_message_attachments_batch(
 
     Ok(map)
 }
+
+/// Processes a file and returns its content as text or base64-encoded data URI.
+/// Delegates to the pure parsing functions in `utils::file_parser`.
+#[tauri::command]
+pub async fn process_file_content(path: String) -> Result<String, String> {
+    crate::utils::file_parser::process_file_content(path).await
+}

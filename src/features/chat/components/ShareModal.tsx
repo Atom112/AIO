@@ -173,6 +173,21 @@ const ShareModal: Component<ShareModalProps> = (props) => {
     return t ? exportAsJSON(t, { mode: jsonMode(), selectedMessageIds: props.selectedMessageIds }) : '';
   });
 
+  const handleCopy = async (mode: 'markdown' | 'json') => {
+    const text = mode === 'markdown' ? mdContent() : jsonContent();
+    const ok = await copyToClipboard(text);
+    if (ok) { setCopied(mode); setTimeout(() => setCopied(null), 2000); }
+  };
+
+  const handleDownload = async (mode: 'markdown' | 'json') => {
+    const t = topic();
+    if (!t) return;
+    const safeName = t.name.replace(/[<>:"/\\|?*]/g, '_');
+    const content = mode === 'markdown' ? mdContent() : jsonContent();
+    const ext = mode === 'markdown' ? 'md' : 'json';
+    const mime = mode === 'markdown' ? 'text/markdown' : 'application/json';
+    await downloadBlob(content, `${safeName}.${ext}`, mime);
+  };
   const htmlContent = createMemo(() => {
     const t = topic();
     return t ? exportAsHtml(t, currentOpts()) : '';

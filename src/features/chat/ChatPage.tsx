@@ -11,7 +11,7 @@ import {
   currentProjectId, currentProject,
   profileModelOverrides, allAvailableModels, resolveProfileModel, customSubagentProfiles,
   workflowState, setWorkflowState, type WorkflowState, type WorkflowStepState,
-  isChatMode, projects, ensureProjectAssistant, showProjectCreateModal, setShowProjectCreateModal,
+  isChatMode, projects, ensureProjectAssistant, showProjectCreateModal, setShowProjectCreateModal, getLastAgentProjectId,
 } from '../../core/store/store';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import {
@@ -1436,19 +1436,23 @@ ${asstObj.prompt}`;
 
       // 2. 处理应用启动时的默认选中（仅冷启动触发）
       if (isFirstAppLaunch) {
-        // 默认选中
-        setCurrentAssistantId(DEFAULT_ASST_ID);
+        // 尝试恢复上次的项目选择，否则默认选中对话
+        const lastProjectId = getLastAgentProjectId();
+        const lastProjectValid = lastProjectId && projects().find(p => p.id === lastProjectId);
+        if (lastProjectValid) {
+          void switchToProject(lastProjectId!);
+        } else {
+          setCurrentAssistantId(DEFAULT_ASST_ID);
 
-        const asst = datas.assistants.find(a => a.id === DEFAULT_ASST_ID);
-        if (asst && asst.topics.length > 0) {
-          // 如果已有话题，选中第一个，不再新建
-          setCurrentTopicId(asst.topics[0].id);
-        } else if (asst) {
-          // 如果万一没话题（极端情况），补充一个
-          const newDefaultTopic = createTopic('默认话题');
-          setDatas('assistants', a => a.id === DEFAULT_ASST_ID, 'topics', [newDefaultTopic]);
-          setCurrentTopicId(newDefaultTopic.id);
-          await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
+          const asst = datas.assistants.find(a => a.id === DEFAULT_ASST_ID);
+          if (asst && asst.topics.length > 0) {
+            setCurrentTopicId(asst.topics[0].id);
+          } else if (asst) {
+            const newDefaultTopic = createTopic('默认话题');
+            setDatas('assistants', a => a.id === DEFAULT_ASST_ID, 'topics', [newDefaultTopic]);
+            setCurrentTopicId(newDefaultTopic.id);
+            await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
+          }
         }
 
         isFirstAppLaunch = false;

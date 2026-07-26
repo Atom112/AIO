@@ -4,6 +4,28 @@
 
 本项目的所有显著更新将记录在此文件中。
 
+
+## [v0.7.2]
+<sup>Released on **2026-07-27**</sup>
+
+### ✨ Added（新增）
+
+- **前端全面 i18n 国际化**：22 个 TSX 组件中 ~170 处硬编码中英文字符串替换为 `t()` 调用，新增 205 个翻译键（526 → 731），en-US / zh-CN 完全同步
+- **PDF 导出重构**：话题分享的 PDF 导出从浏览器打印对话框改为直接文件保存，使用 html-to-image 渲染 + jsPDF 合成，预览与输出像素级一致
+
+### ⚡️ Changed（变更）
+
+- **PDF 预览保留**：PDF 标签页保留 iframe 实时预览，渲染引擎与导出完全一致（同一 DOM 源）
+
+### 🐛 Fixed（修复）
+
+- **PDF 导出空白问题**：修复 jsPDF html2canvas DOM 克隆丢失样式导致视觉空白，改用 html-to-image 直接捕获已渲染 DOM
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.7.2]: https://github.com/Atom112/AIO/releases/tag/v0.7.2
+
+---
 ## [v0.7.1]
 <sup>Released on **2026-07-25**</sup>
 

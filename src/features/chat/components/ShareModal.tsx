@@ -4,10 +4,11 @@
  */
 import { Component, createSignal, createMemo, createEffect, Show, Switch, Match, For } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import { toBlob, toPng } from 'html-to-image';
+import { toBlob, toCanvas, toPng } from 'html-to-image';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { marked } from 'marked';
+import { jsPDF } from 'jspdf';
 import type { Topic, Message } from '../../../core/store/store';
 import { exportAsMarkdown, exportAsJSON, exportAsHtml, type ExportOptions } from '../../../core/utils/exportConversation';
 import Icon from '../../../shared/components/Icon';
@@ -154,6 +155,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
   const [pdfCapturing, setPdfCapturing] = createSignal(false);
 
   let captureRef: HTMLDivElement | undefined;
+  let pdfIframeRef: HTMLIFrameElement | undefined;
 
   const topic = () => props.topic;
 
@@ -255,50 +257,77 @@ const ShareModal: Component<ShareModalProps> = (props) => {
 
   // ---- pdf ----
 
-  const handlePdfPrint = () => {
+  const handlePdfDownload = async () => {
     setPdfCapturing(true);
-    const html = htmlContent();
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.top = '0';
-    iframe.style.left = '0';
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-    iframe.style.border = 'none';
-    iframe.style.zIndex = '99999';
-    iframe.style.background = '#fff';
-    document.body.appendChild(iframe);
+    try {
+      const iframeEl = pdfIframeRef;
+      if (!iframeEl?.contentDocument?.body) {
+        console.error('PDF iframe not ready');
+        setPdfCapturing(false);
+        return;
+      }
+      const topicName = topic()?.name || 'conversation';
+      const body = iframeEl.contentDocument.body;
 
-    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!doc) {
-      document.body.removeChild(iframe);
+      const canvas = await toCanvas(body, {
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+        width: body.scrollWidth,
+        height: body.scrollHeight,
+      });
+
+      // Create PDF with A4 dimensions (595 x 842 pt)
+      const doc = new jsPDF('p', 'pt', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      const contentWidth = pageWidth - margin * 2;
+      const contentHeight = pageHeight - margin * 2;
+
+      // Scale canvas to fit page width
+      const imgWidth = contentWidth;
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+
+      // Split into pages if needed
+      let remainingHeight = imgHeight;
+      let srcY = 0;
+      let page = 0;
+
+      while (remainingHeight > 0) {
+        if (page > 0) doc.addPage();
+        const sliceHeight = Math.min(remainingHeight, contentHeight);
+        const srcH = (sliceHeight / imgHeight) * canvas.height;
+
+        doc.addImage(
+          canvas.toDataURL('image/png'),
+          'PNG',
+          margin,
+          margin,
+          imgWidth,
+          sliceHeight,
+          undefined,
+          'FAST',
+        );
+
+        srcY += srcH;
+        remainingHeight -= sliceHeight;
+        page++;
+      }
+
+      const pdfBytes = doc.output('arraybuffer');
+      const filePath = await save({
+        defaultPath: `${topicName}.pdf`,
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      });
+
+      if (filePath) {
+        await writeFile(filePath, new Uint8Array(pdfBytes));
+      }
+    } catch (e) {
+      console.error('PDF export failed:', e);
+    } finally {
       setPdfCapturing(false);
-      return;
     }
-    doc.open();
-    doc.write(html);
-    doc.close();
-
-    // Wait for content to render, then print
-    iframe.onload = () => {
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        // Remove after print dialog closes (best-effort)
-        const checkClosed = setInterval(() => {
-          if (doc.hidden || !document.body.contains(iframe)) {
-            clearInterval(checkClosed);
-            try { document.body.removeChild(iframe); } catch {}
-            setPdfCapturing(false);
-          }
-        }, 500);
-        // fallback cleanup after 60s
-        setTimeout(() => {
-          clearInterval(checkClosed);
-          try { document.body.removeChild(iframe); } catch {}
-          setPdfCapturing(false);
-        }, 60000);
-      }, 400);
-    };
   };
 
   const tab = () => activeTab();
@@ -532,6 +561,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     {/* HTML preview */}
                     <div class="flex-1 min-h-0 px-6 pb-2">
                       <iframe
+                        ref={pdfIframeRef}
                         srcdoc={htmlContent()}
                         class="w-full h-full rounded-lg border-0"
                         style={{ background: '#fff' }}
@@ -542,7 +572,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                       <button
                         class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]"
                         disabled={pdfCapturing()}
-                        onClick={handlePdfPrint}
+                        onClick={handlePdfDownload}
                       >
                         <Icon name="download" class="w-3.5 h-3.5" />
                         {pdfCapturing() ? t('export.preparing') : t('export.downloadPdf')}

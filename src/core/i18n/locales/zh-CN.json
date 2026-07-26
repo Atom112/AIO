@@ -347,6 +347,8 @@
   "export.includeSystem": "包含 system",
   "export.includeToolCalls": "包含工具调用",
   "export.narrow": "窄",
+  "export.pdfHint": "PDF 使用适合打印的 A4 排版生成。点击下载保存文件。",
+  "export.pdfInfo": "{{count}} 条消息 · A4 PDF",
   "export.preparing": "正在准备...",
   "export.result": "结果",
   "export.role.assistant": "助手",

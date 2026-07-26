@@ -347,6 +347,8 @@
   "export.includeSystem": "Include system",
   "export.includeToolCalls": "Include tool calls",
   "export.narrow": "Narrow",
+  "export.pdfHint": "PDF is generated with print-friendly A4 layout. Click download to save.",
+  "export.pdfInfo": "{{count}} messages · A4 PDF",
   "export.preparing": "Preparing...",
   "export.result": "Result",
   "export.role.assistant": "Assistant",

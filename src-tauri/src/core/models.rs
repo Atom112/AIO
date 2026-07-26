@@ -137,7 +137,7 @@ pub struct Message {
     #[serde(rename = "displayText", skip_serializing_if = "Option::is_none")]
     pub display_text: Option<String>,
     /// role="tool" 时对应触发的 tool_call id
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolCallId", default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     /// role="tool" 时为被调用的函数名；role="assistant" 携带 tool_calls 时为 "assistant"
     #[serde(default, skip_serializing_if = "Option::is_none")]

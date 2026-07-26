@@ -208,7 +208,6 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
 /// PDF: 返回提取内容文本。
 /// Office (docx/pptx): 返回提取内容文本。
 /// 其他: 尝试按 UTF-8 编码读取为纯文本。
-#[tauri::command]
 pub async fn process_file_content(path: String) -> Result<String, String> {
     let path_obj = Path::new(&path);
 

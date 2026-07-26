@@ -93,10 +93,10 @@ const UsageSettings: Component = () => {
                 style="background: transparent; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);"
             >
                 {/* 标题行 */}
-                <div class="flex items-center justify-between pb-3 mb-6 shrink-0" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <div class="flex items-center justify-between pb-3 mb-6 shrink-0 animate-row-in" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
                     <h3 class="text-xl font-bold tracking-tight" style="color: rgba(255,255,255,0.85);">使用量</h3>
                     {/* 时间范围选择器 */}
-                    <div class="flex gap-1" style="background: rgba(255,255,255,0.04); border-radius: 8px; padding: 3px;">
+                    <div class="flex gap-1 animate-row-in" style="background: rgba(255,255,255,0.04); border-radius: 8px; padding: 3px; animation-delay: 30ms;">
                         <For each={RANGES}>
                             {(r) => (
                                 <button
@@ -142,12 +142,14 @@ const UsageSettings: Component = () => {
                     <Show when={hasData()}>
                         <div class="flex flex-col gap-6 overflow-y-auto">
                             {/* 统计卡片 */}
-                            <UsageSummaryCards summary={summary()} byModel={byModel()} />
+                            <div class="animate-row-in" style="animation-delay: 60ms;">
+                                <UsageSummaryCards summary={summary()} byModel={byModel()} />
+                            </div>
 
                             {/* 热力图 — 固定 365 天，不受时间范围影响 */}
                             <div
-                                class="rounded-xl p-5"
-                                style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05);"
+                                class="rounded-xl p-5 animate-row-in"
+                                style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05); animation-delay: 90ms;"
                             >
                                 <div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
                                     每日活动
@@ -158,8 +160,8 @@ const UsageSettings: Component = () => {
                             {/* 模型分布 */}
                             <Show when={byModel().length > 0}>
                                 <div
-                                    class="rounded-xl p-5"
-                                    style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05);"
+                                    class="rounded-xl p-5 animate-row-in"
+                                    style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05); animation-delay: 120ms;"
                                 >
                                     <Show when={selectedDate()} fallback={<div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>模型分布</div>}>
                                         <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>

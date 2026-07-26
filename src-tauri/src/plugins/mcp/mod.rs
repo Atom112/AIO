@@ -11,16 +11,19 @@ pub mod http;
 pub mod stdio;
 
 use crate::core::models::*;
+use crate::plugins::mcp::connection::McpConnection;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
-
-pub use connection::McpConnection;
-pub use error::{McpError, McpResult};
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use crate::core::models::ToolResult;
+pub use crate::plugins::mcp::error::{McpError, McpResult};
 
 /// MCP 传输插件 trait
 #[async_trait]
@@ -143,6 +146,67 @@ impl McpServerManager {
     }
 }
 
+// ====== MCP 运行时状态 ======
+
+/// MCP 服务器连接池：server_id → McpConnection
+/// 锁策略：与 LocalEngineState 一致，单锁避免嵌套死锁
+pub struct McpServerState(pub parking_lot::Mutex<std::collections::HashMap<String, Arc<McpConnection>>>);
+
+impl Default for McpServerState {
+    fn default() -> Self {
+        Self(parking_lot::Mutex::new(std::collections::HashMap::new()))
+    }
+}
+
+impl McpServerState {
+    pub fn lock(&self) -> parking_lot::MutexGuard<'_, std::collections::HashMap<String, Arc<McpConnection>>> {
+        self.0.lock()
+    }
+}
+
+/// 在途 MCP 工具调用：call_id → JoinHandle<Result<ToolResult, McpError>>
+/// 用户点停止时遍历 abort 所有
+pub struct McpRequestManager(
+    pub Arc<DashMap<String, JoinHandle<std::result::Result<ToolResult, McpError>>>>,
+);
+
+impl McpRequestManager {
+    pub fn new() -> Self {
+        Self(Arc::new(DashMap::new()))
+    }
+
+    /// 中止所有在途调用
+    pub fn abort_all(&self) {
+        for entry in self.0.iter() {
+            entry.value().abort();
+        }
+        self.0.clear();
+    }
+}
+
+/// 待处理的工具调用审批：approval_id → oneshot::Sender<bool>
+/// 前端调用 `respond_tool_approval(approval_id, approved)` 时触发对应 channel。
+pub struct PendingApprovals(pub Arc<DashMap<String, oneshot::Sender<bool>>>);
+
+impl PendingApprovals {
+    pub fn new() -> Self {
+        Self(Arc::new(DashMap::new()))
+    }
+
+    /// 插入一个待审批项，返回 approval_id
+    pub fn insert(&self, tx: oneshot::Sender<bool>) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.0.insert(id.clone(), tx);
+        id
+    }
+
+    /// 移除并返回对应 channel（消费一次）
+    pub fn remove(&self, id: &str) -> Option<oneshot::Sender<bool>> {
+        self.0.remove(id).map(|(_, v)| v)
+    }
+}
+
+
 // ====== 持久化 ======
 
 const MCP_FILE: &str = "mcp-servers.json";
@@ -237,7 +301,7 @@ pub fn list_configs_merged(app: &AppHandle, project_id: Option<&str>) -> McpResu
 }
 
 /// 通过 project_id 解析项目路径（复用 skill.rs 中的逻辑）。
-fn resolve_project_path(app: &AppHandle, project_id: &str) -> McpResult<String> {
+pub(crate) fn resolve_project_path(app: &AppHandle, project_id: &str) -> McpResult<String> {
     let idx_path = app
         .path()
         .app_data_dir()

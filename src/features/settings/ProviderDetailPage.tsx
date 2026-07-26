@@ -217,7 +217,7 @@ const ProviderDetail: Component = () => {
         <div class="h-full overflow-y-auto">
             <div class="max-w-5xl mx-auto p-4 sm:p-6">
                 {/* 顶部返回 + 标题 */}
-                <div class="flex items-center gap-3 mb-5 animate-row">
+                <div class="flex items-center gap-3 mb-5 animate-row-in">
                     <button
                         type="button"
                         class="px-3 py-1.5 text-sm rounded-md border border-white/10 text-[#ccc] hover:border-pri-30 hover:text-white hover:bg-white/5 transition-all duration-200 active:scale-95 flex items-center gap-1.5"
@@ -235,7 +235,7 @@ const ProviderDetail: Component = () => {
 
                 {/* Provider header card */}
                 <div
-                    class="glass-card mb-4 flex items-center gap-4 animate-row"
+                    class="glass-card mb-4 flex items-center gap-4 animate-row-in"
                     style={{ "animation-delay": "30ms" }}
                 >
                     <div class="flex items-center justify-center w-12 h-12 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 text-[#1a1e2c]">
@@ -275,7 +275,7 @@ const ProviderDetail: Component = () => {
 
                 {/* 表单 + 操作按钮 组合卡片 */}
                 <div
-                    class="glass-card mb-4 animate-row"
+                    class="glass-card mb-4 animate-row-in"
                     style={{ "animation-delay": "60ms" }}
                 >
                     <div class="section-label mb-3">连接配置</div>
@@ -374,7 +374,7 @@ const ProviderDetail: Component = () => {
                 {/* 测试/拉取反馈 */}
                 <Show when={testState().status !== 'idle'}>
                     <div
-                        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row"
+                        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row-in"
                         classList={{
                             'bg-green-400/[0.08] border-green-400/25 text-green-300': testState().status === 'ok',
                             'bg-red-400/[0.08] border-red-400/25 text-red-300': testState().status === 'fail',
@@ -396,7 +396,7 @@ const ProviderDetail: Component = () => {
                 </Show>
                 <Show when={fetchState().status !== 'idle'}>
                     <div
-                        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row"
+                        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row-in"
                         classList={{
                             'ok': fetchState().status === 'ok',
                             'fail': fetchState().status === 'fail',
@@ -417,7 +417,7 @@ const ProviderDetail: Component = () => {
                 {/* ===== 模型列表区 ===== */}
                 <Show when={isCustom()}>
                     <div
-                        class="glass-card mt-4 animate-row"
+                        class="glass-card mt-4 animate-row-in"
                         style={{ "animation-delay": "90ms" }}
                     >
                         <div class="flex items-center justify-between mb-3">
@@ -430,7 +430,7 @@ const ProviderDetail: Component = () => {
                             <div class="space-y-1.5">
                                 <For each={userCfg()?.fetchedModels ?? []}>
                                     {(m, i) => (
-                                        <div class="animate-row" style={{ "animation-delay": `${i() * 30}ms` }}>
+                                        <div class="animate-row-in" style={{ "animation-delay": `${i() * 30}ms` }}>
                                             <ModelRow
                                                 meta={{
                                                     id: m.id,
@@ -467,7 +467,7 @@ const ProviderDetail: Component = () => {
 
                 <Show when={!isCustom() && isCatalogProvider()}>
                     <div
-                        class="glass-card mt-4 animate-row"
+                        class="glass-card mt-4 animate-row-in"
                         style={{ "animation-delay": "90ms" }}
                     >
                         <div class="flex items-center gap-3 mb-3 flex-wrap">
@@ -506,7 +506,7 @@ const ProviderDetail: Component = () => {
                             <div class="space-y-1.5">
                                 <For each={visibleEnabled()}>
                                     {(m, i) => (
-                                        <div class="animate-row" style={{ "animation-delay": `${i() * 25}ms` }}>
+                                        <div class="animate-row-in" style={{ "animation-delay": `${i() * 25}ms` }}>
                                             <ModelRow meta={m} enabled={true} onToggle={() => toggleModel(m.id)} />
                                         </div>
                                     )}
@@ -523,7 +523,7 @@ const ProviderDetail: Component = () => {
                             <div class="space-y-1.5">
                                 <For each={visibleAvailable()}>
                                     {(m, i) => (
-                                        <div class="animate-row" style={{ "animation-delay": `${i() * 25}ms` }}>
+                                        <div class="animate-row-in" style={{ "animation-delay": `${i() * 25}ms` }}>
                                             <ModelRow meta={m} enabled={false} onToggle={() => toggleModel(m.id)} />
                                         </div>
                                     )}
@@ -541,7 +541,7 @@ const ProviderDetail: Component = () => {
                                 <For each={visibleOrphans()}>
                                     {(mid, i) => (
                                         <span
-                                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-yellow-400/[0.12] text-yellow-200 border border-yellow-400/20 font-mono animate-row"
+                                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-yellow-400/[0.12] text-yellow-200 border border-yellow-400/20 font-mono animate-row-in"
                                             style={{ "animation-delay": `${i() * 30}ms` }}
                                         >
                                             <span class="truncate max-w-[200px]">{mid}</span>

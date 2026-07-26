@@ -50,7 +50,7 @@ const SessionStats: Component = () => {
     const stats = createMemo(() => {
         const asst = datas.assistants.find(a => a.id === currentAssistantId());
         const topic = asst?.topics.find((t: Topic) => t.id === currentTopicId());
-        if (!topic) return { totalInput: 0, totalOutput: 0, toolCallCount: 0 };
+        if (!topic) return { totalInput: 0, totalOutput: 0, toolCallCount: 0, contextInput: 0 };
         return computeStats(topic.history);
     });
 

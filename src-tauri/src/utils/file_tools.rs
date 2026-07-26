@@ -339,7 +339,7 @@ pub fn resolve_project_root(app: &tauri::AppHandle, project_id: Option<&str>) ->
 
 /// 去掉 Windows 扩展长度路径前缀 `\\?\`（由 `std::fs::canonicalize` 产生）。
 /// 该前缀对文件操作透明，但暴露给 LLM 时会造成困惑。
-fn strip_windows_extended_prefix(path: &str) -> String {
+pub fn strip_windows_extended_prefix(path: &str) -> String {
     #[cfg(target_os = "windows")]
     {
         path.strip_prefix("\\\\?\\").unwrap_or(path).to_string()

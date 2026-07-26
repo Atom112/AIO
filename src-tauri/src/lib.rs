@@ -12,13 +12,12 @@ mod plugins;
 mod utils;
 
 use crate::core::state::{
-    DbState, LocalEngineState, McpRequestManager, McpServerState, PendingApprovals, StreamManager,
+    DbState, LocalEngineState, StreamManager,
     SubagentHandles,
 };
+use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
 use crate::plugins::engine::EngineManager;
 use crate::plugins::lsp::LspManager;
-use crate::plugins::mcp::McpServerManager;
-use crate::utils::process_file_content;
 use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -77,10 +76,11 @@ pub fn run() {
             commands::engine::get_engines_status,
             commands::engine::install_engine,
             commands::engine::check_llama_update,
-            process_file_content,
+            commands::attachment::process_file_content,
             commands::config::upload_avatar,
             commands::llm::summarize_history,
             commands::llm::append_message,
+            commands::llm::btw::ask_btw_question,
             commands::llm::delete_topic_message,
             commands::llm::generate_topic_title,
             commands::llm::get_usage_summary,
@@ -164,7 +164,7 @@ pub fn run() {
             // 会话分支
             commands::config::branch_topic,
             // Token 计数
-            utils::token_counter::count_tokens_cmd,
+            commands::llm::count_tokens_cmd,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

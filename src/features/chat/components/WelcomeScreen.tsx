@@ -1,12 +1,12 @@
 import { Component, For } from 'solid-js';
-import Icon from '../../../shared/components/Icon';
+import Icon, { type IconName } from '../../../shared/components/Icon';
 
 interface WelcomeScreenProps {
     onSuggestionClick: (text: string) => void;
 }
 
 interface Suggestion {
-    icon: string;
+    icon: IconName;
     text: string;
     prompt: string;
 }

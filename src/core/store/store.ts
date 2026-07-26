@@ -32,6 +32,7 @@ import type { SkillConfig } from '../types/skill';
         /** 子智能体的任务描述摘要 */
         subagentTask?: string;
         /** 子智能体内部的步骤时间线 */
+        subagentSteps?: SubagentStep[];
         /** 子智能体完成的最终结果 */
         subagentResult?: string;
         /** 完整工具结果（不截断），仅 type=tool_call 时有效 */
@@ -864,20 +865,20 @@ export const initMcpServers = async (projectId?: string | null) => {
 export const startMcpServerAndRefresh = async (id: string, projectId?: string | null): Promise<ToolSpec[]> => {
     setMcpServerStatus(prev => ({
         ...prev,
-        [id]: { id, status: 'connecting', toolCount: 0 },
+        [id]: { id, status: 'connecting', toolCount: 0, resourceCount: 0, promptCount: 0 },
     }));
     try {
         const tools = await invoke<ToolSpec[]>('start_mcp_server', { id, projectId: projectId ?? null });
         setMcpServerStatus(prev => ({
             ...prev,
-            [id]: { id, status: 'connected', toolCount: tools.length },
+        [id]: { id, status: 'connected', toolCount: tools.length, resourceCount: 0, promptCount: 0 },
         }));
         await refreshMcpToolsCache();
         return tools;
     } catch (e) {
         setMcpServerStatus(prev => ({
             ...prev,
-            [id]: { id, status: 'error', message: String(e), toolCount: 0 },
+        [id]: { id, status: 'error', message: String(e), toolCount: 0, resourceCount: 0, promptCount: 0 },
         }));
         throw e;
     }

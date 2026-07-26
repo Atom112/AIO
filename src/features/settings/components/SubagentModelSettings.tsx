@@ -149,7 +149,9 @@ const SubagentModelSettings: Component = () => {
     ]);
 
     const isBuiltin = (id: string) => BUILTIN_PROFILE_IDS.has(id);
-
+    // NOTE: 此函数与 ProjectSettingsModal.tsx 中的 getProviderIdFor 存在分支副本；
+    // 两者行为略有差异（此版本含 .trim() 和 deepseek.ai 检查），
+    // 合并前需确认行为差异是否有意。另见 core/utils/models.ts 中的 detectProviderByUrl。
     const getProviderIdFor = (model: ActivatedModel): string => {
         if ((model as any).provider_id) return (model as any).provider_id;
 
@@ -253,7 +255,7 @@ const SubagentModelSettings: Component = () => {
 
     return (
         <div class="space-y-1">
-            <div class="pb-3 border-b border-[rgba(255,255,255,0.06)]">
+            <div class="pb-3 border-b border-[rgba(255,255,255,0.06)] animate-row-in">
                 <h2 class="text-lg text-white font-semibold m-0">子智能体模型</h2>
                 <p class="text-xs text-white/35 mt-1.5 leading-relaxed">
                     为每个子智能体类型独立指定使用的模型和 API Provider。
@@ -263,11 +265,11 @@ const SubagentModelSettings: Component = () => {
             </div>
 
             <For each={allProfiles()}>
-                {(profile) => {
+                {(profile, index) => {
                     const current = () => overrideModel(profile.id);
                     const isOpen = () => openDropdown() === profile.id;
                     return (
-                        <div class="bg-[rgba(255,255,255,0.035)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden">
+                        <div class="bg-[rgba(255,255,255,0.035)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden animate-row-in" style={{ "animation-delay": `${(index() + 1) * 30}ms` }}>
                             {/* Profile header */}
                             <div class="p-4 flex items-center justify-between">
                                 <div class="flex-1 min-w-0" >
@@ -398,7 +400,7 @@ const SubagentModelSettings: Component = () => {
             </For>
 
             {/* Create custom profile section */}
-            <div class="pt-2">
+            <div class="pt-2 animate-row-in" style={{ "animation-delay": `${(allProfiles().length + 1) * 30}ms` }}>
                 <Show
                     when={showCreateForm()}
                     fallback={

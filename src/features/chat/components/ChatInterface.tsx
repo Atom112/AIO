@@ -19,6 +19,7 @@ import { totalErrors, totalWarnings, problemsPanelVisible, setProblemsPanelVisib
 import AgentModeSelector from './AgentModeSelector';
 import WelcomeScreen from './WelcomeScreen';
 import DiffView from '../../../shared/components/DiffView';
+import BtwResponseBox from './BtwResponseBox';
 
 
 /** 聚合后的文件变更条目，与 FileChangeInfo 同形但条目唯一 */
@@ -84,6 +85,10 @@ interface ChatInterfaceProps {
     onConfirmSelection: () => void;
     /** 从消息处分叉 */
     onBranchFromMessage: (messageId: string) => void;
+    /** /btw 悬浮问答框列表（临时，不存历史） */
+    btwOverlays: Array<{id: string; question: string; answer: string | null; loading: boolean}>;
+    /** 关闭指定 /btw 悬浮框 */
+    onDismissBtw: (id: string) => void;
 }
 
 const UserMessageAvatar: Component = () => {
@@ -397,7 +402,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               fallback={
                 <div class="flex items-center justify-between px-1 pb-3 shrink-0">
                   <span class="text-sm font-medium truncate" style="color: rgba(255,255,255,0.7);">
-                    {props.activeTopic?.name ?? ''}
+                    {(currentProject()?.name || props.activeTopic?.name) ?? ''}
                   </span>
                   <Show when={props.canShare && props.activeTopic}>
                     <button
@@ -885,6 +890,17 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         );
                     }}
                     </For>
+
+                {/* /btw 悬浮问答框 */}
+                <Show when={props.btwOverlays.length > 0}>
+                    <div class="flex flex-col items-center mb-3 space-y-2">
+                        <For each={props.btwOverlays}>
+                            {(item) => (
+                                <BtwResponseBox item={item} onDismiss={props.onDismissBtw} />
+                            )}
+                        </For>
+                    </div>
+                </Show>
                 </Show>
 
                 {/* 工具调用审批气泡 */}

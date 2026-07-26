@@ -109,7 +109,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
     const sortedSkills = () =>
         Object.values(skills()).sort((a, b) => a.name.localeCompare(b.name));
 
-    /** 推导 model 的 provider id（用于查 catalog 元数据，与 ModelDropdown 一致） */
+    // NOTE: 此函数与 SubagentModelSettings.tsx 中的 getProviderIdFor 存在分支副本；
+    // 两者行为略有差异（此版本不含 .trim() 和 deepseek.ai 检查），
+    // 合并前需确认行为差异是否有意。另见 core/utils/models.ts 中的 detectProviderByUrl。
     const getProviderIdFor = (model: ActivatedModel): string => {
         if ((model as any).provider_id) return (model as any).provider_id;
 

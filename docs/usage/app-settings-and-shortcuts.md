@@ -4,6 +4,12 @@
 
 ![应用设置与快捷键](../assets/screenshots/app-settings-shortcuts.webp)
 
+## 界面语言
+
+AIO 支持简体中文（`zh-CN`）和英语（`en-US`）。首次启动会读取系统语言：系统语言以 `zh` 开头时使用简体中文，否则使用英语。你可以在“应用设置 → 语言”中随时切换，已经打开的页面会立即更新，无需重启。
+
+选择结果保存在 WebView `localStorage` 的 `aio-locale` 中，不写入应用配置、SQLite、系统凭据库或项目 `.aio/`。清除此键后，AIO 会在下次启动时重新跟随系统语言。用户消息、模型与 Provider 名称、MCP/Skill 外部描述、文件内容和命令输出始终保留原文。
+
 ## 应用状态
 
 ### 系统自启

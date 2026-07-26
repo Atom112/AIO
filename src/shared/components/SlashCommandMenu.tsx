@@ -18,8 +18,11 @@ import { Component, createSignal, createMemo, createEffect, onCleanup, onMount, 
 import { Portal } from 'solid-js/web';
 import {
     getSlashCommands,
+    getCommandDisplayDescription,
+    getCommandArgumentHint,
     type CommandAction,
 } from '../../core/shortcuts';
+import { t } from '../../core/i18n';
 
 interface SlashCommandMenuProps {
     /** 输入框 DOM 引用（用于定位菜单和读写光标） */
@@ -88,7 +91,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
         return allSlashCommands().filter(cmd => {
             // 匹配命令名（去掉 / 前缀）和描述
             const name = cmd.label.startsWith('/') ? cmd.label.slice(1) : cmd.label;
-            return fuzzyMatch(q, name) || fuzzyMatch(q, cmd.description);
+            return fuzzyMatch(q, name) || fuzzyMatch(q, getCommandDisplayDescription(cmd));
         });
     });
 
@@ -291,19 +294,19 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
                             >
                                 <div class="flex items-center gap-1.5 min-w-0">
                                     <span class="text-[13px] font-semibold text-white/85 whitespace-nowrap font-mono">{cmd.label}</span>
-                                    <Show when={cmd.argumentHint}>
-                                        <span class="text-[11px] text-white/30 italic whitespace-nowrap overflow-hidden text-ellipsis">{cmd.argumentHint}</span>
+                                    <Show when={getCommandArgumentHint(cmd)}>
+                                        <span class="text-[11px] text-white/30 italic whitespace-nowrap overflow-hidden text-ellipsis">{getCommandArgumentHint(cmd)}</span>
                                     </Show>
                                 </div>
-                                <span class="text-[11px] text-white/30 whitespace-nowrap overflow-hidden text-ellipsis shrink text-right">{cmd.description}</span>
+                                <span class="text-[11px] text-white/30 whitespace-nowrap overflow-hidden text-ellipsis shrink text-right">{getCommandDisplayDescription(cmd)}</span>
                             </div>
                         );
                     }}
                 </For>
                 <div class="flex items-center justify-center gap-4 px-4 pt-2 pb-2.5 border-t border-t-white/[0.04] text-[10px] text-white/20">
-                    <span><kbd>↑↓</kbd> 导航</span>
-                    <span><kbd>Enter</kbd> 选择</span>
-                    <span><kbd>Esc</kbd> 关闭</span>
+                    <span><kbd>↑↓</kbd> {t('command.palette.hintNavigate')}</span>
+                    <span><kbd>Enter</kbd> {t('common.select')}</span>
+                    <span><kbd>Esc</kbd> {t('command.palette.hintClose')}</span>
                 </div>
             </div>
         </Portal>

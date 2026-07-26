@@ -90,8 +90,11 @@ enum ToolCategory {
 #[allow(dead_code)]
 fn categorize_tool(name: &str) -> ToolCategory {
     match name {
-        "read_file" | "list_directory" | "search_files" | "search_content" | "web_fetch" | "web_search" | "git_status" | "git_diff" | "git_log" => ToolCategory::Read,
-        "write_file" | "make_directory" | "replace_in_file" | "git_add" | "git_commit" => ToolCategory::Write,
+        "read_file" | "list_directory" | "search_files" | "search_content" | "web_fetch"
+        | "web_search" | "git_status" | "git_diff" | "git_log" => ToolCategory::Read,
+        "write_file" | "make_directory" | "replace_in_file" | "git_add" | "git_commit" => {
+            ToolCategory::Write
+        }
         "delete_file" => ToolCategory::Delete,
         _ => ToolCategory::Other,
     }
@@ -756,7 +759,9 @@ pub fn check_permission_defaults(
 /// 如果文件不存在，返回默认空配置。
 pub fn load_permissions(project_path: Option<&str>) -> PermissionsFile {
     let path = match project_path {
-        Some(p) => std::path::Path::new(p).join(".aio").join("permissions.json"),
+        Some(p) => std::path::Path::new(p)
+            .join(".aio")
+            .join("permissions.json"),
         None => return PermissionsFile::default(),
     };
     if !path.exists() {
@@ -767,26 +772,23 @@ pub fn load_permissions(project_path: Option<&str>) -> PermissionsFile {
             Ok(f) => f,
             // 解析失败时警告（旧实现静默 unwrap_or_default，用户自定义规则会无声消失）
             Err(e) => {
-                tracing::warn!("[permissions] 解析 {} 失败，已回退到空配置：{}", path.display(), e);
+                tracing::warn!(
+                    "[permissions] 解析 {} 失败，已回退到空配置：{}",
+                    path.display(),
+                    e
+                );
                 PermissionsFile::default()
             }
         },
         Err(e) => {
-            tracing::warn!("[permissions] 读取 {} 失败，已回退到空配置：{}", path.display(), e);
+            tracing::warn!(
+                "[permissions] 读取 {} 失败，已回退到空配置：{}",
+                path.display(),
+                e
+            );
             PermissionsFile::default()
         }
     }
-}
-
-/// 保存项目级权限配置。
-pub fn save_permissions(project_path: &str, file: &PermissionsFile) -> Result<(), String> {
-    let dir = std::path::Path::new(project_path).join(".aio");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 .aio 目录失败: {}", e))?;
-    let path = dir.join("permissions.json");
-    let content =
-        serde_json::to_string_pretty(file).map_err(|e| format!("序列化权限配置失败: {}", e))?;
-    std::fs::write(&path, content).map_err(|e| format!("写入权限配置失败: {}", e))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -809,49 +811,64 @@ mod tests {
     #[test]
     fn test_normal_mode_read_allowed() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result = check_permission_defaults("read_file", "__aio-filesystem__", &args, &AgentMode::Normal);
+        let result =
+            check_permission_defaults("read_file", "__aio-filesystem__", &args, &AgentMode::Normal);
         assert_eq!(result, PermissionAction::Allow);
     }
 
     #[test]
     fn test_normal_mode_write_asks() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
-        let result = check_permission_defaults("write_file", "__aio-filesystem__", &args, &AgentMode::Normal);
+        let result = check_permission_defaults(
+            "write_file",
+            "__aio-filesystem__",
+            &args,
+            &AgentMode::Normal,
+        );
         assert_eq!(result, PermissionAction::Ask);
     }
 
     #[test]
     fn test_normal_mode_delete_asks() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result = check_permission_defaults("delete_file", "__aio-filesystem__", &args, &AgentMode::Normal);
+        let result = check_permission_defaults(
+            "delete_file",
+            "__aio-filesystem__",
+            &args,
+            &AgentMode::Normal,
+        );
         assert_eq!(result, PermissionAction::Ask);
     }
 
     #[test]
     fn test_plan_mode_write_denied() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
-        let result = check_permission_defaults("write_file", "__aio-filesystem__", &args, &AgentMode::Plan);
+        let result =
+            check_permission_defaults("write_file", "__aio-filesystem__", &args, &AgentMode::Plan);
         assert_eq!(result, PermissionAction::Deny);
     }
 
     #[test]
     fn test_auto_mode_write_allowed() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
-        let result = check_permission_defaults("write_file", "__aio-filesystem__", &args, &AgentMode::Auto);
+        let result =
+            check_permission_defaults("write_file", "__aio-filesystem__", &args, &AgentMode::Auto);
         assert_eq!(result, PermissionAction::Allow);
     }
 
     #[test]
     fn test_auto_mode_delete_asks() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result = check_permission_defaults("delete_file", "__aio-filesystem__", &args, &AgentMode::Auto);
+        let result =
+            check_permission_defaults("delete_file", "__aio-filesystem__", &args, &AgentMode::Auto);
         assert_eq!(result, PermissionAction::Ask);
     }
 
     #[test]
     fn test_off_mode_denies_all() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result = check_permission_defaults("read_file", "__aio-filesystem__", &args, &AgentMode::Off);
+        let result =
+            check_permission_defaults("read_file", "__aio-filesystem__", &args, &AgentMode::Off);
         assert_eq!(result, PermissionAction::Deny);
     }
 
@@ -867,7 +884,13 @@ mod tests {
             priority: 100, // 高于内置（默认 10）
         }];
         let args = serde_json::json!({"path": "src/old.rs"});
-        let result = check_permission("delete_file", "__aio-filesystem__", &args, &AgentMode::Normal, &custom);
+        let result = check_permission(
+            "delete_file",
+            "__aio-filesystem__",
+            &args,
+            &AgentMode::Normal,
+            &custom,
+        );
         assert_eq!(result, PermissionAction::Allow);
     }
 
@@ -883,7 +906,13 @@ mod tests {
             priority: 5, // 低于内置 allow（10），但 Deny 总是优先
         }];
         let args = serde_json::json!({"path": ".env"});
-        let result = check_permission("read_file", "__aio-filesystem__", &args, &AgentMode::Auto, &custom);
+        let result = check_permission(
+            "read_file",
+            "__aio-filesystem__",
+            &args,
+            &AgentMode::Auto,
+            &custom,
+        );
         assert_eq!(result, PermissionAction::Deny);
     }
 
@@ -891,7 +920,8 @@ mod tests {
     fn test_no_match_fallbacks_to_ask() {
         // 自定义工具不在内置规则中
         let args = serde_json::json!({"query": "SELECT * FROM users"});
-        let result = check_permission_defaults("custom_db_query", "my-db-server", &args, &AgentMode::Normal);
+        let result =
+            check_permission_defaults("custom_db_query", "my-db-server", &args, &AgentMode::Normal);
         assert_eq!(result, PermissionAction::Ask);
     }
 }

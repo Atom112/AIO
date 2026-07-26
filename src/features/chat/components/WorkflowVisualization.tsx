@@ -9,6 +9,7 @@
 import { Component, createSignal, Show, For } from 'solid-js';
 import { workflowState, type WorkflowState, type WorkflowStepState } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
+import { t, type TranslationKey } from '../../../core/i18n';
 
 
 /** 步骤状态 → Tailwind 圆点颜色 */
@@ -27,11 +28,11 @@ const STATUS_TEXT: Record<string, string> = {
     failed:    'text-red-400',
 };
 
-const STATUS_LABEL: Record<string, string> = {
-    pending:   '等待中',
-    running:   '执行中',
-    completed: '已完成',
-    failed:    '失败',
+const STATUS_LABEL: Record<string, TranslationKey> = {
+    pending:   'agent.workflow.pending',
+    running:   'agent.workflow.running',
+    completed: 'agent.status.completed',
+    failed:    'agent.status.failed',
 };
 
 /** 毫秒 → "Xs" 格式（秒取整） */
@@ -96,7 +97,7 @@ const WorkflowVisualization: Component = () => {
                                         <span
                                             class={`${STATUS_TEXT[step.status] || 'text-gray-400'} shrink-0`}
                                         >
-                                            {STATUS_LABEL[step.status] || step.status}
+                                            {STATUS_LABEL[step.status] ? t(STATUS_LABEL[step.status]) : step.status}
                                         </span>
 
                                         {/* 耗时 */}

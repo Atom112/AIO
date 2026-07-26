@@ -28,10 +28,6 @@ pub enum LspError {
     #[error("远程错误 [code={code}]: {message}")]
     Remote { code: i32, message: String },
 
-    /// 不支持的操作
-    #[error("不支持: {0}")]
-    Unsupported(String),
-
     /// 序列化/反序列化错误
     #[error("序列化错误: {0}")]
     Serialization(#[from] serde_json::Error),

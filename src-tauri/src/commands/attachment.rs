@@ -195,45 +195,21 @@ pub fn cleanup_attachment_ids(conn: &Connection, attachment_ids: &[String]) -> R
     Ok(())
 }
 
-pub fn load_message_attachments(
-    conn: &Connection,
-    message_id: &str,
-) -> Result<Vec<FileMeta>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT a.id, a.file_name, a.mime_type, a.size
-             FROM message_attachments ma
-             JOIN attachments a ON a.id = ma.attachment_id
-             WHERE ma.message_id = ?1 ORDER BY ma.sort_order",
-        )
-        .map_err(|e| e.to_string())?;
-    let files = stmt
-        .query_map([message_id], |row| {
-            Ok(FileMeta {
-                id: Some(row.get(0)?),
-                name: row.get(1)?,
-                mime_type: Some(row.get(2)?),
-                size: Some(row.get::<_, i64>(3)? as u64),
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    Ok(files)
-}
-
 /// 批量加载多个消息的附件，返回 message_id → files 的映射。
 pub fn load_message_attachments_batch(
     conn: &Connection,
     msg_ids: &[String],
 ) -> Result<std::collections::HashMap<String, Vec<FileMeta>>, String> {
-    let mut map: std::collections::HashMap<String, Vec<FileMeta>> = std::collections::HashMap::new();
+    let mut map: std::collections::HashMap<String, Vec<FileMeta>> =
+        std::collections::HashMap::new();
     if msg_ids.is_empty() {
         return Ok(map);
     }
 
     // 构建 IN 子句的占位符
-    let placeholders: Vec<String> = msg_ids.iter().enumerate()
+    let placeholders: Vec<String> = msg_ids
+        .iter()
+        .enumerate()
         .map(|(i, _)| format!("?{}", i + 1))
         .collect();
     let sql = format!(
@@ -246,14 +222,15 @@ pub fn load_message_attachments_batch(
 
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
 
-    let params: Vec<&dyn rusqlite::types::ToSql> = msg_ids.iter()
+    let params: Vec<&dyn rusqlite::types::ToSql> = msg_ids
+        .iter()
         .map(|id| id as &dyn rusqlite::types::ToSql)
         .collect();
 
     let rows = stmt
         .query_map(params.as_slice(), |row| {
             Ok((
-                row.get::<_, String>(0)?,  // message_id
+                row.get::<_, String>(0)?, // message_id
                 FileMeta {
                     id: Some(row.get(1)?),
                     name: row.get(2)?,

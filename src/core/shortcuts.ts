@@ -10,6 +10,7 @@
  */
 
 import { createSignal, createMemo } from 'solid-js';
+import { t, type TranslationKey } from './i18n';
 
 // ---- 类型定义 ----
 
@@ -35,6 +36,66 @@ export interface CommandAction {
 // ---- 命令注册表 ----
 
 const commandMap = new Map<string, CommandAction>();
+
+type CommandTranslation = {
+    label?: TranslationKey;
+    description: TranslationKey;
+    prompt?: TranslationKey;
+    argumentHint?: TranslationKey;
+};
+
+const COMMAND_TRANSLATIONS: Record<string, CommandTranslation> = {
+    'command-palette': { label: 'command.commandPalette.label', description: 'command.commandPalette.description' },
+    'toggle-left-sidebar': { label: 'command.toggleLeftSidebar.label', description: 'command.toggleLeftSidebar.description' },
+    'toggle-right-sidebar': { label: 'command.toggleRightSidebar.label', description: 'command.toggleRightSidebar.description' },
+    'go-to-settings': { label: 'command.goToSettings.label', description: 'command.goToSettings.description' },
+    'go-to-chat': { label: 'command.goToChat.label', description: 'command.goToChat.description' },
+    'new-topic': { label: 'command.newTopic.label', description: 'command.newTopic.description' },
+    'new-assistant': { label: 'command.newAssistant.label', description: 'command.newAssistant.description' },
+    'new-project': { label: 'command.newProject.label', description: 'command.newProject.description' },
+    'toggle-web-search': { label: 'command.toggleWebSearch.label', description: 'command.toggleWebSearch.description' },
+    'cycle-reasoning': { label: 'command.cycleReasoning.label', description: 'command.cycleReasoning.description' },
+    'cycle-agent-mode': { label: 'command.cycleAgentMode.label', description: 'command.cycleAgentMode.description' },
+    'stop-generation': { label: 'command.stopGeneration.label', description: 'command.stopGeneration.description' },
+    'focus-input': { label: 'command.focusInput.label', description: 'command.focusInput.description' },
+    'upload-file': { label: 'command.uploadFile.label', description: 'command.uploadFile.description' },
+    'prev-assistant': { label: 'command.prevAssistant.label', description: 'command.prevAssistant.description' },
+    'next-assistant': { label: 'command.nextAssistant.label', description: 'command.nextAssistant.description' },
+    'prev-topic': { label: 'command.prevTopic.label', description: 'command.prevTopic.description' },
+    'next-topic': { label: 'command.nextTopic.label', description: 'command.nextTopic.description' },
+    'slash-clear': { description: 'slash.clear.description' },
+    'slash-compact': { description: 'slash.compact.description' },
+    'slash-review': { description: 'slash.review.description', prompt: 'slash.review.prompt', argumentHint: 'slash.review.hint' },
+    'slash-explain': { description: 'slash.explain.description', prompt: 'slash.explain.prompt', argumentHint: 'slash.explain.hint' },
+    'slash-fix': { description: 'slash.fix.description', prompt: 'slash.fix.prompt', argumentHint: 'slash.fix.hint' },
+    'slash-optimize': { description: 'slash.optimize.description', prompt: 'slash.optimize.prompt', argumentHint: 'slash.optimize.hint' },
+    'slash-translate': { description: 'slash.translate.description', prompt: 'slash.translate.prompt', argumentHint: 'slash.translate.hint' },
+    'slash-summarize': { description: 'slash.summarize.description', prompt: 'slash.summarize.prompt', argumentHint: 'slash.summarize.hint' },
+    'slash-search': { description: 'slash.search.description' },
+    'slash-settings': { description: 'slash.settings.description' },
+    'slash-help': { description: 'slash.help.description' },
+    'slash-btw': { description: 'slash.btw.description', argumentHint: 'slash.btw.hint' },
+};
+
+export function getCommandDisplayLabel(command: CommandAction): string {
+    const key = COMMAND_TRANSLATIONS[command.id]?.label;
+    return key ? t(key) : command.label;
+}
+
+export function getCommandDisplayDescription(command: CommandAction): string {
+    const key = COMMAND_TRANSLATIONS[command.id]?.description;
+    return key ? t(key) : command.description;
+}
+
+export function getCommandArgumentHint(command: CommandAction): string | undefined {
+    const key = COMMAND_TRANSLATIONS[command.id]?.argumentHint;
+    return key ? t(key) : command.argumentHint;
+}
+
+function getCommandPromptBody(command: CommandAction): string | undefined {
+    const key = COMMAND_TRANSLATIONS[command.id]?.prompt;
+    return key ? t(key) : command.promptBody;
+}
 
 /** 命令注册表版本号信号 — 每次 register/unregister 自增，驱动 createMemo 重新计算 */
 const [commandVersion, setCommandVersion] = createSignal(0);
@@ -109,8 +170,9 @@ export function resolveSlashCommand(input: string): ResolvedSlashCommand | null 
     if (!cmd) return null;
 
     const result: ResolvedSlashCommand = { command: cmd, args };
-    if (cmd.promptBody) {
-        result.resolvedBody = cmd.promptBody.replace(/\$ARGUMENTS/g, args);
+    const promptBody = getCommandPromptBody(cmd);
+    if (promptBody) {
+        result.resolvedBody = promptBody.replace(/\$ARGUMENTS/g, args);
     }
     return result;
 }

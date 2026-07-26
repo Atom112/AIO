@@ -11,6 +11,7 @@ export interface ProjectInfo {
 }
 
 import type { AgentMode } from './store/store';
+import { locale } from './i18n';
 
 /**
  * 构建 Agent 模式系统提示词。
@@ -26,6 +27,25 @@ export function buildAgentSystemPrompt(
     customInstructions?: string,
 ): string | null {
     if (mode === 'off') return null;
+    if (locale() === 'en-US') {
+        const modeInstruction: Record<Exclude<AgentMode, 'off'>, string> = {
+            normal: 'Read and search freely, but ask before file changes.',
+            auto: 'Work autonomously until the task is complete.',
+            plan: 'Research and produce an implementation plan only. Do not modify files.',
+            workflow: 'Create and execute an ordered workflow whose steps pass results forward.',
+        };
+        return [
+            '[Agent Mode] You are operating as an AIO Agent.',
+            `Working directory: ${project.path}`,
+            'Use built-in file, search, web, LSP, Git, and delegation tools as needed.',
+            'Delegate multi-step work to an appropriate subagent. Launch independent subtasks together with delegate_tasks.',
+            'Subagents cannot create nested subagents and cannot communicate with one another.',
+            modeInstruction[mode],
+            'All file paths are relative to the project root. Never access paths outside the project without explicit user approval.',
+            'Summarize file changes when multi-step work is complete.',
+            customInstructions ? `Custom instructions:\n${customInstructions}` : '',
+        ].filter(Boolean).join('\n');
+    }
 
     const lines: string[] = [
         `[Agent Mode] 你正在以 Agent 模式运行。`,
@@ -165,6 +185,19 @@ export function buildAgentRecursePrompt(
     project: ProjectInfo,
 ): string | null {
     if (mode === 'off') return null;
+    if (locale() === 'en-US') {
+        const modeHint: Record<Exclude<AgentMode, 'off'>, string> = {
+            normal: 'Ask before modifying files.',
+            auto: 'Complete the task autonomously.',
+            plan: 'Continue planning and do not call execution tools.',
+            workflow: 'Execute the assigned workflow step and return the result.',
+        };
+        return [
+            `[Agent Mode] Working directory: ${project.path}`,
+            modeHint[mode],
+            'All paths are relative to the project root and must remain inside it.',
+        ].join('\n');
+    }
 
     const modeLabel: Record<AgentMode, string> = {
         off: '对话',

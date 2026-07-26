@@ -13,6 +13,7 @@ import type {
 import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
 import Icon from '../../../shared/components/Icon';
 import McpServerDetail from './McpServerDetail';
+import { formatNumber, reportError, t } from '../../../core/i18n';
 
 type ViewMode = 'market' | 'downloaded';
 
@@ -50,7 +51,7 @@ const McpServerList: Component = () => {
             setCatalog(cursor ? [...catalog(), ...page.servers] : page.servers);
             setNextCursor(page.nextCursor);
         } catch (e) {
-            setError(`加载 MCP Registry 失败: ${e}`);
+            setError(reportError('error.load', e));
         } finally {
             setLoading(false);
             setLoadingMore(false);
@@ -61,7 +62,7 @@ const McpServerList: Component = () => {
         try {
             await Promise.all([loadLocal(), loadCatalog()]);
         } catch (e) {
-            setError(String(e));
+            setError(reportError('error.load', e));
         }
     });
 
@@ -99,7 +100,7 @@ const McpServerList: Component = () => {
         try {
             await startMcpServerAndRefresh(id, currentProjectId());
         } catch (e) {
-            setError(`启动失败: ${e}`);
+            setError(reportError('error.connection', e));
         }
     };
 
@@ -108,12 +109,12 @@ const McpServerList: Component = () => {
             await invoke('stop_mcp_server', { id });
             setMcpServerStatus({ ...mcpServerStatus(), [id]: { id, status: 'disconnected', toolCount: 0, resourceCount: 0, promptCount: 0 } });
         } catch (e) {
-            setError(`停止失败: ${e}`);
+            setError(reportError('error.generic', e));
         }
     };
 
     const handleRemove = async (id: string) => {
-        if (!confirm('确定删除此 MCP 服务器配置？此操作不可恢复。')) return;
+        if (!confirm(t('mcp.removeConfirm'))) return;
         try {
             await invoke('remove_mcp_server', { id, projectId: currentProjectId() });
             const next = { ...mcpServers() };
@@ -130,7 +131,7 @@ const McpServerList: Component = () => {
             }
             await Promise.all(affected.map(saveSingleAssistantToBackend));
         } catch (e) {
-            setError(`删除失败: ${e}`);
+            setError(reportError('error.save', e));
         }
     };
 
@@ -140,7 +141,7 @@ const McpServerList: Component = () => {
             setMcpServers({ ...mcpServers(), [config.id]: config });
             setEditingConfig(null);
         } catch (e) {
-            setError(`保存失败: ${e}`);
+            setError(reportError('error.save', e));
         }
     };
 
@@ -178,7 +179,7 @@ const McpServerList: Component = () => {
         if (!server || !delivery) return;
         const missing = delivery.inputs.find(input => input.required && !installValues()[input.name]?.trim());
         if (missing) {
-            setError(`请填写必填配置：${missing.name}`);
+            setError(t('mcp.requiredField', { name: missing.name }));
             return;
         }
         setInstallingId(server.id);
@@ -203,10 +204,11 @@ const McpServerList: Component = () => {
             try {
                 await startMcpServerAndRefresh(config.id, currentProjectId());
             } catch (e) {
-                setError(`已安装，但首次启动失败：${e}`);
+                console.error('[mcp] first start failed:', e);
+                setError(t('mcp.firstStartFailed'));
             }
         } catch (e) {
-            setError(`安装失败: ${e}`);
+            setError(reportError('error.save', e));
         } finally {
             setInstallingId(null);
         }
@@ -215,17 +217,17 @@ const McpServerList: Component = () => {
     return (
         <div class="flex flex-col h-full overflow-hidden p-6 gap-4" style="color: rgba(255,255,255,0.88);">
             <div class="flex items-start justify-between gap-4 animate-row-in">
-                <h2 class="text-xl font-semibold">MCP 服务器</h2>
+                <h2 class="text-xl font-semibold">{t('mcp.title')}</h2>
             </div>
 
             <div class="flex items-center justify-between gap-3 flex-wrap animate-row-in" style={{ "animation-delay": "30ms" }}>
                 <div class="flex items-center gap-1 p-1 rounded-lg" style="background: rgba(255,255,255,0.04);">
                     <button class="px-3 py-1.5 rounded-md text-sm"
                         classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
-                        onClick={() => setView('market')}>商店</button>
+                        onClick={() => setView('market')}>{t('mcp.market')}</button>
                     <button class="px-3 py-1.5 rounded-md text-sm"
                         classList={{ 'bg-pri-20 text-pri': view() === 'downloaded' }}
-                        onClick={() => setView('downloaded')}>已下载 ({sortedServers().length})</button>
+                        onClick={() => setView('downloaded')}>{t('mcp.downloaded', { count: formatNumber(sortedServers().length) })}</button>
                 </div>
                 <div class="flex gap-2">
                     <div class="relative">
@@ -235,10 +237,10 @@ const McpServerList: Component = () => {
                             value={query()}
                             onInput={event => setQuery(event.currentTarget.value)}
                             onKeyDown={event => event.key === 'Enter' && search()}
-                            placeholder="搜索 MCP 服务器"
+                            placeholder={t('mcp.search')}
                         />
                     </div>
-                    <span class="text-xs self-center" style="color: rgba(255,255,255,0.4);">{resultCount()}{nextCursor() ? '+' : ''} 个结果</span>
+                    <span class="text-xs self-center" style="color: rgba(255,255,255,0.4);">{t('mcp.results', { count: `${formatNumber(resultCount())}${nextCursor() ? '+' : ''}` })}</span>
                     <Show when={view() === 'market'}>
                         <button
                             type="button"
@@ -249,7 +251,7 @@ const McpServerList: Component = () => {
                             <Show when={refreshing()} fallback={<Icon name="refresh" size={11} />}>
                                 <Icon name="spinner" size={11} class="animate-spin" />
                             </Show>
-                            {refreshing() ? '更新中…' : '刷新'}
+                            {refreshing() ? t('common.loading') : t('mcp.refresh')}
                         </button>
                     </Show>
                 </div>
@@ -257,14 +259,14 @@ const McpServerList: Component = () => {
 
             <Show when={error()}>
                 <div class="px-3 py-2 rounded-md text-sm" style="background: rgba(255,77,77,0.1); color: #ff8a8a;">
-                    {error()} <button class="ml-3 underline" onClick={() => setError(null)}>关闭</button>
+                    {error()} <button class="ml-3 underline" onClick={() => setError(null)}>{t('common.close')}</button>
                 </div>
             </Show>
 
             <div class="flex-1 overflow-y-auto min-h-0">
                 <Show when={loading()}>
                     <div class="h-full flex items-center justify-center text-sm" style="color: rgba(255,255,255,0.45);">
-                        正在加载 MCP Registry…
+                        {t('mcp.loadingRegistry')}
                     </div>
                 </Show>
 
@@ -272,7 +274,7 @@ const McpServerList: Component = () => {
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
                         <For each={catalog()} fallback={
                             <div class="col-span-full py-12 text-center text-sm" style="color: rgba(255,255,255,0.4);">
-                                没有匹配的 MCP 服务器。
+                                {t('mcp.noMatch')}
                             </div>
                         }>
                             {(server, index) => {
@@ -294,7 +296,7 @@ const McpServerList: Component = () => {
                                             </Show>
                                         </div>
                                         <p class="text-xs leading-relaxed line-clamp-3 min-h-[3rem]" style="color: rgba(255,255,255,0.55);">
-                                            {server.description || '该服务器暂无简介。'}
+                                            {server.description || t('mcp.noDescription')}
                                         </p>
                                         <div class="flex items-center gap-1 flex-wrap">
                                             <For each={server.deliveries}>
@@ -315,7 +317,7 @@ const McpServerList: Component = () => {
                                                     : 'background: rgba(124,154,191,0.2); border: 1px solid rgba(124,154,191,0.3);'}
                                                 onClick={() => openInstall(server)}
                                             >
-                                                {installed() ? '已安装' : installingId() === server.id ? '安装中…' : '安装'}
+                                                {installed() ? t('skill.installed') : installingId() === server.id ? t('mcp.installing') : t('mcp.install')}
                                             </button>
                                         </div>
                                     </div>
@@ -329,7 +331,7 @@ const McpServerList: Component = () => {
                                 disabled={loadingMore()}
                                 style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);"
                                 onClick={() => void loadCatalog(false, nextCursor())}>
-                                {loadingMore() ? '加载中…' : '加载更多'}
+                                {loadingMore() ? t('common.loading') : t('mcp.loadMore')}
                             </button>
                         </div>
                     </Show>
@@ -338,7 +340,7 @@ const McpServerList: Component = () => {
                 <Show when={view() === 'downloaded'}>
                     <div class="flex flex-col gap-2">
                         <For each={filteredLocal()} fallback={
-                            <div class="py-12 text-center text-sm" style="color: rgba(255,255,255,0.4);">尚未安装 MCP 服务器。</div>
+                            <div class="py-12 text-center text-sm" style="color: rgba(255,255,255,0.4);">{t('mcp.noInstalled')}</div>
                         }>
                             {(config) => {
                                 const status = () => mcpServerStatus()[config.id]?.status ?? 'disconnected';
@@ -358,23 +360,23 @@ const McpServerList: Component = () => {
                                             </div>
                                             <div class="text-xs truncate mt-1" style="color: rgba(255,255,255,0.5);">
                                                 {transportLabel(config.transport)}
-                                                {status() === 'connected' ? ` · ${mcpServerStatus()[config.id]?.toolCount ?? 0} 工具` : ''}
+                                                {status() === 'connected' ? ` · ${t('mcp.toolsCount', { count: formatNumber(mcpServerStatus()[config.id]?.toolCount ?? 0) })}` : ''}
                                             </div>
                                         </div>
                                         <div class="flex items-center gap-2 ml-3">
                                             <Show when={status() !== 'connected' && status() !== 'connecting'}>
                                                 <button class="px-2 py-1 rounded text-xs" style="background: rgba(124,154,191,0.2);"
-                                                    onClick={() => void handleStart(config.id)}>启动</button>
+                                                    onClick={() => void handleStart(config.id)}>{t('mcp.start')}</button>
                                             </Show>
                                             <Show when={status() === 'connected'}>
                                                 <button class="px-2 py-1 rounded text-xs" style="background: rgba(255,255,255,0.05);"
-                                                    onClick={() => void handleStop(config.id)}>停止</button>
+                                                    onClick={() => void handleStop(config.id)}>{t('mcp.stop')}</button>
                                             </Show>
                                             <button class="px-2 py-1 rounded text-xs" style="background: rgba(255,255,255,0.05);"
-                                                onClick={() => setEditingConfig({ ...config })}>编辑</button>
+                                                onClick={() => setEditingConfig({ ...config })}>{t('common.edit')}</button>
                                             <button class="px-2 py-1 rounded text-xs"
                                                 style="background: rgba(255,77,77,0.1); color: rgba(255,107,107,0.9);"
-                                                onClick={() => void handleRemove(config.id)}>删除</button>
+                                                onClick={() => void handleRemove(config.id)}>{t('common.delete')}</button>
                                         </div>
                                     </div>
                                 );
@@ -391,13 +393,13 @@ const McpServerList: Component = () => {
                     <div class="w-[620px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
                         style="background: rgba(18,22,35,0.98); border: 1px solid rgba(255,255,255,0.1);">
                         <div>
-                            <h3 class="font-semibold">安装 {installing()!.displayName}</h3>
+                            <h3 class="font-semibold">{t('mcp.installTitle', { name: installing()!.displayName })}</h3>
                             <p class="text-xs mt-1" style="color: rgba(255,255,255,0.45);">
-                                本地 MCP 包会以当前用户权限运行，请确认其仓库和配置可信。
+                                {t('mcp.securityNotice')}
                             </p>
                         </div>
                         <label class="flex flex-col gap-1 text-xs">
-                            安装方式
+                            {t('mcp.installMethod')}
                             <select class="px-3 py-2 rounded text-sm"
                                 style="background: rgba(22,26,40,0.95); border: 1px solid rgba(255,255,255,0.1);"
                                 value={selectedDeliveryId()}
@@ -412,7 +414,7 @@ const McpServerList: Component = () => {
                         </label>
                         <Show when={selectedDelivery()?.kind !== 'http' && !runtimeAvailable()}>
                             <div class="px-3 py-2 rounded text-xs" style="background: rgba(255,180,77,0.12); color: #ffd080;">
-                                未检测到 {selectedDelivery()?.kind === 'npm' ? 'npx（请安装 Node.js）' : 'uvx（请安装 uv）'}，安装后将无法启动。
+                                {selectedDelivery()?.kind === 'npm' ? t('mcp.runtimeMissingNpm') : t('mcp.runtimeMissingUvx')}
                             </div>
                         </Show>
                         <Show when={selectedDelivery()}>
@@ -443,11 +445,11 @@ const McpServerList: Component = () => {
                         </Show>
                         <div class="flex justify-end gap-2">
                             <button class="px-3 py-1.5 rounded text-sm" style="background: rgba(255,255,255,0.05);"
-                                onClick={() => setInstalling(null)}>取消</button>
+                                onClick={() => setInstalling(null)}>{t('common.cancel')}</button>
                             <button class="px-3 py-1.5 rounded text-sm bg-pri text-black"
                                 disabled={installingId() !== null || !runtimeAvailable()}
                                 onClick={() => void install()}>
-                                {installingId() ? '安装中…' : '安装并启动'}
+                                {installingId() ? t('mcp.installing') : t('mcp.installAndStart')}
                             </button>
                         </div>
                     </div>

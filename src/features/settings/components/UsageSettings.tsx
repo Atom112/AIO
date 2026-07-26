@@ -10,14 +10,15 @@ import type { UsageSummary, UsageSummaryByModel } from './UsageSummaryCards';
 import UsageHeatmap from './UsageHeatmap';
 import ModelBreakdown from './ModelBreakdown';
 import Icon from '../../../shared/components/Icon';
+import { reportError, t, type TranslationKey } from '../../../core/i18n';
 
-type Range = { label: string; days: number };
+type Range = { labelKey: TranslationKey; days: number };
 
 const RANGES: Range[] = [
-    { label: '7 天', days: 7 },
-    { label: '30 天', days: 30 },
-    { label: '90 天', days: 90 },
-    { label: '全部', days: 365 },
+    { labelKey: 'usage.range7', days: 7 },
+    { labelKey: 'usage.range30', days: 30 },
+    { labelKey: 'usage.range90', days: 90 },
+    { labelKey: 'usage.rangeAll', days: 365 },
 ];
 
 const UsageSettings: Component = () => {
@@ -43,7 +44,7 @@ const UsageSettings: Component = () => {
             setByModel(m);
         } catch (e) {
             console.error('获取用量数据失败:', e);
-            setError(String(e));
+            setError(reportError('error.load', e));
         } finally {
             setLoading(false);
         }
@@ -94,7 +95,7 @@ const UsageSettings: Component = () => {
             >
                 {/* 标题行 */}
                 <div class="flex items-center justify-between pb-3 mb-6 shrink-0 animate-row-in" style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                    <h3 class="text-xl font-bold tracking-tight" style="color: rgba(255,255,255,0.85);">使用量</h3>
+                    <h3 class="text-xl font-bold tracking-tight" style="color: rgba(255,255,255,0.85);">{t('usage.title')}</h3>
                     {/* 时间范围选择器 */}
                     <div class="flex gap-1 animate-row-in" style="background: rgba(255,255,255,0.04); border-radius: 8px; padding: 3px; animation-delay: 30ms;">
                         <For each={RANGES}>
@@ -107,7 +108,7 @@ const UsageSettings: Component = () => {
                                     }}
                                     onClick={() => { setSelectedDate(null); setRange(r); }}
                                 >
-                                    {r.label}
+                                    {t(r.labelKey)}
                                 </button>
                             )}
                         </For>
@@ -117,14 +118,14 @@ const UsageSettings: Component = () => {
                 {/* 加载状态 */}
                 <Show when={loading()}>
                     <div class="flex items-center justify-center py-16" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                        <span class="text-sm font-mono">加载中...</span>
+                        <span class="text-sm font-mono">{t('common.loading')}</span>
                     </div>
                 </Show>
 
                 {/* 错误状态 */}
                 <Show when={error() && !loading()}>
                     <div class="flex items-center justify-center py-16" style={{ color: 'rgba(224,128,144,0.7)' }}>
-                        <span class="text-sm font-mono">加载失败: {error()}</span>
+                        <span class="text-sm font-mono">{error()}</span>
                     </div>
                 </Show>
 
@@ -134,8 +135,8 @@ const UsageSettings: Component = () => {
                     <Show when={!hasData()}>
                         <div class="flex flex-col items-center justify-center py-16 gap-3">
                             <Icon name="chart-bar" size={30} />
-                            <span class="text-sm" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>暂无使用数据</span>
-                            <span class="text-xs" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>开始对话后，Token 用量将自动记录于此</span>
+                            <span class="text-sm" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>{t('usage.noData')}</span>
+                            <span class="text-xs" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>{t('usage.noDataDescription')}</span>
                         </div>
                     </Show>
 
@@ -152,7 +153,7 @@ const UsageSettings: Component = () => {
                                 style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05); animation-delay: 90ms;"
                             >
                                 <div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
-                                    每日活动
+                                    {t('usage.dailyActivity')}
                                 </div>
                                 <UsageHeatmap summary={heatmapSummary()} onDateSelect={handleDateSelect} highlightDate={selectedDate() ?? undefined} />
                             </div>
@@ -163,14 +164,14 @@ const UsageSettings: Component = () => {
                                     class="rounded-xl p-5 animate-row-in"
                                     style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.05); animation-delay: 120ms;"
                                 >
-                                    <Show when={selectedDate()} fallback={<div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>模型分布</div>}>
+                                    <Show when={selectedDate()} fallback={<div class="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>{t('usage.byModel')}</div>}>
                                         <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.25)' }}>
-                                            <span>{selectedDate()} 模型分布</span>
+                                            <span>{t('usage.selectedModelBreakdown', { date: selectedDate()! })}</span>
                                             <button
                                                 class="border-none cursor-pointer flex items-center justify-center w-4 h-4 rounded-full hover:bg-white/[0.1] transition-colors"
                                                 style="color: rgba(255,255,255,0.4); font-size: 10px; line-height: 1;"
                                                 onClick={() => { setSelectedDate(null); fetchRangeData(range().days); }}
-                                                title="清除日期筛选"
+                                                title={t('usage.clearDate')}
                                             >
                                                 ✕
                                             </button>

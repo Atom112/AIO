@@ -7,6 +7,7 @@
     "start": "vite",
     "dev": "vite",
     "build": "vite build",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "serve": "vite preview",
     "tauri": "tauri"
   },
@@ -14,6 +15,7 @@
   "dependencies": {
     "@aio/models-data": "file:../aio-models-data",
     "@lobehub/icons-static-svg": "^1.91.0",
+    "@solid-primitives/i18n": "^2.2.1",
     "@solidjs/router": "^0.16.1",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",

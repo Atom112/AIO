@@ -7,6 +7,7 @@ import { Component, Show } from 'solid-js';
 import type { ModelMeta } from '@aio/models-data';
 import { formatContextWindow, formatReleaseDate } from '../../core/utils/models';
 import Icon from './Icon';
+import { t } from '../../core/i18n';
 
 const ModelRow: Component<{
     meta: ModelMeta;
@@ -25,7 +26,7 @@ const ModelRow: Component<{
                 </div>
                 <div class="flex items-center gap-1.5 text-[10px] text-[#888] font-mono mt-1 flex-wrap">
                     <Show when={m().releaseDate}>
-                        <span>发布于 {formatReleaseDate(m().releaseDate)}</span>
+                        <span>{t('model.released', { date: formatReleaseDate(m().releaseDate) })}</span>
                     </Show>
                     <Show when={m().contextWindow > 0}>
                         <span class="inline-flex items-center gap-0.5">
@@ -33,19 +34,19 @@ const ModelRow: Component<{
                         </span>
                     </Show>
                     <Show when={caps().vision}>
-                        <span title="支持视觉" class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="eye" size={12} /></span>
+                        <span title={t('model.capability.vision')} class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="eye" size={12} /></span>
                     </Show>
                     <Show when={caps().tools}>
-                        <span title="支持工具调用" class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="wrench" size={12} /></span>
+                        <span title={t('model.capability.tools')} class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="wrench" size={12} /></span>
                     </Show>
                     <Show when={caps().reasoning}>
-                        <span title="支持推理" class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="brain" size={12} /></span>
+                        <span title={t('model.capability.reasoning')} class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="brain" size={12} /></span>
                     </Show>
                     <Show when={caps().streaming}>
-                        <span title="支持流式" class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="bolt" size={12} /></span>
+                        <span title={t('model.capability.streaming')} class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="bolt" size={12} /></span>
                     </Show>
                     <Show when={caps().json_mode}>
-                        <span title="支持 JSON 模式" class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="code" size={12} /></span>
+                        <span title={t('model.capability.json')} class="opacity-70 hover:opacity-100 transition-opacity inline-flex"><Icon name="code" size={12} /></span>
                     </Show>
                     <Show when={m().status && m().status !== 'active'}>
                         <span
@@ -66,12 +67,12 @@ const ModelRow: Component<{
                 </div>
                 <Show when={props.showPricing !== false && m().pricing}>
                     <div class="text-[10px] text-[#aaa] mt-1.5 font-mono">
-                        <span class="text-[#888]">输入</span> ${m().pricing!.input}/M
+                        <span class="text-[#888]">{t('model.price.input')}</span> ${m().pricing!.input}/M
                         <span class="text-[#666] mx-1.5">·</span>
-                        <span class="text-[#888]">输出</span> ${m().pricing!.output}/M
+                        <span class="text-[#888]">{t('model.price.output')}</span> ${m().pricing!.output}/M
                         <Show when={m().pricing!.cacheRead != null}>
                             <span class="text-[#666] mx-1.5">·</span>
-                            <span class="text-[#888]">缓存读</span> ${m().pricing!.cacheRead}/M
+                            <span class="text-[#888]">{t('model.price.cacheRead')}</span> ${m().pricing!.cacheRead}/M
                         </Show>
                     </div>
                 </Show>
@@ -84,7 +85,7 @@ const ModelRow: Component<{
                     ...(props.enabled ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
                 }}
                 onClick={(e) => { e.stopPropagation(); props.onToggle(); }}
-                title={props.enabled ? '点击停用' : '点击启用'}
+                title={props.enabled ? t('common.disable') : t('common.enable')}
             >
                 <span
                     class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"

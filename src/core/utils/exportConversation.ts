@@ -3,6 +3,7 @@
  * 输入 Topic + 选项，输出格式化字符串；无 UI 依赖。
  */
 import type { Topic, Message } from '../store/store';
+import { formatDateTime, locale, t } from '../i18n';
 
 // -------- 选项类型 --------
 
@@ -21,9 +22,7 @@ export interface ExportOptions {
 
 /** 格式化时间戳为 YYYY-MM-DD HH:mm */
 function formatTime(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatDateTime(new Date(), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** 从消息提取纯文本内容。优先 displayText，其次 content（若为数组则取各 item.text 拼接）。 */
@@ -76,11 +75,13 @@ export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string 
     lines.push('');
 
     if (msg.role === 'user') {
-      lines.push('### User');
+      lines.push(`### ${t('export.role.user')}`);
       const text = extractText(msg);
-      lines.push(text || '(empty)');
+      lines.push(text || t('export.empty'));
     } else if (msg.role === 'assistant') {
-      const label = msg.modelId ? `Assistant (${msg.modelId})` : 'Assistant';
+      const label = msg.modelId
+        ? `${t('export.role.assistant')} (${msg.modelId})`
+        : t('export.role.assistant');
       lines.push(`### ${label}`);
 
       // reasoning（引用块）
@@ -94,12 +95,12 @@ export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string 
 
       // 正文
       const text = extractText(msg);
-      lines.push(text || '(empty)');
+      lines.push(text || t('export.empty'));
 
       // tool calls 描述（可选）
       if (opts.includeToolCalls && msg.toolCalls && msg.toolCalls.length > 0) {
         lines.push('');
-        lines.push('**Tool Calls:**');
+        lines.push(`**${t('export.toolCalls')}:**`);
         for (const tc of msg.toolCalls) {
           const fn = tc.function;
           lines.push(`- \`${fn.name}\``);
@@ -109,12 +110,12 @@ export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string 
             lines.push('  ```');
           }
           if (tc.result != null) {
-            lines.push(`  Result: \`${JSON.stringify(tc.result).slice(0, 200)}\``);
+            lines.push(`  ${t('export.result')}: \`${JSON.stringify(tc.result).slice(0, 200)}\``);
           }
         }
       }
     } else if (msg.role === 'system') {
-      lines.push('### System');
+      lines.push(`### ${t('export.role.system')}`);
       lines.push(extractText(msg));
     }
 
@@ -261,7 +262,9 @@ export function exportAsHtml(topic: Topic, options?: ExportOptions): string {
     if (!shouldInclude(msg, opts)) continue;
 
     const isUser = msg.role === 'user';
-    const roleLabel = isUser ? 'User' : (msg.modelId ? `Assistant (${msg.modelId})` : 'Assistant');
+    const roleLabel = isUser
+      ? t('export.role.user')
+      : (msg.modelId ? `${t('export.role.assistant')} (${msg.modelId})` : t('export.role.assistant'));
     const roleClass = isUser ? 'user' : 'assistant';
 
     let body = '';
@@ -271,10 +274,10 @@ export function exportAsHtml(topic: Topic, options?: ExportOptions): string {
     }
 
     const text = extractText(msg);
-    body += mdToHtml(text || '(empty)');
+    body += mdToHtml(text || t('export.empty'));
 
     if (opts.includeToolCalls && msg.toolCalls && msg.toolCalls.length > 0) {
-      body += '<div class="tool-calls"><strong>Tool Calls:</strong><ul>';
+      body += `<div class="tool-calls"><strong>${escapeHtml(t('export.toolCalls'))}:</strong><ul>`;
       for (const tc of msg.toolCalls) {
         const fn = tc.function;
         body += `<li><code>${escapeHtml(fn.name)}</code>`;
@@ -294,7 +297,7 @@ export function exportAsHtml(topic: Topic, options?: ExportOptions): string {
   }
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${locale()}">
 <head>
 <meta charset="UTF-8">
 <title>${escapeHtml(topic.name)}</title>

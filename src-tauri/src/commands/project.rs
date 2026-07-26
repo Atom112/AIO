@@ -3,7 +3,7 @@
 //! 项目是绑定到文件系统目录的逻辑分组单元，每个项目在 `<project_dir>/.aio/` 下
 //! 存放专属的 skills.json 和 mcp-servers.json。
 
-use crate::core::models::{Project, ProjectsFile, AgentMode};
+use crate::core::models::{AgentMode, Project, ProjectsFile};
 use crate::core::state::DbState;
 use crate::utils::file_tools::strip_windows_extended_prefix;
 use std::path::PathBuf;
@@ -109,7 +109,12 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
 
 /// 创建新项目。
 #[tauri::command]
-pub fn create_project(app: AppHandle, state: tauri::State<'_, DbState>, name: String, path: String) -> Result<Project, String> {
+pub fn create_project(
+    app: AppHandle,
+    state: tauri::State<'_, DbState>,
+    name: String,
+    path: String,
+) -> Result<Project, String> {
     if name.trim().is_empty() {
         return Err("项目名称不能为空".into());
     }
@@ -272,11 +277,4 @@ pub fn project_skills_path(project_path: &str) -> PathBuf {
     PathBuf::from(project_path)
         .join(AIO_DIR)
         .join("skills.json")
-}
-
-/// 返回 .aio/ 目录下的 MCP server 文件路径（供 mcp/mod.rs 使用）。
-pub fn project_mcp_servers_path(project_path: &str) -> PathBuf {
-    PathBuf::from(project_path)
-        .join(AIO_DIR)
-        .join("mcp-servers.json")
 }

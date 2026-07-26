@@ -26,17 +26,20 @@ import {
     registerCommand,
     unregisterCommand,
     formatShortcutForDisplay,
+    getCommandDisplayLabel,
+    getCommandDisplayDescription,
     type CommandAction,
     type CommandCategory,
 } from '../../core/shortcuts';
+import { t, type TranslationKey } from '../../core/i18n';
 
 // ---- 类别显示配置 ----
 
-const CATEGORY_LABELS: Record<CommandCategory, string> = {
-    navigation: '导航',
-    chat: '聊天',
-    sidebar: '侧边栏',
-    global: '全局',
+const CATEGORY_LABELS: Record<CommandCategory, TranslationKey> = {
+    navigation: 'command.category.navigation',
+    chat: 'command.category.chat',
+    sidebar: 'command.category.sidebar',
+    global: 'command.category.global',
 };
 
 const CATEGORY_COLORS: Record<CommandCategory, string> = {
@@ -51,8 +54,8 @@ const CATEGORY_COLORS: Record<CommandCategory, string> = {
 /** 检查单个关键词是否匹配命令 */
 function matchWord(word: string, cmd: CommandAction): boolean {
     const w = word.toLowerCase();
-    const label = cmd.label.toLowerCase();
-    const desc = cmd.description.toLowerCase();
+    const label = getCommandDisplayLabel(cmd).toLowerCase();
+    const desc = getCommandDisplayDescription(cmd).toLowerCase();
 
     // 子串匹配
     if (label.includes(w) || desc.includes(w)) return true;
@@ -111,7 +114,7 @@ const CommandPalette: Component = () => {
                 seen.add(cmd.category);
                 groups.push({
                     category: cmd.category,
-                    label: CATEGORY_LABELS[cmd.category] || cmd.category,
+                    label: t(CATEGORY_LABELS[cmd.category]),
                     color: CATEGORY_COLORS[cmd.category] || 'rgba(255,255,255,0.4)',
                     items: [],
                 });
@@ -261,7 +264,7 @@ const CommandPalette: Component = () => {
                             ref={inputRef}
                             type="text"
                             class="flex-1 bg-transparent border-none outline-none text-white/90 text-[15px] leading-[1.4]"
-                            placeholder="输入命令名称搜索..."
+                            placeholder={t('command.palette.placeholder')}
                             value={query()}
                             onInput={e => {
                                 setQuery(e.currentTarget.value);
@@ -276,7 +279,7 @@ const CommandPalette: Component = () => {
                             when={flatIndex().length > 0}
                             fallback={
                                 <div class="py-8 px-4 text-center text-[13px] text-white/25">
-                                    没有找到匹配的命令
+                                    {t('command.palette.empty')}
                                 </div>
                             }
                         >
@@ -303,10 +306,10 @@ const CommandPalette: Component = () => {
                                                     >
                                                         <div class="flex flex-col min-w-0 flex-1">
                                                             <span class="text-[13px] font-medium text-white/85 leading-[1.3]">
-                                                                {cmd.label}
+                                                                {getCommandDisplayLabel(cmd)}
                                                             </span>
                                                             <span class="text-[11px] text-white/30 leading-[1.3] mt-px whitespace-nowrap overflow-hidden text-ellipsis">
-                                                                {cmd.description}
+                                                                {getCommandDisplayDescription(cmd)}
                                                             </span>
                                                         </div>
                                                         <Show when={keys()}>
@@ -326,9 +329,9 @@ const CommandPalette: Component = () => {
 
                     {/* 底部提示 */}
                     <div class="flex items-center justify-center gap-4 px-4 pt-2 pb-2.5 border-t border-t-white/[0.04] text-[10px] text-white/20">
-                        <span><kbd>↑↓</kbd> 导航</span>
-                        <span><kbd>Enter</kbd> 执行</span>
-                        <span><kbd>Esc</kbd> 关闭</span>
+                        <span><kbd>↑↓</kbd> {t('command.palette.hintNavigate')}</span>
+                        <span><kbd>Enter</kbd> {t('command.palette.hintRun')}</span>
+                        <span><kbd>Esc</kbd> {t('command.palette.hintClose')}</span>
                     </div>
                 </div>
             </div>

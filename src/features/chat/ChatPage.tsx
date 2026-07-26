@@ -19,7 +19,9 @@ import {
   unregisterCommand,
   resolveSlashCommand,
   getSlashCommands,
+  getCommandDisplayDescription,
 } from '../../core/shortcuts';
+import { locale, t } from '../../core/i18n';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
@@ -28,6 +30,13 @@ import { Portal } from 'solid-js/web';
 import ShareModal from './components/ShareModal';
 import ProblemsPanel from './components/ProblemsPanel';
 import WorkflowVisualization from './components/WorkflowVisualization';
+
+function getReasoningPrompt(level: string): string | null {
+  if (level === 'low') return t('agent.prompt.reasoningLow');
+  if (level === 'medium') return t('agent.prompt.reasoningMedium');
+  if (level === 'high') return t('agent.prompt.reasoningHigh');
+  return null;
+}
 import type { PendingApproval } from './components/ToolApprovalBubble';
 import { problemsPanelVisible, setProblemsPanelVisible, clearAllDiagnostics } from '../../core/store/diagnostics';
 
@@ -46,7 +55,7 @@ let activeTitleGen: { topicId: string; cancelled: boolean } | null = null;
  */
 const createTopic = (name?: string): Topic => ({
   id: Date.now().toString(),                                // 使用当前时间戳作为唯一标识符
-  name: name || `新话题 ${new Date().toLocaleTimeString()}`, // 默认名称包含创建时间
+  name: name || t('chat.untitledTopic', { time: new Date().toLocaleTimeString(locale()) }), // 默认名称包含创建时间
   history: [],                                              // 消息历史记录数组
   summary: ""                                               // SQLite 存储方案新增：长期记忆摘要，用于压缩历史上下文
 });
@@ -59,15 +68,15 @@ const createTopic = (name?: string): Topic => ({
  */
 const createAssistant = (name?: string, id?: string): Assistant => ({
   id: id ?? Date.now().toString(),        // 若未提供 ID 则生成新的时间戳 ID
-  name: name || '新助手',                  // 默认助手名称
-  prompt: '你是一个乐于助人的 AI 助手。',     // 默认系统提示词
+  name: name || t('chat.newAssistant'),                  // 默认助手名称
+  prompt: t('chat.defaultAssistantPrompt'),     // 默认系统提示词
   modelId: selectedModel() ? modelKey(selectedModel()!) : undefined,  // 继承当前生效模型（复合键）作为新助手默认模型
   // 有项目上下文时自动启用内置文件系统 MCP，让 agent 开箱即用
   mcpServerIds: currentProjectId() ? ['__aio-filesystem__'] : [],
   skillIds: [],
   projectId: currentProjectId() ?? undefined, // 关联当前项目
   assistantType: id === DEFAULT_ASST_ID ? 'chat' : 'project',
-  topics: [createTopic('默认话题')]        // 每个助手默认创建一个"默认话题"
+  topics: [createTopic(t('chat.defaultTopic'))]        // 每个助手默认创建一个"默认话题"
 });
 
 /**
@@ -228,14 +237,14 @@ const ChatPage: Component = () => {
    * @param fileType - 文件类型提示（'file' 或 'image'）
    */
   const handleFileUpload = async (filePath: string, fileType: 'file' | 'image') => {
-    const fileName = filePath.split(/[\\/]/).pop() || '未知文件';
+    const fileName = filePath.split(/[\\/]/).pop() || t('chat.unknownFile');
     const ext = (fileName.split('.').pop() || '').toLowerCase();
     const ALLOWED_IMG = ['png', 'jpg', 'jpeg', 'webp'];
     const ALLOWED_DOC = ['pdf', 'docx', 'pptx', 'txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml', 'ini', 'tsv'];
     const isImg = fileType === 'image' || ALLOWED_IMG.includes(ext);
     const isDoc = ALLOWED_DOC.includes(ext);
     if (!isImg && !isDoc) {
-      alert(`不支持的文件类型: .${ext}\n仅支持: ${[...ALLOWED_IMG, ...ALLOWED_DOC].join(', ')}`);
+      alert(t('chat.unsupportedFile', { extension: ext, supported: [...ALLOWED_IMG, ...ALLOWED_DOC].join(', ') }));
       return;
     }
     setIsProcessing(true);
@@ -666,7 +675,7 @@ ${asstObj.prompt}`;
     if (!resolved.args) {
       const project = currentProject();
       if (project) {
-        content = `${content}\n\n当前项目路径: ${project.path}`;
+        content = `${content}\n\n${t('agent.prompt.projectContext', { path: project.path })}`;
       }
     }
 
@@ -678,14 +687,7 @@ ${asstObj.prompt}`;
     };
 
     // 构建完整消息数组（与普通发送流程一致）
-    const reasoningPrompt = (() => {
-      switch (reasoningLevel()) {
-        case 'low':    return '在回答前先进行简单思考. 用 <think> 标签包裹你的推理过程, 再给出最终回答. 控制思考长度, 简单问题不要过度展开.';
-        case 'medium': return '在回答前先进行中等深度的思考. 用 <think> 标签包裹你的推理过程 (分析问题、拆解步骤、对比方案), 再给出最终回答.';
-        case 'high':   return '在回答前进行深入的多步推理. 必须在 <think> 标签中详细分析问题、列出前提、考虑边界情况、对比多种方案, 再给出严谨的最终回答. 思考越充分越好.';
-        default:       return null;
-      }
-    })();
+    const reasoningPrompt = getReasoningPrompt(reasoningLevel());
 
     const agentMode = currentAsst?.agentMode || 'off';
     const pid = currentProjectId();
@@ -705,10 +707,10 @@ ${asstObj.prompt}`;
       })),
       ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
-      ...(webSearchEnabled() ? [{ role: 'system', content: '你可以使用 web_fetch(url) 获取网页内容（仅 HTTPS），以及 web_search(query, count?) 通过 DuckDuckGo 搜索网页。如有需要获取最新信息，请直接调用这些工具。' }] : []),
+      ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
       ...(currentTopic.summary ? [{
         role: 'system',
-        content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
+        content: t('agent.prompt.summary', { summary: currentTopic.summary })
       }] : []),
       ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
       { role: 'user', content: newUserMsg.content }
@@ -719,7 +721,8 @@ ${asstObj.prompt}`;
     try {
       await invoke('append_message', { topicId, message: newUserMsg });
     } catch (err) {
-      alert(`保存消息失败: ${err}`);
+      console.error('[chat] save message failed:', err);
+      alert(t('error.save'));
       return;
     }
 
@@ -742,6 +745,7 @@ ${asstObj.prompt}`;
         agentMode: agentMode,
         projectId: currentProjectId() ?? null,
         webSearchEnabled: webSearchEnabled(),
+        locale: locale(),
       });
     } catch (err) {
       alert(err);
@@ -779,12 +783,14 @@ ${asstObj.prompt}`;
     // 根据命令类型给出反馈消息
     let feedback = '';
     if (cmd.id === 'slash-compact') {
-      feedback = '✓ /compact — 上下文已压缩';
+      feedback = `✓ /compact — ${t('slash.feedback.compacted')}`;
     } else if (cmd.id === 'slash-clear') {
       // /clear handler 已清空历史，无需额外反馈
       return;
     } else if (cmd.id === 'slash-search') {
-      feedback = webSearchEnabled() ? '✓ 联网搜索已开启' : '✓ 联网搜索已关闭';
+      feedback = webSearchEnabled()
+        ? `✓ ${t('slash.feedback.searchOn')}`
+        : `✓ ${t('slash.feedback.searchOff')}`;
     } else if (cmd.id === 'slash-help') {
       // /help handler 已添加帮助信息，无需额外反馈
       return;
@@ -792,7 +798,7 @@ ${asstObj.prompt}`;
       // /settings handler 已跳转页面
       return;
     } else {
-      feedback = `✓ ${cmd.label} — 已执行`;
+      feedback = `✓ ${t('slash.feedback.executed', { command: cmd.label })}`;
     }
 
     // 添加反馈消息
@@ -862,7 +868,7 @@ ${asstObj.prompt}`;
           }, {
             id: crypto.randomUUID(),
             role: 'assistant' as const,
-            content: `✗ 未知命令: \`${userInput}\`\n\n输入 **/help** 查看所有可用命令。`,
+        content: t('slash.feedback.unknown', { command: userInput }),
           }]);
       }
       setInputMessage('');
@@ -892,14 +898,7 @@ ${asstObj.prompt}`;
     if (!currentAsst || !currentTopic) return;
 
     /** 根据推理强度注入对应的 system 提示, 让模型使用 <think>...</think> 输出思考过程 */
-    const reasoningPrompt = (() => {
-        switch (reasoningLevel()) {
-            case 'low':    return '在回答前先进行简单思考. 用 <think> 标签包裹你的推理过程, 再给出最终回答. 控制思考长度, 简单问题不要过度展开.';
-            case 'medium': return '在回答前先进行中等深度的思考. 用 <think> 标签包裹你的推理过程 (分析问题、拆解步骤、对比方案), 再给出最终回答.';
-            case 'high':   return '在回答前进行深入的多步推理. 必须在 <think> 标签中详细分析问题、列出前提、考虑边界情况、对比多种方案, 再给出严谨的最终回答. 思考越充分越好.';
-            default:       return null;
-        }
-    })();
+    const reasoningPrompt = getReasoningPrompt(reasoningLevel());
 
     const agentMode = currentAsst?.agentMode || 'off';
     const pid = currentProjectId();
@@ -918,10 +917,10 @@ ${asstObj.prompt}`;
         })),
         ...agentSystemPrompt,
         ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
-      ...(webSearchEnabled() ? [{ role: 'system', content: '你可以使用 web_fetch(url) 获取网页内容（仅 HTTPS），以及 web_search(query, count?) 通过 DuckDuckGo 搜索网页。如有需要获取最新信息，请直接调用这些工具。' }] : []),
+      ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
         ...(currentTopic.summary ? [{
           role: 'system',
-          content: `这是之前对话的摘要记忆，请结合这些上下文回答：\n${currentTopic.summary}`
+          content: t('agent.prompt.summary', { summary: currentTopic.summary })
         }] : []),
       ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
         { role: 'user', content: newUserMsg.content }
@@ -942,7 +941,8 @@ ${asstObj.prompt}`;
         message: newUserMsg,
       });
     } catch (err) {
-      alert(`保存消息失败: ${err}`);
+      console.error('save_message_with_attachments failed:', err);
+      alert(t('error.save'));
       return;
     }
 
@@ -1022,6 +1022,7 @@ ${asstObj.prompt}`;
             webSearchEnabled: webSearchEnabled(),
             profileModelOverrides: resolvedOverrides,
             customSubagentProfiles: customSubagentProfiles(),
+            locale: locale(),
           });
         }
 
@@ -1052,7 +1053,7 @@ ${asstObj.prompt}`;
    * 创建新助手并设置为当前选中助手
    */
   const addAssistant = async () => {
-    const newAsst = createAssistant(`新助手 ${datas.assistants.length + 1}`);
+    const newAsst = createAssistant(t('chat.numberedAssistant', { number: datas.assistants.length + 1 }));
     setDatas('assistants', prev => [...prev, newAsst]);
     setCurrentAssistantId(newAsst.id);
     setCurrentTopicId(newAsst.topics[0].id);
@@ -1405,8 +1406,8 @@ ${asstObj.prompt}`;
         const topicId = currentTopicId();
         if (!asstId || !topicId) return;
         const allSlash = getSlashCommands();
-        const lines = allSlash.map(c => `- **${c.label}** — ${c.description}`);
-        const helpText = `## 可用斜杠命令\n\n${lines.join('\n')}`;
+        const lines = allSlash.map(c => `- **${c.label}** — ${getCommandDisplayDescription(c)}`);
+        const helpText = `## ${t('slash.help.title')}\n\n${lines.join('\n')}`;
         setDatas('assistants', (a: any) => a.id === asstId,
           'topics', (t: any) => t.id === topicId,
           'history', (h: any[]) => [...h, {
@@ -1448,7 +1449,7 @@ ${asstObj.prompt}`;
           if (asst && asst.topics.length > 0) {
             setCurrentTopicId(asst.topics[0].id);
           } else if (asst) {
-            const newDefaultTopic = createTopic('默认话题');
+            const newDefaultTopic = createTopic(t('chat.defaultTopic'));
             setDatas('assistants', a => a.id === DEFAULT_ASST_ID, 'topics', [newDefaultTopic]);
             setCurrentTopicId(newDefaultTopic.id);
             await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
@@ -1462,7 +1463,8 @@ ${asstObj.prompt}`;
       .catch((err) => {
         // 如果后端报错，这里会打印出来
         console.error("加载助手列表失败:", err);
-        alert("数据库加载失败: " + err);
+        console.error('load_all_assistants failed:', err);
+        alert(t('error.load'));
       });
 
     // 设置多个事件监听器，存储 unlisten 函数用于清理

@@ -1,5 +1,4 @@
 use crate::utils::git_tools;
-use std::process::Command;
 
 /// 获取当前项目的 Git 分支名称。
 /// 如果不是 git 仓库则返回 null。
@@ -41,7 +40,10 @@ pub fn revert_file_change(project_path: String, file_path: String) -> Result<Str
 /// 批量恢复多个文件到 HEAD 版本，撤销所有未提交的变更。
 /// 适用于撤销单轮对话中的所有 write_file / replace_in_file / delete_file 操作。
 #[tauri::command]
-pub fn revert_file_changes_batch(project_path: String, file_paths: Vec<String>) -> Result<Vec<String>, String> {
+pub fn revert_file_changes_batch(
+    project_path: String,
+    file_paths: Vec<String>,
+) -> Result<Vec<String>, String> {
     let mut results = Vec::new();
     for file_path in &file_paths {
         let status = std::process::Command::new("git")

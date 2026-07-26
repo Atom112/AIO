@@ -17,6 +17,7 @@ import {
 } from '../../../core/store/store';
 import ProjectCreateModal from './ProjectCreateModal';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 let ref: HTMLDivElement | undefined;
 
@@ -52,10 +53,12 @@ export default function ProjectSelector() {
                     type="button"
                     class={`flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60 ${currentProject() ? 'text-white/55' : 'text-white/40'}`}
                     onClick={() => setOpen(!open())}
-                    title={currentProject() ? `项目: ${currentProject()!.name} (${currentProject()!.path})` : '选择工作目录'}
+                    title={currentProject()
+                        ? t('project.current', { name: currentProject()!.name, path: currentProject()!.path })
+                        : t('project.selectDirectory')}
                 >
                     <Icon name="folder" size={15} class="flex items-center justify-center shrink-0" />
-                    <span class="leading-none max-w-[100px] truncate">{currentProject()?.name ?? '选择目录'}</span>
+                    <span class="leading-none max-w-[100px] truncate">{currentProject()?.name ?? t('project.selectDirectory')}</span>
                 </button>
 
             {/* 项目下拉面板 */}
@@ -85,7 +88,7 @@ export default function ProjectSelector() {
                                 <span
                                     class="opacity-0 group-hover:opacity-60 transition-opacity shrink-0"
                                     onClick={(e) => handleOpenDir(e, proj.path)}
-                                    title="打开项目目录"
+                                    title={t('project.openFolder')}
                                 >
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -109,7 +112,7 @@ export default function ProjectSelector() {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                               d="M12 4v16m8-8H4" />
                     </svg>
-                    新建项目
+                    {t('project.new')}
                 </button>
             </div>
 

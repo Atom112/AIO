@@ -11,13 +11,10 @@ pub mod mcp_fs_server;
 mod plugins;
 mod utils;
 
-use crate::core::state::{
-    DbState, LocalEngineState, StreamManager,
-    SubagentHandles,
-};
-use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
+use crate::core::state::{DbState, LocalEngineState, StreamManager, SubagentHandles};
 use crate::plugins::engine::EngineManager;
 use crate::plugins::lsp::LspManager;
+use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
 use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -156,6 +153,8 @@ pub fn run() {
             // Per-Profile 模型覆盖
             commands::config::load_profile_model_overrides,
             commands::config::save_profile_model_overrides,
+            commands::config::list_custom_subagent_profiles,
+            commands::config::save_custom_subagent_profile,
             // 自定义子智能体配置文件
             commands::config::delete_custom_subagent_profile,
             // 系统自启

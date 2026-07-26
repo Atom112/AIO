@@ -14,20 +14,21 @@ import {
     type AgentMode,
 } from '../../../core/store/store';
 import Icon, { type IconName } from '../../../shared/components/Icon';
+import { t, type TranslationKey } from '../../../core/i18n';
 
 interface ModeOption {
     value: AgentMode;
-    label: string;
-    desc: string;
+    labelKey: TranslationKey;
+    descKey: TranslationKey;
     icon: IconName;
 }
 
 const MODES: ModeOption[] = [
-    { value: 'off',    label: '对话',   desc: '纯对话，禁用工具调用',          icon: 'chat' },
-    { value: 'normal', label: '普通',   desc: '修改文件前向用户确认',            icon: 'check-circle' },
-    { value: 'auto',   label: '自动',   desc: '自主迭代直至目标完成',            icon: 'refresh' },
-    { value: 'plan',   label: 'Plan',   desc: '研究需求并输出实现计划（不执行）', icon: 'document' },
-    { value: 'workflow', label: '工作流', desc: '强制拆解任务为工作流并自动执行', icon: 'layers' },
+    { value: 'off', labelKey: 'agent.mode.chat', descKey: 'agent.mode.chatDescription', icon: 'chat' },
+    { value: 'normal', labelKey: 'agent.mode.normal', descKey: 'agent.mode.normalDescription', icon: 'check-circle' },
+    { value: 'auto', labelKey: 'agent.mode.auto', descKey: 'agent.mode.autoDescription', icon: 'refresh' },
+    { value: 'plan', labelKey: 'agent.mode.plan', descKey: 'agent.mode.planDescription', icon: 'document' },
+    { value: 'workflow', labelKey: 'agent.mode.workflow', descKey: 'agent.mode.workflowDescription', icon: 'layers' },
 ];
 
 const MODE_COLORS: Record<string, string> = {
@@ -109,7 +110,7 @@ const AgentModeSelector: Component = () => {
                     color: currentMode() !== 'off' ? (MODE_COLORS[currentMode()] || MODE_COLORS.off) : undefined,
                     opacity: isDisabled() ? 0.4 : 1,
                 }}
-                title={isDisabled() ? '请先选择助手' : activeOption().desc}
+                title={isDisabled() ? t('agent.mode.chooseAssistant') : t(activeOption().descKey)}
                 onClick={(e) => {
                     if (isDisabled()) return;
                     e.stopPropagation();
@@ -117,7 +118,7 @@ const AgentModeSelector: Component = () => {
                 }}
             >
                 <Icon name={activeOption().icon} size={15} class="flex items-center justify-center shrink-0" />
-                <span class="leading-none">{activeOption().label}</span>
+                <span class="leading-none">{t(activeOption().labelKey)}</span>
             </button>
 
             {/* 下拉面板 */}
@@ -132,7 +133,7 @@ const AgentModeSelector: Component = () => {
             >
                 <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                     style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
-                    Agent 工作模式
+                    {t('agent.mode.title')}
                 </div>
                 <div class="py-1">
                     <For each={MODES}>
@@ -152,8 +153,8 @@ const AgentModeSelector: Component = () => {
                             >
                                 <Icon name={opt.icon} size={14} class="mt-0.5 shrink-0" style={`color: ${MODE_COLORS[opt.value]}`} />
                                 <div class="flex-1 min-w-0">
-                                    <div class="text-sm font-medium">{opt.label}</div>
-                                    <div class="text-[11px] mt-0.5" style="color: rgba(255,255,255,0.35);">{opt.desc}</div>
+                                    <div class="text-sm font-medium">{t(opt.labelKey)}</div>
+                                    <div class="text-[11px] mt-0.5" style="color: rgba(255,255,255,0.35);">{t(opt.descKey)}</div>
                                 </div>
                                 <Show when={currentMode() === opt.value}>
                                     <Icon name="check" size={13} class="shrink-0" style="color: rgba(124,154,191,0.8);" />
@@ -179,20 +180,14 @@ const AgentModeSelector: Component = () => {
                         <div class="flex items-center gap-3 mb-4">
                             <Icon name="alert-triangle" size={24} />
                             <h2 style="color: rgba(224,192,96,0.9); font-size: 1.1rem; font-weight: 600; margin: 0;">
-                                自动模式风险提醒
+                                {t('agent.mode.warningTitle')}
                             </h2>
                         </div>
 
                         <div style="color: rgba(255,255,255,0.7); font-size: 0.875rem; line-height: 1.7; margin-bottom: 1.5rem;">
-                            <p style="margin: 0 0 0.75rem 0;">
-                                自动模式下，AI 将<strong style="color: rgba(224,192,96,0.9);">自主执行命令和文件操作</strong>，无需逐条您的确认。
-                            </p>
-                            <p style="margin: 0 0 0.75rem 0;">
-                                包括但不限于：执行系统命令、读取/修改/删除文件、调用 MCP 工具等。
-                            </p>
-                            <p style="margin: 0;">
-                                请确保你<strong style="color: rgba(255,255,255,0.85);">信任当前的工作目录内容</strong>，并了解 AI 可能产生的副作用。
-                            </p>
+                            <p style="margin: 0 0 0.75rem 0;">{t('agent.mode.warningPrimary')}</p>
+                            <p style="margin: 0 0 0.75rem 0;">{t('agent.mode.warningDetails')}</p>
+                            <p style="margin: 0;">{t('agent.mode.warningTrust')}</p>
                         </div>
 
                         <div class="flex justify-end gap-3">
@@ -202,7 +197,7 @@ const AgentModeSelector: Component = () => {
                                 style="background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5);"
                                 onClick={() => setShowAutoWarning(false)}
                             >
-                                取消
+                                {t('common.cancel')}
                             </button>
                             <button
                                 type="button"
@@ -215,7 +210,9 @@ const AgentModeSelector: Component = () => {
                                     await choose(pendingMode);
                                 }}
                             >
-                                我已知晓，进入{ (pendingMode as AgentMode) === 'workflow' ? '工作流' : '自动' }模式
+                                {t('agent.mode.warningConfirm', {
+                                    mode: t((pendingMode as AgentMode) === 'workflow' ? 'agent.mode.workflow' : 'agent.mode.auto'),
+                                })}
                             </button>
                         </div>
                     </div>

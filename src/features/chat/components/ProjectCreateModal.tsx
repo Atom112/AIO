@@ -6,6 +6,7 @@ import { createSignal, onMount } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { Project } from '../../../core/store/store';
+import { reportError, t } from '../../../core/i18n';
 
 interface Props {
     onClose: () => void;
@@ -49,7 +50,8 @@ export default function ProjectCreateModal(props: Props) {
                         { path: selected }
                     );
                     if (!result.valid) {
-                        setError(result.reason);
+                        console.warn('[project] invalid path:', result.reason);
+                        setError(t('project.invalidPath'));
                     } else {
                         setPath(result.canonicalPath || selected);
                         setError('');
@@ -65,11 +67,11 @@ export default function ProjectCreateModal(props: Props) {
 
     const handleCreate = async () => {
         if (!name().trim()) {
-            setError('请输入项目名称');
+            setError(t('project.requiredName'));
             return;
         }
         if (!path()) {
-            setError('请选择项目目录');
+            setError(t('project.requiredPath'));
             return;
         }
         setLoading(true);
@@ -81,7 +83,7 @@ export default function ProjectCreateModal(props: Props) {
             });
             props.onCreated(project.id);
         } catch (e) {
-            setError(String(e));
+            setError(reportError('error.save', e));
         } finally {
             setLoading(false);
         }
@@ -104,28 +106,28 @@ export default function ProjectCreateModal(props: Props) {
                 class="bg-[#1a2540] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
                 onClick={(e) => e.stopPropagation()}
             >
-                <h2 class="text-lg font-semibold text-white mb-4">新建项目</h2>
+                <h2 class="text-lg font-semibold text-white mb-4">{t('project.new')}</h2>
 
                 {/* 项目名称 */}
-                <label class="block text-sm text-white/60 mb-1.5">项目名称</label>
+                <label class="block text-sm text-white/60 mb-1.5">{t('project.name')}</label>
                 <input
                     type="text"
                     class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white
                            text-sm placeholder-white/30 focus:outline-none focus:border-[#7c9abf] mb-4"
-                    placeholder="输入项目名称..."
+                    placeholder={t('project.namePlaceholder')}
                     value={name()}
                     onInput={(e) => setName(e.currentTarget.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                 />
 
                 {/* 项目目录 */}
-                <label class="block text-sm text-white/60 mb-1.5">项目目录</label>
+                <label class="block text-sm text-white/60 mb-1.5">{t('project.path')}</label>
                 <div class="flex gap-2 mb-1">
                     <input
                         type="text"
                         class="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white
                                text-sm placeholder-white/30 focus:outline-none focus:border-[#7c9abf]"
-                        placeholder="选择文件系统目录..."
+                        placeholder={t('project.pathPlaceholder')}
                         value={path()}
                         readOnly
                     />
@@ -134,7 +136,7 @@ export default function ProjectCreateModal(props: Props) {
                                rounded-lg transition-colors border border-white/10 shrink-0"
                         onClick={handleSelectDir}
                     >
-                        浏览...
+                        {t('project.browse')}
                     </button>
                 </div>
 
@@ -144,7 +146,7 @@ export default function ProjectCreateModal(props: Props) {
                 )}
 
                 <p class="text-white/30 text-xs mb-4">
-                    项目目录下将自动创建 <code class="bg-white/10 px-1 rounded">.aio/</code> 文件夹，存放项目专属的 Skills 和 MCP 配置。
+                    {t('project.aioFolderNotice')}
                 </p>
 
                 {/* 按钮 */}
@@ -153,7 +155,7 @@ export default function ProjectCreateModal(props: Props) {
                         class="px-4 py-2 text-sm text-white/60 hover:text-white/90 transition-colors"
                         onClick={handleClose}
                     >
-                        取消
+                        {t('common.cancel')}
                     </button>
                     <button
                         class="px-5 py-2 text-sm bg-[#7c9abf] hover:bg-[#6b8aaf] text-white
@@ -161,7 +163,7 @@ export default function ProjectCreateModal(props: Props) {
                         onClick={handleCreate}
                         disabled={loading()}
                     >
-                        {loading() ? '创建中...' : '创建项目'}
+                        {loading() ? t('project.creating') : t('project.create')}
                     </button>
                 </div>
             </div>

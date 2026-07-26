@@ -7,19 +7,20 @@
 import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import { reasoningLevel, persistReasoningLevel, type ReasoningLevel } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
+import { t, type TranslationKey } from '../../../core/i18n';
 
 interface LevelOption {
     value: ReasoningLevel;
-    label: string;
-    desc: string;
+    labelKey: TranslationKey;
+    descKey: TranslationKey;
     iconName: 'bolt' | 'sparkles' | 'brain' | 'lightbulb';
 }
 
 const LEVELS: LevelOption[] = [
-    { value: 'off', label: '关闭', desc: '不使用推理', iconName: 'bolt' },
-    { value: 'low', label: '轻度', desc: '简单问题快速回答', iconName: 'sparkles' },
-    { value: 'medium', label: '中度', desc: '平衡思考深度', iconName: 'lightbulb' },
-    { value: 'high', label: '深度', desc: '深度分析复杂问题', iconName: 'brain' },
+    { value: 'off', labelKey: 'chat.reasoning.off', descKey: 'chat.reasoning.offDescription', iconName: 'bolt' },
+    { value: 'low', labelKey: 'chat.reasoning.low', descKey: 'chat.reasoning.lowDescription', iconName: 'sparkles' },
+    { value: 'medium', labelKey: 'chat.reasoning.medium', descKey: 'chat.reasoning.mediumDescription', iconName: 'lightbulb' },
+    { value: 'high', labelKey: 'chat.reasoning.high', descKey: 'chat.reasoning.highDescription', iconName: 'brain' },
 ];
 
 const LEVEL_COLORS: Record<ReasoningLevel, string> = {
@@ -60,11 +61,11 @@ const ReasoningButton: Component = () => {
                 class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/55 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
                 style={{ color: LEVEL_COLORS[reasoningLevel()] }}
                 classList={{ 'is-active': isActive() }}
-                title="推理强度"
+                title={t('chat.reasoning')}
                 onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}
             >
                 <Icon name={current().iconName} size={15} class="flex items-center justify-center shrink-0" />
-                <span class="leading-none">{current().label}</span>
+                <span class="leading-none">{t(current().labelKey)}</span>
             </button>
             <div
                 class="absolute left-0 bottom-full mb-2 w-[280px] rounded-xl p-1.5 z-[1500] transition-all duration-150 ease-out origin-bottom"
@@ -78,9 +79,9 @@ const ReasoningButton: Component = () => {
                 <div class="px-3 pt-2 pb-2.5 border-b border-b-white/[0.05]">
                     <div class="flex items-center gap-2 text-[13px] font-semibold mb-1 text-white/85">
                         <Icon name="brain" size={14} />
-                        <span>推理强度</span>
+                        <span>{t('chat.reasoning')}</span>
                     </div>
-                    <div class="text-[11px] text-white/40 leading-[1.5] pl-[22px]">控制模型是否以及如何深入思考后再回答</div>
+                    <div class="text-[11px] text-white/40 leading-[1.5] pl-[22px]">{t('chat.reasoning.description')}</div>
                 </div>
                 <div class="flex flex-col gap-0.5 pt-1.5 pb-1">
                     <For each={LEVELS}>
@@ -95,8 +96,8 @@ const ReasoningButton: Component = () => {
                                     <Icon name={opt.iconName} size={14} />
                                 </span>
                                 <span class="flex flex-col grow min-w-0">
-                                    <span class="text-[12.5px] font-semibold leading-tight">{opt.label}</span>
-                                    <span class="text-[10.5px] text-white/40 leading-[1.4] mt-0.5">{opt.desc}</span>
+                                    <span class="text-[12.5px] font-semibold leading-tight">{t(opt.labelKey)}</span>
+                                    <span class="text-[10.5px] text-white/40 leading-[1.4] mt-0.5">{t(opt.descKey)}</span>
                                 </span>
                                 <Show when={reasoningLevel() === opt.value}>
                                     <Icon name="check" size={13} class="shrink-0 text-white/95 block" />

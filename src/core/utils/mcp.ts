@@ -1,6 +1,7 @@
 // MCP 工具函数
 
 import type { McpServerConfig, McpTransport, McpStatus } from '../types/mcp';
+import { t } from '../i18n';
 
 /** keyring 占位符正则：${KEYRING:account_id} */
 const KEYRING_PLACEHOLDER = /\$\{KEYRING:([^}]+)\}/g;
@@ -56,10 +57,10 @@ export function statusColor(s: McpStatus): string {
 
 export function statusLabel(s: McpStatus): string {
     switch (s) {
-        case 'connected': return '已连接';
-        case 'connecting': return '连接中…';
-        case 'error': return '错误';
-        default: return '未连接';
+        case 'connected': return t('mcp.connected');
+        case 'connecting': return t('mcp.connecting');
+        case 'error': return t('mcp.connectionError');
+        default: return t('mcp.disconnected');
     }
 }
 

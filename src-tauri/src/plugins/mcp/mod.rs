@@ -10,8 +10,10 @@ pub mod error;
 pub mod http;
 pub mod stdio;
 
+use crate::core::models::ToolResult;
 use crate::core::models::*;
 use crate::plugins::mcp::connection::McpConnection;
+pub use crate::plugins::mcp::error::{McpError, McpResult};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde_json::Value;
@@ -22,8 +24,6 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use crate::core::models::ToolResult;
-pub use crate::plugins::mcp::error::{McpError, McpResult};
 
 /// MCP 传输插件 trait
 #[async_trait]
@@ -32,23 +32,13 @@ pub trait McpServerPlugin: Send + Sync {
     fn identifier(&self) -> &'static str;
 
     /// 启动一个 MCP server 连接
-    async fn start(
-        &self,
-        app: AppHandle,
-        config: &McpServerConfig,
-    ) -> McpResult<McpConnection>;
+    async fn start(&self, app: AppHandle, config: &McpServerConfig) -> McpResult<McpConnection>;
 
     /// MCP 协议握手：initialize
-    async fn initialize(
-        &self,
-        conn: &McpConnection,
-    ) -> McpResult<McpServerInfo>;
+    async fn initialize(&self, conn: &McpConnection) -> McpResult<McpServerInfo>;
 
     /// 获取 server 提供的工具列表
-    async fn list_tools(
-        &self,
-        conn: &McpConnection,
-    ) -> McpResult<Vec<ToolSpec>>;
+    async fn list_tools(&self, conn: &McpConnection) -> McpResult<Vec<ToolSpec>>;
 
     /// 调用一个工具
     async fn call_tool(
@@ -60,10 +50,7 @@ pub trait McpServerPlugin: Send + Sync {
     ) -> McpResult<ToolResult>;
 
     /// 获取 server 提供的资源列表
-    async fn list_resources(
-        &self,
-        _conn: &McpConnection,
-    ) -> McpResult<Vec<McpResource>> {
+    async fn list_resources(&self, _conn: &McpConnection) -> McpResult<Vec<McpResource>> {
         Ok(Vec::new())
     }
 
@@ -77,10 +64,7 @@ pub trait McpServerPlugin: Send + Sync {
     }
 
     /// 获取 server 提供的提示词列表
-    async fn list_prompts(
-        &self,
-        _conn: &McpConnection,
-    ) -> McpResult<Vec<McpPrompt>> {
+    async fn list_prompts(&self, _conn: &McpConnection) -> McpResult<Vec<McpPrompt>> {
         Ok(Vec::new())
     }
 
@@ -131,8 +115,7 @@ impl McpServerManager {
 
     /// 注册一个新传输插件
     pub fn register(&mut self, plugin: Arc<dyn McpServerPlugin>) {
-        self.plugins
-            .insert(plugin.identifier().to_string(), plugin);
+        self.plugins.insert(plugin.identifier().to_string(), plugin);
     }
 
     /// 按 transport 字符串获取插件
@@ -150,7 +133,9 @@ impl McpServerManager {
 
 /// MCP 服务器连接池：server_id → McpConnection
 /// 锁策略：与 LocalEngineState 一致，单锁避免嵌套死锁
-pub struct McpServerState(pub parking_lot::Mutex<std::collections::HashMap<String, Arc<McpConnection>>>);
+pub struct McpServerState(
+    pub parking_lot::Mutex<std::collections::HashMap<String, Arc<McpConnection>>>,
+);
 
 impl Default for McpServerState {
     fn default() -> Self {
@@ -159,7 +144,9 @@ impl Default for McpServerState {
 }
 
 impl McpServerState {
-    pub fn lock(&self) -> parking_lot::MutexGuard<'_, std::collections::HashMap<String, Arc<McpConnection>>> {
+    pub fn lock(
+        &self,
+    ) -> parking_lot::MutexGuard<'_, std::collections::HashMap<String, Arc<McpConnection>>> {
         self.0.lock()
     }
 }
@@ -206,7 +193,6 @@ impl PendingApprovals {
     }
 }
 
-
 // ====== 持久化 ======
 
 const MCP_FILE: &str = "mcp-servers.json";
@@ -229,8 +215,7 @@ pub fn load_mcp_servers(app: &AppHandle) -> McpServersFile {
 }
 
 pub fn save_mcp_servers(app: &AppHandle, file: &McpServersFile) -> McpResult<()> {
-    let p = mcp_file_path(app)
-        .ok_or_else(|| McpError::Server("无法获取 AppData 目录".into()))?;
+    let p = mcp_file_path(app).ok_or_else(|| McpError::Server("无法获取 AppData 目录".into()))?;
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -269,7 +254,10 @@ pub fn save_project_mcp_servers(project_path: &str, file: &McpServersFile) -> Mc
 }
 
 /// 合并全局 + 项目的 MCP configs（项目同 ID 覆盖全局）。
-pub fn merge_mcp_configs(global: &McpServersFile, project: &McpServersFile) -> BTreeMap<String, McpServerConfig> {
+pub fn merge_mcp_configs(
+    global: &McpServersFile,
+    project: &McpServersFile,
+) -> BTreeMap<String, McpServerConfig> {
     let mut merged = global.servers.clone();
     for (id, cfg) in &project.servers {
         merged.insert(id.clone(), cfg.clone());
@@ -277,17 +265,11 @@ pub fn merge_mcp_configs(global: &McpServersFile, project: &McpServersFile) -> B
     merged
 }
 
-/// 列出当前配置文件中所有 server（按 id 排序），支持项目合并。
-pub fn list_configs(app: &AppHandle) -> Vec<McpServerConfig> {
-    load_mcp_servers(app)
-        .servers
-        .values()
-        .cloned()
-        .collect()
-}
-
 /// 列出合并后的 server 列表（全局 + 项目，项目优先）。
-pub fn list_configs_merged(app: &AppHandle, project_id: Option<&str>) -> McpResult<Vec<McpServerConfig>> {
+pub fn list_configs_merged(
+    app: &AppHandle,
+    project_id: Option<&str>,
+) -> McpResult<Vec<McpServerConfig>> {
     let global = load_mcp_servers(app);
     let project = match project_id {
         Some(pid) => {
@@ -309,8 +291,8 @@ pub(crate) fn resolve_project_path(app: &AppHandle, project_id: &str) -> McpResu
         .join("projects.json");
     let content = std::fs::read_to_string(&idx_path)
         .map_err(|e| McpError::Server(format!("读取项目索引失败: {}", e)))?;
-    let file: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| McpError::Server(format!("解析项目索引失败: {}", e)))?;
+    let file: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| McpError::Server(format!("解析项目索引失败: {}", e)))?;
     file["projects"][project_id]["path"]
         .as_str()
         .map(|s| s.to_string())
@@ -347,13 +329,12 @@ pub fn remove_project_config(project_path: &str, id: &str) -> McpResult<()> {
     save_project_mcp_servers(project_path, &file)
 }
 
-/// 查找 MCP server 配置：先查项目级，再查全局。
-pub fn get_config(app: &AppHandle, id: &str) -> Option<McpServerConfig> {
-    load_mcp_servers(app).servers.get(id).cloned()
-}
-
 /// 查找 MCP server 配置（合并视图：项目级优先）。
-pub fn get_config_merged(app: &AppHandle, id: &str, project_id: Option<&str>) -> Option<McpServerConfig> {
+pub fn get_config_merged(
+    app: &AppHandle,
+    id: &str,
+    project_id: Option<&str>,
+) -> Option<McpServerConfig> {
     // 1. 有 project_id → 精确查找项目
     if let Some(pid) = project_id {
         if let Ok(project_path) = resolve_project_path(app, pid) {
@@ -399,14 +380,13 @@ pub fn resolve_env_placeholders(
             if let Some(end) = v[start..].find('}') {
                 let account_full = &v[start + 9..start + end];
                 // account_full 形如 "mcp-server-{server_id}-env-{env_key}"
-                let value = crate::core::secure_store::get(
-                    app,
-                    account_full,
-                )
-                .map_err(|e| McpError::Server(format!("读取 keyring {} 失败: {}", account_full, e)))?
-                .ok_or_else(|| {
-                    McpError::Server(format!("keyring 中未找到密钥: {}", account_full))
-                })?;
+                let value = crate::core::secure_store::get(app, account_full)
+                    .map_err(|e| {
+                        McpError::Server(format!("读取 keyring {} 失败: {}", account_full, e))
+                    })?
+                    .ok_or_else(|| {
+                        McpError::Server(format!("keyring 中未找到密钥: {}", account_full))
+                    })?;
                 let prefix = v[..start].to_string();
                 let suffix = v[start + end + 1..].to_string();
                 format!("{}{}{}", prefix, value, suffix)

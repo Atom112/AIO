@@ -512,6 +512,13 @@ pub async fn call_llm_stream(
     messages: Vec<Message>,                 // 历史上下文消息列表
     tools: Option<Vec<ToolSpec>>,           // 工具定义（MCP 工具，None 或空数组则不发送）
 ) -> Result<(), String> {
+    // 诊断日志：打印 messages 每个元素的 role 和关键字段是否存在
+    for (i, m) in messages.iter().enumerate() {
+        tracing::info!(
+            "[call_llm_stream] messages[{}] role={} has_toolCallId={} has_toolCalls={} has_name={}",
+            i, m.role, m.tool_call_id.is_some(), m.tool_calls.is_some(), m.name.is_some()
+        );
+    }
     // SSRF 防护
     crate::utils::url_validation::validate_http_url(
         &api_url,
@@ -1917,6 +1924,13 @@ pub async fn run_agent_turn(
     profile_model_overrides: Vec<ProfileModelOverride>,
     custom_subagent_profiles: Vec<crate::core::models::CustomSubagentProfile>,
 ) -> Result<(), String> {
+    // 诊断日志：打印 messages 每个元素的 role 和关键字段是否存在
+    for (i, m) in messages.iter().enumerate() {
+        tracing::info!(
+            "[run_agent_turn] messages[{}] role={} has_toolCallId={} has_toolCalls={} has_name={}",
+            i, m.role, m.tool_call_id.is_some(), m.tool_calls.is_some(), m.name.is_some()
+        );
+    }
     // SSRF 防护
     crate::utils::url_validation::validate_http_url(
         &api_url,
@@ -1924,9 +1938,15 @@ pub async fn run_agent_turn(
     )?;
     let task_key = format!("{}-{}", assistant_id, topic_id);
 
-    // 取消同 topic 的旧任务（cancel 而非 abort）
-    if let Some((_, (_, old_token))) = stream_mgr.0.remove(&task_key) {
+    // 取消同 topic 的旧任务（cancel 而非 abort）。
+    // 必须 await 旧 handle 完成 epilogue，否则旧任务的 state_inner.remove
+    // 可能在新的 insert 之后执行，误删新任务的条目导致新任务变成孤儿。
+    if let Some((_, (old_handle, old_token))) = stream_mgr.0.remove(&task_key) {
         old_token.cancel();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            old_handle,
+        ).await;
     }
 
     // 预先把 messages 转为 API 格式（含附件 image 展开等），在持锁期间完成同步 I/O
@@ -2785,8 +2805,21 @@ pub async fn summarize_history(
     api_url: String,
     api_key: String,
     model: String,
-    messages: Vec<Message>,
+    messages_json: String,
 ) -> Result<String, String> {
+    let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
+        .map_err(|e| format!("Invalid messages JSON: {}", e))?;
+    // 诊断日志
+    for (i, m) in messages.iter().enumerate() {
+        tracing::info!(
+            "[summarize_history] messages[{}] role={} has_tool_call_id={} has_tool_calls={} has_name={}",
+            i,
+            m.get("role").and_then(|v| v.as_str()).unwrap_or("?"),
+            m.get("tool_call_id").is_some(),
+            m.get("tool_calls").is_some(),
+            m.get("name").is_some()
+        );
+    }
     // SSRF 防护
     crate::utils::url_validation::validate_http_url(
         &api_url,
@@ -2796,7 +2829,7 @@ pub async fn summarize_history(
 
     let mut messages_for_api: Vec<serde_json::Value> = messages
         .iter()
-        .map(|m| json!({ "role": m.role, "content": m.content }))
+        .map(|m| json!({ "role": &m["role"], "content": &m["content"] }))
         .collect();
 
     messages_for_api.push(json!({
@@ -2810,7 +2843,6 @@ pub async fn summarize_history(
         "stream": false
     });
 
-    // --- 修复后的 URL 拼接逻辑 ---
     let base_url = api_url
         .trim_end_matches('/')
         .replace("/chat/completions", "");
@@ -2830,7 +2862,6 @@ pub async fn summarize_history(
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
 
-    // 增加一个简单的错误检查
     if let Some(err) = val.get("error") {
         return Err(err
             .get("message")
@@ -2847,6 +2878,79 @@ pub async fn summarize_history(
     Ok(summary)
 }
 
+
+/// `/btw` 侧问命令：基于当前对话上下文回答一个简短问题（无工具、非流式、不修改对话历史）。
+///
+/// 接收前端构建好的消息列表（含对话历史 + btw 问题），
+/// 调用 LLM 非流式接口，返回回答文本。
+#[tauri::command]
+pub async fn ask_btw_question(
+    api_url: String,
+    api_key: String,
+    model: String,
+    messages_json: String,
+) -> Result<String, String> {
+    let mut messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
+        .map_err(|e| format!("Invalid messages JSON: {}", e))?;
+
+    // Normalize camelCase keys from frontend → snake_case for OpenAI-compatible API.
+    // buildApiMessages() outputs `toolCallId` / `toolCalls`; the LLM expects `tool_call_id` / `tool_calls`.
+    for msg in &mut messages {
+        if let Some(obj) = msg.as_object_mut() {
+            if let Some(v) = obj.remove("toolCallId") {
+                obj.insert("tool_call_id".to_string(), v);
+            }
+            if let Some(v) = obj.remove("toolCalls") {
+                obj.insert("tool_calls".to_string(), v);
+            }
+        }
+    }
+
+    // SSRF 防护
+    crate::utils::url_validation::validate_http_url(
+        &api_url,
+        &crate::utils::url_validation::HttpUrlOptions::local_engine(),
+    )?;
+    let client = non_streaming_http_client();
+
+    let body = json!({
+        "model": model,
+        "messages": messages,
+        "stream": false
+    });
+
+    let base_url = api_url
+        .trim_end_matches('/')
+        .replace("/chat/completions", "");
+    let endpoint = format!("{}/chat/completions", base_url);
+
+    let res = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        client
+            .post(endpoint)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send(),
+    )
+    .await
+    .map_err(|_| "BTW 请求超时（60s）".to_string())?
+    .map_err(|e| e.to_string())?;
+
+    let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+
+    if let Some(err) = val.get("error") {
+        return Err(err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("API Error")
+            .to_string());
+    }
+
+    val["choices"][0]["message"]["content"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "模型返回了空内容".to_string())
+}
 /// 查询最近 N 天的 token 用量摘要（按天聚合）。
 ///
 /// 返回按日期降序排列的每日 input/output tokens 与请求次数。
@@ -3129,8 +3233,21 @@ pub async fn generate_topic_title(
     api_url: String,
     api_key: String,
     model: String,
-    messages: Vec<Message>,
+    messages_json: String,
 ) -> Result<String, String> {
+    let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
+        .map_err(|e| format!("Invalid messages JSON: {}", e))?;
+    // 诊断日志
+    for (i, m) in messages.iter().enumerate() {
+        tracing::info!(
+            "[generate_topic_title] messages[{}] role={} has_tool_call_id={} has_tool_calls={} has_name={}",
+            i,
+            m.get("role").and_then(|v| v.as_str()).unwrap_or("?"),
+            m.get("tool_call_id").is_some(),
+            m.get("tool_calls").is_some(),
+            m.get("name").is_some()
+        );
+    }
     // SSRF 防护
     crate::utils::url_validation::validate_http_url(
         &api_url,
@@ -3142,23 +3259,19 @@ pub async fn generate_topic_title(
 
     let client = non_streaming_http_client();
 
-    // 消息顺序遵循 LLM 约定：system 指令 → 对话上下文 → user 明确任务请求
-    // 将 system 放最前、user 任务请求放最后，能显著提升小模型 / 本地模型的格式遵循度
     let mut messages_for_api: Vec<serde_json::Value> = vec![json!({
         "role": "system",
         "content": "你是一个话题标题生成助手，擅长用最少的字数精准概括对话核心内容。"
     })];
 
-    // 注入对话历史：多模态 content 只取 text 部分，避免图片 base64 干扰生成
     for m in &messages {
-        let text = extract_text_content(&m.content);
+        let text = extract_text_content(&m["content"]);
         if text.trim().is_empty() {
             continue;
         }
-        messages_for_api.push(json!({ "role": m.role, "content": text }));
+        messages_for_api.push(json!({ "role": &m["role"], "content": text }));
     }
 
-    // 末尾追加明确的 user 任务请求，作为模型"应输出什么"的最终信号
     messages_for_api.push(json!({
         "role": "user",
         "content": "请根据以上对话生成一个 4-20 字的话题标题。\n\
@@ -3173,13 +3286,10 @@ pub async fn generate_topic_title(
         "model": model,
         "messages": messages_for_api,
         "stream": false,
-        // 200 token 足够覆盖"标题：xxx + 解释"等冗余输出；
-        // 我们会在 Rust 侧再截断到 20 字符
         "max_tokens": 200,
         "temperature": 0.0
     });
 
-    // URL 处理：去掉末尾斜杠与可能的 /chat/completions 后缀
     let base_url = api_url
         .trim_end_matches('/')
         .replace("/chat/completions", "");
@@ -3215,7 +3325,6 @@ pub async fn generate_topic_title(
     let cleaned = clean_topic_title(&raw);
 
     if cleaned.is_empty() {
-        // 附带诊断信息：模型 / finish_reason / 原始长度
         let finish = val["choices"][0]["finish_reason"]
             .as_str()
             .unwrap_or("unknown");
@@ -3227,7 +3336,6 @@ pub async fn generate_topic_title(
         ));
     }
 
-    // 长度限制：超过 20 字符截断（按字符而非字节，避免中文乱码）
     let truncated: String = if cleaned.chars().count() > 20 {
         cleaned.chars().take(20).collect()
     } else {

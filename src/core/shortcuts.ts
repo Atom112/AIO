@@ -417,3 +417,11 @@ registerCommand({
     category: 'chat', defaultKeys: '', handler: NOOP_HANDLER,
     isSlashCommand: true, promptBody: '', argumentHint: undefined,
 });
+
+registerCommand({
+    id: 'slash-btw', label: '/btw', description: '侧问：基于当前对话上下文回答，不中断主任务，不写入历史',
+    category: 'chat', defaultKeys: '', handler: NOOP_HANDLER,
+    isSlashCommand: true,
+    promptBody: '',
+    argumentHint: '[question]',
+});

@@ -81,6 +81,7 @@ pub fn run() {
             commands::config::upload_avatar,
             commands::llm::summarize_history,
             commands::llm::append_message,
+            commands::llm::ask_btw_question,
             commands::llm::delete_topic_message,
             commands::llm::generate_topic_title,
             commands::llm::get_usage_summary,

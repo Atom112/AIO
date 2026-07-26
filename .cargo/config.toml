@@ -1,0 +1,7 @@
+# The default crates.io IPv6 route can fail TLS negotiation with Schannel on
+# Windows. Use a sparse mirror that is reachable on every supported platform.
+[source.crates-io]
+replace-with = "rsproxy"
+
+[source.rsproxy]
+registry = "sparse+https://rsproxy.cn/index/"

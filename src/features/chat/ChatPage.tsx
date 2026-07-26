@@ -106,6 +106,8 @@ const ChatPage: Component = () => {
   const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
   const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
   const [pendingApprovals, setPendingApprovals] = createSignal<PendingApproval[]>([]);
+  /** /btw 悬浮问答框列表（临时展示，不存历史） */
+  const [btwOverlays, setBtwOverlays] = createSignal<Array<{id: string; question: string; answer: string | null; loading: boolean}>>([]);
   /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
   let chatPageRef: HTMLDivElement | undefined;
   /**
@@ -309,7 +311,7 @@ const ChatPage: Component = () => {
         apiUrl: currentMdl.api_url,
         apiKey: currentMdl.api_key,
         model: currentMdl.model_id,
-        messages: messagesToSummarize
+        messagesJson: JSON.stringify(messagesToSummarize)
       });
       const latestTopic = activeTopic();
       if (!latestTopic) return;
@@ -411,7 +413,7 @@ const ChatPage: Component = () => {
         apiUrl: currentMdl.api_url,
         apiKey: currentMdl.api_key,
         model: currentMdl.model_id,
-        messages: sample
+        messagesJson: JSON.stringify(sample)
       });
       // 用户中途切换了话题或触发了新任务：放弃本次结果
       if (task.cancelled) return;
@@ -570,6 +572,77 @@ const ChatPage: Component = () => {
 
     return result;
   }
+
+  /**
+   * /btw 侧问：基于已有对话上下文流式回答（无工具、不修改对话历史）。
+   * 监听 `btw-chunk` 事件逐 chunk 更新 overlay。
+   * unlisten 在收到 done/error 事件时触发，避免 invoke resolve 与事件交付的竞态。
+   */
+  const askBtwQuestion = async (question: string, overlayId: string) => {
+    const currentMdl = selectedModel();
+    const asstObj = currentAssistant();
+    const topicObj = activeTopic();
+    if (!currentMdl || !asstObj || !topicObj) return;
+
+    let resolved = false;
+
+    // 在 invoke 之前注册监听，确保不丢失首个 chunk
+    const unlisten = await listen<{ overlay_id: string; content: string; done: boolean; error?: string }>('btw-chunk', (e) => {
+      const { overlay_id, content, done, error } = e.payload;
+      if (overlay_id !== overlayId) return;
+
+      if (error) {
+        resolved = true;
+        setBtwOverlays(prev => prev.map(o =>
+          o.id === overlayId ? { ...o, answer: `[Error] ${error}`, loading: false } : o
+        ));
+        unlisten();
+        return;
+      }
+      if (done) {
+        resolved = true;
+        setBtwOverlays(prev => prev.map(o =>
+          o.id === overlayId ? { ...o, loading: false } : o
+        ));
+        unlisten();
+        return;
+      }
+      setBtwOverlays(prev => prev.map(o =>
+        o.id === overlayId ? { ...o, answer: (o.answer || '') + content } : o
+      ));
+    });
+
+    try {
+      // 使用 BTW 专用 system prompt：禁止模型继续执行主任务，仅基于上下文回答
+      const btwSystemPrompt = `[SIDE QUESTION — DO NOT CONTINUE THE MAIN TASK]
+You are answering a brief side question about the conversation above.
+Do NOT continue, repeat, or redo any work from the conversation.
+Only answer the specific question asked. Be concise.
+
+${asstObj.prompt}`;
+
+      const messagesForAI: Record<string, unknown>[] = [
+        { role: 'system', content: btwSystemPrompt },
+        ...topicObj.history.flatMap((m: any) => buildApiMessages(m)),
+        { role: 'user', content: question },
+      ];
+
+      await invoke('ask_btw_question', {
+        apiUrl: currentMdl.api_url,
+        apiKey: currentMdl.api_key,
+        model: currentMdl.model_id,
+        overlayId,
+        messagesJson: JSON.stringify(messagesForAI),
+      });
+    } catch (err) {
+      if (!resolved) {
+        setBtwOverlays(prev => prev.map(o =>
+          o.id === overlayId ? { ...o, answer: `[Error] ${err}`, loading: false } : o
+        ));
+        unlisten();
+      }
+    }
+  };
 
   /**
    * 斜杠命令 — promptBody 类型（/review、/explain 等）
@@ -743,10 +816,12 @@ const ChatPage: Component = () => {
     const asstObj = currentAssistant();
 
     // 前置条件检查：必须有模型、话题、助手，且 AI 不在生成中
-    if (!currentMdl || !topicObj || !asstObj || isThinking()) return;
+    if (!currentMdl || !topicObj || !asstObj) return;
 
     const userInput = inputMessage().trim();
     const files = pendingFiles();
+    // isThinking 时阻止普通消息发送（/btw 由下方独立处理）
+    if (isThinking() && !userInput.startsWith('/btw')) return;
     // 必须满足：有文本输入或有文件附件
     if (!userInput && files.length === 0) return;
 
@@ -754,6 +829,16 @@ const ChatPage: Component = () => {
     if (userInput.startsWith('/')) {
       const resolved = resolveSlashCommand(userInput);
       if (resolved) {
+        // /btw 独立处理：立即基于当前上下文回答，不中断主 agent
+        if (resolved.command.id === 'slash-btw') {
+          const question = resolved.args || '';
+          const id = crypto.randomUUID();
+          setBtwOverlays(prev => [...prev, { id, question, answer: '', loading: true }]);
+          askBtwQuestion(question, id);
+          setInputMessage('');
+          setPendingFiles([]);
+          return;
+        }
         if (resolved.resolvedBody) {
           handleSlashPromptMessage(resolved);
         } else {
@@ -1515,8 +1600,8 @@ const ChatPage: Component = () => {
               }];
             });
           setIsThinking(false);
-          setTypingIndex(null);
           saveSingleAssistantToBackend(assistant_id);
+          setTypingIndex(null);
           // 串行执行：先尝试自动重命名（非默认话题的首次对话），再触发历史压缩总结
           setTimeout(async () => {
             await checkAndRename(assistant_id, topic_id);
@@ -1985,6 +2070,8 @@ const ChatPage: Component = () => {
             onCancelSelection={handleCancelSelection}
             onConfirmSelection={handleConfirmSelection}
             onBranchFromMessage={branchFromMessage}
+            btwOverlays={btwOverlays()}
+            onDismissBtw={(id) => setBtwOverlays(prev => prev.filter(o => o.id !== id))}
           />
       </div>
 

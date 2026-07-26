@@ -17,6 +17,7 @@ import Icon from '../../../shared/components/Icon';
 import ToolCallBubble from './ToolCallBubble';
 import Markdown from '../../../shared/components/Markdown';
 import SubagentBlock from './SubagentBlock';
+import { t } from '../../../core/i18n';
 
 interface AgentProcessBlockProps {
     /** 模型原生思维链文本（旧模式） */
@@ -34,12 +35,21 @@ interface AgentProcessBlockProps {
 }
 
 // ---- 步骤类型配置 ----
-const STEP_CONFIG: Record<AgentStep['type'], { icon: string; label: string; borderColor: string }> = {
-    thinking: { icon: 'brain', label: '思考过程', borderColor: 'rgba(124,154,191,0.55)' },
-    tool_call: { icon: 'wrench', label: '工具调用', borderColor: 'rgba(240,160,64,0.55)' },
-    content: { icon: 'document', label: '阶段性总结', borderColor: 'rgba(156,163,175,0.35)' },
-    subagent: { icon: 'sparkles', label: '子智能体', borderColor: 'rgba(140,120,220,0.55)' },
+const STEP_CONFIG: Record<AgentStep['type'], { icon: string; borderColor: string }> = {
+    thinking: { icon: 'brain', borderColor: 'rgba(124,154,191,0.55)' },
+    tool_call: { icon: 'wrench', borderColor: 'rgba(240,160,64,0.55)' },
+    content: { icon: 'document', borderColor: 'rgba(156,163,175,0.35)' },
+    subagent: { icon: 'sparkles', borderColor: 'rgba(140,120,220,0.55)' },
 };
+
+function stepTypeLabel(type: AgentStep['type']): string {
+    switch (type) {
+        case 'thinking': return t('agent.step.thinking');
+        case 'tool_call': return t('agent.step.toolCall');
+        case 'content': return t('agent.step.content');
+        case 'subagent': return t('agent.step.subagent');
+    }
+}
 
 // 已播放入场动画的步骤 ID 集合，避免 agentSteps 数组重建时重复触发动画
 const animatedStepIds = new Set<string>();
@@ -78,14 +88,13 @@ function getStepBorderColor(step: AgentStep): string {
     if (step.status === 'error') return 'rgba(224,85,85,0.55)';
     return 'rgba(76,175,144,0.55)';
 }
-
 function formatDuration(ms: number): string {
     if (ms < 50) return '0.1s';
     const seconds = ms / 1000;
     if (seconds < 60) return `${seconds.toFixed(1)}s`;
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
-    return `${mins}分 ${secs}秒`;
+    return t('agent.step.duration', { mins, secs });
 }
 
 function stepToolLabel(step: AgentStep): string {
@@ -169,7 +178,7 @@ const StepCard: Component<{
                         classList={{ 'is-spinning': props.step.status === 'running' }}
                     />
                 </span>
-                <span class="font-medium flex-none">{cfg.label}</span>
+                <span class="font-medium flex-none">{stepTypeLabel(props.step.type)}</span>
                 {props.step.type === 'tool_call' && (
                     <span class="truncate text-white/55 flex-initial min-w-0">· {stepToolLabel(props.step)}</span>
                 )}

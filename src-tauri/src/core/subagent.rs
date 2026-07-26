@@ -307,7 +307,10 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
 }
 
 /// 按 ID 查找配置文件（先查内置，再查自定义）
-pub fn find_profile(profile_id: &str, custom_profiles: &[crate::core::models::CustomSubagentProfile]) -> Option<SubagentProfile> {
+pub fn find_profile(
+    profile_id: &str,
+    custom_profiles: &[crate::core::models::CustomSubagentProfile],
+) -> Option<SubagentProfile> {
     // 先查内置
     if let Some(p) = builtin_profiles().into_iter().find(|p| p.id == profile_id) {
         return Some(p);
@@ -327,27 +330,6 @@ pub fn find_profile(profile_id: &str, custom_profiles: &[crate::core::models::Cu
         }
     }
     None
-}
-
-/// 列出所有可用配置文件的摘要信息（供前端使用）
-pub fn list_profiles_summary() -> Vec<SubagentProfileSummary> {
-    builtin_profiles()
-        .into_iter()
-        .map(|p| SubagentProfileSummary {
-            id: p.id,
-            name: p.name,
-            description: p.description,
-        })
-        .collect()
-}
-
-/// 配置文件摘要（轻量版，供前端展示）
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentProfileSummary {
-    pub id: String,
-    pub name: String,
-    pub description: String,
 }
 
 /// 构造 `delegate_task` 工具的 ToolSpec
@@ -399,7 +381,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
 }
 
 /// 构造 `delegate_tasks` 批量工具的 ToolSpec。
-/// 
+///
 /// 此工具允许主 Agent 在单次调用中并行创建多个子智能体。
 /// 与 `delegate_task` 不同，所有子任务同时启动、并发执行。
 /// 共享 context 参数注入到每个子智能体的系统提示词中。
@@ -600,7 +582,6 @@ mod tests {
         assert!(!tester.is_tool_allowed("delete_file"));
         assert!(!tester.is_tool_allowed("delegate_task"));
     }
-
 
     #[test]
     fn test_requirements_profile_read_only() {

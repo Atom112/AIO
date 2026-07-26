@@ -26,6 +26,7 @@ import {
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 // --- Profile descriptions (mirrors subagent::builtin_profiles) ---
 
@@ -42,48 +43,48 @@ const BUILTIN_PROFILE_IDS = new Set([
 const BUILTIN_PROFILES: ProfileInfo[] = [
     {
         id: 'explorer',
-        name: '文件浏览器',
-        description: '遍历代码库，搜索文件、符号和模式',
+        name: t('subagent.profile.fileBrowser'),
+        description: t('subagent.profileDesc.explorer'),
     },
     {
         id: 'coder',
-        name: '代码编辑器',
-        description: '执行代码编写、重构和优化任务',
+        name: t('subagent.profile.codeEditor'),
+        description: t('subagent.profileDesc.coder'),
     },
     {
         id: 'general',
-        name: '通用助手',
-        description: '处理常规任务和对话',
+        name: t('subagent.profile.generalAssistant'),
+        description: t('subagent.profileDesc.general'),
     },
     {
         id: 'architect',
-        name: '架构师',
-        description: '设计系统架构和技术方案',
+        name: t('subagent.profile.architect'),
+        description: t('subagent.profileDesc.architect'),
     },
     {
         id: 'debugger',
-        name: '调试器',
-        description: '分析和修复代码中的 bug',
+        name: t('subagent.profile.debugger'),
+        description: t('subagent.profileDesc.debugger'),
     },
     {
         id: 'reviewer',
-        name: '代码审查员',
-        description: '审查代码质量、安全性和最佳实践',
+        name: t('subagent.profile.codeReviewer'),
+        description: t('subagent.profileDesc.reviewer'),
     },
     {
         id: 'writer',
-        name: '文档编写器',
-        description: '编写文档、注释和说明',
+        name: t('subagent.profile.docWriter'),
+        description: t('subagent.profileDesc.writer'),
     },
     {
         id: 'tester',
-        name: '测试工程师',
-        description: '编写和执行测试用例',
+        name: t('subagent.profile.testEngineer'),
+        description: t('subagent.profileDesc.tester'),
     },
     {
         id: 'requirements',
-        name: '需求分析师',
-        description: '分析和整理项目需求',
+        name: t('subagent.profile.requirementsAnalyst'),
+        description: t('subagent.profileDesc.requirements'),
     },
 ];
 
@@ -256,7 +257,7 @@ const SubagentModelSettings: Component = () => {
     return (
         <div class="space-y-1">
             <div class="pb-3 border-b border-[rgba(255,255,255,0.06)] animate-row-in">
-                <h2 class="text-lg text-white font-semibold m-0">子智能体模型</h2>
+                <h2 class="text-lg text-white font-semibold m-0">{t('subagent.title')}</h2>
                 <p class="text-xs text-white/35 mt-1.5 leading-relaxed">
                     为每个子智能体类型独立指定使用的模型和 API Provider。
                     未设置的子智能体将跟随主 Agent 使用同一模型。
@@ -289,14 +290,14 @@ const SubagentModelSettings: Component = () => {
                                         onClick={() => setOpenDropdown(isOpen() ? null : profile.id)}
                                     >
                                         {current() ? getModelLogo(current()!.model_id) : null}
-                                        <span class="max-w-[140px] truncate">{current()?.model_id ?? '跟随主 Agent'}</span>
+                                        <span class="max-w-[140px] truncate">{current()?.model_id ?? t('subagent.followMain')}</span>
                                         <span class="text-white/30 text-[10px]">&#9662;</span>
                                     </button>
                                     <Show when={!isBuiltin(profile.id)}>
                                         <button
                                             class="w-6 h-6 rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent border-none text-white/25 hover:text-red-400 hover:bg-red-400/10"
                                             onClick={() => void handleDeleteCustom(profile.id)}
-                                            title="删除自定义角色"
+                                            title={t('subagent.deleteCustom')}
                                         >
                                             <Icon name="x" size={12} />
                                         </button>
@@ -322,7 +323,7 @@ const SubagentModelSettings: Component = () => {
                                             }}
                                             onClick={() => void handlePickModel(profile.id, null)}
                                         >
-                                            <span>跟随主 Agent 模型</span>
+                                            <span>{t('subagent.followMainModel')}</span>
                                             <Show when={!current()}>
                                                 <Icon name="arrow-left" size={13} class="text-white/30 ml-auto" />
                                             </Show>
@@ -385,7 +386,7 @@ const SubagentModelSettings: Component = () => {
 
                                         <Show when={cloudModels().length === 0}>
                                             <div class="p-4 text-center text-[13px]" style={{ color: 'rgba(255,255,255,0.2)' }}>
-                                                <div>无云端模型</div>
+                                                <div>{t('subagent.noCloudModel')}</div>
                                                 <div class="text-[10px] mt-1.5 leading-relaxed" style={{ color: 'rgba(255,255,255,0.25)' }}>
                                                     去 <span style={{ color: 'rgba(124,154,191,0.5)', 'font-weight': 500 }}>设置中心 → 供应商设置</span><br />
                                                     启用 provider 并填写 API Key
@@ -408,16 +409,16 @@ const SubagentModelSettings: Component = () => {
                             class="w-full py-3 rounded-xl border border-[rgba(255,255,255,0.14)] text-sm text-white/45 hover:text-white/70 hover:border-[rgba(255,255,255,0.25)] transition-all cursor-pointer bg-transparent"
                             onClick={() => setShowCreateForm(true)}
                         >
-                            创建自定义角色
+                            {t('subagent.createCustom')}
                         </button>
                     }
                 >
                     <div class="bg-[rgba(18,22,35,0.35)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden p-4 space-y-3">
-                        <h3 class="text-sm text-white font-semibold m-0">创建自定义子智能体角色</h3>
+                        <h3 class="text-sm text-white font-semibold m-0">{t('subagent.createTitle')}</h3>
 
                         <div class="grid grid-cols-2 gap-3">
                             <div>
-                                <label class="block text-[11px] text-white/40 mb-1">角色 ID</label>
+                                <label class="block text-[11px] text-white/40 mb-1">{t("subagent.profileId")}</label>
                                 <input
                                     type="text"
                                     value={newId()}
@@ -427,24 +428,24 @@ const SubagentModelSettings: Component = () => {
                                 />
                             </div>
                             <div>
-                                <label class="block text-[11px] text-white/40 mb-1">显示名称</label>
+                                <label class="block text-[11px] text-white/40 mb-1">{t("subagent.displayName")}</label>
                                 <input
                                     type="text"
                                     value={newName()}
                                     onInput={(e) => setNewName(e.currentTarget.value)}
-                                    placeholder="我的助手"
+                                    placeholder={t('subagent.namePlaceholder')}
                                     class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
                                 />
                             </div>
                         </div>
 
                         <div>
-                            <label class="block text-[11px] text-white/40 mb-1">用途说明</label>
+                            <label class="block text-[11px] text-white/40 mb-1">{t("subagent.description")}</label>
                             <input
                                 type="text"
                                 value={newDescription()}
                                 onInput={(e) => setNewDescription(e.currentTarget.value)}
-                                placeholder="简短描述角色的用途"
+                                placeholder={t('subagent.descriptionPlaceholder')}
                                 class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
                             />
                         </div>
@@ -455,14 +456,14 @@ const SubagentModelSettings: Component = () => {
                         }>
                             <div class="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label class="block text-[11px] text-white/40 mb-1">允许的工具（空=全部）</label>
+                                    <label class="block text-[11px] text-white/40 mb-1">{t("subagent.allowedTools")}</label>
                                     <div class="relative" data-tool-dropdown>
                                         <button type="button"
                                             class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[rgba(255,255,255,0.08)] transition-all duration-150 cursor-pointer"
                                             style="background: rgba(0, 0, 0, 0.25);"
                                             onClick={() => { setAllowedOpen(!allowedOpen()); setDeniedOpen(false); }}>
                                             <span class={allowedToolsSet().size > 0 ? 'text-white/80' : 'text-white/35'}>
-                                                {allowedToolsSet().size > 0 ? `已选 ${allowedToolsSet().size} 项` : '选择工具...'}
+                                                {allowedToolsSet().size > 0 ? t('subagent.selectedCount', { count: allowedToolsSet().size }) : t('subagent.selectTools')}
                                             </span>
                                         </button>
                                         <div
@@ -487,14 +488,14 @@ const SubagentModelSettings: Component = () => {
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="block text-[11px] text-white/40 mb-1">禁止的工具</label>
+                                    <label class="block text-[11px] text-white/40 mb-1">{t("subagent.disallowedTools")}</label>
                                     <div class="relative" data-tool-dropdown>
                                         <button type="button"
                                             class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[rgba(255,255,255,0.08)] transition-all duration-150 cursor-pointer"
                                             style="background: rgba(0, 0, 0, 0.25);"
                                             onClick={() => { setDeniedOpen(!deniedOpen()); setAllowedOpen(false); }}>
                                             <span class={deniedToolsSet().size > 0 ? 'text-white/80' : 'text-white/35'}>
-                                                {deniedToolsSet().size > 0 ? `已选 ${deniedToolsSet().size} 项` : '选择工具...'}
+                                                {deniedToolsSet().size > 0 ? t('subagent.selectedCount', { count: deniedToolsSet().size }) : t('subagent.selectTools')}
                                             </span>
                                         </button>
                                         <div
@@ -522,7 +523,7 @@ const SubagentModelSettings: Component = () => {
                         </Show>
 
                         <div>
-                            <label class="block text-[11px] text-white/40 mb-1">系统提示词后缀</label>
+                            <label class="block text-[11px] text-white/40 mb-1">{t("subagent.systemPromptSuffix")}</label>
                             <textarea
                                 value={newSystemPrompt()}
                                 onInput={(e) => setNewSystemPrompt(e.currentTarget.value)}
@@ -537,13 +538,13 @@ const SubagentModelSettings: Component = () => {
                                 class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-white/40 hover:text-white hover:bg-[rgba(255,255,255,0.06)]"
                                 onClick={() => { setShowCreateForm(false); setNewName(''); }}
                             >
-                                取消
+                                {t('common.cancel')}
                             </button>
                             <button
                                 class="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all bg-pri-20 border border-pri-30 text-pri hover:bg-pri-30"
                                 onClick={() => void handleCreate()}
                             >
-                                创建
+                                {t('subagent.create')}
                             </button>
                         </div>
                     </div>

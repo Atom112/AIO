@@ -6,6 +6,7 @@
 import { Component, createMemo, Show, For } from 'solid-js';
 import type { UsageSummaryByModel } from './UsageSummaryCards';
 import { getCachedCatalog } from '../../../core/utils/models';
+import { t } from '../../../core/i18n';
 import type { ModelMeta } from '@aio/models-data';
 
 function fmt(n: number): string {
@@ -61,7 +62,7 @@ const ModelBreakdown: Component<Props> = (props) => {
                 outputTokens: otherOutput,
                 requestCount: rest.reduce((s, it) => s + it.requestCount, 0),
                 total: otherTotal,
-                displayName: '其他',
+                displayName: t('usage.other'),
                 cost: otherCost,
                 meta: undefined,
             });
@@ -120,7 +121,7 @@ const ModelBreakdown: Component<Props> = (props) => {
                                 </span>
                             </Show>
                             <Show when={item.requestCount > 0}>
-                                <span>{item.requestCount} 次</span>
+                                <span>{t('usage.count', { count: item.requestCount })}</span>
                             </Show>
                         </div>
                     </div>

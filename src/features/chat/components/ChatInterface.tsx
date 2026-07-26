@@ -10,6 +10,7 @@ import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
 import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
 import Icon from '../../../shared/components/Icon';
+import { formatNumber, t } from '../../../core/i18n';
 import ReasoningButton from './ReasoningButton';
 import WebSearchButton from './WebSearchButton';
 import ToolCallBubble from './ToolCallBubble';
@@ -99,7 +100,7 @@ const UserMessageAvatar: Component = () => {
              style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
             <img
                 src={avatarSrc()}
-                alt="User"
+                alt={t('common.user')}
                 class="w-full h-full object-cover"
                 onError={(e) => { e.currentTarget.src = '/icons/app-logo/user.svg'; }}
             />
@@ -175,7 +176,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             try {
                 const selected = await open({
                     multiple: false,
-                    filters: [{ name: '所有文件', extensions: ['*'] }],
+                    filters: [{ name: t('common.allFiles'), extensions: ['*'] }],
                 });
                 if (selected) {
                     const path = typeof selected === 'string'
@@ -411,7 +412,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                       onClick={() => props.onOpenShare()}
                     >
                       <Icon src="/icons/app-logo/share.svg" class="w-[15px] h-[15px] shrink-0" />
-                      <span class="overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100 group-hover:ml-1">分享</span>
+                      <span class="overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100 group-hover:ml-1">{t('common.share')}</span>
                     </button>
                   </Show>
                 </div>
@@ -424,18 +425,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
                     onClick={props.onSelectAll}
                   >
-                    全选
+                    {t('common.selectAll')}
                   </button>
                   <button
                     class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
                     onClick={props.onCancelSelection}
                   >
-                    取消
+                    {t('common.cancel')}
                   </button>
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="text-xs text-white/50">
-                    已选 {props.selectedMessageIds.size} 条
+                    {t('chat.selectedMessages', { count: formatNumber(props.selectedMessageIds.size) })}
                   </span>
                   <button
                     class="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200"
@@ -446,7 +447,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     disabled={props.selectedMessageIds.size === 0}
                     onClick={props.onConfirmSelection}
                   >
-                    确认
+                    {t('common.confirm')}
                   </button>
                 </div>
               </div>
@@ -462,7 +463,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <div class="w-full mb-4 p-4 rounded-lg" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);">
                         <div class="flex items-center gap-3 mb-2">
                             <span style="color: rgba(124,154,191,0.6);"><Icon src="/icons/app-logo/loading.svg" class="w-5 h-5 animate-spin" /></span>
-                            <span style="color: rgba(255,255,255,0.85); font-size: 0.875rem;">正在启动本地推理引擎...</span>
+                            <span style="color: rgba(255,255,255,0.85); font-size: 0.875rem;">{t('chat.localEngineStarting')}</span>
                         </div>
                         <div class="w-full h-2 rounded-full" style="background: rgba(255,255,255,0.06);">
                             <div class="h-2 rounded-full transition-all duration-300" style={{ width: `${localModelStartProgress()}%`, background: 'rgba(124,154,191,0.4)' }}></div>
@@ -533,7 +534,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             >
                                                 <img
                                                     src={getModelLogo(msg.modelId || selectedModel()?.model_id || "")!}
-                                                    alt="AI"
+                                                    alt={t('common.ai')}
                                                     class="w-[25px] h-[25px] rounded-full"
                                                 />
                                             </Show>
@@ -560,7 +561,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                             </div>
                                                             <div class="flex-grow overflow-hidden">
                                                                 <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">{file.name}</div>
-                                                                <div style="color: rgba(124,154,191,0.4); font-size: 0.75rem; margin-top: 2px;">已解析</div>
+                                                                <div style="color: rgba(124,154,191,0.4); font-size: 0.75rem; margin-top: 2px;">{t('chat.parsed')}</div>
                                                             </div>
                                                         </div>
                                                     )}
@@ -591,7 +592,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 >
                                                     <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
                                                         <Icon src="/icons/app-logo/loading.svg" class="w-4 h-4 animate-spin opacity-50" />
-                                                        <span class="animate-pulse">AI 正在思考中...</span>
+                                                        <span class="animate-pulse">{t('chat.thinking')}</span>
                                                     </div>
                                                 </Show>
                                             </div>
@@ -605,10 +606,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 <Show when={msg.inputTokens || msg.outputTokens}>
                                                     <span style="color: rgba(255,255,255,0.2);">·</span>
                                                     <Show when={msg.inputTokens}>
-                                                        <span title="输入 tokens">↗ {(msg.inputTokens! >= 1000) ? `${(msg.inputTokens! / 1000).toFixed(1)}K` : msg.inputTokens}</span>
+                                                        <span title={t('chat.inputTokens')}>↗ {(msg.inputTokens! >= 1000) ? `${(msg.inputTokens! / 1000).toFixed(1)}K` : msg.inputTokens}</span>
                                                     </Show>
                                                     <Show when={msg.outputTokens}>
-                                                        <span title="输出 tokens">↘ {(msg.outputTokens! >= 1000) ? `${(msg.outputTokens! / 1000).toFixed(1)}K` : msg.outputTokens}</span>
+                                                        <span title={t('chat.outputTokens')}>↘ {(msg.outputTokens! >= 1000) ? `${(msg.outputTokens! / 1000).toFixed(1)}K` : msg.outputTokens}</span>
                                                     </Show>
                                                 </Show>
                                             </div>
@@ -632,7 +633,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                             currentBtn.style.borderColor = '#4af908';
                                                             label.style.maxWidth = '60px';
                                                             label.style.opacity = '1';
-                                                            label.innerText = '已复制';
+                                                            label.innerText = t('common.copied');
                                                             setTimeout(() => {
                                                                 currentBtn.style.color = '';
                                                                 currentBtn.style.borderColor = '';
@@ -645,7 +646,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 }}
                                             >
                                                 <Icon src="/icons/app-logo/clipboard-copy.svg" class="w-[13px] h-[13px]" />
-                                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">复制</span>
+                                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">{t('common.copy')}</span>
                                             </button>
 
                                             {/* 分支按钮（仅 assistant 消息） */}
@@ -656,10 +657,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     onClick={() => {
                                                         if (msg.id) props.onBranchFromMessage(msg.id);
                                                     }}
-                                                    title="从此消息分叉出新话题"
+                                                    title={t('chat.branchFromHere')}
                                                 >
                                                     <Icon name="git-branch" size={13} style="display: inline; vertical-align: middle;" />
-                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">分支</span>
+                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">{t('chat.branch')}</span>
                                                 </button>
                                             </Show>
 
@@ -707,7 +708,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-[13px] h-[13px]">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
                                                     </svg>
-                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">重新发送</span>
+                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">{t('chat.resendMessage')}</span>
                                                 </button>
                                                 <button
                                                     class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(124,154,191,0.12)] hover:!p-[4px_8px]"
@@ -753,7 +754,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-[13px] h-[13px]">
                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
                                                     </svg>
-                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">编辑</span>
+                                                    <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">{t('common.edit')}</span>
                                                 </button>
                                             </Show>
 
@@ -780,7 +781,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-[13px] h-[13px]">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                                                 </svg>
-                                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[60px] group-hover:opacity-100">删除</span>
+                                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[60px] group-hover:opacity-100">{t('chat.deleteMessage')}</span>
                                             </button>
                                         </div>
                                     </div>
@@ -811,7 +812,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                 });
                                             } catch (err) {
                                                 console.error('批量撤销失败:', err);
-                                                alert('批量撤销失败，请确认项目是否为 Git 仓库且文件未被提交。');
+                                                alert(t('agent.diff.revertFailed'));
                                             }
                                         };
                                         return (
@@ -836,11 +837,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                     </svg>
                                                     <Show
                                                         when={isReverted()}
-                                                        fallback={<span class="font-medium">文件更改</span>}
+                                                        fallback={<span class="font-medium">{t('agent.diff.title')}</span>}
                                                     >
-                                                        <span class="font-medium" style="text-decoration: line-through;">文件更改</span>
+                                                        <span class="font-medium" style="text-decoration: line-through;">{t('agent.diff.title')}</span>
                                                     </Show>
-                                                    <span style="color: rgba(255,255,255,0.25);">{fileChanges.length} 个文件</span>
+                                                    <span style="color: rgba(255,255,255,0.25);">{t('agent.diff.files', { count: formatNumber(fileChanges.length) })}</span>
                                                     <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
                                                         <span class="font-mono">
                                                             {diffStats().added > 0 && <span style="color: #50dc64;">+{diffStats().added}</span>}
@@ -858,7 +859,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                                 border: '1px solid rgba(80, 220, 100, 0.15)',
                                                             }}
                                                         >
-                                                            已撤销
+                                                            {t('agent.diff.reverted')}
                                                         </span>
                                                     </Show>
                                                     <Show when={showUndo()}>
@@ -867,12 +868,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                                             class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors hover:bg-white/[0.06] border-none cursor-pointer"
                                                             style="color: rgba(255,255,255,0.35); background: transparent;"
                                                             onClick={(e) => { e.stopPropagation(); handleUndoAll(); }}
-                                                            title="撤销此轮所有文件更改"
+                                                            title={t('agent.diff.revertAllTitle')}
                                                         >
                                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5" style="opacity: 0.6;">
                                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
                                                             </svg>
-                                                            撤销全部
+                                                            {t('agent.diff.revertAll')}
                                                         </button>
                                                     </Show>
                                                 </div>
@@ -929,7 +930,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         setAutoScroll(true);
                         smoothScrollToBottom();
                     }}
-                    title="滚动到最新消息"
+                    title={t('chat.scrollLatest')}
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -940,7 +941,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             <Show when={props.isProcessing}>
                 <div class="absolute inset-0 flex items-center justify-center z-[100]"
                      style="background: rgba(0,0,0,0.6); color: rgba(124,154,191,0.6); font-size: 0.875rem; backdrop-filter: blur(4px);">
-                    正在解析文件内容...
+                    {t('chat.parsingFile')}
                 </div>
             </Show>
 
@@ -982,13 +983,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
                     const mode = asst?.agentMode || 'off';
                     const project = currentProject();
-                    const modeLabel: string = { normal: '普通', auto: '自动', plan: 'Plan', workflow: '工作流' }[mode as 'normal'|'auto'|'plan'|'workflow'] || mode;
+                    const modeLabel: string = {
+                      normal: t('agent.mode.normal'),
+                      auto: t('agent.mode.auto'),
+                      plan: t('agent.mode.plan'),
+                      workflow: t('agent.mode.workflow'),
+                    }[mode as 'normal'|'auto'|'plan'|'workflow'] || mode;
                     return (
                       <div class="flex items-center gap-2 px-3 h-8 rounded-2xl text-xs"
                            style="background: rgba(124,154,191,0.12); border: 1px solid rgba(124,154,191,0.2);">
                         <Icon name="wrench" size={14} />
                         <span style="color: rgba(255,255,255,0.7);">
-                          Agent · {modeLabel} · 项目: {project?.name ?? ''}
+                          {t('chat.agentStatus', { mode: modeLabel, project: project?.name ?? '' })}
                         </span>
                         <Show when={gitBranch()}>
                           <div class="branch-dropdown-container relative inline-block">
@@ -1012,7 +1018,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               >
                                 <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                                      style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
-                                  切换分支
+                                  {t('chat.switchBranch')}
                                 </div>
                                 <div class="py-1 max-h-[200px] overflow-y-auto">
                                   <For each={gitBranches()}>
@@ -1028,8 +1034,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             await switchBranch(branch);
                                             setBranchOpen(false);
                                           } catch (e) {
-                                            const msg = typeof e === 'string' ? e : '切换分支失败，请检查是否有未提交的更改';
-                                            setBranchToast(msg);
+                                            console.error('[git] switch branch failed:', e);
+                                            setBranchToast(t('chat.branchSwitchFailed'));
                                             setTimeout(() => setBranchToast(null), 3000);
                                           }
                                         }}
@@ -1053,7 +1059,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           </div>
                         </Show>
                         <Show when={project}>
-                          <span class="w-2 h-2 rounded-full shrink-0" style={{ background: (() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? '#4ade80' : s === 'connecting' ? '#facc15' : '#f87171'; })() }} title={(() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? '文件系统正常' : s === 'connecting' ? '文件系统启动中' : '文件系统异常'; })()} />
+                          <span class="w-2 h-2 rounded-full shrink-0" style={{ background: (() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? '#4ade80' : s === 'connecting' ? '#facc15' : '#f87171'; })() }} title={(() => { const s = mcpServerStatus()['__aio-filesystem__']?.status; return s === 'connected' ? t('chat.filesystemConnected') : s === 'connecting' ? t('chat.filesystemConnecting') : t('chat.filesystemError'); })()} />
                         </Show>
                       </div>
                     );
@@ -1064,7 +1070,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     <textarea
                         ref={textareaRef}
                         class="bg-transparent border-none text-white font-inherit text-base leading-relaxed min-h-[40px] max-h-[20vh] outline-none overflow-y-hidden px-[5px] pb-[5px] resize-none w-full focus:overflow-y-auto"
-                        placeholder="输入消息... (Ctrl + Enter 换行)"
+                        placeholder={t('chat.input.placeholder')}
                         value={props.inputMessage}
                         onInput={(e) => {
                             props.setInputMessage(e.currentTarget.value);
@@ -1104,7 +1110,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             <button
                                 class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
                                 style="color: rgba(255,255,255,0.4);"
-                                title="上传文件"
+                                title={t('chat.attachFile')}
                                 onClick={async () => {
                                     const selected = await open({ multiple: true });
                                     if (!selected) return;
@@ -1122,7 +1128,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             <button
                                 class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
                                 style="color: rgba(255,255,255,0.4);"
-                                title="上传图片"
+                                title={t('chat.uploadImage')}
                                 onClick={async () => {
                                     const selected = await open({
                                         multiple: true,
@@ -1145,7 +1151,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 <button
                                     class="relative flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
                                     style="color: rgba(255,255,255,0.4);"
-                                    title={`${totalErrors()} 错误, ${totalWarnings()} 警告 — 点击切换问题面板`}
+                                    title={t('chat.diagnostics', { errors: formatNumber(totalErrors()), warnings: formatNumber(totalWarnings()) })}
                                     onClick={() => setProblemsPanelVisible(!problemsPanelVisible())}
                                     onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; }}
                                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; }}
@@ -1200,8 +1206,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 <span style="color: rgba(124,154,191,0.4);"><Icon src="/icons/app-logo/file-blank.svg" class="w-6 h-6" /></span>
                             </div>
                         </div>
-                        <h2 style="color: rgba(124,154,191,0.6); font-size: 22px; letter-spacing: 0.1em; margin-bottom: 10px; z-index: 2;">上传文件</h2>
-                        <p style="color: rgba(255,255,255,0.5); font-size: 0.875rem; max-width: 80%; z-index: 2;">支持 PDF、Docx、pptx 和图片解析</p>
+                        <h2 style="color: rgba(124,154,191,0.6); font-size: 22px; letter-spacing: 0.1em; margin-bottom: 10px; z-index: 2;">{t('chat.dragUploadTitle')}</h2>
+                        <p style="color: rgba(255,255,255,0.5); font-size: 0.875rem; max-width: 80%; z-index: 2;">{t('chat.dragUploadFormats')}</p>
                         <div class="absolute inset-3 rounded-lg pointer-events-none" style="border: 1px dashed rgba(255,255,255,0.1);"></div>
                     </div>
                 </div>

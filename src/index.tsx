@@ -8,6 +8,7 @@ import { lazy, Suspense } from 'solid-js';
 import Layout from './Layout.tsx';
 import './index.css';
 import { initMcpServers, initSkills, initProjects, initProfileModelOverrides, initCustomSubagentProfiles } from './core/store/store';
+import { t } from './core/i18n';
 
 // 应用启动时初始化项目列表
 initProjects();
@@ -30,7 +31,7 @@ const UsageSettings = lazy(() => import('./features/settings/components/UsageSet
 
 render(
   () => (
-    <Suspense fallback={<div class="flex items-center justify-center h-screen w-screen text-white/40">Loading...</div>}>
+    <Suspense fallback={<div class="flex items-center justify-center h-screen w-screen text-white/40">{t('common.loading')}</div>}>
       <Router root={Layout}>
         <Route path="/" component={() => <Navigate href="/chat" />} />
         <Route path="/chat" component={lazy(() => import('./features/chat/ChatPage'))} />

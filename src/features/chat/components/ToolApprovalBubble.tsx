@@ -7,6 +7,7 @@
 import { Component, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 export interface PendingApproval {
     approvalId: string;
@@ -55,7 +56,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     // 格式化参数显示
     const formatArgs = () => {
         const args = props.approval.arguments;
-        if (!args || Object.keys(args).length === 0) return '无参数';
+        if (!args || Object.keys(args).length === 0) return t('agent.approval.noArguments');
         const parts: string[] = [];
         // path 参数放最前面
         if (args.path) {
@@ -100,19 +101,19 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
                 <Icon name={toolIcon() as any} size={15} class="text-[#7c9abf]/60 shrink-0" />
                 <span class="text-[13px] font-semibold text-white/85 font-mono">{props.approval.toolName}</span>
                 <Show when={isDangerous()}>
-                    <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[#ff4d4d]/15 text-[#ff4d4d]/80 uppercase tracking-[0.3px]">危险操作</span>
+                    <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[#ff4d4d]/15 text-[#ff4d4d]/80 uppercase tracking-[0.3px]">{t('agent.approval.dangerous')}</span>
                 </Show>
             </div>
             <div class="text-[11px] text-white/55 bg-black/20 rounded-md px-2 py-1.5 mb-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
                 <code>{formatArgs()}</code>
             </div>
             <div class="text-[11px] text-white/45 mb-2.5 leading-[1.4]">
-                {props.approval.reason}
+                {t('agent.approval.title')}
             </div>
             <Show when={props.approval.previewDiff}>
                 <div class="mb-2.5 rounded-md overflow-hidden border border-white/[0.06]" style="background: rgba(0,0,0,0.3);">
                     <div class="text-[10px] text-white/35 px-2 py-1 border-b border-white/[0.04]" style="font-family: monospace;">
-                        {props.approval.filePath || '文件变更预览'}
+                        {props.approval.filePath || t('agent.approval.diffPreview')}
                     </div>
                     <pre class="text-[11px] leading-[1.5] p-2 m-0 overflow-x-auto text-white/60" style="font-family: 'JetBrains Mono', 'Fira Code', monospace; max-height: 200px;">{props.approval.previewDiff}</pre>
                 </div>
@@ -124,7 +125,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
                     onClick={handleReject}
                 >
                     <Icon name="x" size={13} />
-                    <span>拒绝</span>
+                    <span>{t('agent.approval.deny')}</span>
                 </button>
                 <button
                     type="button"
@@ -132,7 +133,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
                     onClick={handleApprove}
                 >
                     <Icon name="check" size={13} />
-                    <span>批准</span>
+                    <span>{t('agent.approval.approve')}</span>
                 </button>
             </div>
         </div>

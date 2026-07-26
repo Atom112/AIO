@@ -6,6 +6,11 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data'
+import {
+  formatDateTime as formatLocaleDateTime,
+  formatRelativeTime as formatLocaleRelativeTime,
+  t,
+} from '../i18n'
 
 export type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data'
 
@@ -224,27 +229,27 @@ export function formatContextWindow(tokens: number): string {
 
 /** 格式化单条价格（per 1M tokens） */
 export function formatPricing(input: number, output: number): string {
-  if (input === 0 && output === 0) return '免费'
+  if (input === 0 && output === 0) return t('common.free')
   return `$${input}/${output}/1M`
 }
 
 /** 把 ISO 时间格式化为「X 天前」之类的相对描述 */
 export function formatRelativeTime(iso: string | null): string {
-  if (!iso) return '从未更新'
+  if (!iso) return t('common.neverUpdated')
   try {
     const d = new Date(iso)
     const now = Date.now()
     const diff = now - d.getTime()
     const minutes = Math.floor(diff / 60_000)
-    if (minutes < 1) return '刚刚'
-    if (minutes < 60) return `${minutes} 分钟前`
+    if (minutes < 1) return formatLocaleRelativeTime(0, 'minute')
+    if (minutes < 60) return formatLocaleRelativeTime(-minutes, 'minute')
     const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours} 小时前`
+    if (hours < 24) return formatLocaleRelativeTime(-hours, 'hour')
     const days = Math.floor(hours / 24)
-    if (days < 30) return `${days} 天前`
+    if (days < 30) return formatLocaleRelativeTime(-days, 'day')
     const months = Math.floor(days / 30)
-    if (months < 12) return `${months} 个月前`
-    return `${Math.floor(months / 12)} 年前`
+    if (months < 12) return formatLocaleRelativeTime(-months, 'month')
+    return formatLocaleRelativeTime(-Math.floor(months / 12), 'year')
   } catch {
     return iso
   }
@@ -253,7 +258,7 @@ export function formatRelativeTime(iso: string | null): string {
 /** 格式化 releaseDate（"2025-01-15" → "2025-01"）只取年月 */
 export function formatReleaseDate(iso: string | null | undefined): string {
   if (!iso) return ''
-  return iso.slice(0, 7) // YYYY-MM
+  return formatLocaleDateTime(`${iso.slice(0, 10)}T00:00:00`, { year: 'numeric', month: 'short' })
 }
 
 // ==================== v2 工具函数 ====================

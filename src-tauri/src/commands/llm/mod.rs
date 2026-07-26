@@ -1,34 +1,32 @@
 pub mod btw;
 
-
+use crate::commands::attachment::sync_message_attachments;
+use crate::core::models::*;
 use crate::core::permission::{self, PermissionAction};
 use crate::core::state::DbState;
-use crate::plugins::mcp::PendingApprovals;
-use crate::commands::attachment::sync_message_attachments;
+use crate::core::state::StreamManager;
 use crate::core::subagent;
+use crate::plugins::mcp::PendingApprovals;
 use crate::utils::file_tools;
 use crate::utils::git_tools;
-use crate::utils::lsp_tools;
-use crate::utils::lsp_agent_tools;
 use crate::utils::knowledge;
+use crate::utils::lsp_agent_tools;
+use crate::utils::lsp_tools;
 use crate::utils::shell_tools;
 use crate::utils::web_tools;
 use base64::{engine::general_purpose, Engine as _};
-use rusqlite::params;
-use crate::core::models::*;
-use crate::core::state::StreamManager;
-use futures_util::StreamExt; // 用于处理流式数据
 use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt; // 用于处理流式数据
+use rusqlite::params;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::future::Future;
-use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
-use tokio_util::sync::CancellationToken;
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
 use tokio::sync::Semaphore;
-
+use tokio_util::sync::CancellationToken;
 
 /// 流式 HTTP 客户端（LLM 推理专用）。
 ///
@@ -152,9 +150,11 @@ fn message_for_api(
                 json!(expanded_text)
             } else {
                 let mut parts = vec![json!({ "type": "text", "text": expanded_text })];
-                parts.extend(image_data_urls.into_iter().map(|url| {
-                    json!({ "type": "image_url", "image_url": { "url": url } })
-                }));
+                parts.extend(
+                    image_data_urls
+                        .into_iter()
+                        .map(|url| json!({ "type": "image_url", "image_url": { "url": url } })),
+                );
                 serde_json::Value::Array(parts)
             };
         }
@@ -304,7 +304,11 @@ async fn stream_one_round(
     let status = response.status();
     if !status.is_success() {
         let body_text = response.text().await.unwrap_or_default();
-        let truncated = if body_text.len() > 512 { &body_text[..body_text.floor_char_boundary(512)] } else { &body_text };
+        let truncated = if body_text.len() > 512 {
+            &body_text[..body_text.floor_char_boundary(512)]
+        } else {
+            &body_text
+        };
         return Err(format!("LLM API {}: {}", status, truncated));
     }
 
@@ -397,10 +401,11 @@ async fn stream_one_round(
                     // tool_calls 累积
                     if let Some(tcs) = val["choices"][0]["delta"]["tool_calls"].as_array() {
                         for tc in tcs {
-                            let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                            let entry = tc_accum.entry(index).or_insert_with(|| {
-                                (String::new(), String::new(), String::new())
-                            });
+                            let index =
+                                tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            let entry = tc_accum
+                                .entry(index)
+                                .or_insert_with(|| (String::new(), String::new(), String::new()));
                             if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
                                 entry.0 = id.to_string();
                             }
@@ -496,7 +501,6 @@ async fn stream_one_round(
     })
 }
 
-
 /// 核心函数：调用 LLM 并分块回传结果（流式输出）。
 ///
 /// 注意：此命令保留用于命令稳定性，但前端新流程改用 [`run_agent_turn`]
@@ -507,19 +511,23 @@ pub async fn call_llm_stream(
     window: Window,                         // Tauri 窗口句柄，用于发送事件
     state: tauri::State<'_, StreamManager>, // 全局状态，用于管理正在进行的流任务
     db_state: tauri::State<'_, DbState>,
-    api_url: String,                        // API 地址
-    api_key: String,                        // API 密钥
-    model: String,                          // 模型名称（如 gpt-3.5-turbo）
-    assistant_id: String,                   // 助手 ID（用于前端匹配消息）
-    topic_id: String,                       // 话题/会话 ID
-    messages: Vec<Message>,                 // 历史上下文消息列表
-    tools: Option<Vec<ToolSpec>>,           // 工具定义（MCP 工具，None 或空数组则不发送）
+    api_url: String,              // API 地址
+    api_key: String,              // API 密钥
+    model: String,                // 模型名称（如 gpt-3.5-turbo）
+    assistant_id: String,         // 助手 ID（用于前端匹配消息）
+    topic_id: String,             // 话题/会话 ID
+    messages: Vec<Message>,       // 历史上下文消息列表
+    tools: Option<Vec<ToolSpec>>, // 工具定义（MCP 工具，None 或空数组则不发送）
 ) -> Result<(), String> {
     // 诊断日志：打印 messages 每个元素的 role 和关键字段是否存在
     for (i, m) in messages.iter().enumerate() {
         tracing::info!(
             "[call_llm_stream] messages[{}] role={} has_toolCallId={} has_toolCalls={} has_name={}",
-            i, m.role, m.tool_call_id.is_some(), m.tool_calls.is_some(), m.name.is_some()
+            i,
+            m.role,
+            m.tool_call_id.is_some(),
+            m.tool_calls.is_some(),
+            m.name.is_some()
         );
     }
     // SSRF 防护
@@ -688,7 +696,6 @@ pub async fn stop_llm_stream(
     Ok(())
 }
 
-
 /// 执行内置工具（in-process 直接调用，含权限检查和审批）。
 ///
 /// 覆盖文件工具（file_tools）和命令执行工具（shell_tools），跳过 MCP 通道。
@@ -739,12 +746,14 @@ async fn execute_builtin_tool(
                                 danger_desc = danger.risk,
                             );
                         } else {
-                            reason = format!("命令: {cmd}\n\n工具 '{}' 需要您的确认才能执行", tool_name);
+                            reason =
+                                format!("命令: {cmd}\n\n工具 '{}' 需要您的确认才能执行", tool_name);
                         }
                     }
                 }
                 // 文件修改工具：预计算 diff 预览
-                let (preview_diff, file_path) = compute_diff_preview(tool_name, arguments, &project_root);
+                let (preview_diff, file_path) =
+                    compute_diff_preview(tool_name, arguments, &project_root);
                 let approval_fut = crate::commands::mcp::request_tool_approval(
                     app,
                     pending.inner(),
@@ -773,9 +782,7 @@ async fn execute_builtin_tool(
             shell_tools::execute_command(&command, &root, timeout)
         })
         .await
-        .unwrap_or_else(|_| {
-            shell_tools::tool_err("命令执行线程 panic")
-        }))
+        .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic")))
     } else if tool_name == "web_fetch" {
         let url = arguments["url"].as_str().unwrap_or("");
         let max_bytes = arguments["max_bytes"].as_u64();
@@ -810,9 +817,7 @@ async fn execute_builtin_tool(
             git_tools::execute_git_tool(&tool_name_c, &arguments_c, &root_c)
         })
         .await
-        .unwrap_or_else(|_| {
-            git_tools::tool_err("Git 工具执行线程 panic")
-        }))
+        .unwrap_or_else(|_| git_tools::tool_err("Git 工具执行线程 panic")))
     } else {
         let tool_name_c = tool_name.to_string();
         let arguments_c = arguments.clone();
@@ -821,9 +826,7 @@ async fn execute_builtin_tool(
             file_tools::execute_file_tool(&tool_name_c, &arguments_c, &root_c)
         })
         .await
-        .unwrap_or_else(|_| {
-            file_tools::tool_err("文件工具执行线程 panic")
-        }))
+        .unwrap_or_else(|_| file_tools::tool_err("文件工具执行线程 panic")))
     }
 }
 
@@ -843,23 +846,34 @@ fn build_subagent_messages(
     context_files: &[String],
     project_root: &str,
     extra_context: Option<&str>,
+    locale: &str,
 ) -> Vec<serde_json::Value> {
-    let system_prompt = format!(
-        concat!(
-            "你是 AIO 的子智能体，类型为「{}」。\n",
-            "工作目录: {}\n",
-            "请高效完成子任务并在最后总结工作成果。\n\n",
-            "{}\n\n",
-            "重要：请在回复末尾给出简洁的工作总结（含修改的文件路径和关键发现）。回复请保持精炼，重点突出核心成果，避免冗长叙述。"
-        ),
-        profile.name,
-        project_root,
-        profile.system_prompt_extension,
-    );
+    let system_prompt = if locale == "en-US" {
+        format!(
+            "You are an AIO subagent with the role \"{}\".\nWorking directory: {}\nComplete the task efficiently and summarize the result at the end.\n\n{}\n\nImportant: end with a concise work summary including changed file paths and key findings.",
+            profile.name, project_root, profile.system_prompt_extension,
+        )
+    } else {
+        format!(
+            "你是 AIO 的子智能体，类型为「{}」。\n工作目录: {}\n请高效完成子任务并在最后总结工作成果。\n\n{}\n\n重要：请在回复末尾给出简洁的工作总结（含修改的文件路径和关键发现）。回复请保持精炼，重点突出核心成果，避免冗长叙述。",
+            profile.name, project_root, profile.system_prompt_extension,
+        )
+    };
+    let task_prompt = if locale == "en-US" {
+        format!(
+            "Subtask:\n{}\n\nBegin now and finish with a work summary.",
+            task_desc
+        )
+    } else {
+        format!(
+            "子任务:\n{}\n\n请开始执行。完成后在最后给出工作总结。",
+            task_desc
+        )
+    };
 
     let mut msgs: Vec<serde_json::Value> = vec![
         json!({"role": "system", "content": system_prompt}),
-        json!({"role": "user", "content": format!("子任务:\n{}\n\n请开始执行。完成后在最后给出工作总结。", task_desc)}),
+        json!({"role": "user", "content": task_prompt}),
     ];
 
     if !context_files.is_empty() {
@@ -870,7 +884,11 @@ fn build_subagent_messages(
             .join("\n");
         msgs.push(json!({
             "role": "user",
-            "content": format!("提示：以下文件可能与任务相关，请根据需要读取：\n{}", files_hint)
+            "content": if locale == "en-US" {
+                format!("The following files may be relevant. Read them as needed:\n{}", files_hint)
+            } else {
+                format!("提示：以下文件可能与任务相关，请根据需要读取：\n{}", files_hint)
+            }
         }));
     }
 
@@ -878,7 +896,7 @@ fn build_subagent_messages(
         if !ctx.is_empty() {
             msgs.push(json!({
                 "role": "user",
-                "content": format!("[共享上下文]\n{}", ctx)
+                "content": format!("{}\n{}", if locale == "en-US" { "[Shared context]" } else { "[共享上下文]" }, ctx)
             }));
         }
     }
@@ -887,7 +905,10 @@ fn build_subagent_messages(
 }
 
 /// 构建子 Agent 的受限工具列表（根据 profile 过滤）
-fn build_subagent_tools(profile: &subagent::SubagentProfile, project_root: &str) -> (Vec<ToolSpec>, HashMap<String, String>) {
+fn build_subagent_tools(
+    profile: &subagent::SubagentProfile,
+    project_root: &str,
+) -> (Vec<ToolSpec>, HashMap<String, String>) {
     // 注入和主 Agent 相同的内置工具，但在执行时按 profile 过滤
     let mut tools: Vec<ToolSpec> = Vec::new();
     let mut tool_map: HashMap<String, String> = HashMap::new();
@@ -949,7 +970,11 @@ fn truncate_tool_result(s: &str) -> String {
 
 /// 为文件修改工具预计算 diff 预览（审批前展示用）。
 /// 返回 (preview_diff, file_path)。
-fn compute_diff_preview(tool_name: &str, arguments: &serde_json::Value, project_root: &str) -> (Option<String>, Option<String>) {
+fn compute_diff_preview(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    project_root: &str,
+) -> (Option<String>, Option<String>) {
     let file_path = arguments["path"].as_str().map(|s| s.to_string());
     let full_path = || {
         let root = std::path::Path::new(project_root);
@@ -962,7 +987,11 @@ fn compute_diff_preview(tool_name: &str, arguments: &serde_json::Value, project_
             let old_content = full_path()
                 .and_then(|p| std::fs::read_to_string(&p).ok())
                 .unwrap_or_default();
-            let diff = simple_diff(&old_content, new_content, &file_path.clone().unwrap_or_default());
+            let diff = simple_diff(
+                &old_content,
+                new_content,
+                &file_path.clone().unwrap_or_default(),
+            );
             (Some(diff), file_path)
         }
         "replace_in_file" => {
@@ -973,7 +1002,11 @@ fn compute_diff_preview(tool_name: &str, arguments: &serde_json::Value, project_
                 .unwrap_or_default();
             if old_content.contains(old_s) {
                 let new_content = old_content.replacen(old_s, new_s, 1);
-                let diff = simple_diff(&old_content, &new_content, &file_path.clone().unwrap_or_default());
+                let diff = simple_diff(
+                    &old_content,
+                    &new_content,
+                    &file_path.clone().unwrap_or_default(),
+                );
                 (Some(diff), file_path)
             } else {
                 (None, file_path)
@@ -1001,7 +1034,10 @@ fn simple_diff(old: &str, new: &str, file_name: &str) -> String {
 
     // 找共同前缀
     let mut prefix = 0;
-    while prefix < old_lines.len() && prefix < new_lines.len() && old_lines[prefix] == new_lines[prefix] {
+    while prefix < old_lines.len()
+        && prefix < new_lines.len()
+        && old_lines[prefix] == new_lines[prefix]
+    {
         prefix += 1;
     }
     // 找共同后缀（在去除前缀后）
@@ -1023,9 +1059,12 @@ fn simple_diff(old: &str, new: &str, file_name: &str) -> String {
 
     let mut diff = format!(
         "--- a/{}\n+++ b/{}\n@@ -{},{} +{},{} @@\n",
-        file_name, file_name,
-        old_start, removed.max(1),
-        new_start, added.max(1),
+        file_name,
+        file_name,
+        old_start,
+        removed.max(1),
+        new_start,
+        added.max(1),
     );
 
     // 上下文（前3行）
@@ -1089,7 +1128,9 @@ where
         match execute().await {
             Ok(result) => {
                 if result.is_error && attempt < max_attempts {
-                    if let Some(err_text) = result.content.first()
+                    if let Some(err_text) = result
+                        .content
+                        .first()
                         .and_then(|c| c.data.get("text"))
                         .and_then(|v| v.as_str())
                     {
@@ -1138,6 +1179,7 @@ async fn handle_delegate_task(
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
+    locale: &str,
 ) -> Result<ToolResult, String> {
     // 解析参数
     let profile_id = arguments["profile"].as_str().unwrap_or("general");
@@ -1148,10 +1190,13 @@ async fn handle_delegate_task(
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
 
-
     let context_files: Vec<String> = arguments["context_files"]
         .as_array()
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     // 解析项目根目录
@@ -1212,14 +1257,13 @@ async fn handle_delegate_task(
         &context_files,
         None, // extra_context — 单数调用不注入共享上下文
         project_id,
-        agent_mode,
         token,
         profile_model_overrides,
         custom_profiles,
+        locale,
     )
     .await
 }
-
 
 /// 单个子智能体执行的核心逻辑（被 `handle_delegate_task` 和 `handle_delegate_tasks` 共用）。
 ///
@@ -1239,18 +1283,24 @@ async fn execute_single_delegate(
     context_files: &[String],
     extra_context: Option<&str>,
     project_id: Option<&str>,
-    agent_mode: &AgentMode,
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
+    locale: &str,
 ) -> Result<ToolResult, String> {
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
 
     // 模型解析：per-profile override 优先，否则使用主模型
-    let override_info = profile_model_overrides.iter().find(|o| o.profile_id == profile.id);
+    let override_info = profile_model_overrides
+        .iter()
+        .find(|o| o.profile_id == profile.id);
     let (resolved_api_url, resolved_api_key, resolved_model) = if let Some(ov) = override_info {
-        (ov.api_url.as_str(), ov.api_key.as_str(), ov.model_id.as_str())
+        (
+            ov.api_url.as_str(),
+            ov.api_key.as_str(),
+            ov.model_id.as_str(),
+        )
     } else {
         (api_url, api_key, model)
     };
@@ -1273,8 +1323,8 @@ async fn execute_single_delegate(
         extra_context,
         &project_root,
         project_id,
-        agent_mode,
         token,
+        locale,
     )
     .await
 }
@@ -1300,9 +1350,11 @@ async fn handle_delegate_tasks(
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
     semaphore: Arc<Semaphore>,
+    locale: &str,
 ) -> Result<ToolResult, String> {
     // 解析 tasks 数组
-    let tasks_array = arguments["tasks"].as_array()
+    let tasks_array = arguments["tasks"]
+        .as_array()
         .ok_or_else(|| "delegate_tasks 缺少必填参数 'tasks'（应为数组）".to_string())?;
 
     if tasks_array.is_empty() {
@@ -1312,7 +1364,8 @@ async fn handle_delegate_tasks(
         return Err("delegate_tasks: 'tasks' 数组最多 10 个元素".into());
     }
 
-    let shared_context = arguments["context"].as_str()
+    let shared_context = arguments["context"]
+        .as_str()
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty());
 
@@ -1321,10 +1374,16 @@ async fn handle_delegate_tasks(
         let profile = task_obj["profile"].as_str();
         let task = task_obj["task"].as_str();
         if profile.is_none() || profile.unwrap().is_empty() {
-            return Err(format!("delegate_tasks: 第 {} 个 task 缺少必填字段 'profile'", idx + 1));
+            return Err(format!(
+                "delegate_tasks: 第 {} 个 task 缺少必填字段 'profile'",
+                idx + 1
+            ));
         }
         if task.is_none() || task.unwrap().is_empty() {
-            return Err(format!("delegate_tasks: 第 {} 个 task 缺少必填字段 'task'", idx + 1));
+            return Err(format!(
+                "delegate_tasks: 第 {} 个 task 缺少必填字段 'task'",
+                idx + 1
+            ));
         }
     }
 
@@ -1346,11 +1405,15 @@ async fn handle_delegate_tasks(
             }
             PermissionAction::Ask => {
                 let pending = app.state::<PendingApprovals>();
-                let profiles_summary: Vec<String> = tasks_array.iter()
-                    .map(|t| format!("  - {}: {}", 
-                        t["profile"].as_str().unwrap_or("?"),
-                        truncate_for_display(t["task"].as_str().unwrap_or(""), 80)
-                    ))
+                let profiles_summary: Vec<String> = tasks_array
+                    .iter()
+                    .map(|t| {
+                        format!(
+                            "  - {}: {}",
+                            t["profile"].as_str().unwrap_or("?"),
+                            truncate_for_display(t["task"].as_str().unwrap_or(""), 80)
+                        )
+                    })
                     .collect();
                 let reason = format!(
                     "批量启动 {} 个子智能体:\n{}\n\n确认？",
@@ -1380,11 +1443,18 @@ async fn handle_delegate_tasks(
     let mut unordered = FuturesUnordered::new();
 
     for (_idx, task_obj) in tasks_array.iter().enumerate() {
-        let profile_id = task_obj["profile"].as_str().unwrap_or("general").to_string();
+        let profile_id = task_obj["profile"]
+            .as_str()
+            .unwrap_or("general")
+            .to_string();
         let task_desc = task_obj["task"].as_str().unwrap_or("").to_string();
         let task_context_files: Vec<String> = task_obj["context_files"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         let extra_ctx = shared_context.clone();
 
@@ -1397,25 +1467,38 @@ async fn handle_delegate_tasks(
         let parent_aid = parent_assistant_id.to_string();
         let parent_tid = parent_topic_id.to_string();
         let pid_clone = project_id.map(|s| s.to_string());
-        let agent_mode_clone = agent_mode.clone();
         let token_clone = token.clone();
         let overrides_clone = profile_model_overrides.to_vec();
         let customs_clone = custom_profiles.to_vec();
         let sem_clone = semaphore.clone();
+        let locale_clone = locale.to_string();
 
         unordered.push(async move {
-            let _permit = sem_clone.acquire().await.map_err(|_| "并发控制信号量已关闭".to_string())?;
+            let _permit = sem_clone
+                .acquire()
+                .await
+                .map_err(|_| "并发控制信号量已关闭".to_string())?;
 
             execute_single_delegate(
-                &window_clone, &app_clone, &client_clone,
-                &api_url_clone, &api_key_clone, &model_clone,
-                &parent_aid, &parent_tid,
-                &profile_id, &task_desc, &task_context_files,
+                &window_clone,
+                &app_clone,
+                &client_clone,
+                &api_url_clone,
+                &api_key_clone,
+                &model_clone,
+                &parent_aid,
+                &parent_tid,
+                &profile_id,
+                &task_desc,
+                &task_context_files,
                 extra_ctx.as_deref(),
                 pid_clone.as_deref(),
-                &agent_mode_clone, &token_clone,
-                &overrides_clone, &customs_clone,
-            ).await
+                &token_clone,
+                &overrides_clone,
+                &customs_clone,
+                &locale_clone,
+            )
+            .await
         });
     }
 
@@ -1426,7 +1509,9 @@ async fn handle_delegate_tasks(
     while let Some(result) = unordered.next().await {
         match result {
             Ok(tr) => {
-                let summary = tr.content.iter()
+                let summary = tr
+                    .content
+                    .iter()
                     .find(|c| c.kind == "text")
                     .and_then(|c| c.data.get("text"))
                     .and_then(|v| v.as_str())
@@ -1482,6 +1567,7 @@ async fn execute_workflow(
     custom_profiles: &[CustomSubagentProfile],
     profile_model_overrides: &[ProfileModelOverride],
     token: &CancellationToken,
+    locale: &str,
 ) -> Result<ToolResult, String> {
     let total_steps = workflow.steps.len();
 
@@ -1505,12 +1591,18 @@ async fn execute_workflow(
 
     for (idx, step) in workflow.steps.iter().enumerate() {
         if token.is_cancelled() {
-            let _ = window.emit("workflow-complete", serde_json::json!({ "workflowId": workflow.workflow_id }));
+            let _ = window.emit(
+                "workflow-complete",
+                serde_json::json!({ "workflowId": workflow.workflow_id }),
+            );
             return Err("工作流被用户取消".into());
         }
 
         // 发射 workflow-step-start 事件
-        let _ = window.emit("workflow-step-start", serde_json::json!({ "stepId": step.step_id }));
+        let _ = window.emit(
+            "workflow-step-start",
+            serde_json::json!({ "stepId": step.step_id }),
+        );
 
         let start = std::time::Instant::now();
 
@@ -1543,6 +1635,7 @@ async fn execute_workflow(
             token,
             profile_model_overrides,
             custom_profiles,
+            locale,
         )
         .await;
 
@@ -1560,28 +1653,48 @@ async fn execute_workflow(
                     .to_string();
 
                 // 追加到上下文
-                context.push_str(&format!("\n## 步骤 {} ({}): {}\n{}",
-                    idx + 1, step.name, step.profile_id, step_result_text));
-                all_results.push(format!("步骤 {} ({}): {}",
-                    idx + 1, step.name, step_result_text));
+                context.push_str(&format!(
+                    "\n## 步骤 {} ({}): {}\n{}",
+                    idx + 1,
+                    step.name,
+                    step.profile_id,
+                    step_result_text
+                ));
+                all_results.push(format!(
+                    "步骤 {} ({}): {}",
+                    idx + 1,
+                    step.name,
+                    step_result_text
+                ));
 
                 // 发射 workflow-step-complete 事件
-                let _ = window.emit("workflow-step-complete", serde_json::json!({
-                    "stepId": step.step_id,
-                    "status": "completed",
-                    "duration": duration_ms,
-                }));
+                let _ = window.emit(
+                    "workflow-step-complete",
+                    serde_json::json!({
+                        "stepId": step.step_id,
+                        "status": "completed",
+                        "duration": duration_ms,
+                    }),
+                );
             }
             Err(e) => {
-                context.push_str(&format!("\n## 步骤 {} ({}): [失败] {}", idx + 1, step.name, e));
+                context.push_str(&format!(
+                    "\n## 步骤 {} ({}): [失败] {}",
+                    idx + 1,
+                    step.name,
+                    e
+                ));
                 all_results.push(format!("步骤 {} ({}): [失败] {}", idx + 1, step.name, e));
 
                 // 发射 workflow-step-complete 事件（失败）
-                let _ = window.emit("workflow-step-complete", serde_json::json!({
-                    "stepId": step.step_id,
-                    "status": "failed",
-                    "duration": duration_ms,
-                }));
+                let _ = window.emit(
+                    "workflow-step-complete",
+                    serde_json::json!({
+                        "stepId": step.step_id,
+                        "status": "failed",
+                        "duration": duration_ms,
+                    }),
+                );
 
                 // 步骤失败不中断整个工作流，继续执行后续步骤
             }
@@ -1589,7 +1702,10 @@ async fn execute_workflow(
     }
 
     // 发射 workflow-complete 事件
-    let _ = window.emit("workflow-complete", serde_json::json!({ "workflowId": workflow.workflow_id }));
+    let _ = window.emit(
+        "workflow-complete",
+        serde_json::json!({ "workflowId": workflow.workflow_id }),
+    );
 
     // 构建最终结果
     let summary = format!(
@@ -1628,8 +1744,8 @@ async fn execute_subagent(
     extra_context: Option<&str>,
     project_root: &str,
     project_id: Option<&str>,
-    agent_mode: &AgentMode,
     token: &CancellationToken,
+    locale: &str,
 ) -> Result<ToolResult, String> {
     let subagent_id = uuid::Uuid::new_v4().to_string();
     let model_to_use = profile.model_override.as_deref().unwrap_or(model);
@@ -1647,9 +1763,20 @@ async fn execute_subagent(
         },
     );
 
-    let mut sub_msgs = build_subagent_messages(profile, task_desc, context_files, project_root, extra_context);
+    let mut sub_msgs = build_subagent_messages(
+        profile,
+        task_desc,
+        context_files,
+        project_root,
+        extra_context,
+        locale,
+    );
     let (sub_tools, _sub_tool_map) = build_subagent_tools(profile, project_root);
-    let tools_slice: Option<&[ToolSpec]> = if sub_tools.is_empty() { None } else { Some(&sub_tools) };
+    let tools_slice: Option<&[ToolSpec]> = if sub_tools.is_empty() {
+        None
+    } else {
+        Some(&sub_tools)
+    };
 
     let mut round: usize = 0;
     let mut final_text = String::new();
@@ -1724,7 +1851,11 @@ async fn execute_subagent(
                         parent_topic_id: parent_topic_id.to_string(),
                         subagent_id: subagent_id.clone(),
                         round: round as u32,
-                        step_type: if rr.tool_calls.is_empty() { "content".to_string() } else { "tool_call".to_string() },
+                        step_type: if rr.tool_calls.is_empty() {
+                            "content".to_string()
+                        } else {
+                            "tool_call".to_string()
+                        },
                         summary: step_content,
                     },
                 );
@@ -1745,7 +1876,10 @@ async fn execute_subagent(
 
                     // 再次确认工具被允许（双重保险）
                     if !profile.is_tool_allowed(&tc.name) {
-                        let err_text = format!("[已阻止] 子 Agent ({}) 不允许使用工具: {}", profile.id, tc.name);
+                        let err_text = format!(
+                            "[已阻止] 子 Agent ({}) 不允许使用工具: {}",
+                            profile.id, tc.name
+                        );
                         sub_msgs.push(json!({
                             "role": "tool",
                             "content": err_text,
@@ -1774,8 +1908,11 @@ async fn execute_subagent(
                                 .and_then(|c| c.data.get("text"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
-                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
-                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                                .unwrap_or_else(|| {
+                                    serde_json::to_string(&tr.content).unwrap_or_default()
+                                });
+                            let result_value =
+                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
                             (text, result_value, tr.is_error)
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
@@ -1908,6 +2045,7 @@ struct SubagentErrorPayload {
 /// - `mcp_server_ids`：保留参数（主 Agent 门控后不再注入 MCP 工具，子 Agent 自建工具集）
 /// - `agent_mode`：Agent 执行模式，影响权限规则与工具注入（Plan: 研究工具 / Normal/Auto/Workflow: 编排工具 / Off: 无工具）
 /// - `project_id`：项目 id（用于解析项目级权限规则）
+/// - `locale`：可选界面语言；旧调用缺失时兼容回退到 `zh-CN`
 #[tauri::command]
 pub async fn run_agent_turn(
     app: AppHandle,
@@ -1920,18 +2058,23 @@ pub async fn run_agent_turn(
     assistant_id: String,
     topic_id: String,
     messages: Vec<Message>,
-    mcp_server_ids: Vec<String>,
+    _mcp_server_ids: Vec<String>,
     agent_mode: AgentMode,
     project_id: Option<String>,
     web_search_enabled: bool,
     profile_model_overrides: Vec<ProfileModelOverride>,
     custom_subagent_profiles: Vec<crate::core::models::CustomSubagentProfile>,
+    locale: Option<String>,
 ) -> Result<(), String> {
     // 诊断日志：打印 messages 每个元素的 role 和关键字段是否存在
     for (i, m) in messages.iter().enumerate() {
         tracing::info!(
             "[run_agent_turn] messages[{}] role={} has_toolCallId={} has_toolCalls={} has_name={}",
-            i, m.role, m.tool_call_id.is_some(), m.tool_calls.is_some(), m.name.is_some()
+            i,
+            m.role,
+            m.tool_call_id.is_some(),
+            m.tool_calls.is_some(),
+            m.name.is_some()
         );
     }
     // SSRF 防护
@@ -1946,10 +2089,7 @@ pub async fn run_agent_turn(
     // 可能在新的 insert 之后执行，误删新任务的条目导致新任务变成孤儿。
     if let Some((_, (old_handle, old_token))) = stream_mgr.0.remove(&task_key) {
         old_token.cancel();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            old_handle,
-        ).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), old_handle).await;
     }
 
     // 预先把 messages 转为 API 格式（含附件 image 展开等），在持锁期间完成同步 I/O
@@ -1961,6 +2101,22 @@ pub async fn run_agent_turn(
             .collect::<Result<Vec<_>, _>>()?
     };
     verify_tool_messages(&messages_for_api);
+    let locale_c = if locale.as_deref() == Some("en-US") {
+        "en-US".to_string()
+    } else {
+        "zh-CN".to_string()
+    };
+    messages_for_api.insert(
+        0,
+        json!({
+            "role": "system",
+            "content": if locale_c == "en-US" {
+                "Use English for AIO-controlled explanations, plans, and summaries. Preserve user content, code, identifiers, tool names, paths, and external output verbatim."
+            } else {
+                "AIO 控制的说明、计划和总结请使用简体中文。用户内容、代码、标识符、工具名、路径和外部输出保持原文。"
+            }
+        }),
+    );
 
     let is_agent_mode = agent_mode != AgentMode::Off;
 
@@ -1977,8 +2133,8 @@ pub async fn run_agent_turn(
 
     let handle = tokio::spawn(async move {
         // 加载应用配置（含自动重试设置）
-        let app_config = crate::commands::config::load_app_config(app_c.clone())
-            .unwrap_or_else(|_| AppConfig {
+        let app_config =
+            crate::commands::config::load_app_config(app_c.clone()).unwrap_or_else(|_| AppConfig {
                 api_url: String::new(),
                 api_key: String::new(),
                 default_model: String::new(),
@@ -2002,7 +2158,7 @@ pub async fn run_agent_turn(
         // - Normal/Auto/Workflow: 仅编排工具（delegate_task + create_workflow + think + web + project_map）
         // - 对话 + 联网: 仅 web 工具
         // - 纯对话: 无工具
-        let (tools, tool_server_map) = if agent_mode == AgentMode::Plan {
+        let (mut tools, mut tool_server_map) = if agent_mode == AgentMode::Plan {
             // Plan 模式：仅研究工具（think + project_map + web）
             let mut plan_tools: Vec<ToolSpec> = Vec::new();
             let mut plan_map: HashMap<String, String> = HashMap::new();
@@ -2036,7 +2192,10 @@ pub async fn run_agent_turn(
 
             // delegate_tasks（批量并行）
             let delegate_batch_spec = subagent::delegate_tasks_tool_spec();
-            orch_map.insert(delegate_batch_spec.function.name.clone(), "__builtin__".into());
+            orch_map.insert(
+                delegate_batch_spec.function.name.clone(),
+                "__builtin__".into(),
+            );
             orch_tools.push(delegate_batch_spec);
 
             // create_workflow
@@ -2072,6 +2231,12 @@ pub async fn run_agent_turn(
         } else {
             (Vec::new(), std::collections::HashMap::new())
         };
+        if is_agent_mode && app_config.knowledge_enabled && project_id_c.is_some() {
+            for spec in knowledge::get_knowledge_tool_specs() {
+                tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
+                tools.push(spec);
+            }
+        }
         let tools_slice: Option<&[ToolSpec]> = if tools.is_empty() { None } else { Some(&tools) };
 
         let mut round: u32 = 0;
@@ -2112,20 +2277,19 @@ pub async fn run_agent_turn(
                     let project_knowledge = knowledge::load_knowledge(&project_root);
                     if !project_knowledge.entries.is_empty() {
                         let prompt = knowledge::knowledge_to_prompt(&project_knowledge);
-                        messages_for_api.insert(1, serde_json::json!({
-                            "role": "system",
-                            "content": format!("[项目知识 — 来自之前对话]\n{}", prompt)
-                        }));
+                        messages_for_api.insert(
+                            1,
+                            serde_json::json!({
+                                "role": "system",
+                                "content": format!("[项目知识 — 来自之前对话]\n{}", prompt)
+                            }),
+                        );
                     }
                 }
             }
         }
         // 上下文预算追踪（字符级近似，保守估计）
         const CONTEXT_BUDGET_CRITICAL: usize = 95_000;
-        let mut context_total_chars: usize = messages_for_api.iter()
-            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
-            .sum();
-        let mut context_compression_needed = false;
 
         'outer: loop {
             round += 1;
@@ -2263,7 +2427,8 @@ pub async fn run_agent_turn(
 
                 if server_id.as_deref() == Some("__builtin__") && tc.name == "delegate_task" {
                     // 检查 wait 参数：false = 后台执行（fire-and-forget）
-                    let wait_for_result = args_val.get("wait")
+                    let wait_for_result = args_val
+                        .get("wait")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
                     if !wait_for_result {
@@ -2282,30 +2447,37 @@ pub async fn run_agent_turn(
                         let profile_overrides_clone = profile_overrides_c.clone();
                         let custom_profiles_clone = custom_profiles_c.clone();
                         let token_clone = token_inner.clone();
+                        let locale_clone = locale_c.clone();
                         let subagent_id = uuid::Uuid::new_v4().to_string();
                         let sid = subagent_id.clone();
                         let app_c2 = app_c.clone();
                         tokio::spawn(async move {
                             let result = handle_delegate_task(
-                                &window_clone, &app_clone, &client_clone,
-                                &api_url_clone, &api_key_clone, &model_clone,
-                                &assistant_id_clone, &topic_id_clone,
-                                &args_val_clone, project_id_clone.as_deref(),
-                                &agent_mode_clone, &token_clone,
-                                &profile_overrides_clone, &custom_profiles_clone,
-                            ).await;
+                                &window_clone,
+                                &app_clone,
+                                &client_clone,
+                                &api_url_clone,
+                                &api_key_clone,
+                                &model_clone,
+                                &assistant_id_clone,
+                                &topic_id_clone,
+                                &args_val_clone,
+                                project_id_clone.as_deref(),
+                                &agent_mode_clone,
+                                &token_clone,
+                                &profile_overrides_clone,
+                                &custom_profiles_clone,
+                                &locale_clone,
+                            )
+                            .await;
                             // Remove handle from registry on completion
-                            if let Some(handles) = app_c2.try_state::<crate::core::state::SubagentHandles>() {
+                            if let Some(handles) =
+                                app_c2.try_state::<crate::core::state::SubagentHandles>()
+                            {
                                 handles.0.remove(&sid);
                             }
                             let _ = result;
                         });
-                        // Register handle for lifecycle management
-                        if let Some(handles) = app_c.try_state::<crate::core::state::SubagentHandles>() {
-                            // Note: JoinHandle can't be stored here since it's already spawned;
-                            // the spawned task self-cleans on completion.
-                            // We emit a status event to the frontend.
-                        }
                         // Immediate result: acknowledge the fire-and-forget
                         let content_text = format!("子智能体已在后台启动 (ID: {})", subagent_id);
                         exec_results[i] = Some(ToolExecResult {
@@ -2329,20 +2501,32 @@ pub async fn run_agent_turn(
                         let profile_overrides_clone = profile_overrides_c.clone();
                         let custom_profiles_clone = custom_profiles_c.clone();
                         let token_clone = token_inner.clone();
+                        let locale_clone = locale_c.clone();
 
                         let fut = Box::pin(async move {
                             handle_delegate_task(
-                                &window_clone, &app_clone, &client_clone,
-                                &api_url_clone, &api_key_clone, &model_clone,
-                                &assistant_id_clone, &topic_id_clone,
-                                &args_val_clone, project_id_clone.as_deref(),
-                                &agent_mode_clone, &token_clone,
-                                &profile_overrides_clone, &custom_profiles_clone,
-                            ).await
+                                &window_clone,
+                                &app_clone,
+                                &client_clone,
+                                &api_url_clone,
+                                &api_key_clone,
+                                &model_clone,
+                                &assistant_id_clone,
+                                &topic_id_clone,
+                                &args_val_clone,
+                                project_id_clone.as_deref(),
+                                &agent_mode_clone,
+                                &token_clone,
+                                &profile_overrides_clone,
+                                &custom_profiles_clone,
+                                &locale_clone,
+                            )
+                            .await
                         });
                         delegate_futures.push((i, fut));
                     }
-                } else if server_id.as_deref() == Some("__builtin__") && tc.name == "delegate_tasks" {
+                } else if server_id.as_deref() == Some("__builtin__") && tc.name == "delegate_tasks"
+                {
                     // 批量并行：收集一个 future，放入 delegate_futures
                     let window_clone = window.clone();
                     let app_clone = app_c.clone();
@@ -2359,20 +2543,33 @@ pub async fn run_agent_turn(
                     let custom_profiles_clone = custom_profiles_c.clone();
                     let semaphore_clone = subagent_semaphore.clone();
                     let token_clone = token_inner.clone();
+                    let locale_clone = locale_c.clone();
 
                     let fut = Box::pin(async move {
                         handle_delegate_tasks(
-                            &window_clone, &app_clone, &client_clone,
-                            &api_url_clone, &api_key_clone, &model_clone,
-                            &assistant_id_clone, &topic_id_clone,
-                            &args_val_clone, project_id_clone.as_deref(),
-                            &agent_mode_clone, &token_clone,
-                            &profile_overrides_clone, &custom_profiles_clone,
+                            &window_clone,
+                            &app_clone,
+                            &client_clone,
+                            &api_url_clone,
+                            &api_key_clone,
+                            &model_clone,
+                            &assistant_id_clone,
+                            &topic_id_clone,
+                            &args_val_clone,
+                            project_id_clone.as_deref(),
+                            &agent_mode_clone,
+                            &token_clone,
+                            &profile_overrides_clone,
+                            &custom_profiles_clone,
                             semaphore_clone,
-                        ).await
+                            &locale_clone,
+                        )
+                        .await
                     });
                     delegate_futures.push((i, fut));
-                } else if server_id.as_deref() == Some("__builtin__") && tc.name == "create_workflow" {
+                } else if server_id.as_deref() == Some("__builtin__")
+                    && tc.name == "create_workflow"
+                {
                     // 工作流创建：解析参数并顺序执行所有步骤
                     workflow_called = true;
                     let title = args_val["title"].as_str().unwrap_or("Workflow").to_string();
@@ -2384,11 +2581,15 @@ pub async fn run_agent_turn(
                             let mut workflow_steps: Vec<WorkflowStep> = Vec::new();
                             let mut parse_error: Option<String> = None;
                             for (idx, step) in steps_arr.iter().enumerate() {
-                                let profile = step["profile"].as_str().unwrap_or("general").to_string();
+                                let profile =
+                                    step["profile"].as_str().unwrap_or("general").to_string();
                                 let name = step["name"].as_str().unwrap_or("").to_string();
                                 let task = step["task"].as_str().unwrap_or("").to_string();
                                 if task.is_empty() {
-                                    parse_error = Some(format!("create_workflow: 步骤 {} 缺少 'task' 字段", idx + 1));
+                                    parse_error = Some(format!(
+                                        "create_workflow: 步骤 {} 缺少 'task' 字段",
+                                        idx + 1
+                                    ));
                                     break;
                                 }
                                 workflow_steps.push(WorkflowStep {
@@ -2405,27 +2606,29 @@ pub async fn run_agent_turn(
                             if let Some(err) = parse_error {
                                 Err(err)
                             } else {
-                            let workflow = Workflow {
-                                workflow_id: uuid::Uuid::new_v4().to_string(),
-                                title,
-                                steps: workflow_steps,
-                            };
-                            execute_workflow(
-                                &window,
-                                &app_c,
-                                &client,
-                                &api_url,
-                                &api_key,
-                                &model,
-                                &assistant_id_c,
-                                &topic_id_c,
-                                &workflow,
-                                project_id_c.as_deref(),
-                                &custom_profiles_c,
-                                &profile_overrides_c,
-                                &token_inner,
-                            ).await
-                        }
+                                let workflow = Workflow {
+                                    workflow_id: uuid::Uuid::new_v4().to_string(),
+                                    title,
+                                    steps: workflow_steps,
+                                };
+                                execute_workflow(
+                                    &window,
+                                    &app_c,
+                                    &client,
+                                    &api_url,
+                                    &api_key,
+                                    &model,
+                                    &assistant_id_c,
+                                    &topic_id_c,
+                                    &workflow,
+                                    project_id_c.as_deref(),
+                                    &custom_profiles_c,
+                                    &profile_overrides_c,
+                                    &token_inner,
+                                    &locale_c,
+                                )
+                                .await
+                            }
                         }
                     } else {
                         Err("create_workflow: 缺少 'steps' 数组".to_string())
@@ -2440,8 +2643,11 @@ pub async fn run_agent_turn(
                                 .and_then(|c| c.data.get("text"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
-                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
-                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                                .unwrap_or_else(|| {
+                                    serde_json::to_string(&tr.content).unwrap_or_default()
+                                });
+                            let result_value =
+                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
                             (text, result_value, tr.is_error)
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
@@ -2455,11 +2661,14 @@ pub async fn run_agent_turn(
                 } else {
                     // 非 delegate 工具：立即顺序执行
                     // 在工具执行前提取文件路径（args_val 可能被 move 到 MCP 调用中）
-                    let file_path_for_diff: Option<String> = if ["write_file", "replace_in_file", "delete_file"].contains(&tc.name.as_str()) {
-                        args_val["path"].as_str().map(|s| s.to_string())
-                    } else {
-                        None
-                    };
+                    let file_path_for_diff: Option<String> =
+                        if ["write_file", "replace_in_file", "delete_file"]
+                            .contains(&tc.name.as_str())
+                        {
+                            args_val["path"].as_str().map(|s| s.to_string())
+                        } else {
+                            None
+                        };
                     let tool_result = if server_id.as_deref() == Some("__builtin__") {
                         execute_builtin_tool(
                             &app_c,
@@ -2515,8 +2724,11 @@ pub async fn run_agent_turn(
                                 .and_then(|c| c.data.get("text"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
-                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
-                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                                .unwrap_or_else(|| {
+                                    serde_json::to_string(&tr.content).unwrap_or_default()
+                                });
+                            let result_value =
+                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
                             (text, result_value, tr.is_error)
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
@@ -2575,8 +2787,11 @@ pub async fn run_agent_turn(
                                 .and_then(|c| c.data.get("text"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string())
-                                .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default());
-                            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+                                .unwrap_or_else(|| {
+                                    serde_json::to_string(&tr.content).unwrap_or_default()
+                                });
+                            let result_value =
+                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
                             (text, result_value, tr.is_error)
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
@@ -2632,7 +2847,10 @@ pub async fn run_agent_turn(
 
                     let mut tool_msg = serde_json::Map::new();
                     tool_msg.insert("role".into(), json!("tool"));
-                    tool_msg.insert("content".into(), json!(truncate_tool_result(&result.content_text)));
+                    tool_msg.insert(
+                        "content".into(),
+                        json!(truncate_tool_result(&result.content_text)),
+                    );
                     tool_msg.insert("tool_call_id".into(), json!(tc.id));
                     tool_msg.insert("name".into(), json!(tc.name));
                     messages_for_api.push(serde_json::Value::Object(tool_msg));
@@ -2640,14 +2858,12 @@ pub async fn run_agent_turn(
             }
 
             // 上下文预算检查：更新总字符数并标记压缩需求
-            context_total_chars = messages_for_api.iter()
+            let context_total_chars: usize = messages_for_api
+                .iter()
                 .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
                 .sum();
-            if context_total_chars > CONTEXT_BUDGET_CRITICAL && messages_for_api.len() > 4 {
-                context_compression_needed = true;
-            }
             // 在下一轮开始前执行压缩
-            if context_compression_needed {
+            if context_total_chars > CONTEXT_BUDGET_CRITICAL && messages_for_api.len() > 4 {
                 let window_c = window.clone();
                 let client_c = client.clone();
                 let api_url_c = api_url.clone();
@@ -2658,15 +2874,14 @@ pub async fn run_agent_turn(
                 let tok = token_inner.clone();
                 let mut msgs = std::mem::take(&mut messages_for_api);
                 match compress_context(
-                    &window_c, &client_c, &api_url_c, &api_key_c, &model_c,
-                    &mut msgs, &a_id, &t_id, &tok,
-                ).await {
+                    &window_c, &client_c, &api_url_c, &api_key_c, &model_c, &mut msgs, &a_id,
+                    &t_id, &tok,
+                )
+                .await
+                {
                     Ok(_) => {
-                        context_compression_needed = false;
-                        context_total_chars = msgs.iter()
-                            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
-                            .sum();
-                        let _ = window.emit("llm-compression", json!({"round": round, "result": "ok"}));
+                        let _ =
+                            window.emit("llm-compression", json!({"round": round, "result": "ok"}));
                     }
                     Err(e) => {
                         let _ = window.emit("llm-compression-failed", json!({"error": e}));
@@ -2694,9 +2909,21 @@ pub async fn run_agent_turn(
                 },
                 done: true,
                 error: error_payload,
-                input_tokens: if total_input_tokens > 0 { Some(total_input_tokens) } else { None },
-                output_tokens: if total_output_tokens > 0 { Some(total_output_tokens) } else { None },
-                context_tokens: if context_input_tokens > 0 { Some(context_input_tokens) } else { None },
+                input_tokens: if total_input_tokens > 0 {
+                    Some(total_input_tokens)
+                } else {
+                    None
+                },
+                output_tokens: if total_output_tokens > 0 {
+                    Some(total_output_tokens)
+                } else {
+                    None
+                },
+                context_tokens: if context_input_tokens > 0 {
+                    Some(context_input_tokens)
+                } else {
+                    None
+                },
             },
         );
 
@@ -2759,7 +2986,9 @@ async fn compress_context(
         "max_tokens": 1024
     });
 
-    let base_url = api_url.trim_end_matches('/').replace("/chat/completions", "");
+    let base_url = api_url
+        .trim_end_matches('/')
+        .replace("/chat/completions", "");
     let endpoint = format!("{}/chat/completions", base_url);
 
     let res = tokio::select! {
@@ -2778,7 +3007,11 @@ async fn compress_context(
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
 
     if let Some(err) = val.get("error") {
-        return Err(err.get("message").and_then(|m| m.as_str()).unwrap_or("API Error").to_string());
+        return Err(err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("API Error")
+            .to_string());
     }
 
     let summary = val["choices"][0]["message"]["content"]
@@ -2880,7 +3113,6 @@ pub async fn summarize_history(
 
     Ok(summary)
 }
-
 
 /// 返回按日期降序排列的每日 input/output tokens 与请求次数。
 /// 用于前端用量面板展示（如"过去 7 天 / 30 天用量"）。
@@ -3031,7 +3263,8 @@ pub async fn append_message(
             message.parent_message_id,
             message.branch_index,
         ],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     sync_message_attachments(&conn, &message_id, message.display_files.as_ref())?;
     Ok(())
 }
@@ -3046,7 +3279,8 @@ pub async fn delete_topic_message(
     conn.execute(
         "DELETE FROM messages WHERE id = ?1 AND topic_id = ?2",
         params![message_id, topic_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -3091,13 +3325,30 @@ fn clean_topic_title(raw: &str) -> String {
 
     // 剥离常见前缀（最多尝试 3 轮，防止 "好的，标题是：xxx" 这种嵌套）
     const PREFIXES: &[&str] = &[
-        "好的，标题是：", "好的，标题是:", "好的，标题：", "好的，标题:",
-        "好的：", "好的:", "好的，", "好的,",
-        "标题是：", "标题是:", "标题：", "标题:",
-        "Title:", "Title：", "title:", "title：",
-        "以下是", "以下为", "下面给出", "给你一个",
-        "Here is the title:", "Here is the title：",
-        "The title is:", "The title is：",
+        "好的，标题是：",
+        "好的，标题是:",
+        "好的，标题：",
+        "好的，标题:",
+        "好的：",
+        "好的:",
+        "好的，",
+        "好的,",
+        "标题是：",
+        "标题是:",
+        "标题：",
+        "标题:",
+        "Title:",
+        "Title：",
+        "title:",
+        "title：",
+        "以下是",
+        "以下为",
+        "下面给出",
+        "给你一个",
+        "Here is the title:",
+        "Here is the title：",
+        "The title is:",
+        "The title is：",
     ];
     for _ in 0..3 {
         let mut matched = false;

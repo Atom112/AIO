@@ -5,6 +5,7 @@ import {
     requestRenameTopic
 } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
+import { formatDateTime, t } from '../../../core/i18n';
 
 interface TopicSidebarProps {
     width: number;
@@ -22,7 +23,9 @@ interface TopicSidebarProps {
 
 const createTopic = (name?: string): Topic => ({
     id: Date.now().toString(),
-    name: name || `新话题 ${new Date().toLocaleTimeString()}`,
+    name: name || t('chat.untitledTopic', {
+        time: formatDateTime(Date.now(), { hour: '2-digit', minute: '2-digit' }),
+    }),
     history: [],
     summary: ""
 });
@@ -85,7 +88,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         const asst = datas.assistants.find(a => a.id === asstId);
         if (!asst) return;
         if (asst.topics.length <= 1) {
-            const newT = createTopic('默认话题');
+            const newT = createTopic(t('chat.defaultTopic'));
             setDatas('assistants', a => a.id === asstId, 'topics', [newT]);
             setCurrentTopicId(newT.id);
         } else {
@@ -146,7 +149,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                 <div
                     class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
                     style="background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
-                    title={props.isCollapsed ? "展开话题栏" : "折叠话题栏"}
+                    title={props.isCollapsed ? t('chat.expandTopics') : t('chat.collapseTopics')}
                     onClick={(e) => { e.stopPropagation(); props.onToggle(e); }}
                 >
                     {props.isCollapsed ? '〈' : '〉'}
@@ -167,7 +170,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(124,154,191,0.12)'}
                                 onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
                             >
-                                新建话题
+                                {t('chat.newTopic')}
                             </button>
                             <div class="mt-[15px] space-y-1">
                                 {(() => {
@@ -184,7 +187,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                             >
                                                 {/* 子话题分支标记 */}
                                                 {isChild && (
-                                                    <span class="mr-1 shrink-0 leading-none" style="color: rgba(124,154,191,0.5); font-size: 9px;" title="分支话题">└</span>
+                                                    <span class="mr-1 shrink-0 leading-none" style="color: rgba(124,154,191,0.5); font-size: 9px;" title={t('chat.branchTopic')}>└</span>
                                                 )}
                                                 <Show
                                                     when={props.editingTopicId === topic.id}
@@ -236,12 +239,12 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         }}
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>重命名</button>
+                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={() => { props.setEditingTopicId(topicMenuState().targetTopicId); closeTopicMenu(); }}>{t('chat.renameTopic')}</button>
                         <Show when={!isMenuTargetDefault()}>
-                            <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={handleRegenerateTitle}>重新生成标题</button>
+                            <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={handleRegenerateTitle}>{t('chat.regenerateTitle')}</button>
                         </Show>
-                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={() => { props.onExportTopic(topicMenuState().targetTopicId!); closeTopicMenu(); }}>导出对话</button>
-                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>删除话题</button>
+                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" onClick={() => { props.onExportTopic(topicMenuState().targetTopicId!); closeTopicMenu(); }}>{t('chat.export')}</button>
+                        <button class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white" style="color: rgba(255,77,77,0.8);" onClick={() => deleteTopic(props.currentAssistant!.id, topicMenuState().targetTopicId!)}>{t('chat.deleteTopic')}</button>
                     </div>
                 </Portal>
             )}

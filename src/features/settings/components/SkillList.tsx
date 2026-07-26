@@ -4,6 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { datas, saveSingleAssistantToBackend, setDatas, setSkills, skills, currentProjectId, currentProject } from '../../../core/store/store';
 import Dropdown from '../../../shared/components/Dropdown';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 import type { MarketSkill, SkillConfig, SkillMarketCategory, DiscoveredNpxSkill } from '../../../core/types/skill';
 
 type MarketSort = 'all' | 'trending' | 'hot';
@@ -245,7 +246,7 @@ const SkillList: Component = () => {
     });
 
     const categoryOptions = createMemo(() => [
-        { value: 'all', label: '全部分类' },
+        { value: 'all', label: t('skill.allCategories') },
         ...categories().map(item => ({ value: item.id, label: `${item.name} (${item.skillCount})` })),
     ]);
 
@@ -285,7 +286,7 @@ const SkillList: Component = () => {
             setLastRefreshedAt(new Date(updatedAt));
             setRefreshResult({ ok: true, msg: `已更新 ${marketList.length} 个 Skill` });
         } catch (e) {
-            setRefreshResult({ ok: false, msg: '更新失败' });
+            setRefreshResult({ ok: false, msg: t('skill.refreshFailed') });
         } finally {
             setRefreshing(false);
             setTimeout(() => setRefreshResult(null), 3000);
@@ -332,7 +333,7 @@ const SkillList: Component = () => {
     };
 
     const remove = async (id: string) => {
-        if (!confirm('确定移除此 Skill？所有助手中的引用也会被移除。')) return;
+        if (!confirm(t('skill.removeConfirm'))) return;
         try {
             await invoke('delete_skill', { id, projectId: projectId() });
             const next = { ...skills() };
@@ -359,7 +360,7 @@ const SkillList: Component = () => {
     return (
         <div class="flex flex-col h-full overflow-hidden p-6 gap-4" style="color: rgba(255,255,255,0.88);">
             <div class="animate-row-in flex items-start justify-between gap-4">
-                <h2 class="text-xl font-semibold">Skill 市场</h2>
+                <h2 class="text-xl font-semibold">{t('skill.market')}</h2>
             </div>
 
             <div class="animate-row-in flex items-center justify-between gap-3 flex-wrap" style="animation-delay: 30ms;">
@@ -368,17 +369,17 @@ const SkillList: Component = () => {
                         <button class="px-3 py-1.5 rounded-md text-sm"
                             classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
                             onClick={() => setView('market')}>
-                            市场
+                            {t('skill.tabMarket')}
                         </button>
                         <button class="px-3 py-1.5 rounded-md text-sm"
                             classList={{ 'bg-pri-20 text-pri': view() === 'downloaded' }}
                             onClick={() => setView('downloaded')}>
-                            已下载 ({Object.keys(skills()).length})
+                            {t('skill.tabDownloaded', { count: Object.keys(skills()).length })}
                         </button>
                         <button class="px-3 py-1.5 rounded-md text-sm"
                             classList={{ 'bg-pri-20 text-pri': view() === 'npx' }}
                             onClick={() => { setView('npx'); if (!npxScanned) discoverNpx(); }}>
-                            npx 发现
+                            {t('skill.tabNpx')}
                         </button>
                     </div>
                     {/* 存在活跃项目时，显示作用域切换（市场/已下载/npx 均可看到） */}
@@ -387,12 +388,12 @@ const SkillList: Component = () => {
                             <button class="px-2.5 py-1 rounded-md text-xs"
                                 classList={{ 'bg-pri-20 text-pri': scope() === 'global' }}
                                 onClick={() => setScope('global')}>
-                                全局
+                                {t('skill.scopeGlobal')}
                             </button>
                             <button class="px-2.5 py-1 rounded-md text-xs"
                                 classList={{ 'bg-pri-20 text-pri': scope() === 'project' }}
                                 onClick={() => setScope('project')}>
-                                项目: {currentProject()?.name ?? ''}
+                                {t('skill.scopeProject', { name: currentProject()?.name ?? '' })}
                             </button>
                         </div>
                     )}
@@ -403,7 +404,7 @@ const SkillList: Component = () => {
                         class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
                         value={query()}
                         onInput={(e) => setQuery(e.currentTarget.value)}
-                        placeholder="搜索 Skill、作者或仓库"
+                        placeholder={t('skill.searchPlaceholder')}
                     />
                 </div>
             </div>
@@ -412,8 +413,8 @@ const SkillList: Component = () => {
                 <div class="animate-row-in flex items-center gap-3 flex-wrap" style="animation-delay: 60ms;">
                     <div class="flex gap-1">
                         {([
-                            ['all', '总热度'],
-                            ['trending', '24 小时趋势'],
+                            ['all', t('skill.tabHot')],
+                            ['trending', t('skill.tabTrend')],
                             ['hot', 'Hot'],
                         ] as const).map(([value, label]) => (
                             <button
@@ -441,7 +442,7 @@ const SkillList: Component = () => {
                         <Show when={refreshing()} fallback={<Icon name="refresh" size={11} />}>
                             <Icon name="spinner" size={11} class="animate-spin" />
                         </Show>
-                        {refreshing() ? '更新中…' : '刷新'}
+                        {refreshing() ? t('skill.refreshing') : t('skill.refresh')}
                     </button>
                     <Show when={refreshResult()}>
                         <span
@@ -454,7 +455,7 @@ const SkillList: Component = () => {
                     </Show>
                     <Show when={lastRefreshedAt()}>
                         <span class="text-[10px]" style="color: rgba(255,255,255,0.3);">
-                            更新于 {lastRefreshedAt()!.toLocaleTimeString()}
+                            {t('skill.updatedAt', { time: lastRefreshedAt()!.toLocaleTimeString() })}
                         </span>
                     </Show>
                 </div>
@@ -463,14 +464,14 @@ const SkillList: Component = () => {
             <Show when={error()}>
                 <div class="px-3 py-2 rounded-md text-sm" style="background: rgba(255,77,77,0.1); color: #ff8a8a;">
                     {error()}
-                    <button class="ml-3 underline" onClick={() => setError(null)}>关闭</button>
+                    <button class="ml-3 underline" onClick={() => setError(null)}>{t('skill.close')}</button>
                 </div>
             </Show>
 
             <div class="flex-1 overflow-y-auto min-h-0">
                 <Show when={loading()}>
                     <div class="h-full flex items-center justify-center text-sm" style="color: rgba(255,255,255,0.45);">
-                        正在加载 skills.sh…
+                        {t('skill.loadingMarket')}
                     </div>
                 </Show>
 
@@ -502,16 +503,16 @@ const SkillList: Component = () => {
                                             <div class="text-right shrink-0">
                                                 <div class="font-mono text-sm">{skill.installsLabel || formatInstalls(skill.installs)}</div>
                                                 <div class="text-[10px]" style="color: rgba(255,255,255,0.35);">
-                                                    总安装
+                                                    {t('skill.installs')}
                                                 </div>
                                             </div>
                                         </div>
                                         <p class="text-xs leading-relaxed line-clamp-3 min-h-[3rem]" style="color: rgba(255,255,255,0.55);">
-                                            {skill.description || '该 Skill 暂无简介，下载后可查看完整指令。'}
+                                            {skill.description || t('skill.noDescription')}
                                         </p>
                                         <div class="flex items-center justify-between gap-3">
                                             <span class="text-[11px]" style="color: rgba(255,255,255,0.4);">
-                                                {weekly() > 0 ? `最近一周 ${formatInstalls(weekly())}` : 'skills.sh 社区内容'}
+                                                {weekly() > 0 ? t('skill.weeklyInstalls', { count: formatInstalls(weekly()) }) : t('skill.communityContent')}
                                             </span>
                                             <button
                                                 class="px-3 py-1.5 rounded-md text-xs"
@@ -521,7 +522,7 @@ const SkillList: Component = () => {
                                                     : 'background: rgba(124,154,191,0.2); border: 1px solid rgba(124,154,191,0.3);'}
                                                 onClick={() => void download(skill)}
                                             >
-                                                {downloaded() ? '已下载' : downloadingId() === skill.id ? '下载中…' : '下载'}
+                                                {downloaded() ? t('skill.downloaded') : downloadingId() === skill.id ? t('skill.downloading') : t('skill.download')}
                                             </button>
                                         </div>
                                     </div>
@@ -535,7 +536,7 @@ const SkillList: Component = () => {
                     <div class="flex flex-col gap-2">
                         <For each={filteredLocalSkills()} fallback={
                             <div class="py-12 text-center text-sm" style="color: rgba(255,255,255,0.4);">
-                                尚未下载 Skill。
+                                {t('skill.noInstalled')}
                             </div>
                         }>
                             {(skill, index) => (
@@ -557,18 +558,18 @@ const SkillList: Component = () => {
                                             <button class="px-2 py-1 rounded text-xs"
                                                 style="background: rgba(255,255,255,0.05);"
                                                 onClick={() => void openUrl(skill.sourceUrl!)}>
-                                                来源
+                                                {t('skill.source')}
                                             </button>
                                         </Show>
                                         <button class="px-2 py-1 rounded text-xs"
                                             style="background: rgba(255,255,255,0.05);"
                                             onClick={() => setEditing({ ...skill })}>
-                                            编辑
+                                            {t('skill.edit')}
                                         </button>
                                         <button class="px-2 py-1 rounded text-xs"
                                             style="background: rgba(255,77,77,0.1); color: rgba(255,107,107,0.9);"
                                             onClick={() => void remove(skill.id)}>
-                                            移除
+                                            {t('skill.remove')}
                                         </button>
                                     </div>
                                 </div>
@@ -582,7 +583,7 @@ const SkillList: Component = () => {
                     <div class="animate-row-in flex flex-col gap-3" style="animation-delay: 30ms;">
                         <div class="flex items-center justify-between">
                             <p class="text-xs" style="color: rgba(255,255,255,0.5);">
-                                扫描系统上的 Claude Code skill 包和全局 npm skill 包
+                                {t('skill.npxHint')}
                             </p>
                             <button
                                 class="px-3 py-1.5 rounded-md text-xs"
@@ -590,7 +591,7 @@ const SkillList: Component = () => {
                                 onClick={() => discoverNpx()}
                                 disabled={npxLoading()}
                             >
-                                {npxLoading() ? '扫描中...' : '重新扫描'}
+                                {npxLoading() ? t('skill.scanning') : t('skill.rescan')}
                             </button>
                         </div>
 
@@ -602,7 +603,7 @@ const SkillList: Component = () => {
                             <div class="flex flex-col gap-2">
                                 <For each={npxSkills()} fallback={
                                     <div class="py-12 text-center text-sm" style="color: rgba(255,255,255,0.4);">
-                                        未发现可导入的 npx skill 包。请确保已用 npm 全局安装，或 Claude Code 已配置该 skill。
+                                        {t('skill.npxEmpty')}
                                     </div>
                                 }>
                                     {(item) => (
@@ -631,12 +632,12 @@ const SkillList: Component = () => {
                                                         onClick={() => importNpx(item.packageName)}
                                                         disabled={npxImportingId() === item.packageName}
                                                     >
-                                                        {npxImportingId() === item.packageName ? '导入中...' : '导入'}
+                                                        {npxImportingId() === item.packageName ? t('skill.importing') : t('skill.import')}
                                                     </button>
                                                 }>
                                                     <span class="text-xs px-2 py-1 rounded"
                                                         style="background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.5);">
-                                                        已导入
+                                                        {t('skill.imported')}
                                                     </span>
                                                     <button
                                                         class="px-2 py-1 rounded text-xs"
@@ -644,7 +645,7 @@ const SkillList: Component = () => {
                                                         onClick={() => refreshNpx(`npx-${item.packageName}`)}
                                                         disabled={npxRefreshingId() === `npx-${item.packageName}`}
                                                     >
-                                                        {npxRefreshingId() === `npx-${item.packageName}` ? '刷新中...' : '刷新'}
+                                                        {npxRefreshingId() === `npx-${item.packageName}` ? t('skill.refreshing') : t('skill.refresh')}
                                                     </button>
                                                 </Show>
                                             </div>
@@ -663,23 +664,23 @@ const SkillList: Component = () => {
                     onClick={(e) => e.target === e.currentTarget && setEditing(null)}>
                     <div class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
                         style="background: rgba(18,22,35,0.98); border: 1px solid rgba(255,255,255,0.1);">
-                        <h3 class="text-base font-semibold">编辑 Skill</h3>
+                        <h3 class="text-base font-semibold">{t('skill.editTitle')}</h3>
                         <label class="flex flex-col gap-1 text-xs">
-                            名称
+                            {t('skill.name')}
                             <input class="px-3 py-2 rounded text-sm outline-none"
                                 style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);"
                                 value={editing()!.name}
                                 onInput={(e) => updateField('name', e.currentTarget.value)} />
                         </label>
                         <label class="flex flex-col gap-1 text-xs">
-                            说明
+                            {t('skill.description')}
                             <input class="px-3 py-2 rounded text-sm outline-none"
                                 style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);"
                                 value={editing()!.description}
                                 onInput={(e) => updateField('description', e.currentTarget.value)} />
                         </label>
                         <label class="flex flex-col gap-1 text-xs">
-                            系统指令
+                            {t('skill.systemPrompt')}
                             <textarea class="px-3 py-2 rounded text-sm outline-none min-h-[260px] resize-y font-mono"
                                 style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);"
                                 value={editing()!.content}
@@ -687,9 +688,9 @@ const SkillList: Component = () => {
                         </label>
                         <div class="flex justify-end gap-2">
                             <button class="px-3 py-1.5 rounded text-sm" style="background: rgba(255,255,255,0.05);"
-                                onClick={() => setEditing(null)}>取消</button>
+                                onClick={() => setEditing(null)}>{t('skill.cancel')}</button>
                             <button class="px-3 py-1.5 rounded text-sm bg-pri text-black" onClick={() => void save()}>
-                                保存
+                                {t('skill.save')}
                             </button>
                         </div>
                     </div>

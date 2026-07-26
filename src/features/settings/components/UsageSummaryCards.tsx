@@ -7,6 +7,7 @@
 import { Component, createMemo } from 'solid-js';
 import { getCachedCatalog } from '../../../core/utils/models';
 import type { ModelMeta } from '@aio/models-data';
+import { formatNumber, t } from '../../../core/i18n';
 
 /** 按天聚合的用量（对应 Rust UsageSummary） */
 export interface UsageSummary {
@@ -74,7 +75,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
                 class="rounded-xl p-4 flex flex-col gap-1.5"
                 style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
-                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">总 Token</span>
+                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">{t('usage.totalTokens')}</span>
                 <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{fmt(totalTokens())}</span>
                 <div class="flex gap-2 text-[10px] font-mono">
                     <span style="color: rgba(255,255,255,0.35);">↗ {fmt(totals().input)}</span>
@@ -87,9 +88,9 @@ const UsageSummaryCards: Component<Props> = (props) => {
                 class="rounded-xl p-4 flex flex-col gap-1.5"
                 style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
-                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">总请求</span>
-                <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{totals().requests}</span>
-                <span class="text-[10px]" style="color: rgba(255,255,255,0.25);">次 LLM 调用</span>
+                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">{t('usage.totalRequests')}</span>
+                <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{formatNumber(totals().requests)}</span>
+                <span class="text-[10px]" style="color: rgba(255,255,255,0.25);">{t('usage.llmCalls')}</span>
             </div>
 
             {/* 预估费用 */}
@@ -97,7 +98,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
                 class="rounded-xl p-4 flex flex-col gap-1.5"
                 style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
-                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">预估费用</span>
+                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">{t('usage.estimatedCost')}</span>
                 <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">
                     ${cost().toFixed(2)}
                 </span>
@@ -109,9 +110,9 @@ const UsageSummaryCards: Component<Props> = (props) => {
                 class="rounded-xl p-4 flex flex-col gap-1.5"
                 style="background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255,255,255,0.06);"
             >
-                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">活跃天数</span>
-                <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{totals().activeDays}</span>
-                <span class="text-[10px]" style="color: rgba(255,255,255,0.25);">天有使用记录</span>
+                <span class="text-[10px] uppercase tracking-widest font-bold" style="color: rgba(255,255,255,0.3);">{t('usage.activeDays')}</span>
+                <span class="text-xl font-bold font-mono" style="color: rgba(255,255,255,0.85);">{formatNumber(totals().activeDays)}</span>
+                <span class="text-[10px]" style="color: rgba(255,255,255,0.25);">{t('usage.daysRecorded')}</span>
             </div>
         </div>
     );

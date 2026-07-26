@@ -4,13 +4,15 @@
  */
 import { Component, createSignal, createMemo, createEffect, Show, Switch, Match, For } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import { toBlob, toPng } from 'html-to-image';
+import { toBlob, toCanvas, toPng } from 'html-to-image';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { marked } from 'marked';
+import { jsPDF } from 'jspdf';
 import type { Topic, Message } from '../../../core/store/store';
 import { exportAsMarkdown, exportAsJSON, exportAsHtml, type ExportOptions } from '../../../core/utils/exportConversation';
 import Icon from '../../../shared/components/Icon';
+import { locale, t } from '../../../core/i18n';
 type Tab = 'markdown' | 'json' | 'screenshot' | 'pdf';
 type JsonMode = 'full' | 'simple';
 type ShotFormat = 'png' | 'jpeg';
@@ -79,7 +81,7 @@ function extractText(msg: Message): string {
 /** 将消息内容渲染为 HTML：assistant 消息走 marked 解析，user 消息保持纯文本（转义） */
 function renderMessageHtml(msg: Message): string {
   const raw = extractText(msg);
-  if (!raw) return '<span style="opacity:0.4">(empty)</span>';
+  if (!raw) return `<span style="opacity:0.4">${t('export.empty')}</span>`;
   if (msg.role === 'user') {
     return raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
   }
@@ -103,7 +105,7 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
         color: isUser ? '#7c9abf' : '#4a9',
         'padding-left': isUser ? '0' : '4px', 'padding-right': isUser ? '4px' : '0',
       }}>
-        {isUser ? 'You' : (p.msg.modelId ? `Assistant (${p.msg.modelId})` : 'Assistant')}
+        {isUser ? t('export.roleYou') : (p.msg.modelId ? `${t('export.roleAssistant')} (${p.msg.modelId})` : t('export.roleAssistant'))}
       </div>
       <Show when={p.includeReasoning && p.msg.reasoning && !isUser}>
         <div style={{
@@ -153,6 +155,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
   const [pdfCapturing, setPdfCapturing] = createSignal(false);
 
   let captureRef: HTMLDivElement | undefined;
+  let pdfIframeRef: HTMLIFrameElement | undefined;
 
   const topic = () => props.topic;
 
@@ -254,50 +257,77 @@ const ShareModal: Component<ShareModalProps> = (props) => {
 
   // ---- pdf ----
 
-  const handlePdfPrint = () => {
+  const handlePdfDownload = async () => {
     setPdfCapturing(true);
-    const html = htmlContent();
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.top = '0';
-    iframe.style.left = '0';
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-    iframe.style.border = 'none';
-    iframe.style.zIndex = '99999';
-    iframe.style.background = '#fff';
-    document.body.appendChild(iframe);
+    try {
+      const iframeEl = pdfIframeRef;
+      if (!iframeEl?.contentDocument?.body) {
+        console.error('PDF iframe not ready');
+        setPdfCapturing(false);
+        return;
+      }
+      const topicName = topic()?.name || 'conversation';
+      const body = iframeEl.contentDocument.body;
 
-    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!doc) {
-      document.body.removeChild(iframe);
+      const canvas = await toCanvas(body, {
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+        width: body.scrollWidth,
+        height: body.scrollHeight,
+      });
+
+      // Create PDF with A4 dimensions (595 x 842 pt)
+      const doc = new jsPDF('p', 'pt', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 20;
+      const contentWidth = pageWidth - margin * 2;
+      const contentHeight = pageHeight - margin * 2;
+
+      // Scale canvas to fit page width
+      const imgWidth = contentWidth;
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+
+      // Split into pages if needed
+      let remainingHeight = imgHeight;
+      let srcY = 0;
+      let page = 0;
+
+      while (remainingHeight > 0) {
+        if (page > 0) doc.addPage();
+        const sliceHeight = Math.min(remainingHeight, contentHeight);
+        const srcH = (sliceHeight / imgHeight) * canvas.height;
+
+        doc.addImage(
+          canvas.toDataURL('image/png'),
+          'PNG',
+          margin,
+          margin,
+          imgWidth,
+          sliceHeight,
+          undefined,
+          'FAST',
+        );
+
+        srcY += srcH;
+        remainingHeight -= sliceHeight;
+        page++;
+      }
+
+      const pdfBytes = doc.output('arraybuffer');
+      const filePath = await save({
+        defaultPath: `${topicName}.pdf`,
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      });
+
+      if (filePath) {
+        await writeFile(filePath, new Uint8Array(pdfBytes));
+      }
+    } catch (e) {
+      console.error('PDF export failed:', e);
+    } finally {
       setPdfCapturing(false);
-      return;
     }
-    doc.open();
-    doc.write(html);
-    doc.close();
-
-    // Wait for content to render, then print
-    iframe.onload = () => {
-      setTimeout(() => {
-        iframe.contentWindow?.print();
-        // Remove after print dialog closes (best-effort)
-        const checkClosed = setInterval(() => {
-          if (doc.hidden || !document.body.contains(iframe)) {
-            clearInterval(checkClosed);
-            try { document.body.removeChild(iframe); } catch {}
-            setPdfCapturing(false);
-          }
-        }, 500);
-        // fallback cleanup after 60s
-        setTimeout(() => {
-          clearInterval(checkClosed);
-          try { document.body.removeChild(iframe); } catch {}
-          setPdfCapturing(false);
-        }, 60000);
-      }, 400);
-    };
   };
 
   const tab = () => activeTab();
@@ -324,9 +354,9 @@ const ShareModal: Component<ShareModalProps> = (props) => {
 
   const FilterOptions = () => (
     <>
-      <Checkbox checked={includeReasoning()} onChange={setIncludeReasoning} label="包含推理" />
-      <Checkbox checked={includeSystem()} onChange={setIncludeSystem} label="含 system" />
-      <Checkbox checked={includeToolCalls()} onChange={setIncludeToolCalls} label="含工具调用" />
+      <Checkbox checked={includeReasoning()} onChange={setIncludeReasoning} label={t('export.includeReasoning')} />
+      <Checkbox checked={includeSystem()} onChange={setIncludeSystem} label={t('export.includeSystem')} />
+      <Checkbox checked={includeToolCalls()} onChange={setIncludeToolCalls} label={t('export.includeToolCalls')} />
     </>
   );
 
@@ -357,13 +387,13 @@ const ShareModal: Component<ShareModalProps> = (props) => {
           >
             {/* 标题行 */}
             <div class="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] shrink-0">
-              <h2 class="m-0 text-lg font-semibold text-white/90">分享对话</h2>
+              <h2 class="m-0 text-lg font-semibold text-white/90">{t('export.shareTitle')}</h2>
               <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80">&times;</button>
             </div>
 
             {/* Tab 栏 */}
             <div class="flex gap-0 px-6 pt-4 border-b border-white/[0.06] shrink-0">
-              <button class={tabClass('screenshot')} onClick={() => setActiveTab('screenshot')}>截图</button>
+              <button class={tabClass('screenshot')} onClick={() => setActiveTab('screenshot')}>{t('export.screenshot')}</button>
               <button class={tabClass('markdown')} onClick={() => setActiveTab('markdown')}>Markdown</button>
               <button class={tabClass('json')} onClick={() => setActiveTab('json')}>JSON</button>
               <button class={tabClass('pdf')} onClick={() => setActiveTab('pdf')}>PDF</button>
@@ -379,12 +409,12 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     <div class="flex items-center gap-4 px-6 py-3 shrink-0 text-xs text-white/50 flex-wrap">
                       <FilterOptions />
                       <span class="mx-1 text-white/20">|</span>
-                      <span>格式：</span>
+                      <span>{t('export.format')}</span>
                       <button class={`px-3 py-1 rounded text-xs transition-all ${shotFormat() === 'png' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setShotFormat('png')}>PNG</button>
                       <button class={`px-3 py-1 rounded text-xs transition-all ${shotFormat() === 'jpeg' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setShotFormat('jpeg')}>JPEG</button>
-                      <span>宽度：</span>
-                      <button class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'narrow' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setShotWidth('narrow')}>窄</button>
-                      <button class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'wide' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setShotWidth('wide')}>宽</button>
+                      <span>{t('export.width')}</span>
+                      <button class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'narrow' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setShotWidth('narrow')}>{t('export.narrow')}</button>
+                      <button class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'wide' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setShotWidth('wide')}>{t('export.wide')}</button>
                     </div>
 
                     {/* 截图预览区 */}
@@ -432,7 +462,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                           {topic()?.name ?? ''}
                         </div>
                         <div style={{ 'font-size': '12px', color: '#888', 'margin-bottom': '16px' }}>
-                          {new Date().toLocaleString('zh-CN')}
+                          {new Date().toLocaleString(locale())}
                         </div>
                         <For each={visibleMessages()}>
                           {(msg) => (
@@ -454,7 +484,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         onClick={() => handleScreenshotCapture('copy')}
                       >
                         <Icon name="copy" class="w-3.5 h-3.5" />
-                        {copied() === 'screenshot' ? '已复制' : shotCapturing() ? '截图中...' : '复制截图'}
+                        {copied() === 'screenshot' ? t('common.copied') : shotCapturing() ? t('export.capturing') : t('export.copyScreenshot')}
                       </button>
                       <button
                         class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]"
@@ -462,7 +492,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         onClick={() => handleScreenshotCapture('download')}
                       >
                         <Icon name="download" class="w-3.5 h-3.5" />
-                        {shotCapturing() ? '截图中...' : `下载 ${shotFormat().toUpperCase()}`}
+                        {shotCapturing() ? t('export.capturing') : `${t('common.download')} ${shotFormat().toUpperCase()}`}
                       </button>
                     </div>
                   </div>
@@ -484,7 +514,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         onClick={() => handleCopy('markdown')}
                       >
                         <Icon name="copy" class="w-3.5 h-3.5" />
-                        {copied() === 'markdown' ? '已复制' : '复制到剪贴板'}
+                        {copied() === 'markdown' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
                       <button class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]" onClick={() => handleDownload('markdown')}>
                         <Icon name="download" class="w-3.5 h-3.5" />
@@ -498,9 +528,9 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                 <Match when={tab() === 'json'}>
                   <div class="flex flex-col flex-1 min-h-0">
                     <div class="flex items-center gap-4 px-6 py-3 shrink-0 text-xs text-white/50">
-                      <span>导出模式：</span>
-                      <button class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'full' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setJsonMode('full')}>完整导出</button>
-                      <button class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'simple' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setJsonMode('simple')}>简化导出</button>
+                      <span>{t('export.exportMode')}</span>
+                      <button class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'full' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setJsonMode('full')}>{t('export.full')}</button>
+                      <button class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'simple' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`} onClick={() => setJsonMode('simple')}>{t('export.simple')}</button>
                     </div>
                     <div class="flex-1 min-h-0 px-6 pb-2">
                       <textarea readonly value={jsonContent()} class="w-full h-full resize-none rounded-lg p-4 text-[13px] leading-relaxed font-mono outline-none"
@@ -512,7 +542,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         onClick={() => handleCopy('json')}
                       >
                         <Icon name="copy" class="w-3.5 h-3.5" />
-                        {copied() === 'json' ? '已复制' : '复制到剪贴板'}
+                        {copied() === 'json' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
                       <button class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]" onClick={() => handleDownload('json')}>
                         <Icon name="download" class="w-3.5 h-3.5" />
@@ -531,6 +561,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     {/* HTML preview */}
                     <div class="flex-1 min-h-0 px-6 pb-2">
                       <iframe
+                        ref={pdfIframeRef}
                         srcdoc={htmlContent()}
                         class="w-full h-full rounded-lg border-0"
                         style={{ background: '#fff' }}
@@ -541,10 +572,10 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                       <button
                         class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]"
                         disabled={pdfCapturing()}
-                        onClick={handlePdfPrint}
+                        onClick={handlePdfDownload}
                       >
                         <Icon name="download" class="w-3.5 h-3.5" />
-                        {pdfCapturing() ? '正在准备...' : '下载为 PDF'}
+                        {pdfCapturing() ? t('export.preparing') : t('export.downloadPdf')}
                       </button>
                     </div>
                   </div>

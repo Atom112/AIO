@@ -1,6 +1,7 @@
 import { Component, createSignal, Show, For } from 'solid-js';
 import type { ToolCall, ToolResultContent } from '../../../core/types/mcp';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 interface Props {
     toolCall: ToolCall;
@@ -72,7 +73,7 @@ const ToolCallBubble: Component<Props> = (props) => {
                 <div class="px-2 py-1.5 flex flex-col gap-1.5 text-[11px]" style="background: rgba(0,0,0,0.15);">
                     <Show when={tc().function.arguments && tc().function.arguments !== '{}'}>
                         <div>
-                            <div class="mb-0.5" style="color: rgba(255,255,255,0.35);">参数</div>
+                            <div class="mb-0.5" style="color: rgba(255,255,255,0.35);">{t('chat.tool.params')}</div>
                             <pre
                                 class="px-1.5 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all"
                                 style="background: rgba(0,0,0,0.2); color: rgba(255,255,255,0.55); font-size: 10px; line-height: 1.4;"
@@ -81,7 +82,7 @@ const ToolCallBubble: Component<Props> = (props) => {
                     </Show>
                     <Show when={props.state === 'success' && props.result && props.result.length > 0}>
                         <div>
-                            <div class="mb-0.5" style="color: rgba(255,255,255,0.35);">结果</div>
+                            <div class="mb-0.5" style="color: rgba(255,255,255,0.35);">{t('chat.tool.result')}</div>
                             <div class="flex flex-col gap-0.5">
                                 <For each={props.result}>
                                     {(c) => (
@@ -96,14 +97,14 @@ const ToolCallBubble: Component<Props> = (props) => {
                                 <For each={props.result}>
                                     {(c) => (
                                         <Show when={c.type === 'image'}>
-                                            <span style="color: rgba(255,255,255,0.4); font-size: 10px;">[图像]</span>
+                                            <span style="color: rgba(255,255,255,0.4); font-size: 10px;">{t('chat.tool.image')}</span>
                                         </Show>
                                     )}
                                 </For>
                                 <For each={props.result}>
                                     {(c) => (
                                         <Show when={c.type === 'resource'}>
-                                            <span style="color: rgba(255,255,255,0.4); font-size: 10px;">[资源]</span>
+                                            <span style="color: rgba(255,255,255,0.4); font-size: 10px;">{t('chat.tool.resource')}</span>
                                         </Show>
                                     )}
                                 </For>
@@ -112,7 +113,7 @@ const ToolCallBubble: Component<Props> = (props) => {
                     </Show>
                     <Show when={props.state === 'error'}>
                         <div>
-                            <div class="mb-0.5" style="color: rgba(255,107,107,0.7);">错误</div>
+                            <div class="mb-0.5" style="color: rgba(255,107,107,0.7);">{t('chat.tool.error')}</div>
                             <pre
                                 class="px-1.5 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all"
                                 style="background: rgba(255,77,77,0.08); color: rgba(255,138,138,0.7); font-size: 10px;"

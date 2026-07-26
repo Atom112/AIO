@@ -7,20 +7,22 @@
  *   inputMessage={inputMessage}
  *   setInputMessage={setInputMessage}
  * />
- *
  * 交互：
  * - 在输入框行首或空格后输入 `/` 时弹出
  * - 继续输入时实时模糊过滤
- * - ↑↓ 导航，Enter 选中注入，Escape 关闭
- * - 选中后将 /xxx 替换为 promptBody，$ARGUMENTS 替换为参数部分
+ * - ↑↓ 导航，Enter 选中填入输入框，Escape 关闭
+ * - 选中后替换为完整命令名；参数通过 $ARGUMENTS 注入由 ChatPage 处理
  */
 
 import { Component, createSignal, createMemo, createEffect, onCleanup, onMount, For, Show, Setter } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
     getSlashCommands,
+    getCommandDisplayDescription,
+    getCommandArgumentHint,
     type CommandAction,
 } from '../../core/shortcuts';
+import { t } from '../../core/i18n';
 
 interface SlashCommandMenuProps {
     /** 输入框 DOM 引用（用于定位菜单和读写光标） */
@@ -77,6 +79,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     const [slashStartIdx, setSlashStartIdx] = createSignal(0);
     const [slashArgs, setSlashArgs] = createSignal('');
     let menuRef: HTMLDivElement | undefined;
+    let justSelected = false;
 
     // 所有斜杠命令
     const allSlashCommands = createMemo(() => getSlashCommands());
@@ -88,7 +91,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
         return allSlashCommands().filter(cmd => {
             // 匹配命令名（去掉 / 前缀）和描述
             const name = cmd.label.startsWith('/') ? cmd.label.slice(1) : cmd.label;
-            return fuzzyMatch(q, name) || fuzzyMatch(q, cmd.description);
+            return fuzzyMatch(q, name) || fuzzyMatch(q, getCommandDisplayDescription(cmd));
         });
     });
 
@@ -111,7 +114,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
         setSelectedIndex(0);
     };
 
-    // 选中命令：在输入框放置 /commandName（保留用户已输入的参数），等待用户按 Enter 发送
+    // 选中命令：在输入框放置 /commandName（保留用户已输入的参数）
     const selectCommand = (cmd: CommandAction) => {
         const ta = props.textareaRef;
         if (!ta) return;
@@ -137,11 +140,9 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
             ta.setSelectionRange(newCursorPos, newCursorPos);
         });
 
+        justSelected = true;
         close();
     };
-
-    // ---- 键盘导航（捕获阶段拦截，优先于 textarea） ----
-
     const handleKeyDown = (e: KeyboardEvent) => {
         if (!open()) return;
 
@@ -190,10 +191,10 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
         document.removeEventListener('keydown', handleKeyDown, true);
     });
 
-    // 滚动到选中项（仅垂直滚动，避免水平滚动）
+    // 滚动到选中项（使用 data-selected 属性避免脆弱的长 CSS 选择器）
     const scrollToSelected = () => {
         requestAnimationFrame(() => {
-            const el = menuRef?.querySelector('.flex items-center justify-between gap-3 px-2.5 py-[7px] rounded-md cursor-pointer transition-colors duration-[80ms].selected') as HTMLElement;
+            const el = menuRef?.querySelector('[data-selected="true"]') as HTMLElement;
             el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         });
     };
@@ -209,6 +210,13 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
         const result = extractSlashQuery(text, cursorPos);
 
         if (result) {
+            // 菜单选中后抑制重开：如果刚选中且当前查询是完整命令名，不弹菜单
+            if (justSelected) {
+                const isExactCmd = allSlashCommands().some(c => c.label === result.query);
+                if (isExactCmd) return;
+                // 用户继续编辑了（查询已不是完整命令），允许菜单重新弹出
+                justSelected = false;
+            }
             setQuery(result.query);
             setSlashStartIdx(result.start);
             setSlashArgs(result.args);
@@ -216,6 +224,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
             setOpen(true);
             updatePosition();
         } else {
+            justSelected = false;
             close();
         }
     });
@@ -278,21 +287,27 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
                         const isSelected = () => idx() === selectedIndex();
                         return (
                             <div
-                                class={`flex items-center justify-between gap-3 px-2.5 py-[7px] rounded-md cursor-pointer transition-colors duration-[80ms]${isSelected() ? ' selected' : ''}`}
+                                data-selected={isSelected()}
+                                class={`flex items-center justify-between gap-3 px-2.5 py-[7px] rounded-md cursor-pointer transition-colors duration-[80ms] ${isSelected() ? 'bg-white/[0.10]' : 'hover:bg-white/[0.04]'}`}
                                 onClick={() => selectCommand(cmd)}
                                 onMouseEnter={() => setSelectedIndex(idx())}
                             >
                                 <div class="flex items-center gap-1.5 min-w-0">
                                     <span class="text-[13px] font-semibold text-white/85 whitespace-nowrap font-mono">{cmd.label}</span>
-                                    <Show when={cmd.argumentHint}>
-                                        <span class="text-[11px] text-white/30 italic whitespace-nowrap overflow-hidden text-ellipsis">{cmd.argumentHint}</span>
+                                    <Show when={getCommandArgumentHint(cmd)}>
+                                        <span class="text-[11px] text-white/30 italic whitespace-nowrap overflow-hidden text-ellipsis">{getCommandArgumentHint(cmd)}</span>
                                     </Show>
                                 </div>
-                                <span class="text-[11px] text-white/30 whitespace-nowrap overflow-hidden text-ellipsis shrink text-right">{cmd.description}</span>
+                                <span class="text-[11px] text-white/30 whitespace-nowrap overflow-hidden text-ellipsis shrink text-right">{getCommandDisplayDescription(cmd)}</span>
                             </div>
                         );
                     }}
                 </For>
+                <div class="flex items-center justify-center gap-4 px-4 pt-2 pb-2.5 border-t border-t-white/[0.04] text-[10px] text-white/20">
+                    <span><kbd>↑↓</kbd> {t('command.palette.hintNavigate')}</span>
+                    <span><kbd>Enter</kbd> {t('common.select')}</span>
+                    <span><kbd>Esc</kbd> {t('command.palette.hintClose')}</span>
+                </div>
             </div>
         </Portal>
     );

@@ -8,6 +8,7 @@
  */
 import { Component, createSignal, Show, onCleanup, createEffect } from 'solid-js';
 import Icon from './Icon';
+import { t } from '../../core/i18n';
 
 interface ThinkBlockProps {
     /** 思考过程纯文本 (不含 <think> 标签) */
@@ -71,7 +72,7 @@ const ThinkBlock: Component<ThinkBlockProps> = (props) => {
                     <Icon name={props.isStreaming ? 'sparkles' : 'brain'} size={13} class="w-3.5 h-3.5" />
                 </span>
                 <span class="font-medium flex-none">
-                    {props.isStreaming ? '正在思考' : '已思考'}
+                    {props.isStreaming ? t('chat.thinkingActive') : t('chat.thought')}
                 </span>
                 <span class="font-mono text-white/30 text-[11px] flex-none ml-0.5">{formatDuration(elapsedMs())}</span>
                 <span class="flex items-center justify-center ml-auto text-white/30 transition-[transform,color] duration-200" aria-hidden="true">

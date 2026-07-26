@@ -22,6 +22,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 
 import Icon, { type IconName } from '../../../shared/components/Icon';
+import { formatNumber, t, type TranslationKey } from '../../../core/i18n';
 
 /** 诊断严重级别对应的图标和颜色 */
 const SEVERITY_CONFIG: Record<string, { icon: IconName; color: string; bgColor: string }> = {
@@ -32,12 +33,12 @@ const SEVERITY_CONFIG: Record<string, { icon: IconName; color: string; bgColor: 
 };
 
 /** 过滤器选项 */
-const FILTER_OPTIONS: { value: string; label: string }[] = [
-    { value: 'all', label: '全部' },
-    { value: 'error', label: '错误' },
-    { value: 'warning', label: '警告' },
-    { value: 'info', label: '信息' },
-    { value: 'hint', label: '提示' },
+const FILTER_OPTIONS: { value: string; labelKey: TranslationKey }[] = [
+    { value: 'all', labelKey: 'chat.problemAll' },
+    { value: 'error', labelKey: 'common.error' },
+    { value: 'warning', labelKey: 'chat.problemWarning' },
+    { value: 'info', labelKey: 'chat.problemInfo' },
+    { value: 'hint', labelKey: 'chat.problemHint' },
 ];
 
 /**
@@ -64,15 +65,15 @@ const ProblemsPanel: Component = () => {
             {/* 标题栏 */}
             <div class="flex items-center justify-between px-4 py-2 border-b border-gray-700/30">
                 <div class="flex items-center gap-3">
-                    <span class="text-sm font-medium text-gray-200 inline-flex items-center gap-1"><Icon name="clipboard" size={14} />问题</span>
+                    <span class="text-sm font-medium text-gray-200 inline-flex items-center gap-1"><Icon name="clipboard" size={14} />{t('chat.problems')}</span>
                     <Show when={totalErrors() > 0}>
                         <span class="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-medium">
-                            {totalErrors()} 错误
+                            {t('chat.errorsCount', { count: formatNumber(totalErrors()) })}
                         </span>
                     </Show>
                     <Show when={totalWarnings() > 0}>
                         <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-medium">
-                            {totalWarnings()} 警告
+                            {t('chat.warningsCount', { count: formatNumber(totalWarnings()) })}
                         </span>
                     </Show>
                 </div>
@@ -89,7 +90,7 @@ const ProblemsPanel: Component = () => {
                                 }`}
                                 onClick={() => setSeverityFilter(opt.value as any)}
                             >
-                                {opt.label}
+                                {t(opt.labelKey)}
                             </button>
                         ))}
                     </div>
@@ -98,7 +99,7 @@ const ProblemsPanel: Component = () => {
                     <button
                         class="text-gray-400 hover:text-gray-200 p-1 rounded hover:bg-gray-700/50"
                         onClick={() => setProblemsPanelVisible(false)}
-                        title="关闭面板"
+                        title={t('chat.closePanel')}
                     >
                         ✕
                     </button>
@@ -111,8 +112,8 @@ const ProblemsPanel: Component = () => {
                     when={filteredFiles().length > 0}
                     fallback={
                         <div class="flex items-center justify-center py-8 text-gray-500 text-sm">
-                            <Show when={hasDiagnostics()} fallback="✓ 没有发现问题">
-                                当前过滤器下没有匹配的诊断
+                            <Show when={hasDiagnostics()} fallback={`✓ ${t('chat.noProblems')}`}>
+                                {t('chat.noMatchingDiagnostics')}
                             </Show>
                         </div>
                     }
@@ -124,7 +125,7 @@ const ProblemsPanel: Component = () => {
                                 <button
                                     class="w-full flex items-center gap-2 px-4 py-1.5 text-xs font-mono text-gray-300 hover:bg-gray-800/50 transition-colors cursor-pointer"
                                     onClick={() => openFileInEditor(file.filePath)}
-                                    title={`打开 ${file.filePath}`}
+                                    title={t('chat.openFile', { path: file.filePath })}
                                 >
                                     <Icon name="file" size={14} />
                                     <span class="truncate">{file.filePath}</span>

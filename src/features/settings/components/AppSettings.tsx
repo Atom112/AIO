@@ -18,10 +18,13 @@ import {
     getActionByKeys,
     normalizeKeyCombo,
     formatShortcutForDisplay,
+    getCommandDisplayLabel,
+    getCommandDisplayDescription,
     type CommandAction,
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
+import { locale, setLocale, t, type Locale } from '../../../core/i18n';
 
 /**
  * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）
@@ -179,13 +182,13 @@ const AppSettings: Component = () => {
      */
     const checkResultMessage = (): string => {
         const r = checkResult();
-        if (!r) return '检查 AIO 是否有新版本发布';
+        if (!r) return t('app.update.description');
         switch (r.kind) {
-            case 'up_to_date':         return '当前已是最新版本';
-            case 'update_available':   return '已发现新版本，左下角查看详情';
-            case 'service_not_ready':  return '当前 release 尚未配置自动更新服务';
-            case 'network':            return '网络错误，无法连接更新服务器';
-            case 'failed':             return '检查失败，请稍后重试';
+            case 'up_to_date':         return t('app.update.latest');
+            case 'update_available':   return t('app.update.found');
+            case 'service_not_ready':  return t('app.update.unavailable');
+            case 'network':            return t('app.update.network');
+            case 'failed':             return t('error.update');
         }
     };
 
@@ -376,10 +379,10 @@ const AppSettings: Component = () => {
         const groups: { category: string; label: string; items: CommandAction[] }[] = [];
         const seen = new Set<string>();
         const CAT_LABELS: Record<string, string> = {
-            navigation: '导航',
-            chat: '聊天',
-            sidebar: '侧边栏',
-            global: '全局',
+            navigation: t('command.category.navigation'),
+            chat: t('command.category.chat'),
+            sidebar: t('command.category.sidebar'),
+            global: t('command.category.global'),
         };
 
         for (const cmd of allCommands()) {
@@ -408,9 +411,9 @@ const AppSettings: Component = () => {
         <div class="flex flex-col gap-[15px] box-border">
             <div class="rounded-xl p-6 animate-row-in" style="background: rgba(255, 255, 255, 0.035); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
                 <div class="flex justify-between items-center mb-5">
-                    <h3 class="m-0 text-base text-white">应用状态</h3>
+                    <h3 class="m-0 text-base text-white">{t('app.status.title')}</h3>
                     <div class="flex items-center gap-2">
-                        <span class="text-xs text-white/45 font-medium">版本号:</span>
+                        <span class="text-xs text-white/45 font-medium">{t('app.status.version')}:</span>
                         <div class="text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
                             style="background: rgba(255, 255, 255, 0.035); color: rgba(255,255,255,0.8); font-family: 'JetBrains Mono', monospace;">
                             v{version()}
@@ -419,9 +422,27 @@ const AppSettings: Component = () => {
                 </div>
 
                 <div class="flex justify-between items-center py-3 border-b border-white/5">
+                    <div class="pr-6">
+                        <span class="block text-[#eee] text-[14px]">{t('app.language.title')}</span>
+                        <p class="text-xs text-white/35 mt-1">
+                            {t('app.language.description')} {t('app.language.system')}
+                        </p>
+                    </div>
+                    <select
+                        class="min-w-[150px] rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+                        value={locale()}
+                        onChange={(event) => setLocale(event.currentTarget.value as Locale)}
+                        aria-label={t('app.language.title')}
+                    >
+                        <option value="zh-CN" class="bg-[#1c2030]">{t('app.language.zhCN')}</option>
+                        <option value="en-US" class="bg-[#1c2030]">{t('app.language.enUS')}</option>
+                    </select>
+                </div>
+
+                <div class="flex justify-between items-center py-3 border-b border-white/5">
                     <div>
-                        <span class="block text-[#eee] text-[14px]">系统自启</span>
-                        <p class="text-xs text-white/35 mt-1">随系统启动自动运行应用</p>
+                        <span class="block text-[#eee] text-[14px]">{t('app.autoStart.title')}</span>
+                        <p class="text-xs text-white/35 mt-1">{t('app.autoStart.description')}</p>
                     </div>
 
                     <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
@@ -446,8 +467,8 @@ const AppSettings: Component = () => {
 
                 <div class="flex justify-between items-center py-3 border-b border-white/5">
                     <div>
-                        <span class="block text-[#eee] text-[14px]">跨会话记忆</span>
-                        <p class="text-xs text-white/35 mt-1">Agent 在对话中记住的项目知识（架构决策、代码约定等）将在新对话中自动注入。数据存储在项目根目录的 .aio/knowledge.json 中。</p>
+                        <span class="block text-[#eee] text-[14px]">{t('app.knowledge.title')}</span>
+                        <p class="text-xs text-white/35 mt-1">{t('app.knowledge.description')}</p>
                     </div>
 
                     <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
@@ -474,15 +495,15 @@ const AppSettings: Component = () => {
 
                 <div class="flex justify-between items-center py-3 border-b border-white/5">
                     <div>
-                        <span class="block text-[#eee] text-[14px]">开源主页</span>
-                        <p class="text-xs text-white/35 mt-1">访问 GitHub 仓库获取最新动态</p>
+                        <span class="block text-[#eee] text-[14px]">{t('app.openSource.title')}</span>
+                        <p class="text-xs text-white/35 mt-1">{t('app.openSource.description')}</p>
                     </div>
 
                     <div
                         class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
                         style="background: rgba(124,154,191,0.08); color: rgba(255,255,255,0.5); border: 1px solid rgba(124,154,191,0.08);"
                         onClick={() => open('https://github.com/Atom112/AIO')}
-                        title="访问 GitHub"
+                        title={t('app.openSource.visit')}
                     >
                         <Icon src="/icons/app-logo/github.svg" class="w-5 h-5" />
                         <span>GitHub</span>
@@ -491,7 +512,7 @@ const AppSettings: Component = () => {
 
                 <div class="flex justify-between items-center py-3">
                     <div class="flex-1 min-w-0 pr-4">
-                        <span class="block text-[#eee] text-[14px]">版本更新</span>
+                        <span class="block text-[#eee] text-[14px]">{t('app.update.title')}</span>
                         <p
                             class="text-xs mt-1"
                             style={{
@@ -506,14 +527,6 @@ const AppSettings: Component = () => {
                         >
                             {checkResultMessage()}
                         </p>
-                        <Show when={checkResult() && checkResult()!.kind !== 'update_available' && checkResult()!.kind !== 'up_to_date'}>
-                            <p class="text-[11px] text-white/40 mt-1 break-all leading-relaxed flex items-start gap-1">
-                                <Show when={checkResult()!.kind === 'service_not_ready'}>
-                                    <Icon name="lightbulb" size={11} class="text-yellow-300 shrink-0 mt-0.5" />
-                                </Show>
-                                <span>{(checkResult() as { reason?: string }).reason}</span>
-                            </p>
-                        </Show>
                     </div>
 
                     <button
@@ -525,20 +538,20 @@ const AppSettings: Component = () => {
                         }}
                         disabled={checkUpdating()}
                         onClick={handleManualCheck}
-                        title="手动检查更新"
+                        title={t('app.update.check')}
                     >
                         <Icon src="/icons/app-logo/switch-arrows.svg" class="w-4 h-4" />
                         <span class="text-sm font-medium">
-                            {checkUpdating() ? '检查中…' : '检查更新'}
+                            {checkUpdating() ? t('app.update.checking') : t('app.update.check')}
                         </span>
                     </button>
                 </div>
 
             </div>
 
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', "animation-delay": "30ms" }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ 'backdrop-filter': 'blur(var(--acrylic-blur))', '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', 'border-radius': 'var(--acrylic-radius)', "animation-delay": "30ms" }}>
                 <div class="flex justify-between items-center mb-5">
-                    <h3 class='m-0 text-base text-white'>视觉主题</h3>
+                    <h3 class='m-0 text-base text-white'>{t('app.theme.title')}</h3>
                 </div>
 
                 <div class="flex flex-col gap-[10px]" style={{
@@ -622,7 +635,7 @@ const AppSettings: Component = () => {
 
                     <div class="mt-[25px] px-[20px]">
                         <div class="mb-2">
-                            <label class="block text-[12px] text-white/40 mb-[10px] text-center">饱和度 (Saturation)</label>
+                            <label class="block text-[12px] text-white/40 mb-[10px] text-center">{t('app.theme.saturation')}</label>
                             <input
                                 type="range"
                                 min="0" max="100"
@@ -636,7 +649,7 @@ const AppSettings: Component = () => {
                         </div>
 
                         <div class="mb-2">
-                            <label class="block text-[12px] text-white/40 mb-[10px] text-center">亮度 (Lightness)</label>
+                            <label class="block text-[12px] text-white/40 mb-[10px] text-center">{t('app.theme.lightness')}</label>
                             <input
                                 type="range"
                                 min="0" max="100"
@@ -653,11 +666,11 @@ const AppSettings: Component = () => {
             </div>
 
             {/* 快捷键设置面板 */}
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', "animation-delay": "60ms" }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ 'backdrop-filter': 'blur(var(--acrylic-blur))', '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', 'border-radius': 'var(--acrylic-radius)', "animation-delay": "60ms" }}>
                 <div class="flex justify-between items-center mb-5">
                     <div>
-                        <h3 class="m-0 text-base text-white">快捷键设置</h3>
-                        <p class="text-xs text-white/35 mt-1">点击快捷键区域可自定义按键组合</p>
+                        <h3 class="m-0 text-base text-white">{t('app.shortcuts.title')}</h3>
+                        <p class="text-xs text-white/35 mt-1">{t('app.shortcuts.description')}</p>
                     </div>
                     <button
                         class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-200"
@@ -667,10 +680,10 @@ const AppSettings: Component = () => {
                             border: '1px solid rgba(255, 255, 255, 0.06)',
                         }}
                         onClick={() => setResetAllConfirm(true)}
-                        title="恢复全部默认快捷键"
+                        title={t('app.shortcuts.restoreDefaults')}
                     >
                         <Icon name="refresh" size={12} />
-                        <span>恢复默认</span>
+                        <span>{t('app.shortcuts.restoreDefaults')}</span>
                     </button>
                 </div>
 
@@ -678,14 +691,14 @@ const AppSettings: Component = () => {
                 <Show when={resetAllConfirm()}>
                     <div class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setResetAllConfirm(false)}>
                         <div class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(22,26,40,0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]" style="animation: command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);" onClick={e => e.stopPropagation()}>
-                            <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">确定要恢复所有快捷键为默认值吗？此操作不可撤销。</p>
+                            <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">{t('app.shortcuts.resetMessage')}</p>
                             <div class="flex justify-end gap-2">
-                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel" onClick={() => setResetAllConfirm(false)}>取消</button>
+                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel" onClick={() => setResetAllConfirm(false)}>{t('common.cancel')}</button>
                                 <button
                                     class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm"
                                     onClick={() => { resetAllShortcutBindings(); setResetAllConfirm(false); }}
                                 >
-                                    确定恢复
+                                    {t('common.confirm')}
                                 </button>
                             </div>
                         </div>
@@ -697,11 +710,17 @@ const AppSettings: Component = () => {
                     <div class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={handleConflictCancel}>
                         <div class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(22,26,40,0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]" style="animation: command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);" onClick={e => e.stopPropagation()}>
                             <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">
-                                该快捷键已用于「{getCommandLabel(conflictDialog()!.conflictActionId)}」，是否覆盖？
+                                {t('app.shortcuts.conflictMessage', {
+                                    keys: conflictDialog()!.newKeys,
+                                    action: (() => {
+                                        const found = getRegisteredCommands().find(c => c.id === conflictDialog()!.conflictActionId);
+                                        return found ? getCommandDisplayLabel(found) : conflictDialog()!.conflictActionId;
+                                    })(),
+                                })}
                             </p>
                             <div class="flex justify-end gap-2">
-                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel" onClick={handleConflictCancel}>取消</button>
-                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm" onClick={handleConflictOverride}>覆盖</button>
+                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel" onClick={handleConflictCancel}>{t('common.cancel')}</button>
+                                <button class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm" onClick={handleConflictOverride}>{t('app.shortcuts.replace')}</button>
                             </div>
                         </div>
                     </div>
@@ -728,10 +747,10 @@ const AppSettings: Component = () => {
                                             }}>
                                             <div class="flex-1 min-w-0 mr-4">
                                                 <span class="block text-[13px] text-white/85 font-medium">
-                                                    {cmd.label}
+                                                    {getCommandDisplayLabel(cmd)}
                                                 </span>
                                                 <span class="block text-[11px] text-white/40 mt-0.5 leading-relaxed">
-                                                    {cmd.description}
+                                                    {getCommandDisplayDescription(cmd)}
                                                 </span>
                                             </div>
                                             <div class="flex items-center gap-2 shrink-0">
@@ -745,15 +764,15 @@ const AppSettings: Component = () => {
                                                             startRecording(cmd.id);
                                                         }
                                                     }}
-                                                    title={isRecording() ? '正在录制...按 Esc 取消' : '点击修改快捷键'}
+                                                    title={isRecording() ? t('app.shortcuts.recordingCancel') : t('app.shortcuts.change')}
                                                 >
                                                     <Show
                                                         when={!isRecording()}
-                                                        fallback={<span class="text-[11px] font-medium" style={{ color: 'var(--primary-color)' }}>按下快捷键...</span>}
+                                                        fallback={<span class="text-[11px] font-medium" style={{ color: 'var(--primary-color)' }}>{t('app.shortcuts.recording')}</span>}
                                                     >
                                                         <Show
                                                             when={keys()}
-                                                            fallback={<span class="text-[11px] text-white/25 italic">未设置</span>}
+                                                            fallback={<span class="text-[11px] text-white/25 italic">{t('app.shortcuts.unset')}</span>}
                                                         >
                                                             <span class="text-xs font-medium text-white/70 tracking-[0.02em]">
                                                                 {formatShortcutForDisplay(keys())}
@@ -770,7 +789,7 @@ const AppSettings: Component = () => {
                                                             e.stopPropagation();
                                                             resetShortcutBinding(cmd.id);
                                                         }}
-                                                        title="恢复默认"
+                                                        title={t('app.shortcuts.restoreOne')}
                                                     >
                                                         <Icon name="refresh" size={11} />
                                                     </button>
@@ -787,19 +806,12 @@ const AppSettings: Component = () => {
                 {/* 无命令时的空状态 */}
                 <Show when={allCommands().length === 0}>
                     <div class="text-center py-8 text-[13px]" style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
-                        暂无可用命令。请先打开聊天页面以加载命令。
+                        {t('app.shortcuts.empty')}
                     </div>
                 </Show>
             </div>
         </div>
     );
 };
-
-/** 根据 actionId 获取命令标签（用于冲突提示） */
-function getCommandLabel(actionId: string): string {
-    const cmds = getRegisteredCommands();
-    const cmd = cmds.find(c => c.id === actionId);
-    return cmd?.label ?? actionId;
-}
 
 export default AppSettings;

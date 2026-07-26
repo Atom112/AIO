@@ -1,5 +1,6 @@
 import { Component, For } from 'solid-js';
 import Icon, { type IconName } from '../../../shared/components/Icon';
+import { t, type TranslationKey } from '../../../core/i18n';
 
 interface WelcomeScreenProps {
     onSuggestionClick: (text: string) => void;
@@ -7,30 +8,30 @@ interface WelcomeScreenProps {
 
 interface Suggestion {
     icon: IconName;
-    text: string;
-    prompt: string;
+    textKey: TranslationKey;
+    promptKey: TranslationKey;
 }
 
 const suggestions: Suggestion[] = [
     {
         icon: 'lightbulb',
-        text: '帮我写一段代码',
-        prompt: '帮我写一段代码实现',
+        textKey: 'chat.welcome.code',
+        promptKey: 'chat.welcome.codePrompt',
     },
     {
         icon: 'globe',
-        text: '翻译文本内容',
-        prompt: '请帮我把以下文本翻译成英文：',
+        textKey: 'chat.welcome.translate',
+        promptKey: 'chat.welcome.translatePrompt',
     },
     {
         icon: 'book',
-        text: '解释一个概念',
-        prompt: '请帮我解释一下什么是',
+        textKey: 'chat.welcome.explain',
+        promptKey: 'chat.welcome.explainPrompt',
     },
     {
         icon: 'sparkles',
-        text: '生成创意想法',
-        prompt: '请帮我头脑风暴一些关于',
+        textKey: 'chat.welcome.brainstorm',
+        promptKey: 'chat.welcome.brainstormPrompt',
     },
 ];
 
@@ -55,13 +56,13 @@ const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
                     class="text-2xl font-bold mb-2 tracking-wide"
                     style="color: rgba(255,255,255,0.9);"
                 >
-                    我是 AIO
+                    {t('chat.welcome.title')}
                 </h1>
                 <p
                     class="text-sm"
                     style="color: rgba(255,255,255,0.45);"
                 >
-                    有什么可以帮你的？
+                    {t('chat.welcome.subtitle')}
                 </p>
             </div>
 
@@ -82,14 +83,14 @@ const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
                                 e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
                                 e.currentTarget.style.transform = 'translateY(0)';
                             }}
-                            onClick={() => props.onSuggestionClick(item.prompt)}
+                            onClick={() => props.onSuggestionClick(t(item.promptKey))}
                         >
                             <Icon name={item.icon} size={14} />
                             <span
                                 class="text-[13px] font-medium whitespace-nowrap overflow-hidden text-ellipsis"
                                 style="color: rgba(255,255,255,0.75);"
                             >
-                                {item.text}
+                                {t(item.textKey)}
                             </span>
                         </button>
                     )}

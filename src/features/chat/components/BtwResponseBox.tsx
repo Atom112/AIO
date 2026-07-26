@@ -1,6 +1,7 @@
 import { Component, Show } from 'solid-js';
 import Markdown from '../../../shared/components/Markdown';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 export interface BtwOverlayItem {
     id: string;
@@ -35,13 +36,13 @@ const BtwResponseBox: Component<BtwResponseBoxProps> = (props) => {
                           color: 'rgba(124,154,191,0.8)',
                           border: '1px solid rgba(124,154,191,0.15)',
                       }}
-                >BTW</span>
-                <span class="flex-1" style="color: rgba(255,255,255,0.6);">{props.item.question || '(空)'}</span>
+                >{t('chat.btw.label')}</span>
+                <span class="flex-1" style="color: rgba(255,255,255,0.6);">{props.item.question || t('chat.btw.empty')}</span>
                 <button
                     onClick={() => props.onDismiss(props.item.id)}
                     class="flex items-center justify-center w-5 h-5 rounded hover:bg-white/10 transition-colors"
                     style="color: rgba(255,255,255,0.3);"
-                    title="关闭"
+                    title={t('chat.btw.close')}
                 >
                     <Icon name="x" class="w-3 h-3" />
                 </button>
@@ -50,9 +51,9 @@ const BtwResponseBox: Component<BtwResponseBoxProps> = (props) => {
             <div class="px-3 py-2 text-[14px] leading-relaxed text-white/85">
                 <Show when={props.item.answer} fallback={
                     <Show when={props.item.loading} fallback={
-                        <span style="color: rgba(255,255,255,0.3); font-style: italic;">等待回答...</span>
+                        <span style="color: rgba(255,255,255,0.3); font-style: italic;">{t('chat.btw.awaitingAnswer')}</span>
                     }>
-                        <span style="color: rgba(255,255,255,0.4);" class="animate-pulse">AI 正在思考中...</span>
+                        <span style="color: rgba(255,255,255,0.4);" class="animate-pulse">{t('chat.btw.thinking')}</span>
                     </Show>
                 }>
                     <Markdown content={props.item.answer!} />

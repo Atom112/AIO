@@ -137,7 +137,11 @@ pub struct Message {
     #[serde(rename = "displayText", skip_serializing_if = "Option::is_none")]
     pub display_text: Option<String>,
     /// role="tool" 时对应触发的 tool_call id
-    #[serde(rename = "toolCallId", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "toolCallId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub tool_call_id: Option<String>,
     /// role="tool" 时为被调用的函数名；role="assistant" 携带 tool_calls 时为 "assistant"
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -279,10 +283,18 @@ pub struct Topic {
     #[serde(default)]
     pub renamed: bool,
     /// 分支来源消息 ID（此话题从哪条消息分支而来）
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "branchedFromMessageId")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "branchedFromMessageId"
+    )]
     pub branched_from_message_id: Option<String>,
     /// 父话题 ID（用于话题树结构）
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "parentTopicId")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "parentTopicId"
+    )]
     pub parent_topic_id: Option<String>,
 }
 
@@ -308,11 +320,7 @@ pub struct Assistant {
     #[serde(rename = "skillIds", default, skip_serializing_if = "Vec::is_empty")]
     pub skill_ids: Vec<String>,
     /// 助手所属的项目 ID。None = 全局助手（不属于任何项目）。
-    #[serde(
-        rename = "projectId",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "projectId", default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
     /// Agent 执行模式。Off = 对话模式。旧数据缺省反序列化为 Off。
     #[serde(rename = "agentMode", default)]
@@ -369,9 +377,15 @@ pub struct AppConfig {
     pub max_concurrent_subagents: Option<u32>,
 }
 
-fn default_auto_retry_enabled() -> bool { true }
-fn default_auto_retry_count() -> u32 { 2 }
-fn default_auto_retry_delay_ms() -> u64 { 500 }
+fn default_auto_retry_enabled() -> bool {
+    true
+}
+fn default_auto_retry_count() -> u32 {
+    2
+}
+fn default_auto_retry_delay_ms() -> u64 {
+    500
+}
 
 // ====== MCP 服务器配置 ======
 
@@ -813,35 +827,7 @@ pub struct ProjectsFile {
 // ====== npx Skill 发现 ======
 
 /// npx skill 发现结果：系统上检测到的可导入 Skill 包。
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct DiscoveredNpxSkill {
-    pub package_name: String,
-    pub version: String,
-    pub description: String,
-    /// 发现路径（Claude skills dir / global node_modules）
-    pub source_path: String,
-    /// 发现来源类型："claude-skills-dir" | "global-npm"
-    pub source_type: String,
-    /// AIO 中是否已导入该 skill
-    pub already_imported: bool,
-}
-
 // ====== Token 用量日志 ======
-
-/// 用量日志条目：每次 LLM 调用（单轮）产生一条不可变记录。
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageLogEntry {
-    pub id: String,
-    pub timestamp: String,
-    pub assistant_id: String,
-    pub topic_id: String,
-    pub model_id: String,
-    pub round: u32,
-    pub input_tokens: u32,
-    pub output_tokens: u32,
-}
 
 /// 用量摘要：按天聚合的 token 用量。
 #[derive(Serialize, Deserialize, Clone, Debug)]

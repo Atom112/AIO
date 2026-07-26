@@ -6,8 +6,7 @@
  */
 import { Component, createMemo, createSignal, Show, For } from 'solid-js';
 import type { UsageSummary } from './UsageSummaryCards';
-
-const DAY_LABELS = ['', '一', '', '三', '', '五', ''];
+import { formatDateTime, formatNumber, locale, t } from '../../../core/i18n';
 
 function buildDateMap(summary: UsageSummary[]): Map<string, UsageSummary> {
     const m = new Map<string, UsageSummary>();
@@ -53,6 +52,9 @@ interface Props {
 }
 
 const UsageHeatmap: Component<Props> = (props) => {
+    const dayLabels = createMemo(() => Array.from({ length: 7 }, (_, day) =>
+        day % 2 === 0 ? '' : new Intl.DateTimeFormat(locale(), { weekday: 'narrow' }).format(new Date(2024, 0, 7 + day))
+    ));
     const [tooltip, setTooltip] = createSignal<{
         x: number;
         y: number;
@@ -103,7 +105,7 @@ const UsageHeatmap: Component<Props> = (props) => {
         const levels = calcLevels(allTokens);
 
         // 月份标签（带年份）
-        const monthLabels: { col: number; label: string }[] = [];
+        const monthLabels: { col: number; year?: string; month: string }[] = [];
         if (rows[0]) {
             let lastMonth = -1;
             let lastYear = -1;
@@ -113,9 +115,8 @@ const UsageHeatmap: Component<Props> = (props) => {
                     const showYear = d.getFullYear() !== lastYear;
                     monthLabels.push({
                         col,
-                        label: showYear
-                            ? `${d.getFullYear()}年${d.getMonth() + 1}月`
-                            : `${d.getMonth() + 1}月`,
+                        year: showYear ? formatDateTime(d, { year: 'numeric' }) : undefined,
+                        month: formatDateTime(d, { month: 'short' }),
                     });
                     lastMonth = d.getMonth();
                     lastYear = d.getFullYear();
@@ -165,8 +166,8 @@ const UsageHeatmap: Component<Props> = (props) => {
                 {/* 年份行 */}
                 <div class="absolute top-0 left-0 w-full" style="height: 14px;">
                     <For each={gridData().monthLabels}>
-                        {({ col, label }) => {
-                            if (!label.includes('年')) return null;
+                        {({ col, year }) => {
+                            if (!year) return null;
                             const left = 32 + col * 14;
                             return (
                                 <span
@@ -177,7 +178,7 @@ const UsageHeatmap: Component<Props> = (props) => {
                                         'line-height': '14px',
                                     }}
                                 >
-                                    {label.replace(/\d+月$/, '')}
+                                    {year}
                                 </span>
                             );
                         }}
@@ -186,10 +187,7 @@ const UsageHeatmap: Component<Props> = (props) => {
                 {/* 月份行 */}
                 <div class="absolute bottom-0 left-0 w-full" style="height: 14px;">
                     <For each={gridData().monthLabels}>
-                        {({ col, label }) => {
-                            const monthPart = label.includes('年')
-                                ? label.replace(/^\d{4}年/, '')
-                                : label;
+                        {({ col, month }) => {
                             const left = 32 + col * 14;
                             return (
                                 <span
@@ -200,7 +198,7 @@ const UsageHeatmap: Component<Props> = (props) => {
                                         'line-height': '14px',
                                     }}
                                 >
-                                    {monthPart}
+                                    {month}
                                 </span>
                             );
                         }}
@@ -210,7 +208,7 @@ const UsageHeatmap: Component<Props> = (props) => {
             <div class="flex gap-0.5">
                 {/* 星期标签 */}
                 <div class="flex flex-col gap-0.5 mr-1.5">
-                    <For each={DAY_LABELS}>
+                    <For each={dayLabels()}>
                         {(label, i) => (
                             <span
                                 class="w-3 h-3 flex items-center justify-center text-[8px] font-bold"
@@ -260,21 +258,21 @@ const UsageHeatmap: Component<Props> = (props) => {
 
             {/* 图例 */}
             <div class="flex items-center gap-1.5 mt-2 justify-end">
-                <span class="text-[9px]" style={{ color: 'rgba(255,255,255,0.2)' }}>少</span>
+                <span class="text-[9px]" style={{ color: 'rgba(255,255,255,0.2)' }}>{t('usage.less')}</span>
                 {[0, 1, 2, 3, 4].map(lvl => (
                     <div class="w-3 h-3 rounded-sm" style={{ background: levelColor(lvl) }} />
                 ))}
-                <span class="text-[9px]" style={{ color: 'rgba(255,255,255,0.2)' }}>多</span>
+                <span class="text-[9px]" style={{ color: 'rgba(255,255,255,0.2)' }}>{t('usage.more')}</span>
             </div>
 
             {/* Tooltip — absolute 定位，跟随鼠标在格子上的位置 */}
             <Show when={tooltip()}>
-                {(t) => (
+                {(tip) => (
                     <div
                         class="absolute z-50 pointer-events-none px-3 py-2 rounded-lg text-xs font-mono"
                         style={{
-                            left: `${t().x}px`,
-                            top: `${t().y}px`,
+                            left: `${tip().x}px`,
+                            top: `${tip().y}px`,
                             transform: 'translate(-50%, -100%)',
                             background: 'rgba(10,14,26,0.96)',
                             border: '1px solid rgba(255,255,255,0.15)',
@@ -283,15 +281,15 @@ const UsageHeatmap: Component<Props> = (props) => {
                             'box-shadow': '0 4px 16px rgba(0,0,0,0.4)',
                         }}
                     >
-                        <div style={{ color: 'rgba(255,255,255,0.5)' }}>{t().date}</div>
+                        <div style={{ color: 'rgba(255,255,255,0.5)' }}>{formatDateTime(`${tip().date}T00:00:00`, { dateStyle: 'medium' })}</div>
                         <div>
                             <span style={{ color: 'rgba(255,255,255,0.85)' }}>
-                                {fmtTokens(t().tokens)}
+                                {fmtTokens(tip().tokens)}
                             </span>{' '}
-                            tokens
+                            {t('usage.tokens')}
                         </div>
                         <div style={{ color: 'rgba(255,255,255,0.4)' }}>
-                            {t().requests} 次请求
+                            {t('usage.requestCount', { count: formatNumber(tip().requests) })}
                         </div>
                     </div>
                 )}

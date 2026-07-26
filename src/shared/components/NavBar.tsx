@@ -22,6 +22,7 @@ import {
   startLocalEngineForAssistant,
   currentAssistantId,
 } from '../../core/store/store';
+import { reportError, t } from '../../core/i18n';
 
 /**
  * 初始化窗口实例
@@ -54,7 +55,7 @@ const NavBar: Component<NavBarProps> = () => {
       }
     } catch (err) {
       console.error("选择头像失败:", err);
-      alert('选择头像失败: ' + err);
+      alert(reportError('error.load', err));
     }
   };
 
@@ -70,7 +71,7 @@ const NavBar: Component<NavBarProps> = () => {
       localStorage.setItem('user-avatar-path', savedPath);
       setTempImage(null);
     } catch (err) {
-      alert("头像保存失败: " + err);
+      alert(reportError('error.save', err));
     }
   };
 
@@ -170,7 +171,7 @@ const NavBar: Component<NavBarProps> = () => {
         </div>
         <A
           href="/chat"
-          title="对话"
+          title={t('nav.chat')}
           activeClass="!text-pri font-bold"
           class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
         >
@@ -184,7 +185,7 @@ const NavBar: Component<NavBarProps> = () => {
 
         <A
           href="/settings"
-          title="设置"
+          title={t('nav.settings')}
           activeClass="!text-pri font-bold"
           class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
         >
@@ -192,11 +193,11 @@ const NavBar: Component<NavBarProps> = () => {
         </A>
 
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleMinimize} title="最小化">
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleMinimize} title={t('nav.minimize')}>
             <Icon src="/icons/app-logo/minimize.svg" class="w-6 h-6" />
           </button>
 
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleToggleMaximize} title={isMaximized() ? "还原" : "最大化"}>
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleToggleMaximize} title={isMaximized() ? t('nav.restore') : t('nav.maximize')}>
             {isMaximized() ? (
               <Icon src="/icons/app-logo/restore.svg" class="w-6 h-6" />
             ) : (
@@ -204,7 +205,7 @@ const NavBar: Component<NavBarProps> = () => {
             )}
           </button>
 
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-danger" onClick={handleClose} title="关闭">
+          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-danger" onClick={handleClose} title={t('nav.close')}>
             <Icon src="/icons/app-logo/close-x.svg" class="w-6 h-6" />
           </button>
         </div>

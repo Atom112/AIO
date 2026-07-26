@@ -2,6 +2,7 @@ import { Component, JSX, Show } from 'solid-js';
 import { A, useLocation } from '@solidjs/router';
 import { Transition } from 'solid-transition-group';
 import Icon from '../../shared/components/Icon';
+import { t } from '../../core/i18n';
 
 /**
  * 设置页面布局 (lobehub v2 嵌套路由)
@@ -17,12 +18,12 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
     const isProviderDetail = () => /^\/settings\/provider\/[^/]+/.test(location.pathname);
 
     const menuItems: Array<{ id: string; path: string; label: string; icon: JSX.Element }> = [
-        { id: 'provider', path: '/settings', label: '供应商设置', icon: <Icon src="/icons/app-logo/provider.svg" class="w-5 h-5" /> },
-        { id: 'mcp', path: '/settings/mcp', label: 'MCP 服务器', icon: <Icon src="/icons/app-logo/mcp.svg" class="w-5 h-5" /> },
-        { id: 'skills', path: '/settings/skills', label: 'Skill 管理', icon: <Icon src="/icons/app-logo/prompt.svg" class="w-5 h-5" /> },
-        { id: 'usage', path: '/settings/usage', label: '使用量', icon: <Icon src="/icons/app-logo/chart.svg" class="w-5 h-5" /> },
-        { id: 'subagent-models', path: '/settings/subagent-models', label: '子智能体模型', icon: <Icon name="sparkles" class="w-5 h-5" /> },
-        { id: 'app', path: '/settings/app', label: '应用信息', icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" /> },
+        { id: 'provider', path: '/settings', label: t('settings.providers'), icon: <Icon src="/icons/app-logo/provider.svg" class="w-5 h-5" /> },
+        { id: 'mcp', path: '/settings/mcp', label: t('settings.mcp'), icon: <Icon src="/icons/app-logo/mcp.svg" class="w-5 h-5" /> },
+        { id: 'skills', path: '/settings/skills', label: t('settings.skills'), icon: <Icon src="/icons/app-logo/prompt.svg" class="w-5 h-5" /> },
+        { id: 'usage', path: '/settings/usage', label: t('settings.usage'), icon: <Icon src="/icons/app-logo/chart.svg" class="w-5 h-5" /> },
+        { id: 'subagent-models', path: '/settings/subagent-models', label: t('settings.subagents'), icon: <Icon name="sparkles" class="w-5 h-5" /> },
+        { id: 'app', path: '/settings/app', label: t('settings.app'), icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" /> },
     ];
 
     const isActive = (path: string) => {
@@ -39,7 +40,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
                 {/* 侧边栏 */}
                 <div class="w-[200px] flex flex-col rounded-lg overflow-hidden shrink-0" style="background: rgba(18, 22, 35, 0.25); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
                     <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
-                        设置中心
+                        {t('settings.title')}
                     </div>
 
                     <div class="flex flex-col px-2">
@@ -70,7 +71,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
 
             {/* 主内容区 */}
             <Transition name="subpage-fade">
-                <div class="flex-1 overflow-y-auto overflow-x-hidden min-w-0" key={location.pathname}>
+                <div class="flex-1 overflow-y-auto overflow-x-hidden min-w-0" {...({ key: location.pathname } as any)}>
                     {props.children}
                 </div>
             </Transition>

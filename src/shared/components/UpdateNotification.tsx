@@ -16,6 +16,7 @@ import {
     setAppUpdateReady,
     setIgnoredUpdateVersion,
 } from '../../core/store/store';
+import { formatNumber, t } from '../../core/i18n';
 
 /**
  * 左下角应用更新提示 Toast
@@ -52,7 +53,7 @@ const UpdateNotification: Component = () => {
             setAppUpdateReady(true);
         } catch (e) {
             console.error('下载更新失败:', e);
-            setError(typeof e === 'string' ? e : '更新下载失败，请稍后重试');
+            setError(t('update.downloadFailed'));
         } finally {
             setAppUpdateDownloading(false);
         }
@@ -77,7 +78,7 @@ const UpdateNotification: Component = () => {
             await invoke('restart_app');
         } catch (e) {
             console.error('重启失败:', e);
-            setError(typeof e === 'string' ? e : '重启失败，请手动关闭并重新打开应用');
+            setError(t('update.restartFailed'));
         }
     };
 
@@ -132,10 +133,10 @@ const UpdateNotification: Component = () => {
                             </div>
                             <div class="flex-1 min-w-0">
                                 <div class="text-sm font-semibold text-white leading-tight">
-                                    发现新版本 v{appUpdateInfo()!.version}
+                                    {t('update.foundVersion', { version: appUpdateInfo()!.version })}
                                 </div>
                                 <div class="text-[11px] text-[#888] mt-0.5">
-                                    当前版本 v{appUpdateInfo()!.currentVersion || '?'} · 点击立即更新
+                                    {t('update.currentVersion', { version: appUpdateInfo()!.currentVersion || '?' })}
                                 </div>
                             </div>
                         </div>
@@ -176,10 +177,10 @@ const UpdateNotification: Component = () => {
                             <div class="flex flex-col gap-1.5">
                                 <div class="flex justify-between text-[11px] text-[#888]">
                                     <span>
-                                        {appUpdateReady() ? '下载完成，等待重启' : '正在下载更新…'}
+                                        {appUpdateReady() ? t('update.ready') : t('update.downloading')}
                                     </span>
                                     <span class="font-mono">
-                                        {Math.round(appUpdateProgress() * 100)}%
+                                        {formatNumber(Math.round(appUpdateProgress() * 100))}%
                                     </span>
                                 </div>
                                 <div
@@ -211,7 +212,7 @@ const UpdateNotification: Component = () => {
                                         }}
                                         onClick={handleRestart}
                                     >
-                                        重启应用
+                                        {t('update.restart')}
                                     </button>
                                 }
                             >
@@ -224,7 +225,7 @@ const UpdateNotification: Component = () => {
                                     disabled={appUpdateDownloading()}
                                     onClick={handleUpdate}
                                 >
-                                    {appUpdateDownloading() ? '下载中…' : '立即更新'}
+                                    {appUpdateDownloading() ? t('update.downloading') : t('update.install')}
                                 </button>
                                 <button
                                     class="px-4 py-2 rounded-lg text-sm cursor-pointer transition-all duration-200 hover:bg-white/10 active:scale-95"
@@ -235,7 +236,7 @@ const UpdateNotification: Component = () => {
                                     }}
                                     onClick={handleDismiss}
                                 >
-                                    稍后
+                                    {t('update.later')}
                                 </button>
                             </Show>
                         </div>

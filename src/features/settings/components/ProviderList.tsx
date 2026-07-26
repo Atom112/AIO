@@ -31,6 +31,7 @@ import {
 } from '../../../core/utils/models';
 import { getProviderLogo } from '../../../core/utils/modelLogo';
 import type { ProviderConfig, ProviderMeta } from '../../../core/utils/models';
+import { formatNumber, reportError, t } from '../../../core/i18n';
 
 // ============== 本地模型子组件 (从 ProviderSettings.tsx 抽出) ==============
 
@@ -92,17 +93,17 @@ const LocalEngineSection: Component = () => {
             });
             if (file && typeof file === 'string') {
                 setLocalModelPath(file);
-                setLocalSaveStatus(`已选择: ${file}`);
+                setLocalSaveStatus(t('provider.selectedPath', { path: file }));
                 setTimeout(() => setLocalSaveStatus(''), 3000);
             }
         } catch (e) {
-            alert('选择文件失败: ' + e);
+            alert(reportError('error.load', e));
         }
     };
 
     const addLocalModel = async () => {
         const path = localModelPath();
-        if (!path) return alert('请先选择模型文件');
+        if (!path) return alert(t('provider.modelRequired'));
         const engine = ENGINE_OPTIONS[0];
         const fileName = path.split(/[\\/]/).pop() || 'local-model';
         const modelName = fileName.replace(/\.[^/.]+$/, '');
@@ -118,7 +119,7 @@ const LocalEngineSection: Component = () => {
         const newList = [...localActivatedModels(), newLocal];
         setLocalActivatedModels(newList);
         await invoke('save_activated_models', { models: newList });
-        setLocalSaveStatus(`已添加本地模型: ${modelName} (${engine.name})`);
+        setLocalSaveStatus(t('provider.localAdded', { name: modelName }));
         setTimeout(() => setLocalSaveStatus(''), 3000);
     };
 
@@ -126,17 +127,17 @@ const LocalEngineSection: Component = () => {
         if (isLocalRunning()) {
             await invoke('stop_local_server');
             setIsLocalRunning(false);
-            setLocalSaveStatus('本地引擎已停止');
+            setLocalSaveStatus(t('provider.localStopped'));
         } else {
-            if (!localModelPath()) return alert('请先选择模型文件');
+            if (!localModelPath()) return alert(t('provider.modelRequired'));
             try {
                 const currentCfg: any = await invoke('load_app_config');
                 await invoke('save_app_config', { config: { ...currentCfg, localModelPath: localModelPath() } });
-                setLocalSaveStatus('正在启动本地引擎...');
+                setLocalSaveStatus(t('provider.localStarting'));
                 const engine = ENGINE_OPTIONS[0];
                 // vLLM: 用户确认 --trust-remote-code
                 let trustRemoteCode = false;
-                if (engine.id === 'vllm') {
+                if ((engine.id as string) === 'vllm') {
                     trustRemoteCode = window.confirm(
                         '[!] 安全警告\n\nvLLM 的 --trust-remote-code 选项允许模型仓库中的\n' +
                         'Python 代码以当前用户权限执行。\n\n' +
@@ -152,7 +153,7 @@ const LocalEngineSection: Component = () => {
                     trustRemoteCode,
                 });
                 setIsLocalRunning(true);
-                setLocalSaveStatus('本地引擎已就绪');
+                setLocalSaveStatus(t('provider.localReady'));
                 const fullPath = localModelPath();
                 const fileNameWithExt = fullPath.split(/[\\/]/).pop() || 'local-model';
                 const modelName = fileNameWithExt.replace(/\.[^/.]+$/, '');
@@ -168,9 +169,9 @@ const LocalEngineSection: Component = () => {
                     setLocalActivatedModels(newList);
                     await invoke('save_activated_models', { models: newList });
                 }
-                setLocalSaveStatus(`本地模型 ${modelName} 已启动 (${engine.name})`);
+                setLocalSaveStatus(t('provider.localStarted', { name: modelName, engine: engine.name }));
             } catch (err) {
-                alert('启动失败: ' + err);
+                alert(reportError('error.connection', err));
                 setIsLocalRunning(false);
             }
         }
@@ -188,27 +189,27 @@ const LocalEngineSection: Component = () => {
             <div class="flex items-center justify-between mb-2.5">
                 <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-2">
                     <Icon name="cpu" class="text-pri" size={16} />
-                    本地推理引擎
+                    {t('provider.localEngine')}
                 </h3>
                 <Show when={localSaveStatus()}>
                     <span class="text-xs text-pri font-medium animate-row-in">{localSaveStatus()}</span>
                 </Show>
             </div>
             <div class="text-xs text-[#aaa] mb-3">
-                llama.cpp (GGUF 模型) · 当前路径: <span class="font-mono text-[#ccc]">{localModelPath() || '未选择'}</span>
+                llama.cpp (GGUF) · {t('provider.currentPath')}: <span class="font-mono text-[#ccc]">{localModelPath() || t('common.none')}</span>
             </div>
             <div class="flex gap-2 flex-wrap mb-3">
                 <button
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
                     onClick={pickLocalFile}
                 >
-                    <Icon name="folder" size={14} /> 选择模型文件
+                    <Icon name="folder" size={14} /> {t('provider.chooseModel')}
                 </button>
                 <button
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
                     onClick={addLocalModel}
                 >
-                    <Icon name="plus" size={14} /> 添加到模型列表
+                    <Icon name="plus" size={14} /> {t('provider.addModel')}
                 </button>
                 <button
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md text-dark-850 font-medium transition-all duration-200 active:scale-95"
@@ -218,19 +219,19 @@ const LocalEngineSection: Component = () => {
                     <Show when={isLocalRunning()} fallback={<Icon name="play" size={12} class="text-dark-850" />}>
                         <Icon name="stop" size={12} class="text-dark-850" />
                     </Show>
-                    {isLocalRunning() ? '停止本地推理引擎' : '启动本地 llama.cpp 引擎'}
+                    {isLocalRunning() ? t('provider.stopEngine') : t('provider.startEngine')}
                 </button>
                 <Show when={enginesStatus()}>
                     <span class="text-[10px] text-[#888] self-center ml-auto flex items-center gap-1">
                         <Show when={enginesStatus()!.installed} fallback={<Icon name="alert-triangle" size={12} class="text-yellow-400" />}>
                             <Icon name="check-circle" size={12} class="text-green-400" />
                         </Show>
-                        {enginesStatus()!.installed ? '引擎已安装' : '引擎未安装, 启动时会自动下载'}
+                        {enginesStatus()!.installed ? t('provider.engineInstalled') : t('provider.engineMissing')}
                     </span>
                 </Show>
             </div>
             <Show when={localActivatedModels().length > 0}>
-                <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">已激活的本地模型 ({localActivatedModels().length})</div>
+                <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">{t('provider.activeLocalModels', { count: formatNumber(localActivatedModels().length) })}</div>
                 <div class="flex flex-wrap gap-1.5">
                     <For each={localActivatedModels()}>
                         {(m, i) => (
@@ -241,7 +242,7 @@ const LocalEngineSection: Component = () => {
                                 <span class="text-[#888]">({m.owned_by})</span>
                                 <button
                                     class="text-pri hover:text-white hover:bg-white/10 rounded-full w-4 h-4 flex items-center justify-center transition-colors"
-                                    title="移除"
+                                    title={t('common.delete')}
                                     onClick={() => removeLocalModel(m)}
                                 >
                                     <Icon name="x" size={10} />
@@ -268,12 +269,13 @@ const CatalogStats: Component = () => {
             const r = await updateModelsCatalog();
             if (r.success) {
                 await loadModelsCatalog();
-                setResult({ ok: true, msg: `已更新 ${r.modelCount} 个模型` });
+                setResult({ ok: true, msg: t('provider.syncSuccess', { count: formatNumber(r.modelCount) }) });
             } else {
-                setResult({ ok: false, msg: r.error ?? '同步失败' });
+                console.error('[catalog] sync failed:', r.error);
+                setResult({ ok: false, msg: t('common.failed') });
             }
         } catch {
-            setResult({ ok: false, msg: '网络错误' });
+            setResult({ ok: false, msg: t('error.connection') });
         }
         setUpdating(false);
         setTimeout(() => setResult(null), 3000);
@@ -281,7 +283,7 @@ const CatalogStats: Component = () => {
 
     return (
         <div class="glass-card mb-4 flex items-center justify-between animate-row-in" style={{ "animation-delay": "30ms" }}>
-            <span class="text-xl text-white uppercase tracking-[1.5px] font-semibold">模型供应商</span>
+            <span class="text-xl text-white uppercase tracking-[1.5px] font-semibold">{t('provider.title')}</span>
             <div class="flex items-center gap-3">
                 <Show when={result()}>
                     <span
@@ -293,7 +295,7 @@ const CatalogStats: Component = () => {
                     >{result()!.msg}</span>
                 </Show>
                 <span class="text-[10px] text-white/30">
-                    更新于{formatRelativeTime(modelsCatalogGeneratedAt())}
+                    {t('provider.updatedAt', { time: formatRelativeTime(modelsCatalogGeneratedAt()) })}
                 </span>
                 <button
                     type="button"
@@ -304,7 +306,7 @@ const CatalogStats: Component = () => {
                     <Show when={updating()} fallback={<Icon name="refresh" size={11} />}>
                         <Icon name="spinner" size={11} class="animate-spin" />
                     </Show>
-                    {updating() ? '同步中...' : '同步'}
+                    {updating() ? t('provider.syncing') : t('provider.sync')}
                 </button>
             </div>
         </div>
@@ -380,7 +382,7 @@ const ProviderList: Component = () => {
                 setTimeout(() => setToast(null), 2000);
             }
         } catch (e) {
-            setToast({ msg: '保存失败: ' + e, ok: false });
+            setToast({ msg: reportError('error.save', e), ok: false });
             setTimeout(() => setToast(null), 3000);
         }
     };
@@ -410,9 +412,9 @@ const ProviderList: Component = () => {
     const addCustomProvider = () => {
         const name = newCustomName().trim();
         const url = newCustomUrl().trim();
-        if (!name || !url) return alert('名称和 URL 都不能为空');
+        if (!name || !url) return alert(t('provider.requiredNameUrl'));
         const id = 'custom-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32);
-        if (providerConfigs()[id]) return alert('已存在同 ID 的 provider');
+        if (providerConfigs()[id]) return alert(t('provider.duplicate'));
         const newCfg: ProviderConfig = {
             id,
             enabled: true,
@@ -432,21 +434,21 @@ const ProviderList: Component = () => {
                 setShowAddCustom(false);
                 setNewCustomName('');
                 setNewCustomUrl('');
-                setToast({ msg: `已添加自定义 provider "${name}"`, ok: true });
+                setToast({ msg: t('provider.customAdded', { name }), ok: true });
                 setTimeout(() => setToast(null), 2000);
             })
-            .catch(e => alert('保存失败: ' + e));
+            .catch(e => alert(reportError('error.save', e)));
     };
 
     const removeCustomProvider = async (id: string) => {
-        if (!confirm(`确认删除自定义 provider "${providerConfigs()[id]?.displayName}"？`)) return;
+        if (!confirm(t('provider.deleteCustomConfirm', { name: providerConfigs()[id]?.displayName ?? id }))) return;
         const next = { ...providerConfigs() };
         delete next[id];
         try {
             await invoke('save_provider_configs', { file: { version: 2, updatedAt: String(Date.now()), providers: next } });
             setProviderConfigs(next);
         } catch (e) {
-            alert('删除失败: ' + e);
+            alert(reportError('error.save', e));
         }
     };
 
@@ -462,7 +464,7 @@ const ProviderList: Component = () => {
                     <Icon name="search" size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
                     <input
                         type="text"
-                        placeholder="搜索供应商"
+                        placeholder={t('provider.search')}
                         class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full pl-9 pr-3 py-1.5 text-sm"
                         value={search()}
                         onInput={(e) => setSearch(e.currentTarget.value)}
@@ -473,18 +475,18 @@ const ProviderList: Component = () => {
                     class="px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
                     onClick={() => setShowAddCustom(true)}
                 >
-                    + 添加自定义 Provider
+                    + {t('provider.addCustom')}
                 </button>
             </div>
 
             {/* 自定义 provider 模态框 */}
             <Show when={showAddCustom()}>
                 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur" style={{ animation: 'modalOverlayIn 0.2s ease forwards' }} onClick={() => setShowAddCustom(false)}>
-                    <div class="bg-[rgba(18,22,35,0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]" style={{ backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', animation: 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards' }} onClick={(e) => e.stopPropagation()}>
-                        <h3 class="text-lg font-bold text-white mb-1">添加自定义 Provider</h3>
-                        <p class="text-xs text-[#888] mb-5">通过 OpenAI-兼容端点接入任何 LLM 服务</p>
+                    <div class="bg-[rgba(18,22,35,0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]" style={{ 'backdrop-filter': 'blur(60px) saturate(180%)', '-webkit-backdrop-filter': 'blur(60px) saturate(180%)', animation: 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards' }} onClick={(e) => e.stopPropagation()}>
+                        <h3 class="text-lg font-bold text-white mb-1">{t('provider.addCustom')}</h3>
+                        <p class="text-xs text-[#888] mb-5">{t('provider.customDescription')}</p>
                         <div class="mb-3">
-                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">显示名称</label>
+                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">{t('provider.displayName')}</label>
                             <input
                                 type="text"
                                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm"
@@ -494,7 +496,7 @@ const ProviderList: Component = () => {
                             />
                         </div>
                         <div class="mb-5">
-                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">API URL</label>
+                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">{t('provider.apiUrlLabel')}</label>
                             <input
                                 type="text"
                                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
@@ -508,22 +510,22 @@ const ProviderList: Component = () => {
                                 type="button"
                                 class="px-4 py-1.5 text-xs rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200"
                                 onClick={() => { setShowAddCustom(false); setNewCustomName(''); setNewCustomUrl(''); }}
-                            >取消</button>
+                            >{t('common.cancel')}</button>
                             <button
                                 type="button"
                                 class="px-4 py-1.5 text-xs rounded-md font-semibold transition-all duration-200 active:scale-95"
                                 style={{ 'background-color': 'var(--primary-color)', color: '#0e121f' }}
                                 onClick={addCustomProvider}
-                            >添加</button>
+                            >{t('common.add')}</button>
                         </div>
                     </div>
                 </div>
             </Show>
 
             {/* Provider 列表 (catalog) */}
-            <Show when={catalogReady()} fallback={<div class="text-center text-[#888] py-8">加载 catalog 中...</div>}>
+            <Show when={catalogReady()} fallback={<div class="text-center text-[#888] py-8">{t('provider.loadingCatalog')}</div>}>
                 <Show when={sortedCatalog().enabled.length === 0 && sortedCatalog().disabled.length === 0}>
-                    <div class="text-center text-[#666] py-8 italic text-sm">没有匹配的 provider</div>
+                    <div class="text-center text-[#666] py-8 italic text-sm">{t('provider.noMatch')}</div>
                 </Show>
 
                 {/* 已启用 */}
@@ -546,7 +548,7 @@ const ProviderList: Component = () => {
                 <Show when={sortedCatalog().enabled.length > 0 && sortedCatalog().disabled.length > 0}>
                     <div class="flex items-center gap-3 my-4">
                         <div class="flex-1 h-px bg-white/[0.06]" />
-                        <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">未启用</span>
+                        <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">{t('provider.notEnabled')}</span>
                         <div class="flex-1 h-px bg-white/[0.06]" />
                     </div>
                 </Show>
@@ -572,7 +574,7 @@ const ProviderList: Component = () => {
                     <div class="flex items-center gap-3 mt-5 mb-2">
                         <div class="flex-1 h-px bg-white/[0.06]" />
                         <span class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold shrink-0">
-                            自定义 Provider ({customProviders().length})
+                            {t('provider.custom')} ({formatNumber(customProviders().length)})
                         </span>
                         <div class="flex-1 h-px bg-white/[0.06]" />
                     </div>
@@ -592,10 +594,10 @@ const ProviderList: Component = () => {
                                         <div class="grow min-w-0">
                                             <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
                                             <div class="text-[10px] text-[#888] font-mono truncate mt-0.5">
-                                                {cfg.apiUrl || '(未配置)'} · 自定义
+                                                {cfg.apiUrl || `(${t('provider.notConfigured')})`} · {t('provider.custom')}
                                             </div>
                                         </div>
-                                        <span class="text-[10px] text-[#666] hidden sm:inline">已启用 {cfg.enabledModels.length} 个</span>
+                                        <span class="text-[10px] text-[#666] hidden sm:inline">{t('provider.enabledModels', { count: formatNumber(cfg.enabledModels.length) })}</span>
                                         <button
                                             type="button"
                                             class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
@@ -604,7 +606,7 @@ const ProviderList: Component = () => {
                                                 ...(cfg.enabled ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
                                             }}
                                             onClick={(e) => { e.stopPropagation(); toggleEnabled(cfg.id, cfg.enabled); }}
-                                            title={cfg.enabled ? '点击停用' : '点击启用'}
+                                            title={cfg.enabled ? t('common.disable') : t('common.enable')}
                                         >
                                             <span
                                                 class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
@@ -615,7 +617,7 @@ const ProviderList: Component = () => {
                                             type="button"
                                             class="px-2.5 py-1 text-[11px] rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95"
                                             onClick={(e) => { e.stopPropagation(); removeCustomProvider(cfg.id); }}
-                                        >删除</button>
+                                        >{t('common.delete')}</button>
                                     </div>
                                 )}
                             </For>
@@ -625,7 +627,7 @@ const ProviderList: Component = () => {
                     <Show when={sortedCustom().enabled.length > 0 && sortedCustom().disabled.length > 0}>
                         <div class="flex items-center gap-3 my-3">
                             <div class="flex-1 h-px bg-white/[0.06]" />
-                            <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">未启用</span>
+                            <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">{t('provider.notEnabled')}</span>
                             <div class="flex-1 h-px bg-white/[0.06]" />
                         </div>
                     </Show>
@@ -645,10 +647,10 @@ const ProviderList: Component = () => {
                                         <div class="grow min-w-0">
                                             <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
                                             <div class="text-[10px] text-[#888] font-mono truncate mt-0.5">
-                                                {cfg.apiUrl || '(未配置)'} · 自定义
+                                                {cfg.apiUrl || `(${t('provider.notConfigured')})`} · {t('provider.custom')}
                                             </div>
                                         </div>
-                                        <span class="text-[10px] text-[#666] hidden sm:inline">已启用 {cfg.enabledModels.length} 个</span>
+                                        <span class="text-[10px] text-[#666] hidden sm:inline">{t('provider.enabledModels', { count: formatNumber(cfg.enabledModels.length) })}</span>
                                         <button
                                             type="button"
                                             class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
@@ -657,7 +659,7 @@ const ProviderList: Component = () => {
                                                 ...(cfg.enabled ? { background: 'rgba(var(--primary-rgb), 0.7)', 'border-color': 'rgba(var(--primary-rgb), 0.5)', 'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)' } : {})
                                             }}
                                             onClick={(e) => { e.stopPropagation(); toggleEnabled(cfg.id, cfg.enabled); }}
-                                            title={cfg.enabled ? '点击停用' : '点击启用'}
+                                            title={cfg.enabled ? t('common.disable') : t('common.enable')}
                                         >
                                             <span
                                                 class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
@@ -668,7 +670,7 @@ const ProviderList: Component = () => {
                                             type="button"
                                             class="px-2.5 py-1 text-[11px] rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95"
                                             onClick={(e) => { e.stopPropagation(); removeCustomProvider(cfg.id); }}
-                                        >删除</button>
+                                        >{t('common.delete')}</button>
                                     </div>
                                 )}
                             </For>
@@ -685,7 +687,7 @@ const ProviderList: Component = () => {
                         'text-green-300': toast()!.ok,
                         'text-red-300': !toast()!.ok,
                     }}
-                    style={{ background: 'rgba(18, 22, 35, 0.88)', backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
+                    style={{ background: 'rgba(18, 22, 35, 0.88)', 'backdrop-filter': 'blur(30px) saturate(180%)', '-webkit-backdrop-filter': 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
                 >{toast()!.msg}</div>
             </Show>
         </div>
@@ -703,10 +705,10 @@ const ProviderRow: Component<{
     const isEnabled = () => cfg()?.enabled ?? false;
     const status = createMemo(() => {
         const c = cfg();
-        if (!c) return { label: '未配置', cls: 'bg-white/5 text-white/40 border border-white/[0.06]' };
-        if (isEnabled() && c.apiKey) return { label: '已配置', cls: 'bg-green-400/15 text-green-300 border border-green-400/20' };
-        if (c.apiKey) return { label: '已配置 · 禁用', cls: 'bg-yellow-400/[0.12] text-yellow-200 border border-yellow-400/20' };
-        return { label: '未配置', cls: 'bg-white/5 text-white/40 border border-white/[0.06]' };
+        if (!c) return { label: t('provider.notConfigured'), cls: 'bg-white/5 text-white/40 border border-white/[0.06]' };
+        if (isEnabled() && c.apiKey) return { label: t('provider.configured'), cls: 'bg-green-400/15 text-green-300 border border-green-400/20' };
+        if (c.apiKey) return { label: t('provider.configuredDisabled'), cls: 'bg-yellow-400/[0.12] text-yellow-200 border border-yellow-400/20' };
+        return { label: t('provider.notConfigured'), cls: 'bg-white/5 text-white/40 border border-white/[0.06]' };
     });
     const enabledCount = createMemo(() => cfg()?.enabledModels.length ?? 0);
 
@@ -727,13 +729,13 @@ const ProviderRow: Component<{
                     <span class="text-sm text-white truncate font-medium">{props.provider.name}</span>
                     <span class={`inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] ${status().cls}`}>{status().label}</span>
                     <Show when={props.provider.isAggregator}>
-                        <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6]" style={{ background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)' }}>聚合</span>
+                        <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6]" style={{ background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)' }}>{t('provider.aggregator')}</span>
                     </Show>
                 </div>
                 <div class="text-[10px] text-[#888] font-mono mt-0.5">
-                    {props.provider.modelCount} 个模型
+                    {t('provider.modelCount', { count: props.provider.modelCount })}
                     <Show when={enabledCount() > 0}>
-                        <span class="ml-2 text-pri">· 已启用 {enabledCount()} 个</span>
+                        <span class="ml-2 text-pri">· {t('mcp.detail.enabledCount', { count: enabledCount() })}</span>
                     </Show>
                 </div>
             </div>
@@ -748,7 +750,7 @@ const ProviderRow: Component<{
                     e.stopPropagation();
                     props.onToggleEnabled(props.provider.id, isEnabled());
                 }}
-                title={isEnabled() ? '点击停用' : '点击启用'}
+                title={isEnabled() ? t('mcp.detail.clickToDisable') : t('mcp.detail.clickToEnable')}
             >
                 <span
                     class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"

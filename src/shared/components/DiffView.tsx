@@ -1,6 +1,7 @@
 import { createSignal, For, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { currentProject } from '../../core/store/store';
+import { t } from '../../core/i18n';
 import type { FileChangeInfo } from '../../core/store/store';
 
 interface DiffViewProps {
@@ -16,9 +17,9 @@ const ACTION_COLORS: Record<FileChangeInfo['action'], string> = {
 };
 
 const ACTION_LABELS: Record<FileChangeInfo['action'], string> = {
-    create: 'New',
-    modify: 'Mod',
-    delete: 'Del',
+    create: t('diff.new'),
+    modify: t('diff.mod'),
+    delete: t('diff.del'),
 };
 
 function parseDiffLines(diff: string): { type: 'ctx' | 'add' | 'del' | 'hdr'; text: string }[] {
@@ -125,7 +126,7 @@ const DiffView = (props: DiffViewProps) => {
                             <Show when={!props.allReverted}>
                                 <span
                                     class="flex items-center justify-center w-5 h-5 rounded hover:bg-white/[0.08] shrink-0 text-white/25 hover:text-red-400 transition-colors cursor-pointer"
-                                    title="Revert this change"
+                                    title={t('diff.revert')}
                                     onClick={(e) => { e.stopPropagation(); handleRevert(); }}
                                 >
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5">

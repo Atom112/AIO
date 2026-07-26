@@ -1,5 +1,6 @@
 import { Component, createSignal, createEffect } from 'solid-js';
 import Icon from './Icon';
+import { t } from '../../core/i18n';
 
 interface UserDropdownProps {
   avatar: string;
@@ -37,7 +38,7 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
         style="background: rgba(18, 22, 35, 0.85); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.06);">
         <div class="flex items-center gap-2.5 p-2.5 text-[13px] rounded-md transition-all text-white/70 hover:bg-pri-10 hover:text-white" onClick={props.onEditAvatar}>
           <Icon src="/icons/app-logo/camera.svg" class="w-4 h-4" />
-          更换头像
+          {t('nav.changeAvatar')}
         </div>
       </div>
     </div>

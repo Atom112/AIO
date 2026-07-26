@@ -26,6 +26,7 @@ import { getProviderLogo } from '../../core/utils/modelLogo';
 import ModelRow from '../../shared/components/ModelRow';
 import Icon from '../../shared/components/Icon';
 import Dropdown from '../../shared/components/Dropdown';
+import { formatNumber, reportError, t } from '../../core/i18n';
 
 type SortKey = 'releaseDesc' | 'nameAsc';
 
@@ -99,7 +100,7 @@ const ProviderDetail: Component = () => {
             await invoke('save_provider_configs', { file });
             setProviderConfigs(map);
         } catch (e) {
-            setToast({ msg: '保存失败: ' + e, ok: false });
+            setToast({ msg: reportError('error.save', e), ok: false });
             setTimeout(() => setToast(null), 3000);
         }
     };
@@ -179,12 +180,13 @@ const ProviderDetail: Component = () => {
                 proxyUrl: u?.proxyUrl ?? null,
             });
             if (r.success) {
-                setTestState({ status: 'ok', msg: `连接成功 · ${r.modelCount} 个模型 · ${r.elapsedMs}ms`, sampleModels: r.sampleModelIds });
+                setTestState({ status: 'ok', msg: t('provider.connectionResult', { count: formatNumber(r.modelCount), elapsed: formatNumber(r.elapsedMs) }), sampleModels: r.sampleModelIds });
             } else {
-                setTestState({ status: 'fail', msg: r.error ?? '失败' });
+                console.error('[provider] connection test failed:', r.error);
+                setTestState({ status: 'fail', msg: t('error.connection') });
             }
         } catch (e) {
-            setTestState({ status: 'fail', msg: typeof e === 'string' ? e : String(e) });
+            setTestState({ status: 'fail', msg: reportError('error.connection', e) });
         }
     };
 
@@ -200,15 +202,16 @@ const ProviderDetail: Component = () => {
                 const incoming: FetchedModel[] = r.models.map(m => ({
                     id: m.id, ownedBy: m.owned_by, displayName: m.display_name, releasedAt: m.released_at,
                 }));
-                setFetchState({ status: 'ok', msg: `已拉到 ${r.models.length} 个`, models: incoming });
+                setFetchState({ status: 'ok', msg: t('provider.fetchResult', { count: formatNumber(r.models.length) }), models: incoming });
                 if (isCustom()) {
                     persist({ fetchedModels: incoming });
                 }
             } else {
-                setFetchState({ status: 'fail', msg: r.error ?? '失败' });
+                console.error('[provider] fetch models failed:', r.error);
+                setFetchState({ status: 'fail', msg: t('error.connection') });
             }
         } catch (e) {
-            setFetchState({ status: 'fail', msg: typeof e === 'string' ? e : String(e) });
+            setFetchState({ status: 'fail', msg: reportError('error.connection', e) });
         }
     };
 
@@ -223,12 +226,12 @@ const ProviderDetail: Component = () => {
                         class="px-3 py-1.5 text-sm rounded-md border border-white/10 text-[#ccc] hover:border-pri-30 hover:text-white hover:bg-white/5 transition-all duration-200 active:scale-95 flex items-center gap-1.5"
                         onClick={() => navigate('/settings')}
                     >
-                        <Icon name="arrow-left" size={14} class="text-pri" /> 返回 Provider 列表
+                        <Icon name="arrow-left" size={14} class="text-pri" /> {t('provider.back')}
                     </button>
                     <Show when={!catalogReady()}>
                         <span class="text-xs text-[#888] flex items-center gap-1.5">
                             <span class="w-1.5 h-1.5 rounded-full bg-pri animate-pulse" />
-                            加载 catalog 中...
+                            {t('provider.loadingCatalog')}
                         </span>
                     </Show>
                 </div>
@@ -248,13 +251,13 @@ const ProviderDetail: Component = () => {
                         <h1 class="text-xl font-bold text-white truncate tracking-tight">{userCfg()?.displayName ?? providerMeta()?.name ?? providerId()}</h1>
                         <div class="text-xs text-[#888] font-mono mt-1 flex items-center gap-2 flex-wrap">
                             <Show when={isCustom()}>
-                                <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6]" style={{ background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)' }}>自定义</span>
+                                <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6]" style={{ background: 'rgba(var(--primary-rgb), 0.15)', color: 'rgba(var(--primary-rgb), 1)', border: '1px solid rgba(var(--primary-rgb), 0.25)' }}>{t('provider.custom')}</span>
                             </Show>
                             <Show when={!isCustom()}>
-                                <span><span class="text-pri font-semibold">{modelGroups().enabled.length}</span><span class="text-[#666]"> / </span><span>{modelGroups().enabled.length + modelGroups().available.length}</span> 个模型已启用</span>
+                                <span>{t('provider.enabledModels', { count: `${formatNumber(modelGroups().enabled.length)} / ${formatNumber(modelGroups().enabled.length + modelGroups().available.length)}` })}</span>
                                 <Show when={modelGroups().enabled.length > 0}>
                                     <span class="text-[#666]">·</span>
-                                    <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-green-400/15 text-green-300 border border-green-400/20">已启用</span>
+                                    <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-green-400/15 text-green-300 border border-green-400/20">{t('common.enabled')}</span>
                                 </Show>
                             </Show>
                         </div>
@@ -267,7 +270,7 @@ const ProviderDetail: Component = () => {
                                 rel="noopener noreferrer"
                                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-pri transition-all duration-200"
                             >
-                                <Icon name="book" size={12} /> 文档
+                                <Icon name="book" size={12} /> {t('provider.docs')}
                             </a>
                         </Show>
                     </Show>
@@ -278,10 +281,10 @@ const ProviderDetail: Component = () => {
                     class="glass-card mb-4 animate-row-in"
                     style={{ "animation-delay": "60ms" }}
                 >
-                    <div class="section-label mb-3">连接配置</div>
+                    <div class="section-label mb-3">{t('provider.connectionConfig')}</div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                         <div>
-                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>显示名称</label>
+                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>{t('provider.displayName')}</label>
                             <input
                                 type="text"
                                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm"
@@ -290,9 +293,8 @@ const ProviderDetail: Component = () => {
                             />
                         </div>
                         <div>
-                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>API URL</label>
-                            <input
-                                type="text"
+                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>{t('provider.apiUrlLabel')}</label>
+                            <input type="text"
                                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                                 value={userCfg()?.apiUrl ?? ''}
                                 onInput={(e) => updateField('apiUrl', e.currentTarget.value)}
@@ -310,11 +312,11 @@ const ProviderDetail: Component = () => {
                         </div>
                         <div>
                             <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>
-                                代理 URL <span class="text-[#666] normal-case tracking-normal font-normal ml-1">(可选, 例如 http://127.0.0.1:7890)</span>
+                                {t('provider.proxyUrl')} <span class="text-[#666] normal-case tracking-normal font-normal ml-1">({t('provider.proxyOptional')})</span>
                             </label>
                             <input
                                 type="text"
-                                placeholder="留空则不使用代理"
+                                placeholder={t('provider.proxyPlaceholder')}
                                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                                 value={userCfg()?.proxyUrl ?? ''}
                                 onInput={(e) => updateField('proxyUrl', e.currentTarget.value || undefined)}
@@ -344,7 +346,7 @@ const ProviderDetail: Component = () => {
                                     style={{ transform: (userCfg()?.enabled ?? false) ? 'translateX(21px)' : 'translateX(3px)' }}
                                 />
                             </span>
-                            <span class="text-sm text-white">启用此 provider</span>
+                            <span class="text-sm text-white">{t('provider.enableProvider')}</span>
                         </button>
                         <button
                             type="button"
@@ -355,7 +357,7 @@ const ProviderDetail: Component = () => {
                             <Show when={testState().status === 'testing'} fallback={<Icon name="beaker" size={13} />}>
                                 <Icon name="spinner" size={13} class="animate-spin" />
                             </Show>
-                            {testState().status === 'testing' ? '测试中...' : '测试连接'}
+                            {testState().status === 'testing' ? t('provider.testing') : t('provider.testConnection')}
                         </button>
                         <button
                             type="button"
@@ -366,7 +368,7 @@ const ProviderDetail: Component = () => {
                             <Show when={fetchState().status === 'fetching'} fallback={<Icon name="download" size={13} />}>
                                 <Icon name="spinner" size={13} class="animate-spin" />
                             </Show>
-                            {fetchState().status === 'fetching' ? '拉取中...' : '从 API 拉取模型'}
+                            {fetchState().status === 'fetching' ? t('provider.fetching') : t('provider.fetchModels')}
                         </button>
                     </div>
                 </div>
@@ -421,10 +423,10 @@ const ProviderDetail: Component = () => {
                         style={{ "animation-delay": "90ms" }}
                     >
                         <div class="flex items-center justify-between mb-3">
-                            <div class="section-label">自定义模型 ({userCfg()?.fetchedModels?.length ?? 0})</div>
+                            <div class="section-label">{t('provider.customModels', { count: formatNumber(userCfg()?.fetchedModels?.length ?? 0) })}</div>
                         </div>
                         <div class="text-xs text-[#888] italic mb-3 px-1">
-                            自定义 provider 无 catalog 数据, 请通过"从 API 拉取模型"获取列表后再勾选启用
+                            {t('provider.customModelsHint')}
                         </div>
                         <Show when={(userCfg()?.fetchedModels?.length ?? 0) > 0}>
                             <div class="space-y-1.5">
@@ -472,14 +474,14 @@ const ProviderDetail: Component = () => {
                     >
                         <div class="flex items-center gap-3 mb-3 flex-wrap">
                             <div class="section-label">
-                                模型列表 ({modelGroups().enabled.length + modelGroups().available.length})
+                                {t('provider.modelList', { count: formatNumber(modelGroups().enabled.length + modelGroups().available.length) })}
                             </div>
                             <div class="flex items-center gap-2 ml-auto flex-wrap">
                                 <div class="relative">
                                     <Icon name="search" size={12} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none" />
                                     <input
                                         type="text"
-                                        placeholder="搜索模型..."
+                                        placeholder={t('provider.searchModels')}
                                         class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-7 pr-3 py-1 text-xs"
                                         style={{ 'width': '180px' }}
                                         value={search()}
@@ -490,8 +492,8 @@ const ProviderDetail: Component = () => {
                                     value={sortKey()}
                                     onChange={(v) => setSortKey(v as SortKey)}
                                     options={[
-                                        { value: 'releaseDesc', label: '发布日期' },
-                                        { value: 'nameAsc', label: '名称 A-Z' },
+                                        { value: 'releaseDesc', label: t('provider.releaseDate') },
+                                        { value: 'nameAsc', label: t('provider.nameSort') },
                                     ]}
                                     class="text-xs" />
                             </div>
@@ -501,7 +503,7 @@ const ProviderDetail: Component = () => {
                         <Show when={visibleEnabled().length > 0}>
                             <div class="section-label mt-2 mb-2 flex items-center gap-2">
                                 <span class="w-1.5 h-1.5 rounded-full bg-pri" />
-                                已启用 ({visibleEnabled().length})
+                                {t('provider.enabledCount', { count: formatNumber(visibleEnabled().length) })}
                             </div>
                             <div class="space-y-1.5">
                                 <For each={visibleEnabled()}>
@@ -518,7 +520,7 @@ const ProviderDetail: Component = () => {
                         <Show when={visibleAvailable().length > 0}>
                             <div class="section-label mt-4 mb-2 flex items-center gap-2">
                                 <span class="w-1.5 h-1.5 rounded-full bg-[#666]" />
-                                未启用 ({visibleAvailable().length})
+                                {t('provider.notEnabledCount', { count: formatNumber(visibleAvailable().length) })}
                             </div>
                             <div class="space-y-1.5">
                                 <For each={visibleAvailable()}>
@@ -535,7 +537,7 @@ const ProviderDetail: Component = () => {
                         <Show when={visibleOrphans().length > 0}>
                             <div class="section-label mt-4 mb-2 flex items-center gap-2">
                                 <span class="w-1.5 h-1.5 rounded-full bg-yellow-400/60" />
-                                未在 catalog 中 ({visibleOrphans().length})
+                                {t('provider.orphanCount', { count: formatNumber(visibleOrphans().length) })}
                             </div>
                             <div class="flex flex-wrap gap-1.5">
                                 <For each={visibleOrphans()}>
@@ -548,7 +550,7 @@ const ProviderDetail: Component = () => {
                                             <button
                                                 type="button"
                                                 class="w-4 h-4 flex items-center justify-center rounded-full text-[12px] leading-none transition-colors hover:bg-white/15"
-                                                title="移除"
+                                                title={t('common.delete')}
                                                 onClick={() => removeOrphan(mid)}
                                             >×</button>
                                         </span>
@@ -560,12 +562,12 @@ const ProviderDetail: Component = () => {
                         {/* 空状态 */}
                         <Show when={modelGroups().enabled.length === 0 && modelGroups().available.length === 0 && !search()}>
                             <div class="text-xs text-[#666] italic py-6 text-center">
-                                catalog 中暂无该 provider 的模型
+                                {t('provider.noCatalogModels')}
                             </div>
                         </Show>
                         <Show when={search() && visibleEnabled().length === 0 && visibleAvailable().length === 0 && visibleOrphans().length === 0}>
                             <div class="text-xs text-[#666] italic py-6 text-center">
-                                无匹配 "{search()}" 的模型
+                                {t('provider.noModelMatch', { query: search() })}
                             </div>
                         </Show>
                     </div>
@@ -579,7 +581,7 @@ const ProviderDetail: Component = () => {
                             'text-green-300': toast()!.ok,
                             'text-red-300': !toast()!.ok,
                         }}
-                        style={{ background: 'rgba(18, 22, 35, 0.88)', backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
+                        style={{ background: 'rgba(18, 22, 35, 0.88)', 'backdrop-filter': 'blur(30px) saturate(180%)', '-webkit-backdrop-filter': 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
                     >{toast()!.msg}</div>
                 </Show>
             </div>

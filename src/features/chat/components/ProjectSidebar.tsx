@@ -9,6 +9,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import Icon from '../../../shared/components/Icon';
 import ProjectCreateModal from './ProjectCreateModal';
+import { t } from '../../../core/i18n';
 
 interface ProjectSidebarProps {
   width: number;
@@ -137,7 +138,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
 
   /** 删除项目 */
   const deleteProject = async (projectId: string) => {
-    if (!confirm('确定要删除该项目吗？项目助理数据将被清除。')) return;
+    if (!confirm(t('project.deleteConfirm'))) return;
     try {
       const asst = datas.assistants.find(a => a.projectId === projectId);
       if (asst) {
@@ -202,7 +203,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               onClick={switchToChat}
             >
               <span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);">
-                <Icon name="chat" size={14} class="shrink-0" /> <span class="truncate">对话</span>
+                <Icon name="chat" size={14} class="shrink-0" /> <span class="truncate">{t('project.sidebar.dialog')}</span>
               </span>
             </div>
 
@@ -211,7 +212,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
 
             {/* 项目区域 */}
             <div class="flex items-center h-12 text-xs uppercase tracking-[1.5px] font-semibold px-3 mb-1" style="color: rgba(255,255,255,0.35);">
-              项目
+              {t('project.sidebar.project')}
             </div>
 
             <For each={projectList()}>
@@ -301,7 +302,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               <button
                 class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white"
                 onClick={() => setShowProjectCreateModal(true)}
-                title="新建项目"
+                title={t('project.sidebar.newProject')}
               >
                 <Icon name="plus" size={16} />
               </button>
@@ -337,7 +338,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                 closeMenu();
               }}
             >
-              项目设置
+              {t('project.settings')}
             </button>
             <button
               class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white"
@@ -347,14 +348,14 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                 closeMenu();
               }}
             >
-              重命名
+              {t('project.rename')}
             </button>
             <button
               class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200"
               style="color: rgba(255,77,77,0.8);"
               onClick={() => deleteProject(menuState().targetProjectId!)}
             >
-              删除项目
+              {t('project.delete')}
             </button>
           </div>
         </Portal>
@@ -378,7 +379,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         <div
           class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
           style="background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
-          title={props.isCollapsed ? '展开侧栏' : '折叠侧栏'}
+          title={props.isCollapsed ? t('project.sidebar.expand') : t('project.sidebar.collapse')}
           onClick={(e) => { e.stopPropagation(); props.onToggle(e); }}
         >
           {props.isCollapsed ? '〉' : '〈'}

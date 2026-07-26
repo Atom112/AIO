@@ -6,6 +6,7 @@
  */
 
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 import { Component, Show, createMemo, For } from 'solid-js';
 import { datas, currentAssistantId, currentTopicId, selectedModel } from '../../../core/store/store';
 import type { Topic, Message } from '../../../core/store/store';
@@ -69,10 +70,10 @@ const SessionStats: Component = () => {
                 class="flex items-center gap-3 px-4 py-1.5 text-xs select-none"
                 style="background: rgba(0,0,0,0.1); border-bottom: 1px solid rgba(255,255,255,0.03);"
             >
-                <span class="text-gray-400 shrink-0 inline-flex items-center gap-1"><Icon name="trending-up" size={14} />会话</span>
+                <span class="text-gray-400 shrink-0 inline-flex items-center gap-1"><Icon name="trending-up" size={14} />{t('chat.session.label')}</span>
 
                 <span class="font-mono" style={`color: ${color()};`}>
-                    总 {fmt(totalUsed())} tokens
+                    {t('chat.session.totalTokens', { count: fmt(totalUsed()) })}
                 </span>
 
                 <Show when={stats().totalInput > 0}>
@@ -88,7 +89,7 @@ const SessionStats: Component = () => {
                 </Show>
 
                 <Show when={stats().toolCallCount > 0}>
-                    <span class="text-gray-600 font-mono"><Icon name="wrench" size={14} /> {stats().toolCallCount} 次工具调用</span>
+                    <span class="text-gray-600 font-mono"><Icon name="wrench" size={14} /> {t('chat.session.toolCalls', { count: stats().toolCallCount })}</span>
                 </Show>
 
                 <span class="flex-1" />

@@ -10,14 +10,15 @@ import { Component, Show, createMemo } from 'solid-js';
 import { selectedModel, modelsCatalog } from '../../../core/store/store';
 import { getCachedCatalog } from '../../../core/utils/models';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 /** 根据占用百分比返回颜色和提示 */
 function usageInfo(pct: number): { color: string; tip: string } {
-    if (pct > 0.95) return { color: '#ef4444', tip: '[!] 即将超出上下文窗口，建议立即压缩' };
-    if (pct > 0.85) return { color: '#f59e0b', tip: '[!] 上下文压力较高，建议压缩' };
-    if (pct > 0.70) return { color: '#eab308', tip: '上下文使用中' };
-    if (pct > 0.40) return { color: '#22c55e', tip: '上下文使用正常' };
-    return { color: '#22c55e', tip: '上下文充足' };
+    if (pct > 0.95) return { color: '#ef4444', tip: t('chat.token.windowExceeded') };
+    if (pct > 0.85) return { color: '#f59e0b', tip: t('chat.token.highPressure') };
+    if (pct > 0.70) return { color: '#eab308', tip: t('chat.token.inUse') };
+    if (pct > 0.40) return { color: '#22c55e', tip: t('chat.token.normal') };
+    return { color: '#22c55e', tip: t('chat.token.sufficient') };
 }
 
 /** 格式化数字 */

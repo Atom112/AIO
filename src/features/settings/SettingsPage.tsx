@@ -71,7 +71,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
 
             {/* 主内容区 */}
             <Transition name="subpage-fade">
-                <div class="flex-1 overflow-y-auto overflow-x-hidden min-w-0" key={location.pathname}>
+                <div class="flex-1 overflow-y-auto overflow-x-hidden min-w-0" {...({ key: location.pathname } as any)}>
                     {props.children}
                 </div>
             </Transition>

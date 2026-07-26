@@ -119,7 +119,7 @@ const LocalEngineSection: Component = () => {
         const newList = [...localActivatedModels(), newLocal];
         setLocalActivatedModels(newList);
         await invoke('save_activated_models', { models: newList });
-        setLocalSaveStatus(`已添加本地模型: ${modelName} (${engine.name})`);
+        setLocalSaveStatus(t('provider.localAdded', { name: modelName }));
         setTimeout(() => setLocalSaveStatus(''), 3000);
     };
 
@@ -127,17 +127,17 @@ const LocalEngineSection: Component = () => {
         if (isLocalRunning()) {
             await invoke('stop_local_server');
             setIsLocalRunning(false);
-            setLocalSaveStatus('本地引擎已停止');
+            setLocalSaveStatus(t('provider.localStopped'));
         } else {
             if (!localModelPath()) return alert(t('provider.modelRequired'));
             try {
                 const currentCfg: any = await invoke('load_app_config');
                 await invoke('save_app_config', { config: { ...currentCfg, localModelPath: localModelPath() } });
-                setLocalSaveStatus('正在启动本地引擎...');
+                setLocalSaveStatus(t('provider.localStarting'));
                 const engine = ENGINE_OPTIONS[0];
                 // vLLM: 用户确认 --trust-remote-code
                 let trustRemoteCode = false;
-                if (engine.id === 'vllm') {
+                if ((engine.id as string) === 'vllm') {
                     trustRemoteCode = window.confirm(
                         '[!] 安全警告\n\nvLLM 的 --trust-remote-code 选项允许模型仓库中的\n' +
                         'Python 代码以当前用户权限执行。\n\n' +
@@ -153,7 +153,7 @@ const LocalEngineSection: Component = () => {
                     trustRemoteCode,
                 });
                 setIsLocalRunning(true);
-                setLocalSaveStatus('本地引擎已就绪');
+                setLocalSaveStatus(t('provider.localReady'));
                 const fullPath = localModelPath();
                 const fileNameWithExt = fullPath.split(/[\\/]/).pop() || 'local-model';
                 const modelName = fileNameWithExt.replace(/\.[^/.]+$/, '');
@@ -169,7 +169,7 @@ const LocalEngineSection: Component = () => {
                     setLocalActivatedModels(newList);
                     await invoke('save_activated_models', { models: newList });
                 }
-                setLocalSaveStatus(`本地模型 ${modelName} 已启动 (${engine.name})`);
+                setLocalSaveStatus(t('provider.localStarted', { name: modelName, engine: engine.name }));
             } catch (err) {
                 alert(reportError('error.connection', err));
                 setIsLocalRunning(false);
@@ -482,7 +482,7 @@ const ProviderList: Component = () => {
             {/* 自定义 provider 模态框 */}
             <Show when={showAddCustom()}>
                 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur" style={{ animation: 'modalOverlayIn 0.2s ease forwards' }} onClick={() => setShowAddCustom(false)}>
-                    <div class="bg-[rgba(18,22,35,0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]" style={{ backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', animation: 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards' }} onClick={(e) => e.stopPropagation()}>
+                    <div class="bg-[rgba(18,22,35,0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]" style={{ 'backdrop-filter': 'blur(60px) saturate(180%)', '-webkit-backdrop-filter': 'blur(60px) saturate(180%)', animation: 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards' }} onClick={(e) => e.stopPropagation()}>
                         <h3 class="text-lg font-bold text-white mb-1">{t('provider.addCustom')}</h3>
                         <p class="text-xs text-[#888] mb-5">{t('provider.customDescription')}</p>
                         <div class="mb-3">
@@ -496,7 +496,7 @@ const ProviderList: Component = () => {
                             />
                         </div>
                         <div class="mb-5">
-                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">API URL</label>
+                            <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">{t('provider.apiUrlLabel')}</label>
                             <input
                                 type="text"
                                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
@@ -687,7 +687,7 @@ const ProviderList: Component = () => {
                         'text-green-300': toast()!.ok,
                         'text-red-300': !toast()!.ok,
                     }}
-                    style={{ background: 'rgba(18, 22, 35, 0.88)', backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
+                    style={{ background: 'rgba(18, 22, 35, 0.88)', 'backdrop-filter': 'blur(30px) saturate(180%)', '-webkit-backdrop-filter': 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
                 >{toast()!.msg}</div>
             </Show>
         </div>
@@ -733,9 +733,9 @@ const ProviderRow: Component<{
                     </Show>
                 </div>
                 <div class="text-[10px] text-[#888] font-mono mt-0.5">
-                    {props.provider.modelCount} 个模型
+                    {t('provider.modelCount', { count: props.provider.modelCount })}
                     <Show when={enabledCount() > 0}>
-                        <span class="ml-2 text-pri">· 已启用 {enabledCount()} 个</span>
+                        <span class="ml-2 text-pri">· {t('mcp.detail.enabledCount', { count: enabledCount() })}</span>
                     </Show>
                 </div>
             </div>
@@ -750,7 +750,7 @@ const ProviderRow: Component<{
                     e.stopPropagation();
                     props.onToggleEnabled(props.provider.id, isEnabled());
                 }}
-                title={isEnabled() ? '点击停用' : '点击启用'}
+                title={isEnabled() ? t('mcp.detail.clickToDisable') : t('mcp.detail.clickToEnable')}
             >
                 <span
                     class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"

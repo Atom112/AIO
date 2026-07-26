@@ -104,14 +104,14 @@ const [commandVersion, setCommandVersion] = createSignal(0);
 const NOOP_HANDLER = () => {};
 
 /** 注册一个命令（组件在 onMount 中调用以覆盖处理器） */
-export function registerCommand(action: CommandAction): string {
+export function registerCommand(action: CommandAction | Pick<CommandAction, 'id' | 'handler'>): string {
     const id = action.id;
     if (commandMap.has(id)) {
         // 已存在 → 仅更新处理器（保留元数据）
         const existing = commandMap.get(id)!;
         existing.handler = action.handler;
     } else {
-        commandMap.set(id, { ...action });
+        commandMap.set(id, action as CommandAction);
     }
     setCommandVersion(v => v + 1);
     return id;

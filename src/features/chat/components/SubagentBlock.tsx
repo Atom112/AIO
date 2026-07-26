@@ -13,6 +13,7 @@
 import { Component, createSignal, Show, For, onCleanup, createEffect } from 'solid-js';
 import type { AgentStep, SubagentStep } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 interface SubagentBlockProps {
     step: AgentStep;
@@ -27,7 +28,6 @@ interface ProfileStyle {
     color: string;
     bgColor: string;
     borderColor: string;
-    label: string;
 }
 
 const PROFILE_STYLES: Record<string, ProfileStyle> = {
@@ -36,28 +36,24 @@ const PROFILE_STYLES: Record<string, ProfileStyle> = {
         color: 'rgba(100,149,237,0.85)',
         bgColor: 'rgba(100,149,237,0.08)',
         borderColor: 'rgba(100,149,237,0.25)',
-        label: '探索者',
     },
     coder: {
         icon: 'code',
         color: 'rgba(76,175,144,0.85)',
         bgColor: 'rgba(76,175,144,0.08)',
         borderColor: 'rgba(76,175,144,0.25)',
-        label: '实现者',
     },
     general: {
         icon: 'sparkles',
         color: 'rgba(186,104,200,0.85)',
         bgColor: 'rgba(186,104,200,0.08)',
         borderColor: 'rgba(186,104,200,0.25)',
-        label: '通用',
     },
     requirements: {
         icon: 'lightbulb',
         color: 'rgba(255, 183, 77, 0.85)',
         bgColor: 'rgba(255, 183, 77, 0.08)',
         borderColor: 'rgba(255, 183, 77, 0.25)',
-        label: '需求分析',
     },
 };
 
@@ -66,8 +62,17 @@ const DEFAULT_PROFILE: ProfileStyle = {
     color: 'rgba(156,163,175,0.75)',
     bgColor: 'rgba(156,163,175,0.06)',
     borderColor: 'rgba(156,163,175,0.2)',
-    label: '子Agent',
 };
+
+function profileLabel(profileId?: string): string {
+    switch (profileId) {
+        case 'explorer': return t('agent.profile.explorer');
+        case 'coder': return t('agent.profile.coder');
+        case 'general': return t('agent.profile.general');
+        case 'requirements': return t('agent.profile.requirements');
+        default: return t('agent.profile.subagent');
+    }
+}
 
 function getProfileStyle(profileId?: string): ProfileStyle {
     return PROFILE_STYLES[profileId || ''] || DEFAULT_PROFILE;
@@ -79,7 +84,7 @@ function formatDuration(ms: number): string {
     if (seconds < 60) return `${seconds.toFixed(1)}s`;
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
-    return `${mins}分 ${secs}秒`;
+    return t('agent.step.duration', { mins, secs });
 }
 
 function stepTypeIcon(type: SubagentStep['type']): string {
@@ -93,9 +98,9 @@ function stepTypeIcon(type: SubagentStep['type']): string {
 
 function stepTypeLabel(type: SubagentStep['type']): string {
     switch (type) {
-        case 'thinking': return '思考';
-        case 'tool_call': return '工具调用';
-        case 'content': return '内容';
+        case 'thinking': return t('agent.sub.step.thinking');
+        case 'tool_call': return t('agent.sub.step.toolCall');
+        case 'content': return t('agent.sub.step.content');
     }
 }
 
@@ -167,7 +172,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
 
     const style = profileStyle();
     const steps = () => props.step.subagentSteps || [];
-    const displayName = props.step.subagentName || style.label;
+    const displayName = props.step.subagentName || profileLabel(props.step.subagentProfile);
     const taskSummary = props.step.subagentTask || '';
     const resultText = props.step.subagentResult || '';
 
@@ -211,7 +216,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
                         'border': `1px solid ${style.borderColor}`,
                     }}
                 >
-                    {style.label}
+                    {profileLabel(props.step.subagentProfile)}
                 </span>
                 {taskSummary && (
                     <span
@@ -267,7 +272,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
                             }}
                         >
                             {resultText.length > 2000
-                                ? resultText.slice(0, 2000) + '\n\n...(结果已截断)'
+                                ? resultText.slice(0, 2000) + '\n\n' + t('agent.sub.resultTruncated')
                                 : resultText}
                         </div>
                     </Show>
@@ -275,14 +280,14 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
                     {/* 无步骤提示 */}
                     <Show when={steps().length === 0 && props.step.status === 'running'}>
                         <div class="text-[11px] text-white/25 italic px-2 py-2">
-                            子智能体正在工作中...
+                            {t('agent.sub.working')}
                         </div>
                     </Show>
 
                     {/* 错误状态 */}
                     <Show when={props.step.status === 'error'}>
                         <div class="text-[12px] text-red-400/60 px-2 py-2">
-                            子智能体执行出错
+                            {t('agent.sub.error')}
                         </div>
                     </Show>
                 </div>

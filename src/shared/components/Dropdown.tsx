@@ -13,6 +13,7 @@
  */
 import { Component, For, Show, createSignal, onCleanup, onMount, JSX } from 'solid-js';
 import Icon from './Icon';
+import { t } from '../../core/i18n';
 
 export interface DropdownOption<V extends string = string> {
     value: V;
@@ -94,14 +95,14 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
                 id={props.id}
                 disabled={props.disabled}
                 class="border border-white/[0.08] rounded-lg text-white px-[14px] cursor-pointer hover:border-white/[0.14] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.55)] focus:bg-[rgba(0,0,0,0.35)] focus:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.12)] flex items-center gap-1.5 w-full text-center py-1 text-xs"
-                style={{ appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none', backgroundColor: 'rgba(0, 0, 0, 0.25)', backgroundImage: 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'rgba(255,255,255,0.5)\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'><path d=\'m6 9 6 6 6-6\'/></svg>")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '12px', transition: 'border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease' }}
+                style={{ appearance: 'none', '-webkit-appearance': 'none', '-moz-appearance': 'none', 'background-color': 'rgba(0, 0, 0, 0.25)', 'background-image': 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'rgba(255,255,255,0.5)\' stroke-width=\'1.5\' stroke-linecap=\'round\' stroke-linejoin=\'round\'><path d=\'m6 9 6 6 6-6\'/></svg>")', 'background-repeat': 'no-repeat', 'background-position': 'right 8px center', 'background-size': '16px', 'padding-right': '32px' }}
                 onClick={(e) => { e.stopPropagation(); setOpen(!open()); }}
                 aria-haspopup="listbox"
                 aria-expanded={open()}
             >
                 <Show
                     when={current() || props.trigger}
-                    fallback={<span class="text-[#666]">{props.placeholder ?? '请选择'}</span>}
+                    fallback={<span class="text-[#666]">{props.placeholder ?? t('common.placeholder')}</span>}
                 >
                     <Show
                         when={!props.trigger}

@@ -6,6 +6,7 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import type { Catalog, CatalogSourceTag, ProviderConfig } from '../utils/models';
 import type { McpServerConfig, McpServerStatusInfo, ToolSpec, LlmToolCallPayload } from '../types/mcp';
 import type { SkillConfig } from '../types/skill';
+import { t } from '../i18n';
 
 // 接口定义
     /** Agent 工作过程时间线步骤 */
@@ -579,10 +580,7 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
     // M13 防护：未确认时不静默启动
     if (!isLocalAutoStartConfirmed()) {
         const ok = confirm(
-            `检测到本地模型 "${model.model_id}"\n` +
-            `路径: ${model.local_path}\n\n` +
-            `是否允许 AIO 在应用启动时自动拉起该本地推理引擎？\n` +
-            `（点击"取消"后，可随时在设置页手动启动）`
+            t('provider.autoStartConfirm', { name: model.model_id, path: model.local_path })
         );
         if (!ok) return;
         setLocalAutoStartConfirmed();
@@ -593,7 +591,7 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
     const assistant = datas.assistants.find((a: any) => a.id === asstId);
     if (!assistant) return;
     const topicId = assistant.topics?.[0]?.id;
-    const loadingText = "**正在启动本地推理引擎...**";
+    const loadingText = "**" + t('provider.localLoading') + "**";
 
     if (topicId) {
         setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
@@ -610,7 +608,7 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
             gpuLayers: 99,
             engineType: model.engine_type || 'llama_cpp',
             trustRemoteCode: model.engine_type === 'vllm'
-                ? window.confirm('[!] vLLM 安全警告：是否启用 --trust-remote-code？\n\n该选项允许模型执行自定义 Python 代码。')
+                ? window.confirm(t('provider.vllmWarning'))
                 : false,
         });
 
@@ -630,7 +628,7 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
                     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
                         'history', h => h.map((msg: any) =>
                             msg.content === loadingText
-                                ? { ...msg, content: "**本地服务器启动成功，可以开始对话了！**" }
+                                ? { ...msg, content: "**" + t('provider.localSuccess') + "**" }
                                 : msg
                         )
                     );
@@ -644,7 +642,7 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
                 }, 1000);
                 if (topicId) {
                     setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-                        'history', h => [...h, { role: 'assistant', content: "**服务器启动超时，请检查显存空间或模型文件。**" }]
+                        'history', h => [...h, { role: 'assistant', content: "**" + t('provider.localTimeout') + "**" }]
                     );
                 }
             }
@@ -657,7 +655,7 @@ export const startLocalEngineForAssistant = async (model: ActivatedModel, asstId
         }, 1000);
         if (topicId) {
             setDatas('assistants', a => a.id === asstId, 'topics', t => t.id === topicId,
-                'history', h => [...h, { role: 'assistant', content: `**启动失败: ${err}**` }]
+                'history', h => [...h, { role: 'assistant', content: "**" + t('provider.localFailed', { error: String(err) }) + "**" }]
             );
         }
     }

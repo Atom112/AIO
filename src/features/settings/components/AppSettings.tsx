@@ -549,7 +549,7 @@ const AppSettings: Component = () => {
 
             </div>
 
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', "animation-delay": "30ms" }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ 'backdrop-filter': 'blur(var(--acrylic-blur))', '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', 'border-radius': 'var(--acrylic-radius)', "animation-delay": "30ms" }}>
                 <div class="flex justify-between items-center mb-5">
                     <h3 class='m-0 text-base text-white'>{t('app.theme.title')}</h3>
                 </div>
@@ -666,7 +666,7 @@ const AppSettings: Component = () => {
             </div>
 
             {/* 快捷键设置面板 */}
-            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)', "animation-delay": "60ms" }}>
+            <div class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in" style={{ 'backdrop-filter': 'blur(var(--acrylic-blur))', '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', 'border-radius': 'var(--acrylic-radius)', "animation-delay": "60ms" }}>
                 <div class="flex justify-between items-center mb-5">
                     <div>
                         <h3 class="m-0 text-base text-white">{t('app.shortcuts.title')}</h3>
@@ -712,10 +712,10 @@ const AppSettings: Component = () => {
                             <p class="text-[13px] text-white/75 leading-[1.5] m-0 mb-4">
                                 {t('app.shortcuts.conflictMessage', {
                                     keys: conflictDialog()!.newKeys,
-                                    action: getCommandDisplayLabel(
-                                        getRegisteredCommands().find(c => c.id === conflictDialog()!.conflictActionId)
-                                            ?? conflictDialog()!.conflictActionId,
-                                    ),
+                                    action: (() => {
+                                        const found = getRegisteredCommands().find(c => c.id === conflictDialog()!.conflictActionId);
+                                        return found ? getCommandDisplayLabel(found) : conflictDialog()!.conflictActionId;
+                                    })(),
                                 })}
                             </p>
                             <div class="flex justify-end gap-2">

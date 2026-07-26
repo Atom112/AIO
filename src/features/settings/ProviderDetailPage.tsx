@@ -293,9 +293,8 @@ const ProviderDetail: Component = () => {
                             />
                         </div>
                         <div>
-                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>API URL</label>
-                            <input
-                                type="text"
+                            <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>{t('provider.apiUrlLabel')}</label>
+                            <input type="text"
                                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                                 value={userCfg()?.apiUrl ?? ''}
                                 onInput={(e) => updateField('apiUrl', e.currentTarget.value)}
@@ -582,7 +581,7 @@ const ProviderDetail: Component = () => {
                             'text-green-300': toast()!.ok,
                             'text-red-300': !toast()!.ok,
                         }}
-                        style={{ background: 'rgba(18, 22, 35, 0.88)', backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
+                        style={{ background: 'rgba(18, 22, 35, 0.88)', 'backdrop-filter': 'blur(30px) saturate(180%)', '-webkit-backdrop-filter': 'blur(30px) saturate(180%)', animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards' }}
                     >{toast()!.msg}</div>
                 </Show>
             </div>

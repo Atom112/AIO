@@ -80,7 +80,7 @@ function extractText(msg: Message): string {
 /** 将消息内容渲染为 HTML：assistant 消息走 marked 解析，user 消息保持纯文本（转义） */
 function renderMessageHtml(msg: Message): string {
   const raw = extractText(msg);
-  if (!raw) return '<span style="opacity:0.4">(empty)</span>';
+  if (!raw) return `<span style="opacity:0.4">${t('export.empty')}</span>`;
   if (msg.role === 'user') {
     return raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
   }
@@ -104,7 +104,7 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
         color: isUser ? '#7c9abf' : '#4a9',
         'padding-left': isUser ? '0' : '4px', 'padding-right': isUser ? '4px' : '0',
       }}>
-        {isUser ? 'You' : (p.msg.modelId ? `Assistant (${p.msg.modelId})` : 'Assistant')}
+        {isUser ? t('export.roleYou') : (p.msg.modelId ? `${t('export.roleAssistant')} (${p.msg.modelId})` : t('export.roleAssistant'))}
       </div>
       <Show when={p.includeReasoning && p.msg.reasoning && !isUser}>
         <div style={{

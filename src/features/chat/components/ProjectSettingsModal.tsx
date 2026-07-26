@@ -11,6 +11,7 @@ import { findModel, formatContextWindow } from '../../../core/utils/models';
 import { transportLabel, statusLabel, statusColor } from '../../../core/utils/mcp';
 import Icon from '../../../shared/components/Icon';
 import Switch from '../../../shared/components/Switch';
+import { t } from '../../../core/i18n';
 
 interface ProjectSettingsModalProps {
     show: boolean;
@@ -184,22 +185,22 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                         "scale-95 opacity-0": isExiting() || isEntering(),
                         "scale-100 opacity-100": !isExiting() && !isEntering()
                     }}
-                    class="rounded-lg bg-dark-500 text-[#e0e0e0] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform" style={{ background: 'var(--acrylic-bg)', backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)' }}
+                    class="rounded-lg bg-dark-500 text-[#e0e0e0] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform" style={{ background: 'var(--acrylic-bg)', 'backdrop-filter': 'blur(var(--acrylic-blur))', '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)' }}
                 >
                     <div class="flex justify-between items-center border-b border-[#444] pb-3">
-                        <h2 class='m-0 text-xl'>项目设置</h2>
+                        <h2 class='m-0 text-xl'>{t('project.settings')}</h2>
                         <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80">&times;</button>
                     </div>
 
                     {/* 名称 */}
                     <div class="flex flex-col gap-1.5">
-                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">项目名称</label>
+                        <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">{t('project.name')}</label>
                         <input
                             value={nameText()}
                             onInput={(e) => setNameText(e.currentTarget.value)}
                             onBlur={() => saveName()}
                             onKeyDown={(e) => e.key === 'Enter' && saveName()}
-                            placeholder="例如：我的项目"
+                            placeholder={t('project.namePlaceholder')}
                             class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[#e0e0e0] text-sm focus:outline-none focus:border-pri-50"
                         />
                     </div>
@@ -207,10 +208,10 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                     {/* 模型 */}
                     <div class="flex flex-col gap-1.5">
                         <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
-                            绑定模型
+                            {t('project.bindModel')}
                             <Show when={activeModel()}>
                                 <span class="ml-2 text-[11px] font-normal" style="color: rgba(124,154,191,0.7);">
-                                    当前：{activeModel()!.model_id}
+                                    {t('project.currentModel', { model: activeModel()!.model_id })}
                                 </span>
                             </Show>
                         </label>
@@ -219,7 +220,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             <div class="flex-1 flex flex-col min-w-0">
                                 <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                                     style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
-                                    线上模型
+                                    {t('chat.model.cloud')}
                                 </div>
                                 <div class="flex-1 overflow-y-auto p-1.5 scrollbar-thin">
                                     <For each={cloudModels()}>
@@ -247,21 +248,21 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                                                             <Show when={meta()}>
                                                                 <span class="text-[9px] px-1 py-0.5 rounded bg-pri-20 text-pri">{formatContextWindow(meta()!.contextWindow)}</span>
                                                                 <Show when={meta()!.capabilities.tools}>
-                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">工具</span>
+                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">{t('project.capability.tools')}</span>
                                                                 </Show>
                                                                 <Show when={meta()!.capabilities.vision}>
-                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-300">视觉</span>
+                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-300">{t('project.capability.vision')}</span>
                                                                 </Show>
                                                                 <Show when={meta()!.capabilities.reasoning}>
-                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">推理</span>
+                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">{t('project.capability.reasoning')}</span>
                                                                 </Show>
                                                                 <Show when={meta()!.status === 'deprecated'}>
-                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-red-500/20 text-red-300">已弃用</span>
+                                                                    <span class="text-[9px] px-1 py-0.5 rounded bg-red-500/20 text-red-300">{t('project.capability.deprecated')}</span>
                                                                 </Show>
                                                             </Show>
                                                             <Show when={noKey()}>
                                                                 <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 inline-flex items-center gap-0.5" title="该 provider 未配置 API Key">
-                                                                    <Icon name="alert-triangle" size={9} /> 未配置 Key
+                                                                    <Icon name="alert-triangle" size={9} /> {t('project.noKeyConfigured')}
                                                                 </span>
                                                             </Show>
                                                         </div>
@@ -272,7 +273,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                                     </For>
                                     <Show when={cloudModels().length === 0}>
                                         <div class="p-5 text-center text-[13px]" style="color: rgba(255,255,255,0.2);">
-                                            <div>无线上模型</div>
+                                            <div>{t('chat.model.noCloud')}</div>
                                             <div class="text-[10px] mt-1.5 leading-relaxed" style="color: rgba(255,255,255,0.25);">
                                                 去 <span style="color: rgba(124,154,191,0.5); font-medium;">设置中心 → 供应商设置</span><br />
                                                 启用 provider 并填写 API Key
@@ -286,7 +287,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             <div class="flex-1 flex flex-col min-w-0">
                                 <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                                     style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
-                                    本地模型
+                                    {t('chat.model.local')}
                                 </div>
                                 <div class="flex-1 overflow-y-auto p-1.5 scrollbar-thin">
                                     <For each={localModels()}>
@@ -314,7 +315,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                                         }}
                                     </For>
                                     <Show when={localModels().length === 0}>
-                                        <div class="p-5 text-center text-[13px]" style="color: rgba(255,255,255,0.2);">无本地模型</div>
+                                        <div class="p-5 text-center text-[13px]" style="color: rgba(255,255,255,0.2);">{t('chat.model.noLocal')}</div>
                                     </Show>
                                 </div>
                             </div>
@@ -324,9 +325,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                     {/* MCP 服务器 */}
                     <div class="flex flex-col gap-1.5">
                         <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
-                            MCP 服务器
+                            {t('mcp.title')}
                             <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
-                                仅对当前项目生效
+                                {t('project.skillHint')}
                             </span>
                         </label>
                         <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
@@ -350,7 +351,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                                             </span>
                                             <Switch
                                                 checked={checked()}
-                                                label={`启用 ${server.displayName || server.id}`}
+                                                label={t('project.mcpEnable', { name: server.displayName || server.id })}
                                                 onChange={(enabled) => void handleToggleMcpServer(server.id, enabled)}
                                             />
                                         </div>
@@ -359,7 +360,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             </For>
                             <Show when={sortedMcpServers().length === 0}>
                                 <div class="px-3 py-5 text-center text-xs" style="color: rgba(255,255,255,0.35);">
-                                    尚未配置 MCP 服务器，请先前往设置中心添加。
+                                    {t('project.mcpEmpty')}
                                 </div>
                             </Show>
                         </div>
@@ -368,9 +369,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                     {/* Skill */}
                     <div class="flex flex-col gap-1.5">
                         <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
-                            Skill
+                            {t('project.skill')}
                             <span class="ml-2 text-[11px] font-normal" style="color: rgba(255,255,255,0.4);">
-                                仅对当前项目生效
+                                {t('project.skillHint')}
                             </span>
                         </label>
                         <div class="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto rounded-lg border border-dark-100 p-1.5">
@@ -387,7 +388,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                                             </div>
                                             <Switch
                                                 checked={checked()}
-                                                label={`启用 ${skill.name}`}
+                                                label={t('project.skillEnable', { name: skill.name })}
                                                 onChange={(enabled) => void handleToggleSkill(skill.id, enabled)}
                                             />
                                         </div>
@@ -396,7 +397,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             </For>
                             <Show when={sortedSkills().length === 0}>
                                 <div class="px-3 py-5 text-center text-xs" style="color: rgba(255,255,255,0.35);">
-                                    尚未配置 Skill，请先前往设置中心添加。
+                                    {t('project.skillEmpty')}
                                 </div>
                             </Show>
                         </div>
@@ -404,7 +405,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
 
                     <div class="flex justify-end gap-3">
                         <button onClick={handleClose} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-dark-100 text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-dark-50">
-                            关闭
+                            {t('common.close')}
                         </button>
                     </div>
                 </div>

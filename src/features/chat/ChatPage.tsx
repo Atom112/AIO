@@ -1365,7 +1365,7 @@ ${asstObj.prompt}`;
         const asstId = currentAssistantId();
         const topicId = currentTopicId();
         if (!asstId || !topicId) return;
-        if (!confirm('确定要清空当前对话历史吗？此操作不可撤销。')) return;
+        if (!confirm(t('chat.clearConfirm'))) return;
         setDatas('assistants', (a: any) => a.id === asstId,
           'topics', (t: any) => t.id === topicId,
           'history', []);

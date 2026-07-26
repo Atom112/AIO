@@ -100,7 +100,7 @@ const UserMessageAvatar: Component = () => {
              style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.04); box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
             <img
                 src={avatarSrc()}
-                alt="User"
+                alt={t('common.user')}
                 class="w-full h-full object-cover"
                 onError={(e) => { e.currentTarget.src = '/icons/app-logo/user.svg'; }}
             />
@@ -534,7 +534,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                             >
                                                 <img
                                                     src={getModelLogo(msg.modelId || selectedModel()?.model_id || "")!}
-                                                    alt="AI"
+                                                    alt={t('common.ai')}
                                                     class="w-[25px] h-[25px] rounded-full"
                                                 />
                                             </Show>

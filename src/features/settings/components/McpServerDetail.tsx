@@ -1,6 +1,7 @@
 import { Component, createSignal, For, Show, createMemo, createEffect } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
+import { t } from '../../../core/i18n';
 
 interface Props {
     config: McpServerConfig;
@@ -123,17 +124,17 @@ const McpServerDetail: Component<Props> = (props) => {
                 class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
                 style="background: rgba(18,22,35,0.95); border: 1px solid rgba(255,255,255,0.1);"
             >
-                <h3 class="text-base font-semibold">{props.isNew ? '添加 MCP 服务器' : '编辑 MCP 服务器'}</h3>
+                <h3 class="text-base font-semibold">{props.isNew ? t('mcp.detail.titleAdd') : t('mcp.detail.titleEdit')}</h3>
 
                 {/* 名称 + 启用 */}
                 <div class="flex flex-col gap-1">
-                    <label class="text-xs" style="color: rgba(255,255,255,0.6);">名称</label>
+                    <label class="text-xs" style="color: rgba(255,255,255,0.6);">{t('mcp.detail.name')}</label>
                     <input
                         class="px-3 py-1.5 rounded text-sm outline-none"
                         style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;"
                         value={config().displayName}
                         onInput={(e) => updateField('displayName', e.currentTarget.value)}
-                        placeholder="本地文件系统"
+                        placeholder={t('mcp.detail.namePlaceholder')}
                     />
                 </div>
                 <div class="flex items-center gap-3">
@@ -143,16 +144,16 @@ const McpServerDetail: Component<Props> = (props) => {
                             checked={config().autoStart}
                             onChange={(e) => updateField('autoStart', e.currentTarget.checked)}
                         />
-                        应用启动时自动连接
+                        {t('mcp.detail.autoStart')}
                     </label>
                     <span class="text-xs" style="color: rgba(255,255,255,0.4);">
-                        （是否被助手使用由各助手设置中的「MCP 服务器」勾选项决定）
+                        {t('mcp.detail.autoStartHint')}
                     </span>
                 </div>
 
                 {/* 传输类型 */}
                 <div class="flex flex-col gap-1">
-                    <label class="text-xs" style="color: rgba(255,255,255,0.6);">传输类型</label>
+                    <label class="text-xs" style="color: rgba(255,255,255,0.6);">{t('mcp.detail.transport')}</label>
                     <select
                         class="px-3 py-1.5 rounded text-sm outline-none"
                         style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;"
@@ -169,10 +170,10 @@ const McpServerDetail: Component<Props> = (props) => {
                         }}
                     >
                         <Show when={transports().includes('stdio')}>
-                            <option value="stdio">stdio（本地子进程）</option>
+                            <option value="stdio">{t('mcp.detail.transportStdio')}</option>
                         </Show>
                         <Show when={transports().includes('http')}>
-                            <option value="http">HTTP+SSE（远程）</option>
+                            <option value="http">{t('mcp.detail.transportHttp')}</option>
                         </Show>
                     </select>
                 </div>
@@ -180,25 +181,25 @@ const McpServerDetail: Component<Props> = (props) => {
                 {/* stdio 字段 */}
                 <Show when={config().transport.transport === 'stdio'}>
                     {(() => {
-                        const t = () => config().transport as Extract<McpTransport, { transport: 'stdio' }>;
+                        const trans = () => config().transport as Extract<McpTransport, { transport: 'stdio' }>;
                         return (
                             <>
                                 <div class="flex flex-col gap-1">
-                                    <label class="text-xs" style="color: rgba(255,255,255,0.6);">命令 (command)</label>
+                                    <label class="text-xs" style="color: rgba(255,255,255,0.6);">{t('mcp.detail.command')}</label>
                                     <input
                                         class="px-3 py-1.5 rounded text-sm outline-none"
                                         style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;"
-                                        value={t().command}
-                                        onInput={(e) => updateTransport({ ...t(), command: e.currentTarget.value })}
-                                        placeholder="npx 或 /usr/local/bin/python"
+                                        value={trans().command}
+                                        onInput={(e) => updateTransport({ ...trans(), command: e.currentTarget.value })}
+                                        placeholder={t('mcp.detail.commandPlaceholder')}
                                     />
                                 </div>
                                 <div class="flex flex-col gap-1">
                                     <label class="text-xs flex items-center justify-between" style="color: rgba(255,255,255,0.6);">
-                                        参数 (args)
-                                        <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(124,154,191,0.2);" onClick={addStdioArg}>+ 添加</button>
+                                        {t('mcp.detail.args')}
+                                        <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(124,154,191,0.2);" onClick={addStdioArg}>{t('mcp.detail.add')}</button>
                                     </label>
-                                    <For each={t().args}>
+                                    <For each={trans().args}>
                                         {(arg, idx) => (
                                             <div class="flex items-center gap-1">
                                                 <input
@@ -218,10 +219,10 @@ const McpServerDetail: Component<Props> = (props) => {
                                 </div>
                                 <div class="flex flex-col gap-1">
                                     <label class="text-xs flex items-center justify-between" style="color: rgba(255,255,255,0.6);">
-                                        环境变量 (env)
-                                        <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(124,154,191,0.2);" onClick={addEnvEntry}>+ 添加</button>
+                                        {t('mcp.detail.env')}
+                                        <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(124,154,191,0.2);" onClick={addEnvEntry}>{t('mcp.detail.add')}</button>
                                     </label>
-                                    <For each={Object.entries(t().env)}>
+                                    <For each={Object.entries(trans().env)}>
                                         {([k, v]) => (
                                             <div class="flex items-center gap-1">
                                                 <input
@@ -233,16 +234,16 @@ const McpServerDetail: Component<Props> = (props) => {
                                                 <input
                                                     class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
                                                     style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;"
-                                                    value={v.includes('${KEYRING:') ? '[密钥·已存keyring]' : v}
+                                                    value={v.includes('${KEYRING:') ? t('mcp.detail.savedToKeychain') : v}
                                                     onInput={(e) => updateEnvEntry(k, e.currentTarget.value)}
-                                                    placeholder="值"
+                                                    placeholder={t('mcp.detail.envValuePlaceholder')}
                                                 />
                                                 <button
                                                     class="px-2 py-1 rounded text-xs whitespace-nowrap"
                                                     style="background: rgba(255,180,77,0.15); color: rgba(255,200,120,0.95);"
-                                                    title="存到系统钥匙串（不再显示在 UI 中）"
+                                                    title={t('mcp.detail.saveToKeychainTitle')}
                                                     onClick={() => void storeEnvSecret(k, v)}
-                                                >存密钥</button>
+                                                >{t('mcp.detail.saveToKeychain')}</button>
                                                 <button
                                                     class="px-2 py-1 rounded text-xs"
                                                     style="background: rgba(255,77,77,0.1); color: rgba(255,107,107,0.9);"
@@ -260,19 +261,19 @@ const McpServerDetail: Component<Props> = (props) => {
                 {/* http 字段 */}
                 <Show when={config().transport.transport === 'http' || config().transport.transport === 'streamable_http'}>
                     {(() => {
-                        const t = () => config().transport as Extract<McpTransport, { transport: 'http' | 'streamable_http' }>;
+                        const trans = () => config().transport as Extract<McpTransport, { transport: 'http' | 'streamable_http' }>;
                         return (
                             <div class="flex flex-col gap-1">
                                 <label class="text-xs" style="color: rgba(255,255,255,0.6);">URL</label>
                                 <input
                                     class="px-3 py-1.5 rounded text-sm outline-none"
                                     style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white;"
-                                    value={t().url}
-                                    onInput={(e) => updateTransport({ ...t(), url: e.currentTarget.value })}
+                                    value={trans().url}
+                                    onInput={(e) => updateTransport({ ...trans(), url: e.currentTarget.value })}
                                     placeholder="https://mcp.example.com/sse"
                                 />
-                                <Show when={!t().url.startsWith('http://') && !t().url.startsWith('https://') && t().url !== ''}>
-                                    <span class="text-xs" style="color: #ff8a8a;">URL 必须以 http:// 或 https:// 开头</span>
+                                <Show when={!trans().url.startsWith('http://') && !trans().url.startsWith('https://') && trans().url !== ''}>
+                                    <span class="text-xs" style="color: #ff8a8a;">{t('mcp.detail.urlValidate')}</span>
                                 </Show>
                             </div>
                         );
@@ -287,7 +288,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         disabled={testing()}
                         onClick={handleTest}
                     >
-                        {testing() ? '测试中…' : '测试连接'}
+                        {testing() ? t('mcp.detail.testing') : t('mcp.detail.testConnection')}
                     </button>
                     <Show when={testResult()}>
                         <span
@@ -297,7 +298,7 @@ const McpServerDetail: Component<Props> = (props) => {
                                 : "background: rgba(255,77,77,0.1); color: #ff8a8a;"}
                         >
                             {testResult()!.ok
-                                ? `✓ 成功，${testResult()!.tools?.length ?? 0} 个工具`
+                                ? `✓ ${t('mcp.detail.testSuccess', { count: testResult()!.tools?.length ?? 0 })}`
                                 : `✗ ${testResult()!.error}`}
                         </span>
                     </Show>
@@ -308,11 +309,11 @@ const McpServerDetail: Component<Props> = (props) => {
                     <div class="flex flex-col gap-2">
                         <div class="flex items-center justify-between">
                             <label class="text-xs" style="color: rgba(255,255,255,0.6);">
-                                工具白名单（{config().enabledTools.length === 0 ? '全部启用' : `已选 ${config().enabledTools.length}/${availableTools().length}`}）
+                                {t('mcp.detail.toolWhitelist')}（{config().enabledTools.length === 0 ? t('mcp.detail.enableAll') : `${t('mcp.detail.selected')} ${config().enabledTools.length}/${availableTools().length}`}）
                             </label>
                             <div class="flex gap-2">
-                                <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(124,154,191,0.2);" onClick={selectAllTools}>全选</button>
-                                <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(255,255,255,0.05);" onClick={deselectAllTools}>清空</button>
+                                <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(124,154,191,0.2);" onClick={selectAllTools}>{t('mcp.detail.selectAll')}</button>
+                                <button class="text-xs px-2 py-0.5 rounded" style="background: rgba(255,255,255,0.05);" onClick={deselectAllTools}>{t('mcp.detail.clearAll')}</button>
                             </div>
                         </div>
                         <div class="flex flex-col gap-1 max-h-40 overflow-y-auto">
@@ -343,14 +344,14 @@ const McpServerDetail: Component<Props> = (props) => {
                         style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);"
                         onClick={props.onCancel}
                     >
-                        取消
+                        {t('common.cancel')}
                     </button>
                     <button
                         class="px-3 py-1.5 rounded text-sm cursor-pointer"
                         style="background: rgba(124,217,160,0.2); border: 1px solid rgba(124,217,160,0.3);"
                         onClick={() => props.onSave(config())}
                     >
-                        保存
+                        {t('common.save')}
                     </button>
                 </div>
             </div>

@@ -1,6 +1,7 @@
 import { Component, createSignal, onCleanup, onMount } from 'solid-js';
 import Cropper from 'cropperjs';
 import 'cropperjs/dist/cropper.css';
+import { t } from '../../core/i18n';
 
 interface AvatarCropModalProps {
     imageSrc: string; // 待裁剪的图片源
@@ -117,10 +118,10 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                     'scale-95 opacity-0 translate-y-2': isExiting() || isEntering(),
                     'scale-100 opacity-100 translate-y-0': !isExiting() && !isEntering(),
                 }}
-                class="bg-dark-850 w-[600px] overflow-hidden flex flex-col transition-all duration-250 ease-out transform" style={{ background: 'var(--acrylic-bg)', backdropFilter: 'blur(var(--acrylic-blur))', WebkitBackdropFilter: 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', borderRadius: 'var(--acrylic-radius)' }}
+                class="bg-dark-850 w-[600px] overflow-hidden flex flex-col transition-all duration-250 ease-out transform" style={{ background: 'var(--acrylic-bg)', 'backdrop-filter': 'blur(var(--acrylic-blur))', '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))', border: '1px solid var(--acrylic-border)', 'border-radius': 'var(--acrylic-radius)' }}
             >
                 <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-dark-300 text-pri font-bold">
-                    <span>裁剪图片</span>
+                    <span>{t('crop.title')}</span>
                     <button onClick={handleClose} class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80">
                         &times;
                     </button>
@@ -141,7 +142,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
                     </div>
 
                     <div class="w-[150px] flex flex-col items-center justify-center">
-                        <div class="text-[#888] text-[12px] mb-[10px]">预览</div>
+                        <div class="text-[#888] text-[12px] mb-[10px]">{t('crop.preview')}</div>
                         <div ref={previewElement} class="w-[120px] h-[120px] rounded-full overflow-hidden border-2 border-pri bg-black"></div>
                     </div>
                 </div>
@@ -165,10 +166,10 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
 
                     <div class="flex justify-end gap-3">
                         <button onClick={handleClose} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-dark-100 text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-dark-50">
-                            取消
+                            {t('crop.cancel')}
                         </button>
                         <button onClick={handleSave} class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-pri text-black rounded-lg hover:scale-105 transition-all duration-200">
-                            保存
+                            {t('crop.save')}
                         </button>
                     </div>
                 </div>

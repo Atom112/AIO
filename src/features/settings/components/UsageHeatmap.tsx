@@ -286,7 +286,7 @@ const UsageHeatmap: Component<Props> = (props) => {
                             <span style={{ color: 'rgba(255,255,255,0.85)' }}>
                                 {fmtTokens(tip().tokens)}
                             </span>{' '}
-                            tokens
+                            {t('usage.tokens')}
                         </div>
                         <div style={{ color: 'rgba(255,255,255,0.4)' }}>
                             {t('usage.requestCount', { count: formatNumber(tip().requests) })}

@@ -5,6 +5,7 @@
  */
 import { Component, createSignal, Show, For } from 'solid-js';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 import {
     datas, currentAssistantId, allAvailableModels, isLocalModel,
     resolveAssistantModel, modelKey, setAssistantModel, ActivatedModel,
@@ -44,7 +45,7 @@ const ModelSelector: Component = () => {
             {/* 触发按钮：仅显示当前模型图标（hover title 显示完整名称） */}
             <button
                 class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1 transition-all duration-200"
-                title={activeModel() ? activeModel()!.model_id : '切换模型'}
+                title={activeModel() ? activeModel()!.model_id : t('chat.model.switch')}
                 onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
                 onMouseLeave={(e) => { if (!open()) { e.currentTarget.style.background = 'transparent'; } }}
@@ -81,7 +82,7 @@ const ModelSelector: Component = () => {
                         {/* 线上模型 */}
                         <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest sticky top-0"
                             style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
-                            线上模型
+                            {t('chat.model.cloud')}
                         </div>
                         <div class="p-1.5">
                             <For each={cloudModels()}>
@@ -108,14 +109,14 @@ const ModelSelector: Component = () => {
                                 )}
                             </For>
                             <Show when={cloudModels().length === 0}>
-                                <div class="p-3 text-center text-[12px]" style="color: rgba(255,255,255,0.25);">无线上模型</div>
+                                <div class="p-3 text-center text-[12px]" style="color: rgba(255,255,255,0.25);">{t('chat.model.noCloud')}</div>
                             </Show>
                         </div>
 
                         {/* 本地模型 */}
                         <div class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                             style="color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.04); border-top: 1px solid rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.04);">
-                            本地模型
+                            {t('chat.model.local')}
                         </div>
                         <div class="p-1.5">
                             <For each={localModels()}>
@@ -142,7 +143,7 @@ const ModelSelector: Component = () => {
                                 )}
                             </For>
                             <Show when={localModels().length === 0}>
-                                <div class="p-3 text-center text-[12px]" style="color: rgba(255,255,255,0.25);">无本地模型</div>
+                                <div class="p-3 text-center text-[12px]" style="color: rgba(255,255,255,0.25);">{t('chat.model.noLocal')}</div>
                             </Show>
                         </div>
                     </div>

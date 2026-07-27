@@ -94,7 +94,7 @@ fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
 }
 
 fn is_leap(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 /// 快捷构造成功 `ToolResult`。
@@ -130,8 +130,7 @@ pub fn save_knowledge(project_root: &str, knowledge: &KnowledgeFile) -> Result<(
     let path = aio_dir.join("knowledge.json");
     let json = serde_json::to_string_pretty(knowledge).map_err(|e| format!("序列化失败: {e}"))?;
 
-    let mut file =
-        fs::File::create(&path).map_err(|e| format!("创建知识文件失败: {e}"))?;
+    let mut file = fs::File::create(&path).map_err(|e| format!("创建知识文件失败: {e}"))?;
     file.write_all(json.as_bytes())
         .map_err(|e| format!("写入知识文件失败: {e}"))?;
     Ok(())
@@ -141,10 +140,7 @@ pub fn save_knowledge(project_root: &str, knowledge: &KnowledgeFile) -> Result<(
 ///
 /// - 若已存在相同 `key` 的条目，则更新其 `content` / `category` / `updated_at`。
 /// - 条目数上限 50；超出时移除最早的条目。
-pub fn add_knowledge_entry(
-    project_root: &str,
-    entry: KnowledgeEntry,
-) -> Result<(), String> {
+pub fn add_knowledge_entry(project_root: &str, entry: KnowledgeEntry) -> Result<(), String> {
     let mut knowledge = load_knowledge(project_root);
 
     // 去重：相同 key 的条目原地更新
@@ -159,7 +155,9 @@ pub fn add_knowledge_entry(
     // 上限裁剪：保留最新的 50 条
     if knowledge.entries.len() > 50 {
         // 按 created_at 升序排列，移除最早的
-        knowledge.entries.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        knowledge
+            .entries
+            .sort_by(|a, b| a.created_at.cmp(&b.created_at));
         knowledge.entries = knowledge.entries.split_off(knowledge.entries.len() - 50);
     }
 

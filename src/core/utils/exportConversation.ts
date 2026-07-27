@@ -224,8 +224,9 @@ function escapeHtml(s: string): string {
 function mdToHtml(md: string): string {
   let html = md;
   // 代码块 ```...```
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code: string) =>
-    `<pre><code>${escapeHtml(code.trimEnd())}</code></pre>`
+  html = html.replace(
+    /```(\w*)\n([\s\S]*?)```/g,
+    (_m, lang, code: string) => `<pre><code>${escapeHtml(code.trimEnd())}</code></pre>`,
   );
   // 行内代码 `...`
   html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
@@ -264,7 +265,9 @@ export function exportAsHtml(topic: Topic, options?: ExportOptions): string {
     const isUser = msg.role === 'user';
     const roleLabel = isUser
       ? t('export.role.user')
-      : (msg.modelId ? `${t('export.role.assistant')} (${msg.modelId})` : t('export.role.assistant'));
+      : msg.modelId
+        ? `${t('export.role.assistant')} (${msg.modelId})`
+        : t('export.role.assistant');
     const roleClass = isUser ? 'user' : 'assistant';
 
     let body = '';

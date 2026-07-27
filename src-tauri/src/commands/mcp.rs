@@ -5,7 +5,9 @@
 use crate::core::models::*;
 use crate::core::permission::{self, PermissionAction};
 use crate::core::secure_store;
-use crate::plugins::mcp::{self, McpServerManager, McpServerPlugin, McpRequestManager, McpServerState, PendingApprovals};
+use crate::plugins::mcp::{
+    self, McpRequestManager, McpServerManager, McpServerPlugin, McpServerState, PendingApprovals,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -211,7 +213,12 @@ pub async fn start_mcp_server(
     };
 
     // 仅当服务端声明了 resources 能力时才拉取资源列表
-    let (_resources, resource_count) = if server_info.capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
+    let (_resources, resource_count) = if server_info
+        .capabilities
+        .as_ref()
+        .and_then(|c| c.resources.as_ref())
+        .is_some()
+    {
         match plugin.list_resources(&conn).await {
             Ok(r) => {
                 let count = r.len();
@@ -227,7 +234,12 @@ pub async fn start_mcp_server(
     };
 
     // 仅当服务端声明了 prompts 能力时才拉取提示词列表
-    let (_prompts, prompt_count) = if server_info.capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
+    let (_prompts, prompt_count) = if server_info
+        .capabilities
+        .as_ref()
+        .and_then(|c| c.prompts.as_ref())
+        .is_some()
+    {
         match plugin.list_prompts(&conn).await {
             Ok(p) => {
                 let count = p.len();
@@ -247,7 +259,15 @@ pub async fn start_mcp_server(
         map.insert(id.clone(), conn);
     }
 
-    emit_status_full(&app, &id, McpStatus::Connected, None, filtered.len(), resource_count, prompt_count);
+    emit_status_full(
+        &app,
+        &id,
+        McpStatus::Connected,
+        None,
+        filtered.len(),
+        resource_count,
+        prompt_count,
+    );
     Ok(filtered)
 }
 
@@ -345,9 +365,6 @@ pub async fn list_mcp_tools(
             jobs.push((cfg, plugin, conn));
         }
     }
-    drop(state);
-    drop(mgr);
-
     // 3) 顺序调用（避免在循环中跨 await 持锁）
     let mut all_tools = Vec::new();
     for (cfg, plugin, conn) in jobs {
@@ -380,7 +397,8 @@ pub async fn list_mcp_tools_for_assistant(
     mcp_server_ids: Vec<String>,
     project_id: Option<String>,
 ) -> Result<AssistantTools, String> {
-    list_mcp_tools_for_assistant_inner(&app, mgr.inner(), state.inner(), mcp_server_ids, project_id).await
+    list_mcp_tools_for_assistant_inner(&app, mgr.inner(), state.inner(), mcp_server_ids, project_id)
+        .await
 }
 
 /// 内部实现：供 `run_agent_turn` 后端复用，避免再次走 Tauri State 解包。
@@ -516,7 +534,13 @@ pub(crate) async fn execute_tool_call(
             .as_ref()
             .map(|p| permission::load_permissions(Some(p)).rules)
             .unwrap_or_default();
-        let action = permission::check_permission(tool_name, server_id, &arguments, agent_mode, &custom_rules);
+        let action = permission::check_permission(
+            tool_name,
+            server_id,
+            &arguments,
+            agent_mode,
+            &custom_rules,
+        );
 
         match action {
             PermissionAction::Deny => {
@@ -528,7 +552,16 @@ pub(crate) async fn execute_tool_call(
             PermissionAction::Ask => {
                 // 需要用户确认；用 select! 让取消可打断挂起审批
                 let reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
-                let approval_fut = request_tool_approval(app, pending.inner(), server_id, tool_name, &arguments, &reason, None, None);
+                let approval_fut = request_tool_approval(
+                    app,
+                    pending.inner(),
+                    server_id,
+                    tool_name,
+                    &arguments,
+                    &reason,
+                    None,
+                    None,
+                );
                 tokio::select! {
                     _ = token.cancelled() => return Err("cancelled".into()),
                     res = approval_fut => res?,
@@ -645,13 +678,16 @@ pub async fn check_tool_permission(
     };
 
     // 加载项目级自定义规则
-    let project_path = project_id.as_ref().and_then(|pid| resolve_project_path_mcp_opt(&app, pid));
+    let project_path = project_id
+        .as_ref()
+        .and_then(|pid| resolve_project_path_mcp_opt(&app, pid));
     let custom_rules = project_path
         .as_ref()
         .map(|p| permission::load_permissions(Some(p)).rules)
         .unwrap_or_default();
 
-    let action = permission::check_permission(&tool_name, &server_id, &arguments, &mode, &custom_rules);
+    let action =
+        permission::check_permission(&tool_name, &server_id, &arguments, &mode, &custom_rules);
 
     match action {
         PermissionAction::Deny => Ok(PermissionCheckResult {
@@ -671,8 +707,6 @@ pub async fn check_tool_permission(
         }),
     }
 }
-
-
 
 /// 审批结果负载（发送给前端的事件）
 ///
@@ -703,6 +737,10 @@ pub struct ApprovalRequestPayload {
 /// 3. 用户批准 → 继续执行；用户拒绝 → 返回错误
 ///
 /// 超时分支会从 `PendingApprovals` 移除 sender，避免泄漏（旧 bug：超时后 sender 永留 map）。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "approval events mirror the stable payload fields explicitly"
+)]
 pub(crate) async fn request_tool_approval(
     app: &AppHandle,
     pending: &PendingApprovals,
@@ -732,7 +770,7 @@ pub(crate) async fn request_tool_approval(
 
     // 等待前端响应（60s 超时）；超时/通道关闭时移除泄漏的 sender
     match tokio::time::timeout(Duration::from_secs(60), rx).await {
-        Ok(Ok(true)) => Ok(()),       // 用户批准
+        Ok(Ok(true)) => Ok(()), // 用户批准
         Ok(Ok(false)) => {
             // 拒绝：sender 已被消费，无需移除
             Err("用户已拒绝此操作".into())
@@ -757,7 +795,8 @@ pub async fn respond_tool_approval(
     approval_id: String,
     approved: bool,
 ) -> Result<(), String> {
-    let tx = pending.remove(&approval_id)
+    let tx = pending
+        .remove(&approval_id)
         .ok_or_else(|| format!("审批请求 {} 不存在或已过期", approval_id))?;
     tx.send(approved).map_err(|_| "发送审批结果失败".into())
 }
@@ -771,7 +810,9 @@ pub async fn list_mcp_resources(
 ) -> Result<Vec<McpResource>, String> {
     let conn = {
         let map = state.lock();
-        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+        map.get(&id)
+            .cloned()
+            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
     };
     let plugin = mgr
         .get(&conn.transport_kind)
@@ -792,7 +833,9 @@ pub async fn read_mcp_resource(
 ) -> Result<ReadResourceResult, String> {
     let conn = {
         let map = state.lock();
-        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+        map.get(&id)
+            .cloned()
+            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
     };
     let plugin = mgr
         .get(&conn.transport_kind)
@@ -812,7 +855,9 @@ pub async fn list_mcp_prompts(
 ) -> Result<Vec<McpPrompt>, String> {
     let conn = {
         let map = state.lock();
-        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+        map.get(&id)
+            .cloned()
+            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
     };
     let plugin = mgr
         .get(&conn.transport_kind)
@@ -834,7 +879,9 @@ pub async fn get_mcp_prompt(
 ) -> Result<GetPromptResult, String> {
     let conn = {
         let map = state.lock();
-        map.get(&id).cloned().ok_or_else(|| format!("MCP server 未连接: {}", id))?
+        map.get(&id)
+            .cloned()
+            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
     };
     let plugin = mgr
         .get(&conn.transport_kind)

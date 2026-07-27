@@ -2,7 +2,7 @@
 //!
 //! 提供 `read_lints` 工具，让 Agent 可以查询项目中的 LSP 诊断信息。
 
-use crate::core::models::{ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use crate::plugins::lsp::LspManager;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -136,10 +136,7 @@ fn build_diagnostics_output(
     let summary = if total_errors == 0 && total_warnings == 0 {
         "✅ 没有发现诊断问题。".to_string()
     } else {
-        format!(
-            "📊 共 {} 个错误，{} 个警告\n",
-            total_errors, total_warnings
-        )
+        format!("📊 共 {} 个错误，{} 个警告\n", total_errors, total_warnings)
     };
 
     if output.is_empty() {

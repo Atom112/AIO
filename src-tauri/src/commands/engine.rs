@@ -1,5 +1,4 @@
 /// 本地推理引擎管理相关的 Tauri 命令：启动、停止、检查状态以及引擎安装管理。
-
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::installer::{EngineInstaller, EngineStatus, EngineUpdateInfo};
 use crate::plugins::engine::EngineManager;
@@ -13,6 +12,10 @@ use tokio::time::{sleep, Duration};
 /// @param gpu_layers 卸载到 GPU 的模型层数
 /// @param engine_type 可选的引擎类型标识，不传时默认使用 llama_cpp（兼容旧配置）
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Tauri IPC compatibility requires the existing flat command parameters"
+)]
 pub async fn start_local_server(
     app: AppHandle,
     state: State<'_, LocalEngineState>,
@@ -39,7 +42,14 @@ pub async fn start_local_server(
 
     // 调用插件启动
     let url = plugin
-        .start(app, &state, safe_path.to_string_lossy().as_ref(), port, gpu_layers, trust_remote)
+        .start(
+            app,
+            &state,
+            safe_path.to_string_lossy().as_ref(),
+            port,
+            gpu_layers,
+            trust_remote,
+        )
         .await?;
 
     Ok(url)

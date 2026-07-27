@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.temp/
+src-tauri/gen/
+src-tauri/target/
+docs/assets/
+public/
+src-tauri/icons/
+src-tauri/resources/

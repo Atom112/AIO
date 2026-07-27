@@ -10,13 +10,11 @@ import Icon from './Icon';
 import {
   datas,
   setDatas,
-  selectedModel,
   setSelectedModel,
   ActivatedModel,
   globalUserAvatar,
   setGlobalUserAvatar,
   loadAvatarFromPath,
-  setIsStartingLocalModel,
   setLocalModelStartProgress,
   isLocalModel,
   startLocalEngineForAssistant,
@@ -29,13 +27,11 @@ import { reportError, t } from '../../core/i18n';
  */
 const appWindow = new Window('main');
 
-interface NavBarProps { }
-
 /**
  * 导航栏组件
  * @returns {JSX.Element} 导航栏 JSX 元素
  */
-const NavBar: Component<NavBarProps> = () => {
+const NavBar: Component = () => {
   const [isMaximized, setIsMaximized] = createSignal<boolean>(false);
   const [tempImage, setTempImage] = createSignal<string | null>(null);
 
@@ -46,7 +42,7 @@ const NavBar: Component<NavBarProps> = () => {
     try {
       const selected = await open({
         multiple: false,
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }]
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }],
       });
 
       if (selected && typeof selected === 'string') {
@@ -54,7 +50,7 @@ const NavBar: Component<NavBarProps> = () => {
         setTempImage(dataUrl);
       }
     } catch (err) {
-      console.error("选择头像失败:", err);
+      console.error('选择头像失败:', err);
       alert(reportError('error.load', err));
     }
   };
@@ -65,7 +61,7 @@ const NavBar: Component<NavBarProps> = () => {
   const onCropSave = async (croppedDataUrl: string) => {
     try {
       const savedPath = await invoke<string>('upload_avatar', {
-        dataUrl: croppedDataUrl
+        dataUrl: croppedDataUrl,
       });
       setGlobalUserAvatar(croppedDataUrl);
       localStorage.setItem('user-avatar-path', savedPath);
@@ -80,17 +76,21 @@ const NavBar: Component<NavBarProps> = () => {
    */
   const startLocalModel = async (model: ActivatedModel) => {
     if (!model.local_path) return;
-    let asstId = currentAssistantId() || datas.assistants[0]?.id;
+    const asstId = currentAssistantId() || datas.assistants[0]?.id;
     if (!asstId) {
       const isRunning = await invoke<boolean>('is_local_server_running');
       if (!isRunning) {
         try {
           await invoke('start_local_server', {
-            modelPath: model.local_path, port: 8080, gpuLayers: 99,
+            modelPath: model.local_path,
+            port: 8080,
+            gpuLayers: 99,
             engineType: model.engine_type || 'llama_cpp',
             trustRemoteCode: false,
           });
-        } catch (e) { console.error("自动启动本地模型失败:", e); }
+        } catch (e) {
+          console.error('自动启动本地模型失败:', e);
+        }
       }
       return;
     }
@@ -126,13 +126,13 @@ const NavBar: Component<NavBarProps> = () => {
     try {
       const [models, config] = await Promise.all([
         invoke<ActivatedModel[]>('load_activated_models'),
-        invoke<any>('load_app_config')
+        invoke<any>('load_app_config'),
       ]);
       setDatas('activatedModels', models);
 
       if (models.length > 0) {
         const lastSelectedId = config.defaultModel;
-        const found = models.find(m => m.model_id === lastSelectedId);
+        const found = models.find((m) => m.model_id === lastSelectedId);
         const targetModel = found || models[0];
         setSelectedModel(targetModel);
         if (isLocalModel(targetModel)) {
@@ -140,7 +140,7 @@ const NavBar: Component<NavBarProps> = () => {
         }
       }
     } catch (e) {
-      console.error("初始化数据失败:", e);
+      console.error('初始化数据失败:', e);
     }
 
     setIsMaximized(await appWindow.isMaximized());
@@ -160,44 +160,53 @@ const NavBar: Component<NavBarProps> = () => {
       <div
         data-tauri-drag-region
         class="absolute top-0 left-0 right-0 h-[60px] z-[1] [app-region:drag]"
-      ></div>
+      />
 
       <nav
         data-tauri-drag-region
         class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] m-0 mr-[1px] z-[100] [app-region:drag] select-none"
       >
         <div class="absolute left-[10px] top-1/2 -translate-y-1/2 flex items-center justify-center z-[1001] pointer-events-none">
-          <img src="/icons/app-logo/logo.svg" alt="AIO" class="w-10 h-10 object-contain block [app-region:no-drag]" />
+          <img
+            src="/icons/app-logo/logo.svg"
+            alt="AIO"
+            class="w-10 h-10 object-contain block [app-region:no-drag]"
+          />
         </div>
         <A
           href="/chat"
           title={t('nav.chat')}
           activeClass="!text-pri font-bold"
-          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
+          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-theme-secondary hover:text-theme-primary hover:bg-white/[0.06] [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
 
-        <UserDropdown
-          avatar={globalUserAvatar()}
-          onEditAvatar={handleEditAvatar}
-        />
+        <UserDropdown avatar={globalUserAvatar()} onEditAvatar={handleEditAvatar} />
 
         <A
           href="/settings"
           title={t('nav.settings')}
           activeClass="!text-pri font-bold"
-          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
+          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-theme-secondary hover:text-theme-primary hover:bg-white/[0.06] [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/settings-gear.svg" class="w-6 h-6" />
         </A>
 
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleMinimize} title={t('nav.minimize')}>
+          <button
+            class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10"
+            onClick={handleMinimize}
+            title={t('nav.minimize')}
+          >
             <Icon src="/icons/app-logo/minimize.svg" class="w-6 h-6" />
           </button>
 
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10" onClick={handleToggleMaximize} title={isMaximized() ? t('nav.restore') : t('nav.maximize')}>
+          <button
+            class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10"
+            onClick={handleToggleMaximize}
+            title={isMaximized() ? t('nav.restore') : t('nav.maximize')}
+          >
             {isMaximized() ? (
               <Icon src="/icons/app-logo/restore.svg" class="w-6 h-6" />
             ) : (
@@ -205,7 +214,11 @@ const NavBar: Component<NavBarProps> = () => {
             )}
           </button>
 
-          <button class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-danger" onClick={handleClose} title={t('nav.close')}>
+          <button
+            class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-danger"
+            onClick={handleClose}
+            title={t('nav.close')}
+          >
             <Icon src="/icons/app-logo/close-x.svg" class="w-6 h-6" />
           </button>
         </div>

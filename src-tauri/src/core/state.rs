@@ -1,5 +1,4 @@
 /// 全局 Tauri 状态定义
-
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -45,7 +44,6 @@ impl LocalEngineState {
         self.0.lock()
     }
 }
-
 
 /// 后台运行的子智能体句柄：subagent_id → JoinHandle
 /// 用于 fire-and-forget 子智能体的生命周期管理。

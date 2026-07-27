@@ -1,10 +1,20 @@
 import { Component, For, Show, createSignal, createMemo, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
-  datas, currentAssistantId, setCurrentAssistantId, setCurrentTopicId,
-  projects, setProjects, setCurrentProjectId, ensureProjectAssistant, saveSingleAssistantToBackend,
-  setDatas, deleteAssistantFile, initMcpServers,
-  showProjectCreateModal, setShowProjectCreateModal,
+  datas,
+  currentAssistantId,
+  setCurrentAssistantId,
+  setCurrentTopicId,
+  projects,
+  setProjects,
+  setCurrentProjectId,
+  ensureProjectAssistant,
+  saveSingleAssistantToBackend,
+  setDatas,
+  deleteAssistantFile,
+  initMcpServers,
+  showProjectCreateModal,
+  setShowProjectCreateModal,
 } from '../../../core/store/store';
 import { invoke } from '@tauri-apps/api/core';
 import Icon from '../../../shared/components/Icon';
@@ -41,7 +51,9 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
 
   // 点击菜单外部时自动关闭（与右侧话题栏"更多"按钮行为一致）
   onMount(() => {
-    const handleClickOutside = () => { if (menuState().isOpen) closeMenu(); };
+    const handleClickOutside = () => {
+      if (menuState().isOpen) closeMenu();
+    };
     window.addEventListener('click', handleClickOutside);
     onCleanup(() => window.removeEventListener('click', handleClickOutside));
 
@@ -56,10 +68,11 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   });
 
   /** 当前助理 */
-  const currentAsst = () => datas.assistants.find(a => a.id === currentAssistantId());
+  const currentAsst = () => datas.assistants.find((a) => a.id === currentAssistantId());
 
   /** 是否是聊天模式活跃 */
-  const isChatActive = () => currentAsst()?.assistantType === 'chat' || currentAsst()?.id === DIALOG_ASST_ID;
+  const isChatActive = () =>
+    currentAsst()?.assistantType === 'chat' || currentAsst()?.id === DIALOG_ASST_ID;
   /** 当前活跃的项目 ID（从助理反查） */
   const activeProjectId = () => currentAsst()?.projectId ?? null;
 
@@ -85,7 +98,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   };
 
   const closeMenu = () => {
-    setMenuState(p => ({ ...p, isOpen: false }));
+    setMenuState((p) => ({ ...p, isOpen: false }));
     setIsMenuAnimatingOut(true);
     clearTimeout(menuCloseTimeoutId);
     menuCloseTimeoutId = setTimeout(() => {
@@ -98,7 +111,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   const switchToChat = () => {
     setCurrentProjectId(null);
     setCurrentAssistantId(DIALOG_ASST_ID);
-    const asst = datas.assistants.find(a => a.id === DIALOG_ASST_ID);
+    const asst = datas.assistants.find((a) => a.id === DIALOG_ASST_ID);
     if (asst?.topics?.length) {
       setCurrentTopicId(asst.topics[0].id);
     }
@@ -111,7 +124,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       const asstId = await ensureProjectAssistant(projectId);
       setCurrentAssistantId(asstId);
       initMcpServers(projectId);
-      const asst = datas.assistants.find(a => a.id === asstId);
+      const asst = datas.assistants.find((a) => a.id === asstId);
       if (asst?.topics?.length) {
         setCurrentTopicId(asst.topics[0].id);
       }
@@ -126,9 +139,9 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     try {
       await invoke('update_project', { id: projectId, name: newName.trim() });
       // 也更新助理名称
-      const asst = datas.assistants.find(a => a.projectId === projectId);
+      const asst = datas.assistants.find((a) => a.projectId === projectId);
       if (asst) {
-        setDatas('assistants', a => a.id === asst.id, 'name', newName.trim());
+        setDatas('assistants', (a) => a.id === asst.id, 'name', newName.trim());
         await saveSingleAssistantToBackend(asst.id);
       }
     } catch (e) {
@@ -140,17 +153,17 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   const deleteProject = async (projectId: string) => {
     if (!confirm(t('project.deleteConfirm'))) return;
     try {
-      const asst = datas.assistants.find(a => a.projectId === projectId);
+      const asst = datas.assistants.find((a) => a.projectId === projectId);
       if (asst) {
         await deleteAssistantFile(asst.id);
         // 如果当前选中的是这个助理，切换到聊天
         if (currentAssistantId() === asst.id) {
           switchToChat();
         }
-        setDatas('assistants', prev => prev.filter(a => a.id !== asst.id));
+        setDatas('assistants', (prev) => prev.filter((a) => a.id !== asst.id));
       }
       await invoke('delete_project', { id: projectId });
-      setProjects(prev => prev.filter(p => p.id !== projectId));
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (e) {
       alert('删除项目失败: ' + e);
     }
@@ -162,16 +175,29 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     setShowProjectCreateModal(false);
     // 重新加载项目列表
     try {
-      const list = await invoke<Array<{ id: string; name: string; path: string; createdAt: string; updatedAt: string; assistantId: string }>>('list_projects');
-      setProjects(list.map((p: Record<string, string>) => ({
-        id: p.id,
-        name: p.name,
-        path: p.path,
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-        assistantId: p.assistantId,
-      })));
-    } catch { /* ignore */ }
+      const list = await invoke<
+        Array<{
+          id: string;
+          name: string;
+          path: string;
+          createdAt: string;
+          updatedAt: string;
+          assistantId: string;
+        }>
+      >('list_projects');
+      setProjects(
+        list.map((p: Record<string, string>) => ({
+          id: p.id,
+          name: p.name,
+          path: p.path,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          assistantId: p.assistantId,
+        })),
+      );
+    } catch {
+      /* ignore */
+    }
     await switchToProject(projectId);
   };
 
@@ -184,7 +210,18 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   return (
     <div
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10 h-full"
-      style={`width: ${props.isCollapsed ? '48px' : `${props.width}%`}; padding: ${props.isCollapsed ? '6px 4px' : '15px'}; background: rgba(18, 22, 35, 0.15); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; box-shadow: inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2); transition: ${props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'};`}
+      style={{
+        width: props.isCollapsed ? '48px' : `${props.width}%`,
+        padding: props.isCollapsed ? '6px 4px' : '15px',
+        background: 'rgba(var(--surface-bg), 0.15)',
+        'backdrop-filter': 'blur(30px)',
+        '-webkit-backdrop-filter': 'blur(30px)',
+        border: '1px solid var(--border-dim)',
+        'border-radius': '12px',
+        'box-shadow':
+          'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
+        transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <div class="relative flex-1 min-h-0">
@@ -198,20 +235,28 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
               classList={{
-                '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]': isChatActive(),
+                '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
+                  isChatActive(),
               }}
               onClick={switchToChat}
             >
-              <span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);">
-                <Icon name="chat" size={14} class="shrink-0" /> <span class="truncate">{t('project.sidebar.dialog')}</span>
+              <span
+                class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]"
+                style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
+              >
+                <Icon name="chat" size={14} class="shrink-0" />{' '}
+                <span class="truncate">{t('project.sidebar.dialog')}</span>
               </span>
             </div>
 
             {/* 分隔线 */}
-            <div class="my-3 border-t" style="border-color: rgba(255,255,255,0.06);" />
+            <div class="my-3 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
 
             {/* 项目区域 */}
-            <div class="flex items-center h-12 text-xs uppercase tracking-[1.5px] font-semibold px-3 mb-1" style="color: rgba(255,255,255,0.35);">
+            <div
+              class="flex items-center h-12 text-xs uppercase tracking-[1.5px] font-semibold px-3 mb-1"
+              style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
+            >
               {t('project.sidebar.project')}
             </div>
 
@@ -222,21 +267,48 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   <div
                     class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                     classList={{
-                      '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]': isActive(),
+                      '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
+                        isActive(),
                     }}
                     onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                     onClick={() => switchToProject(project.id)}
                   >
-                    <Show when={editingProjectId() === project.id}
-                      fallback={<span class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]" style="color: rgba(255,255,255,0.85);"><Icon name="folder" size={14} class="shrink-0" /> <span class="truncate">{project.name}</span></span>}
+                    <Show
+                      when={editingProjectId() === project.id}
+                      fallback={
+                        <span
+                          class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]"
+                          style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
+                        >
+                          <Icon name="folder" size={14} class="shrink-0" />{' '}
+                          <span class="truncate">{project.name}</span>
+                        </span>
+                      }
                     >
                       <input
                         class="flex-grow rounded px-2 py-0.5 text-[0.85rem] h-6 outline-none mx-1"
-                        style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.85);"
+                        style={{
+                          background: 'rgba(0,0,0,0.3)',
+                          border: '1px solid var(--border-dim)',
+                          color: 'rgba(var(--text-base-rgb),0.85)',
+                        }}
                         value={project.name}
-                        ref={(el) => { setTimeout(() => { el.focus(); el.select(); }, 0); }}
-                        onBlur={(e) => { renameProject(project.id, e.currentTarget.value); setEditingProjectId(null); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { renameProject(project.id, e.currentTarget.value); setEditingProjectId(null); } else if (e.key === 'Escape') setEditingProjectId(null); }}
+                        ref={(el) => {
+                          setTimeout(() => {
+                            el.focus();
+                            el.select();
+                          }, 0);
+                        }}
+                        onBlur={(e) => {
+                          renameProject(project.id, e.currentTarget.value);
+                          setEditingProjectId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            renameProject(project.id, e.currentTarget.value);
+                            setEditingProjectId(null);
+                          } else if (e.key === 'Escape') setEditingProjectId(null);
+                        }}
                         onClick={(e) => e.stopPropagation()}
                       />
                     </Show>
@@ -255,10 +327,18 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             {/* 新建项目按钮 */}
             <button
               class="w-full mt-[10px] px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
-              style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); color: rgba(255,255,255,0.6);"
+              style={{
+                background: 'rgba(var(--text-base-rgb),0.04)',
+                border: '1px solid var(--border-dim)',
+                color: 'rgba(var(--text-base-rgb),0.6)',
+              }}
               onClick={() => setShowProjectCreateModal(true)}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(124,154,191,0.12)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')
+              }
             >
               新建项目
             </button>
@@ -273,13 +353,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
           <div class="flex flex-col items-center gap-3 py-2 h-full">
             <button
               class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
-              style={isChatActive() ? "background: rgba(124,154,191,0.30);" : ""}
+              style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
               onClick={switchToChat}
               title="对话"
             >
               <Icon name="chat" size={16} />
             </button>
-            <div class="w-5 border-t" style="border-color: rgba(255,255,255,0.06);" />
+            <div class="w-5 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
             <div class="flex flex-col items-center gap-1 flex-1 w-full overflow-y-auto">
               <For each={projectList()}>
                 {(project) => {
@@ -287,7 +367,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   return (
                     <div
                       class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
-                      style={isActive() ? "background: rgba(124,154,191,0.30);" : ""}
+                      style={isActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
                       onClick={() => switchToProject(project.id)}
                       onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                       title={project.name}
@@ -323,7 +403,9 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               'backdrop-filter': 'blur(40px) saturate(180%)',
               '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
               border: '1px solid var(--acrylic-border)',
-              animation: isMenuAnimatingOut() ? 'contextMenuOut 0.14s ease-in forwards' : 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards'
+              animation: isMenuAnimatingOut()
+                ? 'contextMenuOut 0.14s ease-in forwards'
+                : 'contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -332,7 +414,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               onClick={() => {
                 const pid = menuState().targetProjectId;
                 if (pid) {
-                  const asst = datas.assistants.find(a => a.projectId === pid);
+                  const asst = datas.assistants.find((a) => a.projectId === pid);
                   if (asst) props.onOpenSettings(asst.id);
                 }
                 closeMenu();
@@ -352,7 +434,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             </button>
             <button
               class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200"
-              style="color: rgba(255,77,77,0.8);"
+              style={{ color: 'rgba(255,77,77,0.8)' }}
               onClick={() => deleteProject(menuState().targetProjectId!)}
             >
               {t('project.delete')}
@@ -378,9 +460,16 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       >
         <div
           class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
-          style="background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"
+          style={{
+            background: 'rgba(var(--text-base-rgb),0.08)',
+            color: 'rgba(var(--text-base-rgb),0.6)',
+            'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
+          }}
           title={props.isCollapsed ? t('project.sidebar.expand') : t('project.sidebar.collapse')}
-          onClick={(e) => { e.stopPropagation(); props.onToggle(e); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onToggle(e);
+          }}
         >
           {props.isCollapsed ? '〉' : '〈'}
         </div>

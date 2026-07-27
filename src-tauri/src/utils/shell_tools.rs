@@ -13,7 +13,7 @@
 //! - Windows Job Object 沙箱：限制子进程权限
 //! - 权限系统：复用现有 Allow/Ask/Deny 规则引擎
 
-use crate::core::models::{ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
@@ -195,15 +195,17 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     // --- 1. 系统破坏：rm -rf + 关键系统路径 ---
     // 检测 `rm` 后面紧跟 `-rf`/`-fr`/`-r`/`-f` + 系统路径
     let system_paths = [
-        "/", "/*", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64",
-        "/media", "/mnt", "/opt", "/proc", "/root", "/run", "/sbin", "/srv",
-        "/sys", "/usr", "/var", "~", "~/", "/tmp", "/var/tmp",
+        "/", "/*", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/media", "/mnt",
+        "/opt", "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var", "~", "~/",
+        "/tmp", "/var/tmp",
     ];
 
     for i in 0..tokens.len() {
         if is_rm_command(&lower_tokens[i]) {
             let args: Vec<&str> = tokens[i + 1..].iter().map(|t| t.as_str()).collect();
-            let has_force = args.iter().any(|a| *a == "-rf" || *a == "-fr" || *a == "-r" || *a == "-f");
+            let has_force = args
+                .iter()
+                .any(|a| *a == "-rf" || *a == "-fr" || *a == "-r" || *a == "-f");
             if has_force {
                 for arg in &args {
                     if !arg.starts_with('-') {
@@ -227,11 +229,10 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         for i in 0..lower_tokens.len() {
             let t = &lower_tokens[i];
             if (t == "del" || t == "del.exe" || t == "rmdir" || t == "rmdir.exe")
-                && lower_tokens.get(i + 1).map_or(false, |a| a == "/s")
+                && lower_tokens.get(i + 1).is_some_and(|a| a == "/s")
             {
                 // 检查是否有 C:\ 之类的系统盘路径
-                for j in (i + 2)..lower_tokens.len() {
-                    let arg = &lower_tokens[j];
+                for arg in lower_tokens.iter().skip(i + 2) {
                     if arg.starts_with("c:\\") || arg.starts_with("c:") || arg == "c:\\" {
                         return Some(DangerInfo {
                             risk: "危险：删除/格式化系统盘",
@@ -297,13 +298,26 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     // 重定向到 /dev/ 设备
     if cmd.contains("> /dev/") || cmd.contains(">> /dev/") || cmd.contains("> /dev") {
         // 允许 /dev/null、/dev/zero、/dev/random、/dev/urandom
-        let has_dangerous_redirect = [
-            "> /dev/", ">> /dev/", "> /dev",
-        ].iter().any(|pat| {
+        let has_dangerous_redirect = ["> /dev/", ">> /dev/", "> /dev"].iter().any(|pat| {
             if let Some(pos) = cmd.find(pat) {
                 let suffix = &cmd[pos + pat.len()..];
-                let first_word = suffix.split_whitespace().next().unwrap_or("").trim_end_matches(|c: char| !c.is_alphanumeric());
-                !matches!(first_word, "null" | "zero" | "random" | "urandom" | "stdout" | "stdin" | "stderr" | "fd" | "tty")
+                let first_word = suffix
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_end_matches(|c: char| !c.is_alphanumeric());
+                !matches!(
+                    first_word,
+                    "null"
+                        | "zero"
+                        | "random"
+                        | "urandom"
+                        | "stdout"
+                        | "stdin"
+                        | "stderr"
+                        | "fd"
+                        | "tty"
+                )
             } else {
                 false
             }
@@ -317,7 +331,8 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     }
 
     // --- 4. fork bomb ---
-    if lower_cmd.contains(":(){ :|:& };:") || lower_cmd.contains(":(){ :|:&};:")
+    if lower_cmd.contains(":(){ :|:& };:")
+        || lower_cmd.contains(":(){ :|:&};:")
         || (lower_cmd.contains("() {") && lower_cmd.contains(":&"))
     {
         return Some(DangerInfo {
@@ -329,8 +344,13 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     // --- 5. 系统关机/重启 ---
     {
         let shutdown_cmds = [
-            "shutdown", "reboot", "halt", "poweroff", "init",
-            "shutdown.exe", "reboot.exe",
+            "shutdown",
+            "reboot",
+            "halt",
+            "poweroff",
+            "init",
+            "shutdown.exe",
+            "reboot.exe",
         ];
         for t in &lower_tokens {
             if shutdown_cmds.contains(&t.as_str()) {
@@ -357,12 +377,17 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     // --- 6. 网络外泄：curl/wget + 内网地址 ---
     {
         let download_cmds = ["curl", "curl.exe", "wget", "wget.exe"];
-        if lower_tokens.iter().any(|t| download_cmds.contains(&t.as_str())) {
+        if lower_tokens
+            .iter()
+            .any(|t| download_cmds.contains(&t.as_str()))
+        {
             if let Some(url_str) = extract_url_from_tokens(&tokens, &download_cmds) {
                 if let Ok(parsed) = url::Url::parse(&url_str) {
                     let host = parsed.host_str().unwrap_or("");
                     // 检查内网
-                    if host.parse::<std::net::Ipv4Addr>().is_ok() || host.parse::<std::net::Ipv6Addr>().is_ok() {
+                    if host.parse::<std::net::Ipv4Addr>().is_ok()
+                        || host.parse::<std::net::Ipv6Addr>().is_ok()
+                    {
                         return Some(DangerInfo {
                             risk: "危险：curl/wget 访问 IP 地址（疑似数据外泄）",
                             category: DangerCategory::High,
@@ -386,7 +411,11 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                 }
             }
             // curl 管道到 bash/sh
-            if cmd.contains("| bash") || cmd.contains("| sh") || cmd.contains("|bash") || cmd.contains("|sh") {
+            if cmd.contains("| bash")
+                || cmd.contains("| sh")
+                || cmd.contains("|bash")
+                || cmd.contains("|sh")
+            {
                 return Some(DangerInfo {
                     risk: "危险：curl/wget 管道到 shell 执行（远程代码执行）",
                     category: DangerCategory::Critical,
@@ -398,13 +427,13 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     // netcat 反弹 shell 检测
     {
         let nc_cmds = ["nc", "ncat", "netcat", "nc.exe", "ncat.exe", "netcat.exe"];
-        if lower_tokens.iter().any(|t| nc_cmds.contains(&t.as_str())) {
-            if lower_tokens.iter().any(|t| t == "-e" || t == "-c") {
-                return Some(DangerInfo {
-                    risk: "危险：nc/netcat 执行远程命令（反弹 shell）",
-                    category: DangerCategory::High,
-                });
-            }
+        if lower_tokens.iter().any(|t| nc_cmds.contains(&t.as_str()))
+            && lower_tokens.iter().any(|t| t == "-e" || t == "-c")
+        {
+            return Some(DangerInfo {
+                risk: "危险：nc/netcat 执行远程命令（反弹 shell）",
+                category: DangerCategory::High,
+            });
         }
     }
 
@@ -418,7 +447,11 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
             });
         }
         // 检测 `. script.sh` 模式（dot-space：bash source 语法）
-        if lower_tokens.len() >= 2 && lower_tokens[0] == "." && !lower_tokens[1].starts_with('/') && !lower_tokens[1].starts_with("./") {
+        if lower_tokens.len() >= 2
+            && lower_tokens[0] == "."
+            && !lower_tokens[1].starts_with('/')
+            && !lower_tokens[1].starts_with("./")
+        {
             // `.` 后跟非路径 token 可能是 source 命令
             if lower_tokens[1].contains(".sh") || lower_tokens[1].contains(".bash") {
                 return Some(DangerInfo {
@@ -440,7 +473,10 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
             {
                 // 检查是否在篡改 PATH/LD_PRELOAD/LD_LIBRARY_PATH 等关键变量
                 let var_name = first.split('=').next().unwrap_or("").to_uppercase();
-                if matches!(var_name.as_str(), "PATH" | "LD_PRELOAD" | "LD_LIBRARY_PATH" | "PYTHONPATH") {
+                if matches!(
+                    var_name.as_str(),
+                    "PATH" | "LD_PRELOAD" | "LD_LIBRARY_PATH" | "PYTHONPATH"
+                ) {
                     return Some(DangerInfo {
                         risk: "危险：命令注入前篡改关键环境变量",
                         category: DangerCategory::High,
@@ -452,12 +488,16 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
 
     // --- 9. git 危险操作 ---
     {
-        let git_idx = lower_tokens.iter().position(|t| t == "git" || t == "git.exe");
+        let git_idx = lower_tokens
+            .iter()
+            .position(|t| t == "git" || t == "git.exe");
         if let Some(idx) = git_idx {
             let subcmd = lower_tokens.get(idx + 1).map(|s| s.as_str()).unwrap_or("");
             if subcmd == "push" {
-                let has_force = lower_tokens.get(idx + 2).map_or(false, |a| a == "--force" || a == "-f");
-                let has_delete = tokens.get(idx + 2).map_or(false, |a| a == "--delete");
+                let has_force = lower_tokens
+                    .get(idx + 2)
+                    .is_some_and(|a| a == "--force" || a == "-f");
+                let has_delete = tokens.get(idx + 2).is_some_and(|a| a == "--delete");
                 if has_force {
                     return Some(DangerInfo {
                         risk: "危险：强制推送 (git push --force)",
@@ -476,7 +516,9 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
 
     // --- 10. chmod 777 / chown 到关键路径 ---
     {
-        let chmod_idx = lower_tokens.iter().position(|t| t == "chmod" || t == "chmod.exe");
+        let chmod_idx = lower_tokens
+            .iter()
+            .position(|t| t == "chmod" || t == "chmod.exe");
         if let Some(idx) = chmod_idx {
             let mode = lower_tokens.get(idx + 1).map(|s| s.as_str()).unwrap_or("");
             if mode == "777" || mode == "7777" || mode == "a+rwx" || mode == "ugo+rwx" {
@@ -589,9 +631,7 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         return tool_err(&format!("安全拦截: {reason}"));
     }
 
-    let timeout = timeout_ms
-        .unwrap_or(DEFAULT_TIMEOUT_MS)
-        .min(MAX_TIMEOUT_MS);
+    let timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
 
     // 平台选择 shell
     let (shell, shell_arg) = if cfg!(windows) {
@@ -654,21 +694,27 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
     let stdout = {
         let mut c = child_arc.lock().unwrap();
         use std::io::Read;
-        c.stdout.take().and_then(|mut o| {
-            let mut buf = Vec::new();
-            std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
-            Some(buf)
-        }).unwrap_or_default()
+        c.stdout
+            .take()
+            .and_then(|mut o| {
+                let mut buf = Vec::new();
+                std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
+                Some(buf)
+            })
+            .unwrap_or_default()
     };
 
     let stderr = {
         let mut c = child_arc.lock().unwrap();
         use std::io::Read;
-        c.stderr.take().and_then(|mut o| {
-            let mut buf = Vec::new();
-            std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
-            Some(buf)
-        }).unwrap_or_default()
+        c.stderr
+            .take()
+            .and_then(|mut o| {
+                let mut buf = Vec::new();
+                std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
+                Some(buf)
+            })
+            .unwrap_or_default()
     };
 
     // 构建结果
@@ -684,13 +730,19 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
     }
 
     if !stdout.is_empty() {
-        result.push_str(&format!("\n[stdout]:\n{}\n", truncate_output(&stdout, MAX_OUTPUT_BYTES)));
+        result.push_str(&format!(
+            "\n[stdout]:\n{}\n",
+            truncate_output(&stdout, MAX_OUTPUT_BYTES)
+        ));
     }
     if !stderr.is_empty() {
-        result.push_str(&format!("\n[stderr]:\n{}\n", truncate_output(&stderr, MAX_OUTPUT_BYTES)));
+        result.push_str(&format!(
+            "\n[stderr]:\n{}\n",
+            truncate_output(&stderr, MAX_OUTPUT_BYTES)
+        ));
     }
 
-    if exit_code.map_or(true, |c| c != 0) || timed_out {
+    if (exit_code != Some(0)) || timed_out {
         tool_err(&result)
     } else {
         tool_ok(result)

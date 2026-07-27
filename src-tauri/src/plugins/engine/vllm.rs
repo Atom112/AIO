@@ -5,7 +5,6 @@
 /// 1. 检查系统是否已安装 vllm (python -c "import vllm")
 /// 2. 若未安装但 resources/engines/vllm/ 下有 .whl 文件，自动 pip install
 /// 3. 通过 python -m vllm.entrypoints.openai.api_server 启动 OpenAI 兼容服务
-
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::io::{BufRead, BufReader};
@@ -44,7 +43,12 @@ fn check_vllm_installed() -> bool {
 fn find_python() -> Result<String, String> {
     for python in ["python", "python3"] {
         let mut cmd = create_progress_cmd(python, &["--version"]);
-        if cmd.spawn().and_then(|mut c| c.wait()).map(|s| s.success()).unwrap_or(false) {
+        if cmd
+            .spawn()
+            .and_then(|mut c| c.wait())
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
             return Ok(python.to_string());
         }
     }
@@ -70,18 +74,24 @@ fn find_bundled_wheels(resource_dir: &Path) -> Vec<std::path::PathBuf> {
 fn install_from_wheels(python: &str, wheels: &[std::path::PathBuf]) -> Result<(), String> {
     let mut args = vec!["-m", "pip", "install", "--quiet"];
     for w in wheels {
-        args.push(w.to_str().ok_or_else(|| format!("无效的 wheel 路径: {:?}", w))?);
+        args.push(
+            w.to_str()
+                .ok_or_else(|| format!("无效的 wheel 路径: {:?}", w))?,
+        );
     }
 
     debug!("[vLLM] 正在从 bundled .whl 安装 vllm...");
     let mut cmd = create_progress_cmd(python, &args);
-    let status = cmd.spawn()
+    let status = cmd
+        .spawn()
         .map_err(|e| format!("pip install 启动失败: {}", e))?
         .wait()
         .map_err(|e| format!("pip install 执行失败: {}", e))?;
 
     if !status.success() {
-        return Err("pip install vllm 失败。请检查 Python 环境和 CUDA 工具链是否正确安装。".to_string());
+        return Err(
+            "pip install vllm 失败。请检查 Python 环境和 CUDA 工具链是否正确安装。".to_string(),
+        );
     }
     debug!("[vLLM] vllm 安装成功");
     Ok(())
@@ -155,7 +165,8 @@ impl LocalEnginePlugin for VllmPlugin {
         port: u16,
         gpu_layers: i32,
         trust_remote_code: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+    {
         Box::pin(async move {
             debug!(
                 "启动参数 - 引擎: vLLM, 模型: {}, 端口: {}, GPU层数: {}",
@@ -251,25 +262,23 @@ impl LocalEnginePlugin for VllmPlugin {
             let event_name = self.progress_event_name().to_string();
             task::spawn_blocking(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        debug!("[vllm-server] {}", line);
+                for line in reader.lines().map_while(Result::ok) {
+                    debug!("[vllm-server] {}", line);
 
-                        let progress = if line.contains("Loading model weights") {
-                            Some(0.3)
-                        } else if line.contains("Model loaded") || line.contains("model loaded") {
-                            Some(0.6)
-                        } else if line.contains("Uvicorn running on") {
-                            Some(0.8)
-                        } else if line.contains("Application startup complete") {
-                            Some(1.0)
-                        } else {
-                            None
-                        };
+                    let progress = if line.contains("Loading model weights") {
+                        Some(0.3)
+                    } else if line.contains("Model loaded") || line.contains("model loaded") {
+                        Some(0.6)
+                    } else if line.contains("Uvicorn running on") {
+                        Some(0.8)
+                    } else if line.contains("Application startup complete") {
+                        Some(1.0)
+                    } else {
+                        None
+                    };
 
-                        if let Some(p) = progress {
-                            let _ = app_clone.emit(&event_name, p);
-                        }
+                    if let Some(p) = progress {
+                        let _ = app_clone.emit(&event_name, p);
                     }
                 }
             });
@@ -290,11 +299,7 @@ impl LocalEnginePlugin for VllmPlugin {
                 .unwrap_or_else(|_| reqwest::Client::new());
             let health_url = format!("http://127.0.0.1:{}/health", port);
 
-            match client
-                .get(&health_url)
-                .send()
-                .await
-            {
+            match client.get(&health_url).send().await {
                 Ok(_) => {
                     let _ = app.emit(self.progress_event_name(), 1.0);
                 }

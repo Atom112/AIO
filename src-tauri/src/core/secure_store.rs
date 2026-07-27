@@ -67,7 +67,10 @@ struct FallbackStore {
 // ====== fallback 文件路径 ======
 
 fn fallback_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join(FALLBACK_FILE))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join(FALLBACK_FILE))
 }
 
 fn fallback_key_path(app: &AppHandle) -> Option<PathBuf> {
@@ -93,7 +96,9 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
                 if let Some(kp) = fallback_key_path(app) {
                     if kp.exists() {
                         let _ = fs::remove_file(&kp);
-                        tracing::info!("[secure_store] keyring 已恢复，已删除残留的 fallback-key 文件");
+                        tracing::info!(
+                            "[secure_store] keyring 已恢复，已删除残留的 fallback-key 文件"
+                        );
                     }
                 }
                 return Ok(key);
@@ -157,8 +162,8 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
 /// 用 AES-256-GCM 加密一段明文。
 /// 返回格式：hex(nonce[12] + ciphertext[..] + auth_tag[16])
 fn encrypt_entry(plaintext: &str, key: &[u8; AES_KEY_LEN]) -> Result<String> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| SecureStoreError::AesEncrypt(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|e| SecureStoreError::AesEncrypt(e.to_string()))?;
 
     let mut nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce_bytes);
@@ -191,7 +196,8 @@ fn decrypt_entry(hex_or_base64: &str, key: &[u8; AES_KEY_LEN]) -> Result<String>
                 .decrypt(nonce, ciphertext)
                 .map_err(|e| SecureStoreError::AesDecrypt(e.to_string()))
                 .and_then(|bytes| {
-                    String::from_utf8(bytes).map_err(|e| SecureStoreError::AesDecrypt(e.to_string()))
+                    String::from_utf8(bytes)
+                        .map_err(|e| SecureStoreError::AesDecrypt(e.to_string()))
                 });
         }
     }
@@ -221,8 +227,7 @@ fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
         Ok(s) => s,
         Err(_) => return FallbackStore::default(),
     };
-    let raw: FallbackStore =
-        serde_json::from_str(&json_str).unwrap_or_default();
+    let raw: FallbackStore = serde_json::from_str(&json_str).unwrap_or_default();
 
     // 解密所有 entry
     let mut store = FallbackStore::default();
@@ -240,13 +245,9 @@ fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
     store
 }
 
-fn save_fallback(
-    app: &AppHandle,
-    store: &FallbackStore,
-    key: &[u8; AES_KEY_LEN],
-) -> Result<()> {
-    let p = fallback_path(app)
-        .ok_or_else(|| SecureStoreError::FallbackIo("无 AppData 路径".into()))?;
+fn save_fallback(app: &AppHandle, store: &FallbackStore, key: &[u8; AES_KEY_LEN]) -> Result<()> {
+    let p =
+        fallback_path(app).ok_or_else(|| SecureStoreError::FallbackIo("无 AppData 路径".into()))?;
     if let Some(parent) = p.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -254,9 +255,7 @@ fn save_fallback(
     // 加密所有 entry
     let mut encoded = FallbackStore::default();
     for (k, v) in &store.entries {
-        encoded
-            .entries
-            .insert(k.clone(), encrypt_entry(v, key)?);
+        encoded.entries.insert(k.clone(), encrypt_entry(v, key)?);
     }
 
     let json = serde_json::to_string_pretty(&encoded)
@@ -322,9 +321,7 @@ pub fn set(app: &AppHandle, account: &str, value: &str) -> Result<()> {
         Err(_) => {
             let key = get_fallback_key(app)?;
             let mut store = load_fallback(app, &key);
-            store
-                .entries
-                .insert(account.to_string(), value.to_string());
+            store.entries.insert(account.to_string(), value.to_string());
             save_fallback(app, &store, &key)
         }
     }
@@ -370,7 +367,6 @@ pub mod accounts {
     use sha2::{Digest, Sha256};
 
     pub const APP_API_KEY: &str = "app-api-key";
-
 
     pub fn provider_key(id: &str) -> String {
         format!("provider-{}-api-key", id)

@@ -7,7 +7,13 @@ import { Router, Route, Navigate } from '@solidjs/router';
 import { lazy, Suspense } from 'solid-js';
 import Layout from './Layout.tsx';
 import './index.css';
-import { initMcpServers, initSkills, initProjects, initProfileModelOverrides, initCustomSubagentProfiles } from './core/store/store';
+import {
+  initMcpServers,
+  initSkills,
+  initProjects,
+  initProfileModelOverrides,
+  initCustomSubagentProfiles,
+} from './core/store/store';
 import { t } from './core/i18n';
 
 // 应用启动时初始化项目列表
@@ -26,12 +32,20 @@ const ProviderDetail = lazy(() => import('./features/settings/ProviderDetailPage
 const AppSettings = lazy(() => import('./features/settings/components/AppSettings'));
 const McpServerList = lazy(() => import('./features/settings/components/McpServerList'));
 const SkillList = lazy(() => import('./features/settings/components/SkillList'));
-const SubagentModelSettings = lazy(() => import('./features/settings/components/SubagentModelSettings'));
+const SubagentModelSettings = lazy(
+  () => import('./features/settings/components/SubagentModelSettings'),
+);
 const UsageSettings = lazy(() => import('./features/settings/components/UsageSettings'));
 
 render(
   () => (
-    <Suspense fallback={<div class="flex items-center justify-center h-screen w-screen text-white/40">{t('common.loading')}</div>}>
+    <Suspense
+      fallback={
+        <div class="flex items-center justify-center h-screen w-screen text-white/40">
+          {t('common.loading')}
+        </div>
+      }
+    >
       <Router root={Layout}>
         <Route path="/" component={() => <Navigate href="/chat" />} />
         <Route path="/chat" component={lazy(() => import('./features/chat/ChatPage'))} />
@@ -47,5 +61,5 @@ render(
       </Router>
     </Suspense>
   ),
-  document.getElementById('root') as HTMLElement
+  document.getElementById('root') as HTMLElement,
 );

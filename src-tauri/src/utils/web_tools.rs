@@ -6,7 +6,7 @@
 //!
 //! 安全措施：SSRF 防护（HTTPS-only + 内网 IP 屏蔽）、响应体大小限制、速率限制。
 
-use crate::core::models::{ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -15,10 +15,10 @@ use std::time::{Duration, Instant};
 
 // ====== 常量 ======
 
-const MAX_BYTES: u64 = 1_000_000;       // 默认响应体上限 1MB
-const FETCH_TIMEOUT: u64 = 30;           // web_fetch 总超时（秒）
-const CONNECT_TIMEOUT: u64 = 5;          // 连接超时（秒）
-const RATE_LIMIT_SECS: u64 = 3;          // web_search 最小间隔（秒）
+const MAX_BYTES: u64 = 1_000_000; // 默认响应体上限 1MB
+const FETCH_TIMEOUT: u64 = 30; // web_fetch 总超时（秒）
+const CONNECT_TIMEOUT: u64 = 5; // 连接超时（秒）
+const RATE_LIMIT_SECS: u64 = 3; // web_search 最小间隔（秒）
 
 // ====== 限流 ======
 
@@ -83,7 +83,8 @@ fn strip_html(html: &str) -> String {
     let re_tag = Regex::new(r"<[^>]*>").unwrap();
     let s = re_tag.replace_all(&s, "");
     // 解码常见实体
-    let s = s.replace("&amp;", "&")
+    let s = s
+        .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
@@ -107,7 +108,12 @@ fn truncate(text: &str, max_bytes: u64) -> String {
     } else {
         end
     };
-    format!("{}\n\n⚠ 内容过长已截断 ({}B / {}B)", &text[..cut], cut, max_bytes)
+    format!(
+        "{}\n\n⚠ 内容过长已截断 ({}B / {}B)",
+        &text[..cut],
+        cut,
+        max_bytes
+    )
 }
 
 // ====== 工具定义 ======
@@ -118,7 +124,8 @@ pub fn get_web_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "web_fetch".into(),
-                description: "获取指定 URL 的网页内容，返回纯文本（HTML 标签已剥离）。仅支持 HTTPS。".into(),
+                description:
+                    "获取指定 URL 的网页内容，返回纯文本（HTML 标签已剥离）。仅支持 HTTPS。".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -133,7 +140,9 @@ pub fn get_web_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "web_search".into(),
-                description: "通过 DuckDuckGo 搜索网页，返回结果摘要和链接。适用于查找最新文档、API 参考等。".into(),
+                description:
+                    "通过 DuckDuckGo 搜索网页，返回结果摘要和链接。适用于查找最新文档、API 参考等。"
+                        .into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -164,13 +173,17 @@ pub async fn execute_web_fetch(url_str: &str, max_bytes: Option<u64>) -> ToolRes
             if !status.is_success() {
                 return tool_err(&format!("HTTP {status}"));
             }
-            let ct = resp.headers()
+            let ct = resp
+                .headers()
                 .get("content-type")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("")
                 .to_string();
             // 只处理 text/* 和 application/json
-            let is_text = ct.starts_with("text/") || ct.contains("json") || ct.contains("xml") || ct.contains("javascript");
+            let is_text = ct.starts_with("text/")
+                || ct.contains("json")
+                || ct.contains("xml")
+                || ct.contains("javascript");
             let is_html = ct.contains("html");
             match resp.bytes().await {
                 Ok(bytes) => {
@@ -247,7 +260,9 @@ pub async fn execute_web_search(query: &str, count: Option<u64>) -> ToolResult {
                     if let Some(topics) = data["RelatedTopics"].as_array() {
                         let mut n = 0;
                         for topic in topics {
-                            if n >= limit { break; }
+                            if n >= limit {
+                                break;
+                            }
                             if let Some(text) = topic["Text"].as_str() {
                                 let url = topic["FirstURL"].as_str().unwrap_or("");
                                 lines.push(format!("🔗 {}", text));
@@ -263,7 +278,9 @@ pub async fn execute_web_search(query: &str, count: Option<u64>) -> ToolResult {
                         if let Some(results) = data["Results"].as_array() {
                             let mut n = 0;
                             for r in results {
-                                if n >= limit { break; }
+                                if n >= limit {
+                                    break;
+                                }
                                 if let Some(text) = r["Text"].as_str() {
                                     let url = r["FirstURL"].as_str().unwrap_or("");
                                     lines.push(format!("🔗 {}", text));

@@ -1,0 +1,89 @@
+name: Quality
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, master]
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MODELS_DATA_REF: b314a90bb979da07e654bb995aa44cff26476cfe
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout AIO
+        uses: actions/checkout@v7
+
+      - name: Checkout models data
+        shell: bash
+        run: |
+          MODELS_DATA_DIR="${GITHUB_WORKSPACE}/../aio-models-data"
+          git clone --no-checkout https://github.com/Atom112/aio-models-data.git "$MODELS_DATA_DIR"
+          git -C "$MODELS_DATA_DIR" checkout "$MODELS_DATA_REF"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify frontend
+        run: npm run check:frontend
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout AIO
+        uses: actions/checkout@v7
+
+      - name: Checkout models data
+        shell: bash
+        run: |
+          MODELS_DATA_DIR="${GITHUB_WORKSPACE}/../aio-models-data"
+          git clone --no-checkout https://github.com/Atom112/aio-models-data.git "$MODELS_DATA_DIR"
+          git -C "$MODELS_DATA_DIR" checkout "$MODELS_DATA_REF"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify Rust
+        run: npm run check:rust

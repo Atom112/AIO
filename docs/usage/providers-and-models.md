@@ -4,11 +4,11 @@
 
 AIO 后端按顺序匹配专用 Provider，最后使用 OpenAI-compatible 实现兜底：
 
-| 类型 | 适用场景 |
-| --- | --- |
-| Google | Google 原生生成接口及其流式响应格式 |
-| Anthropic | Anthropic Messages 接口 |
-| Ollama | 本机或局域网 Ollama 服务 |
+| 类型              | 适用场景                                            |
+| ----------------- | --------------------------------------------------- |
+| Google            | Google 原生生成接口及其流式响应格式                 |
+| Anthropic         | Anthropic Messages 接口                             |
+| Ollama            | 本机或局域网 Ollama 服务                            |
 | OpenAI-compatible | OpenAI 及兼容 `/chat/completions`、`/models` 的服务 |
 
 供应商列表和模型元数据来自相邻依赖 `@aio/models-data`。Provider 配置只保存开关、API URL、启用模型等运行信息；模型能力、上下文窗口和展示名称由目录提供。
@@ -38,13 +38,13 @@ Provider 详情会合并两类模型：
 
 模型行可能展示以下能力标签：
 
-| 标签 | 含义 |
-| --- | --- |
-| Vision | 支持图片输入 |
-| Tools | 支持工具调用 |
+| 标签      | 含义                       |
+| --------- | -------------------------- |
+| Vision    | 支持图片输入               |
+| Tools     | 支持工具调用               |
 | Reasoning | 支持推理能力或原生推理内容 |
-| Streaming | 支持流式响应 |
-| JSON | 支持 JSON mode |
+| Streaming | 支持流式响应               |
+| JSON      | 支持 JSON mode             |
 
 `preview`、`beta`、`experimental` 和 `alpha` 是上游模型状态，不代表 AIO 会额外放宽兼容性或安全检查。
 

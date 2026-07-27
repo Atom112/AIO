@@ -13,11 +13,11 @@
 
 AIO 当前注册三种传输：
 
-| 传输 | 适用场景 | 配置 |
-| --- | --- | --- |
-| stdio | 本机通过子进程运行的 Server | 命令、参数、工作目录、环境变量 |
-| HTTP | HTTP + SSE 风格的远程 Server | URL、请求头 |
-| Streamable HTTP | MCP Streamable HTTP Server | URL、请求头 |
+| 传输            | 适用场景                     | 配置                           |
+| --------------- | ---------------------------- | ------------------------------ |
+| stdio           | 本机通过子进程运行的 Server  | 命令、参数、工作目录、环境变量 |
+| HTTP            | HTTP + SSE 风格的远程 Server | URL、请求头                    |
+| Streamable HTTP | MCP Streamable HTTP Server   | URL、请求头                    |
 
 设置页支持查看、启停、测试、删除和编辑服务器。连接完成后会读取 capabilities，并按服务器声明列出 Tools、Resources 和 Prompts；聊天只向模型暴露当前助手或项目绑定且位于 `enabledTools` 白名单内的工具。空白名单表示全部启用。
 
@@ -126,15 +126,15 @@ Catalog 页面读取官方 MCP Registry：
 
 字段含义：
 
-| 字段 | 行为 |
-| --- | --- |
-| `id` | 规则唯一标识 |
-| `toolPattern` | 工具名、前缀/后缀 `*` 或 `*` |
-| `serverId` | 可选；只匹配指定 MCP Server |
-| `modes` | 空数组匹配全部模式 |
-| `action` | `allow`、`ask` 或 `deny` |
-| `pathPattern` | 可选；匹配工具参数中的 `path` |
-| `priority` | 数值越大越优先；匹配到的拒绝规则优先于允许规则 |
+| 字段          | 行为                                           |
+| ------------- | ---------------------------------------------- |
+| `id`          | 规则唯一标识                                   |
+| `toolPattern` | 工具名、前缀/后缀 `*` 或 `*`                   |
+| `serverId`    | 可选；只匹配指定 MCP Server                    |
+| `modes`       | 空数组匹配全部模式                             |
+| `action`      | `allow`、`ask` 或 `deny`                       |
+| `pathPattern` | 可选；匹配工具参数中的 `path`                  |
+| `priority`    | 数值越大越优先；匹配到的拒绝规则优先于允许规则 |
 
 当前 glob 只支持完整匹配以及开头或结尾的单个 `*`，不要按完整 glob 语法理解。修改权限文件后应重新进入项目，让配置重新加载。
 

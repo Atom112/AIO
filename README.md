@@ -61,13 +61,13 @@
 
 ## ⚙️ 技术栈 | Tech Stack
 
-| 层级 | 技术 |
-| --- | --- |
-| Frontend | SolidJS 1.9、TypeScript、Tailwind CSS、Vite |
-| Desktop | Tauri 2.11 |
-| Backend | Rust、Tokio、Reqwest |
-| Storage | SQLite、JSON 配置、系统凭据库 |
-| Local Engine | llama.cpp；vLLM 后端插件 |
+| 层级         | 技术                                        |
+| ------------ | ------------------------------------------- |
+| Frontend     | SolidJS 1.9、TypeScript、Tailwind CSS、Vite |
+| Desktop      | Tauri 2.11                                  |
+| Backend      | Rust、Tokio、Reqwest                        |
+| Storage      | SQLite、JSON 配置、系统凭据库               |
+| Local Engine | llama.cpp；vLLM 后端插件                    |
 
 ---
 
@@ -118,15 +118,15 @@ cargo check
 
 ## 📖 文档导航 | Documentation
 
-| 想了解什么 | 从这里开始 |
-| --- | --- |
-| 安装、首次配置与第一次对话 | [快速开始](docs/usage/getting-started.md) |
-| Provider 与本地模型 | [供应商与模型](docs/usage/providers-and-models.md) |
-| 助手、项目、Agent 与子智能体 | [聊天与 Agent](docs/usage/chat-and-agent.md) |
-| MCP、Skill 与工具权限 | [MCP 与 Skill](docs/usage/mcp-and-skills.md) |
-| 主题、更新与快捷键 | [应用设置与快捷键](docs/usage/app-settings-and-shortcuts.md) |
-| 架构与扩展开发 | [开发指南](docs/README.md#开发指南) |
-| 连接、引擎或构建问题 | [故障排查](docs/troubleshooting.md) |
+| 想了解什么                   | 从这里开始                                                   |
+| ---------------------------- | ------------------------------------------------------------ |
+| 安装、首次配置与第一次对话   | [快速开始](docs/usage/getting-started.md)                    |
+| Provider 与本地模型          | [供应商与模型](docs/usage/providers-and-models.md)           |
+| 助手、项目、Agent 与子智能体 | [聊天与 Agent](docs/usage/chat-and-agent.md)                 |
+| MCP、Skill 与工具权限        | [MCP 与 Skill](docs/usage/mcp-and-skills.md)                 |
+| 主题、更新与快捷键           | [应用设置与快捷键](docs/usage/app-settings-and-shortcuts.md) |
+| 架构与扩展开发               | [开发指南](docs/README.md#开发指南)                          |
+| 连接、引擎或构建问题         | [故障排查](docs/troubleshooting.md)                          |
 
 完整目录见 [AIO 文档中心](docs/README.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 

@@ -16,46 +16,40 @@ mod imp {
     use std::sync::OnceLock;
 
     // Win32 类型
-    type HANDLE = isize;
-    type BOOL = i32;
-    type DWORD = u32;
+    type Handle = isize;
+    type Bool = i32;
+    type Dword = u32;
 
-    const FALSE: BOOL = 0;
-    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x00002000;
-    const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: DWORD = 0x00000008;
-    const JOB_OBJECT_UILIMIT_DESKTOP: DWORD = 0x00000040;
-    const JOB_OBJECT_UILIMIT_HANDLES: DWORD = 0x00000001;
+    const FALSE: Bool = 0;
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Dword = 0x00002000;
+    const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: Dword = 0x00000008;
+    const JOB_OBJECT_UILIMIT_DESKTOP: Dword = 0x00000040;
+    const JOB_OBJECT_UILIMIT_HANDLES: Dword = 0x00000001;
     #[allow(non_upper_case_globals)]
-    const JobObjectExtendedLimitInformation: DWORD = 9;
+    const JobObjectExtendedLimitInformation: Dword = 9;
     #[allow(non_upper_case_globals)]
-    const JobObjectBasicUIRestrictions: DWORD = 4;
+    const JobObjectBasicUIRestrictions: Dword = 4;
 
     extern "system" {
-        fn CreateJobObjectW(
-            lpJobAttributes: *const std::ffi::c_void,
-            lpName: *const u16,
-        ) -> HANDLE;
+        fn CreateJobObjectW(lpJobAttributes: *const std::ffi::c_void, lpName: *const u16)
+            -> Handle;
 
         fn SetInformationJobObject(
-            hJob: HANDLE,
-            JobObjectInformationClass: DWORD,
+            hJob: Handle,
+            JobObjectInformationClass: Dword,
             lpJobObjectInformation: *const std::ffi::c_void,
-            cbJobObjectInformationLength: DWORD,
-        ) -> BOOL;
+            cbJobObjectInformationLength: Dword,
+        ) -> Bool;
 
-        fn AssignProcessToJobObject(hJob: HANDLE, hProcess: HANDLE) -> BOOL;
+        fn AssignProcessToJobObject(hJob: Handle, hProcess: Handle) -> Bool;
 
-        fn CloseHandle(hObject: HANDLE) -> BOOL;
+        fn CloseHandle(hObject: Handle) -> Bool;
 
-        fn OpenProcess(
-            dwDesiredAccess: DWORD,
-            bInheritHandle: BOOL,
-            dwProcessId: DWORD,
-        ) -> HANDLE;
+        fn OpenProcess(dwDesiredAccess: Dword, bInheritHandle: Bool, dwProcessId: Dword) -> Handle;
     }
 
-    const PROCESS_SET_QUOTA: DWORD = 0x0100;
-    const PROCESS_TERMINATE: DWORD = 0x0001;
+    const PROCESS_SET_QUOTA: Dword = 0x0100;
+    const PROCESS_TERMINATE: Dword = 0x0001;
 
     #[repr(C)]
     struct IoCounters {
@@ -81,34 +75,34 @@ mod imp {
     struct JobObjectBasicLimitInformation {
         per_process_user_time_limit: u64,
         per_job_user_time_limit: u64,
-        limit_flags: DWORD,
+        limit_flags: Dword,
         minimum_working_set_size: usize,
         maximum_working_set_size: usize,
-        active_process_limit: DWORD,
+        active_process_limit: Dword,
         affinity: usize,
-        priority_class: DWORD,
-        scheduling_class: DWORD,
+        priority_class: Dword,
+        scheduling_class: Dword,
     }
 
     #[repr(C)]
     struct JobObjectBasicUiRestrictions {
-        ui_restrictions_class: DWORD,
+        ui_restrictions_class: Dword,
     }
 
     /// Job Object 句柄和错误状态的懒初始化存储。
     /// 如果创建 Job Object 失败，后续所有 assign 调用都会返回该错误。
-    static JOB_STATE: OnceLock<Result<HANDLE, String>> = OnceLock::new();
+    static JOB_STATE: OnceLock<Result<Handle, String>> = OnceLock::new();
 
     /// 获取全局限制性 Job Object，首次调用时创建。
-    fn ensure_job_handle() -> Result<HANDLE, String> {
-        match JOB_STATE.get_or_init(|| create_job_object()) {
+    fn ensure_job_handle() -> Result<Handle, String> {
+        match JOB_STATE.get_or_init(create_job_object) {
             Ok(handle) => Ok(*handle),
             Err(e) => Err(e.clone()),
         }
     }
 
     /// 创建并配置限制性 Job Object。
-    fn create_job_object() -> Result<HANDLE, String> {
+    fn create_job_object() -> Result<Handle, String> {
         unsafe {
             // 创建未命名的 Job Object
             let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
@@ -148,7 +142,7 @@ mod imp {
                 handle,
                 JobObjectExtendedLimitInformation,
                 &extended as *const _ as *const _,
-                std::mem::size_of::<JobObjectExtendedLimitInformation>() as DWORD,
+                std::mem::size_of::<JobObjectExtendedLimitInformation>() as Dword,
             ) == FALSE
             {
                 CloseHandle(handle);
@@ -157,14 +151,13 @@ mod imp {
 
             // 设置 UI 限制：禁止桌面/窗口访问
             let ui_restrictions = JobObjectBasicUiRestrictions {
-                ui_restrictions_class: JOB_OBJECT_UILIMIT_DESKTOP
-                    | JOB_OBJECT_UILIMIT_HANDLES,
+                ui_restrictions_class: JOB_OBJECT_UILIMIT_DESKTOP | JOB_OBJECT_UILIMIT_HANDLES,
             };
             if SetInformationJobObject(
                 handle,
                 JobObjectBasicUIRestrictions,
                 &ui_restrictions as *const _ as *const _,
-                std::mem::size_of::<JobObjectBasicUiRestrictions>() as DWORD,
+                std::mem::size_of::<JobObjectBasicUiRestrictions>() as Dword,
             ) == FALSE
             {
                 CloseHandle(handle);

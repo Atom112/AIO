@@ -13,20 +13,17 @@
 //! `update_models_catalog` 从 GitHub raw URL 拉取最新 JSON，
 //! 校验大小/可解析性后写入 AppData 目录。重启后自动生效。
 
+use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
-use serde::Serialize;
-use tauri::{Manager, Emitter};
+use tauri::{Emitter, Manager};
 
 const DEFAULT_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/Atom112/aio-models-data/main/dist/data/models.json";
 
 /// 允许拉取 catalog 的 host 白名单（H7 SSRF 防护）
-const ALLOWED_CATALOG_HOSTS: &[&str] = &[
-    "raw.githubusercontent.com",
-    "raw.githubusercontent.com.",
-];
+const ALLOWED_CATALOG_HOSTS: &[&str] = &["raw.githubusercontent.com", "raw.githubusercontent.com."];
 
 const APPDATA_FILENAME: &str = "models-catalog.json";
 const BUNDLE_FILENAME: &str = "models.json";
@@ -83,7 +80,10 @@ fn parse_catalog_meta(json: &str) -> (Option<String>, Option<String>, usize, usi
         Err(_) => return (None, None, 0, 0),
     };
     let version = v.get("version").and_then(|x| x.as_str()).map(String::from);
-    let generated_at = v.get("generatedAt").and_then(|x| x.as_str()).map(String::from);
+    let generated_at = v
+        .get("generatedAt")
+        .and_then(|x| x.as_str())
+        .map(String::from);
     let model_count = v.get("modelCount").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
     let provider_count = v.get("providerCount").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
     (version, generated_at, model_count, provider_count)
@@ -143,7 +143,10 @@ pub fn load_models_catalog_full(app: tauri::AppHandle) -> Result<CatalogResponse
     }
 
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    for rel in &["../".to_string() + NODE_MODULES_REL, NODE_MODULES_REL.to_string()] {
+    for rel in &[
+        "../".to_string() + NODE_MODULES_REL,
+        NODE_MODULES_REL.to_string(),
+    ] {
         let p = PathBuf::from(manifest_dir).join(rel);
         if let Some(content) = try_read(&p) {
             let (v, g, _, _) = parse_catalog_meta(&content);
@@ -224,7 +227,11 @@ pub async fn update_models_catalog(
             provider_count: 0,
             version: String::new(),
             cached_path: String::new(),
-            error: Some(format!("HTTP {} {}", resp.status().as_u16(), resp.status().canonical_reason().unwrap_or(""))),
+            error: Some(format!(
+                "HTTP {} {}",
+                resp.status().as_u16(),
+                resp.status().canonical_reason().unwrap_or("")
+            )),
             bytes: 0,
             elapsed_ms: started.elapsed().as_millis(),
         });
@@ -242,7 +249,10 @@ pub async fn update_models_catalog(
             provider_count: 0,
             version: String::new(),
             cached_path: String::new(),
-            error: Some(format!("响应体超过 {}MB 上限", MAX_CATALOG_BYTES / 1024 / 1024)),
+            error: Some(format!(
+                "响应体超过 {}MB 上限",
+                MAX_CATALOG_BYTES / 1024 / 1024
+            )),
             bytes: body.len(),
             elapsed_ms: started.elapsed().as_millis(),
         });
@@ -256,7 +266,10 @@ pub async fn update_models_catalog(
             provider_count: 0,
             version: String::new(),
             cached_path: String::new(),
-            error: Some(format!("响应体过小 ({} 字节)，可能不是有效 catalog", body_str.len())),
+            error: Some(format!(
+                "响应体过小 ({} 字节)，可能不是有效 catalog",
+                body_str.len()
+            )),
             bytes: body_str.len(),
             elapsed_ms: started.elapsed().as_millis(),
         });
@@ -276,16 +289,10 @@ pub async fn update_models_catalog(
         });
     }
 
-    let cached = appdata_catalog_path(&app)
-        .ok_or_else(|| "无法获取 AppData 目录".to_string())?;
+    let cached = appdata_catalog_path(&app).ok_or_else(|| "无法获取 AppData 目录".to_string())?;
 
-    fs::write(&cached, &body).map_err(|e| {
-        format!(
-            "写入 AppData 失败 ({}): {}",
-            cached.display(),
-            e
-        )
-    })?;
+    fs::write(&cached, &body)
+        .map_err(|e| format!("写入 AppData 失败 ({}): {}", cached.display(), e))?;
 
     let _ = app.emit(
         "models-catalog-updated",

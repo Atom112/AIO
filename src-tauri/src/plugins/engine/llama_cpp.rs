@@ -3,7 +3,6 @@
 /// 启动策略：
 /// 1. 优先使用 app data 下通过自动安装的引擎（EngineInstaller）
 /// 2. 回退到 resources/engines/llama-cpp/ 下的 bundled 版本（旧版打包兼容）
-
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::installer::EngineInstaller;
 use crate::plugins::engine::LocalEnginePlugin;
@@ -101,7 +100,8 @@ impl LocalEnginePlugin for LlamaCppPlugin {
         port: u16,
         gpu_layers: i32,
         _trust_remote_code: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+    {
         Box::pin(async move {
             debug!(
                 "启动参数 - 引擎: llama.cpp, 模型: {}, 端口: {}, GPU层数: {}",
@@ -122,9 +122,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                     .map_err(|e| format!("无法解析资源路径: {}", e))?;
                 let fallback = resource_dir.join("llama-server.exe");
                 if !fallback.exists() {
-                    return Err(
-                        "找不到 llama.cpp 引擎。请先在设置页面中安装引擎。".to_string()
-                    );
+                    return Err("找不到 llama.cpp 引擎。请先在设置页面中安装引擎。".to_string());
                 }
                 fallback
             };
@@ -149,24 +147,24 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             let event_name = self.progress_event_name().to_string();
             task::spawn_blocking(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        // 只在调试时记录子进程日志，避免泄露
-                        debug!("[llama-server] {}", line);
-                        let progress = if line.contains("build info") || line.contains("system info") {
-                            Some(0.1)
-                        } else if line.contains("loading model") {
-                            Some(0.2)
-                        } else if line.contains("model loaded") || line.contains("done") {
-                            Some(0.5)
-                        } else if line.contains("HTTP server listening") || line.contains("listening on") {
-                            Some(0.8)
-                        } else {
-                            None
-                        };
-                        if let Some(p) = progress {
-                            let _ = app_clone.emit(&event_name, p);
-                        }
+                for line in reader.lines().map_while(Result::ok) {
+                    // 只在调试时记录子进程日志，避免泄露
+                    debug!("[llama-server] {}", line);
+                    let progress = if line.contains("build info") || line.contains("system info") {
+                        Some(0.1)
+                    } else if line.contains("loading model") {
+                        Some(0.2)
+                    } else if line.contains("model loaded") || line.contains("done") {
+                        Some(0.5)
+                    } else if line.contains("HTTP server listening")
+                        || line.contains("listening on")
+                    {
+                        Some(0.8)
+                    } else {
+                        None
+                    };
+                    if let Some(p) = progress {
+                        let _ = app_clone.emit(&event_name, p);
                     }
                 }
             });
@@ -186,11 +184,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             let health_url = format!("http://127.0.0.1:{}/health", port);
-            match client
-                .get(&health_url)
-                .send()
-                .await
-            {
+            match client.get(&health_url).send().await {
                 Ok(_) => {
                     let _ = app.emit(self.progress_event_name(), 1.0);
                 }

@@ -15,8 +15,8 @@
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
-use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_updater::Error as UpdaterError;
+use tauri_plugin_updater::UpdaterExt;
 
 /// 标准化后的更新信息（返回给前端）
 #[derive(Serialize, Clone, Debug)]
@@ -123,7 +123,9 @@ fn translate_error(err: UpdaterError, current_version: &str, endpoint: &str) -> 
         | UpdaterError::TargetsNotFound(_) => CheckUpdateResult::ServiceNotReady {
             current_version: current_version.to_string(),
             endpoint: endpoint.to_string(),
-            reason: "GitHub Release 尚未附 latest.json 更新清单，需要用新 CI 发布一次后才会启用自动更新".to_string(),
+            reason:
+                "GitHub Release 尚未附 latest.json 更新清单，需要用新 CI 发布一次后才会启用自动更新"
+                    .to_string(),
         },
 
         // 2) 网络层错误（HTTP、DNS、连接超时等）
@@ -134,7 +136,8 @@ fn translate_error(err: UpdaterError, current_version: &str, endpoint: &str) -> 
                     CheckUpdateResult::ServiceNotReady {
                         current_version: current_version.to_string(),
                         endpoint: endpoint.to_string(),
-                        reason: format!("更新清单不存在 (HTTP 404) — GitHub Release 尚未附 latest.json"),
+                        reason: "更新清单不存在 (HTTP 404) — GitHub Release 尚未附 latest.json"
+                            .to_string(),
                     }
                 } else {
                     CheckUpdateResult::Network {

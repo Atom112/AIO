@@ -42,11 +42,7 @@ pub trait ProviderPlugin: Send + Sync {
     fn models_url(&self, api_url: &str) -> String;
 
     /// 给 RequestBuilder 附加认证头
-    fn apply_auth(
-        &self,
-        req: reqwest::RequestBuilder,
-        api_key: &str,
-    ) -> reqwest::RequestBuilder;
+    fn apply_auth(&self, req: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder;
 
     /// 从 JSON 响应解析为统一 LiveModel 列表
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel>;

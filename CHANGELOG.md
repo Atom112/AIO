@@ -2,10 +2,31 @@
 
 # Changelog
 
-本项目的所有显著更新将记录在此文件中。
+## [v0.7.3]
 
+<sup>Released on **2026-07-27**</sup>
+
+### ✨ Added（新增）
+
+- **暗色模式**：新增深色/浅色模式切换开关（设置 → 应用），状态持久化到 localStorage
+  - 浅色模式保持现有亚克力紫蓝渐变风格
+  - 暗色模式使用纯色深灰背景（`#0a0e1a`），降低文字与边框亮度以减少视觉疲劳
+  - 所有内联样式边框迁移为 CSS 变量 `--border-dim`，暗色模式下统一 alpha=0.3 确保清晰可见
+  - Tailwind `border-white/*` 类通过运行时样式注入 + 编译期 CSS 双重覆盖
+  - 亚克力面板（`--acrylic-bg/border`）、表面色（`--surface-bg`）、文字色（`--text-base-rgb`）全面 CSS 变量化
+- **主题色无关的 Agent 状态栏**：聊天输入框上方的 Agent 提示框背景改为表面色，不再跟随主题色变化
+
+### ⚡️ Changed（变更）
+
+- **全局色彩系统 CSS 变量化**：`rgba(124,154,191,*)` → `rgba(var(--primary-rgb),*)`（159 处）、`rgba(255,255,255,*)` → `rgba(var(--text-base-rgb),*)`（394 处）、`rgba(18,22,35,*)` → `rgba(var(--surface-bg),*)`（23 处），全面消除硬编码颜色值
+- **NavBar 导航链接**：`text-white/50` → `text-theme-secondary`，hover 态 `text-white/85` → `text-theme-primary`
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.7.3]: https://github.com/Atom112/AIO/releases/tag/v0.7.3
 
 ## [v0.7.2]
+
 <sup>Released on **2026-07-27**</sup>
 
 ### ✨ Added（新增）
@@ -26,7 +47,9 @@
 [v0.7.2]: https://github.com/Atom112/AIO/releases/tag/v0.7.2
 
 ---
+
 ## [v0.7.1]
+
 <sup>Released on **2026-07-25**</sup>
 
 ### ✨ Added（新增）
@@ -41,6 +64,7 @@
 - **系统提示词更新**：Agent 模式提示词中新增 `delegate_tasks` 工具说明和批量并行推荐
 
 ### 🐛 Fixed（修复）
+
 - **安全漏洞修复**：升级 `seroval`（critical CVE: Promise 反序列化类型混淆）、`postcss`（high: 路径遍历）、`dompurify`（low: 沙箱绕过）
 - **Rust 依赖安全升级**：修复 4 个 HIGH 级漏洞 — `lopdf` 栈溢出、`quick-xml` 双漏洞（O(n²) 属性检查 + 无界命名空间分配）、`quinn-proto` QUIC 流重组 OOM
 
@@ -49,7 +73,9 @@
 [v0.7.1]: https://github.com/Atom112/AIO/releases/tag/v0.7.1
 
 ---
+
 ## [v0.7.0]
+
 <sup>Released on **2026-07-20**</sup>
 
 ### ✨ Added（新增）
@@ -106,7 +132,9 @@
 [v0.7.0]: https://github.com/Atom112/AIO/releases/tag/v0.7.0
 
 ---
+
 ## [v0.6.2]
+
 <sup>Released on **2026-07-12**</sup>
 
 ### ✨ Added（新增）
@@ -138,7 +166,9 @@
 [v0.6.2]: https://github.com/Atom112/AIO/releases/tag/v0.6.2
 
 ---
+
 ## [v0.6.1]
+
 <sup>Released on **2026-07-09**</sup>
 
 ### ✨ Added（新增）
@@ -164,7 +194,9 @@
 [v0.6.1]: https://github.com/Atom112/AIO/releases/tag/v0.6.1
 
 ---
+
 ## [v0.6.0]
+
 <sup>Released on **2026-07-09**</sup>
 
 ### ⚡️ Changed（变更）
@@ -185,15 +217,14 @@
 [v0.6.0]: https://github.com/Atom112/AIO/releases/tag/v0.6.0
 
 ---
-## [v0.3.1-Beta]
-<sup>Released on **2026-02-11**</sup>
 
+## [v0.3.1-Beta]
+
+<sup>Released on **2026-02-11**</sup>
 
 ### 🐛 Fixed（修复）
 
 - 修复了更换头像时缓存不会自动清除的问题
-
-
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
@@ -202,17 +233,20 @@
 ---
 
 ## [v0.3.0-Beta]
+
 <sup>Released on **2026-02-10**</sup>
 
 ### 🐛 Fixed（修复）
+
 - 修复了首次打开应用时话题未选中的问题
 
 ### ✨ Added（新增）
+
 - 初步实现了登录相关功能，但所有涉及后端与登录相关内容都处于试验状态
 
 ### ⚡️ Changed（变更）
-- 优化了聊天上下文处理逻辑，重构了设置界面
 
+- 优化了聊天上下文处理逻辑，重构了设置界面
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
@@ -221,117 +255,136 @@
 ---
 
 ## [v0.2.13-Beta]
+
 <sup>Released on **2026-02-01**</sup>
 
-
 ### ⚡️ Changed（变更）
+
 - 优化消息输入框文件上传逻辑
 - 增加单次对话上下文限制
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.2.13-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.13
+[v0.2.13-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.2.13
 
 ---
 
 ## [v0.2.12-Beta]
+
 <sup>Released on **2026-01-31**</sup>
 
 ### ✨ Added（新增）
+
 - 添加用户头像，AI供应商logo头像，支持用户更换头像
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.2.12-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.12
+[v0.2.12-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.2.12
 
 ---
 
 ## [v0.2.9-Beta]
+
 <sup>Released on **2026-01-28**</sup>
 
 ### ✨ Added（新增）
+
 - 新增`.deb`、`.rpm`和`.dmg`安装包
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.2.9-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.9
+[v0.2.9-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.2.9
 
 ---
 
 ## [v0.2.0-Beta]
+
 <sup>Released on **2026-01-28**</sup>
 
 ### ✨ Added（新增）
+
 - 集成`llama.cpp`支持运行`.gguf`本地模型
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.2.0-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.2.0
+[v0.2.0-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.2.0
 
 ---
 
 ## [v0.1.7-Beta]
+
 <sup>Released on **2026-01-28**</sup>
 
 ### ✨ Added（新增）
+
 - 添加了话题自动总结和话题重命名
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.1.7-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.7
+[v0.1.7-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.1.7
 
 ---
 
 ## [v0.1.6-Beta]
+
 <sup>Released on **2026-01-27**</sup>
 
 ### ✨ Added（新增）
+
 - 可用模型列表持久化存储
 
 ### 🐛 Fixed（修复）
+
 - 修复了切换页面导致聊天框内文件卡片渲染失败的问题 **closes [#2](https://github.com/Atom112/AIO/issues/2) ([8e634d](https://github.com/Atom112/AIO/commit/8e634dabe85167d6d60448374c3fed45b0fa5950))**
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.1.6-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.6
+[v0.1.6-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.1.6
 
 ---
 
 ## [v0.1.5-Beta]
+
 <sup>Released on **2026-01-27**</sup>
 
 ### ⚡️ Changed（变更）
+
 - 优化了模型调用逻辑
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.1.5-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.5
+[v0.1.5-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.1.5
 
 ---
 
 ## [v0.1.3-Beta]
+
 <sup>Released on **2026-01-26**</sup>
 
 ### ✨ Added（新增）
+
 - 增加了文本文件上传功能
 - 拖入文件上传时显示浮层提示
-  
+
 ### 🐛 Fixed（修复）
+
 - 修复了因事件监听器泄露导致的聊天文字重复问题 **closes [#1](https://github.com/Atom112/AIO/issues/1) ([ec957a](https://github.com/Atom112/AIO/commit/ec957a38f74b7fc0fa70f7e97e8fbbf193550ee6))**
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.1.3-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.3
+[v0.1.3-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.1.3
 
 ---
 
 ## [v0.1.0-Beta]
+
 <sup>Released on **2026-01-24**</sup>
 
 ### ✨ Added（新增）
+
 - AIO 初始版本发布。
 - 集成了核心功能：综合API调用、模型选择与AI文本对话
 
 <p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
 
-[v0.1.0-Beta]:https://github.com/Atom112/AIO/releases/tag/v0.1.0
+[v0.1.0-Beta]: https://github.com/Atom112/AIO/releases/tag/v0.1.0

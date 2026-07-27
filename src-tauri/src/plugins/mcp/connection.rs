@@ -95,7 +95,11 @@ pub(crate) struct McpConnectionInner {
 
 impl McpConnection {
     /// 由传输层调用：构造一个 McpConnection
-    pub fn new(server_id: impl Into<String>, transport_kind: impl Into<String>, transport: Box<dyn McpTransport>) -> Self {
+    pub fn new(
+        server_id: impl Into<String>,
+        transport_kind: impl Into<String>,
+        transport: Box<dyn McpTransport>,
+    ) -> Self {
         Self {
             server_id: server_id.into(),
             transport_kind: transport_kind.into(),
@@ -129,7 +133,9 @@ impl McpConnection {
             Ok(Ok(r)) => r,
             Ok(Err(_canceled)) => {
                 self.inner.pending.remove(&id);
-                return Err(McpError::JsonRpc("oneshot canceled (sender dropped)".into()));
+                return Err(McpError::JsonRpc(
+                    "oneshot canceled (sender dropped)".into(),
+                ));
             }
             Err(_) => {
                 self.inner.pending.remove(&id);

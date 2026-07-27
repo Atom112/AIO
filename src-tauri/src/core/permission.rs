@@ -722,7 +722,7 @@ pub fn check_permission(
     }
 
     // 2. 按优先级排序（高 → 低）
-    all_candidates.sort_by(|a, b| b.priority.cmp(&a.priority));
+    all_candidates.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
 
     // 3. 检查是否有 Deny（Deny 总是优先于 Allow 和 Ask）
     for rule in &all_candidates {

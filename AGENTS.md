@@ -6,16 +6,16 @@ AIO is a lightweight, cross-platform AI assistant client built with **Tauri 2.x*
 
 ## Tech Stack & Versions
 
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| Frontend Framework | SolidJS | ^1.9.3 |
-| Routing | @solidjs/router | ^0.15.3 |
-| Styling | Tailwind CSS | ^3.4.19 |
-| Build Tool | Vite | ^6.0.3 |
-| Desktop Framework | Tauri | 2.10.1 |
-| Backend Language | Rust | 1.75+ |
-| Database | SQLite (rusqlite) | bundled |
-| State Management | SolidJS Store + Signals | built-in |
+| Layer              | Technology              | Version  |
+| ------------------ | ----------------------- | -------- |
+| Frontend Framework | SolidJS                 | ^1.9.13  |
+| Routing            | @solidjs/router         | ^0.16.1  |
+| Styling            | Tailwind CSS            | ^3.4.19  |
+| Build Tool         | Vite                    | ^8.0.16  |
+| Desktop Framework  | Tauri                   | 2.11.x   |
+| Backend Language   | Rust                    | 1.97.1   |
+| Database           | SQLite (rusqlite)       | bundled  |
+| State Management   | SolidJS Store + Signals | built-in |
 
 ## Directory Structure
 
@@ -113,6 +113,7 @@ src-tauri/src/
 Follow this 4-step process to achieve "plug-and-play" integration:
 
 1. **Implement the Trait**: Create a new file in `plugins/engine/` (e.g., `plugins/engine/olama.rs`). Implement the `LocalEnginePlugin` trait:
+
    ```rust
    #[async_trait]
    impl LocalEnginePlugin for OllamaPlugin {
@@ -126,6 +127,7 @@ Follow this 4-step process to achieve "plug-and-play" integration:
    ```
 
 2. **Register the Plugin**: In `plugins/engine/mod.rs`, add the plugin to `EngineManager::new()`:
+
    ```rust
    mgr.register(Box::new(OllamaPlugin));
    ```
@@ -169,8 +171,8 @@ The frontend will automatically show the new engine in the local model list via 
 ## Build & Dev Commands
 
 ```bash
-# Install dependencies
-npm install
+# Install locked dependencies
+npm ci
 
 # Dev mode (frontend + Tauri)
 npm run tauri dev
@@ -178,16 +180,16 @@ npm run tauri dev
 # Production build
 npm run tauri build
 
-# Check Rust code
-cd src-tauri && cargo check
+# Run the complete frontend and Rust quality baseline
+npm run verify
 ```
 
 ## Review Checklist for Agents
 
 Before submitting changes, verify:
+
 - [ ] New Rust modules are declared in their parent `mod.rs`.
 - [ ] New Tauri commands are registered in `lib.rs`.
 - [ ] Frontend imports use the new `core/` and `features/` path conventions.
 - [ ] No hardcoded engine/provider names in logic; use constants or `engine_type` fields.
-- [ ] `cargo check` passes without warnings.
-- [ ] `npm run build` completes successfully.
+- [ ] `npm run verify` passes without warnings or errors.

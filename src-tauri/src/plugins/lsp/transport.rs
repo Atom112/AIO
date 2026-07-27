@@ -17,7 +17,7 @@ use tokio::process::ChildStdout;
 
 /// 将 JSON body 编码为 LSP Content-Length 帧
 pub fn encode_message(body: &str) -> String {
-    let len = body.as_bytes().len();
+    let len = body.len();
     format!("Content-Length: {}\r\n\r\n{}", len, body)
 }
 
@@ -34,7 +34,14 @@ pub async fn read_frame(reader: &mut BufReader<ChildStdout>) -> std::io::Result<
         let n = reader.read_line(&mut line).await?;
         if n == 0 {
             // EOF
-            return if headers.is_empty() { Ok(None) } else { Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "incomplete LSP header")) };
+            return if headers.is_empty() {
+                Ok(None)
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "incomplete LSP header",
+                ))
+            };
         }
         // 空行（\r\n 或 \n）表示头部结束
         if line == "\r\n" || line == "\n" {
@@ -46,23 +53,32 @@ pub async fn read_frame(reader: &mut BufReader<ChildStdout>) -> std::io::Result<
             .strip_prefix("content-length:")
             .map(|s| s.trim().to_string())
         {
-            content_length = Some(
-                len_str
-                    .parse::<usize>()
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("invalid Content-Length: {}", e)))?,
-            );
+            content_length = Some(len_str.parse::<usize>().map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid Content-Length: {}", e),
+                )
+            })?);
         }
         headers.push_str(&line);
     }
 
-    let len = content_length
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "missing Content-Length header"))?;
+    let len = content_length.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "missing Content-Length header",
+        )
+    })?;
 
     // 2. 读取指定长度的 body
     let mut body_buf = vec![0u8; len];
     reader.read_exact(&mut body_buf).await?;
-    let body = String::from_utf8(body_buf)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("invalid UTF-8 in LSP message: {}", e)))?;
+    let body = String::from_utf8(body_buf).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid UTF-8 in LSP message: {}", e),
+        )
+    })?;
 
     Ok(Some(body))
 }

@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -18,9 +18,9 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            target: ""
+            target: ''
           - platform: ubuntu-22.04
-            target: ""
+            target: ''
           - platform: macos-15
             target: x86_64-apple-darwin
           - platform: macos-15
@@ -52,9 +52,11 @@ jobs:
           cache: npm
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Install Rust target (macOS x86_64)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: rustup target add x86_64-apple-darwin
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'

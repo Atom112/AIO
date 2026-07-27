@@ -4,7 +4,6 @@
 /// - `process_file_content` 接受路径仅当满足：扩展名白名单 + 父目录在用户 home 或 AppData 内
 /// - `start_local_server` 接受的 `model_path` 仅允许用户 home 或 AppData/engines 内的文件
 /// - 限制文件大小（图片 10MB / 文档 30MB）防止 OOM DoS
-
 use base64::{engine::general_purpose, Engine as _};
 use std::fs::File;
 use std::io::Read;
@@ -68,10 +67,7 @@ fn check_extension(path: &Path, allowed: &[&str]) -> Result<String, String> {
         .unwrap_or("")
         .to_lowercase();
     if !allowed.iter().any(|a| *a == ext) {
-        return Err(format!(
-            "扩展名 {:?} 不在白名单 {:?} 内",
-            ext, allowed
-        ));
+        return Err(format!("扩展名 {:?} 不在白名单 {:?} 内", ext, allowed));
     }
     Ok(ext)
 }
@@ -116,8 +112,8 @@ pub fn validate_attachment_path(path: &str) -> Result<PathBuf, String> {
     let extension = check_extension(
         &path,
         &[
-            "png", "jpg", "jpeg", "webp", "pdf", "docx", "pptx", "txt", "md", "json",
-            "csv", "log", "xml", "yaml", "yml", "ini", "tsv",
+            "png", "jpg", "jpeg", "webp", "pdf", "docx", "pptx", "txt", "md", "json", "csv", "log",
+            "xml", "yaml", "yml", "ini", "tsv",
         ],
     )?;
     let max = if ["png", "jpg", "jpeg", "webp"].contains(&extension.as_str()) {
@@ -139,12 +135,12 @@ pub fn extract_file_content(path: &Path, extension: &str) -> Result<Option<Strin
             .map(Some)
             .map_err(|e| format!("PDF解析失败: {}", e)),
         "docx" | "pptx" => read_office_file(
-            path.to_str().ok_or_else(|| "文件路径不是有效 UTF-8".to_string())?,
+            path.to_str()
+                .ok_or_else(|| "文件路径不是有效 UTF-8".to_string())?,
             extension,
         )
         .map(Some),
-        "txt" | "md" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "ini"
-        | "tsv" => {
+        "txt" | "md" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "ini" | "tsv" => {
             let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
             let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
             Ok(Some(res.into_owned()))
@@ -162,13 +158,17 @@ pub fn extract_text_from_xml(xml: &str) -> String {
     for e in reader {
         match e {
             Ok(xml::reader::XmlEvent::StartElement { name, .. }) => {
-                if name.local_name == "t" { in_text_tag = true; }
+                if name.local_name == "t" {
+                    in_text_tag = true;
+                }
             }
             Ok(xml::reader::XmlEvent::Characters(content)) => {
-                if in_text_tag { out.push_str(&content); }
+                if in_text_tag {
+                    out.push_str(&content);
+                }
             }
-            Ok(xml::reader::XmlEvent::EndElement { name, .. }) => {
-                if name.local_name == "t" { in_text_tag = false; }
+            Ok(xml::reader::XmlEvent::EndElement { name, .. }) if name.local_name == "t" => {
+                in_text_tag = false;
             }
             _ => {}
         }
@@ -194,7 +194,8 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
 
         if is_target {
             let mut content = String::new();
-            file.read_to_string(&mut content).map_err(|e| e.to_string())?;
+            file.read_to_string(&mut content)
+                .map_err(|e| e.to_string())?;
             full_text.push_str(&extract_text_from_xml(&content));
             full_text.push('\n');
         }
@@ -260,7 +261,10 @@ pub fn validate_model_path(path: &str) -> Result<PathBuf, String> {
     if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
         let ext_lower = ext.to_lowercase();
         if !["gguf", "safetensors", "bin"].contains(&ext_lower.as_str()) {
-            return Err(format!("模型文件扩展名 {:?} 不在白名单内 (gguf/safetensors/bin)", ext_lower));
+            return Err(format!(
+                "模型文件扩展名 {:?} 不在白名单内 (gguf/safetensors/bin)",
+                ext_lower
+            ));
         }
     } else {
         return Err("模型文件必须有扩展名".into());

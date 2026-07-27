@@ -100,7 +100,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
           '-moz-appearance': 'none',
           'background-color': 'rgba(0, 0, 0, 0.25)',
           'background-image':
-            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>\")",
+            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(var(--text-base-rgb),0.5)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>\")",
           'background-repeat': 'no-repeat',
           'background-position': 'right 8px center',
           'background-size': '16px',
@@ -126,10 +126,10 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
       <div
         class={`absolute z-[100] min-w-full mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top ${props.align === 'right' ? 'right-0' : 'left-0'} top-full`}
         style={{
-          background: 'rgba(18, 22, 35, 0.88)',
+          background: 'rgba(var(--surface-bg), 0.88)',
           'backdrop-filter': 'blur(40px) saturate(180%)',
           '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          border: '1px solid var(--border-dim)',
           'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
         }}
         classList={{

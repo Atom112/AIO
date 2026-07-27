@@ -93,7 +93,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
 
   return (
     <div
-      class="rounded-[10px] px-3.5 py-3 my-1 max-w-[420px] bg-[rgba(22,28,46,0.95)] border border-[rgba(124,154,191,0.15)] shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
+      class="rounded-[10px] px-3.5 py-3 my-1 max-w-[420px] bg-[rgba(var(--surface-alt-bg),0.95)] border border-[rgba(var(--primary-rgb),0.15)] shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
       classList={{ 'border-[rgba(255,77,77,0.25)]': isDangerous() }}
       style={{ animation: 'tool-approval-in 0.2s ease-out' }}
     >

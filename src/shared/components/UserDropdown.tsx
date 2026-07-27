@@ -25,9 +25,9 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
     >
       <div
         class="relative w-10 h-10 rounded-full overflow-hidden transition-all duration-200"
-        style={{ border: '2px solid rgba(255,255,255,0.06)' }}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(124,154,191,0.3)')}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)')}
+        style={{ border: '2px solid var(--border-dim)' }}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb),0.3)')}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-dim)')}
       >
         <img
           src={imgSrc()}
@@ -39,7 +39,7 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
         />
         <div
           class="absolute inset-0 w-full h-full flex items-center justify-center transition-opacity duration-300 pointer-events-none"
-          style={{ background: 'rgba(255,255,255,0.04)' }}
+          style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
           classList={{ 'opacity-100': !isLoaded(), 'opacity-0': isLoaded() }}
         >
           <Icon src="/icons/app-logo/user.svg" class="w-5 h-5 opacity-50" />
@@ -49,10 +49,10 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
         class="absolute top-full left-1/2 -translate-x-1/2 mt-3 min-w-[140px] rounded-lg shadow-[0_4px_15px_rgba(0,0,0,0.4)] z-[1000] transition-all duration-200 p-1.5"
         classList={{ 'invisible opacity-0': !isVisible(), 'visible opacity-100': isVisible() }}
         style={{
-          background: 'rgba(18, 22, 35, 0.85)',
+          background: 'rgba(var(--surface-bg), 0.85)',
           'backdrop-filter': 'blur(30px)',
           '-webkit-backdrop-filter': 'blur(30px)',
-          border: '1px solid rgba(255, 255, 255, 0.06)',
+          border: '1px solid var(--border-dim)',
         }}
       >
         <div

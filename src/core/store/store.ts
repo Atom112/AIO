@@ -342,6 +342,11 @@ export const [globalUserAvatar, setGlobalUserAvatar] = createSignal('/icons/app-
 export const [themeColor, setThemeColor] = createSignal(
   localStorage.getItem('theme-color') || '#7c9abf',
 );
+/** 深色模式信号，从本地存储读取 */
+export const [isDarkMode, setIsDarkMode] = createSignal(
+  localStorage.getItem('dark-mode') === 'true',
+);
+
 /** 推理强度 (off=关闭 / low=轻度 / medium=中度 / high=深度) */
 export type ReasoningLevel = 'off' | 'low' | 'medium' | 'high';
 const REASONING_KEY = 'chat-reasoning-level';
@@ -1115,12 +1120,44 @@ createEffect(() => {
   });
 });
 
-/**
- * 平滑更新指定话题的消息历史（解决动画闪烁/DOM全量重建问题）
- * @param assistantId - 助手 ID
- * @param topicId - 话题 ID
- * @param newHistory - 最新的完整消息历史数组
- */
+// 同步深色模式到 HTML data-theme 属性，并注入边框亮度修复
+createEffect(() => {
+  const dark = isDarkMode();
+  document.documentElement.setAttribute('data-theme-changing', '');
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  localStorage.setItem('dark-mode', String(dark));
+
+  // 动态注入/移除暗色模式边框亮度样式（运行时注入，确保优先级最高）
+  const STYLE_ID = 'aio-dark-border-fix';
+  if (dark) {
+    if (!document.getElementById(STYLE_ID)) {
+      const el = document.createElement('style');
+      el.id = STYLE_ID;
+      el.textContent = [
+        '[data-theme="dark"] .border-white\\/5{--tw-border-opacity:1;border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/10{--tw-border-opacity:1;border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/15{--tw-border-opacity:1;border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/20{--tw-border-opacity:1;border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/\\[0\\.04\\]{border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/\\[0\\.05\\]{border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/\\[0\\.06\\]{border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/\\[0\\.08\\]{border-color:rgba(240,240,240,0.3)!important}',
+        '[data-theme="dark"] .border-white\\/\\[0\\.15\\]{border-color:rgba(240,240,240,0.3)!important}',
+      ].join('');
+      document.head.appendChild(el);
+    }
+  } else {
+    const el = document.getElementById(STYLE_ID);
+    if (el) el.remove();
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      document.documentElement.removeAttribute('data-theme-changing');
+    });
+  });
+});
+
 export const updateTopicHistorySmoothly = (
   assistantId: string,
   topicId: string,

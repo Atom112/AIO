@@ -56,7 +56,7 @@ const ModelSelector: Component = () => {
           setOpen((o) => !o);
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+          e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
         }}
         onMouseLeave={(e) => {
           if (!open()) {
@@ -96,8 +96,8 @@ const ModelSelector: Component = () => {
           'opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),
         }}
         style={{
-          background: 'rgba(18,22,35,0.96)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'rgba(var(--surface-bg),0.96)',
+          border: '1px solid var(--border-dim)',
           'backdrop-filter': 'blur(12px)',
           'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
           'max-height': '340px',
@@ -108,9 +108,9 @@ const ModelSelector: Component = () => {
           <div
             class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest sticky top-0"
             style={{
-              color: 'rgba(255,255,255,0.35)',
-              background: 'rgba(255,255,255,0.04)',
-              'border-bottom': '1px solid rgba(255,255,255,0.04)',
+              color: 'rgba(var(--text-base-rgb),0.35)',
+              background: 'rgba(var(--text-base-rgb),0.04)',
+              'border-bottom': '1px solid var(--border-dim)',
             }}
           >
             {t('chat.model.cloud')}
@@ -120,19 +120,19 @@ const ModelSelector: Component = () => {
               {(model) => (
                 <div
                   class="flex items-center gap-2 p-2 rounded-lg cursor-pointer select-none transition-all"
-                  style={{ color: 'rgba(255,255,255,0.6)' }}
-                  classList={{ '!bg-[rgba(124,154,191,0.12)]': isCurrent(model) }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
+                  classList={{ '!bg-[rgba(var(--primary-rgb),0.12)]': isCurrent(model) }}
                   onClick={() => handlePick(model)}
                   onMouseEnter={(e) => {
                     if (!isCurrent(model)) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                      e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
                       e.currentTarget.style.color = 'white';
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!isCurrent(model)) {
                       e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = 'rgba(255,255,255,0.6)';
+                      e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.6)';
                     }
                   }}
                 >
@@ -145,7 +145,7 @@ const ModelSelector: Component = () => {
                   </div>
                   <div class="flex-1 min-w-0">
                     <div class="text-[13px] text-white font-medium truncate">{model.model_id}</div>
-                    <div class="text-[10px] truncate" style={{ color: 'rgba(124,154,191,0.5)' }}>
+                    <div class="text-[10px] truncate" style={{ color: 'rgba(var(--primary-rgb),0.5)' }}>
                       {model.owned_by}
                     </div>
                   </div>
@@ -154,14 +154,14 @@ const ModelSelector: Component = () => {
                       name="check"
                       size={14}
                       class="shrink-0"
-                      style={{ color: 'rgba(124,154,191,0.9)' }}
+                      style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
                     />
                   </Show>
                 </div>
               )}
             </For>
             <Show when={cloudModels().length === 0}>
-              <div class="p-3 text-center text-[12px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+              <div class="p-3 text-center text-[12px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
                 {t('chat.model.noCloud')}
               </div>
             </Show>
@@ -171,10 +171,10 @@ const ModelSelector: Component = () => {
           <div
             class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
             style={{
-              color: 'rgba(255,255,255,0.35)',
-              background: 'rgba(255,255,255,0.04)',
-              'border-top': '1px solid rgba(255,255,255,0.04)',
-              'border-bottom': '1px solid rgba(255,255,255,0.04)',
+              color: 'rgba(var(--text-base-rgb),0.35)',
+              background: 'rgba(var(--text-base-rgb),0.04)',
+              'border-top': '1px solid var(--border-dim)',
+              'border-bottom': '1px solid var(--border-dim)',
             }}
           >
             {t('chat.model.local')}
@@ -184,19 +184,19 @@ const ModelSelector: Component = () => {
               {(model) => (
                 <div
                   class="flex items-center gap-2 p-2 rounded-lg cursor-pointer select-none transition-all"
-                  style={{ color: 'rgba(255,255,255,0.6)' }}
-                  classList={{ '!bg-[rgba(124,154,191,0.12)]': isCurrent(model) }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
+                  classList={{ '!bg-[rgba(var(--primary-rgb),0.12)]': isCurrent(model) }}
                   onClick={() => handlePick(model)}
                   onMouseEnter={(e) => {
                     if (!isCurrent(model)) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                      e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
                       e.currentTarget.style.color = 'white';
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!isCurrent(model)) {
                       e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = 'rgba(255,255,255,0.6)';
+                      e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.6)';
                     }
                   }}
                 >
@@ -209,7 +209,7 @@ const ModelSelector: Component = () => {
                   </div>
                   <div class="flex-1 min-w-0">
                     <div class="text-[13px] text-white font-medium truncate">{model.model_id}</div>
-                    <div class="text-[10px] truncate" style={{ color: 'rgba(124,154,191,0.5)' }}>
+                    <div class="text-[10px] truncate" style={{ color: 'rgba(var(--primary-rgb),0.5)' }}>
                       {model.owned_by}
                     </div>
                   </div>
@@ -218,14 +218,14 @@ const ModelSelector: Component = () => {
                       name="check"
                       size={14}
                       class="shrink-0"
-                      style={{ color: 'rgba(124,154,191,0.9)' }}
+                      style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
                     />
                   </Show>
                 </div>
               )}
             </For>
             <Show when={localModels().length === 0}>
-              <div class="p-3 text-center text-[12px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+              <div class="p-3 text-center text-[12px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
                 {t('chat.model.noLocal')}
               </div>
             </Show>

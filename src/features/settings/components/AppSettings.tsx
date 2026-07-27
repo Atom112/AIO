@@ -14,6 +14,8 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   setThemeColor,
   themeColor,
+  isDarkMode,
+  setIsDarkMode,
   setAppUpdateAvailable,
   setAppUpdateInfo,
   setAppUpdateDismissed,
@@ -34,6 +36,7 @@ import {
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
+import Dropdown from '../../../shared/components/Dropdown';
 import { locale, setLocale, t, type Locale } from '../../../core/i18n';
 
 /**
@@ -435,14 +438,19 @@ const AppSettings: Component = () => {
     { name: '薰衣草', color: '#a89cc8' },
   ];
 
+  const langOptions = createMemo(() => [
+    { value: 'zh-CN' as Locale, label: t('app.language.zhCN') },
+    { value: 'en-US' as Locale, label: t('app.language.enUS') },
+  ]);
+
   return (
     <div class="flex flex-col gap-[15px] box-border">
       <div
         class="rounded-xl p-6 animate-row-in"
         style={{
-          background: 'rgba(255, 255, 255, 0.035)',
+          background: 'rgba(var(--text-base-rgb), 0.035)',
           'backdrop-filter': 'blur(30px)',
-          border: '1px solid rgba(255, 255, 255, 0.06)',
+          border: '1px solid var(--border-dim)',
         }}
       >
         <div class="flex justify-between items-center mb-5">
@@ -452,8 +460,8 @@ const AppSettings: Component = () => {
             <div
               class="text-base font-bold px-2.5 py-0.5 rounded-full font-mono whitespace-nowrap"
               style={{
-                background: 'rgba(255, 255, 255, 0.035)',
-                color: 'rgba(255,255,255,0.8)',
+                background: 'rgba(var(--text-base-rgb), 0.035)',
+                color: 'rgba(var(--text-base-rgb),0.8)',
                 'font-family': "'JetBrains Mono', monospace",
               }}
             >
@@ -469,19 +477,28 @@ const AppSettings: Component = () => {
               {t('app.language.description')} {t('app.language.system')}
             </p>
           </div>
-          <select
-            class="min-w-[150px] rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none"
+          <Dropdown
             value={locale()}
-            onChange={(event) => setLocale(event.currentTarget.value as Locale)}
-            aria-label={t('app.language.title')}
-          >
-            <option value="zh-CN" class="bg-[#1c2030]">
-              {t('app.language.zhCN')}
-            </option>
-            <option value="en-US" class="bg-[#1c2030]">
-              {t('app.language.enUS')}
-            </option>
-          </select>
+            onChange={(v) => setLocale(v as Locale)}
+            options={langOptions()}
+            class="min-w-[150px]"
+          />
+        </div>
+
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div class="pr-6">
+            <span class="block text-[#eee] text-[14px]">{t('app.darkMode.title')}</span>
+            <p class="text-xs text-white/35 mt-1">{t('app.darkMode.description')}</p>
+          </div>
+          <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
+            <input
+              class="opacity-0 w-0 h-0 peer"
+              type="checkbox"
+              checked={isDarkMode()}
+              onChange={(e) => setIsDarkMode(e.currentTarget.checked)}
+            />
+            <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
+          </label>
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
@@ -547,9 +564,9 @@ const AppSettings: Component = () => {
           <div
             class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
             style={{
-              background: 'rgba(124,154,191,0.08)',
-              color: 'rgba(255,255,255,0.5)',
-              border: '1px solid rgba(124,154,191,0.08)',
+              background: 'rgba(var(--primary-rgb),0.08)',
+              color: 'rgba(var(--text-base-rgb),0.5)',
+              border: '1px solid rgba(var(--primary-rgb),0.08)',
             }}
             onClick={() => open('https://github.com/Atom112/AIO')}
             title={t('app.openSource.visit')}
@@ -567,7 +584,7 @@ const AppSettings: Component = () => {
               style={{
                 color: (() => {
                   const r = checkResult();
-                  if (!r) return 'rgba(255,255,255,0.35)';
+                  if (!r) return 'rgba(var(--text-base-rgb),0.35)';
                   if (r.kind === 'update_available') return 'var(--primary-color)';
                   if (r.kind === 'service_not_ready' || r.kind === 'failed' || r.kind === 'network')
                     return '#d99';
@@ -753,9 +770,9 @@ const AppSettings: Component = () => {
           <button
             class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-200"
             style={{
-              background: 'rgba(255, 255, 255, 0.04)',
-              color: 'rgba(255, 255, 255, 0.40)',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
+              background: 'rgba(var(--text-base-rgb), 0.04)',
+              color: 'rgba(var(--text-base-rgb), 0.40)',
+              border: '1px solid var(--border-dim)',
             }}
             onClick={() => setResetAllConfirm(true)}
             title={t('app.shortcuts.restoreDefaults')}
@@ -772,7 +789,7 @@ const AppSettings: Component = () => {
             onClick={() => setResetAllConfirm(false)}
           >
             <div
-              class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(22,26,40,0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
+              class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(var(--surface-alt-bg),0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
               style={{ animation: 'command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1)' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -807,7 +824,7 @@ const AppSettings: Component = () => {
             onClick={handleConflictCancel}
           >
             <div
-              class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(22,26,40,0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
+              class="rounded-xl px-6 py-5 max-w-[380px] bg-[rgba(var(--surface-alt-bg),0.97)] border border-white/[0.08] shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
               style={{ animation: 'command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1)' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -859,8 +876,8 @@ const AppSettings: Component = () => {
                     <div
                       class="flex items-center justify-between py-2.5 px-3 rounded-lg transition-colors duration-150 mb-[4px] last:mb-0"
                       style={{
-                        background: 'rgba(255, 255, 255, 0.02)',
-                        border: '1px solid rgba(255, 255, 255, 0.03)',
+                        background: 'rgba(var(--text-base-rgb), 0.02)',
+                        border: '1px solid var(--border-dim)',
                       }}
                     >
                       <div class="flex-1 min-w-0 mr-4">
@@ -938,7 +955,7 @@ const AppSettings: Component = () => {
 
         {/* 无命令时的空状态 */}
         <Show when={allCommands().length === 0}>
-          <div class="text-center py-8 text-[13px]" style={{ color: 'rgba(255, 255, 255, 0.3)' }}>
+          <div class="text-center py-8 text-[13px]" style={{ color: 'rgba(var(--text-base-rgb), 0.3)' }}>
             {t('app.shortcuts.empty')}
           </div>
         </Show>

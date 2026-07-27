@@ -117,7 +117,7 @@ const DiffView = (props: DiffViewProps) => {
                 class="px-1.5 py-px rounded text-[12px] font-medium shrink-0"
                 style={{
                   color: ACTION_COLORS[change.action],
-                  background: 'rgba(255,255,255,0.04)',
+                  background: 'rgba(var(--text-base-rgb),0.04)',
                   border: `1px solid ${ACTION_COLORS[change.action]}33`,
                 }}
               >
@@ -127,7 +127,7 @@ const DiffView = (props: DiffViewProps) => {
                 <For each={parseSummary(change.summary)}>
                   {(seg) => (
                     <span
-                      style={seg.color ? { color: seg.color } : { color: 'rgba(255,255,255,0.35)' }}
+                      style={seg.color ? { color: seg.color } : { color: 'rgba(var(--text-base-rgb),0.35)' }}
                     >
                       {seg.text}
                     </span>

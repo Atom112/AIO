@@ -70,7 +70,7 @@ const SessionStats: Component = () => {
         class="flex items-center gap-3 px-4 py-1.5 text-xs select-none"
         style={{
           background: 'rgba(0,0,0,0.1)',
-          'border-bottom': '1px solid rgba(255,255,255,0.03)',
+          'border-bottom': '1px solid var(--border-dim)',
         }}
       >
         <span class="text-gray-400 shrink-0 inline-flex items-center gap-1">

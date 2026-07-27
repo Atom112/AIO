@@ -34,7 +34,7 @@ function usageColor(pct: number): string {
   if (pct > 0.95) return '#ef4444';
   if (pct > 0.85) return '#f59e0b';
   if (pct > 0.7) return '#eab308';
-  return 'rgba(255,255,255,0.45)';
+  return 'rgba(var(--text-base-rgb),0.45)';
 }
 
 const TokenStatsBar: Component = () => {
@@ -99,7 +99,7 @@ const TokenStatsBar: Component = () => {
         {/* 微型进度条 */}
         <div
           class="w-8 h-1 rounded-full overflow-hidden shrink-0"
-          style={{ background: 'rgba(255,255,255,0.08)' }}
+          style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
         >
           <div
             class="h-full rounded-full transition-all duration-500"
@@ -114,26 +114,26 @@ const TokenStatsBar: Component = () => {
 
         <Show when={stats().input > 0 || stats().output > 0}>
           <Show when={stats().input > 0}>
-            <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.30)' }}>
+            <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.30)' }}>
               ↗{fmt(stats().input)}
             </span>
           </Show>
           <Show when={stats().output > 0}>
-            <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.30)' }}>
+            <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.30)' }}>
               ↘{fmt(stats().output)}
             </span>
           </Show>
         </Show>
 
-        <span style={{ color: 'rgba(255,255,255,0.10)' }}>·</span>
-        <span class="whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.22)' }}>
+        <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
+        <span class="whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}>
           {stats().messages}条
         </span>
 
         <Show when={stats().tools > 0}>
           <span
             class="inline-flex items-center gap-1 whitespace-nowrap"
-            style={{ color: 'rgba(255,255,255,0.22)' }}
+            style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}
           >
             <Icon name="wrench" size={14} />
             {stats().tools}
@@ -141,8 +141,8 @@ const TokenStatsBar: Component = () => {
         </Show>
 
         <Show when={stats().price > 0}>
-          <span style={{ color: 'rgba(255,255,255,0.10)' }}>·</span>
-          <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(255,255,255,0.22)' }}>
+          <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
+          <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}>
             {fmtPrice(stats().price)}
           </span>
         </Show>

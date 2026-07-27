@@ -99,16 +99,16 @@ const UsageSettings: Component = () => {
         {/* 标题行 */}
         <div
           class="flex items-center justify-between pb-3 mb-6 shrink-0 animate-row-in"
-          style={{ 'border-bottom': '1px solid rgba(255,255,255,0.06)' }}
+          style={{ 'border-bottom': '1px solid var(--border-dim)' }}
         >
-          <h3 class="text-xl font-bold tracking-tight" style={{ color: 'rgba(255,255,255,0.85)' }}>
+          <h3 class="text-xl font-bold tracking-tight" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
             {t('usage.title')}
           </h3>
           {/* 时间范围选择器 */}
           <div
             class="flex gap-1 animate-row-in"
             style={{
-              background: 'rgba(255,255,255,0.04)',
+              background: 'rgba(var(--text-base-rgb),0.04)',
               'border-radius': '8px',
               padding: '3px',
               'animation-delay': '30ms',
@@ -122,7 +122,7 @@ const UsageSettings: Component = () => {
                     background:
                       r.days === range().days ? 'rgba(var(--primary-rgb), 0.2)' : 'transparent',
                     color:
-                      r.days === range().days ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.4)',
+                      r.days === range().days ? 'rgba(var(--text-base-rgb),0.9)' : 'rgba(var(--text-base-rgb),0.4)',
                   }}
                   onClick={() => {
                     setSelectedDate(null);
@@ -140,7 +140,7 @@ const UsageSettings: Component = () => {
         <Show when={loading()}>
           <div
             class="flex items-center justify-center py-16"
-            style={{ color: 'rgba(255,255,255,0.3)' }}
+            style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
           >
             <span class="text-sm font-mono">{t('common.loading')}</span>
           </div>
@@ -162,10 +162,10 @@ const UsageSettings: Component = () => {
           <Show when={!hasData()}>
             <div class="flex flex-col items-center justify-center py-16 gap-3">
               <Icon name="chart-bar" size={30} />
-              <span class="text-sm" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>
+              <span class="text-sm" style={{ color: 'rgba(var(--text-base-rgb), 0.035);' }}>
                 {t('usage.noData')}
               </span>
-              <span class="text-xs" style={{ color: 'rgba(255, 255, 255, 0.035);' }}>
+              <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb), 0.035);' }}>
                 {t('usage.noDataDescription')}
               </span>
             </div>
@@ -182,14 +182,14 @@ const UsageSettings: Component = () => {
               <div
                 class="rounded-xl p-5 animate-row-in"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.035)',
-                  border: '1px solid rgba(255,255,255,0.05)',
+                  background: 'rgba(var(--text-base-rgb), 0.035)',
+                  border: '1px solid var(--border-dim)',
                   'animation-delay': '90ms',
                 }}
               >
                 <div
                   class="text-xs font-bold uppercase tracking-wider mb-3"
-                  style={{ color: 'rgba(255,255,255,0.25)' }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
                 >
                   {t('usage.dailyActivity')}
                 </div>
@@ -205,8 +205,8 @@ const UsageSettings: Component = () => {
                 <div
                   class="rounded-xl p-5 animate-row-in"
                   style={{
-                    background: 'rgba(255, 255, 255, 0.035)',
-                    border: '1px solid rgba(255,255,255,0.05)',
+                    background: 'rgba(var(--text-base-rgb), 0.035)',
+                    border: '1px solid var(--border-dim)',
                     'animation-delay': '120ms',
                   }}
                 >
@@ -215,7 +215,7 @@ const UsageSettings: Component = () => {
                     fallback={
                       <div
                         class="text-xs font-bold uppercase tracking-wider mb-3"
-                        style={{ color: 'rgba(255,255,255,0.25)' }}
+                        style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
                       >
                         {t('usage.byModel')}
                       </div>
@@ -223,13 +223,13 @@ const UsageSettings: Component = () => {
                   >
                     <div
                       class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-3"
-                      style={{ color: 'rgba(255,255,255,0.25)' }}
+                      style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
                     >
                       <span>{t('usage.selectedModelBreakdown', { date: selectedDate()! })}</span>
                       <button
                         class="border-none cursor-pointer flex items-center justify-center w-4 h-4 rounded-full hover:bg-white/[0.1] transition-colors"
                         style={{
-                          color: 'rgba(255,255,255,0.4)',
+                          color: 'rgba(var(--text-base-rgb),0.4)',
                           'font-size': '10px',
                           'line-height': '1',
                         }}

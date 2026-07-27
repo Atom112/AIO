@@ -37,7 +37,7 @@ function getLevel(val: number, levels: [number, number, number, number]): number
 function levelColor(level: number): string {
   switch (level) {
     case 0:
-      return 'rgba(255,255,255,0.03)';
+      return 'rgba(var(--text-base-rgb),0.03)';
     case 1:
       return 'rgba(var(--primary-rgb), 0.15)';
     case 2:
@@ -47,7 +47,7 @@ function levelColor(level: number): string {
     case 4:
       return 'rgba(var(--primary-rgb), 0.75)';
     default:
-      return 'rgba(255,255,255,0.03)';
+      return 'rgba(var(--text-base-rgb),0.03)';
   }
 }
 
@@ -187,7 +187,7 @@ const UsageHeatmap: Component<Props> = (props) => {
                   class="text-[9px] font-bold absolute whitespace-nowrap"
                   style={{
                     left: `${left}px`,
-                    color: 'rgba(255,255,255,0.35)',
+                    color: 'rgba(var(--text-base-rgb),0.35)',
                     'line-height': '14px',
                   }}
                 >
@@ -207,7 +207,7 @@ const UsageHeatmap: Component<Props> = (props) => {
                   class="text-[9px] font-bold absolute whitespace-nowrap"
                   style={{
                     left: `${left}px`,
-                    color: 'rgba(255,255,255,0.25)',
+                    color: 'rgba(var(--text-base-rgb),0.25)',
                     'line-height': '14px',
                   }}
                 >
@@ -226,7 +226,7 @@ const UsageHeatmap: Component<Props> = (props) => {
               <span
                 class="w-3 h-3 flex items-center justify-center text-[8px] font-bold"
                 style={{
-                  color: i() % 2 === 0 ? 'rgba(255,255,255,0.18)' : 'transparent',
+                  color: i() % 2 === 0 ? 'rgba(var(--text-base-rgb),0.18)' : 'transparent',
                   'line-height': '12px',
                 }}
               >
@@ -271,13 +271,13 @@ const UsageHeatmap: Component<Props> = (props) => {
 
       {/* 图例 */}
       <div class="flex items-center gap-1.5 mt-2 justify-end">
-        <span class="text-[9px]" style={{ color: 'rgba(255,255,255,0.2)' }}>
+        <span class="text-[9px]" style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}>
           {t('usage.less')}
         </span>
         <For each={[0, 1, 2, 3, 4]}>
           {(lvl) => <div class="w-3 h-3 rounded-sm" style={{ background: levelColor(lvl) }} />}
         </For>
-        <span class="text-[9px]" style={{ color: 'rgba(255,255,255,0.2)' }}>
+        <span class="text-[9px]" style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}>
           {t('usage.more')}
         </span>
       </div>
@@ -292,20 +292,20 @@ const UsageHeatmap: Component<Props> = (props) => {
               top: `${tip().y}px`,
               transform: 'translate(-50%, -100%)',
               background: 'rgba(10,14,26,0.96)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              color: 'rgba(255,255,255,0.85)',
+              border: '1px solid var(--border-dim)',
+              color: 'rgba(var(--text-base-rgb),0.85)',
               'white-space': 'nowrap',
               'box-shadow': '0 4px 16px rgba(0,0,0,0.4)',
             }}
           >
-            <div style={{ color: 'rgba(255,255,255,0.5)' }}>
+            <div style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
               {formatDateTime(`${tip().date}T00:00:00`, { dateStyle: 'medium' })}
             </div>
             <div>
-              <span style={{ color: 'rgba(255,255,255,0.85)' }}>{fmtTokens(tip().tokens)}</span>{' '}
+              <span style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>{fmtTokens(tip().tokens)}</span>{' '}
               {t('usage.tokens')}
             </div>
-            <div style={{ color: 'rgba(255,255,255,0.4)' }}>
+            <div style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
               {t('usage.requestCount', { count: formatNumber(tip().requests) })}
             </div>
           </div>

@@ -55,7 +55,7 @@ export function statusColor(s: McpStatus): string {
     case 'error':
       return '#ff6b6b';
     default:
-      return 'rgba(255,255,255,0.4)';
+      return 'rgba(var(--text-base-rgb),0.4)';
   }
 }
 

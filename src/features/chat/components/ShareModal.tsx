@@ -164,7 +164,7 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
             'font-size': '13px',
             'line-height': '1.5',
             'max-width': p.wide ? '640px' : '420px',
-            background: 'rgba(255,255,255,0.03)',
+            background: 'rgba(var(--text-base-rgb),0.03)',
             'border-radius': '0 6px 6px 0',
           }}
         >
@@ -180,10 +180,10 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
           'line-height': '1.65',
           'max-width': p.wide ? '640px' : '420px',
           'word-break': 'break-word',
-          background: isUser() ? 'rgba(124,154,191,0.18)' : 'rgba(255,255,255,0.06)',
+          background: isUser() ? 'rgba(var(--primary-rgb),0.18)' : 'rgba(var(--text-base-rgb),0.06)',
           border: isUser()
-            ? '1px solid rgba(124,154,191,0.25)'
-            : '1px solid rgba(255,255,255,0.08)',
+            ? '1px solid rgba(var(--primary-rgb),0.25)'
+            : '1px solid rgba(var(--text-base-rgb),0.08)',
           color: '#e0e0e0',
         }}
         // eslint-disable-next-line solid/no-innerhtml -- renderMessageHtml sanitizes content
@@ -406,12 +406,12 @@ const ShareModal: Component<ShareModalProps> = (props) => {
       <div
         class="w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all duration-150"
         classList={{
-          'bg-[rgba(124,154,191,0.25)] border-[rgba(124,154,191,0.4)]': p.checked,
+          'bg-[rgba(var(--primary-rgb),0.25)] border-[rgba(var(--primary-rgb),0.4)]': p.checked,
           'bg-transparent border-white/[0.15] hover:border-white/[0.3]': !p.checked,
         }}
       >
         <Show when={p.checked}>
-          <Icon name="check" class="w-2.5 h-2.5" style={{ color: 'rgba(124,154,191,0.9)' }} />
+          <Icon name="check" class="w-2.5 h-2.5" style={{ color: 'rgba(var(--primary-rgb),0.9)' }} />
         </Show>
       </div>
       <span>{p.label}</span>
@@ -441,7 +441,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
   const tabClass = (t: Tab) =>
     `px-4 py-2.5 bg-transparent border-0 border-b-2 cursor-pointer text-sm transition-all duration-200 ${
       tab() === t
-        ? 'border-[rgba(124,154,191,0.8)] text-[rgba(124,154,191,0.95)]'
+        ? 'border-[rgba(var(--primary-rgb),0.8)] text-[rgba(var(--primary-rgb),0.95)]'
         : 'border-transparent text-white/40 hover:text-white/70'
     }`;
 
@@ -508,26 +508,26 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                       <span class="mx-1 text-white/20">|</span>
                       <span>{t('export.format')}</span>
                       <button
-                        class={`px-3 py-1 rounded text-xs transition-all ${shotFormat() === 'png' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
+                        class={`px-3 py-1 rounded text-xs transition-all ${shotFormat() === 'png' ? 'bg-[rgba(var(--primary-rgb),0.15)] text-[rgba(var(--primary-rgb),0.9)] border border-[rgba(var(--primary-rgb),0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
                         onClick={() => setShotFormat('png')}
                       >
                         PNG
                       </button>
                       <button
-                        class={`px-3 py-1 rounded text-xs transition-all ${shotFormat() === 'jpeg' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
+                        class={`px-3 py-1 rounded text-xs transition-all ${shotFormat() === 'jpeg' ? 'bg-[rgba(var(--primary-rgb),0.15)] text-[rgba(var(--primary-rgb),0.9)] border border-[rgba(var(--primary-rgb),0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
                         onClick={() => setShotFormat('jpeg')}
                       >
                         JPEG
                       </button>
                       <span>{t('export.width')}</span>
                       <button
-                        class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'narrow' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
+                        class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'narrow' ? 'bg-[rgba(var(--primary-rgb),0.15)] text-[rgba(var(--primary-rgb),0.9)] border border-[rgba(var(--primary-rgb),0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
                         onClick={() => setShotWidth('narrow')}
                       >
                         {t('export.narrow')}
                       </button>
                       <button
-                        class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'wide' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
+                        class={`px-3 py-1 rounded text-xs transition-all ${shotWidth() === 'wide' ? 'bg-[rgba(var(--primary-rgb),0.15)] text-[rgba(var(--primary-rgb),0.9)] border border-[rgba(var(--primary-rgb),0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
                         onClick={() => setShotWidth('wide')}
                       >
                         {t('export.wide')}
@@ -553,7 +553,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                           .shot-bubble-content ul, .shot-bubble-content ol { padding-left: 20px; margin: 4px 0; }
                           .shot-bubble-content li { margin-bottom: 2px; }
                           .shot-bubble-content code {
-                            background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 3px;
+                            background: rgba(var(--text-base-rgb),0.06); padding: 1px 5px; border-radius: 3px;
                             font-family: "SF Mono", "Fira Code", monospace; font-size: 0.88em;
                           }
                           .shot-bubble-content pre {
@@ -562,14 +562,14 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                           }
                           .shot-bubble-content pre code { background: none; padding: 0; font-size: inherit; }
                           .shot-bubble-content blockquote {
-                            border-left: 3px solid rgba(124,154,191,0.5); padding: 2px 10px; margin: 6px 0;
-                            color: rgba(255,255,255,0.6); font-style: italic;
+                            border-left: 3px solid rgba(var(--primary-rgb),0.5); padding: 2px 10px; margin: 6px 0;
+                            color: rgba(var(--text-base-rgb),0.6); font-style: italic;
                           }
                           .shot-bubble-content table { border-collapse: collapse; margin: 8px 0; width: 100%; }
                           .shot-bubble-content th, .shot-bubble-content td {
-                            border: 1px solid rgba(255,255,255,0.15); padding: 6px 10px; text-align: left;
+                            border: 1px solid var(--border-dim); padding: 6px 10px; text-align: left;
                           }
-                          .shot-bubble-content th { background: rgba(255,255,255,0.06); }
+                          .shot-bubble-content th { background: rgba(var(--text-base-rgb),0.06); }
                           .shot-bubble-content h1, .shot-bubble-content h2, .shot-bubble-content h3,
                           .shot-bubble-content h4, .shot-bubble-content h5, .shot-bubble-content h6 {
                             margin: 10px 0 4px; font-weight: 600; line-height: 1.3;
@@ -577,9 +577,9 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                           .shot-bubble-content h1 { font-size: 1.3em; }
                           .shot-bubble-content h2 { font-size: 1.15em; }
                           .shot-bubble-content h3 { font-size: 1.05em; }
-                          .shot-bubble-content hr { border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 10px 0; }
-                          .shot-bubble-content a { color: rgba(124,154,191,0.9); }
-                          .shot-bubble-content strong { font-weight: 600; color: rgba(255,255,255,0.95); }
+                          .shot-bubble-content hr { border: none; border-top: 1px solid var(--border-dim); margin: 10px 0; }
+                          .shot-bubble-content a { color: rgba(var(--primary-rgb),0.9); }
+                          .shot-bubble-content strong { font-weight: 600; color: rgba(var(--text-base-rgb),0.95); }
                           .shot-bubble-content em { font-style: italic; }
                         `}</style>
                         <div
@@ -630,7 +630,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                             : t('export.copyScreenshot')}
                       </button>
                       <button
-                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(var(--primary-rgb),0.12)] border border-[rgba(var(--primary-rgb),0.3)] text-[rgba(var(--primary-rgb),0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.2)]"
                         disabled={shotCapturing()}
                         onClick={() => handleScreenshotCapture('download')}
                       >
@@ -656,8 +656,8 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         class="w-full h-full resize-none rounded-lg p-4 text-[13px] leading-relaxed font-mono outline-none"
                         style={{
                           background: 'rgba(0,0,0,0.25)',
-                          border: '1px solid rgba(255,255,255,0.06)',
-                          color: 'rgba(255,255,255,0.80)',
+                          border: '1px solid var(--border-dim)',
+                          color: 'rgba(var(--text-base-rgb),0.80)',
                         }}
                       />
                     </div>
@@ -670,7 +670,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         {copied() === 'markdown' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
                       <button
-                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(var(--primary-rgb),0.12)] border border-[rgba(var(--primary-rgb),0.3)] text-[rgba(var(--primary-rgb),0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.2)]"
                         onClick={() => handleDownload('markdown')}
                       >
                         <Icon name="download" class="w-3.5 h-3.5" />
@@ -686,13 +686,13 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     <div class="flex items-center gap-4 px-6 py-3 shrink-0 text-xs text-white/50">
                       <span>{t('export.exportMode')}</span>
                       <button
-                        class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'full' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
+                        class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'full' ? 'bg-[rgba(var(--primary-rgb),0.15)] text-[rgba(var(--primary-rgb),0.9)] border border-[rgba(var(--primary-rgb),0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
                         onClick={() => setJsonMode('full')}
                       >
                         {t('export.full')}
                       </button>
                       <button
-                        class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'simple' ? 'bg-[rgba(124,154,191,0.15)] text-[rgba(124,154,191,0.9)] border border-[rgba(124,154,191,0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
+                        class={`px-3 py-1 rounded text-xs transition-all ${jsonMode() === 'simple' ? 'bg-[rgba(var(--primary-rgb),0.15)] text-[rgba(var(--primary-rgb),0.9)] border border-[rgba(var(--primary-rgb),0.25)]' : 'bg-white/[0.04] text-white/50 border border-white/[0.06] hover:text-white/70'}`}
                         onClick={() => setJsonMode('simple')}
                       >
                         {t('export.simple')}
@@ -705,8 +705,8 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         class="w-full h-full resize-none rounded-lg p-4 text-[13px] leading-relaxed font-mono outline-none"
                         style={{
                           background: 'rgba(0,0,0,0.25)',
-                          border: '1px solid rgba(255,255,255,0.06)',
-                          color: 'rgba(255,255,255,0.80)',
+                          border: '1px solid var(--border-dim)',
+                          color: 'rgba(var(--text-base-rgb),0.80)',
                         }}
                       />
                     </div>
@@ -719,7 +719,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         {copied() === 'json' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
                       <button
-                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(var(--primary-rgb),0.12)] border border-[rgba(var(--primary-rgb),0.3)] text-[rgba(var(--primary-rgb),0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.2)]"
                         onClick={() => handleDownload('json')}
                       >
                         <Icon name="download" class="w-3.5 h-3.5" />
@@ -747,7 +747,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     </div>
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0">
                       <button
-                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(124,154,191,0.2)]"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[rgba(var(--primary-rgb),0.12)] border border-[rgba(var(--primary-rgb),0.3)] text-[rgba(var(--primary-rgb),0.9)] text-xs font-medium transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.2)]"
                         disabled={pdfCapturing()}
                         onClick={handlePdfDownload}
                       >

@@ -133,7 +133,7 @@ export function buildAgentSystemPrompt(
       break;
     case 'plan':
       lines.push(
-        `当前是 Plan 模式。你的职责：`,
+        `当前是计划模式。你的职责：`,
         ``,
         `1. 使用 think 工具分析用户需求，拆解为具体步骤。`,
         `2. 使用 project_map 了解项目结构。`,
@@ -145,7 +145,7 @@ export function buildAgentSystemPrompt(
         `   - 风险点和依赖`,
         `5. 计划输出后自然结束，不要调用任何执行工具。`,
         ``,
-        `注意：Plan 模式只做调研和输出计划，不执行任何实际操作。`,
+        `注意：计划模式只做调研和输出计划，不执行任何实际操作。`,
       );
       break;
     case 'workflow':
@@ -202,14 +202,14 @@ export function buildAgentRecursePrompt(mode: AgentMode, project: ProjectInfo): 
     off: '对话',
     normal: '普通',
     auto: '自动',
-    plan: 'Plan',
+    plan: '计划',
     workflow: '工作流',
   };
   const modeHint: Record<AgentMode, string> = {
     off: '',
     normal: '普通模式：修改文件前需要用户确认。',
     auto: '自动模式：自主完成任务。',
-    plan: 'Plan 模式：请继续制定计划，不要调用工具。',
+    plan: '计划模式：请继续制定计划，不要调用工具。',
     workflow: '工作流模式：请执行分配给你的工作流步骤，完成后返回结果。',
   };
   const lines: string[] = [

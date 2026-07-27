@@ -1,30 +1,499 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  /* ── 主题色（映射 CSS 变量）── */
+  --color-pri: var(--primary-color);
+  --color-pri-5: var(--primary-5);
+  --color-pri-10: var(--primary-10);
+  --color-pri-20: var(--primary-20);
+  --color-pri-30: var(--primary-30);
+  --color-pri-50: var(--primary-50);
+
+  /* ── 深色背景色阶 ── */
+  --color-dark: #161a28;
+  --color-dark-50: #6a6e7a;
+  --color-dark-100: #585c6a;
+  --color-dark-200: #464a58;
+  --color-dark-300: #353946;
+  --color-dark-400: #2d3140;
+  --color-dark-500: #262a38;
+  --color-dark-600: #1f2331;
+  --color-dark-700: #1a1e2c;
+  --color-dark-800: #161a28;
+  --color-dark-850: #121624;
+  --color-dark-900: #0e121f;
+  --color-dark-950: #0a0e1a;
+
+  /* ── 危险/关闭操作色 ── */
+  --color-danger: #e08090;
+
+  /* ── 阴影 ── */
+  --shadow-theme-inner: inset 0 0 20px rgba(0, 0, 0, 0.3);
+  --shadow-acrylic: 0 8px 32px rgba(0, 0, 0, 0.25);
+
+  /* ── 动画 ── */
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-stream-fade-in: stream-fade-in 0.3s ease-out forwards;
+  --animate-fade-in: fade-in 0.2s ease-out forwards;
+  --animate-message-out: message-out 0.25s ease-in forwards;
+  --animate-context-menu-in: contextMenuIn 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  --animate-context-menu-out: contextMenuOut 0.14s ease-in forwards;
+  --animate-modal-overlay-in: modalOverlayIn 0.2s ease forwards;
+  --animate-message-in: message-in 0.4s ease-out forwards;
+  --animate-row-in: rowIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  --animate-think-icon-pulse: thinkIconPulse 2s ease-in-out infinite;
+  --animate-think-icon-spin: thinkIconSpin 2.4s linear infinite;
+  --animate-agent-process-pulse: agentProcessIconPulse 2s ease-in-out infinite;
+  --animate-agent-process-spin: agentProcessIconSpin 2.4s linear infinite;
+  --animate-expand-width: expand-width 0.35s ease-out backwards;
+  --animate-step-card-pulse: stepCardPulse 2s ease-in-out infinite;
+  --animate-tool-approval-in: toolApprovalIn 0.2s ease-out;
+  --animate-cmd-palette-fade-in: commandPaletteFadeIn 0.12s ease-out;
+  --animate-cmd-palette-slide-in: commandPaletteSlideIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-shortcut-recording-pulse: shortcutRecordingPulse 1.2s ease-in-out infinite;
+  --animate-slash-menu-in: slashMenuIn 0.1s ease-out;
+  --animate-welcome-logo-float: welcomeLogoFloat 3s ease-in-out infinite;
+  --animate-welcome-text-fade-in: welcomeTextFadeIn 0.5s ease-out both;
+  --animate-welcome-card-in: welcomeCardIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+/* ══════════════════════════════════════════════
+   CSS 变量
+   ══════════════════════════════════════════════ */
 
 :root {
   background-color: transparent;
 
   --primary-color: #7c9abf;
-  /* 供 rgba(var(--primary-rgb), 0.xx) 内联使用 */
   --primary-rgb: 124, 154, 191;
-  /* 透明度变体（自动跟随主色变化） */
   --primary-5: color-mix(in srgb, var(--primary-color), transparent 95%);
   --primary-10: color-mix(in srgb, var(--primary-color), transparent 90%);
   --primary-20: color-mix(in srgb, var(--primary-color), transparent 80%);
   --primary-30: color-mix(in srgb, var(--primary-color), transparent 70%);
   --primary-50: color-mix(in srgb, var(--primary-color), transparent 50%);
 
-  /* 亚克力材质变量 */
-  --acrylic-bg: rgba(18, 22, 35, 0.72);
-  --acrylic-border: rgba(255, 255, 255, 0.06);
+  --surface-bg: 18, 22, 35;
+  --surface-alt-bg: 22, 26, 40;
+  --text-base-rgb: 255, 255, 255;
+  --border-rgb: 255, 255, 255;
+
+  --border-dim: rgba(255, 255, 255, 0.06);
+
+  --acrylic-bg: rgba(var(--surface-bg), 0.72);
+  --acrylic-border: rgba(var(--border-rgb), 0.06);
   --acrylic-blur: 40px;
   --acrylic-radius: 12px;
 }
 
+/* ── Dark mode: CSS variable overrides for surface/text/border ── */
+[data-theme='dark'] {
+  --surface-bg: 8, 10, 16;
+  --surface-alt-bg: 5, 8, 15;
+  --text-base-rgb: 240, 240, 240;
+  --border-rgb: 240, 240, 240;
+  --border-dim: rgba(240, 240, 240, 0.3);
+
+  --acrylic-bg: rgba(var(--surface-bg), 0.85);
+  --acrylic-border: rgba(var(--border-rgb), 0.1);
+}
+
+/* ══════════════════════════════════════════════
+   Keyframes（全部从 tailwind.config.js + @layer 迁移至此）
+   ══════════════════════════════════════════════ */
+
+/* ── 消息 / 通用 ── */
+@keyframes bubble-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes tagFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-up {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes message-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes message-out {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes stream-fade-in {
+  0% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── 右键菜单 ── */
+@keyframes contextMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes contextMenuOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(-2px);
+  }
+}
+
+/* ── 模态框 ── */
+@keyframes modalOverlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalPanelIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ── Toast ── */
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ── 行入场 ── */
+@keyframes rowIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 思考图标 ── */
+@keyframes thinkIconPulse {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes thinkIconSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Agent Process 图标 ── */
+@keyframes agentProcessIconPulse {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes agentProcessIconSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 步骤卡片 ── */
+@keyframes stepCardPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ── 宽度展开（clip-path）── */
+@keyframes expand-width {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0% 0 0);
+  }
+}
+
+/* ── 工具审批 ── */
+@keyframes toolApprovalIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* kebab-case 版本，供内联 animation 直接引用 */
+@keyframes tool-approval-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 命令面板 ── */
+@keyframes commandPaletteFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(6px);
+  }
+}
+
+@keyframes commandPaletteSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* kebab-case 版本，供内联 animation 直接引用 */
+@keyframes command-palette-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes command-palette-slide-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ── 快捷键录制 ── */
+@keyframes shortcutRecordingPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--primary-rgb), 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(var(--primary-rgb), 0);
+  }
+}
+
+/* ── 斜杠菜单 ── */
+@keyframes slashMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slash-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── 欢迎页 ── */
+@keyframes welcomeLogoFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes welcomeTextFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes welcomeCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 步骤滑入（非主题 token，直接内联引用）── */
+@keyframes stepSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ══════════════════════════════════════════════
+   基础样式
+   ══════════════════════════════════════════════ */
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  scrollbar-color: rgba(var(--text-base-rgb), 0.15) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -37,12 +506,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.15);
+  background-color: rgba(var(--text-base-rgb), 0.15);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.25);
+  background-color: rgba(var(--text-base-rgb), 0.25);
 }
 
 html,
@@ -55,6 +524,10 @@ body {
 [data-theme-changing] *::after {
   transition-duration: 0s !important;
 }
+
+/* ══════════════════════════════════════════════
+   页面过渡
+   ══════════════════════════════════════════════ */
 
 .page-fade-enter-active,
 .page-fade-exit-active {
@@ -109,135 +582,11 @@ body {
   transform: translateY(20px) scale(0.95);
 }
 
+/* ══════════════════════════════════════════════
+   @layer components（仅保留 .code-body）
+   ══════════════════════════════════════════════ */
+
 @layer components {
-  @keyframes contextMenuIn {
-    from {
-      opacity: 0;
-      transform: scale(0.94) translateY(-4px);
-    }
-
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-  }
-
-  @keyframes contextMenuOut {
-    from {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-
-    to {
-      opacity: 0;
-      transform: scale(0.96) translateY(-2px);
-    }
-  }
-
-  /* ——— 模态框入场 keyframes ——— */
-  @keyframes modalOverlayIn {
-    from {
-      opacity: 0;
-    }
-
-    to {
-      opacity: 1;
-    }
-  }
-
-  @keyframes modalPanelIn {
-    from {
-      opacity: 0;
-      transform: scale(0.92) translateY(12px);
-    }
-
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-  }
-
-  @keyframes stepCardPulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-
-    50% {
-      opacity: 0.5;
-    }
-  }
-
-  @keyframes tool-approval-in {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes command-palette-fade-in {
-    from {
-      opacity: 0;
-    }
-
-    to {
-      opacity: 1;
-    }
-  }
-
-  @keyframes command-palette-slide-in {
-    from {
-      opacity: 0;
-      transform: scale(0.96) translateY(-8px);
-    }
-
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-  }
-
-  @keyframes slash-menu-in {
-    from {
-      opacity: 0;
-      transform: scale(0.95);
-    }
-
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-
-  @keyframes toastIn {
-    from {
-      opacity: 0;
-      transform: translateY(8px) scale(0.95);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-
-  @keyframes modalIn {
-    from {
-      opacity: 0;
-      transform: scale(0.92) translateY(8px);
-    }
-
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-  }
-
   .code-body pre {
     @apply m-0 p-4 rounded-none;
     background: transparent !important;
@@ -251,6 +600,29 @@ body {
     background: transparent !important;
   }
 }
+
+/* ── Theme-aware text colors (use in place of text-white/XX) ── */
+.text-theme-primary {
+  color: rgba(var(--text-base-rgb), 0.87);
+}
+.text-theme-secondary {
+  color: rgba(var(--text-base-rgb), 0.6);
+}
+.text-theme-tertiary {
+  color: rgba(var(--text-base-rgb), 0.35);
+}
+
+/* ── Theme-aware surface backgrounds ── */
+.bg-theme-surface {
+  background-color: rgba(var(--surface-bg), var(--surface-alpha, 1));
+}
+.bg-theme-surface-50 {
+  background-color: rgba(var(--surface-bg), 0.5);
+}
+
+/* ══════════════════════════════════════════════
+   Range 输入
+   ══════════════════════════════════════════════ */
 
 input[type='range'] {
   appearance: none;
@@ -267,13 +639,13 @@ input[type='range']::-webkit-slider-thumb {
   width: 16px;
   height: 26px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(var(--text-base-rgb), 0.15);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  border: 2.5px solid rgba(255, 255, 255, 0.85);
+  border: 2.5px solid var(--border-dim);
   box-shadow:
     0 4px 12px rgba(0, 0, 0, 0.4),
-    inset 0 0 4px rgba(255, 255, 255, 0.5);
+    inset 0 0 4px rgba(var(--text-base-rgb), 0.5);
   transition:
     transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275),
     border-color 0.2s;
@@ -283,10 +655,13 @@ input[type='range']::-webkit-slider-thumb {
 input[type='range']::-webkit-slider-thumb:active {
   transform: scale(1.15);
   border-color: #fff;
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(var(--text-base-rgb), 0.25);
 }
 
-/* markdown 段落间分隔 (think 块插入) */
+/* ══════════════════════════════════════════════
+   Markdown 样式
+   ══════════════════════════════════════════════ */
+
 .markdown-segment > :first-child {
   margin-top: 0 !important;
 }
@@ -295,37 +670,14 @@ input[type='range']::-webkit-slider-thumb:active {
   margin-bottom: 0 !important;
 }
 
-@keyframes stepSlideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-12px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes expand-width {
-  from {
-    clip-path: inset(0 100% 0 0);
-  }
-
-  to {
-    clip-path: inset(0 0% 0 0);
-  }
-}
-
 .markdown-body {
-  color: rgba(255, 255, 255, 0.87);
+  color: rgba(var(--text-base-rgb), 0.87);
   font-size: 14px;
   line-height: 1.7;
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
-/* 段落间距 */
 .markdown-body p {
   margin: 0.6em 0;
 }
@@ -338,7 +690,6 @@ input[type='range']::-webkit-slider-thumb:active {
   margin-bottom: 0;
 }
 
-/* 标题 */
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3,
@@ -348,7 +699,7 @@ input[type='range']::-webkit-slider-thumb:active {
   margin: 0.8em 0 0.4em 0;
   font-weight: 600;
   line-height: 1.35;
-  color: rgba(255, 255, 255, 0.93);
+  color: rgba(var(--text-base-rgb), 0.93);
 }
 
 .markdown-body h1 {
@@ -375,10 +726,9 @@ input[type='range']::-webkit-slider-thumb:active {
 
 .markdown-body h6 {
   font-size: 0.9em;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(var(--text-base-rgb), 0.6);
 }
 
-/* 链接 */
 .markdown-body a {
   @apply text-[#7c9abf] no-underline;
   border-bottom: 1px solid transparent;
@@ -386,15 +736,14 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 .markdown-body a:hover {
-  border-bottom-color: rgba(124, 154, 191, 0.4);
+  border-bottom-color: rgba(var(--primary-rgb), 0.4);
 }
 
-/* 引用块 */
 .markdown-body blockquote {
   margin: 0.6em 0;
   padding: 0.4em 1em;
   @apply rounded-r-md bg-white/[0.03] text-white/60;
-  border-left: 3px solid rgba(124, 154, 191, 0.3);
+  border-left: 3px solid rgba(var(--primary-rgb), 0.3);
 }
 
 .markdown-body blockquote > :first-child {
@@ -405,7 +754,6 @@ input[type='range']::-webkit-slider-thumb:active {
   margin-bottom: 0;
 }
 
-/* 列表 */
 .markdown-body ul,
 .markdown-body ol {
   margin: 0.4em 0;
@@ -430,10 +778,9 @@ input[type='range']::-webkit-slider-thumb:active {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
 
-/* 加粗/斜体 */
 .markdown-body strong {
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.93);
+  color: rgba(var(--text-base-rgb), 0.93);
 }
 
 .markdown-body em {
@@ -463,12 +810,12 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 .markdown-body table::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(var(--text-base-rgb), 0.1);
   border-radius: 2px;
 }
 
 .markdown-body thead {
-  background: rgba(124, 154, 191, 0.1);
+  background: rgba(var(--primary-rgb), 0.1);
 }
 
 .markdown-body th {
@@ -488,7 +835,7 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 .markdown-body tbody tr:hover {
-  background: rgba(124, 154, 191, 0.06);
+  background: rgba(var(--primary-rgb), 0.06);
 }
 
 .markdown-body tfoot {
@@ -499,6 +846,10 @@ input[type='range']::-webkit-slider-thumb:active {
   @apply px-2 py-[6px] text-white/50 text-[0.85em] caption-bottom;
 }
 
+/* ══════════════════════════════════════════════
+   消息流式输出动画
+   ══════════════════════════════════════════════ */
+
 .message-streaming::after {
   content: '';
   position: absolute;
@@ -507,7 +858,7 @@ input[type='range']::-webkit-slider-thumb:active {
   background: linear-gradient(
     105deg,
     transparent 40%,
-    rgba(255, 255, 255, 0.03) 50%,
+    rgba(var(--text-base-rgb), 0.03) 50%,
     transparent 60%
   );
   background-size: 200% 100%;
@@ -521,6 +872,10 @@ input[type='range']::-webkit-slider-thumb:active {
   z-index: 1;
 }
 
+/* ══════════════════════════════════════════════
+   斜杠命令菜单滚动条
+   ══════════════════════════════════════════════ */
+
 .slash-command-menu::-webkit-scrollbar {
   width: 4px;
 }
@@ -530,6 +885,21 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 .slash-command-menu::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--text-base-rgb), 0.06);
   border-radius: 10px;
 }
+
+/* ══════════════════════════════════════════════
+   Dark mode: boost Tailwind border-white opacity
+   Tailwind compiles these as color-mix() with
+   fixed alpha — dark backgrounds need higher alpha
+   ══════════════════════════════════════════════ */
+[data-theme='dark'] .border-white\/5 { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/10 { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/15 { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/20 { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/\[0\.04\] { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/\[0\.05\] { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/\[0\.06\] { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/\[0\.08\] { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/\[0\.15\] { border-color: rgba(240, 240, 240, 0.3) !important; }

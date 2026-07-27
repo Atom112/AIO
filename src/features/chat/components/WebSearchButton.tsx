@@ -16,7 +16,7 @@ const WebSearchButton: Component = () => {
     persistWebSearch(!webSearchEnabled());
   };
 
-  const color = () => (isActive() ? 'var(--primary-color)' : 'rgba(255,255,255,0.4)');
+  const color = () => (isActive() ? 'var(--primary-color)' : 'rgba(var(--text-base-rgb),0.4)');
 
   return (
     <button

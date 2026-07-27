@@ -83,22 +83,22 @@ const UsageSummaryCards: Component<Props> = (props) => {
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
-          background: 'rgba(255, 255, 255, 0.035)',
-          border: '1px solid rgba(255,255,255,0.06)',
+          background: 'rgba(var(--text-base-rgb), 0.035)',
+          border: '1px solid var(--border-dim)',
         }}
       >
         <span
           class="text-[10px] uppercase tracking-widest font-bold"
-          style={{ color: 'rgba(255,255,255,0.3)' }}
+          style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
         >
           {t('usage.totalTokens')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(255,255,255,0.85)' }}>
+        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
           {fmt(totalTokens())}
         </span>
         <div class="flex gap-2 text-[10px] font-mono">
-          <span style={{ color: 'rgba(255,255,255,0.35)' }}>↗ {fmt(totals().input)}</span>
-          <span style={{ color: 'rgba(255,255,255,0.35)' }}>↘ {fmt(totals().output)}</span>
+          <span style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>↗ {fmt(totals().input)}</span>
+          <span style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>↘ {fmt(totals().output)}</span>
         </div>
       </div>
 
@@ -106,20 +106,20 @@ const UsageSummaryCards: Component<Props> = (props) => {
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
-          background: 'rgba(255, 255, 255, 0.035)',
-          border: '1px solid rgba(255,255,255,0.06)',
+          background: 'rgba(var(--text-base-rgb), 0.035)',
+          border: '1px solid var(--border-dim)',
         }}
       >
         <span
           class="text-[10px] uppercase tracking-widest font-bold"
-          style={{ color: 'rgba(255,255,255,0.3)' }}
+          style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
         >
           {t('usage.totalRequests')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(255,255,255,0.85)' }}>
+        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
           {formatNumber(totals().requests)}
         </span>
-        <span class="text-[10px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+        <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
           {t('usage.llmCalls')}
         </span>
       </div>
@@ -128,20 +128,20 @@ const UsageSummaryCards: Component<Props> = (props) => {
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
-          background: 'rgba(255, 255, 255, 0.035)',
-          border: '1px solid rgba(255,255,255,0.06)',
+          background: 'rgba(var(--text-base-rgb), 0.035)',
+          border: '1px solid var(--border-dim)',
         }}
       >
         <span
           class="text-[10px] uppercase tracking-widest font-bold"
-          style={{ color: 'rgba(255,255,255,0.3)' }}
+          style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
         >
           {t('usage.estimatedCost')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(255,255,255,0.85)' }}>
+        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
           ${cost().toFixed(2)}
         </span>
-        <span class="text-[10px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+        <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
           USD
         </span>
       </div>
@@ -150,20 +150,20 @@ const UsageSummaryCards: Component<Props> = (props) => {
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
-          background: 'rgba(255, 255, 255, 0.035)',
-          border: '1px solid rgba(255,255,255,0.06)',
+          background: 'rgba(var(--text-base-rgb), 0.035)',
+          border: '1px solid var(--border-dim)',
         }}
       >
         <span
           class="text-[10px] uppercase tracking-widest font-bold"
-          style={{ color: 'rgba(255,255,255,0.3)' }}
+          style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
         >
           {t('usage.activeDays')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(255,255,255,0.85)' }}>
+        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
           {formatNumber(totals().activeDays)}
         </span>
-        <span class="text-[10px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+        <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
           {t('usage.daysRecorded')}
         </span>
       </div>

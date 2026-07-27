@@ -62,7 +62,7 @@ const TokenBar: Component<TokenBarProps> = (props) => {
         class="flex items-center gap-2 px-3 py-1.5 text-xs select-none"
         style={{
           background: 'rgba(0,0,0,0.15)',
-          'border-bottom': '1px solid rgba(255,255,255,0.05)',
+          'border-bottom': '1px solid var(--border-dim)',
         }}
         title={info().tip}
       >
@@ -70,7 +70,7 @@ const TokenBar: Component<TokenBarProps> = (props) => {
 
         <div
           class="flex-1 h-1.5 rounded-full overflow-hidden"
-          style={{ background: 'rgba(255,255,255,0.08)' }}
+          style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
         >
           <div
             class="h-full rounded-full transition-all duration-500"

@@ -48,7 +48,7 @@ const LEVELS: LevelOption[] = [
 ];
 
 const LEVEL_COLORS: Record<ReasoningLevel, string> = {
-  off: 'rgba(255,255,255,0.55)',
+  off: 'rgba(var(--text-base-rgb),0.55)',
   low: 'rgba(144,200,144,0.85)',
   medium: 'rgba(220,170,120,0.85)',
   high: 'rgba(180,150,220,0.85)',
@@ -101,9 +101,9 @@ const ReasoningButton: Component = () => {
       <div
         class="absolute left-0 bottom-full mb-2 w-[280px] rounded-xl p-1.5 z-[1500] transition-all duration-150 ease-out origin-bottom"
         style={{
-          background: 'rgba(18,22,35,0.96)',
+          background: 'rgba(var(--surface-bg),0.96)',
           'backdrop-filter': 'blur(12px)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          border: '1px solid var(--border-dim)',
           'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
         }}
         classList={{
@@ -128,13 +128,13 @@ const ReasoningButton: Component = () => {
                 type="button"
                 class="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md border-none cursor-pointer text-left transition-all duration-150 bg-transparent text-white/70 hover:bg-white/[0.05] hover:text-white/90"
                 style={
-                  reasoningLevel() === opt.value ? { background: 'rgba(255,255,255,0.06)' } : {}
+                  reasoningLevel() === opt.value ? { background: 'rgba(var(--text-base-rgb),0.06)' } : {}
                 }
                 onClick={() => choose(opt.value)}
               >
                 <span
                   class="flex items-center justify-center w-7 h-7 rounded-md shrink-0"
-                  style={{ background: 'rgba(255,255,255,0.05)', color: LEVEL_COLORS[opt.value] }}
+                  style={{ background: 'rgba(var(--text-base-rgb),0.05)', color: LEVEL_COLORS[opt.value] }}
                 >
                   <Icon name={opt.iconName} size={14} />
                 </span>

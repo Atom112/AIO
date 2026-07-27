@@ -215,7 +215,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
       >
         <span
           class="flex items-center justify-center w-5 h-5 rounded shrink-0"
-          style={{ background: 'rgba(255,255,255,0.04)' }}
+          style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
         >
           <Icon
             name={profileStyle().icon as any}
@@ -228,7 +228,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
           class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
           style={{
             color: profileStyle().color,
-            background: 'rgba(255,255,255,0.05)',
+            background: 'rgba(var(--text-base-rgb),0.05)',
             border: `1px solid ${profileStyle().borderColor}`,
           }}
         >
@@ -237,7 +237,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
         {taskSummary() && (
           <span
             class="truncate min-w-0 flex-1"
-            style={{ color: "'rgba(255,255,255,0.35)'", 'font-weight': '400' }}
+            style={{ color: "'rgba(var(--text-base-rgb),0.35)'", 'font-weight': '400' }}
           >
             {taskSummary().length > 60 ? taskSummary().slice(0, 58) + '…' : taskSummary()}
           </span>
@@ -283,7 +283,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
               class="mt-2 px-2 py-2 rounded text-[12px] leading-relaxed whitespace-pre-wrap break-words"
               style={{
                 background: 'rgba(0,0,0,0.12)',
-                color: 'rgba(255,255,255,0.55)',
+                color: 'rgba(var(--text-base-rgb),0.55)',
                 'max-height': '300px',
                 'overflow-y': 'auto',
               }}

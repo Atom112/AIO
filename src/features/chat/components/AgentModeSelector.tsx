@@ -2,7 +2,7 @@
  * Agent 模式快速选择器
  *
  * 位于聊天输入框模型选择器与推理按钮之间，点击弹出上拉菜单选择工作模式。
- * 四种模式：对话（关闭工具调用）、普通（写入确认）、自动（自主执行）、Plan（先列计划）。
+ * 四种模式：对话（关闭工具调用）、普通（写入确认）、自动（自主执行）、计划（先列计划）。
  * 切换到 Agent 模式时自动恢复上次的工作目录，若无则显示"选择目录"按钮供用户自行选择或新建。
  */
 import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
@@ -65,7 +65,7 @@ const MODES: ModeOption[] = [
 ];
 
 const MODE_COLORS: Record<string, string> = {
-  off: 'rgba(124,154,191,0.4)',
+  off: 'rgba(var(--primary-rgb),0.4)',
   normal: 'rgba(124,217,160,0.7)',
   auto: 'rgba(224,192,96,0.7)',
   plan: 'rgba(160,124,217,0.7)',
@@ -163,8 +163,8 @@ const AgentModeSelector: Component = () => {
       <div
         class="absolute bottom-full left-0 mb-2 z-[41] w-[260px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
         style={{
-          background: 'rgba(18,22,35,0.96)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'rgba(var(--surface-bg),0.96)',
+          border: '1px solid var(--border-dim)',
           'backdrop-filter': 'blur(12px)',
           'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
         }}
@@ -177,9 +177,9 @@ const AgentModeSelector: Component = () => {
         <div
           class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
           style={{
-            color: 'rgba(255,255,255,0.35)',
-            background: 'rgba(255,255,255,0.04)',
-            'border-bottom': '1px solid rgba(255,255,255,0.04)',
+            color: 'rgba(var(--text-base-rgb),0.35)',
+            background: 'rgba(var(--text-base-rgb),0.04)',
+            'border-bottom': '1px solid var(--border-dim)',
           }}
         >
           {t('agent.mode.title')}
@@ -190,12 +190,12 @@ const AgentModeSelector: Component = () => {
               <button
                 type="button"
                 class="w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer border-none"
-                style={{ color: 'rgba(255,255,255,0.75)' }}
-                classList={{ '!bg-[rgba(124,154,191,0.12)]': currentMode() === opt.value }}
+                style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
+                classList={{ '!bg-[rgba(var(--primary-rgb),0.12)]': currentMode() === opt.value }}
                 onClick={() => choose(opt.value)}
                 onMouseEnter={(e) => {
                   if (currentMode() !== opt.value)
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                    e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.05)';
                 }}
                 onMouseLeave={(e) => {
                   if (currentMode() !== opt.value) e.currentTarget.style.background = 'transparent';
@@ -209,7 +209,7 @@ const AgentModeSelector: Component = () => {
                 />
                 <div class="flex-1 min-w-0">
                   <div class="text-sm font-medium">{t(opt.labelKey)}</div>
-                  <div class="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                  <div class="text-[11px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
                     {t(opt.descKey)}
                   </div>
                 </div>
@@ -218,7 +218,7 @@ const AgentModeSelector: Component = () => {
                     name="check"
                     size={13}
                     class="shrink-0"
-                    style={{ color: 'rgba(124,154,191,0.8)' }}
+                    style={{ color: 'rgba(var(--primary-rgb),0.8)' }}
                   />
                 </Show>
               </button>
@@ -237,8 +237,8 @@ const AgentModeSelector: Component = () => {
           <div
             class="bg-dark-500 p-6 rounded-lg max-w-[420px] w-full"
             style={{
-              background: 'rgba(18,22,35,0.96)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgba(var(--surface-bg),0.96)',
+              border: '1px solid var(--border-dim)',
               'backdrop-filter': 'blur(20px)',
               'box-shadow': '0 8px 32px rgba(0,0,0,0.5)',
               animation: 'modalPanelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both',
@@ -261,7 +261,7 @@ const AgentModeSelector: Component = () => {
 
             <div
               style={{
-                color: 'rgba(255,255,255,0.7)',
+                color: 'rgba(var(--text-base-rgb),0.7)',
                 'font-size': '0.875rem',
                 'line-height': '1.7',
                 'margin-bottom': '1.5rem',
@@ -276,7 +276,7 @@ const AgentModeSelector: Component = () => {
               <button
                 type="button"
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-none"
-                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' }}
+                style={{ background: 'rgba(var(--text-base-rgb),0.06)', color: 'rgba(var(--text-base-rgb),0.5)' }}
                 onClick={() => setShowAutoWarning(false)}
               >
                 {t('common.cancel')}

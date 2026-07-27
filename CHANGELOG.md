@@ -2,7 +2,29 @@
 
 # Changelog
 
-本项目的所有显著更新将记录在此文件中。
+
+## [v0.7.3]
+
+<sup>Released on **2026-07-27**</sup>
+
+### ✨ Added（新增）
+
+- **暗色模式**：新增深色/浅色模式切换开关（设置 → 应用），状态持久化到 localStorage
+  - 浅色模式保持现有亚克力紫蓝渐变风格
+  - 暗色模式使用纯色深灰背景（`#0a0e1a`），降低文字与边框亮度以减少视觉疲劳
+  - 所有内联样式边框迁移为 CSS 变量 `--border-dim`，暗色模式下统一 alpha=0.3 确保清晰可见
+  - Tailwind `border-white/*` 类通过运行时样式注入 + 编译期 CSS 双重覆盖
+  - 亚克力面板（`--acrylic-bg/border`）、表面色（`--surface-bg`）、文字色（`--text-base-rgb`）全面 CSS 变量化
+- **主题色无关的 Agent 状态栏**：聊天输入框上方的 Agent 提示框背景改为表面色，不再跟随主题色变化
+
+### ⚡️ Changed（变更）
+
+- **全局色彩系统 CSS 变量化**：`rgba(124,154,191,*)` → `rgba(var(--primary-rgb),*)`（159 处）、`rgba(255,255,255,*)` → `rgba(var(--text-base-rgb),*)`（394 处）、`rgba(18,22,35,*)` → `rgba(var(--surface-bg),*)`（23 处），全面消除硬编码颜色值
+- **NavBar 导航链接**：`text-white/50` → `text-theme-secondary`，hover 态 `text-white/85` → `text-theme-primary`
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.7.3]: https://github.com/Atom112/AIO/releases/tag/v0.7.3
 
 ## [v0.7.2]
 

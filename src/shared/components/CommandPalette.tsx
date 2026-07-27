@@ -52,7 +52,7 @@ const CATEGORY_LABELS: Record<CommandCategory, TranslationKey> = {
 };
 
 const CATEGORY_COLORS: Record<CommandCategory, string> = {
-  navigation: 'rgba(124, 154, 191, 0.6)',
+  navigation: 'rgba(var(--primary-rgb), 0.6)',
   chat: 'rgba(144, 200, 144, 0.6)',
   sidebar: 'rgba(200, 170, 120, 0.6)',
   global: 'rgba(180, 140, 200, 0.6)',
@@ -129,7 +129,7 @@ const CommandPalette: Component = () => {
         groups.push({
           category: cmd.category,
           label: t(CATEGORY_LABELS[cmd.category]),
-          color: CATEGORY_COLORS[cmd.category] || 'rgba(255,255,255,0.4)',
+          color: CATEGORY_COLORS[cmd.category] || 'rgba(var(--text-base-rgb),0.4)',
           items: [],
         });
       }
@@ -270,8 +270,8 @@ const CommandPalette: Component = () => {
         <div
           class="w-[600px] max-h-[460px] flex flex-col border border-white/[0.08] rounded-[14px] overflow-hidden"
           style={{
-            background: 'rgba(22, 26, 40, 0.95)',
-            'box-shadow': '0 0 0 1px rgba(255, 255, 255, 0.04), 0 16px 48px rgba(0, 0, 0, 0.5)',
+            background: 'rgba(var(--surface-alt-bg), 0.95)',
+            'box-shadow': '0 0 0 1px rgba(var(--text-base-rgb), 0.04), 0 16px 48px rgba(0, 0, 0, 0.5)',
             animation: 'command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
           onClick={(e) => e.stopPropagation()}

@@ -172,14 +172,14 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
       style={{
         width: props.isCollapsed ? '0%' : `${props.width}%`,
         padding: props.isCollapsed ? '0' : '15px',
-        background: props.isCollapsed ? 'none' : 'rgba(18, 22, 35, 0.15)',
+        background: props.isCollapsed ? 'none' : 'rgba(var(--surface-bg), 0.15)',
         'backdrop-filter': props.isCollapsed ? 'none' : 'blur(30px)',
         '-webkit-backdrop-filter': props.isCollapsed ? 'none' : 'blur(30px)',
-        border: props.isCollapsed ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
+        border: props.isCollapsed ? 'none' : '1px solid var(--border-dim)',
         'border-radius': '12px',
         'box-shadow': props.isCollapsed
           ? 'none'
-          : 'inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
+          : 'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
@@ -192,8 +192,8 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         <div
           class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
           style={{
-            background: 'rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.6)',
+            background: 'rgba(var(--text-base-rgb),0.08)',
+            color: 'rgba(var(--text-base-rgb),0.6)',
             'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
           }}
           title={props.isCollapsed ? t('chat.expandTopics') : t('chat.collapseTopics')}
@@ -216,13 +216,13 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
               <button
                 class="w-full px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                  color: 'rgba(255,255,255,0.6)',
+                  background: 'rgba(var(--text-base-rgb),0.04)',
+                  border: '1px solid var(--border-dim)',
+                  color: 'rgba(var(--text-base-rgb),0.6)',
                 }}
                 onClick={props.addTopic}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(124,154,191,0.12)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')}
               >
                 {t('chat.newTopic')}
               </button>
@@ -237,7 +237,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         <div
                           class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent border-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
                           classList={{
-                            '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]':
+                            '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
                               topic.id === currentTopicId(),
                           }}
                           onClick={() => setCurrentTopicId(topic.id)}
@@ -246,7 +246,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           {isChild && (
                             <span
                               class="mr-1 shrink-0 leading-none"
-                              style={{ color: 'rgba(124,154,191,0.5)', 'font-size': '9px' }}
+                              style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '9px' }}
                               title={t('chat.branchTopic')}
                             >
                               └
@@ -257,7 +257,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                             fallback={
                               <span
                                 style={{
-                                  color: `rgba(255,255,255,${isChild ? '0.45' : '0.75'})`,
+                                  color: `rgba(var(--text-base-rgb),${isChild ? '0.45' : '0.75'})`,
                                   'font-size': isChild ? '0.78rem' : '0.9rem',
                                   overflow: 'hidden',
                                   'text-overflow': 'ellipsis',
@@ -274,8 +274,8 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               class="rounded px-2 py-0.5 text-[0.85rem] h-5 outline-none w-[80%]"
                               style={{
                                 background: 'rgba(0,0,0,0.3)',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                color: 'rgba(255,255,255,0.85)',
+                                border: '1px solid var(--border-dim)',
+                                color: 'rgba(var(--text-base-rgb),0.85)',
                               }}
                               value={topic.name}
                               ref={(el) => {

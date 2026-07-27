@@ -132,8 +132,8 @@ const UserMessageAvatar: Component = () => {
     <div
       class="relative flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
       style={{
-        background: 'rgba(255,255,255,0.06)',
-        border: '1px solid rgba(255,255,255,0.04)',
+        background: 'rgba(var(--text-base-rgb),0.06)',
+        border: '1px solid var(--border-dim)',
         'box-shadow': '0 2px 6px rgba(0,0,0,0.15)',
       }}
     >
@@ -147,7 +147,7 @@ const UserMessageAvatar: Component = () => {
       />
       <div
         class="absolute inset-0 w-full h-full flex items-center justify-center pointer-events-none"
-        style={{ background: 'rgba(255,255,255,0.02)' }}
+        style={{ background: 'rgba(var(--text-base-rgb),0.02)' }}
       />
     </div>
   );
@@ -442,10 +442,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     <div
       class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full"
       style={{
-        background: 'rgba(18, 22, 35, 0.12)',
+        background: 'rgba(var(--surface-bg), 0.12)',
         'backdrop-filter': 'blur(20px)',
-        border: '1px solid rgba(255, 255, 255, 0.06)',
-        'box-shadow': 'inset 0 0 1px rgba(255,255,255,0.04)',
+        border: '1px solid var(--border-dim)',
+        'box-shadow': 'inset 0 0 1px rgba(var(--text-base-rgb),0.04)',
       }}
     >
       {/* 顶部操作栏 */}
@@ -453,15 +453,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         when={props.isSelectingMessages}
         fallback={
           <div class="flex items-center justify-between px-1 pb-3 shrink-0">
-            <span class="text-sm font-medium truncate" style={{ color: 'rgba(255,255,255,0.7)' }}>
+            <span class="text-sm font-medium truncate" style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}>
               {(currentProject()?.name || props.activeTopic?.name) ?? ''}
             </span>
             <Show when={props.canShare && props.activeTopic}>
               <button
-                class="group inline-flex items-center justify-center bg-transparent rounded-lg cursor-pointer w-8 h-8 hover:w-[68px] transition-all duration-200 hover:px-2 hover:bg-[rgba(255,255,255,0.06)]"
+                class="group inline-flex items-center justify-center bg-transparent rounded-lg cursor-pointer w-8 h-8 hover:w-[68px] transition-all duration-200 hover:px-2 hover:bg-[rgba(var(--text-base-rgb),0.06)]"
                 style={{
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'rgba(255,255,255,0.45)',
+                  border: '1px solid var(--border-dim)',
+                  color: 'rgba(var(--text-base-rgb),0.45)',
                 }}
                 onClick={() => props.onOpenShare()}
               >
@@ -497,7 +497,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             <button
               class="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200"
               classList={{
-                'bg-[rgba(124,154,191,0.12)] border border-[rgba(124,154,191,0.3)] text-[rgba(124,154,191,0.9)] hover:bg-[rgba(124,154,191,0.2)]':
+                'bg-[rgba(var(--primary-rgb),0.12)] border border-[rgba(var(--primary-rgb),0.3)] text-[rgba(var(--primary-rgb),0.9)] hover:bg-[rgba(var(--primary-rgb),0.2)]':
                   props.selectedMessageIds.size > 0,
                 'bg-white/[0.02] border border-white/[0.04] text-white/25 cursor-not-allowed':
                   props.selectedMessageIds.size === 0,
@@ -521,28 +521,28 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           <div
             class="w-full mb-4 p-4 rounded-lg"
             style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.06)',
+              background: 'rgba(var(--text-base-rgb),0.04)',
+              border: '1px solid var(--border-dim)',
             }}
           >
             <div class="flex items-center gap-3 mb-2">
-              <span style={{ color: 'rgba(124,154,191,0.6)' }}>
+              <span style={{ color: 'rgba(var(--primary-rgb),0.6)' }}>
                 <Icon src="/icons/app-logo/loading.svg" class="w-5 h-5 animate-spin" />
               </span>
-              <span style={{ color: 'rgba(255,255,255,0.85)', 'font-size': '0.875rem' }}>
+              <span style={{ color: 'rgba(var(--text-base-rgb),0.85)', 'font-size': '0.875rem' }}>
                 {t('chat.localEngineStarting')}
               </span>
             </div>
-            <div class="w-full h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <div class="w-full h-2 rounded-full" style={{ background: 'rgba(var(--text-base-rgb),0.06)' }}>
               <div
                 class="h-2 rounded-full transition-all duration-300"
                 style={{
                   width: `${localModelStartProgress()}%`,
-                  background: 'rgba(124,154,191,0.4)',
+                  background: 'rgba(var(--primary-rgb),0.4)',
                 }}
               />
             </div>
-            <div class="text-right text-xs mt-1" style={{ color: 'rgba(124,154,191,0.4)' }}>
+            <div class="text-right text-xs mt-1" style={{ color: 'rgba(var(--primary-rgb),0.4)' }}>
               {Math.round(localModelStartProgress())}%
             </div>
           </div>
@@ -581,7 +581,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                       <div
                         class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-150 hover:scale-110 active:scale-95"
                         classList={{
-                          'bg-[rgba(124,154,191,0.25)] border-[rgba(124,154,191,0.5)]':
+                          'bg-[rgba(var(--primary-rgb),0.25)] border-[rgba(var(--primary-rgb),0.5)]':
                             props.selectedMessageIds.has(msg.id!),
                           'bg-transparent border-white/[0.15] hover:border-white/[0.35]':
                             !props.selectedMessageIds.has(msg.id!),
@@ -591,7 +591,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           <Icon
                             name="check"
                             class="w-3 h-3"
-                            style={{ color: 'rgba(124,154,191,0.9)' }}
+                            style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
                           />
                         </Show>
                       </div>
@@ -614,7 +614,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
                           style={{
                             background: '#ffffff',
-                            border: '1px solid rgba(255,255,255,0.85)',
+                            border: '1px solid var(--border-dim)',
                             'box-shadow': '0 2px 6px rgba(0,0,0,0.25)',
                           }}
                         >
@@ -652,12 +652,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           style={{
                             background:
                               msg.role === 'assistant'
-                                ? 'rgba(255,255,255,0.04)'
-                                : 'rgba(124,154,191,0.08)',
+                                ? 'rgba(var(--text-base-rgb),0.04)'
+                                : 'rgba(var(--primary-rgb),0.08)',
                             border:
                               msg.role === 'assistant'
-                                ? '1px solid rgba(255,255,255,0.04)'
-                                : '1px solid rgba(124,154,191,0.06)',
+                                ? '1px solid rgba(var(--text-base-rgb),0.04)'
+                                : '1px solid rgba(var(--primary-rgb),0.06)',
                             'backdrop-filter': 'blur(8px)',
                           }}
                         >
@@ -671,15 +671,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 <div
                                   class="flex items-center rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 first:mt-3"
                                   style={{
-                                    background: 'rgba(124,154,191,0.06)',
-                                    border: '1px solid rgba(124,154,191,0.04)',
+                                    background: 'rgba(var(--primary-rgb),0.06)',
+                                    border: '1px solid rgba(var(--primary-rgb),0.04)',
                                   }}
                                 >
                                   <div
                                     class="flex flex-shrink-0 items-center justify-center w-10 h-10 rounded-md mr-3"
                                     style={{
-                                      background: 'rgba(124,154,191,0.08)',
-                                      color: 'rgba(124,154,191,0.6)',
+                                      background: 'rgba(var(--primary-rgb),0.08)',
+                                      color: 'rgba(var(--primary-rgb),0.6)',
                                     }}
                                   >
                                     <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
@@ -690,7 +690,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </div>
                                     <div
                                       style={{
-                                        color: 'rgba(124,154,191,0.4)',
+                                        color: 'rgba(var(--primary-rgb),0.4)',
                                         'font-size': '0.75rem',
                                         'margin-top': '2px',
                                       }}
@@ -770,7 +770,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         >
                           <div
                             style={{
-                              color: 'rgba(255,255,255,0.3)',
+                              color: 'rgba(var(--text-base-rgb),0.3)',
                               'font-family': 'monospace',
                               'font-size': '11px',
                               'margin-left': '4px',
@@ -787,7 +787,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               <span>{msg.modelId || selectedModel()?.model_id}</span>
                             </Show>
                             <Show when={msg.inputTokens || msg.outputTokens}>
-                              <span style={{ color: 'rgba(255,255,255,0.2)' }}>·</span>
+                              <span style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}>·</span>
                               <Show when={msg.inputTokens}>
                                 <span title={t('chat.inputTokens')}>
                                   ↗{' '}
@@ -814,10 +814,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         >
                           {/* 复制按钮（每条消息都有） */}
                           <button
-                            class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(124,154,191,0.12)] hover:!p-[4px_8px]"
+                            class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
                             style={{
-                              border: '1px solid rgba(124,154,191,0.5)',
-                              color: 'rgba(124,154,191,0.9)',
+                              border: '1px solid rgba(var(--primary-rgb),0.5)',
+                              color: 'rgba(var(--primary-rgb),0.9)',
                             }}
                             onClick={(e) => {
                               const currentBtn = e.currentTarget;
@@ -860,10 +860,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           {/* 分支按钮（仅 assistant 消息） */}
                           <Show when={msg.role === 'assistant' && !!msg.id}>
                             <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(124,154,191,0.12)] hover:!p-[4px_8px]"
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
                               style={{
-                                border: '1px solid rgba(124,154,191,0.5)',
-                                color: 'rgba(124,154,191,0.9)',
+                                border: '1px solid rgba(var(--primary-rgb),0.5)',
+                                color: 'rgba(var(--primary-rgb),0.9)',
                               }}
                               onClick={() => {
                                 if (msg.id) props.onBranchFromMessage(msg.id);
@@ -890,10 +890,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             }
                           >
                             <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(124,154,191,0.12)] hover:!p-[4px_8px]"
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
                               style={{
-                                border: '1px solid rgba(124,154,191,0.5)',
-                                color: 'rgba(124,154,191,0.9)',
+                                border: '1px solid rgba(var(--primary-rgb),0.5)',
+                                color: 'rgba(var(--primary-rgb),0.9)',
                               }}
                               onClick={async () => {
                                 const text =
@@ -970,10 +970,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               </span>
                             </button>
                             <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(124,154,191,0.12)] hover:!p-[4px_8px]"
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
                               style={{
-                                border: '1px solid rgba(124,154,191,0.5)',
-                                color: 'rgba(124,154,191,0.9)',
+                                border: '1px solid rgba(var(--primary-rgb),0.5)',
+                                color: 'rgba(var(--primary-rgb),0.9)',
                               }}
                               onClick={async () => {
                                 const text =
@@ -1146,15 +1146,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             class="rounded-lg overflow-hidden transition-opacity duration-300 w-[80%] self-center mt-3"
                             classList={{ 'opacity-40': isReverted() }}
                             style={{
-                              border: '1px solid rgba(255,255,255,0.06)',
-                              background: 'rgba(255,255,255,0.015)',
+                              border: '1px solid var(--border-dim)',
+                              background: 'rgba(var(--text-base-rgb),0.015)',
                             }}
                           >
                             <div
                               class="flex items-center gap-2 px-3 py-1.5"
                               style={{
-                                'border-bottom': '1px solid rgba(255,255,255,0.04)',
-                                color: 'rgba(255,255,255,0.4)',
+                                'border-bottom': '1px solid var(--border-dim)',
+                                color: 'rgba(var(--text-base-rgb),0.4)',
                                 'font-size': '14px',
                               }}
                             >
@@ -1184,7 +1184,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   {t('agent.diff.title')}
                                 </span>
                               </Show>
-                              <span style={{ color: 'rgba(255,255,255,0.25)' }}>
+                              <span style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
                                 {t('agent.diff.files', { count: formatNumber(fileChanges.length) })}
                               </span>
                               <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
@@ -1193,7 +1193,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     <span style={{ color: '#50dc64' }}>+{diffStats().added}</span>
                                   )}
                                   {diffStats().added > 0 && diffStats().deleted > 0 && (
-                                    <span style={{ color: 'rgba(255,255,255,0.18)' }}> </span>
+                                    <span style={{ color: 'rgba(var(--text-base-rgb),0.18)' }}> </span>
                                   )}
                                   {diffStats().deleted > 0 && (
                                     <span style={{ color: '#ff5050' }}>-{diffStats().deleted}</span>
@@ -1218,7 +1218,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   type="button"
                                   class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors hover:bg-white/[0.06] border-none cursor-pointer"
                                   style={{
-                                    color: 'rgba(255,255,255,0.35)',
+                                    color: 'rgba(var(--text-base-rgb),0.35)',
                                     background: 'transparent',
                                   }}
                                   onClick={(e) => {
@@ -1287,9 +1287,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           class="absolute bottom-[130px] right-[30px] z-[50] flex items-center justify-center w-9 h-9 rounded-full cursor-pointer
                            animate-fade-in transition-all duration-200 hover:scale-110 active:scale-95"
           style={{
-            background: 'rgba(124,154,191,0.15)',
-            border: '1px solid rgba(124,154,191,0.25)',
-            color: 'rgba(124,154,191,0.7)',
+            background: 'rgba(var(--primary-rgb),0.15)',
+            border: '1px solid rgba(var(--primary-rgb),0.25)',
+            color: 'rgba(var(--primary-rgb),0.7)',
             'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
           }}
           onClick={() => {
@@ -1317,7 +1317,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           class="absolute inset-0 flex items-center justify-center z-[100]"
           style={{
             background: 'rgba(0,0,0,0.6)',
-            color: 'rgba(124,154,191,0.6)',
+            color: 'rgba(var(--primary-rgb),0.6)',
             'font-size': '0.875rem',
             'backdrop-filter': 'blur(4px)',
           }}
@@ -1332,9 +1332,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             <div
               class="flex items-center rounded-[16px] text-[12px] px-[10px] py-1 transition-all duration-200"
               style={{
-                background: 'rgba(124,154,191,0.08)',
-                border: '1px solid rgba(124,154,191,0.04)',
-                color: 'rgba(124,154,191,0.6)',
+                background: 'rgba(var(--primary-rgb),0.08)',
+                border: '1px solid rgba(var(--primary-rgb),0.04)',
+                color: 'rgba(var(--primary-rgb),0.6)',
               }}
             >
               <Show
@@ -1349,7 +1349,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               </Show>
               {file.name}
               <button
-                class="flex items-center bg-none border-none text-[rgba(255,255,255,0.5)] cursor-pointer text-lg leading-none ml-2 transition-colors duration-200 hover:text-[#ff4d4d]"
+                class="flex items-center bg-none border-none text-[rgba(var(--text-base-rgb),0.5)] cursor-pointer text-lg leading-none ml-2 transition-colors duration-200 hover:text-[#ff4d4d]"
                 onClick={() => {
                   const currentIndex = i();
                   const duplicatePending = props.pendingFiles.some(
@@ -1388,32 +1388,32 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               <div
                 class="flex items-center gap-2 px-3 h-8 rounded-2xl text-xs"
                 style={{
-                  background: 'rgba(124,154,191,0.12)',
-                  border: '1px solid rgba(124,154,191,0.2)',
+                  background: 'rgba(var(--surface-bg), 0.5)',
+                  border: '1px solid rgba(var(--border-rgb), 0.15)',
                 }}
               >
                 <Icon name="wrench" size={14} />
-                <span style={{ color: 'rgba(255,255,255,0.7)' }}>
+                <span style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}>
                   {t('chat.agentStatus', { mode: modeLabel, project: project?.name ?? '' })}
                 </span>
                 <Show when={gitBranch()}>
                   <div class="branch-dropdown-container relative inline-block">
                     <button
                       type="button"
-                      class="flex items-center gap-0.5 cursor-pointer border-none rounded-md px-1.5 py-0.5 transition-colors duration-150 bg-[rgba(124,154,191,0.08)]"
-                      style={{ color: 'rgba(255,255,255,0.5)', 'font-weight': '400' }}
-                      classList={{ '!bg-[rgba(124,154,191,0.18)]': branchOpen() }}
+                      class="flex items-center gap-0.5 cursor-pointer border-none rounded-md px-1.5 py-0.5 transition-colors duration-150 bg-[rgba(var(--surface-alt-bg),0.5)]"
+                      style={{ color: 'rgba(var(--text-base-rgb),0.5)', 'font-weight': '400' }}
+                      classList={{ '!bg-[rgba(var(--surface-bg),0.7)]': branchOpen() }}
                       onClick={(e) => {
                         e.stopPropagation();
                         setBranchOpen(!branchOpen());
                       }}
                       onMouseEnter={(e) => {
                         if (!branchOpen())
-                          e.currentTarget.style.background = 'rgba(124,154,191,0.15)';
+                          e.currentTarget.style.background = 'rgba(var(--surface-bg),0.6)';
                       }}
                       onMouseLeave={(e) => {
                         if (!branchOpen())
-                          e.currentTarget.style.background = 'rgba(124,154,191,0.08)';
+                          e.currentTarget.style.background = 'rgba(var(--surface-alt-bg),0.5)';
                       }}
                     >
                       ·{' '}
@@ -1434,8 +1434,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         }
                         class="absolute bottom-full left-0 mb-2 z-[41] w-[200px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
                         style={{
-                          background: 'rgba(18,22,35,0.96)',
-                          border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'rgba(var(--surface-bg),0.96)',
+                          border: '1px solid var(--border-dim)',
                           'backdrop-filter': 'blur(12px)',
                           'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
                         }}
@@ -1444,9 +1444,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         <div
                           class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                           style={{
-                            color: 'rgba(255,255,255,0.35)',
-                            background: 'rgba(255,255,255,0.04)',
-                            'border-bottom': '1px solid rgba(255,255,255,0.04)',
+                            color: 'rgba(var(--text-base-rgb),0.35)',
+                            background: 'rgba(var(--text-base-rgb),0.04)',
+                            'border-bottom': '1px solid var(--border-dim)',
                           }}
                         >
                           {t('chat.switchBranch')}
@@ -1457,9 +1457,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               <button
                                 type="button"
                                 class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer border-none text-[13px]"
-                                style={{ color: 'rgba(255,255,255,0.75)' }}
+                                style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
                                 classList={{
-                                  '!bg-[rgba(124,154,191,0.12)]': branch === gitBranch(),
+                                  '!bg-[rgba(var(--surface-bg),0.5)]': branch === gitBranch(),
                                 }}
                                 onClick={async () => {
                                   if (branch === gitBranch()) {
@@ -1477,7 +1477,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 }}
                                 onMouseEnter={(e) => {
                                   if (branch !== gitBranch())
-                                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                                    e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.05)';
                                 }}
                                 onMouseLeave={(e) => {
                                   if (branch !== gitBranch())
@@ -1490,7 +1490,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     name="check"
                                     size={13}
                                     class="shrink-0"
-                                    style={{ color: 'rgba(124,154,191,0.8)' }}
+                                    style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}
                                   />
                                 </Show>
                               </button>
@@ -1530,7 +1530,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         </Show>
         <div
           class="rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 w-full"
-          style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}
+          style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-dim)' }}
         >
           <textarea
             ref={textareaRef}
@@ -1565,7 +1565,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
           <div
             class="flex items-center justify-between border-t pt-2"
-            style={{ 'border-color': 'rgba(255,255,255,0.04)' }}
+            style={{ 'border-color': 'var(--border-dim)' }}
           >
             <div class="flex items-center gap-2">
               <ModelSelector />
@@ -1577,7 +1577,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
               <button
                 class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
-                style={{ color: 'rgba(255,255,255,0.4)' }}
+                style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 title={t('chat.attachFile')}
                 onClick={async () => {
                   const selected = await open({ multiple: true });
@@ -1588,12 +1588,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                   }
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                  e.currentTarget.style.color = 'rgba(124,154,191,0.6)';
+                  e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
+                  e.currentTarget.style.color = 'rgba(var(--primary-rgb),0.6)';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'rgba(255,255,255,0.4)';
+                  e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.4)';
                 }}
               >
                 <Icon src="/icons/app-logo/paperclip.svg" class="w-5 h-5" />
@@ -1601,7 +1601,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
               <button
                 class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
-                style={{ color: 'rgba(255,255,255,0.4)' }}
+                style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 title={t('chat.uploadImage')}
                 onClick={async () => {
                   const selected = await open({
@@ -1615,12 +1615,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                   }
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                  e.currentTarget.style.color = 'rgba(124,154,191,0.6)';
+                  e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
+                  e.currentTarget.style.color = 'rgba(var(--primary-rgb),0.6)';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'rgba(255,255,255,0.4)';
+                  e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.4)';
                 }}
               >
                 <Icon src="/icons/app-logo/image-photo.svg" class="w-5 h-5" />
@@ -1630,19 +1630,19 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               <Show when={hasDiagnostics()}>
                 <button
                   class="relative flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
-                  style={{ color: 'rgba(255,255,255,0.4)' }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                   title={t('chat.diagnostics', {
                     errors: formatNumber(totalErrors()),
                     warnings: formatNumber(totalWarnings()),
                   })}
                   onClick={() => setProblemsPanelVisible(!problemsPanelVisible())}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                    e.currentTarget.style.color = 'rgba(255,255,255,0.6)';
+                    e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
+                    e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.6)';
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = 'transparent';
-                    e.currentTarget.style.color = 'rgba(255,255,255,0.4)';
+                    e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.4)';
                   }}
                 >
                   <Icon name="clipboard" size={14} />
@@ -1659,7 +1659,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               <TokenStatsBar />
               <button
                 class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95 ${props.isThinking ? 'bg-[#ff4d4d] text-white' : 'text-white'}`}
-                style={!props.isThinking ? { background: 'rgba(124,154,191,0.3)' } : {}}
+                style={!props.isThinking ? { background: 'rgba(var(--primary-rgb),0.3)' } : {}}
                 onClick={() =>
                   props.isThinking ? props.handleStopGeneration() : props.handleSendMessage()
                 }
@@ -1684,28 +1684,28 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           <div
             class="relative flex flex-col items-center justify-center w-[420px] h-[280px] rounded-xl text-white text-center p-5"
             style={{
-              background: 'rgba(18, 22, 35, 0.7)',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
+              background: 'rgba(var(--surface-bg), 0.7)',
+              border: '1px solid var(--border-dim)',
             }}
           >
             <div class="flex items-end mb-[25px] mt-[-30px]">
               <div
                 class="flex items-center justify-center w-[60px] h-20 rounded-md opacity-60 scale-[0.85] translate-y-[10px] -rotate-12 translate-x-[15px] z-[1]"
                 style={{
-                  background: 'rgba(124,154,191,0.06)',
-                  border: '1px solid rgba(124,154,191,0.06)',
+                  background: 'rgba(var(--primary-rgb),0.06)',
+                  border: '1px solid rgba(var(--primary-rgb),0.06)',
                 }}
               >
-                <span style={{ color: 'rgba(124,154,191,0.4)' }}>
+                <span style={{ color: 'rgba(var(--primary-rgb),0.4)' }}>
                   <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
                 </span>
               </div>
               <div
                 class="flex items-center justify-center w-[70px] h-[90px] rounded-md z-[3]"
                 style={{
-                  background: 'rgba(124,154,191,0.08)',
-                  border: '1px solid rgba(124,154,191,0.1)',
-                  color: 'rgba(124,154,191,0.5)',
+                  background: 'rgba(var(--primary-rgb),0.08)',
+                  border: '1px solid rgba(var(--primary-rgb),0.1)',
+                  color: 'rgba(var(--primary-rgb),0.5)',
                 }}
               >
                 <Icon src="/icons/app-logo/upload-arrow.svg" class="w-8 h-8" />
@@ -1713,18 +1713,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               <div
                 class="flex items-center justify-center w-[60px] h-20 rounded-md opacity-60 scale-[0.85] translate-y-[10px] rotate-12 -translate-x-[15px] z-[1]"
                 style={{
-                  background: 'rgba(124,154,191,0.06)',
-                  border: '1px solid rgba(124,154,191,0.04)',
+                  background: 'rgba(var(--primary-rgb),0.06)',
+                  border: '1px solid rgba(var(--primary-rgb),0.04)',
                 }}
               >
-                <span style={{ color: 'rgba(124,154,191,0.4)' }}>
+                <span style={{ color: 'rgba(var(--primary-rgb),0.4)' }}>
                   <Icon src="/icons/app-logo/file-blank.svg" class="w-6 h-6" />
                 </span>
               </div>
             </div>
             <h2
               style={{
-                color: 'rgba(124,154,191,0.6)',
+                color: 'rgba(var(--primary-rgb),0.6)',
                 'font-size': '22px',
                 'letter-spacing': '0.1em',
                 'margin-bottom': '10px',
@@ -1735,7 +1735,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             </h2>
             <p
               style={{
-                color: 'rgba(255,255,255,0.5)',
+                color: 'rgba(var(--text-base-rgb),0.5)',
                 'font-size': '0.875rem',
                 'max-width': '80%',
                 'z-index': '2',
@@ -1745,7 +1745,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             </p>
             <div
               class="absolute inset-3 rounded-lg pointer-events-none"
-              style={{ border: '1px dashed rgba(255,255,255,0.1)' }}
+              style={{ border: '1px dashed var(--border-dim)' }}
             />
           </div>
         </div>
@@ -1758,7 +1758,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             class="fixed bottom-5 left-5 z-[9999] max-w-[25vw] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] select-none cursor-pointer"
             style={{
               color: '#fca5a5',
-              background: 'rgba(18, 22, 35, 0.92)',
+              background: 'rgba(var(--surface-bg), 0.92)',
               border: '1px solid rgba(248,113,113,0.2)',
               'backdrop-filter': 'blur(30px) saturate(180%)',
               animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',

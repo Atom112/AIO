@@ -302,7 +302,7 @@ const SubagentModelSettings: Component = () => {
 
   return (
     <div class="space-y-1">
-      <div class="pb-3 border-b border-[rgba(255,255,255,0.06)] animate-row-in">
+      <div class="pb-3 border-b border-[var(--border-dim)] animate-row-in">
         <h2 class="text-lg text-white font-semibold m-0">{t('subagent.title')}</h2>
         <p class="text-xs text-white/35 mt-1.5 leading-relaxed">
           为每个子智能体类型独立指定使用的模型和 API Provider。 未设置的子智能体将跟随主 Agent
@@ -316,7 +316,7 @@ const SubagentModelSettings: Component = () => {
           const isOpen = () => openDropdown() === profile.id;
           return (
             <div
-              class="bg-[rgba(255,255,255,0.035)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden animate-row-in"
+              class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] overflow-hidden animate-row-in"
               style={{ 'animation-delay': `${(index() + 1) * 30}ms` }}
             >
               {/* Profile header */}
@@ -335,7 +335,7 @@ const SubagentModelSettings: Component = () => {
                     class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all border font-medium flex items-center gap-1.5"
                     classList={{
                       'bg-pri-20 border-pri-30 text-pri': !!current(),
-                      'bg-[rgba(255,255,255,0.04)] border-[rgba(255,255,255,0.08)] text-white/40 hover:text-white hover:bg-[rgba(255,255,255,0.06)]':
+                      'bg-white/[0.04] border-[var(--border-dim)] text-white/40 hover:text-white hover:bg-white/[0.06]':
                         !current(),
                     }}
                     onClick={() => setOpenDropdown(isOpen() ? null : profile.id)}
@@ -360,7 +360,7 @@ const SubagentModelSettings: Component = () => {
 
               {/* Dropdown model picker */}
               <div
-                class="border-t border-[rgba(255,255,255,0.04)] bg-[rgba(0,0,0,0.15)] transition-all duration-200 ease-out origin-top overflow-hidden"
+                class="border-t border-[var(--border-dim)] bg-[rgba(0,0,0,0.15)] transition-all duration-200 ease-out origin-top overflow-hidden"
                 classList={{
                   'invisible max-h-0 opacity-0': !isOpen(),
                   'visible max-h-[260px] opacity-100': isOpen(),
@@ -385,7 +385,7 @@ const SubagentModelSettings: Component = () => {
                     </Show>
                   </div>
 
-                  <div class="my-1.5 mx-2 border-t border-[rgba(255,255,255,0.04)]" />
+                  <div class="my-1.5 mx-2 border-t border-[var(--border-dim)]" />
 
                   <For each={cloudModels()}>
                     {(model) => {
@@ -399,21 +399,21 @@ const SubagentModelSettings: Component = () => {
                         <div
                           class="flex items-center gap-2.5 p-2.5 text-sm rounded-lg cursor-pointer select-none transition-all"
                           classList={{
-                            '!bg-[rgba(124,154,191,0.12)] !border-l-[3px] !border-[rgba(124,154,191,0.2)]':
+                            '!bg-[rgba(var(--primary-rgb),0.12)] !border-l-[3px] !border-[rgba(var(--primary-rgb),0.2)]':
                               selected(),
                           }}
                           onClick={() => handlePickModel(profile.id, model)}
-                          style={{ color: 'rgba(255,255,255,0.5)' }}
+                          style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
                           onMouseEnter={(e) => {
                             if (!selected()) {
-                              e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                              e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
                               e.currentTarget.style.color = 'white';
                             }
                           }}
                           onMouseLeave={(e) => {
                             if (!selected()) {
                               e.currentTarget.style.background = 'transparent';
-                              e.currentTarget.style.color = 'rgba(255,255,255,0.5)';
+                              e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.5)';
                             }
                           }}
                         >
@@ -445,15 +445,15 @@ const SubagentModelSettings: Component = () => {
                   <Show when={cloudModels().length === 0}>
                     <div
                       class="p-4 text-center text-[13px]"
-                      style={{ color: 'rgba(255,255,255,0.2)' }}
+                      style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}
                     >
                       <div>{t('subagent.noCloudModel')}</div>
                       <div
                         class="text-[10px] mt-1.5 leading-relaxed"
-                        style={{ color: 'rgba(255,255,255,0.25)' }}
+                        style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
                       >
                         去{' '}
-                        <span style={{ color: 'rgba(124,154,191,0.5)', 'font-weight': 500 }}>
+                        <span style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-weight': 500 }}>
                           设置中心 → 供应商设置
                         </span>
                         <br />
@@ -477,14 +477,14 @@ const SubagentModelSettings: Component = () => {
           when={showCreateForm()}
           fallback={
             <button
-              class="w-full py-3 rounded-xl border border-[rgba(255,255,255,0.14)] text-sm text-white/45 hover:text-white/70 hover:border-[rgba(255,255,255,0.25)] transition-all cursor-pointer bg-transparent"
+              class="w-full py-3 rounded-xl border border-[var(--border-dim)] text-sm text-white/45 hover:text-white/70 hover:border-[var(--border-dim)] transition-all cursor-pointer bg-transparent"
               onClick={() => setShowCreateForm(true)}
             >
               {t('subagent.createCustom')}
             </button>
           }
         >
-          <div class="bg-[rgba(18,22,35,0.35)] rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden p-4 space-y-3">
+          <div class="bg-[rgba(var(--surface-bg),0.35)] rounded-xl border border-[var(--border-dim)] overflow-hidden p-4 space-y-3">
             <h3 class="text-sm text-white font-semibold m-0">{t('subagent.createTitle')}</h3>
 
             <div class="grid grid-cols-2 gap-3">
@@ -497,7 +497,7 @@ const SubagentModelSettings: Component = () => {
                   value={newId()}
                   onInput={(e) => setNewId(e.currentTarget.value)}
                   placeholder={slugify(newName())}
-                  class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
+                  class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[var(--border-dim)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
                 />
               </div>
               <div>
@@ -509,7 +509,7 @@ const SubagentModelSettings: Component = () => {
                   value={newName()}
                   onInput={(e) => setNewName(e.currentTarget.value)}
                   placeholder={t('subagent.namePlaceholder')}
-                  class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
+                  class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[var(--border-dim)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
                 />
               </div>
             </div>
@@ -523,7 +523,7 @@ const SubagentModelSettings: Component = () => {
                 value={newDescription()}
                 onInput={(e) => setNewDescription(e.currentTarget.value)}
                 placeholder={t('subagent.descriptionPlaceholder')}
-                class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
+                class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[var(--border-dim)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors"
               />
             </div>
 
@@ -544,7 +544,7 @@ const SubagentModelSettings: Component = () => {
                   <div class="relative" data-tool-dropdown>
                     <button
                       type="button"
-                      class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[rgba(255,255,255,0.08)] transition-all duration-150 cursor-pointer"
+                      class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[var(--border-dim)] transition-all duration-150 cursor-pointer"
                       style={{ background: 'rgba(0, 0, 0, 0.25)' }}
                       onClick={() => {
                         setAllowedOpen(!allowedOpen());
@@ -560,10 +560,10 @@ const SubagentModelSettings: Component = () => {
                     <div
                       class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 max-h-[200px] overflow-y-auto transition-all duration-150 ease-out origin-top"
                       style={{
-                        background: 'rgba(18, 22, 35, 0.92)',
+                        background: 'rgba(var(--surface-bg), 0.92)',
                         'backdrop-filter': 'blur(40px) saturate(180%)',
                         '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        border: '1px solid var(--border-dim)',
                         'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
                       }}
                       classList={{
@@ -605,7 +605,7 @@ const SubagentModelSettings: Component = () => {
                   <div class="relative" data-tool-dropdown>
                     <button
                       type="button"
-                      class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[rgba(255,255,255,0.08)] transition-all duration-150 cursor-pointer"
+                      class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-left outline-none border border-[var(--border-dim)] transition-all duration-150 cursor-pointer"
                       style={{ background: 'rgba(0, 0, 0, 0.25)' }}
                       onClick={() => {
                         setDeniedOpen(!deniedOpen());
@@ -621,10 +621,10 @@ const SubagentModelSettings: Component = () => {
                     <div
                       class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 max-h-[200px] overflow-y-auto transition-all duration-150 ease-out origin-top"
                       style={{
-                        background: 'rgba(18, 22, 35, 0.92)',
+                        background: 'rgba(var(--surface-bg), 0.92)',
                         'backdrop-filter': 'blur(40px) saturate(180%)',
                         '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        border: '1px solid var(--border-dim)',
                         'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
                       }}
                       classList={{
@@ -671,13 +671,13 @@ const SubagentModelSettings: Component = () => {
                 onInput={(e) => setNewSystemPrompt(e.currentTarget.value)}
                 placeholder={`你是${newName() || '助手'}，请完成任务。`}
                 rows={3}
-                class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors resize-none"
+                class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[var(--border-dim)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors resize-none"
               />
             </div>
 
             <div class="flex gap-2 justify-end pt-1">
               <button
-                class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-white/40 hover:text-white hover:bg-[rgba(255,255,255,0.06)]"
+                class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all bg-white/[0.04] border border-[var(--border-dim)] text-white/40 hover:text-white hover:bg-white/[0.06]"
                 onClick={() => {
                   setShowCreateForm(false);
                   setNewName('');

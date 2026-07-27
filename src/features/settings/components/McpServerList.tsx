@@ -247,7 +247,7 @@ const McpServerList: Component = () => {
   return (
     <div
       class="flex flex-col h-full overflow-hidden p-6 gap-4"
-      style={{ color: 'rgba(255,255,255,0.88)' }}
+      style={{ color: 'rgba(var(--text-base-rgb),0.88)' }}
     >
       <div class="flex items-start justify-between gap-4 animate-row-in">
         <h2 class="text-xl font-semibold">{t('mcp.title')}</h2>
@@ -259,7 +259,7 @@ const McpServerList: Component = () => {
       >
         <div
           class="flex items-center gap-1 p-1 rounded-lg"
-          style={{ background: 'rgba(255,255,255,0.04)' }}
+          style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
         >
           <button
             class="px-3 py-1.5 rounded-md text-sm"
@@ -291,7 +291,7 @@ const McpServerList: Component = () => {
               placeholder={t('mcp.search')}
             />
           </div>
-          <span class="text-xs self-center" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          <span class="text-xs self-center" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.results', {
               count: `${formatNumber(resultCount())}${nextCursor() ? '+' : ''}`,
             })}
@@ -328,7 +328,7 @@ const McpServerList: Component = () => {
         <Show when={loading()}>
           <div
             class="h-full flex items-center justify-center text-sm"
-            style={{ color: 'rgba(255,255,255,0.45)' }}
+            style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
           >
             {t('mcp.loadingRegistry')}
           </div>
@@ -341,7 +341,7 @@ const McpServerList: Component = () => {
               fallback={
                 <div
                   class="col-span-full py-12 text-center text-sm"
-                  style={{ color: 'rgba(255,255,255,0.4)' }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 >
                   {t('mcp.noMatch')}
                 </div>
@@ -353,8 +353,8 @@ const McpServerList: Component = () => {
                   <div
                     class="flex flex-col gap-3 rounded-xl p-4 animate-row-in"
                     style={{
-                      background: 'rgba(255,255,255,0.035)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(var(--text-base-rgb),0.035)',
+                      border: '1px solid var(--border-dim)',
                       'animation-delay': `${(index() + 2) * 30}ms`,
                     }}
                   >
@@ -363,7 +363,7 @@ const McpServerList: Component = () => {
                         <div class="font-semibold truncate">{server.displayName}</div>
                         <div
                           class="text-[11px] font-mono truncate mt-1"
-                          style={{ color: 'rgba(124,154,191,0.85)' }}
+                          style={{ color: 'rgba(var(--primary-rgb),0.85)' }}
                         >
                           {server.name}
                         </div>
@@ -371,7 +371,7 @@ const McpServerList: Component = () => {
                       <Show when={server.version}>
                         <span
                           class="text-[10px] px-2 py-1 rounded shrink-0"
-                          style={{ background: 'rgba(255,255,255,0.06)' }}
+                          style={{ background: 'rgba(var(--text-base-rgb),0.06)' }}
                         >
                           v{server.version}
                         </span>
@@ -379,7 +379,7 @@ const McpServerList: Component = () => {
                     </div>
                     <p
                       class="text-xs leading-relaxed line-clamp-3 min-h-[3rem]"
-                      style={{ color: 'rgba(255,255,255,0.55)' }}
+                      style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
                     >
                       {server.description || t('mcp.noDescription')}
                     </p>
@@ -395,7 +395,7 @@ const McpServerList: Component = () => {
                     <div class="flex items-center justify-between gap-3">
                       <button
                         class="text-[11px] hover:underline"
-                        style={{ color: 'rgba(255,255,255,0.45)' }}
+                        style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
                         disabled={!server.repositoryUrl && !server.websiteUrl}
                         onClick={() => void openUrl(server.repositoryUrl || server.websiteUrl)}
                       >
@@ -407,7 +407,7 @@ const McpServerList: Component = () => {
                         style={
                           installed()
                             ? 'background: rgba(124,217,160,0.12); color: #7cd9a0;'
-                            : 'background: rgba(124,154,191,0.2); border: 1px solid rgba(124,154,191,0.3);'
+                            : 'background: rgba(var(--primary-rgb),0.2); border: 1px solid rgba(var(--primary-rgb),0.3);'
                         }
                         onClick={() => openInstall(server)}
                       >
@@ -429,8 +429,8 @@ const McpServerList: Component = () => {
                 class="px-4 py-2 rounded text-xs"
                 disabled={loadingMore()}
                 style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'rgba(var(--text-base-rgb),0.05)',
+                  border: '1px solid var(--border-dim)',
                 }}
                 onClick={() => void loadCatalog(false, nextCursor())}
               >
@@ -445,7 +445,7 @@ const McpServerList: Component = () => {
             <For
               each={filteredLocal()}
               fallback={
-                <div class="py-12 text-center text-sm" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                <div class="py-12 text-center text-sm" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
                   {t('mcp.noInstalled')}
                 </div>
               }
@@ -456,8 +456,8 @@ const McpServerList: Component = () => {
                   <div
                     class="flex items-center justify-between px-4 py-3 rounded-lg"
                     style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(var(--text-base-rgb),0.03)',
+                      border: '1px solid var(--border-dim)',
                     }}
                   >
                     <div class="flex-1 min-w-0">
@@ -478,7 +478,7 @@ const McpServerList: Component = () => {
                           </span>
                         </Show>
                       </div>
-                      <div class="text-xs truncate mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      <div class="text-xs truncate mt-1" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
                         {transportLabel(config.transport)}
                         {status() === 'connected'
                           ? ` · ${t('mcp.toolsCount', { count: formatNumber(mcpServerStatus()[config.id]?.toolCount ?? 0) })}`
@@ -489,7 +489,7 @@ const McpServerList: Component = () => {
                       <Show when={status() !== 'connected' && status() !== 'connecting'}>
                         <button
                           class="px-2 py-1 rounded text-xs"
-                          style={{ background: 'rgba(124,154,191,0.2)' }}
+                          style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
                           onClick={() => void handleStart(config.id)}
                         >
                           {t('mcp.start')}
@@ -498,7 +498,7 @@ const McpServerList: Component = () => {
                       <Show when={status() === 'connected'}>
                         <button
                           class="px-2 py-1 rounded text-xs"
-                          style={{ background: 'rgba(255,255,255,0.05)' }}
+                          style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                           onClick={() => void handleStop(config.id)}
                         >
                           {t('mcp.stop')}
@@ -506,7 +506,7 @@ const McpServerList: Component = () => {
                       </Show>
                       <button
                         class="px-2 py-1 rounded text-xs"
-                        style={{ background: 'rgba(255,255,255,0.05)' }}
+                        style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                         onClick={() => setEditingConfig({ ...config })}
                       >
                         {t('common.edit')}
@@ -538,13 +538,13 @@ const McpServerList: Component = () => {
         >
           <div
             class="w-[620px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
-            style={{ background: 'rgba(18,22,35,0.98)', border: '1px solid rgba(255,255,255,0.1)' }}
+            style={{ background: 'rgba(var(--surface-bg),0.98)', border: '1px solid var(--border-dim)' }}
           >
             <div>
               <h3 class="font-semibold">
                 {t('mcp.installTitle', { name: installing()!.displayName })}
               </h3>
-              <p class="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.45)' }}>
+              <p class="text-xs mt-1" style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}>
                 {t('mcp.securityNotice')}
               </p>
             </div>
@@ -553,8 +553,8 @@ const McpServerList: Component = () => {
               <select
                 class="px-3 py-2 rounded text-sm"
                 style={{
-                  background: 'rgba(22,26,40,0.95)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'rgba(var(--surface-alt-bg),0.95)',
+                  border: '1px solid var(--border-dim)',
                 }}
                 value={selectedDeliveryId()}
                 onChange={(event) => {
@@ -582,7 +582,7 @@ const McpServerList: Component = () => {
             <Show when={selectedDelivery()}>
               <div
                 class="px-3 py-2 rounded font-mono text-xs break-all"
-                style={{ background: 'rgba(0,0,0,0.25)', color: 'rgba(255,255,255,0.6)' }}
+                style={{ background: 'rgba(0,0,0,0.25)', color: 'rgba(var(--text-base-rgb),0.6)' }}
               >
                 {selectedDelivery()!.kind === 'http'
                   ? selectedDelivery()!.url
@@ -600,7 +600,7 @@ const McpServerList: Component = () => {
                       class="px-3 py-2 rounded text-sm outline-none"
                       style={{
                         background: 'rgba(0,0,0,0.3)',
-                        border: '1px solid rgba(255,255,255,0.1)',
+                        border: '1px solid var(--border-dim)',
                       }}
                       value={installValues()[input.name] ?? ''}
                       placeholder={input.description || input.defaultValue}
@@ -618,7 +618,7 @@ const McpServerList: Component = () => {
             <div class="flex justify-end gap-2">
               <button
                 class="px-3 py-1.5 rounded text-sm"
-                style={{ background: 'rgba(255,255,255,0.05)' }}
+                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                 onClick={() => setInstalling(null)}
               >
                 {t('common.cancel')}

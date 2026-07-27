@@ -547,7 +547,7 @@ const ProviderList: Component = () => {
           onClick={() => setShowAddCustom(false)}
         >
           <div
-            class="bg-[rgba(18,22,35,0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]"
+            class="bg-[rgba(var(--surface-bg),0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]"
             style={{
               'backdrop-filter': 'blur(60px) saturate(180%)',
               '-webkit-backdrop-filter': 'blur(60px) saturate(180%)',
@@ -823,7 +823,7 @@ const ProviderList: Component = () => {
             'text-red-300': !toast()!.ok,
           }}
           style={{
-            background: 'rgba(18, 22, 35, 0.88)',
+            background: 'rgba(var(--surface-bg), 0.88)',
             'backdrop-filter': 'blur(30px) saturate(180%)',
             '-webkit-backdrop-filter': 'blur(30px) saturate(180%)',
             animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',

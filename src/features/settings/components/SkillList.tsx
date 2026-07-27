@@ -389,7 +389,7 @@ const SkillList: Component = () => {
   return (
     <div
       class="flex flex-col h-full overflow-hidden p-6 gap-4"
-      style={{ color: 'rgba(255,255,255,0.88)' }}
+      style={{ color: 'rgba(var(--text-base-rgb),0.88)' }}
     >
       <div class="animate-row-in flex items-start justify-between gap-4">
         <h2 class="text-xl font-semibold">{t('skill.market')}</h2>
@@ -402,7 +402,7 @@ const SkillList: Component = () => {
         <div class="flex items-center gap-3 flex-wrap">
           <div
             class="flex items-center gap-1 p-1 rounded-lg"
-            style={{ background: 'rgba(255,255,255,0.04)' }}
+            style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
           >
             <button
               class="px-3 py-1.5 rounded-md text-sm"
@@ -433,7 +433,7 @@ const SkillList: Component = () => {
           {currentProjectId() && (
             <div
               class="flex items-center gap-1 p-1 rounded-lg"
-              style={{ background: 'rgba(255,255,255,0.04)' }}
+              style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
             >
               <button
                 class="px-2.5 py-1 rounded-md text-xs"
@@ -486,7 +486,7 @@ const SkillList: Component = () => {
                 <button
                   class="px-3 py-1.5 rounded-md text-xs"
                   classList={{ 'bg-pri-20 text-pri': sort() === value }}
-                  style={sort() === value ? '' : 'background: rgba(255,255,255,0.04);'}
+                  style={sort() === value ? '' : 'background: rgba(var(--text-base-rgb),0.04);'}
                   onClick={() => selectSort(value)}
                 >
                   {label}
@@ -523,7 +523,7 @@ const SkillList: Component = () => {
             </span>
           </Show>
           <Show when={lastRefreshedAt()}>
-            <span class="text-[10px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}>
               {t('skill.updatedAt', { time: lastRefreshedAt()!.toLocaleTimeString() })}
             </span>
           </Show>
@@ -546,7 +546,7 @@ const SkillList: Component = () => {
         <Show when={loading()}>
           <div
             class="h-full flex items-center justify-center text-sm"
-            style={{ color: 'rgba(255,255,255,0.45)' }}
+            style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
           >
             {t('skill.loadingMarket')}
           </div>
@@ -559,7 +559,7 @@ const SkillList: Component = () => {
               fallback={
                 <div
                   class="col-span-full py-12 text-center text-sm"
-                  style={{ color: 'rgba(255,255,255,0.4)' }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 >
                   没有匹配的 Skill。
                 </div>
@@ -573,14 +573,14 @@ const SkillList: Component = () => {
                     class="animate-row-in flex flex-col gap-3 rounded-xl p-4"
                     style={{
                       'animation-delay': `${(index() + 3) * 30}ms`,
-                      background: 'rgba(255,255,255,0.035)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(var(--text-base-rgb),0.035)',
+                      border: '1px solid var(--border-dim)',
                     }}
                   >
                     <div class="flex items-start gap-3">
                       <div
                         class="w-8 text-center font-mono text-sm pt-0.5"
-                        style={{ color: 'rgba(255,255,255,0.35)' }}
+                        style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
                       >
                         #{index() + 1}
                       </div>
@@ -588,7 +588,7 @@ const SkillList: Component = () => {
                         <div class="font-semibold truncate">{skill.name}</div>
                         <button
                           class="text-xs font-mono truncate hover:underline"
-                          style={{ color: 'rgba(124,154,191,0.8)' }}
+                          style={{ color: 'rgba(var(--primary-rgb),0.8)' }}
                           onClick={() => void openUrl(skill.sourceUrl)}
                         >
                           {skill.owner}/{skill.repo}
@@ -598,19 +598,19 @@ const SkillList: Component = () => {
                         <div class="font-mono text-sm">
                           {skill.installsLabel || formatInstalls(skill.installs)}
                         </div>
-                        <div class="text-[10px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                        <div class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
                           {t('skill.installs')}
                         </div>
                       </div>
                     </div>
                     <p
                       class="text-xs leading-relaxed line-clamp-3 min-h-[3rem]"
-                      style={{ color: 'rgba(255,255,255,0.55)' }}
+                      style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
                     >
                       {skill.description || t('skill.noDescription')}
                     </p>
                     <div class="flex items-center justify-between gap-3">
-                      <span class="text-[11px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                      <span class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
                         {weekly() > 0
                           ? t('skill.weeklyInstalls', { count: formatInstalls(weekly()) })
                           : t('skill.communityContent')}
@@ -621,7 +621,7 @@ const SkillList: Component = () => {
                         style={
                           downloaded()
                             ? 'background: rgba(124,217,160,0.12); color: #7cd9a0;'
-                            : 'background: rgba(124,154,191,0.2); border: 1px solid rgba(124,154,191,0.3);'
+                            : 'background: rgba(var(--primary-rgb),0.2); border: 1px solid rgba(var(--primary-rgb),0.3);'
                         }
                         onClick={() => void download(skill)}
                       >
@@ -644,7 +644,7 @@ const SkillList: Component = () => {
             <For
               each={filteredLocalSkills()}
               fallback={
-                <div class="py-12 text-center text-sm" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                <div class="py-12 text-center text-sm" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
                   {t('skill.noInstalled')}
                 </div>
               }
@@ -654,8 +654,8 @@ const SkillList: Component = () => {
                   class="animate-row-in flex items-center justify-between px-4 py-3 rounded-lg"
                   style={{
                     'animation-delay': `${(index() + 3) * 30}ms`,
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(var(--text-base-rgb),0.03)',
+                    border: '1px solid var(--border-dim)',
                   }}
                 >
                   <div class="flex-1 min-w-0">
@@ -667,7 +667,7 @@ const SkillList: Component = () => {
                         </span>
                       </Show>
                     </div>
-                    <div class="text-xs truncate mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                    <div class="text-xs truncate mt-1" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
                       {skill.description || skill.content}
                     </div>
                   </div>
@@ -675,7 +675,7 @@ const SkillList: Component = () => {
                     <Show when={skill.sourceUrl}>
                       <button
                         class="px-2 py-1 rounded text-xs"
-                        style={{ background: 'rgba(255,255,255,0.05)' }}
+                        style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                         onClick={() => void openUrl(skill.sourceUrl!)}
                       >
                         {t('skill.source')}
@@ -683,7 +683,7 @@ const SkillList: Component = () => {
                     </Show>
                     <button
                       class="px-2 py-1 rounded text-xs"
-                      style={{ background: 'rgba(255,255,255,0.05)' }}
+                      style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                       onClick={() => setEditing({ ...skill })}
                     >
                       {t('skill.edit')}
@@ -706,12 +706,12 @@ const SkillList: Component = () => {
         <Show when={view() === 'npx'}>
           <div class="animate-row-in flex flex-col gap-3" style={{ 'animation-delay': '30ms' }}>
             <div class="flex items-center justify-between">
-              <p class="text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              <p class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
                 {t('skill.npxHint')}
               </p>
               <button
                 class="px-3 py-1.5 rounded-md text-xs"
-                style={{ background: 'rgba(255,255,255,0.05)' }}
+                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                 onClick={() => discoverNpx()}
                 disabled={npxLoading()}
               >
@@ -722,7 +722,7 @@ const SkillList: Component = () => {
             <Show
               when={!npxLoading()}
               fallback={
-                <div class="py-12 text-center text-sm" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                <div class="py-12 text-center text-sm" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
                   正在扫描系统上的 npx skill...
                 </div>
               }
@@ -733,7 +733,7 @@ const SkillList: Component = () => {
                   fallback={
                     <div
                       class="py-12 text-center text-sm"
-                      style={{ color: 'rgba(255,255,255,0.4)' }}
+                      style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                     >
                       {t('skill.npxEmpty')}
                     </div>
@@ -743,8 +743,8 @@ const SkillList: Component = () => {
                     <div
                       class="flex items-center justify-between px-4 py-3 rounded-lg"
                       style={{
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        background: 'rgba(var(--text-base-rgb),0.03)',
+                        border: '1px solid var(--border-dim)',
                       }}
                     >
                       <div class="flex-1 min-w-0">
@@ -760,7 +760,7 @@ const SkillList: Component = () => {
                         <Show when={item.description}>
                           <div
                             class="text-xs truncate mt-1"
-                            style={{ color: 'rgba(255,255,255,0.5)' }}
+                            style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
                           >
                             {item.description}
                           </div>
@@ -784,15 +784,15 @@ const SkillList: Component = () => {
                           <span
                             class="text-xs px-2 py-1 rounded"
                             style={{
-                              background: 'rgba(255,255,255,0.05)',
-                              color: 'rgba(255,255,255,0.5)',
+                              background: 'rgba(var(--text-base-rgb),0.05)',
+                              color: 'rgba(var(--text-base-rgb),0.5)',
                             }}
                           >
                             {t('skill.imported')}
                           </span>
                           <button
                             class="px-2 py-1 rounded text-xs"
-                            style={{ background: 'rgba(255,255,255,0.05)' }}
+                            style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                             onClick={() => refreshNpx(`npx-${item.packageName}`)}
                             disabled={npxRefreshingId() === `npx-${item.packageName}`}
                           >
@@ -819,14 +819,14 @@ const SkillList: Component = () => {
         >
           <div
             class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
-            style={{ background: 'rgba(18,22,35,0.98)', border: '1px solid rgba(255,255,255,0.1)' }}
+            style={{ background: 'rgba(var(--surface-bg),0.98)', border: '1px solid var(--border-dim)' }}
           >
             <h3 class="text-base font-semibold">{t('skill.editTitle')}</h3>
             <label class="flex flex-col gap-1 text-xs">
               {t('skill.name')}
               <input
                 class="px-3 py-2 rounded text-sm outline-none"
-                style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}
+                style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-dim)' }}
                 value={editing()!.name}
                 onInput={(e) => updateField('name', e.currentTarget.value)}
               />
@@ -835,7 +835,7 @@ const SkillList: Component = () => {
               {t('skill.description')}
               <input
                 class="px-3 py-2 rounded text-sm outline-none"
-                style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}
+                style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-dim)' }}
                 value={editing()!.description}
                 onInput={(e) => updateField('description', e.currentTarget.value)}
               />
@@ -844,7 +844,7 @@ const SkillList: Component = () => {
               {t('skill.systemPrompt')}
               <textarea
                 class="px-3 py-2 rounded text-sm outline-none min-h-[260px] resize-y font-mono"
-                style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}
+                style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-dim)' }}
                 value={editing()!.content}
                 onInput={(e) => updateField('content', e.currentTarget.value)}
               />
@@ -852,7 +852,7 @@ const SkillList: Component = () => {
             <div class="flex justify-end gap-2">
               <button
                 class="px-3 py-1.5 rounded text-sm"
-                style={{ background: 'rgba(255,255,255,0.05)' }}
+                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                 onClick={() => setEditing(null)}
               >
                 {t('skill.cancel')}

@@ -104,10 +104,10 @@ const UpdateNotification: Component = () => {
         <div
           class="fixed bottom-5 left-5 z-[9999] w-[340px] rounded-2xl overflow-hidden select-none"
           style={{
-            background: 'rgba(18, 22, 35, 0.88)',
+            background: 'rgba(var(--surface-bg), 0.88)',
             'backdrop-filter': 'blur(40px)',
             '-webkit-backdrop-filter': 'blur(40px)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
+            border: '1px solid var(--border-dim)',
             'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
           }}
         >
@@ -147,8 +147,8 @@ const UpdateNotification: Component = () => {
               <div
                 class="text-[12px] text-[#bbb] leading-relaxed rounded-lg p-2.5 max-h-[88px] overflow-y-auto"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid rgba(255, 255, 255, 0.05)',
+                  background: 'rgba(var(--text-base-rgb), 0.04)',
+                  border: '1px solid var(--border-dim)',
                   'white-space': 'pre-wrap',
                   'word-break': 'break-word',
                 }}
@@ -184,7 +184,7 @@ const UpdateNotification: Component = () => {
                 </div>
                 <div
                   class="h-1.5 rounded-full overflow-hidden"
-                  style={{ background: 'rgba(255, 255, 255, 0.08)' }}
+                  style={{ background: 'rgba(var(--text-base-rgb), 0.08)' }}
                 >
                   <div
                     class="h-full rounded-full transition-all duration-200"
@@ -229,9 +229,9 @@ const UpdateNotification: Component = () => {
                 <button
                   class="px-4 py-2 rounded-lg text-sm cursor-pointer transition-all duration-200 hover:bg-white/10 active:scale-95"
                   style={{
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    color: 'rgba(255, 255, 255, 0.7)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    background: 'rgba(var(--text-base-rgb), 0.05)',
+                    color: 'rgba(var(--text-base-rgb), 0.7)',
+                    border: '1px solid var(--border-dim)',
                   }}
                   onClick={handleDismiss}
                 >

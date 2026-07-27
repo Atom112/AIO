@@ -85,28 +85,28 @@ const ModelBreakdown: Component<Props> = (props) => {
           <div
             class="rounded-lg px-4 py-3 transition-colors duration-150 hover:bg-white/[0.02]"
             style={{
-              background: 'rgba(255, 255, 255, 0.035)',
-              border: '1px solid rgba(255,255,255,0.04)',
+              background: 'rgba(var(--text-base-rgb), 0.035)',
+              border: '1px solid var(--border-dim)',
             }}
           >
             {/* 主行：模型名 + 占比 + 条形图 */}
             <div class="flex items-center gap-3">
               <span
                 class="text-sm font-medium truncate min-w-0 flex-1"
-                style={{ color: 'rgba(255,255,255,0.8)' }}
+                style={{ color: 'rgba(var(--text-base-rgb),0.8)' }}
               >
                 {item.displayName}
               </span>
               <span
                 class="text-xs font-mono shrink-0 w-12 text-right"
-                style={{ color: 'rgba(255,255,255,0.35)' }}
+                style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
               >
                 {item.pct.toFixed(1)}%
               </span>
               {/* 条形图 */}
               <div
                 class="flex-1 h-2 rounded-full overflow-hidden"
-                style={{ background: 'rgba(255,255,255,0.04)' }}
+                style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
               >
                 <div
                   class="h-full rounded-full transition-all duration-500"
@@ -121,13 +121,13 @@ const ModelBreakdown: Component<Props> = (props) => {
             {/* 次级行：input/output + 费用 */}
             <div
               class="flex items-center gap-3 mt-1.5 text-[10px] font-mono"
-              style={{ color: 'rgba(255,255,255,0.25)' }}
+              style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
             >
               <span class="flex-1" />
               <span>↗ {fmt(item.inputTokens)}</span>
               <span>↘ {fmt(item.outputTokens)}</span>
               <Show when={item.cost > 0}>
-                <span style={{ color: 'rgba(255,255,255,0.4)' }}>${item.cost.toFixed(2)}</span>
+                <span style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>${item.cost.toFixed(2)}</span>
               </Show>
               <Show when={item.requestCount > 0}>
                 <span>{t('usage.count', { count: item.requestCount })}</span>

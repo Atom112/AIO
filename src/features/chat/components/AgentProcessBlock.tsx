@@ -46,7 +46,7 @@ interface AgentProcessBlockProps {
 
 // ---- 步骤类型配置 ----
 const STEP_CONFIG: Record<AgentStep['type'], { icon: string; borderColor: string }> = {
-  thinking: { icon: 'brain', borderColor: 'rgba(124,154,191,0.55)' },
+  thinking: { icon: 'brain', borderColor: 'rgba(var(--primary-rgb),0.55)' },
   tool_call: { icon: 'wrench', borderColor: 'rgba(240,160,64,0.55)' },
   content: { icon: 'document', borderColor: 'rgba(156,163,175,0.35)' },
   subagent: { icon: 'sparkles', borderColor: 'rgba(140,120,220,0.55)' },
@@ -177,7 +177,7 @@ const StepCard: Component<{
       }}
       style={{
         '--step-border-color': getStepBorderColor(props.step),
-        'border-left': `2px solid var(--step-border-color, rgba(255, 255, 255, 0.12))`,
+        'border-left': `2px solid var(--step-border-color, var(--border-dim))`,
         transition: 'border-color 0.3s, background 0.2s',
         ...(props.step.status === 'running'
           ? {

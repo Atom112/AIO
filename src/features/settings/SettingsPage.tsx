@@ -1,4 +1,4 @@
-import { Component, JSX, Show, For } from 'solid-js';
+import { Component, JSX, Show, For, createMemo } from 'solid-js';
 import { A, useLocation } from '@solidjs/router';
 import { Transition } from 'solid-transition-group';
 import Icon from '../../shared/components/Icon';
@@ -17,7 +17,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
   /** 详情页 (匹配 /settings/provider/<id>) 时隐藏侧栏 */
   const isProviderDetail = () => /^\/settings\/provider\/[^/]+/.test(location.pathname);
 
-  const menuItems: Array<{ id: string; path: string; label: string; icon: JSX.Element }> = [
+  const menuItems = createMemo((): Array<{ id: string; path: string; label: string; icon: JSX.Element }> => [
     {
       id: 'provider',
       path: '/settings',
@@ -54,7 +54,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
       label: t('settings.app'),
       icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" />,
     },
-  ];
+  ]);
 
   const isActive = (path: string) => {
     if (path === '/settings')
@@ -71,9 +71,9 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         <div
           class="w-[200px] flex flex-col rounded-lg overflow-hidden shrink-0"
           style={{
-            background: 'rgba(18, 22, 35, 0.25)',
+            background: 'rgba(var(--surface-bg), 0.25)',
             'backdrop-filter': 'blur(30px)',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
+            border: '1px solid var(--border-dim)',
           }}
         >
           <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
@@ -81,7 +81,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
           </div>
 
           <div class="flex flex-col px-2">
-            <For each={menuItems}>
+            <For each={menuItems()}>
               {(item) => (
                 <A
                   href={item.path}

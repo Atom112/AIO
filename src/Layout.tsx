@@ -28,6 +28,7 @@ import {
   setModelsCatalogVersion,
   setModelsCatalogGeneratedAt,
   setProviderConfigs,
+  isDarkMode,
 } from './core/store/store';
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
 import type { ProviderConfigFile } from './core/utils/models';
@@ -145,9 +146,13 @@ const Layout: Component<ParentProps> = (props) => {
       class="app-container h-screen flex flex-col overflow-hidden rounded-xl"
       style={{
         background: [
-          'radial-gradient(ellipse 100% 70% at 25% 15%, rgba(70, 120, 200, 0.45), transparent 60%)',
-          'radial-gradient(ellipse 80% 90% at 70% 85%, rgba(50, 90, 140, 0.35), transparent 55%)',
-          'linear-gradient(135deg, #1e3a5f 0%, #2d2d5e 30%, #3d2d5a 50%, #2a2050 70%, #1a2540 100%)',
+          isDarkMode()
+            ? '#0a0e1a'
+            : [
+                'radial-gradient(ellipse 100% 70% at 25% 15%, rgba(70, 120, 200, 0.45), transparent 60%)',
+                'radial-gradient(ellipse 80% 90% at 70% 85%, rgba(50, 90, 140, 0.35), transparent 55%)',
+                'linear-gradient(135deg, #1e3a5f 0%, #2d2d5e 30%, #3d2d5a 50%, #2a2050 70%, #1a2540 100%)',
+              ].join(', '),
         ].join(', '),
       }}
     >

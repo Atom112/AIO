@@ -55,11 +55,11 @@ const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
       <div class="animate-welcome-text-fade-in text-center mb-8">
         <h1
           class="text-2xl font-bold mb-2 tracking-wide"
-          style={{ color: 'rgba(255,255,255,0.9)' }}
+          style={{ color: 'rgba(var(--text-base-rgb),0.9)' }}
         >
           {t('chat.welcome.title')}
         </h1>
-        <p class="text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
+        <p class="text-sm" style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}>
           {t('chat.welcome.subtitle')}
         </p>
       </div>
@@ -72,17 +72,17 @@ const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
               class="animate-welcome-card-in flex items-center gap-2.5 px-4 py-3 rounded-xl cursor-pointer border-none text-left transition-all duration-200"
               style={{
                 'animation-delay': `${0.15 + index() * 0.08}s`,
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.05)',
+                background: 'rgba(var(--text-base-rgb),0.03)',
+                border: '1px solid var(--border-dim)',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                e.currentTarget.style.borderColor = 'rgba(124,154,191,0.25)';
+                e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
+                e.currentTarget.style.borderColor = 'rgba(var(--primary-rgb),0.25)';
                 e.currentTarget.style.transform = 'translateY(-1px)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
+                e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.03)';
+                e.currentTarget.style.borderColor = 'var(--border-dim)';
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
               onClick={() => props.onSuggestionClick(t(item.promptKey))}
@@ -90,7 +90,7 @@ const WelcomeScreen: Component<WelcomeScreenProps> = (props) => {
               <Icon name={item.icon} size={14} />
               <span
                 class="text-[13px] font-medium whitespace-nowrap overflow-hidden text-ellipsis"
-                style={{ color: 'rgba(255,255,255,0.75)' }}
+                style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
               >
                 {t(item.textKey)}
               </span>

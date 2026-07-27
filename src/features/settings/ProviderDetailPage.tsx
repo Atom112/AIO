@@ -703,7 +703,7 @@ const ProviderDetail: Component = () => {
               'text-red-300': !toast()!.ok,
             }}
             style={{
-              background: 'rgba(18, 22, 35, 0.88)',
+              background: 'rgba(var(--surface-bg), 0.88)',
               'backdrop-filter': 'blur(30px) saturate(180%)',
               '-webkit-backdrop-filter': 'blur(30px) saturate(180%)',
               animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',

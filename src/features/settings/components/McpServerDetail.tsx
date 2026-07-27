@@ -134,7 +134,7 @@ const McpServerDetail: Component<Props> = (props) => {
     >
       <div
         class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
-        style={{ background: 'rgba(18,22,35,0.95)', border: '1px solid rgba(255,255,255,0.1)' }}
+        style={{ background: 'rgba(var(--surface-bg),0.95)', border: '1px solid var(--border-dim)' }}
       >
         <h3 class="text-base font-semibold">
           {props.isNew ? t('mcp.detail.titleAdd') : t('mcp.detail.titleEdit')}
@@ -142,14 +142,14 @@ const McpServerDetail: Component<Props> = (props) => {
 
         {/* 名称 + 启用 */}
         <div class="flex flex-col gap-1">
-          <label class="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>
+          <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.name')}
           </label>
           <input
             class="px-3 py-1.5 rounded text-sm outline-none"
             style={{
               background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid var(--border-dim)',
               color: 'white',
             }}
             value={config().displayName}
@@ -166,21 +166,21 @@ const McpServerDetail: Component<Props> = (props) => {
             />
             {t('mcp.detail.autoStart')}
           </label>
-          <span class="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
+          <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.detail.autoStartHint')}
           </span>
         </div>
 
         {/* 传输类型 */}
         <div class="flex flex-col gap-1">
-          <label class="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>
+          <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.transport')}
           </label>
           <select
             class="px-3 py-1.5 rounded text-sm outline-none"
             style={{
               background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid var(--border-dim)',
               color: 'white',
             }}
             value={config().transport.transport}
@@ -211,14 +211,14 @@ const McpServerDetail: Component<Props> = (props) => {
             return (
               <>
                 <div class="flex flex-col gap-1">
-                  <label class="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
                     {t('mcp.detail.command')}
                   </label>
                   <input
                     class="px-3 py-1.5 rounded text-sm outline-none"
                     style={{
                       background: 'rgba(0,0,0,0.3)',
-                      border: '1px solid rgba(255,255,255,0.1)',
+                      border: '1px solid var(--border-dim)',
                       color: 'white',
                     }}
                     value={trans().command}
@@ -229,12 +229,12 @@ const McpServerDetail: Component<Props> = (props) => {
                 <div class="flex flex-col gap-1">
                   <label
                     class="text-xs flex items-center justify-between"
-                    style={{ color: 'rgba(255,255,255,0.6)' }}
+                    style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
                   >
                     {t('mcp.detail.args')}
                     <button
                       class="text-xs px-2 py-0.5 rounded"
-                      style={{ background: 'rgba(124,154,191,0.2)' }}
+                      style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
                       onClick={addStdioArg}
                     >
                       {t('mcp.detail.add')}
@@ -247,7 +247,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           class="flex-1 px-3 py-1.5 rounded text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
-                            border: '1px solid rgba(255,255,255,0.1)',
+                            border: '1px solid var(--border-dim)',
                             color: 'white',
                           }}
                           value={arg}
@@ -270,12 +270,12 @@ const McpServerDetail: Component<Props> = (props) => {
                 <div class="flex flex-col gap-1">
                   <label
                     class="text-xs flex items-center justify-between"
-                    style={{ color: 'rgba(255,255,255,0.6)' }}
+                    style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
                   >
                     {t('mcp.detail.env')}
                     <button
                       class="text-xs px-2 py-0.5 rounded"
-                      style={{ background: 'rgba(124,154,191,0.2)' }}
+                      style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
                       onClick={addEnvEntry}
                     >
                       {t('mcp.detail.add')}
@@ -288,7 +288,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           class="w-1/3 px-2 py-1.5 rounded text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
-                            border: '1px solid rgba(255,255,255,0.1)',
+                            border: '1px solid var(--border-dim)',
                             color: 'white',
                           }}
                           value={k}
@@ -298,7 +298,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
-                            border: '1px solid rgba(255,255,255,0.1)',
+                            border: '1px solid var(--border-dim)',
                             color: 'white',
                           }}
                           value={v.includes('${KEYRING:') ? t('mcp.detail.savedToKeychain') : v}
@@ -350,14 +350,14 @@ const McpServerDetail: Component<Props> = (props) => {
               >;
             return (
               <div class="flex flex-col gap-1">
-                <label class="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
                   URL
                 </label>
                 <input
                   class="px-3 py-1.5 rounded text-sm outline-none"
                   style={{
                     background: 'rgba(0,0,0,0.3)',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    border: '1px solid var(--border-dim)',
                     color: 'white',
                   }}
                   value={trans().url}
@@ -385,8 +385,8 @@ const McpServerDetail: Component<Props> = (props) => {
           <button
             class="px-3 py-1.5 rounded text-sm cursor-pointer transition-colors"
             style={{
-              background: 'rgba(124,154,191,0.2)',
-              border: '1px solid rgba(124,154,191,0.3)',
+              background: 'rgba(var(--primary-rgb),0.2)',
+              border: '1px solid rgba(var(--primary-rgb),0.3)',
             }}
             disabled={testing()}
             onClick={handleTest}
@@ -413,7 +413,7 @@ const McpServerDetail: Component<Props> = (props) => {
         <Show when={availableTools().length > 0}>
           <div class="flex flex-col gap-2">
             <div class="flex items-center justify-between">
-              <label class="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>
+              <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
                 {t('mcp.detail.toolWhitelist')}（
                 {config().enabledTools.length === 0
                   ? t('mcp.detail.enableAll')
@@ -423,14 +423,14 @@ const McpServerDetail: Component<Props> = (props) => {
               <div class="flex gap-2">
                 <button
                   class="text-xs px-2 py-0.5 rounded"
-                  style={{ background: 'rgba(124,154,191,0.2)' }}
+                  style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
                   onClick={selectAllTools}
                 >
                   {t('mcp.detail.selectAll')}
                 </button>
                 <button
                   class="text-xs px-2 py-0.5 rounded"
-                  style={{ background: 'rgba(255,255,255,0.05)' }}
+                  style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
                   onClick={deselectAllTools}
                 >
                   {t('mcp.detail.clearAll')}
@@ -442,7 +442,7 @@ const McpServerDetail: Component<Props> = (props) => {
                 {(tool) => (
                   <label
                     class="flex items-start gap-2 text-xs px-2 py-1 rounded cursor-pointer"
-                    style={{ background: 'rgba(255,255,255,0.03)' }}
+                    style={{ background: 'rgba(var(--text-base-rgb),0.03)' }}
                   >
                     <input
                       type="checkbox"
@@ -454,10 +454,10 @@ const McpServerDetail: Component<Props> = (props) => {
                       class="mt-0.5"
                     />
                     <div class="flex-1 min-w-0">
-                      <div class="font-mono" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                      <div class="font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
                         {tool.function.name}
                       </div>
-                      <div style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      <div style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
                         {tool.function.description}
                       </div>
                     </div>
@@ -473,8 +473,8 @@ const McpServerDetail: Component<Props> = (props) => {
           <button
             class="px-3 py-1.5 rounded text-sm cursor-pointer"
             style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(var(--text-base-rgb),0.05)',
+              border: '1px solid var(--border-dim)',
             }}
             onClick={() => props.onCancel()}
           >

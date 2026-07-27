@@ -213,12 +213,12 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       style={{
         width: props.isCollapsed ? '48px' : `${props.width}%`,
         padding: props.isCollapsed ? '6px 4px' : '15px',
-        background: 'rgba(18, 22, 35, 0.15)',
+        background: 'rgba(var(--surface-bg), 0.15)',
         'backdrop-filter': 'blur(30px)',
         '-webkit-backdrop-filter': 'blur(30px)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
+        border: '1px solid var(--border-dim)',
         'border-radius': '12px',
-        'box-shadow': 'inset 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
+        'box-shadow': 'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
@@ -234,13 +234,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
               classList={{
-                '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]': isChatActive(),
+                '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]': isChatActive(),
               }}
               onClick={switchToChat}
             >
               <span
                 class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]"
-                style={{ color: 'rgba(255,255,255,0.85)' }}
+                style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
               >
                 <Icon name="chat" size={14} class="shrink-0" />{' '}
                 <span class="truncate">{t('project.sidebar.dialog')}</span>
@@ -248,12 +248,12 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             </div>
 
             {/* 分隔线 */}
-            <div class="my-3 border-t" style={{ 'border-color': 'rgba(255,255,255,0.06)' }} />
+            <div class="my-3 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
 
             {/* 项目区域 */}
             <div
               class="flex items-center h-12 text-xs uppercase tracking-[1.5px] font-semibold px-3 mb-1"
-              style={{ color: 'rgba(255,255,255,0.35)' }}
+              style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
             >
               {t('project.sidebar.project')}
             </div>
@@ -265,7 +265,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   <div
                     class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                     classList={{
-                      '!bg-[rgba(124,154,191,0.22)] !border-[rgba(124,154,191,0.22)]': isActive(),
+                      '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]': isActive(),
                     }}
                     onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                     onClick={() => switchToProject(project.id)}
@@ -275,7 +275,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                       fallback={
                         <span
                           class="flex-grow inline-flex items-center gap-1.5 text-[0.95rem] overflow-hidden pr-[10px]"
-                          style={{ color: 'rgba(255,255,255,0.85)' }}
+                          style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
                         >
                           <Icon name="folder" size={14} class="shrink-0" />{' '}
                           <span class="truncate">{project.name}</span>
@@ -286,8 +286,8 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                         class="flex-grow rounded px-2 py-0.5 text-[0.85rem] h-6 outline-none mx-1"
                         style={{
                           background: 'rgba(0,0,0,0.3)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          color: 'rgba(255,255,255,0.85)',
+                          border: '1px solid var(--border-dim)',
+                          color: 'rgba(var(--text-base-rgb),0.85)',
                         }}
                         value={project.name}
                         ref={(el) => {
@@ -325,13 +325,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             <button
               class="w-full mt-[10px] px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
               style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.06)',
-                color: 'rgba(255,255,255,0.6)',
+                background: 'rgba(var(--text-base-rgb),0.04)',
+                border: '1px solid var(--border-dim)',
+                color: 'rgba(var(--text-base-rgb),0.6)',
               }}
               onClick={() => setShowProjectCreateModal(true)}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(124,154,191,0.12)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')}
             >
               新建项目
             </button>
@@ -346,13 +346,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
           <div class="flex flex-col items-center gap-3 py-2 h-full">
             <button
               class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
-              style={isChatActive() ? 'background: rgba(124,154,191,0.30);' : ''}
+              style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
               onClick={switchToChat}
               title="对话"
             >
               <Icon name="chat" size={16} />
             </button>
-            <div class="w-5 border-t" style={{ 'border-color': 'rgba(255,255,255,0.06)' }} />
+            <div class="w-5 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
             <div class="flex flex-col items-center gap-1 flex-1 w-full overflow-y-auto">
               <For each={projectList()}>
                 {(project) => {
@@ -360,7 +360,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   return (
                     <div
                       class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
-                      style={isActive() ? 'background: rgba(124,154,191,0.30);' : ''}
+                      style={isActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
                       onClick={() => switchToProject(project.id)}
                       onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                       title={project.name}
@@ -454,8 +454,8 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         <div
           class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
           style={{
-            background: 'rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.6)',
+            background: 'rgba(var(--text-base-rgb),0.08)',
+            color: 'rgba(var(--text-base-rgb),0.6)',
             'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
           }}
           title={props.isCollapsed ? t('project.sidebar.expand') : t('project.sidebar.collapse')}

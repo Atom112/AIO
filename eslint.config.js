@@ -27,6 +27,7 @@ export default tseslint.config(
     },
     rules: {
       ...solid.configs['flat/typescript'].rules,
+      'no-unassigned-vars': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },

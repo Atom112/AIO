@@ -177,7 +177,7 @@ const NavBar: Component = () => {
           href="/chat"
           title={t('nav.chat')}
           activeClass="!text-pri font-bold"
-          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
+          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-theme-secondary hover:text-theme-primary hover:bg-white/[0.06] [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
@@ -188,7 +188,7 @@ const NavBar: Component = () => {
           href="/settings"
           title={t('nav.settings')}
           activeClass="!text-pri font-bold"
-          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-white/50 hover:text-white/85 hover:bg-white/[0.06] [app-region:no-drag]"
+          class="flex items-center gap-2 px-3 py-2 rounded-md transition-all duration-200 cursor-pointer text-theme-secondary hover:text-theme-primary hover:bg-white/[0.06] [app-region:no-drag]"
         >
           <Icon src="/icons/app-logo/settings-gear.svg" class="w-6 h-6" />
         </A>

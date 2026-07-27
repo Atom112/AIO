@@ -246,7 +246,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               <Show when={activeModel()}>
                 <span
                   class="ml-2 text-[11px] font-normal"
-                  style={{ color: 'rgba(124,154,191,0.7)' }}
+                  style={{ color: 'rgba(var(--primary-rgb),0.7)' }}
                 >
                   {t('project.currentModel', { model: activeModel()!.model_id })}
                 </span>
@@ -258,9 +258,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                 <div
                   class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                   style={{
-                    color: 'rgba(255,255,255,0.35)',
-                    background: 'rgba(255,255,255,0.04)',
-                    'border-bottom': '1px solid rgba(255,255,255,0.04)',
+                    color: 'rgba(var(--text-base-rgb),0.35)',
+                    background: 'rgba(var(--text-base-rgb),0.04)',
+                    'border-bottom': '1px solid var(--border-dim)',
                   }}
                 >
                   {t('chat.model.cloud')}
@@ -274,22 +274,22 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                       return (
                         <div
                           class="flex flex-row items-center gap-2.5 p-2 text-sm rounded-lg cursor-pointer select-none transition-all"
-                          style={{ color: 'rgba(255,255,255,0.5)' }}
+                          style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
                           classList={{
-                            '!bg-[rgba(124,154,191,0.12)] !border-l-[3px] !border-[rgba(124,154,191,0.2)]':
+                            '!bg-[rgba(var(--primary-rgb),0.12)] !border-l-[3px] !border-[rgba(var(--primary-rgb),0.2)]':
                               selected(),
                           }}
                           onClick={() => handlePickModel(model)}
                           onMouseEnter={(e) => {
                             if (!selected()) {
-                              e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                              e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
                               e.currentTarget.style.color = 'white';
                             }
                           }}
                           onMouseLeave={(e) => {
                             if (!selected()) {
                               e.currentTarget.style.background = 'transparent';
-                              e.currentTarget.style.color = 'rgba(255,255,255,0.5)';
+                              e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.5)';
                             }
                           }}
                         >
@@ -304,7 +304,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             <div class="max-w-[200px] text-[13px] text-white font-medium truncate">
                               {model.model_id}
                             </div>
-                            <div style={{ color: 'rgba(124,154,191,0.5)', 'font-size': '10px' }}>
+                            <div style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '10px' }}>
                               {model.owned_by}
                             </div>
                             <div class="flex gap-1 mt-0.5 flex-wrap">
@@ -351,17 +351,17 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                   <Show when={cloudModels().length === 0}>
                     <div
                       class="p-5 text-center text-[13px]"
-                      style={{ color: 'rgba(255,255,255,0.2)' }}
+                      style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}
                     >
                       <div>{t('chat.model.noCloud')}</div>
                       <div
                         class="text-[10px] mt-1.5 leading-relaxed"
-                        style={{ color: 'rgba(255,255,255,0.25)' }}
+                        style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
                       >
                         去{' '}
                         <span
                           style={{
-                            color: 'rgba(124,154,191,0.5)',
+                            color: 'rgba(var(--primary-rgb),0.5)',
                             'font-weight': '500',
                           }}
                         >
@@ -377,7 +377,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               <div
                 style={{
                   width: '1px',
-                  background: 'rgba(255,255,255,0.04)',
+                  background: 'rgba(var(--text-base-rgb),0.04)',
                   'align-self': 'stretch',
                 }}
               />
@@ -386,9 +386,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                 <div
                   class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
                   style={{
-                    color: 'rgba(255,255,255,0.35)',
-                    background: 'rgba(255,255,255,0.04)',
-                    'border-bottom': '1px solid rgba(255,255,255,0.04)',
+                    color: 'rgba(var(--text-base-rgb),0.35)',
+                    background: 'rgba(var(--text-base-rgb),0.04)',
+                    'border-bottom': '1px solid var(--border-dim)',
                   }}
                 >
                   {t('chat.model.local')}
@@ -400,22 +400,22 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                       return (
                         <div
                           class="flex flex-row items-center gap-2.5 p-2 text-sm rounded-lg cursor-pointer select-none transition-all"
-                          style={{ color: 'rgba(255,255,255,0.5)' }}
+                          style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
                           classList={{
-                            '!bg-[rgba(124,154,191,0.12)] !border-l-[3px] !border-[rgba(124,154,191,0.2)]':
+                            '!bg-[rgba(var(--primary-rgb),0.12)] !border-l-[3px] !border-[rgba(var(--primary-rgb),0.2)]':
                               selected(),
                           }}
                           onClick={() => handlePickModel(model)}
                           onMouseEnter={(e) => {
                             if (!selected()) {
-                              e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                              e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
                               e.currentTarget.style.color = 'white';
                             }
                           }}
                           onMouseLeave={(e) => {
                             if (!selected()) {
                               e.currentTarget.style.background = 'transparent';
-                              e.currentTarget.style.color = 'rgba(255,255,255,0.5)';
+                              e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.5)';
                             }
                           }}
                         >
@@ -430,7 +430,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             <div class="max-w-[180px] text-[13px] text-white font-medium truncate">
                               {model.model_id}
                             </div>
-                            <div style={{ color: 'rgba(124,154,191,0.5)', 'font-size': '10px' }}>
+                            <div style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '10px' }}>
                               {model.owned_by}
                             </div>
                           </div>
@@ -441,7 +441,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                   <Show when={localModels().length === 0}>
                     <div
                       class="p-5 text-center text-[13px]"
-                      style={{ color: 'rgba(255,255,255,0.2)' }}
+                      style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}
                     >
                       {t('chat.model.noLocal')}
                     </div>
@@ -455,7 +455,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('mcp.title')}
-              <span class="ml-2 text-[11px] font-normal" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              <span class="ml-2 text-[11px] font-normal" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
                 {t('project.skillHint')}
               </span>
             </label>
@@ -472,7 +472,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                         </div>
                         <div
                           class="text-[11px] truncate"
-                          style={{ color: 'rgba(255,255,255,0.4)' }}
+                          style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                         >
                           {transportLabel(server.transport)}
                         </div>
@@ -498,7 +498,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               <Show when={sortedMcpServers().length === 0}>
                 <div
                   class="px-3 py-5 text-center text-xs"
-                  style={{ color: 'rgba(255,255,255,0.35)' }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
                 >
                   {t('project.mcpEmpty')}
                 </div>
@@ -510,7 +510,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('project.skill')}
-              <span class="ml-2 text-[11px] font-normal" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              <span class="ml-2 text-[11px] font-normal" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
                 {t('project.skillHint')}
               </span>
             </label>
@@ -524,7 +524,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                         <div class="text-sm text-white truncate">{skill.name}</div>
                         <div
                           class="text-[11px] line-clamp-2"
-                          style={{ color: 'rgba(255,255,255,0.4)' }}
+                          style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                         >
                           {skill.description || skill.content}
                         </div>
@@ -541,7 +541,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               <Show when={sortedSkills().length === 0}>
                 <div
                   class="px-3 py-5 text-center text-xs"
-                  style={{ color: 'rgba(255,255,255,0.35)' }}
+                  style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
                 >
                   {t('project.skillEmpty')}
                 </div>

@@ -29,12 +29,12 @@ const ToolCallBubble: Component<Props> = (props) => {
   return (
     <div
       class="mb-1.5 rounded-md overflow-hidden text-xs animate-expand-width"
-      style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+      style={{ border: '1px solid var(--border-dim)' }}
     >
       {/* 更紧凑的头部：无衬底背景，仅 hover 时交互 */}
       <div
         class="flex items-center gap-1.5 px-2 py-1 cursor-pointer select-none rounded-md transition-colors duration-150"
-        style={{ background: 'rgba(255,255,255,0.03)' }}
+        style={{ background: 'rgba(var(--text-base-rgb),0.03)' }}
         classList={{ 'rounded-b-none': expanded() }}
         onClick={() => setExpanded(!expanded())}
       >
@@ -72,21 +72,21 @@ const ToolCallBubble: Component<Props> = (props) => {
         </span>
         <span
           class="font-medium truncate min-w-0"
-          style={{ color: 'rgba(255,255,255,0.65)', 'font-size': '11px' }}
+          style={{ color: 'rgba(var(--text-base-rgb),0.65)', 'font-size': '11px' }}
         >
           {tc().function.name}
         </span>
         <Show when={props.serverName}>
           <span
             class="text-[10px] px-1 py-[1px] rounded flex-shrink-0"
-            style={{ background: 'rgba(124,154,191,0.1)', color: 'rgba(124,154,191,0.7)' }}
+            style={{ background: 'rgba(var(--primary-rgb),0.1)', color: 'rgba(var(--primary-rgb),0.7)' }}
           >
             {props.serverName}
           </span>
         </Show>
         <span
           class="ml-auto flex-shrink-0"
-          style={{ color: 'rgba(255,255,255,0.25)', 'font-size': '9px', 'letter-spacing': '0.5px' }}
+          style={{ color: 'rgba(var(--text-base-rgb),0.25)', 'font-size': '9px', 'letter-spacing': '0.5px' }}
         >
           {props.state === 'calling' ? '…' : props.state === 'error' ? '✗' : '✓'}
         </span>
@@ -100,14 +100,14 @@ const ToolCallBubble: Component<Props> = (props) => {
         >
           <Show when={tc().function.arguments && tc().function.arguments !== '{}'}>
             <div>
-              <div class="mb-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              <div class="mb-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
                 {t('chat.tool.params')}
               </div>
               <pre
                 class="px-1.5 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all"
                 style={{
                   background: 'rgba(0,0,0,0.2)',
-                  color: 'rgba(255,255,255,0.55)',
+                  color: 'rgba(var(--text-base-rgb),0.55)',
                   'font-size': '10px',
                   'line-height': '1.4',
                 }}
@@ -118,7 +118,7 @@ const ToolCallBubble: Component<Props> = (props) => {
           </Show>
           <Show when={props.state === 'success' && props.result && props.result.length > 0}>
             <div>
-              <div class="mb-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              <div class="mb-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
                 {t('chat.tool.result')}
               </div>
               <div class="flex flex-col gap-0.5">
@@ -129,7 +129,7 @@ const ToolCallBubble: Component<Props> = (props) => {
                         class="px-1.5 py-1 rounded overflow-x-auto whitespace-pre-wrap break-all"
                         style={{
                           background: 'rgba(0,0,0,0.2)',
-                          color: 'rgba(255,255,255,0.55)',
+                          color: 'rgba(var(--text-base-rgb),0.55)',
                           'font-size': '10px',
                           'line-height': '1.4',
                           'max-height': '120px',
@@ -146,7 +146,7 @@ const ToolCallBubble: Component<Props> = (props) => {
                 <For each={props.result}>
                   {(c) => (
                     <Show when={c.type === 'image'}>
-                      <span style={{ color: 'rgba(255,255,255,0.4)', 'font-size': '10px' }}>
+                      <span style={{ color: 'rgba(var(--text-base-rgb),0.4)', 'font-size': '10px' }}>
                         {t('chat.tool.image')}
                       </span>
                     </Show>
@@ -155,7 +155,7 @@ const ToolCallBubble: Component<Props> = (props) => {
                 <For each={props.result}>
                   {(c) => (
                     <Show when={c.type === 'resource'}>
-                      <span style={{ color: 'rgba(255,255,255,0.4)', 'font-size': '10px' }}>
+                      <span style={{ color: 'rgba(var(--text-base-rgb),0.4)', 'font-size': '10px' }}>
                         {t('chat.tool.resource')}
                       </span>
                     </Show>

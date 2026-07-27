@@ -288,7 +288,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     <Portal>
       <div
         ref={menuRef}
-        class="fixed z-[9998] max-h-[280px] overflow-y-auto border border-white/[0.08] rounded-[10px] p-1.5 bg-[rgba(18,22,38,0.96)] shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_8px_32px_rgba(0,0,0,0.5)] transition-all duration-100 ease-out"
+        class="fixed z-[9998] max-h-[280px] overflow-y-auto border border-white/[0.08] rounded-[10px] p-1.5 bg-[rgba(18,22,38,0.96)] shadow-[0_0_0_1px_var(--border-dim),0_8px_32px_rgba(0,0,0,0.5)] transition-all duration-100 ease-out"
         style={{ ...menuStyle(), animation: 'slash-menu-in 0.1s ease-out' }}
         classList={{
           'invisible opacity-0 translate-y-1 pointer-events-none': !(

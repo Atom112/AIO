@@ -229,27 +229,15 @@ impl EngineInstaller {
     }
 
     /// 检测 NVIDIA GPU 是否可用
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn check_nvidia_gpu() -> bool {
-        #[cfg(target_os = "windows")]
-        {
-            std::process::Command::new("nvidia-smi")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .and_then(|mut c| c.wait())
-                .map(|s| s.success())
-                .unwrap_or(false)
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::process::Command::new("nvidia-smi")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .and_then(|mut c| c.wait())
-                .map(|s| s.success())
-                .unwrap_or(false)
-        }
+        std::process::Command::new("nvidia-smi")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut c| c.wait())
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     /// 获取已安装的版本

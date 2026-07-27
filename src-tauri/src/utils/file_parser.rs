@@ -252,11 +252,18 @@ pub async fn process_file_content(path: String) -> Result<String, String> {
     }
 }
 
-/// 校验模型路径在沙箱内（H8 强化）
+/// 校验模型路径安全性（不限制目录，仅验证路径合法 + 文件存在）。
+/// 模型文件由用户通过文件选择器主动指定，可以存放在任意位置。
 pub fn validate_model_path(path: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(path);
     if !p.is_absolute() {
         return Err("模型路径必须为绝对路径".into());
+    }
+    // 拒绝含 .. 的路径（防目录穿越）
+    for comp in p.components() {
+        if matches!(comp, std::path::Component::ParentDir) {
+            return Err("模型路径不允许包含 ..".into());
+        }
     }
     if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
         let ext_lower = ext.to_lowercase();
@@ -269,6 +276,8 @@ pub fn validate_model_path(path: &str) -> Result<PathBuf, String> {
     } else {
         return Err("模型文件必须有扩展名".into());
     }
-    path_in_sandbox(&p)?;
+    if !p.exists() {
+        return Err(format!("模型文件不存在: {}", path));
+    }
     Ok(p)
 }

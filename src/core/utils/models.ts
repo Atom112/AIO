@@ -37,6 +37,8 @@ export interface ProviderConfig {
   proxyUrl?: string;
   /** 从 API 持久化拉取的模型列表，用于仿 LobeHub 风格的双段 toggle 列表 */
   fetchedModels?: FetchedModel[];
+  /** 本地引擎专属：模型文件路径映射 { modelId -> localPath } */
+  localModelPaths?: Record<string, string>;
 }
 
 export interface ProviderConfigFile {
@@ -44,6 +46,62 @@ export interface ProviderConfigFile {
   updatedAt: string;
   providers: Record<string, ProviderConfig>;
 }
+
+// ==================== 本地推理引擎供应商定义 ====================
+
+/** 内置本地推理引擎供应商定义 */
+export interface LocalEngineProvider {
+  id: string; // provider identifier, e.g. 'local-llamacpp'
+  name: string; // display name, e.g. 'llama.cpp'
+  defaultApiUrl: string; // pre-filled URL, e.g. 'http://127.0.0.1:8080/v1'
+  engineType: string; // 'llama_cpp' | 'vllm' | 'ollama'
+  fileExtensions: string[]; // ['gguf'] for file picker, [] for no file picker
+  allowModelFileSelection: boolean;
+  engineInstallUrl?: string; // docs URL for manual install (not AIO auto-install)
+  /** 是否支持从 API 拉取模型列表（Ollama 的 /api/tags；llama.cpp/vLLM 启动时固定模型，无需拉取） */
+  supportsFetchModels?: boolean;
+}
+
+export const LOCAL_ENGINE_PROVIDERS: LocalEngineProvider[] = [
+  {
+    id: 'local-llamacpp',
+    name: 'llama.cpp',
+    defaultApiUrl: 'http://127.0.0.1:8080/v1',
+    engineType: 'llama_cpp',
+    fileExtensions: ['gguf'],
+    allowModelFileSelection: true,
+    engineInstallUrl: 'https://github.com/ggml-org/llama.cpp',
+    supportsFetchModels: false,
+  },
+  {
+    id: 'local-vllm',
+    name: 'vLLM',
+    defaultApiUrl: 'http://127.0.0.1:8000/v1',
+    engineType: 'vllm',
+    fileExtensions: [],
+    allowModelFileSelection: false,
+    engineInstallUrl: 'https://docs.vllm.ai',
+    supportsFetchModels: false,
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama',
+    defaultApiUrl: 'http://localhost:11434',
+    engineType: 'ollama',
+    fileExtensions: [],
+    allowModelFileSelection: false,
+    engineInstallUrl: 'https://ollama.ai',
+    supportsFetchModels: true,
+  },
+];
+
+/** 判断 provider id 是否是本地引擎 provider */
+export const isLocalEngineProvider = (id: string): boolean =>
+  LOCAL_ENGINE_PROVIDERS.some((p) => p.id === id);
+
+/** 根据 provider id 取 LocalEngineProvider 定义 */
+export const getLocalEngineProvider = (id: string): LocalEngineProvider | undefined =>
+  LOCAL_ENGINE_PROVIDERS.find((p) => p.id === id);
 
 export interface TestConnectionResult {
   success: boolean;

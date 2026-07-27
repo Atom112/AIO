@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { readFile } from '@tauri-apps/plugin-fs';
 import type { Catalog, CatalogSourceTag, ProviderConfig } from '../utils/models';
+import { isLocalEngineProvider, getLocalEngineProvider } from '../utils/models';
 import type {
   McpServerConfig,
   McpServerStatusInfo,
@@ -404,6 +405,10 @@ export interface ActiveModelEntry {
   apiUrl: string;
   apiKey: string;
   isCustom: boolean;
+  /** 本地引擎模型文件路径 */
+  local_path?: string;
+  /** 本地引擎类型 */
+  engine_type?: string;
 }
 
 export const activeProviderModels = (): ActiveModelEntry[] => {
@@ -412,14 +417,23 @@ export const activeProviderModels = (): ActiveModelEntry[] => {
   for (const cfg of Object.values(cfgs)) {
     if (!cfg.enabled) continue;
     for (const mid of cfg.enabledModels) {
-      out.push({
+      const entry: ActiveModelEntry = {
         provider: cfg.id,
         providerName: cfg.displayName,
         modelId: mid,
         apiUrl: cfg.apiUrl,
         apiKey: cfg.apiKey,
         isCustom: cfg.isCustom,
-      });
+      };
+      // 本地引擎：附加 engine_type（始终设置）+ local_path（有路径时）
+      if (isLocalEngineProvider(cfg.id)) {
+        entry.engine_type = getLocalEngineProvider(cfg.id)?.engineType;
+        const localPath = cfg.localModelPaths?.[mid];
+        if (localPath) {
+          entry.local_path = localPath;
+        }
+      }
+      out.push(entry);
     }
   }
   return out;
@@ -441,11 +455,10 @@ export const modelKey = (m: ActivatedModel): string => {
 
 /**
  * 当前可用的全部模型列表（云端 + 本地合并）。
- * 云端模型来自 providerConfigs，本地模型来自 datas.activatedModels。
+ * 云端模型来自 providerConfigs，本地引擎模型通过 providerConfigs 的 localModelPaths 注入。
  * 供助手设置弹窗的模型选择器与 resolveAssistantModel 解析使用。
  */
 export const allAvailableModels = (): ActivatedModel[] => {
-  // 云端模型：派生自 providerConfigs (lobehub 形态)
   const cloud = activeProviderModels().map(
     (m) =>
       ({
@@ -454,10 +467,14 @@ export const allAvailableModels = (): ActivatedModel[] => {
         api_url: m.apiUrl,
         api_key: m.apiKey,
         provider_id: m.provider,
+        ...(m.local_path ? { local_path: m.local_path, engine_type: m.engine_type } : {}),
       }) as ActivatedModel & { provider_id: string },
   );
-  // 本地模型：activatedModels 中带 local_path / engine_type 的项
-  const local = datas.activatedModels.filter((m) => isLocalModel(m));
+  // 旧版本地模型：仅保留与 providerConfigs 不重叠的（向后兼容）
+  const providerModelIds = new Set(cloud.map((m) => m.model_id + '@' + m.api_url));
+  const local = datas.activatedModels.filter(
+    (m) => isLocalModel(m) && !providerModelIds.has(m.model_id + '@' + (m.api_url ?? '')),
+  );
   return [...cloud, ...local];
 };
 
@@ -614,17 +631,22 @@ export const startLocalEngineForAssistant = async (
   model: ActivatedModel,
   asstId: string,
 ): Promise<void> => {
-  if (!model.local_path) return;
-  // M13 防护：未确认时不静默启动
-  if (!isLocalAutoStartConfirmed()) {
-    const ok = confirm(
-      t('provider.autoStartConfirm', { name: model.model_id, path: model.local_path }),
-    );
-    if (!ok) return;
-    setLocalAutoStartConfirmed();
+  // 外部引擎（Ollama）：无需启动进程，仅做运行态检测
+  const isExternalEngine = !model.local_path && !!model.engine_type;
+  if (!model.local_path && !isExternalEngine) return;
+
+  if (!isExternalEngine) {
+    // M13 防护：未确认时不静默启动
+    if (!isLocalAutoStartConfirmed()) {
+      const ok = confirm(
+        t('provider.autoStartConfirm', { name: model.model_id, path: model.local_path! }),
+      );
+      if (!ok) return;
+      setLocalAutoStartConfirmed();
+    }
+    const isRunning = await invoke<boolean>('is_local_server_running');
+    if (isRunning) return;
   }
-  const isRunning = await invoke<boolean>('is_local_server_running');
-  if (isRunning) return;
 
   const assistant = datas.assistants.find((a: any) => a.id === asstId);
   if (!assistant) return;
@@ -645,20 +667,29 @@ export const startLocalEngineForAssistant = async (
   try {
     setIsStartingLocalModel(true);
     setLocalModelStartProgress(0);
-    await invoke('start_local_server', {
-      modelPath: model.local_path,
-      port: 8080,
-      gpuLayers: 99,
-      engineType: model.engine_type || 'llama_cpp',
-      trustRemoteCode:
-        model.engine_type === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
-    });
 
+    if (!isExternalEngine) {
+      await invoke('start_local_server', {
+        modelPath: model.local_path,
+        port: 8080,
+        gpuLayers: 99,
+        engineType: model.engine_type || 'llama_cpp',
+        trustRemoteCode:
+          model.engine_type === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
+      });
+    }
+
+    const healthBaseUrl = model.api_url.replace(/\/+$/, '');
     let attempts = 0;
-    const maxAttempts = 60;
+    const maxAttempts = isExternalEngine ? 5 : 60;
     const poll = setInterval(async () => {
       attempts++;
-      const isReady = await checkServerHealth('http://127.0.0.1:8080/v1');
+      const isReady = isExternalEngine
+        ? await invoke<boolean>('probe_engine_health', {
+            apiUrl: healthBaseUrl,
+            engineType: model.engine_type,
+          }).catch(() => false)
+        : await checkServerHealth(healthBaseUrl);
       if (isReady) {
         clearInterval(poll);
         setLocalModelStartProgress(100);
@@ -919,10 +950,10 @@ export const initMcpServers = async (projectId?: string | null) => {
       }
     });
 
-    // 自动启动标记为 autoStart 的 server
+    // 自动启动标记为 autoStart 的 server（跳过已连接的，避免重复启动）
     // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）
     const autoStartIds = Object.values(map)
-      .filter((cfg) => cfg.autoStart)
+      .filter((cfg) => cfg.autoStart && !statusMap[cfg.id])
       .map((cfg) => cfg.id);
     if (autoStartIds.length > 0) {
       const pid = projectId ?? null;
@@ -1214,3 +1245,30 @@ export interface WorkflowState {
 
 /** 当前活跃的工作流状态，null 表示无活跃工作流 */
 export const [workflowState, setWorkflowState] = createSignal<WorkflowState | null>(null);
+
+// ====== 引擎扫描缓存（应用启动时扫一次） ======
+
+export interface EngineScanEntry {
+  id: string;
+  name: string;
+  installed: boolean;
+  version: string | null;
+  defaultPort: number;
+  defaultApiUrl: string;
+}
+
+/** 引擎扫描结果缓存，null = 尚未扫描 */
+export const [engineScanResults, setEngineScanResults] = createSignal<EngineScanEntry[] | null>(
+  null,
+);
+
+/** 应用启动时扫描一次已安装的推理引擎 */
+export const initEngineScan = async () => {
+  try {
+    const results = await invoke<EngineScanEntry[]>('scan_installed_engines');
+    setEngineScanResults(results);
+  } catch (e) {
+    console.error('[engine] init scan failed:', e);
+    setEngineScanResults([]);
+  }
+};

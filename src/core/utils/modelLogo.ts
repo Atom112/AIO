@@ -70,6 +70,8 @@ import zaiSvg from '@lobehub/icons-static-svg/icons/zai.svg?raw';
 import zhipuColorSvg from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw';
 import zenmuxSvg from '@lobehub/icons-static-svg/icons/zenmux.svg?raw';
 import replitColorSvg from '@lobehub/icons-static-svg/icons/replit-color.svg?raw';
+import llamacppIconSvg from '../assets/llamacpp-icon.svg?raw';
+import vllmColorSvg from '@lobehub/icons-static-svg/icons/vllm-color.svg?raw';
 
 /** SVG 字符串 → data URL（base64 编码, UTF-8 安全） */
 function svgToDataUrl(svg: string): string {
@@ -159,6 +161,8 @@ const PROVIDER_LOGOS: Record<string, string> = {
   'github-copilot': svgToDataUrl(githubcopilotSvg),
   v0: svgToDataUrl(v0Svg), // Vercel v0
   lmstudio: svgToDataUrl(lmstudioSvg),
+  'local-llamacpp': svgToDataUrl(llamacppIconSvg),
+  'local-vllm': svgToDataUrl(vllmColorSvg),
   ollama: svgToDataUrl(ollamaSvg),
   'ollama-cloud': svgToDataUrl(ollamaSvg),
   opencode: svgToDataUrl(opencodeSvg),

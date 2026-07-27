@@ -490,15 +490,30 @@ const AppSettings: Component = () => {
             <span class="block text-[#eee] text-[14px]">{t('app.darkMode.title')}</span>
             <p class="text-xs text-white/35 mt-1">{t('app.darkMode.description')}</p>
           </div>
-          <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
-            <input
-              class="opacity-0 w-0 h-0 peer"
-              type="checkbox"
-              checked={isDarkMode()}
-              onChange={(e) => setIsDarkMode(e.currentTarget.checked)}
-            />
-            <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
-          </label>
+          <div class="flex rounded-md border border-white/10 overflow-hidden">
+            <button
+              type="button"
+              class="px-3 py-1 text-xs transition-all duration-200"
+              classList={{
+                'bg-pri-10 text-pri': !isDarkMode(),
+                'text-white/35 hover:text-white/60': isDarkMode(),
+              }}
+              onClick={() => setIsDarkMode(false)}
+            >
+              {t('app.darkMode.off')}
+            </button>
+            <button
+              type="button"
+              class="px-3 py-1 text-xs transition-all duration-200"
+              classList={{
+                'bg-pri-10 text-pri': isDarkMode(),
+                'text-white/35 hover:text-white/60': !isDarkMode(),
+              }}
+              onClick={() => setIsDarkMode(true)}
+            >
+              {t('app.darkMode.on')}
+            </button>
+          </div>
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">

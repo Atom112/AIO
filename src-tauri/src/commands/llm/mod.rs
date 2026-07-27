@@ -251,6 +251,14 @@ fn insert_usage_log(
     );
 }
 
+/// 通过 provider 插件系统规范化 chat completions URL。
+/// 对于 Ollama（11434 端口 / localhost / ollama 关键字），自动插入 /v1 前缀。
+fn normalize_chat_url(api_url: &str) -> String {
+    let mgr = crate::plugins::provider::ProviderManager::new();
+    let plugin = mgr.for_url(api_url);
+    plugin.chat_completions_url(api_url)
+}
+
 /// 单轮流式请求：构造 body → POST → 解析 SSE → 累积 content/reasoning/tool_calls → emit 增量事件。
 ///
 /// 与旧 `call_llm_stream` 的差异：
@@ -269,7 +277,7 @@ async fn stream_one_round(
     window: &Window,
     token: &CancellationToken,
     client: &reqwest::Client,
-    mut api_url: String,
+    api_url: String,
     api_key: &str,
     model: &str,
     messages: &[serde_json::Value],
@@ -278,12 +286,7 @@ async fn stream_one_round(
     topic_id: &str,
     suppress_events: bool,
 ) -> Result<RoundResult, String> {
-    api_url = api_url.trim_end_matches('/').to_string();
-    let final_url = if !api_url.ends_with("/chat/completions") {
-        format!("{}/chat/completions", api_url)
-    } else {
-        api_url
-    };
+    let final_url = normalize_chat_url(&api_url);
 
     let mut body_map = serde_json::Map::new();
     body_map.insert("model".into(), json!(model));
@@ -3018,11 +3021,7 @@ async fn compress_context(
         "stream": false,
         "max_tokens": 1024
     });
-
-    let base_url = api_url
-        .trim_end_matches('/')
-        .replace("/chat/completions", "");
-    let endpoint = format!("{}/chat/completions", base_url);
+    let endpoint = normalize_chat_url(api_url);
 
     let res = tokio::select! {
         _ = token.cancelled() => return Err("cancelled".into()),
@@ -3111,12 +3110,7 @@ pub async fn summarize_history(
         "messages": messages_for_api,
         "stream": false
     });
-
-    let base_url = api_url
-        .trim_end_matches('/')
-        .replace("/chat/completions", "");
-    let endpoint = format!("{}/chat/completions", base_url);
-
+    let endpoint = normalize_chat_url(&api_url);
     let res = tokio::time::timeout(
         std::time::Duration::from_secs(45),
         client
@@ -3503,11 +3497,7 @@ pub async fn generate_topic_title(
         "temperature": 0.0
     });
 
-    let base_url = api_url
-        .trim_end_matches('/')
-        .replace("/chat/completions", "");
-    let endpoint = format!("{}/chat/completions", base_url);
-
+    let endpoint = normalize_chat_url(&api_url);
     let res = tokio::time::timeout(
         std::time::Duration::from_secs(45),
         client

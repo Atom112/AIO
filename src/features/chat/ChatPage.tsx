@@ -39,6 +39,7 @@ import {
   ensureProjectAssistant,
   setShowProjectCreateModal,
   getLastAgentProjectId,
+  initMcpServers,
 } from '../../core/store/store';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import {
@@ -2472,6 +2473,14 @@ ${asstObj.prompt}`;
         console.debug('[LSP] 自动检测失败:', e);
       }
     })();
+  });
+
+  // 项目切换时初始化 MCP 服务器（含内置文件系统 MCP 的自动连接）
+  createEffect(() => {
+    const pid = currentProjectId();
+    if (pid) {
+      void initMcpServers(pid);
+    }
   });
 
   /**

@@ -12,10 +12,9 @@
  * - 列表上的 inline 开关: 仅修改 `enabled` 标志, 详细配置在 ProviderDetail 页
  * - 保存: 写入整个 providerConfigs map (与 ProviderDetail 一致)
  */
-import { Component, createSignal, For, Show, onMount, createMemo, onCleanup } from 'solid-js';
+import { Component, createSignal, For, Show, onMount, createMemo } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
 import { invoke } from '@tauri-apps/api/core';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon from '../../../shared/components/Icon';
 import {
   providerConfigs,
@@ -28,264 +27,13 @@ import {
   formatRelativeTime,
   searchProviders,
   loadModelsCatalog,
+  LOCAL_ENGINE_PROVIDERS,
+  isLocalEngineProvider,
+  type LocalEngineProvider,
 } from '../../../core/utils/models';
 import { getProviderLogo } from '../../../core/utils/modelLogo';
 import type { ProviderConfig, ProviderMeta } from '../../../core/utils/models';
 import { formatNumber, reportError, t } from '../../../core/i18n';
-
-// ============== 本地模型子组件 (从 ProviderSettings.tsx 抽出) ==============
-
-interface LocalModel {
-  model_id: string;
-  owned_by: string;
-  api_url: string;
-  api_key: string;
-  local_path?: string;
-  engine_type?: string;
-}
-
-const ENGINE_OPTIONS = [
-  { id: 'llama_cpp', name: 'llama.cpp', ownedBy: 'Local-llama.cpp', extensions: ['gguf'] },
-] as const;
-
-const LocalEngineSection: Component = () => {
-  const [localModelPath, setLocalModelPath] = createSignal('');
-  const [isLocalRunning, setIsLocalRunning] = createSignal(false);
-  const [localActivatedModels, setLocalActivatedModels] = createSignal<LocalModel[]>([]);
-  const [localSaveStatus, setLocalSaveStatus] = createSignal('');
-  const [enginesStatus, setEnginesStatus] = createSignal<any>(null);
-
-  let pollHandle: number | null = null;
-
-  const refreshLocalStatus = async () => {
-    try {
-      const running: boolean = await invoke('is_local_server_running');
-      setIsLocalRunning(running);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  onMount(async () => {
-    try {
-      const models: LocalModel[] = (await invoke('load_activated_models')) || [];
-      setLocalActivatedModels(models);
-    } catch {
-      /* ignore */
-    }
-    try {
-      const cfg: any = await invoke('load_app_config');
-      if (cfg?.localModelPath) setLocalModelPath(cfg.localModelPath);
-    } catch {
-      /* ignore */
-    }
-    try {
-      const s = await invoke('get_engines_status');
-      setEnginesStatus(s);
-    } catch {
-      /* ignore */
-    }
-    refreshLocalStatus();
-    pollHandle = window.setInterval(refreshLocalStatus, 3000);
-  });
-
-  onCleanup(() => {
-    if (pollHandle !== null) clearInterval(pollHandle);
-  });
-
-  const pickLocalFile = async () => {
-    try {
-      const file = await openDialog({
-        multiple: false,
-        filters: [{ name: 'GGUF', extensions: ['gguf'] }],
-      });
-      if (file && typeof file === 'string') {
-        setLocalModelPath(file);
-        setLocalSaveStatus(t('provider.selectedPath', { path: file }));
-        setTimeout(() => setLocalSaveStatus(''), 3000);
-      }
-    } catch (e) {
-      alert(reportError('error.load', e));
-    }
-  };
-
-  const addLocalModel = async () => {
-    const path = localModelPath();
-    if (!path) return alert(t('provider.modelRequired'));
-    const engine = ENGINE_OPTIONS[0];
-    const fileName = path.split(/[\\/]/).pop() || 'local-model';
-    const modelName = fileName.replace(/\.[^/.]+$/, '');
-    if (localActivatedModels().find((m) => m.local_path === path)) return;
-    const newLocal: LocalModel = {
-      model_id: modelName,
-      owned_by: engine.ownedBy,
-      api_url: 'http://127.0.0.1:8080/v1',
-      api_key: 'local-no-key',
-      local_path: path,
-      engine_type: engine.id,
-    };
-    const newList = [...localActivatedModels(), newLocal];
-    setLocalActivatedModels(newList);
-    await invoke('save_activated_models', { models: newList });
-    setLocalSaveStatus(t('provider.localAdded', { name: modelName }));
-    setTimeout(() => setLocalSaveStatus(''), 3000);
-  };
-
-  const toggleLocalEngine = async () => {
-    if (isLocalRunning()) {
-      await invoke('stop_local_server');
-      setIsLocalRunning(false);
-      setLocalSaveStatus(t('provider.localStopped'));
-    } else {
-      if (!localModelPath()) return alert(t('provider.modelRequired'));
-      try {
-        const currentCfg: any = await invoke('load_app_config');
-        await invoke('save_app_config', {
-          config: { ...currentCfg, localModelPath: localModelPath() },
-        });
-        setLocalSaveStatus(t('provider.localStarting'));
-        const engine = ENGINE_OPTIONS[0];
-        // vLLM: 用户确认 --trust-remote-code
-        let trustRemoteCode = false;
-        if ((engine.id as string) === 'vllm') {
-          trustRemoteCode = window.confirm(
-            '[!] 安全警告\n\nvLLM 的 --trust-remote-code 选项允许模型仓库中的\n' +
-              'Python 代码以当前用户权限执行。\n\n' +
-              '仅当你信任该模型来源时才启用此选项。\n\n' +
-              '是否启用 --trust-remote-code？',
-          );
-        }
-        const serverUrl: string = await invoke('start_local_server', {
-          modelPath: localModelPath(),
-          port: 8080,
-          gpuLayers: 99,
-          engineType: engine.id,
-          trustRemoteCode,
-        });
-        setIsLocalRunning(true);
-        setLocalSaveStatus(t('provider.localReady'));
-        const fullPath = localModelPath();
-        const fileNameWithExt = fullPath.split(/[\\/]/).pop() || 'local-model';
-        const modelName = fileNameWithExt.replace(/\.[^/.]+$/, '');
-        const newLocal: LocalModel = {
-          model_id: modelName,
-          owned_by: engine.ownedBy,
-          api_url: serverUrl,
-          api_key: 'local-no-key',
-          engine_type: engine.id,
-        };
-        if (
-          !localActivatedModels().some((m) => m.model_id === modelName && m.api_url === serverUrl)
-        ) {
-          const newList = [...localActivatedModels(), newLocal];
-          setLocalActivatedModels(newList);
-          await invoke('save_activated_models', { models: newList });
-        }
-        setLocalSaveStatus(t('provider.localStarted', { name: modelName, engine: engine.name }));
-      } catch (err) {
-        alert(reportError('error.connection', err));
-        setIsLocalRunning(false);
-      }
-    }
-    setTimeout(() => setLocalSaveStatus(''), 3000);
-  };
-
-  const removeLocalModel = async (target: LocalModel) => {
-    const newList = localActivatedModels().filter(
-      (m) => !(m.model_id === target.model_id && m.api_url === target.api_url),
-    );
-    setLocalActivatedModels(newList);
-    await invoke('save_activated_models', { models: newList });
-  };
-
-  return (
-    <div class="glass-card mb-4 animate-row-in">
-      <div class="flex items-center justify-between mb-2.5">
-        <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-2">
-          <Icon name="cpu" class="text-pri" size={16} />
-          {t('provider.localEngine')}
-        </h3>
-        <Show when={localSaveStatus()}>
-          <span class="text-xs text-pri font-medium animate-row-in">{localSaveStatus()}</span>
-        </Show>
-      </div>
-      <div class="text-xs text-[#aaa] mb-3">
-        llama.cpp (GGUF) · {t('provider.currentPath')}:{' '}
-        <span class="font-mono text-[#ccc]">{localModelPath() || t('common.none')}</span>
-      </div>
-      <div class="flex gap-2 flex-wrap mb-3">
-        <button
-          class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
-          onClick={pickLocalFile}
-        >
-          <Icon name="folder" size={14} /> {t('provider.chooseModel')}
-        </button>
-        <button
-          class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
-          onClick={addLocalModel}
-        >
-          <Icon name="plus" size={14} /> {t('provider.addModel')}
-        </button>
-        <button
-          class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md text-dark-850 font-medium transition-all duration-200 active:scale-95"
-          style={{ 'background-color': isLocalRunning() ? '#E08090' : 'var(--primary-color)' }}
-          onClick={toggleLocalEngine}
-        >
-          <Show
-            when={isLocalRunning()}
-            fallback={<Icon name="play" size={12} class="text-dark-850" />}
-          >
-            <Icon name="stop" size={12} class="text-dark-850" />
-          </Show>
-          {isLocalRunning() ? t('provider.stopEngine') : t('provider.startEngine')}
-        </button>
-        <Show when={enginesStatus()}>
-          <span class="text-[10px] text-[#888] self-center ml-auto flex items-center gap-1">
-            <Show
-              when={enginesStatus()!.installed}
-              fallback={<Icon name="alert-triangle" size={12} class="text-yellow-400" />}
-            >
-              <Icon name="check-circle" size={12} class="text-green-400" />
-            </Show>
-            {enginesStatus()!.installed
-              ? t('provider.engineInstalled')
-              : t('provider.engineMissing')}
-          </span>
-        </Show>
-      </div>
-      <Show when={localActivatedModels().length > 0}>
-        <div class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">
-          {t('provider.activeLocalModels', { count: formatNumber(localActivatedModels().length) })}
-        </div>
-        <div class="flex flex-wrap gap-1.5">
-          <For each={localActivatedModels()}>
-            {(m, i) => (
-              <span
-                class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] font-mono animate-row-in"
-                style={{
-                  background: 'rgba(var(--primary-rgb), 0.15)',
-                  color: 'rgba(var(--primary-rgb), 1)',
-                  border: '1px solid rgba(var(--primary-rgb), 0.25)',
-                  'animation-delay': `${i() * 30}ms`,
-                }}
-              >
-                <span class="truncate max-w-[200px]">{m.model_id}</span>
-                <span class="text-[#888]">({m.owned_by})</span>
-                <button
-                  class="text-pri hover:text-white hover:bg-white/10 rounded-full w-4 h-4 flex items-center justify-center transition-colors"
-                  title={t('common.delete')}
-                  onClick={() => removeLocalModel(m)}
-                >
-                  <Icon name="x" size={10} />
-                </button>
-              </span>
-            )}
-          </For>
-        </div>
-      </Show>
-    </div>
-  );
-};
 
 // ============== Catalog 统计 + 同步 ==============
 
@@ -375,11 +123,11 @@ const ProviderList: Component = () => {
     return Object.values(providerConfigs()).filter((c) => c.isCustom);
   });
 
-  /** 搜索后的 catalog providers */
+  /** 搜索后的 catalog providers (排除本地引擎 supplier，它们单独渲染) */
   const filteredCatalog = createMemo(() => {
     const c = modelsCatalog();
     if (!c) return [] as ProviderMeta[];
-    return searchProviders(c, search());
+    return searchProviders(c, search()).filter((p) => !isLocalEngineProvider(p.id));
   });
 
   /** 搜索后的 catalog providers, 按字母排序, 启用的置顶 */
@@ -507,8 +255,6 @@ const ProviderList: Component = () => {
 
   return (
     <div class="h-full overflow-y-auto pr-1">
-      <LocalEngineSection />
-      <div class="border-t border-white/[0.06] my-4" />
       <CatalogStats />
 
       {/* 搜索 */}
@@ -630,6 +376,26 @@ const ProviderList: Component = () => {
             </For>
           </div>
         </Show>
+
+        {/* 本地推理引擎 */}
+        <div class="flex items-center gap-3 mt-5 mb-2">
+          <div class="flex-1 h-px bg-white/[0.06]" />
+          <span class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold shrink-0">
+            {t('provider.localEngines')}
+          </span>
+          <div class="flex-1 h-px bg-white/[0.06]" />
+        </div>
+        <div class="space-y-1.5">
+          <For each={LOCAL_ENGINE_PROVIDERS}>
+            {(ep) => (
+              <LocalEngineRow
+                engine={ep}
+                config={providerConfigs()[ep.id]}
+                onClick={() => navigate('/settings/provider/' + encodeURIComponent(ep.id))}
+              />
+            )}
+          </For>
+        </div>
 
         {/* 分隔线 */}
         <Show when={sortedCatalog().enabled.length > 0 && sortedCatalog().disabled.length > 0}>
@@ -946,6 +712,59 @@ const ProviderRow: Component<{
       <span class="text-[#666] text-lg transition-transform duration-200 group-hover:translate-x-0.5">
         ›
       </span>
+    </div>
+  );
+};
+
+// 本地引擎供应商行
+const LocalEngineRow: Component<{
+  engine: LocalEngineProvider;
+  config: ProviderConfig | undefined;
+  onClick: () => void;
+}> = (props) => {
+  const status = createMemo(() => {
+    if (props.config?.enabled)
+      return {
+        label: t('provider.configured'),
+        cls: 'bg-green-400/15 text-green-300 border border-green-400/20',
+      };
+    return {
+      label: t('provider.localInstallGuide'),
+      cls: 'bg-white/5 text-white/40 border border-white/[0.06]',
+    };
+  });
+  const modelCount = () => props.config?.enabledModels.length ?? 0;
+
+  return (
+    <div
+      class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
+      onClick={() => props.onClick()}
+    >
+      <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200">
+        {getProviderLogo(props.engine.id) ? (
+          <img
+            src={getProviderLogo(props.engine.id)!}
+            alt={props.engine.name}
+            class="w-5 h-5 object-contain"
+          />
+        ) : (
+          <Icon name="cpu" class="text-[#1a1e2c]" size={18} />
+        )}
+      </div>
+      <div class="grow min-w-0">
+        <div class="flex items-center gap-1.5">
+          <span class="text-sm text-white truncate font-medium">{props.engine.name}</span>
+          <span
+            class={`inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] ${status().cls}`}
+          >
+            {status().label}
+          </span>
+        </div>
+        <div class="text-[10px] text-[#888] font-mono mt-0.5">
+          {t('provider.modelCount', { count: modelCount() })}
+        </div>
+      </div>
+      <span class="text-[#666] text-lg transition-transform duration-200">›</span>
     </div>
   );
 };

@@ -2,6 +2,7 @@
 /// 提供统一的 LocalEnginePlugin trait 和 EngineManager 注册中心
 pub mod installer;
 pub mod llama_cpp;
+pub mod ollama;
 pub mod vllm;
 
 use std::collections::HashMap;
@@ -56,9 +57,22 @@ pub trait LocalEnginePlugin: Send + Sync {
         port: u16,
         gpu_layers: i32,
     ) -> std::process::Command;
-
     /// 解析 stderr 日志并返回进度值 (0.0~1.0)
     fn parse_progress_from_log(&self, line: &str) -> Option<f64>;
+
+    /// 深度检测：检查引擎是否实际安装在系统上（PATH / 包管理器 / 默认端口可访问）。
+    /// 默认实现调用 is_installed()；外部引擎应覆盖以检查 PATH + HTTP 可达。
+    fn detect_installation(&self, app: &AppHandle) -> crate::core::models::EngineInstallInfo {
+        crate::core::models::EngineInstallInfo {
+            installed: self.is_installed(app),
+            version: None,
+        }
+    }
+
+    /// 此引擎的默认端口（供前端预填 URL 和启动时使用）。
+    fn default_port(&self) -> u16 {
+        8080
+    }
 }
 
 /// 引擎管理器：维护所有已注册插件
@@ -73,6 +87,7 @@ impl EngineManager {
         };
         mgr.register(Box::new(llama_cpp::LlamaCppPlugin));
         mgr.register(Box::new(vllm::VllmPlugin));
+        mgr.register(Box::new(ollama::OllamaPlugin));
         mgr
     }
 
@@ -82,5 +97,13 @@ impl EngineManager {
 
     pub fn get(&self, id: &str) -> Option<&dyn LocalEnginePlugin> {
         self.plugins.get(id).map(|b| b.as_ref())
+    }
+
+    /// 返回所有已注册插件的引用（按标识符字母序排列）。
+    pub fn all_plugins(&self) -> Vec<&dyn LocalEnginePlugin> {
+        let mut plugins: Vec<&dyn LocalEnginePlugin> =
+            self.plugins.values().map(|b| b.as_ref()).collect();
+        plugins.sort_by_key(|p| p.identifier());
+        plugins
     }
 }

@@ -1,6 +1,7 @@
 /// 全局 Tauri 状态定义
 use dashmap::DashMap;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -14,11 +15,9 @@ pub struct StreamManager(pub Arc<DashMap<String, (JoinHandle<()>, CancellationTo
 /// 包装 SQLite 数据库连接
 pub struct DbState(pub parking_lot::Mutex<rusqlite::Connection>);
 
-/// 本地引擎进程内部状态（M11：合并为单锁避免死锁）
+/// 本地引擎进程内部状态
 #[derive(Default)]
 pub struct LocalEngineInner {
-    /// 当前引擎类型标识，如 "llama_cpp"
-    pub engine_type: String,
     /// 子进程句柄
     pub child_process: Option<std::process::Child>,
 }
@@ -32,15 +31,16 @@ impl Drop for LocalEngineInner {
     }
 }
 
-/// 当前运行的本地推理引擎进程状态
-pub struct LocalEngineState(pub Mutex<LocalEngineInner>);
+/// 当前运行的本地推理引擎进程状态（支持多引擎并发）。
+/// key = engine_type (e.g. "llama_cpp", "vllm")
+pub struct LocalEngineState(pub Mutex<HashMap<String, LocalEngineInner>>);
 
 impl LocalEngineState {
     pub fn new() -> Self {
-        Self(Mutex::new(LocalEngineInner::default()))
+        Self(Mutex::new(HashMap::new()))
     }
 
-    pub fn lock(&self) -> parking_lot::MutexGuard<'_, LocalEngineInner> {
+    pub fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<String, LocalEngineInner>> {
         self.0.lock()
     }
 }

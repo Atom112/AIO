@@ -7,10 +7,16 @@
  * - 开关 (model toggle / provider enabled / orphan remove): 立即 auto-save
  * - 文本字段 (URL/Key/Proxy/displayName): onInput 立即 auto-save
  */
-import { Component, createSignal, createMemo, Show, For, onMount } from 'solid-js';
+import { Component, createSignal, createMemo, Show, For, onMount, onCleanup } from 'solid-js';
 import { useNavigate, useParams } from '@solidjs/router';
 import { invoke } from '@tauri-apps/api/core';
-import { providerConfigs, setProviderConfigs, modelsCatalog } from '../../core/store/store';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import {
+  providerConfigs,
+  setProviderConfigs,
+  modelsCatalog,
+  engineScanResults,
+} from '../../core/store/store';
 import { loadModelsCatalog } from '../../core/utils/models';
 import {
   type ProviderConfig,
@@ -20,6 +26,7 @@ import {
   type TestConnectionResult,
   listProviderModels,
 } from '../../core/utils/models';
+import { getLocalEngineProvider } from '../../core/utils/models';
 import { getProviderLogo } from '../../core/utils/modelLogo';
 import ModelRow from '../../shared/components/ModelRow';
 import Icon from '../../shared/components/Icon';
@@ -34,6 +41,8 @@ const ProviderDetail: Component = () => {
 
   const providerId = () => decodeURIComponent(params.providerId);
   const isCustom = () => providerId().startsWith('custom-');
+  const localEngineDef = () => getLocalEngineProvider(providerId());
+  const isLocalEngine = () => localEngineDef() !== undefined;
 
   // ===== catalog / 状态 =====
   const [catalogReady, setCatalogReady] = createSignal(false);
@@ -52,6 +61,16 @@ const ProviderDetail: Component = () => {
 
   const [search, setSearch] = createSignal('');
   const [sortKey, setSortKey] = createSignal<SortKey>('releaseDesc');
+  const [isServerAlive, setIsServerAlive] = createSignal<'checking' | 'alive' | 'dead'>('checking');
+  // ===== 引擎安装状态（从应用启动时缓存的扫描结果中派生） =====
+  const engineInstallInfo = createMemo(() => {
+    if (!isLocalEngine()) return null;
+    const results = engineScanResults();
+    if (!results) return null; // 尚未扫描完成
+    const match = results.find((r) => r.id === localEngineDef()!.engineType);
+    return match ? { installed: match.installed, version: match.version } : null;
+  });
+  const [engineActionLoading, setEngineActionLoading] = createSignal(false);
 
   onMount(async () => {
     if (!modelsCatalog()) {
@@ -65,7 +84,10 @@ const ProviderDetail: Component = () => {
   const isCatalogProvider = () =>
     !isCustom() && !!cat()?.providers.find((p: ProviderMeta) => p.id === providerId());
 
-  /** 从 catalog 拿 provider 元数据; 找不到则用 fallback */
+  /** 用户对该 provider 的当前配置 (从 store) */
+  const userCfg = () => providerConfigs()[providerId()] ?? null;
+
+  /** 从 catalog 拿 provider 元数据; 找不到则用 fallback（local engine 等） */
   const providerMeta = createMemo(() => {
     const c = cat();
     if (!c) return null;
@@ -80,27 +102,38 @@ const ProviderDetail: Component = () => {
           }
         : null;
     }
-    return c.providers.find((p: ProviderMeta) => p.id === providerId()) ?? null;
+    const catMeta = c.providers.find((p: ProviderMeta) => p.id === providerId());
+    if (catMeta) return catMeta;
+    // 本地引擎 fallback
+    if (isLocalEngine()) {
+      const def = localEngineDef()!;
+      return {
+        id: def.id,
+        name: def.name,
+        modelCount: userCfg()?.enabledModels?.length ?? 0,
+        isLocalEngine: true,
+      };
+    }
+    return null;
   });
-
-  /** 用户对该 provider 的当前配置 (从 store) */
-  const userCfg = () => providerConfigs()[providerId()] ?? null;
 
   /** 写入磁盘并更新 store. overrides 用于局部修改 (如切换 enabledModels) */
   const persist = async (overrides: Partial<ProviderConfig> = {}) => {
     const cur = userCfg();
     const meta = providerMeta();
+    const localDef = localEngineDef();
     const next: ProviderConfig = {
       id: providerId(),
       enabled: cur?.enabled ?? false,
-      displayName: cur?.displayName ?? meta?.name ?? providerId(),
-      apiUrl: cur?.apiUrl ?? (meta as any)?.api ?? defaultApiUrl(providerId()),
+      displayName: cur?.displayName ?? localDef?.name ?? meta?.name ?? providerId(),
+      apiUrl: cur?.apiUrl ?? localDef?.defaultApiUrl ?? defaultApiUrl(providerId()),
       apiKey: cur?.apiKey ?? '',
       proxyUrl: cur?.proxyUrl,
       enabledModels: cur?.enabledModels ?? [],
-      isCustom: isCustom(),
+      isCustom: isCustom() || isLocalEngine(),
       customModelIds: cur?.customModelIds ?? [],
       fetchedModels: cur?.fetchedModels,
+      localModelPaths: cur?.localModelPaths,
       ...overrides,
     };
     const map = { ...providerConfigs() };
@@ -140,6 +173,93 @@ const ProviderDetail: Component = () => {
   /** Provider 启用 toggle */
   const toggleProviderEnabled = (enabled: boolean) => {
     persist({ enabled });
+  };
+
+  /** 选择本地模型文件（GGUF 等） */
+  const pickLocalModelFile = async () => {
+    if (!localEngineDef()) return;
+    try {
+      const file = await openDialog({
+        multiple: false,
+        filters: [{ name: localEngineDef()!.name, extensions: localEngineDef()!.fileExtensions }],
+      });
+      if (file && typeof file === 'string') {
+        const fileName = file.split(/[\\/]/).pop() || 'model';
+        const modelId = fileName.replace(/\.[^.]+$/, '');
+        const current = userCfg()?.localModelPaths ?? {};
+        const next = { ...current, [modelId]: file };
+        const enabled = userCfg()?.enabledModels ?? [];
+        const nextEnabled = enabled.includes(modelId) ? enabled : [...enabled, modelId];
+        persist({ localModelPaths: next, enabledModels: nextEnabled });
+      }
+    } catch {
+      /* user cancelled dialog */
+    }
+  };
+
+  /** 移除本地模型文件 */
+  const removeLocalModelFile = (modelId: string) => {
+    const current = userCfg()?.localModelPaths ?? {};
+    const next = { ...current };
+    delete next[modelId];
+    persist({
+      localModelPaths: Object.keys(next).length > 0 ? next : undefined,
+      enabledModels: (userCfg()?.enabledModels ?? []).filter((m) => m !== modelId),
+    });
+  };
+
+  /** 启动本地引擎 */
+  const handleStartEngine = async () => {
+    const def = localEngineDef();
+    if (!def || def.engineType === 'ollama') return;
+    setEngineActionLoading(true);
+    try {
+      const u = userCfg();
+      const paths = u?.localModelPaths ?? {};
+      const modelPath = Object.values(paths)[0];
+      if (!modelPath) {
+        setToast({ msg: t('provider.modelRequired'), ok: false });
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+      const port = def.engineType === 'vllm' ? 8000 : 8080;
+      await invoke('start_local_server', {
+        modelPath,
+        port,
+        gpuLayers: 99,
+        engineType: def.engineType,
+        trustRemoteCode: false,
+      });
+      setIsServerAlive('alive');
+      setToast({
+        msg: t('provider.localStarted', { name: modelPath, engine: def.name }),
+        ok: true,
+      });
+      setTimeout(() => setToast(null), 3000);
+    } catch (e) {
+      setToast({ msg: t('provider.localFailed', { error: String(e) }), ok: false });
+      setTimeout(() => setToast(null), 3000);
+    } finally {
+      setEngineActionLoading(false);
+    }
+  };
+
+  /** 停止本地引擎 */
+  const handleStopEngine = async () => {
+    const def = localEngineDef();
+    if (!def || def.engineType === 'ollama') return;
+    setEngineActionLoading(true);
+    try {
+      await invoke('stop_local_server', { engineType: def.engineType });
+      setIsServerAlive('dead');
+      setToast({ msg: t('provider.localStopped'), ok: true });
+      setTimeout(() => setToast(null), 3000);
+    } catch (e) {
+      setToast({ msg: String(e), ok: false });
+      setTimeout(() => setToast(null), 3000);
+    } finally {
+      setEngineActionLoading(false);
+    }
   };
 
   // ===== 模型分组 (修复 IIFE bug: 必须用 createMemo 保留响应式) =====
@@ -190,6 +310,7 @@ const ProviderDetail: Component = () => {
         apiUrl: u?.apiUrl ?? defaultApiUrl(providerId()),
         apiKey: u?.apiKey ?? '',
         proxyUrl: u?.proxyUrl ?? null,
+        engineType: isLocalEngine() ? (localEngineDef()?.engineType ?? null) : null,
       });
       if (r.success) {
         setTestState({
@@ -209,6 +330,90 @@ const ProviderDetail: Component = () => {
     }
   };
 
+  // ===== 本地引擎运行状态探测 =====
+  let alivePoll: number | undefined;
+  onMount(() => {
+    if (!isLocalEngine()) return;
+    const probe = async () => {
+      // 启动/停止操作进行中时跳过轮询，避免竞态覆盖状态
+      if (engineActionLoading()) return;
+      const u = userCfg();
+      if (!u?.apiUrl) {
+        setIsServerAlive('dead');
+        return;
+      }
+      try {
+        const engineType = localEngineDef()?.engineType;
+        if (engineType === 'llama_cpp' || engineType === 'vllm') {
+          const alive = await invoke<boolean>('probe_engine_health', {
+            apiUrl: u.apiUrl,
+            engineType: null,
+          });
+          setIsServerAlive(alive ? 'alive' : 'dead');
+        } else if (engineType === 'ollama') {
+          const alive = await invoke<boolean>('probe_engine_health', {
+            apiUrl: u.apiUrl,
+            engineType: 'ollama',
+          });
+          setIsServerAlive(alive ? 'alive' : 'dead');
+          if (alive) {
+            try {
+              const r = await invoke<{
+                success: boolean;
+                models: Array<{
+                  id: string;
+                  owned_by: string;
+                  display_name?: string;
+                  released_at?: string;
+                }>;
+                error: string | null;
+                elapsedMs: number;
+              }>('fetch_provider_models', {
+                apiUrl: u.apiUrl,
+                apiKey: '',
+                proxyUrl: null,
+                engineType: 'ollama',
+              });
+              if (r.success && r.models.length > 0) {
+                const incoming: FetchedModel[] = r.models.map((m) => ({
+                  id: m.id,
+                  ownedBy: m.owned_by,
+                  displayName: m.display_name,
+                  releasedAt: m.released_at,
+                }));
+                persist({ fetchedModels: incoming });
+                setFetchState({
+                  status: 'ok',
+                  msg: t('provider.fetchResult', { count: formatNumber(r.models.length) }),
+                  models: incoming,
+                });
+              }
+            } catch {
+              /* silence auto-fetch failures; next tick will retry */
+            }
+          } else {
+            persist({ fetchedModels: [] });
+          }
+        } else {
+          const r = await invoke<TestConnectionResult>('test_provider_connection', {
+            apiUrl: u.apiUrl,
+            apiKey: '',
+            proxyUrl: null,
+            engineType: engineType ?? null,
+          });
+          setIsServerAlive(r.success ? 'alive' : 'dead');
+        }
+      } catch {
+        setIsServerAlive('dead');
+      }
+    };
+    probe();
+    alivePoll = window.setInterval(probe, 5000);
+  });
+  onCleanup(() => {
+    clearInterval(alivePoll);
+  });
+
   const handleFetchModels = async () => {
     const u = userCfg();
     setFetchState({ status: 'fetching' });
@@ -227,6 +432,7 @@ const ProviderDetail: Component = () => {
         apiUrl: u?.apiUrl ?? '',
         apiKey: u?.apiKey ?? '',
         proxyUrl: u?.proxyUrl ?? null,
+        engineType: isLocalEngine() ? (localEngineDef()?.engineType ?? null) : null,
       });
       if (r.success) {
         const incoming: FetchedModel[] = r.models.map((m) => ({
@@ -240,7 +446,7 @@ const ProviderDetail: Component = () => {
           msg: t('provider.fetchResult', { count: formatNumber(r.models.length) }),
           models: incoming,
         });
-        if (isCustom()) {
+        if (isCustom() || localEngineDef()?.engineType === 'ollama') {
           persist({ fetchedModels: incoming });
         }
       } else {
@@ -320,6 +526,30 @@ const ProviderDetail: Component = () => {
                   </span>
                 </Show>
               </Show>
+              <Show when={isLocalEngine()}>
+                <span
+                  class="ml-2 inline-flex items-center gap-1 text-[10px]"
+                  classList={{
+                    'text-green-400': isServerAlive() === 'alive',
+                    'text-yellow-400': isServerAlive() === 'checking',
+                    'text-red-400': isServerAlive() === 'dead',
+                  }}
+                >
+                  <span
+                    class="w-1.5 h-1.5 rounded-full"
+                    classList={{
+                      'bg-green-400': isServerAlive() === 'alive',
+                      'bg-yellow-400': isServerAlive() === 'checking',
+                      'bg-red-400': isServerAlive() === 'dead',
+                    }}
+                  />
+                  {isServerAlive() === 'alive'
+                    ? t('provider.localRunning')
+                    : isServerAlive() === 'checking'
+                      ? t('engine.checking')
+                      : t('provider.notRunning')}
+                </span>
+              </Show>
             </div>
           </div>
           <Show when={!isCustom() && providerMeta()}>
@@ -340,6 +570,25 @@ const ProviderDetail: Component = () => {
           </Show>
         </div>
 
+        {/* 本地引擎安装引导 */}
+        <Show when={isLocalEngine() && !userCfg()}>
+          <div
+            class="glass-card mb-4 p-4 text-xs text-[#aaa] leading-relaxed animate-row-in"
+            style={{ 'animation-delay': '45ms' }}
+          >
+            <p class="mb-2">{t('provider.localEngineGuide', { name: localEngineDef()!.name })}</p>
+            <Show when={localEngineDef()!.engineInstallUrl}>
+              <a
+                href={localEngineDef()!.engineInstallUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-pri hover:underline"
+              >
+                {t('provider.localEngineDoc')}
+              </a>
+            </Show>
+          </div>
+        </Show>
         {/* 表单 + 操作按钮 组合卡片 */}
         <div class="glass-card mb-4 animate-row-in" style={{ 'animation-delay': '60ms' }}>
           <div class="section-label mb-3">{t('provider.connectionConfig')}</div>
@@ -363,36 +612,41 @@ const ProviderDetail: Component = () => {
                 type="text"
                 class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
                 value={userCfg()?.apiUrl ?? ''}
+                placeholder={localEngineDef()?.defaultApiUrl ?? ''}
                 onInput={(e) => updateField('apiUrl', e.currentTarget.value)}
               />
             </div>
-            <div>
-              <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>
-                API Key
-              </label>
-              <input
-                type="password"
-                placeholder="sk-..."
-                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
-                value={userCfg()?.apiKey ?? ''}
-                onInput={(e) => updateField('apiKey', e.currentTarget.value)}
-              />
-            </div>
-            <div>
-              <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>
-                {t('provider.proxyUrl')}{' '}
-                <span class="text-[#666] normal-case tracking-normal font-normal ml-1">
-                  ({t('provider.proxyOptional')})
-                </span>
-              </label>
-              <input
-                type="text"
-                placeholder={t('provider.proxyPlaceholder')}
-                class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
-                value={userCfg()?.proxyUrl ?? ''}
-                onInput={(e) => updateField('proxyUrl', e.currentTarget.value || undefined)}
-              />
-            </div>
+            <Show when={!isLocalEngine()}>
+              <div>
+                <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>
+                  API Key
+                </label>
+                <input
+                  type="password"
+                  placeholder="sk-..."
+                  class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
+                  value={userCfg()?.apiKey ?? ''}
+                  onInput={(e) => updateField('apiKey', e.currentTarget.value)}
+                />
+              </div>
+            </Show>
+            <Show when={!isLocalEngine()}>
+              <div>
+                <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>
+                  {t('provider.proxyUrl')}{' '}
+                  <span class="text-[#666] normal-case tracking-normal font-normal ml-1">
+                    ({t('provider.proxyOptional')})
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  placeholder={t('provider.proxyPlaceholder')}
+                  class="bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none w-full px-3 py-2 text-sm font-mono"
+                  value={userCfg()?.proxyUrl ?? ''}
+                  onInput={(e) => updateField('proxyUrl', e.currentTarget.value || undefined)}
+                />
+              </div>
+            </Show>
           </div>
 
           {/* 启用 toggle + 操作按钮 */}
@@ -445,24 +699,131 @@ const ProviderDetail: Component = () => {
                 ? t('provider.testing')
                 : t('provider.testConnection')}
             </button>
-            <button
-              type="button"
-              class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={fetchState().status === 'fetching'}
-              onClick={handleFetchModels}
+            <Show
+              when={
+                !isLocalEngine() ||
+                ((localEngineDef()?.supportsFetchModels ?? false) &&
+                  localEngineDef()!.engineType !== 'ollama')
+              }
             >
-              <Show
-                when={fetchState().status === 'fetching'}
-                fallback={<Icon name="download" size={13} />}
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={fetchState().status === 'fetching'}
+                onClick={handleFetchModels}
               >
-                <Icon name="spinner" size={13} class="animate-spin" />
-              </Show>
-              {fetchState().status === 'fetching'
-                ? t('provider.fetching')
-                : t('provider.fetchModels')}
-            </button>
+                <Show
+                  when={fetchState().status === 'fetching'}
+                  fallback={<Icon name="download" size={13} />}
+                >
+                  <Icon name="spinner" size={13} class="animate-spin" />
+                </Show>
+                {fetchState().status === 'fetching'
+                  ? t('provider.fetching')
+                  : t('provider.fetchModels')}
+              </button>
+            </Show>
           </div>
         </div>
+
+        {/* vLLM Windows 平台警告 */}
+        <Show
+          when={
+            isLocalEngine() &&
+            localEngineDef()!.engineType === 'vllm' &&
+            /Windows|Win32|Win64/i.test(navigator.userAgent)
+          }
+        >
+          <div
+            class="glass-card mb-4 p-4 text-xs text-red-300 leading-relaxed animate-row-in border border-red-400/20"
+            style={{ 'animation-delay': '75ms' }}
+          >
+            <div class="flex items-center gap-2">
+              <Icon name="alert-triangle" size={14} />
+              <span>{t('provider.vllmWindowsWarning')}</span>
+            </div>
+          </div>
+        </Show>
+
+        {/* 引擎状态面板 */}
+        <Show when={isLocalEngine()}>
+          <div class="glass-card mb-4 animate-row-in" style={{ 'animation-delay': '80ms' }}>
+            {/* 安装状态 */}
+            <div class="flex items-center gap-3 mb-3 text-sm">
+              <span
+                class="w-2 h-2 rounded-full"
+                classList={{
+                  'bg-green-400': engineInstallInfo()?.installed,
+                  'bg-gray-500': !engineInstallInfo()?.installed,
+                }}
+              />
+              <span class="text-white/80">
+                {engineInstallInfo()?.installed
+                  ? t('engine.installed')
+                  : engineInstallInfo() === null
+                    ? t('engine.scanning')
+                    : t('engine.notInstalled')}
+              </span>
+              <Show when={engineInstallInfo()?.version}>
+                <span class="text-white/40 text-xs font-mono">{engineInstallInfo()!.version}</span>
+              </Show>
+            </div>
+
+            {/* 运行状态 + 操作按钮 */}
+            <div class="flex items-center gap-3 flex-wrap">
+              <span
+                class="w-2 h-2 rounded-full"
+                classList={{
+                  'bg-green-400': isServerAlive() === 'alive',
+                  'bg-yellow-400': isServerAlive() === 'checking',
+                  'bg-red-400': isServerAlive() === 'dead',
+                }}
+              />
+              <span class="text-white/80 text-sm">
+                {isServerAlive() === 'alive'
+                  ? t('engine.running')
+                  : isServerAlive() === 'checking'
+                    ? t('engine.checking')
+                    : t('engine.stopped')}
+              </span>
+
+              <Show when={localEngineDef()!.engineType !== 'ollama'}>
+                <Show when={isServerAlive() !== 'alive'}>
+                  <button
+                    type="button"
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={engineActionLoading()}
+                    onClick={handleStartEngine}
+                  >
+                    <Show
+                      when={!engineActionLoading()}
+                      fallback={<Icon name="spinner" size={13} class="animate-spin" />}
+                    >
+                      <Icon name="play" size={13} />
+                    </Show>
+                    {t('engine.start')}
+                  </button>
+                </Show>
+                <Show when={isServerAlive() === 'alive'}>
+                  <button
+                    type="button"
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-red-400/30 bg-red-400/10 text-red-400 hover:bg-red-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={engineActionLoading()}
+                    onClick={handleStopEngine}
+                  >
+                    <Show
+                      when={!engineActionLoading()}
+                      fallback={<Icon name="spinner" size={13} class="animate-spin" />}
+                    >
+                      <Icon name="stop" size={13} />
+                    </Show>
+                    {t('engine.stop')}
+                  </button>
+                </Show>
+              </Show>
+            </div>
+          </div>
+        </Show>
 
         {/* 测试/拉取反馈 */}
         <Show when={testState().status !== 'idle'}>
@@ -492,7 +853,14 @@ const ProviderDetail: Component = () => {
             </Show>
           </div>
         </Show>
-        <Show when={fetchState().status !== 'idle'}>
+        <Show
+          when={
+            (!isLocalEngine() ||
+              ((localEngineDef()?.supportsFetchModels ?? false) &&
+                localEngineDef()!.engineType !== 'ollama')) &&
+            fetchState().status !== 'idle'
+          }
+        >
           <div
             class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row-in"
             classList={{
@@ -515,8 +883,72 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
+        {/* 本地引擎运行模型信息卡片 */}
+        <Show
+          when={
+            isLocalEngine() &&
+            testState().status === 'ok' &&
+            testState().sampleModels &&
+            testState().sampleModels!.length > 0
+          }
+        >
+          <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '105ms' }}>
+            <div class="section-label mb-3">{t('provider.activeModel')}</div>
+            <div class="space-y-1.5">
+              <For each={testState().sampleModels}>
+                {(modelId) => (
+                  <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
+                    <Icon name="model" size={14} />
+                    <span class="text-xs text-white font-mono">{modelId}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+
+        {/* 本地模型文件选择器 (仅 allowModelFileSelection 的引擎) */}
+        <Show when={isLocalEngine() && localEngineDef()!.allowModelFileSelection}>
+          <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '75ms' }}>
+            <div class="section-label mb-3">{t('provider.localModels')}</div>
+            <div class="text-xs text-[#888] mb-3">{t('provider.localModelsHint')}</div>
+            <Show
+              when={
+                (userCfg()?.localModelPaths &&
+                  Object.keys(userCfg()!.localModelPaths!).length > 0) ||
+                false
+              }
+            >
+              <div class="space-y-1.5 mb-3">
+                <For each={Object.entries(userCfg()?.localModelPaths ?? {})}>
+                  {([modelId, path]) => (
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
+                      <Icon name="file" size={14} />
+                      <span class="flex-1 text-xs text-white font-mono truncate">{path}</span>
+                      <button
+                        type="button"
+                        class="w-5 h-5 flex items-center justify-center rounded hover:bg-white/10 text-[#888] hover:text-red-400"
+                        onClick={() => removeLocalModelFile(modelId)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-dashed border-white/20 text-[#aaa] hover:border-pri-30 hover:text-pri transition-all duration-200"
+              onClick={pickLocalModelFile}
+            >
+              <Icon name="plus" size={12} />
+              {t('provider.addLocalModel')}
+            </button>
+          </div>
+        </Show>
         {/* ===== 模型列表区 ===== */}
-        <Show when={isCustom()}>
+        <Show when={isCustom() && !isLocalEngine()}>
           <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '90ms' }}>
             <div class="flex items-center justify-between mb-3">
               <div class="section-label">
@@ -564,6 +996,59 @@ const ProviderDetail: Component = () => {
                 </For>
               </div>
             </Show>
+          </div>
+        </Show>
+
+        {/* Ollama 等支持 API 拉取的引擎：展示已拉取的模型 */}
+        <Show
+          when={
+            isLocalEngine() &&
+            (localEngineDef()?.supportsFetchModels ?? false) &&
+            (userCfg()?.fetchedModels?.length ?? 0) > 0
+          }
+        >
+          <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '90ms' }}>
+            <div class="section-label mb-3">
+              {t('provider.customModels', {
+                count: formatNumber(userCfg()?.fetchedModels?.length ?? 0),
+              })}
+            </div>
+            <div class="space-y-1.5">
+              <For each={userCfg()?.fetchedModels ?? []}>
+                {(m, i) => (
+                  <div class="animate-row-in" style={{ 'animation-delay': `${i() * 30}ms` }}>
+                    <ModelRow
+                      meta={
+                        {
+                          id: m.id,
+                          provider: providerId(),
+                          providerName: userCfg()?.displayName ?? providerId(),
+                          displayName: m.displayName || m.id,
+                          family: null,
+                          releaseDate: m.releasedAt ?? null,
+                          lastUpdated: null,
+                          knowledgeCutoff: null,
+                          contextWindow: 0,
+                          maxOutputTokens: null,
+                          capabilities: {} as any,
+                          modalities: { input: ['text'], output: ['text'] },
+                          pricing: null,
+                          status: 'active',
+                          deprecationDate: null,
+                          replacedBy: null,
+                          aliases: [],
+                          isAggregator: false,
+                          sources: [],
+                        } as any
+                      }
+                      enabled={(userCfg()?.enabledModels ?? []).includes(m.id)}
+                      onToggle={() => toggleModel(m.id)}
+                      showPricing={false}
+                    />
+                  </div>
+                )}
+              </For>
+            </div>
           </div>
         </Show>
 

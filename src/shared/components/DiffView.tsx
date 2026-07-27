@@ -127,7 +127,11 @@ const DiffView = (props: DiffViewProps) => {
                 <For each={parseSummary(change.summary)}>
                   {(seg) => (
                     <span
-                      style={seg.color ? { color: seg.color } : { color: 'rgba(var(--text-base-rgb),0.35)' }}
+                      style={
+                        seg.color
+                          ? { color: seg.color }
+                          : { color: 'rgba(var(--text-base-rgb),0.35)' }
+                      }
                     >
                       {seg.text}
                     </span>

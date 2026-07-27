@@ -302,7 +302,9 @@ const UsageHeatmap: Component<Props> = (props) => {
               {formatDateTime(`${tip().date}T00:00:00`, { dateStyle: 'medium' })}
             </div>
             <div>
-              <span style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>{fmtTokens(tip().tokens)}</span>{' '}
+              <span style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
+                {fmtTokens(tip().tokens)}
+              </span>{' '}
               {t('usage.tokens')}
             </div>
             <div style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>

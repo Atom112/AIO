@@ -128,13 +128,18 @@ const ReasoningButton: Component = () => {
                 type="button"
                 class="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md border-none cursor-pointer text-left transition-all duration-150 bg-transparent text-white/70 hover:bg-white/[0.05] hover:text-white/90"
                 style={
-                  reasoningLevel() === opt.value ? { background: 'rgba(var(--text-base-rgb),0.06)' } : {}
+                  reasoningLevel() === opt.value
+                    ? { background: 'rgba(var(--text-base-rgb),0.06)' }
+                    : {}
                 }
                 onClick={() => choose(opt.value)}
               >
                 <span
                   class="flex items-center justify-center w-7 h-7 rounded-md shrink-0"
-                  style={{ background: 'rgba(var(--text-base-rgb),0.05)', color: LEVEL_COLORS[opt.value] }}
+                  style={{
+                    background: 'rgba(var(--text-base-rgb),0.05)',
+                    color: LEVEL_COLORS[opt.value],
+                  }}
                 >
                   <Icon name={opt.iconName} size={14} />
                 </span>

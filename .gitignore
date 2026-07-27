@@ -9,3 +9,4 @@ src-tauri/undefined/
 .vscode/
 .claude/
 .temp/
+.aio/

@@ -79,14 +79,21 @@ const ToolCallBubble: Component<Props> = (props) => {
         <Show when={props.serverName}>
           <span
             class="text-[10px] px-1 py-[1px] rounded flex-shrink-0"
-            style={{ background: 'rgba(var(--primary-rgb),0.1)', color: 'rgba(var(--primary-rgb),0.7)' }}
+            style={{
+              background: 'rgba(var(--primary-rgb),0.1)',
+              color: 'rgba(var(--primary-rgb),0.7)',
+            }}
           >
             {props.serverName}
           </span>
         </Show>
         <span
           class="ml-auto flex-shrink-0"
-          style={{ color: 'rgba(var(--text-base-rgb),0.25)', 'font-size': '9px', 'letter-spacing': '0.5px' }}
+          style={{
+            color: 'rgba(var(--text-base-rgb),0.25)',
+            'font-size': '9px',
+            'letter-spacing': '0.5px',
+          }}
         >
           {props.state === 'calling' ? '…' : props.state === 'error' ? '✗' : '✓'}
         </span>
@@ -146,7 +153,9 @@ const ToolCallBubble: Component<Props> = (props) => {
                 <For each={props.result}>
                   {(c) => (
                     <Show when={c.type === 'image'}>
-                      <span style={{ color: 'rgba(var(--text-base-rgb),0.4)', 'font-size': '10px' }}>
+                      <span
+                        style={{ color: 'rgba(var(--text-base-rgb),0.4)', 'font-size': '10px' }}
+                      >
                         {t('chat.tool.image')}
                       </span>
                     </Show>
@@ -155,7 +164,9 @@ const ToolCallBubble: Component<Props> = (props) => {
                 <For each={props.result}>
                   {(c) => (
                     <Show when={c.type === 'resource'}>
-                      <span style={{ color: 'rgba(var(--text-base-rgb),0.4)', 'font-size': '10px' }}>
+                      <span
+                        style={{ color: 'rgba(var(--text-base-rgb),0.4)', 'font-size': '10px' }}
+                      >
                         {t('chat.tool.resource')}
                       </span>
                     </Show>

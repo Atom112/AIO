@@ -304,7 +304,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             <div class="max-w-[200px] text-[13px] text-white font-medium truncate">
                               {model.model_id}
                             </div>
-                            <div style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '10px' }}>
+                            <div
+                              style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '10px' }}
+                            >
                               {model.owned_by}
                             </div>
                             <div class="flex gap-1 mt-0.5 flex-wrap">
@@ -430,7 +432,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                             <div class="max-w-[180px] text-[13px] text-white font-medium truncate">
                               {model.model_id}
                             </div>
-                            <div style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '10px' }}>
+                            <div
+                              style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '10px' }}
+                            >
                               {model.owned_by}
                             </div>
                           </div>
@@ -455,7 +459,10 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('mcp.title')}
-              <span class="ml-2 text-[11px] font-normal" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+              <span
+                class="ml-2 text-[11px] font-normal"
+                style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+              >
                 {t('project.skillHint')}
               </span>
             </label>
@@ -510,7 +517,10 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('project.skill')}
-              <span class="ml-2 text-[11px] font-normal" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+              <span
+                class="ml-2 text-[11px] font-normal"
+                style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+              >
                 {t('project.skillHint')}
               </span>
             </label>

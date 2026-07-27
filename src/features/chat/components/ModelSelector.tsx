@@ -145,7 +145,10 @@ const ModelSelector: Component = () => {
                   </div>
                   <div class="flex-1 min-w-0">
                     <div class="text-[13px] text-white font-medium truncate">{model.model_id}</div>
-                    <div class="text-[10px] truncate" style={{ color: 'rgba(var(--primary-rgb),0.5)' }}>
+                    <div
+                      class="text-[10px] truncate"
+                      style={{ color: 'rgba(var(--primary-rgb),0.5)' }}
+                    >
                       {model.owned_by}
                     </div>
                   </div>
@@ -161,7 +164,10 @@ const ModelSelector: Component = () => {
               )}
             </For>
             <Show when={cloudModels().length === 0}>
-              <div class="p-3 text-center text-[12px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
+              <div
+                class="p-3 text-center text-[12px]"
+                style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
+              >
                 {t('chat.model.noCloud')}
               </div>
             </Show>
@@ -209,7 +215,10 @@ const ModelSelector: Component = () => {
                   </div>
                   <div class="flex-1 min-w-0">
                     <div class="text-[13px] text-white font-medium truncate">{model.model_id}</div>
-                    <div class="text-[10px] truncate" style={{ color: 'rgba(var(--primary-rgb),0.5)' }}>
+                    <div
+                      class="text-[10px] truncate"
+                      style={{ color: 'rgba(var(--primary-rgb),0.5)' }}
+                    >
                       {model.owned_by}
                     </div>
                   </div>
@@ -225,7 +234,10 @@ const ModelSelector: Component = () => {
               )}
             </For>
             <Show when={localModels().length === 0}>
-              <div class="p-3 text-center text-[12px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
+              <div
+                class="p-3 text-center text-[12px]"
+                style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
+              >
                 {t('chat.model.noLocal')}
               </div>
             </Show>

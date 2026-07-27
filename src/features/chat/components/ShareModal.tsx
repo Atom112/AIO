@@ -180,7 +180,9 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
           'line-height': '1.65',
           'max-width': p.wide ? '640px' : '420px',
           'word-break': 'break-word',
-          background: isUser() ? 'rgba(var(--primary-rgb),0.18)' : 'rgba(var(--text-base-rgb),0.06)',
+          background: isUser()
+            ? 'rgba(var(--primary-rgb),0.18)'
+            : 'rgba(var(--text-base-rgb),0.06)',
           border: isUser()
             ? '1px solid rgba(var(--primary-rgb),0.25)'
             : '1px solid rgba(var(--text-base-rgb),0.08)',
@@ -411,7 +413,11 @@ const ShareModal: Component<ShareModalProps> = (props) => {
         }}
       >
         <Show when={p.checked}>
-          <Icon name="check" class="w-2.5 h-2.5" style={{ color: 'rgba(var(--primary-rgb),0.9)' }} />
+          <Icon
+            name="check"
+            class="w-2.5 h-2.5"
+            style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
+          />
         </Show>
       </div>
       <span>{p.label}</span>

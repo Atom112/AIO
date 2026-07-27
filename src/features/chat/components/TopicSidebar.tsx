@@ -221,8 +221,12 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                   color: 'rgba(var(--text-base-rgb),0.6)',
                 }}
                 onClick={props.addTopic}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')
+                }
               >
                 {t('chat.newTopic')}
               </button>

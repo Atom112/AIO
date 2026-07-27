@@ -453,7 +453,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         when={props.isSelectingMessages}
         fallback={
           <div class="flex items-center justify-between px-1 pb-3 shrink-0">
-            <span class="text-sm font-medium truncate" style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}>
+            <span
+              class="text-sm font-medium truncate"
+              style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}
+            >
               {(currentProject()?.name || props.activeTopic?.name) ?? ''}
             </span>
             <Show when={props.canShare && props.activeTopic}>
@@ -533,7 +536,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 {t('chat.localEngineStarting')}
               </span>
             </div>
-            <div class="w-full h-2 rounded-full" style={{ background: 'rgba(var(--text-base-rgb),0.06)' }}>
+            <div
+              class="w-full h-2 rounded-full"
+              style={{ background: 'rgba(var(--text-base-rgb),0.06)' }}
+            >
               <div
                 class="h-2 rounded-full transition-all duration-300"
                 style={{
@@ -1193,7 +1199,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     <span style={{ color: '#50dc64' }}>+{diffStats().added}</span>
                                   )}
                                   {diffStats().added > 0 && diffStats().deleted > 0 && (
-                                    <span style={{ color: 'rgba(var(--text-base-rgb),0.18)' }}> </span>
+                                    <span style={{ color: 'rgba(var(--text-base-rgb),0.18)' }}>
+                                      {' '}
+                                    </span>
                                   )}
                                   {diffStats().deleted > 0 && (
                                     <span style={{ color: '#ff5050' }}>-{diffStats().deleted}</span>
@@ -1477,7 +1485,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 }}
                                 onMouseEnter={(e) => {
                                   if (branch !== gitBranch())
-                                    e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.05)';
+                                    e.currentTarget.style.background =
+                                      'rgba(var(--text-base-rgb),0.05)';
                                 }}
                                 onMouseLeave={(e) => {
                                   if (branch !== gitBranch())

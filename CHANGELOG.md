@@ -2,7 +2,6 @@
 
 # Changelog
 
-
 ## [v0.7.3]
 
 <sup>Released on **2026-07-27**</sup>

@@ -209,7 +209,10 @@ const AgentModeSelector: Component = () => {
                 />
                 <div class="flex-1 min-w-0">
                   <div class="text-sm font-medium">{t(opt.labelKey)}</div>
-                  <div class="text-[11px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
+                  <div
+                    class="text-[11px] mt-0.5"
+                    style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
+                  >
                     {t(opt.descKey)}
                   </div>
                 </div>
@@ -276,7 +279,10 @@ const AgentModeSelector: Component = () => {
               <button
                 type="button"
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-none"
-                style={{ background: 'rgba(var(--text-base-rgb),0.06)', color: 'rgba(var(--text-base-rgb),0.5)' }}
+                style={{
+                  background: 'rgba(var(--text-base-rgb),0.06)',
+                  color: 'rgba(var(--text-base-rgb),0.5)',
+                }}
                 onClick={() => setShowAutoWarning(false)}
               >
                 {t('common.cancel')}

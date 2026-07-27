@@ -101,7 +101,10 @@ const UsageSettings: Component = () => {
           class="flex items-center justify-between pb-3 mb-6 shrink-0 animate-row-in"
           style={{ 'border-bottom': '1px solid var(--border-dim)' }}
         >
-          <h3 class="text-xl font-bold tracking-tight" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
+          <h3
+            class="text-xl font-bold tracking-tight"
+            style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
+          >
             {t('usage.title')}
           </h3>
           {/* 时间范围选择器 */}
@@ -122,7 +125,9 @@ const UsageSettings: Component = () => {
                     background:
                       r.days === range().days ? 'rgba(var(--primary-rgb), 0.2)' : 'transparent',
                     color:
-                      r.days === range().days ? 'rgba(var(--text-base-rgb),0.9)' : 'rgba(var(--text-base-rgb),0.4)',
+                      r.days === range().days
+                        ? 'rgba(var(--text-base-rgb),0.9)'
+                        : 'rgba(var(--text-base-rgb),0.4)',
                   }}
                   onClick={() => {
                     setSelectedDate(null);

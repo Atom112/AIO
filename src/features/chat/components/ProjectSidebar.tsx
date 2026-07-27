@@ -218,7 +218,8 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         '-webkit-backdrop-filter': 'blur(30px)',
         border: '1px solid var(--border-dim)',
         'border-radius': '12px',
-        'box-shadow': 'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
+        'box-shadow':
+          'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
@@ -234,7 +235,8 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
               classList={{
-                '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]': isChatActive(),
+                '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
+                  isChatActive(),
               }}
               onClick={switchToChat}
             >
@@ -265,7 +267,8 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   <div
                     class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                     classList={{
-                      '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]': isActive(),
+                      '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
+                        isActive(),
                     }}
                     onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                     onClick={() => switchToProject(project.id)}
@@ -330,8 +333,12 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                 color: 'rgba(var(--text-base-rgb),0.6)',
               }}
               onClick={() => setShowProjectCreateModal(true)}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')
+              }
             >
               新建项目
             </button>

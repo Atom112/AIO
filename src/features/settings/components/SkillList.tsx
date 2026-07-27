@@ -598,7 +598,10 @@ const SkillList: Component = () => {
                         <div class="font-mono text-sm">
                           {skill.installsLabel || formatInstalls(skill.installs)}
                         </div>
-                        <div class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
+                        <div
+                          class="text-[10px]"
+                          style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
+                        >
                           {t('skill.installs')}
                         </div>
                       </div>
@@ -644,7 +647,10 @@ const SkillList: Component = () => {
             <For
               each={filteredLocalSkills()}
               fallback={
-                <div class="py-12 text-center text-sm" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+                <div
+                  class="py-12 text-center text-sm"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                >
                   {t('skill.noInstalled')}
                 </div>
               }
@@ -667,7 +673,10 @@ const SkillList: Component = () => {
                         </span>
                       </Show>
                     </div>
-                    <div class="text-xs truncate mt-1" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
+                    <div
+                      class="text-xs truncate mt-1"
+                      style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
+                    >
                       {skill.description || skill.content}
                     </div>
                   </div>
@@ -722,7 +731,10 @@ const SkillList: Component = () => {
             <Show
               when={!npxLoading()}
               fallback={
-                <div class="py-12 text-center text-sm" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+                <div
+                  class="py-12 text-center text-sm"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                >
                   正在扫描系统上的 npx skill...
                 </div>
               }
@@ -819,7 +831,10 @@ const SkillList: Component = () => {
         >
           <div
             class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
-            style={{ background: 'rgba(var(--surface-bg),0.98)', border: '1px solid var(--border-dim)' }}
+            style={{
+              background: 'rgba(var(--surface-bg),0.98)',
+              border: '1px solid var(--border-dim)',
+            }}
           >
             <h3 class="text-base font-semibold">{t('skill.editTitle')}</h3>
             <label class="flex flex-col gap-1 text-xs">

@@ -127,7 +127,9 @@ const ModelBreakdown: Component<Props> = (props) => {
               <span>↗ {fmt(item.inputTokens)}</span>
               <span>↘ {fmt(item.outputTokens)}</span>
               <Show when={item.cost > 0}>
-                <span style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>${item.cost.toFixed(2)}</span>
+                <span style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+                  ${item.cost.toFixed(2)}
+                </span>
               </Show>
               <Show when={item.requestCount > 0}>
                 <span>{t('usage.count', { count: item.requestCount })}</span>

@@ -134,7 +134,10 @@ const McpServerDetail: Component<Props> = (props) => {
     >
       <div
         class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
-        style={{ background: 'rgba(var(--surface-bg),0.95)', border: '1px solid var(--border-dim)' }}
+        style={{
+          background: 'rgba(var(--surface-bg),0.95)',
+          border: '1px solid var(--border-dim)',
+        }}
       >
         <h3 class="text-base font-semibold">
           {props.isNew ? t('mcp.detail.titleAdd') : t('mcp.detail.titleEdit')}

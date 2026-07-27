@@ -17,44 +17,46 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
   /** 详情页 (匹配 /settings/provider/<id>) 时隐藏侧栏 */
   const isProviderDetail = () => /^\/settings\/provider\/[^/]+/.test(location.pathname);
 
-  const menuItems = createMemo((): Array<{ id: string; path: string; label: string; icon: JSX.Element }> => [
-    {
-      id: 'provider',
-      path: '/settings',
-      label: t('settings.providers'),
-      icon: <Icon src="/icons/app-logo/provider.svg" class="w-5 h-5" />,
-    },
-    {
-      id: 'mcp',
-      path: '/settings/mcp',
-      label: t('settings.mcp'),
-      icon: <Icon src="/icons/app-logo/mcp.svg" class="w-5 h-5" />,
-    },
-    {
-      id: 'skills',
-      path: '/settings/skills',
-      label: t('settings.skills'),
-      icon: <Icon src="/icons/app-logo/prompt.svg" class="w-5 h-5" />,
-    },
-    {
-      id: 'usage',
-      path: '/settings/usage',
-      label: t('settings.usage'),
-      icon: <Icon src="/icons/app-logo/chart.svg" class="w-5 h-5" />,
-    },
-    {
-      id: 'subagent-models',
-      path: '/settings/subagent-models',
-      label: t('settings.subagents'),
-      icon: <Icon name="sparkles" class="w-5 h-5" />,
-    },
-    {
-      id: 'app',
-      path: '/settings/app',
-      label: t('settings.app'),
-      icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" />,
-    },
-  ]);
+  const menuItems = createMemo(
+    (): Array<{ id: string; path: string; label: string; icon: JSX.Element }> => [
+      {
+        id: 'provider',
+        path: '/settings',
+        label: t('settings.providers'),
+        icon: <Icon src="/icons/app-logo/provider.svg" class="w-5 h-5" />,
+      },
+      {
+        id: 'mcp',
+        path: '/settings/mcp',
+        label: t('settings.mcp'),
+        icon: <Icon src="/icons/app-logo/mcp.svg" class="w-5 h-5" />,
+      },
+      {
+        id: 'skills',
+        path: '/settings/skills',
+        label: t('settings.skills'),
+        icon: <Icon src="/icons/app-logo/prompt.svg" class="w-5 h-5" />,
+      },
+      {
+        id: 'usage',
+        path: '/settings/usage',
+        label: t('settings.usage'),
+        icon: <Icon src="/icons/app-logo/chart.svg" class="w-5 h-5" />,
+      },
+      {
+        id: 'subagent-models',
+        path: '/settings/subagent-models',
+        label: t('settings.subagents'),
+        icon: <Icon name="sparkles" class="w-5 h-5" />,
+      },
+      {
+        id: 'app',
+        path: '/settings/app',
+        label: t('settings.app'),
+        icon: <Icon src="/icons/app-logo/app-grid.svg" class="w-5 h-5" />,
+      },
+    ],
+  );
 
   const isActive = (path: string) => {
     if (path === '/settings')

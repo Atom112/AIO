@@ -894,12 +894,30 @@ input[type='range']::-webkit-slider-thumb:active {
    Tailwind compiles these as color-mix() with
    fixed alpha — dark backgrounds need higher alpha
    ══════════════════════════════════════════════ */
-[data-theme='dark'] .border-white\/5 { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/10 { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/15 { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/20 { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/\[0\.04\] { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/\[0\.05\] { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/\[0\.06\] { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/\[0\.08\] { border-color: rgba(240, 240, 240, 0.3) !important; }
-[data-theme='dark'] .border-white\/\[0\.15\] { border-color: rgba(240, 240, 240, 0.3) !important; }
+[data-theme='dark'] .border-white\/5 {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/10 {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/15 {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/20 {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/\[0\.04\] {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/\[0\.05\] {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/\[0\.06\] {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/\[0\.08\] {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}
+[data-theme='dark'] .border-white\/\[0\.15\] {
+  border-color: rgba(240, 240, 240, 0.3) !important;
+}

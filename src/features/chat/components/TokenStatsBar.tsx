@@ -114,12 +114,18 @@ const TokenStatsBar: Component = () => {
 
         <Show when={stats().input > 0 || stats().output > 0}>
           <Show when={stats().input > 0}>
-            <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.30)' }}>
+            <span
+              class="font-mono whitespace-nowrap"
+              style={{ color: 'rgba(var(--text-base-rgb),0.30)' }}
+            >
               ↗{fmt(stats().input)}
             </span>
           </Show>
           <Show when={stats().output > 0}>
-            <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.30)' }}>
+            <span
+              class="font-mono whitespace-nowrap"
+              style={{ color: 'rgba(var(--text-base-rgb),0.30)' }}
+            >
               ↘{fmt(stats().output)}
             </span>
           </Show>
@@ -142,7 +148,10 @@ const TokenStatsBar: Component = () => {
 
         <Show when={stats().price > 0}>
           <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
-          <span class="font-mono whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}>
+          <span
+            class="font-mono whitespace-nowrap"
+            style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}
+          >
             {fmtPrice(stats().price)}
           </span>
         </Show>

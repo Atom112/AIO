@@ -445,7 +445,10 @@ const McpServerList: Component = () => {
             <For
               each={filteredLocal()}
               fallback={
-                <div class="py-12 text-center text-sm" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+                <div
+                  class="py-12 text-center text-sm"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                >
                   {t('mcp.noInstalled')}
                 </div>
               }
@@ -478,7 +481,10 @@ const McpServerList: Component = () => {
                           </span>
                         </Show>
                       </div>
-                      <div class="text-xs truncate mt-1" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
+                      <div
+                        class="text-xs truncate mt-1"
+                        style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
+                      >
                         {transportLabel(config.transport)}
                         {status() === 'connected'
                           ? ` · ${t('mcp.toolsCount', { count: formatNumber(mcpServerStatus()[config.id]?.toolCount ?? 0) })}`
@@ -538,7 +544,10 @@ const McpServerList: Component = () => {
         >
           <div
             class="w-[620px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
-            style={{ background: 'rgba(var(--surface-bg),0.98)', border: '1px solid var(--border-dim)' }}
+            style={{
+              background: 'rgba(var(--surface-bg),0.98)',
+              border: '1px solid var(--border-dim)',
+            }}
           >
             <div>
               <h3 class="font-semibold">

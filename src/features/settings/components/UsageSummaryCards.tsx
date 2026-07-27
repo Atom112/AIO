@@ -93,7 +93,10 @@ const UsageSummaryCards: Component<Props> = (props) => {
         >
           {t('usage.totalTokens')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
+        <span
+          class="text-xl font-bold font-mono"
+          style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
+        >
           {fmt(totalTokens())}
         </span>
         <div class="flex gap-2 text-[10px] font-mono">
@@ -116,7 +119,10 @@ const UsageSummaryCards: Component<Props> = (props) => {
         >
           {t('usage.totalRequests')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
+        <span
+          class="text-xl font-bold font-mono"
+          style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
+        >
           {formatNumber(totals().requests)}
         </span>
         <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
@@ -138,7 +144,10 @@ const UsageSummaryCards: Component<Props> = (props) => {
         >
           {t('usage.estimatedCost')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
+        <span
+          class="text-xl font-bold font-mono"
+          style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
+        >
           ${cost().toFixed(2)}
         </span>
         <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
@@ -160,7 +169,10 @@ const UsageSummaryCards: Component<Props> = (props) => {
         >
           {t('usage.activeDays')}
         </span>
-        <span class="text-xl font-bold font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
+        <span
+          class="text-xl font-bold font-mono"
+          style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}
+        >
           {formatNumber(totals().activeDays)}
         </span>
         <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>

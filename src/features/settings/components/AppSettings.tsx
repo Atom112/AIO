@@ -955,7 +955,10 @@ const AppSettings: Component = () => {
 
         {/* 无命令时的空状态 */}
         <Show when={allCommands().length === 0}>
-          <div class="text-center py-8 text-[13px]" style={{ color: 'rgba(var(--text-base-rgb), 0.3)' }}>
+          <div
+            class="text-center py-8 text-[13px]"
+            style={{ color: 'rgba(var(--text-base-rgb), 0.3)' }}
+          >
             {t('app.shortcuts.empty')}
           </div>
         </Show>

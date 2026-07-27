@@ -5,7 +5,7 @@
 //!
 //! 参考：Claude Code / Cursor 的 Git 工具设计。
 
-use crate::core::models::{FileChange, ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
+use crate::core::models::{FileChange, ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -41,7 +41,12 @@ fn truncate_output(s: &str, limit: usize) -> String {
         s.to_string()
     } else {
         let safe_end = s.floor_char_boundary(limit);
-        format!("{}\n\n⚠ 输出过长已截断 ({}B / {}B)", &s[..safe_end], limit, s.len())
+        format!(
+            "{}\n\n⚠ 输出过长已截断 ({}B / {}B)",
+            &s[..safe_end],
+            limit,
+            s.len()
+        )
     }
 }
 
@@ -58,7 +63,11 @@ fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if stderr.trim().is_empty() { stdout } else { stderr };
+        let detail = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
         return Err(format!("git {} 失败: {}", args.join(" "), detail.trim()));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -93,7 +102,11 @@ pub fn list_branches(project_root: &str) -> Result<Vec<String>, String> {
         return Err("不是 git 仓库".into());
     }
     let out = run_git(project_root, &["branch", "--format=%(refname:short)"])?;
-    Ok(out.lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+    Ok(out
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
 }
 
 /// 切换到指定分支（git checkout）。成功返回 Ok(()).
@@ -131,8 +144,14 @@ pub fn capture_file_diff(project_root: &str, file_path: &str) -> Option<FileChan
 
 /// 从 unified diff 文本中解析 "+N -M" 统计
 fn format_diff_stats(patch: &str) -> String {
-    let added = patch.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
-    let removed = patch.lines().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+    let added = patch
+        .lines()
+        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .count();
+    let removed = patch
+        .lines()
+        .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+        .count();
     format!("+{} -{}", added, removed)
 }
 
@@ -220,30 +239,24 @@ pub fn get_git_tool_specs() -> Vec<ToolSpec> {
 
 // ====== 工具执行 ======
 
-pub fn execute_git_tool(
-    name: &str,
-    arguments: &Value,
-    project_root: &str,
-) -> ToolResult {
+pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> ToolResult {
     // 前置：检查是否为 git 仓库
     if !is_git_repo(project_root) {
         return tool_err("当前目录不是 git 仓库（或 git 未安装）");
     }
 
     match name {
-        "git_status" => {
-            match run_git(project_root, &["status", "--porcelain=v2", "--branch"]) {
-                Ok(out) => {
-                    let result = if out.trim().is_empty() {
-                        "✓ 工作区干净，没有待提交的变更。".to_string()
-                    } else {
-                        format!("git status:\n\n{}", out.trim())
-                    };
-                    tool_ok(truncate_output(&result, MAX_OUTPUT_BYTES))
-                }
-                Err(e) => tool_err(&e),
+        "git_status" => match run_git(project_root, &["status", "--porcelain=v2", "--branch"]) {
+            Ok(out) => {
+                let result = if out.trim().is_empty() {
+                    "✓ 工作区干净，没有待提交的变更。".to_string()
+                } else {
+                    format!("git status:\n\n{}", out.trim())
+                };
+                tool_ok(truncate_output(&result, MAX_OUTPUT_BYTES))
             }
-        }
+            Err(e) => tool_err(&e),
+        },
 
         "git_diff" => {
             let staged = arguments["staged"].as_bool().unwrap_or(false);
@@ -299,7 +312,14 @@ pub fn execute_git_tool(
             let all = arguments["all"].as_bool().unwrap_or(false);
             if all {
                 match run_git(project_root, &["add", "--all"]) {
-                    Ok(out) => tool_ok(format!("✓ git add --all\n{}", if out.trim().is_empty() { "(无输出)" } else { out.trim() })),
+                    Ok(out) => tool_ok(format!(
+                        "✓ git add --all\n{}",
+                        if out.trim().is_empty() {
+                            "(无输出)"
+                        } else {
+                            out.trim()
+                        }
+                    )),
                     Err(e) => tool_err(&e),
                 }
             } else {
@@ -320,7 +340,8 @@ pub fn execute_git_tool(
                         let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                         match run_git(project_root, &arg_refs) {
                             Ok(_) => {
-                                let names: Vec<&str> = args[1..].iter().map(|s| s.as_str()).collect();
+                                let names: Vec<&str> =
+                                    args[1..].iter().map(|s| s.as_str()).collect();
                                 tool_ok(format!("✓ git add {}", names.join(" ")))
                             }
                             Err(e) => tool_err(&e),
@@ -332,7 +353,11 @@ pub fn execute_git_tool(
         }
 
         "git_commit" => {
-            let message = arguments["message"].as_str().unwrap_or("").trim().to_string();
+            let message = arguments["message"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             if message.is_empty() {
                 return tool_err("缺少 commit message");
             }
@@ -347,12 +372,13 @@ pub fn execute_git_tool(
             // 先检查是否有暂存的变更
             let staged_empty = run_git(project_root, &["diff", "--staged", "--quiet"]).is_ok();
             if staged_empty {
-                return tool_err(
-                    "暂存区为空，没有可提交的变更。请先用 git_add 暂存文件后再提交。"
-                );
+                return tool_err("暂存区为空，没有可提交的变更。请先用 git_add 暂存文件后再提交。");
             }
             match run_git(project_root, &["commit", "-m", &message]) {
-                Ok(out) => tool_ok(truncate_output(&format!("✓ git commit\n\n{}", out.trim()), MAX_OUTPUT_BYTES)),
+                Ok(out) => tool_ok(truncate_output(
+                    &format!("✓ git commit\n\n{}", out.trim()),
+                    MAX_OUTPUT_BYTES,
+                )),
                 Err(e) => tool_err(&e),
             }
         }

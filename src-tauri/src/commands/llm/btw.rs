@@ -43,7 +43,9 @@ pub async fn ask_btw_question(
 
     let client = super::streaming_http_client();
     let body = json!({ "model": model, "messages": messages, "stream": true });
-    let base_url = api_url.trim_end_matches('/').replace("/chat/completions", "");
+    let base_url = api_url
+        .trim_end_matches('/')
+        .replace("/chat/completions", "");
     let endpoint = format!("{}/chat/completions", base_url);
 
     let res = match tokio::time::timeout(
@@ -131,8 +133,7 @@ pub async fn ask_btw_question(
                 );
                 return Ok(());
             }
-            if line.starts_with("data: ") {
-                let json_str = &line[6..];
+            if let Some(json_str) = line.strip_prefix("data: ") {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if let Some(err) = val.get("error") {
                         let msg = err

@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -18,9 +18,9 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            target: ""
+            target: ''
           - platform: ubuntu-22.04
-            target: ""
+            target: ''
           - platform: macos-15
             target: x86_64-apple-darwin
           - platform: macos-15

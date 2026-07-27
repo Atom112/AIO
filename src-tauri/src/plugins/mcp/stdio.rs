@@ -6,8 +6,8 @@
 use super::connection::{McpConnection, McpTransport};
 use super::error::{McpError, McpResult};
 use crate::core::models::{
-    McpServerConfig, McpServerInfo, McpStatus, McpResource, McpPrompt,
-    ReadResourceResult, GetPromptResult, ToolResult, ToolResultContent, ToolSpec,
+    GetPromptResult, McpPrompt, McpResource, McpServerConfig, McpServerInfo, McpStatus,
+    ReadResourceResult, ToolResult, ToolResultContent, ToolSpec,
 };
 use crate::core::secure_store;
 use async_trait::async_trait;
@@ -26,11 +26,7 @@ impl super::McpServerPlugin for StdioPlugin {
         "stdio"
     }
 
-    async fn start(
-        &self,
-        app: AppHandle,
-        config: &McpServerConfig,
-    ) -> McpResult<McpConnection> {
+    async fn start(&self, app: AppHandle, config: &McpServerConfig) -> McpResult<McpConnection> {
         let (command, args, env_raw, cwd) = match &config.transport {
             crate::core::models::McpTransport::Stdio {
                 command,
@@ -101,7 +97,12 @@ impl super::McpServerPlugin for StdioPlugin {
         let conn = McpConnection::new(&config.id, "stdio", transport);
 
         // 启动 stdout 行读取循环
-        spawn_stdout_reader(conn.clone(), BufReader::new(stdout), app.clone(), config.id.clone());
+        spawn_stdout_reader(
+            conn.clone(),
+            BufReader::new(stdout),
+            app.clone(),
+            config.id.clone(),
+        );
 
         // stderr → 日志事件（前端可订阅 `mcp-server-stderr` 调试）
         if let Some(stderr) = stderr {
@@ -110,10 +111,7 @@ impl super::McpServerPlugin for StdioPlugin {
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = app2.emit(
-                        "mcp-server-stderr",
-                        json!({ "id": sid, "line": line }),
-                    );
+                    let _ = app2.emit("mcp-server-stderr", json!({ "id": sid, "line": line }));
                 }
             });
         }
@@ -121,10 +119,7 @@ impl super::McpServerPlugin for StdioPlugin {
         Ok(conn)
     }
 
-    async fn initialize(
-        &self,
-        conn: &McpConnection,
-    ) -> McpResult<McpServerInfo> {
+    async fn initialize(&self, conn: &McpConnection) -> McpResult<McpServerInfo> {
         // MCP initialize 协议
         let params = json!({
             "protocolVersion": "2024-11-05",
@@ -155,13 +150,14 @@ impl super::McpServerPlugin for StdioPlugin {
         let capabilities = result
             .get("capabilities")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
-        Ok(McpServerInfo { name, version, capabilities })
+        Ok(McpServerInfo {
+            name,
+            version,
+            capabilities,
+        })
     }
 
-    async fn list_tools(
-        &self,
-        conn: &McpConnection,
-    ) -> McpResult<Vec<ToolSpec>> {
+    async fn list_tools(&self, conn: &McpConnection) -> McpResult<Vec<ToolSpec>> {
         let result = conn
             .request("tools/list", Some(json!({})), Duration::from_secs(60))
             .await?;
@@ -217,10 +213,7 @@ impl super::McpServerPlugin for StdioPlugin {
         Ok(ToolResult { content, is_error })
     }
 
-    async fn list_resources(
-        &self,
-        conn: &McpConnection,
-    ) -> McpResult<Vec<McpResource>> {
+    async fn list_resources(&self, conn: &McpConnection) -> McpResult<Vec<McpResource>> {
         let result = conn
             .request("resources/list", Some(json!({})), Duration::from_secs(60))
             .await?;
@@ -248,10 +241,7 @@ impl super::McpServerPlugin for StdioPlugin {
         serde_json::from_value(result).map_err(McpError::from)
     }
 
-    async fn list_prompts(
-        &self,
-        conn: &McpConnection,
-    ) -> McpResult<Vec<McpPrompt>> {
+    async fn list_prompts(&self, conn: &McpConnection) -> McpResult<Vec<McpPrompt>> {
         let result = conn
             .request("prompts/list", Some(json!({})), Duration::from_secs(60))
             .await?;
@@ -378,8 +368,7 @@ fn resolve_command_on_path(command: &str) -> Option<String> {
     }
     let file_name = p.file_name()?;
 
-    let pathext =
-        std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
     let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
 
     // command 含目录部分时只在该目录内查找；否则遍历 PATH

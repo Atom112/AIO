@@ -261,6 +261,10 @@ fn insert_usage_log(
 /// - tool_call 仅 emit `llm-tool-call`（通知前端展示"调用中"气泡），执行由循环主体负责。
 ///
 /// 返回 `RoundResult`；若被取消返回 `Err("cancelled")`，其它错误原样上抛。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "stream orchestration keeps request and event context explicit"
+)]
 async fn stream_one_round(
     window: &Window,
     token: &CancellationToken,
@@ -354,8 +358,7 @@ async fn stream_one_round(
                 break;
             }
 
-            if line.starts_with("data: ") {
-                let json_str = &line[6..];
+            if let Some(json_str) = line.strip_prefix("data: ") {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         content_buf.push_str(content);
@@ -428,21 +431,19 @@ async fn stream_one_round(
                     // finish_reason="tool_calls" 时不必立即 flush（累积器已存好），
                     // 统一在末尾按 index 升序构造。这里仅触发提前 flush 事件通知前端。
                     let finish = val["choices"][0]["finish_reason"].as_str().unwrap_or("");
-                    if finish == "tool_calls" {
-                        if !suppress_events {
-                            for (_idx, (id, name, args)) in tc_accum.iter() {
-                                if !id.is_empty() && !name.is_empty() {
-                                    let _ = window.emit(
-                                        "llm-tool-call",
-                                        ToolCallPayload {
-                                            assistant_id: assistant_id.to_string(),
-                                            topic_id: topic_id.to_string(),
-                                            tool_call_id: id.clone(),
-                                            name: name.clone(),
-                                            arguments: args.clone(),
-                                        },
-                                    );
-                                }
+                    if finish == "tool_calls" && !suppress_events {
+                        for (id, name, args) in tc_accum.values() {
+                            if !id.is_empty() && !name.is_empty() {
+                                let _ = window.emit(
+                                    "llm-tool-call",
+                                    ToolCallPayload {
+                                        assistant_id: assistant_id.to_string(),
+                                        topic_id: topic_id.to_string(),
+                                        tool_call_id: id.clone(),
+                                        name: name.clone(),
+                                        arguments: args.clone(),
+                                    },
+                                );
                             }
                         }
                     }
@@ -466,7 +467,7 @@ async fn stream_one_round(
     // 按 index 升序构造工具调用列表（若 finish_reason="tool_calls" 已 emit 过通知，这里不再重复 emit）
     let mut tool_calls = Vec::new();
     let need_emit = !saw_done; // 若未到 [DONE]，则此前可能未 emit tool-call 通知
-    for (_idx, (id, name, args)) in tc_accum.iter() {
+    for (id, name, args) in tc_accum.values() {
         if !id.is_empty() && !name.is_empty() {
             tool_calls.push(ToolCallAccum {
                 id: id.clone(),
@@ -507,6 +508,10 @@ async fn stream_one_round(
 /// （后端单任务自驱循环）。本命令现在仅做单轮流式 + 终止 done，
 /// 不再做工具执行/递归——工具调用的通知事件仍会 emit（供调试/兼容）。
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Tauri IPC compatibility requires the existing flat command parameters"
+)]
 pub async fn call_llm_stream(
     window: Window,                         // Tauri 窗口句柄，用于发送事件
     state: tauri::State<'_, StreamManager>, // 全局状态，用于管理正在进行的流任务
@@ -555,7 +560,7 @@ pub async fn call_llm_stream(
             .map(|message| message_for_api(&conn, message))
             .collect::<Result<Vec<_>, _>>()?
     };
-    let tools_slice = tools.map(|t| t); // 用于 as_slice()
+    let tools_slice = tools; // 用于 as_slice()
 
     // 防御性校验：检查 tool_calls 与 tool 响应是否匹配
     verify_tool_messages(&messages_for_api);
@@ -568,7 +573,7 @@ pub async fn call_llm_stream(
     // 4. 创建异步任务执行请求
     let handle = tokio::spawn(async move {
         let client = streaming_http_client();
-        let tools_ref: Option<&[ToolSpec]> = tools_slice.as_ref().map(|v| v.as_slice());
+        let tools_ref: Option<&[ToolSpec]> = tools_slice.as_deref();
         let result = stream_one_round(
             &window,
             &token_inner,
@@ -835,7 +840,7 @@ fn truncate_for_display(s: &str, max_len: usize) -> String {
     if s.chars().count() <= max_len {
         s.to_string()
     } else {
-        format!("{}…", &s.chars().take(max_len).collect::<String>())
+        format!("{}…", s.chars().take(max_len).collect::<String>())
     }
 }
 
@@ -1164,6 +1169,10 @@ where
 /// 处理 delegate_task 工具调用（从主 Agent 循环中调用）。
 ///
 /// 解析参数、验证权限、获取 profile，然后委托给 execute_subagent 执行。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "agent delegation keeps inherited execution context explicit"
+)]
 async fn handle_delegate_task(
     window: &Window,
     app: &AppHandle,
@@ -1269,6 +1278,10 @@ async fn handle_delegate_task(
 ///
 /// 负责：解析 profile、模型覆盖、项目根目录，然后调用 execute_subagent。
 /// 不包含权限检查——由调用方负责。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "agent delegation keeps inherited execution context explicit"
+)]
 async fn execute_single_delegate(
     window: &Window,
     app: &AppHandle,
@@ -1334,6 +1347,10 @@ async fn execute_single_delegate(
 /// 解析 tasks 数组和可选的 context，整体检查一次权限，
 /// 然后使用 FuturesUnordered 并行执行所有子智能体。
 /// 返回所有子任务结果的汇总报告。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "parallel delegation keeps inherited execution context explicit"
+)]
 async fn handle_delegate_tasks(
     window: &Window,
     app: &AppHandle,
@@ -1442,7 +1459,7 @@ async fn handle_delegate_tasks(
     // 并发执行所有子任务
     let mut unordered = FuturesUnordered::new();
 
-    for (_idx, task_obj) in tasks_array.iter().enumerate() {
+    for task_obj in tasks_array.iter() {
         let profile_id = task_obj["profile"]
             .as_str()
             .unwrap_or("general")
@@ -1553,6 +1570,10 @@ async fn handle_delegate_tasks(
 ///
 /// 每个步骤独立调用 `handle_delegate_task`，前一步的输出作为上下文追加到下一步的任务描述中。
 /// 通过 Tauri 事件向前端推送工作流进度（workflow-start / workflow-step-start / workflow-step-complete / workflow-complete）。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "workflow orchestration keeps inherited execution context explicit"
+)]
 async fn execute_workflow(
     window: &Window,
     app: &AppHandle,
@@ -1729,6 +1750,10 @@ async fn execute_workflow(
 ///
 /// 创建独立的 LLM 上下文，注入子 Agent 系统提示词 + 任务描述，
 /// 运行最多 `max_rounds` 轮流式调用 + 工具执行，完成后返回结果总结。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "subagent execution keeps inherited parent context explicit"
+)]
 async fn execute_subagent(
     window: &Window,
     app: &AppHandle,
@@ -2047,6 +2072,10 @@ struct SubagentErrorPayload {
 /// - `project_id`：项目 id（用于解析项目级权限规则）
 /// - `locale`：可选界面语言；旧调用缺失时兼容回退到 `zh-CN`
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Tauri IPC compatibility requires the existing flat agent parameters"
+)]
 pub async fn run_agent_turn(
     app: AppHandle,
     window: Window,
@@ -2937,6 +2966,10 @@ pub async fn run_agent_turn(
 
 /// 上下文自动压缩：将早期消息压缩为摘要，保留最近 2 轮对话。
 /// 用于 Agent 循环中避免超出模型上下文窗口限制。
+#[allow(
+    clippy::too_many_arguments,
+    reason = "context compression reuses the active stream request context"
+)]
 async fn compress_context(
     window: &Window,
     client: &reqwest::Client,
@@ -3020,7 +3053,7 @@ async fn compress_context(
         .to_string();
 
     // 重建消息列表：摘要 → 尾部消息
-    let tail: Vec<serde_json::Value> = messages.drain(..).collect();
+    let tail: Vec<serde_json::Value> = std::mem::take(messages);
     messages.push(json!({
         "role": "system",
         "content": format!("[历史摘要 — 自动压缩]\n{}", summary)

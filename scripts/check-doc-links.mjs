@@ -25,10 +25,17 @@ for (const file of files) {
       continue;
     }
     if (anchor && extname(destination) === '.md') {
-      const headings = readFileSync(destination, 'utf8')
-        .match(/^#{1,6}\s+.+$/gm)
-        ?.map((line) => line.replace(/^#{1,6}\s+/, '').trim().toLowerCase()
-          .replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/\s+/g, '-')) ?? [];
+      const headings =
+        readFileSync(destination, 'utf8')
+          .match(/^#{1,6}\s+.+$/gm)
+          ?.map((line) =>
+            line
+              .replace(/^#{1,6}\s+/, '')
+              .trim()
+              .toLowerCase()
+              .replace(/[^\p{L}\p{N}\s-]/gu, '')
+              .replace(/\s+/g, '-'),
+          ) ?? [];
       if (!headings.includes(decodeURIComponent(anchor).toLowerCase())) {
         errors.push(`${file}: missing anchor ${target}`);
       }

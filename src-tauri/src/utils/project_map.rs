@@ -4,7 +4,7 @@
 //! 供 Plan 模式和编排 Agent 了解项目布局。
 //! 不修改任何文件，无副作用。
 
-use crate::core::models::{ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -82,7 +82,15 @@ fn build_tree(dir: &Path, output: &mut String, depth: usize, prefix: &str) {
     });
 
     // 跳过隐藏文件和 node_modules / target 等常见忽略目录
-    let ignore_dirs = ["node_modules", "target", ".git", "__pycache__", ".next", "dist", "build"];
+    let ignore_dirs = [
+        "node_modules",
+        "target",
+        ".git",
+        "__pycache__",
+        ".next",
+        "dist",
+        "build",
+    ];
     let entries: Vec<_> = entries
         .into_iter()
         .filter(|e| {
@@ -90,7 +98,9 @@ fn build_tree(dir: &Path, output: &mut String, depth: usize, prefix: &str) {
             if name.starts_with('.') && name != ".env" && name != ".gitignore" {
                 return false;
             }
-            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) && ignore_dirs.contains(&name.as_str()) {
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && ignore_dirs.contains(&name.as_str())
+            {
                 return false;
             }
             true
@@ -122,6 +132,10 @@ fn build_tree(dir: &Path, output: &mut String, depth: usize, prefix: &str) {
     }
 
     if count > display_count {
-        output.push_str(&format!("{}... (+{} more entries)\n", prefix, count - display_count));
+        output.push_str(&format!(
+            "{}... (+{} more entries)\n",
+            prefix,
+            count - display_count
+        ));
     }
 }

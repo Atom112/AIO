@@ -188,10 +188,7 @@ pub async fn get_diagnostics(
 
 /// 自动检测项目应启动的语言服务器
 #[tauri::command]
-pub async fn auto_detect_ls(
-    app: AppHandle,
-    project_path: String,
-) -> Result<Value, String> {
+pub async fn auto_detect_ls(app: AppHandle, project_path: String) -> Result<Value, String> {
     let lsp_mgr = app.state::<LspManager>();
     let project_root = PathBuf::from(&project_path);
 
@@ -239,10 +236,7 @@ pub async fn list_supported_languages(app: AppHandle) -> Result<Value, String> {
 
 /// 关闭指定项目的所有语言服务器
 #[tauri::command]
-pub async fn stop_all_lsp_servers(
-    app: AppHandle,
-    project_path: String,
-) -> Result<Value, String> {
+pub async fn stop_all_lsp_servers(app: AppHandle, project_path: String) -> Result<Value, String> {
     let lsp_mgr = app.state::<LspManager>();
     let project_root = PathBuf::from(&project_path);
     let project_prefix = project_root.to_string_lossy().to_string();

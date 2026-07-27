@@ -8,8 +8,8 @@
 
 use super::error::{McpError, McpResult};
 use crate::core::models::{
-    McpServerConfig, McpServerInfo, McpResource, McpPrompt,
-    ReadResourceResult, GetPromptResult, ToolResult, ToolResultContent, ToolSpec,
+    GetPromptResult, McpPrompt, McpResource, McpServerConfig, McpServerInfo, ReadResourceResult,
+    ToolResult, ToolResultContent, ToolSpec,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -153,7 +153,11 @@ impl super::McpServerPlugin for HttpPlugin {
             .get("result")
             .and_then(|r| r.get("capabilities"))
             .and_then(|c| serde_json::from_value(c.clone()).ok());
-        Ok(McpServerInfo { name, version, capabilities })
+        Ok(McpServerInfo {
+            name,
+            version,
+            capabilities,
+        })
     }
 
     async fn list_tools(

@@ -66,10 +66,7 @@ impl HttpUrlOptions {
 }
 
 /// Cloud metadata 端点（拒绝访问）
-const CLOUD_METADATA_HOSTS: &[&str] = &[
-    "169.254.169.254",
-    "metadata.google.internal",
-];
+const CLOUD_METADATA_HOSTS: &[&str] = &["169.254.169.254", "metadata.google.internal"];
 
 /// 已知内网 hostname（localhost 变体除外，由 `allow_localhost` 控制）
 const BLOCKED_HOSTNAMES: &[&str] = &[]; // 保留扩展空间
@@ -105,7 +102,10 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
 
     // 4. 拒绝裸 IP 地址（所有 IPv4 / IPv6）
     // 注意：url crate 2.x 中 host_str() 对 IPv6 地址返回带括号的 "[::1]" 格式
-    let host_for_ip_check = host.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or(host);
+    let host_for_ip_check = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
     if host_for_ip_check.parse::<std::net::Ipv4Addr>().is_ok()
         || host_for_ip_check.parse::<std::net::Ipv6Addr>().is_ok()
     {
@@ -183,14 +183,26 @@ mod tests {
 
     #[test]
     fn test_allow_localhost_when_permitted() {
-        assert!(validate_http_url("http://localhost:8080", &HttpUrlOptions::local_engine()).is_ok());
-        assert!(validate_http_url("http://127.0.0.1:8080", &HttpUrlOptions::local_engine()).is_ok());
+        assert!(
+            validate_http_url("http://localhost:8080", &HttpUrlOptions::local_engine()).is_ok()
+        );
+        assert!(
+            validate_http_url("http://127.0.0.1:8080", &HttpUrlOptions::local_engine()).is_ok()
+        );
     }
 
     #[test]
     fn test_reject_cloud_metadata() {
-        assert!(validate_http_url("http://169.254.169.254/latest/meta-data", &HttpUrlOptions::default()).is_err());
-        assert!(validate_http_url("http://metadata.google.internal", &HttpUrlOptions::default()).is_err());
+        assert!(validate_http_url(
+            "http://169.254.169.254/latest/meta-data",
+            &HttpUrlOptions::default()
+        )
+        .is_err());
+        assert!(validate_http_url(
+            "http://metadata.google.internal",
+            &HttpUrlOptions::default()
+        )
+        .is_err());
     }
 
     #[test]

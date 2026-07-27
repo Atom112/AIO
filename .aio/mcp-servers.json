@@ -7,10 +7,7 @@
       "hasStoredSecret": false,
       "id": "__aio-filesystem__",
       "transport": {
-        "args": [
-          "--fs-server",
-          "\\\\?\\D:\\base\\AIO"
-        ],
+        "args": ["--fs-server", "\\\\?\\D:\\base\\AIO"],
         "command": "D:\\base\\AIO\\src-tauri\\target\\debug\\aio.exe",
         "env": {},
         "transport": "stdio"

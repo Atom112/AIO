@@ -5,7 +5,7 @@
 //!
 //! 用于 Plan 模式和编排场景，让模型在调用执行工具前先整理思路。
 
-use crate::core::models::{ToolResult, ToolResultContent, ToolSpec, ToolFunctionSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use serde_json::json;
 
 /// 返回 Think 工具的 ToolSpec。
@@ -31,9 +31,7 @@ pub fn tool_spec() -> ToolSpec {
 
 /// 执行 Think 工具（no-op，返回确认文本）。
 pub fn execute(arguments: &serde_json::Value) -> ToolResult {
-    let thought = arguments["thought"]
-        .as_str()
-        .unwrap_or("");
+    let thought = arguments["thought"].as_str().unwrap_or("");
 
     let preview: String = if thought.chars().count() > 100 {
         format!("{}...", thought.chars().take(100).collect::<String>())

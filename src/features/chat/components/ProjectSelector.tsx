@@ -5,15 +5,14 @@
 import { createSignal, onMount, Show, For } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import {
-    currentProjectId,
-    setCurrentProjectId,
-    projects,
-    setProjects,
-    initProjects,
-    initSkills,
-    initMcpServers,
-    currentProject,
-    saveLastAgentProjectId,
+  currentProjectId,
+  setCurrentProjectId,
+  projects,
+  initProjects,
+  initSkills,
+  initMcpServers,
+  currentProject,
+  saveLastAgentProjectId,
 } from '../../../core/store/store';
 import ProjectCreateModal from './ProjectCreateModal';
 import Icon from '../../../shared/components/Icon';
@@ -22,121 +21,144 @@ import { t } from '../../../core/i18n';
 let ref: HTMLDivElement | undefined;
 
 export default function ProjectSelector() {
-    const [open, setOpen] = createSignal(false);
-    const [showCreate, setShowCreate] = createSignal(false);
+  const [open, setOpen] = createSignal(false);
+  const [showCreate, setShowCreate] = createSignal(false);
 
-    onMount(() => {
-        initProjects();
-    });
+  onMount(() => {
+    initProjects();
+  });
 
-    const selectProject = async (id: string) => {
-        setCurrentProjectId(id);
-        saveLastAgentProjectId(id);
-        setOpen(false);
-        // 重新加载 skills 和 MCP
-        await Promise.all([initSkills(id), initMcpServers(id)]);
-    };
+  const selectProject = async (id: string) => {
+    setCurrentProjectId(id);
+    saveLastAgentProjectId(id);
+    setOpen(false);
+    // 重新加载 skills 和 MCP
+    await Promise.all([initSkills(id), initMcpServers(id)]);
+  };
 
-    const handleOpenDir = async (e: MouseEvent, path: string) => {
-        e.stopPropagation();
-        try {
-            await invoke('open_project_directory', { path });
-        } catch (err) {
-            console.warn('打开目录失败:', err);
-        }
-    };
+  const handleOpenDir = async (e: MouseEvent, path: string) => {
+    e.stopPropagation();
+    try {
+      await invoke('open_project_directory', { path });
+    } catch (err) {
+      console.warn('打开目录失败:', err);
+    }
+  };
 
-    return (
-        <>
-            <div class="relative" ref={ref}>
+  return (
+    <>
+      <div class="relative" ref={ref}>
+        <button
+          type="button"
+          class={`flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60 ${currentProject() ? 'text-white/55' : 'text-white/40'}`}
+          onClick={() => setOpen(!open())}
+          title={
+            currentProject()
+              ? t('project.current', { name: currentProject()!.name, path: currentProject()!.path })
+              : t('project.selectDirectory')
+          }
+        >
+          <Icon name="folder" size={15} class="flex items-center justify-center shrink-0" />
+          <span class="leading-none max-w-[100px] truncate">
+            {currentProject()?.name ?? t('project.selectDirectory')}
+          </span>
+        </button>
+
+        {/* 项目下拉面板 */}
+        <div
+          class="absolute bottom-full left-0 mb-1 w-64 bg-[#1e2a3a] border border-white/15 rounded-lg shadow-xl z-50 overflow-hidden transition-all duration-150 ease-out origin-bottom"
+          classList={{
+            'invisible opacity-0 scale-95 -translate-y-1 pointer-events-none': !open(),
+            'visible opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 项目列表 */}
+          <div class="max-h-64 overflow-y-auto">
+            <For each={projects()}>
+              {(proj) => (
                 <button
-                    type="button"
-                    class={`flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60 ${currentProject() ? 'text-white/55' : 'text-white/40'}`}
-                    onClick={() => setOpen(!open())}
-                    title={currentProject()
-                        ? t('project.current', { name: currentProject()!.name, path: currentProject()!.path })
-                        : t('project.selectDirectory')}
-                >
-                    <Icon name="folder" size={15} class="flex items-center justify-center shrink-0" />
-                    <span class="leading-none max-w-[100px] truncate">{currentProject()?.name ?? t('project.selectDirectory')}</span>
-                </button>
-
-            {/* 项目下拉面板 */}
-            <div
-                class="absolute bottom-full left-0 mb-1 w-64 bg-[#1e2a3a] border border-white/15 rounded-lg shadow-xl z-50 overflow-hidden transition-all duration-150 ease-out origin-bottom"
-                classList={{
-                    'invisible opacity-0 scale-95 -translate-y-1 pointer-events-none': !open(),
-                    'visible opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),
-                }}
-                onClick={(e) => e.stopPropagation()}
-            >
-                {/* 项目列表 */}
-                <div class="max-h-64 overflow-y-auto">
-                    <For each={projects()}>
-                        {(proj) => (
-                            <button
-                                class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80
+                  class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80
                                        hover:bg-white/10 transition-colors group"
-                                classList={{ 'bg-white/5': currentProjectId() === proj.id }}
-                                onClick={() => selectProject(proj.id)}
-                            >
-                                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                                </svg>
-                                <span class="truncate flex-1 text-left">{proj.name}</span>
-                                <span
-                                    class="opacity-0 group-hover:opacity-60 transition-opacity shrink-0"
-                                    onClick={(e) => handleOpenDir(e, proj.path)}
-                                    title={t('project.openFolder')}
-                                >
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                              d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2h-4l-2-2H8a2 2 0 00-2 2v0" />
-                                    </svg>
-                                </span>
-                            </button>
-                        )}
-                    </For>
-                </div>
-
-                <div class="border-t border-white/10" />
-
-                {/* 新建项目 */}
-                <button
-                    class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[#7c9abf]
-                           hover:bg-white/10 transition-colors"
-                    onClick={() => { setShowCreate(true); setOpen(false); }}
+                  classList={{ 'bg-white/5': currentProjectId() === proj.id }}
+                  onClick={() => selectProject(proj.id)}
                 >
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M12 4v16m8-8H4" />
+                  <svg
+                    class="w-4 h-4 shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
+                  </svg>
+                  <span class="truncate flex-1 text-left">{proj.name}</span>
+                  <span
+                    class="opacity-0 group-hover:opacity-60 transition-opacity shrink-0"
+                    onClick={(e) => handleOpenDir(e, proj.path)}
+                    title={t('project.openFolder')}
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2h-4l-2-2H8a2 2 0 00-2 2v0"
+                      />
                     </svg>
-                    {t('project.new')}
+                  </span>
                 </button>
-            </div>
+              )}
+            </For>
+          </div>
 
-            {/* 点击外部关闭（始终渲染，通过 pointer-events 控制） */}
-            </div>
-            <div
-                class="fixed inset-0 z-40"
-                classList={{
-                    'pointer-events-none': !open(),
-                    'pointer-events-auto': open(),
-                }}
-                onClick={() => setOpen(false)}
-            />
+          <div class="border-t border-white/10" />
 
-            <Show when={showCreate()}>
-                <ProjectCreateModal
-                    onClose={() => setShowCreate(false)}
-                    onCreated={async (id) => {
-                        setShowCreate(false);
-                        await initProjects();
-                        await selectProject(id);
-                    }}
-                />
-            </Show>
-        </>
-    );
+          {/* 新建项目 */}
+          <button
+            class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[#7c9abf]
+                           hover:bg-white/10 transition-colors"
+            onClick={() => {
+              setShowCreate(true);
+              setOpen(false);
+            }}
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            {t('project.new')}
+          </button>
+        </div>
+
+        {/* 点击外部关闭（始终渲染，通过 pointer-events 控制） */}
+      </div>
+      <div
+        class="fixed inset-0 z-40"
+        classList={{
+          'pointer-events-none': !open(),
+          'pointer-events-auto': open(),
+        }}
+        onClick={() => setOpen(false)}
+      />
+
+      <Show when={showCreate()}>
+        <ProjectCreateModal
+          onClose={() => setShowCreate(false)}
+          onCreated={(id) => {
+            setShowCreate(false);
+            void initProjects().then(() => selectProject(id));
+          }}
+        />
+      </Show>
+    </>
+  );
 }

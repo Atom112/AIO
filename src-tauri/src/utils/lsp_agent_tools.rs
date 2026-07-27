@@ -6,7 +6,7 @@
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use crate::plugins::lsp::{LspClient, LspManager};
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Duration;
 use tauri::Manager;
 
@@ -152,7 +152,7 @@ fn extension_to_language_id(ext: &str) -> Option<&str> {
 }
 
 /// 相对文件路径 → file:// URI（仿照 client.rs 中同名私有函数）。
-fn file_path_to_uri(project_root: &PathBuf, file_path: &str) -> Result<String, String> {
+fn file_path_to_uri(project_root: &Path, file_path: &str) -> Result<String, String> {
     let full = project_root.join(file_path);
     let canonical = std::fs::canonicalize(&full)
         .map_err(|e| format!("无法解析路径 {}: {}", full.display(), e))?;
@@ -251,7 +251,7 @@ pub async fn execute_lsp_definition(
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
-    let uri = file_path_to_uri(&PathBuf::from(project_root), &relative_path)?;
+    let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
 
     let params = json!({
         "textDocument": { "uri": uri },
@@ -259,7 +259,11 @@ pub async fn execute_lsp_definition(
     });
 
     let response = client
-        .request("textDocument/definition", Some(params), Duration::from_secs(10))
+        .request(
+            "textDocument/definition",
+            Some(params),
+            Duration::from_secs(10),
+        )
         .await
         .map_err(|e| format!("LSP definition 请求失败: {e}"))?;
 
@@ -286,10 +290,7 @@ pub async fn execute_lsp_definition(
 
     // 再尝试解析为单条 Location
     if response.get("uri").and_then(|u| u.as_str()).is_some() {
-        return Ok(tool_ok(format!(
-            "定义位置: {}",
-            format_location(&response)
-        )));
+        return Ok(tool_ok(format!("定义位置: {}", format_location(&response))));
     }
 
     // 兜底：直接输出原始结果
@@ -311,7 +312,7 @@ pub async fn execute_lsp_references(
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
-    let uri = file_path_to_uri(&PathBuf::from(project_root), &relative_path)?;
+    let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
 
     let params = json!({
         "textDocument": { "uri": uri },
@@ -320,7 +321,11 @@ pub async fn execute_lsp_references(
     });
 
     let response = client
-        .request("textDocument/references", Some(params), Duration::from_secs(10))
+        .request(
+            "textDocument/references",
+            Some(params),
+            Duration::from_secs(10),
+        )
         .await
         .map_err(|e| format!("LSP references 请求失败: {e}"))?;
 
@@ -360,7 +365,7 @@ pub async fn execute_lsp_hover(
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
-    let uri = file_path_to_uri(&PathBuf::from(project_root), &relative_path)?;
+    let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
 
     let params = json!({
         "textDocument": { "uri": uri },
@@ -400,14 +405,18 @@ pub async fn execute_lsp_symbols(
         .ok_or_else(|| "缺少 'path' 参数".to_string())?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
-    let uri = file_path_to_uri(&PathBuf::from(project_root), &relative_path)?;
+    let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
 
     let params = json!({
         "textDocument": { "uri": uri }
     });
 
     let response = client
-        .request("textDocument/documentSymbol", Some(params), Duration::from_secs(10))
+        .request(
+            "textDocument/documentSymbol",
+            Some(params),
+            Duration::from_secs(10),
+        )
         .await
         .map_err(|e| format!("LSP documentSymbol 请求失败: {e}"))?;
 
@@ -439,10 +448,8 @@ pub async fn execute_lsp_symbols(
 /// 格式化单个 Location JSON 对象为 "文件:行:列"。
 fn format_location(loc: &Value) -> String {
     let uri_str = loc.get("uri").and_then(|u| u.as_str()).unwrap_or("?");
-    let start = loc
-        .get("range")
-        .and_then(|r| r.get("start"));
-    let pos = start.map(|s| format_position(s)).unwrap_or_else(|| "?".into());
+    let start = loc.get("range").and_then(|r| r.get("start"));
+    let pos = start.map(format_position).unwrap_or_else(|| "?".into());
     format!("  {}:{}", format_uri(uri_str), pos)
 }
 
@@ -450,10 +457,7 @@ fn format_location(loc: &Value) -> String {
 fn extract_hover_text(contents: &Value) -> String {
     // MarkupContent: { kind: "markdown" | "plaintext", value: "..." }
     if let Some(value) = contents.get("value").and_then(|v| v.as_str()) {
-        let kind = contents
-            .get("kind")
-            .and_then(|k| k.as_str())
-            .unwrap_or("");
+        let kind = contents.get("kind").and_then(|k| k.as_str()).unwrap_or("");
         if kind == "markdown" || kind == "plaintext" {
             return value.to_string();
         }
@@ -505,7 +509,7 @@ fn flatten_symbol(symbol: &Value, depth: usize, out: &mut Vec<String>) {
                 .and_then(|l| l.get("range"))
                 .and_then(|r| r.get("start"))
         })
-        .map(|s| format_position(s))
+        .map(format_position)
         .unwrap_or_else(|| "?".into());
 
     out.push(format!("{indent}{name} {pos} ({kind})"));

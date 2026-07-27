@@ -29,11 +29,7 @@ impl ProviderPlugin for AnthropicProvider {
         u.contains("api.anthropic.com")
     }
 
-    fn build_client(
-        &self,
-        proxy_url: Option<&str>,
-        timeout_secs: u64,
-    ) -> Result<Client, String> {
+    fn build_client(&self, proxy_url: Option<&str>, timeout_secs: u64) -> Result<Client, String> {
         let mut b = Client::builder()
             .user_agent("AIO-Desktop/0.4 (anthropic-provider)")
             .connect_timeout(Duration::from_secs(5))
@@ -44,7 +40,8 @@ impl ProviderPlugin for AnthropicProvider {
                 b = b.proxy(proxy);
             }
         }
-        b.build().map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
+        b.build()
+            .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
     }
 
     fn models_url(&self, api_url: &str) -> String {

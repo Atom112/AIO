@@ -10,7 +10,7 @@ use super::transport::{encode_message, read_frame};
 use dashmap::DashMap;
 use lsp_types::PublishDiagnosticsParams;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -333,22 +333,19 @@ impl LspClient {
 
         // 处理 notification
         if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
-            match method {
-                "textDocument/publishDiagnostics" => {
-                    if let Some(params) = v.get("params") {
-                        if let Ok(p) =
-                            serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
-                        {
-                            let uri = p.uri.to_string();
-                            if p.diagnostics.is_empty() {
-                                self.inner.diagnostics.remove(&uri);
-                            } else {
-                                self.inner.diagnostics.insert(uri, p.diagnostics);
-                            }
+            if method == "textDocument/publishDiagnostics" {
+                if let Some(params) = v.get("params") {
+                    if let Ok(p) =
+                        serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
+                    {
+                        let uri = p.uri.to_string();
+                        if p.diagnostics.is_empty() {
+                            self.inner.diagnostics.remove(&uri);
+                        } else {
+                            self.inner.diagnostics.insert(uri, p.diagnostics);
                         }
                     }
                 }
-                _ => {}
             }
         }
     }
@@ -357,7 +354,7 @@ impl LspClient {
 // ====== 辅助函数 ======
 
 /// 文件系统路径 → file:// URI
-fn path_to_uri(path: &PathBuf) -> LspResult<String> {
+fn path_to_uri(path: &Path) -> LspResult<String> {
     let canonical = std::fs::canonicalize(path)
         .map_err(|e| super::error::LspError::Protocol(format!("canonicalize 路径失败: {}", e)))?;
     let url = url::Url::from_file_path(&canonical).map_err(|_| {
@@ -367,7 +364,7 @@ fn path_to_uri(path: &PathBuf) -> LspResult<String> {
 }
 
 /// 相对文件路径 → file:// URI
-fn file_path_to_uri(project_root: &PathBuf, file_path: &str) -> LspResult<String> {
+fn file_path_to_uri(project_root: &Path, file_path: &str) -> LspResult<String> {
     let full = project_root.join(file_path);
     path_to_uri(&full)
 }

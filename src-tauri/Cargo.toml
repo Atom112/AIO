@@ -1,7 +1,7 @@
 [package]
 name = "aio"
-version = "0.6.2"
-description = "A Tauri App"
+version = "0.7.2"
+description = "A lightweight cross-platform AI assistant desktop client"
 authors = ["Loch"]
 edition = "2021"
 license = "Apache-2.0"

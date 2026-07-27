@@ -1,9 +1,9 @@
-use crate::core::models::*;
-use crate::core::secure_store;
-use crate::core::state::DbState;
 use crate::commands::attachment::{
     cleanup_attachment_ids, load_message_attachments_batch, sync_message_attachments,
 };
+use crate::core::models::*;
+use crate::core::secure_store;
+use crate::core::state::DbState;
 use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use std::fs; // 导入标准库文件系统模块
@@ -32,7 +32,6 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
     } else {
         let _ = secure_store::delete(&app, secure_store::accounts::APP_API_KEY);
     }
-
 
     // 1. 获取操作系统的用户配置目录 (如 Windows 的 AppData/Roaming 或 Linux 的 ~/.config)
     let mut path = dirs::config_dir().ok_or_else(|| "无法获取系统配置目录".to_string())?;
@@ -93,7 +92,11 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
             // 兼容旧 schema（含明文 api_key）：读出后迁出到 keyring
             if let Ok(legacy) = serde_json::from_str::<AppConfig>(&content) {
                 if !legacy.api_key.is_empty() {
-                    let _ = secure_store::set(&app, secure_store::accounts::APP_API_KEY, &legacy.api_key);
+                    let _ = secure_store::set(
+                        &app,
+                        secure_store::accounts::APP_API_KEY,
+                        &legacy.api_key,
+                    );
                 }
                 let mut disk = AppConfigDisk {
                     api_url: legacy.api_url.clone(),
@@ -105,7 +108,10 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                 disk.api_url = legacy.api_url;
                 disk.default_model = legacy.default_model;
                 disk.local_model_path = legacy.local_model_path;
-                let _ = fs::write(&path, serde_json::to_string_pretty(&disk).unwrap_or_default());
+                let _ = fs::write(
+                    &path,
+                    serde_json::to_string_pretty(&disk).unwrap_or_default(),
+                );
                 return Ok(AppConfig {
                     api_url: disk.api_url,
                     api_key: legacy.api_key,
@@ -223,24 +229,26 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         .and_then(|s| serde_json::from_str::<Vec<ToolCall>>(&s).ok());
 
                     Ok(Message {
-                        id: row.get(0)?,           // index 0: id
-                        role: row.get(1)?,         // index 1: role
-                        content: content_value,    // index 2: content (JSON)
-                        model_id: row.get(3)?,     // index 3: model_id
-                        display_files,             // 已经解析好的 files
-                        display_text: row.get(5)?, // index 5: display_text
-                        tool_call_id: row.get(7)?, // index 7: tool_call_id
-                        name: row.get(8)?,         // index 8: name
-                        tool_calls,                // index 9: tool_calls_json（已解析）
-                        reasoning: row.get(6)?,    // index 6: reasoning
+                        id: row.get(0)?,             // index 0: id
+                        role: row.get(1)?,           // index 1: role
+                        content: content_value,      // index 2: content (JSON)
+                        model_id: row.get(3)?,       // index 3: model_id
+                        display_files,               // 已经解析好的 files
+                        display_text: row.get(5)?,   // index 5: display_text
+                        tool_call_id: row.get(7)?,   // index 7: tool_call_id
+                        name: row.get(8)?,           // index 8: name
+                        tool_calls,                  // index 9: tool_calls_json（已解析）
+                        reasoning: row.get(6)?,      // index 6: reasoning
                         input_tokens: row.get(10)?,  // index 10: input_tokens
                         output_tokens: row.get(11)?, // index 11: output_tokens
-                        agent_steps: row.get::<_, Option<String>>(12)?.and_then(|s| serde_json::from_str(&s).ok()),  // index 12: agent_steps_json
-                        interim_content: row.get(13)?,  // index 13: interim_content
+                        agent_steps: row
+                            .get::<_, Option<String>>(12)?
+                            .and_then(|s| serde_json::from_str(&s).ok()), // index 12: agent_steps_json
+                        interim_content: row.get(13)?, // index 13: interim_content
                         agent_start_time: row.get(14)?, // index 14: agent_start_time
                         parent_message_id: row.get(15)?, // index 15: parent_message_id
-                        branch_index: row.get(16)?,      // index 16: branch_index
-                        full_tool_result: None,           // 会话级内存字段，不持久化
+                        branch_index: row.get(16)?,    // index 16: branch_index
+                        full_tool_result: None,        // 会话级内存字段，不持久化
                     })
                 })
                 .map_err(|e| e.to_string())?;
@@ -263,7 +271,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     if let Some(mut stored_files) = attachments_map.get(message_id).cloned() {
                         if !stored_files.is_empty() {
                             if let Some(ref display_files) = message.display_files {
-                                for (stored, display) in stored_files.iter_mut().zip(display_files) {
+                                for (stored, display) in stored_files.iter_mut().zip(display_files)
+                                {
                                     stored.name = display.name.clone();
                                 }
                             }
@@ -289,10 +298,10 @@ pub async fn save_assistant(
     let conn = state.0.lock();
 
     // 1. 保存/更新助手基本信息
-    let mcp_ids_json = serde_json::to_string(&assistant.mcp_server_ids)
-        .unwrap_or_else(|_| "[]".to_string());
-    let skill_ids_json = serde_json::to_string(&assistant.skill_ids)
-        .unwrap_or_else(|_| "[]".to_string());
+    let mcp_ids_json =
+        serde_json::to_string(&assistant.mcp_server_ids).unwrap_or_else(|_| "[]".to_string());
+    let skill_ids_json =
+        serde_json::to_string(&assistant.skill_ids).unwrap_or_else(|_| "[]".to_string());
     let agent_mode_str = serde_json::to_string(&assistant.agent_mode)
         .unwrap_or_else(|_| "\"off\"".to_string())
         .trim_matches('"')
@@ -505,7 +514,8 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
         return Ok(vec![]);
     }
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut models: Vec<ActivatedModel> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let mut models: Vec<ActivatedModel> =
+        serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
     // 从 secure_store 恢复 api_key，并自动迁移旧数据（含明文 api_key 的旧文件）
     let mut needs_migration = false;
@@ -655,7 +665,11 @@ pub async fn read_avatar_source(path: String) -> Result<String, String> {
         return Err(format!("文件过大 (上限 {}MB)", MAX_BYTES / 1024 / 1024));
     }
     // 校验扩展名
-    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let ext = p
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     if !["png", "jpg", "jpeg", "webp", "bmp", "gif"].contains(&ext.as_str()) {
         return Err("仅支持 png/jpg/jpeg/webp/bmp/gif 图像".into());
     }
@@ -688,9 +702,10 @@ pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, Strin
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 profile-model-overrides.json 失败: {}", e))?;
-    let file: ProfileModelOverridesFile =
-        serde_json::from_str(&raw).map_err(|e| format!("解析 profile-model-overrides.json 失败: {}", e))?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("读取 profile-model-overrides.json 失败: {}", e))?;
+    let file: ProfileModelOverridesFile = serde_json::from_str(&raw)
+        .map_err(|e| format!("解析 profile-model-overrides.json 失败: {}", e))?;
     Ok(file.overrides)
 }
 
@@ -708,10 +723,15 @@ pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Res
         version: 1,
         updated_at: {
             use std::time::SystemTime;
-            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let dur = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
             let secs = dur.as_secs();
             let tm = secs_to_date_parts(secs);
-            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+            format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                tm.0, tm.1, tm.2, tm.3, tm.4, tm.5
+            )
         },
         overrides,
     };
@@ -757,14 +777,13 @@ fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
 }
 
 fn is_leap(y: u64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
 }
 
 // ====== Custom Subagent Profiles (CRUD) ======
 use crate::core::models::CustomSubagentProfile;
 
 use crate::core::models::CustomSubagentProfilesFile;
-
 
 fn custom_profiles_path() -> Result<std::path::PathBuf, String> {
     let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
@@ -782,9 +801,10 @@ pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, Str
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
-    let file: CustomSubagentProfilesFile =
-        serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+    let file: CustomSubagentProfilesFile = serde_json::from_str(&raw)
+        .map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
     Ok(file.profiles)
 }
 
@@ -795,9 +815,10 @@ pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, Str
 pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<(), String> {
     let path = custom_profiles_path()?;
     let mut profiles: Vec<CustomSubagentProfile> = if path.exists() {
-        let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
-        let file: CustomSubagentProfilesFile =
-            serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+        let raw = fs::read_to_string(&path)
+            .map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+        let file: CustomSubagentProfilesFile = serde_json::from_str(&raw)
+            .map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
         file.profiles
     } else {
         Vec::new()
@@ -818,10 +839,15 @@ pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<()
         version: 1,
         updated_at: {
             use std::time::SystemTime;
-            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let dur = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
             let secs = dur.as_secs();
             let tm = secs_to_date_parts(secs);
-            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+            format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                tm.0, tm.1, tm.2, tm.3, tm.4, tm.5
+            )
         },
         profiles,
     };
@@ -838,19 +864,29 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
     if !path.exists() {
         return Ok(());
     }
-    let raw = fs::read_to_string(&path).map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
-    let file: CustomSubagentProfilesFile =
-        serde_json::from_str(&raw).map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
-    let profiles: Vec<CustomSubagentProfile> = file.profiles.into_iter().filter(|p| p.id != profile_id).collect();
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
+    let file: CustomSubagentProfilesFile = serde_json::from_str(&raw)
+        .map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    let profiles: Vec<CustomSubagentProfile> = file
+        .profiles
+        .into_iter()
+        .filter(|p| p.id != profile_id)
+        .collect();
     // Write back
     let updated = CustomSubagentProfilesFile {
         version: 1,
         updated_at: {
             use std::time::SystemTime;
-            let dur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+            let dur = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
             let secs = dur.as_secs();
             let tm = secs_to_date_parts(secs);
-            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", tm.0, tm.1, tm.2, tm.3, tm.4, tm.5)
+            format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                tm.0, tm.1, tm.2, tm.3, tm.4, tm.5
+            )
         },
         profiles,
     };
@@ -880,9 +916,12 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 .args([
                     "add",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                    "/v", app_name,
-                    "/t", "REG_SZ",
-                    "/d", &exe_str,
+                    "/v",
+                    app_name,
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &exe_str,
                     "/f",
                 ])
                 .output()
@@ -896,7 +935,8 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 .args([
                     "delete",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                    "/v", app_name,
+                    "/v",
+                    app_name,
                     "/f",
                 ])
                 .output()
@@ -940,7 +980,8 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
             fs::write(&plist_path, plist).map_err(|e| format!("写入 LaunchAgent 失败: {}", e))?;
         } else {
             if plist_path.exists() {
-                fs::remove_file(&plist_path).map_err(|e| format!("删除 LaunchAgent 失败: {}", e))?;
+                fs::remove_file(&plist_path)
+                    .map_err(|e| format!("删除 LaunchAgent 失败: {}", e))?;
             }
         }
     }
@@ -965,7 +1006,8 @@ X-GNOME-Autostart-enabled=true"#,
             fs::write(&desktop_path, desktop).map_err(|e| format!("写入 autostart 失败: {}", e))?;
         } else {
             if desktop_path.exists() {
-                fs::remove_file(&desktop_path).map_err(|e| format!("删除 autostart 失败: {}", e))?;
+                fs::remove_file(&desktop_path)
+                    .map_err(|e| format!("删除 autostart 失败: {}", e))?;
             }
         }
     }
@@ -1025,7 +1067,8 @@ pub async fn branch_topic(
             Ok(Message {
                 id: row.get(0)?,
                 role: row.get(1)?,
-                content: serde_json::from_str(&content_json).unwrap_or(serde_json::Value::String(content_json)),
+                content: serde_json::from_str(&content_json)
+                    .unwrap_or(serde_json::Value::String(content_json)),
                 model_id: row.get(3)?,
                 display_files: display_files_json.and_then(|s| serde_json::from_str(&s).ok()),
                 display_text: row.get(5)?,
@@ -1035,7 +1078,9 @@ pub async fn branch_topic(
                 tool_calls: tool_calls_json.and_then(|s| serde_json::from_str(&s).ok()),
                 input_tokens: row.get(10)?,
                 output_tokens: row.get(11)?,
-                agent_steps: row.get::<_, Option<String>>(12)?.and_then(|s| serde_json::from_str(&s).ok()),
+                agent_steps: row
+                    .get::<_, Option<String>>(12)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
                 interim_content: row.get(13)?,
                 agent_start_time: row.get(14)?,
                 parent_message_id: row.get(15)?,
@@ -1050,10 +1095,17 @@ pub async fn branch_topic(
     drop(m_stmt);
 
     // 截取到分支点（含）
-    let branch_pos = all_msgs.iter().position(|m| m.id.as_deref() == Some(&source_message_id));
+    let branch_pos = all_msgs
+        .iter()
+        .position(|m| m.id.as_deref() == Some(&source_message_id));
     let history: Vec<Message> = match branch_pos {
         Some(pos) => all_msgs.into_iter().take(pos + 1).collect(),
-        None => return Err(format!("消息 {} 不在话题 {} 中", source_message_id, source_topic_id)),
+        None => {
+            return Err(format!(
+                "消息 {} 不在话题 {} 中",
+                source_message_id, source_topic_id
+            ))
+        }
     };
 
     // 3. 创建新话题

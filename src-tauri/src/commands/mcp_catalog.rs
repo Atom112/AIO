@@ -427,10 +427,7 @@ pub async fn install_mcp_catalog_server(
                 &crate::utils::url_validation::HttpUrlOptions::local_engine(),
             )
             .map_err(|e| format!("Registry 返回了非法的 HTTP 地址: {e}"))?;
-            McpTransport::Http {
-                url,
-                headers,
-            }
+            McpTransport::Http { url, headers }
         }
         "npm" | "pypi" => McpTransport::Stdio {
             command: if delivery.kind == "npm" {

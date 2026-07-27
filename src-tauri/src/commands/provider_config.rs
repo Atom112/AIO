@@ -19,7 +19,7 @@ use tauri::AppHandle;
 use crate::core::models::LiveModel;
 use crate::core::secure_store;
 use crate::plugins::provider::{
-    classify_reqwest_error, ProviderManager, TEST_TIMEOUT_SECS, DEFAULT_TIMEOUT_SECS,
+    classify_reqwest_error, ProviderManager, DEFAULT_TIMEOUT_SECS, TEST_TIMEOUT_SECS,
 };
 
 const APPDATA_DIRNAME: &str = "com.loch.aio";
@@ -142,7 +142,7 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
             match serde_json::from_str::<ProviderConfigFile>(&raw) {
                 Ok(mut parsed) if parsed.version == CURRENT_VERSION => {
                     // 还原每个 provider 的 api_key：优先 keyring，缺失时退回明文（旧配置）
-                    for (_, cfg) in parsed.providers.iter_mut() {
+                    for cfg in parsed.providers.values_mut() {
                         let key_name = secure_store::accounts::provider_key(&cfg.id);
                         match secure_store::get(&app, &key_name) {
                             Ok(Some(v)) => {
@@ -182,7 +182,10 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
     Ok(file)
 }
 
-fn save_provider_configs_internal(_app: &AppHandle, file: &ProviderConfigFile) -> Result<(), String> {
+fn save_provider_configs_internal(
+    _app: &AppHandle,
+    file: &ProviderConfigFile,
+) -> Result<(), String> {
     let p = provider_path().ok_or_else(|| "无法获取 config 目录".to_string())?;
     // 在落盘前剥离 api_key（明文 key 一律只存 keyring）
     let mut sanitized = file.clone();

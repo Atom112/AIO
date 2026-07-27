@@ -15,19 +15,25 @@ const dictionaries = Object.fromEntries(
 );
 const reference = dictionaries['en-US'];
 const referenceKeys = Object.keys(reference).sort();
-const placeholders = value => [...value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)].map(match => match[1]).sort();
+const placeholders = (value) =>
+  [...value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)].map((match) => match[1]).sort();
 const errors = [];
 
 for (const [locale, dictionary] of Object.entries(dictionaries)) {
   const keys = Object.keys(dictionary).sort();
-  for (const key of referenceKeys.filter(key => !keys.includes(key))) errors.push(`${locale}: missing ${key}`);
-  for (const key of keys.filter(key => !referenceKeys.includes(key))) errors.push(`${locale}: extra ${key}`);
+  for (const key of referenceKeys.filter((key) => !keys.includes(key)))
+    errors.push(`${locale}: missing ${key}`);
+  for (const key of keys.filter((key) => !referenceKeys.includes(key)))
+    errors.push(`${locale}: extra ${key}`);
   for (const key of keys) {
     if (typeof dictionary[key] !== 'string' || dictionary[key].trim() === '') {
       errors.push(`${locale}: empty ${key}`);
       continue;
     }
-    if (reference[key] && placeholders(dictionary[key]).join(',') !== placeholders(reference[key]).join(',')) {
+    if (
+      reference[key] &&
+      placeholders(dictionary[key]).join(',') !== placeholders(reference[key]).join(',')
+    ) {
       errors.push(`${locale}: placeholder mismatch ${key}`);
     }
   }

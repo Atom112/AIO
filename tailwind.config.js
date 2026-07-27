@@ -1,21 +1,18 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
       colors: {
         // 映射 CSS 变量，使你可以使用 bg-primary, text-primary-50 等类名
-        'pri': 'var(--primary-color)',
+        pri: 'var(--primary-color)',
         'pri-5': 'var(--primary-5)',
         'pri-10': 'var(--primary-10)',
         'pri-20': 'var(--primary-20)',
         'pri-30': 'var(--primary-30)',
         'pri-50': 'var(--primary-50)',
         // 深色背景色阶：改为偏蓝灰调
-        'dark': {
+        dark: {
           DEFAULT: '#161a28',
           50: '#6a6e7a',
           100: '#585c6a',
@@ -31,11 +28,11 @@ export default {
           950: '#0a0e1a',
         },
         // 危险/关闭操作色
-        'danger': '#E08090',
+        danger: '#E08090',
       },
       boxShadow: {
         'theme-inner': 'inset 0 0 20px rgba(0, 0, 0, 0.3)',
-        'acrylic': '0 8px 32px rgba(0, 0, 0, 0.25)',
+        acrylic: '0 8px 32px rgba(0, 0, 0, 0.25)',
       },
       keyframes: {
         'bubble-in': {
@@ -45,9 +42,9 @@ export default {
         'cursor-blink': {
           '50%': { opacity: '0' },
         },
-        'tagFadeIn': {
-          'from': { opacity: '0', transform: 'translateY(5px)' },
-          'to': { opacity: '1', transform: 'translateY(0)' },
+        tagFadeIn: {
+          from: { opacity: '0', transform: 'translateY(5px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
         },
         'slide-up': {
           '0%': { opacity: '0', transform: 'translateY(12px)' },
@@ -65,7 +62,7 @@ export default {
           '0%': { opacity: '1', transform: 'scale(1) translateY(0)' },
           '100%': { opacity: '0', transform: 'scale(0.96) translateY(-4px)' },
         },
-        'shimmer': {
+        shimmer: {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
@@ -160,7 +157,7 @@ export default {
         },
       },
       animation: {
-        'shimmer': 'shimmer 2s linear infinite',
+        shimmer: 'shimmer 2s linear infinite',
         'stream-fade-in': 'stream-fade-in 0.3s ease-out forwards',
         'fade-in': 'fade-in 0.2s ease-out forwards',
         // ======= Moved from index.css =======
@@ -188,4 +185,4 @@ export default {
     },
   },
   plugins: [],
-}
+};

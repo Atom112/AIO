@@ -7,7 +7,6 @@
 /// 3. 流式下载（支持进度回调）
 /// 4. 解压到 app data 目录
 /// 5. 记录版本信息，支持版本对比和更新
-
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -283,26 +282,20 @@ impl EngineInstaller {
         on_progress(0.05);
 
         // 2. 选择 asset
-        let asset = Self::select_asset(&release).ok_or_else(|| {
-            format!(
-                "未找到当前平台 ({}) 对应的下载文件",
-                std::env::consts::OS
-            )
-        })?;
+        let asset = Self::select_asset(&release)
+            .ok_or_else(|| format!("未找到当前平台 ({}) 对应的下载文件", std::env::consts::OS))?;
         on_progress(0.1);
 
         // 3. 创建目标目录
         let engine_dir = Self::get_engine_dir(app);
-        std::fs::create_dir_all(&engine_dir)
-            .map_err(|e| format!("创建引擎目录失败: {}", e))?;
+        std::fs::create_dir_all(&engine_dir).map_err(|e| format!("创建引擎目录失败: {}", e))?;
 
         // 4. 下载到临时文件
         let temp_dir = std::env::temp_dir().join(format!("aio-llama-{}", tag));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
-        std::fs::create_dir_all(&temp_dir)
-            .map_err(|e| format!("创建临时目录失败: {}", e))?;
+        std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
 
         let zip_path = temp_dir.join(&asset.name);
         let fallback_progress = on_progress;
@@ -328,17 +321,14 @@ impl EngineInstaller {
         let total_size = resp.content_length().unwrap_or(0);
         let mut downloaded: u64 = 0;
 
-        let mut file = std::fs::File::create(&zip_path)
-            .map_err(|e| format!("创建临时文件失败: {}", e))?;
+        let mut file =
+            std::fs::File::create(&zip_path).map_err(|e| format!("创建临时文件失败: {}", e))?;
 
         let mut stream = resp.bytes_stream();
         use futures_util::StreamExt;
-        while let Some(chunk_result) = tokio::time::timeout(
-            Duration::from_secs(120),
-            stream.next(),
-        )
-        .await
-        .map_err(|_| "下载超时：120 秒未收到数据，请检查网络连接".to_string())?
+        while let Some(chunk_result) = tokio::time::timeout(Duration::from_secs(120), stream.next())
+            .await
+            .map_err(|_| "下载超时：120 秒未收到数据，请检查网络连接".to_string())?
         {
             let chunk = chunk_result.map_err(|e| format!("下载数据流中断: {}", e))?;
             file.write_all(&chunk)
@@ -366,13 +356,12 @@ impl EngineInstaller {
         if engine_dir.exists() {
             let _ = std::fs::remove_dir_all(&engine_dir);
         }
-        std::fs::create_dir_all(&engine_dir)
-            .map_err(|e| format!("创建引擎目录失败: {}", e))?;
+        std::fs::create_dir_all(&engine_dir).map_err(|e| format!("创建引擎目录失败: {}", e))?;
 
         for i in 0..total_files {
-            let mut entry = archive.by_index(i).map_err(|e| {
-                format!("读取 ZIP 条目失败: {}", e)
-            })?;
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| format!("读取 ZIP 条目失败: {}", e))?;
 
             // 安全路径检查：使用 zip crate 的 enclosed_name() 自动拒绝绝对路径和 .. 段
             let safe_name = match entry.enclosed_name() {
@@ -397,14 +386,11 @@ impl EngineInstaller {
 
             // 二次校验：解析后路径必须落在 engine_dir 内
             let dest_path = engine_dir.join(&relative_name);
-            let canonical_engine = std::fs::canonicalize(&engine_dir)
-                .unwrap_or_else(|_| engine_dir.clone());
+            let canonical_engine =
+                std::fs::canonicalize(&engine_dir).unwrap_or_else(|_| engine_dir.clone());
             if let Ok(canonical_dest) = std::fs::canonicalize(&dest_path) {
                 if !canonical_dest.starts_with(&canonical_engine) {
-                    return Err(format!(
-                        "ZIP 条目路径逃逸被拦截: {:?}",
-                        relative_name
-                    ));
+                    return Err(format!("ZIP 条目路径逃逸被拦截: {:?}", relative_name));
                 }
             } else {
                 // 目标文件尚不存在，通过 components 检查防 .. 段
@@ -413,16 +399,10 @@ impl EngineInstaller {
                     match comp {
                         std::path::Component::Normal(c) => normalized.push(c),
                         std::path::Component::ParentDir => {
-                            return Err(format!(
-                                "ZIP 条目含 ParentDir 段: {:?}",
-                                relative_name
-                            ));
+                            return Err(format!("ZIP 条目含 ParentDir 段: {:?}", relative_name));
                         }
                         _ => {
-                            return Err(format!(
-                                "ZIP 条目含非 Normal 段: {:?}",
-                                relative_name
-                            ));
+                            return Err(format!("ZIP 条目含非 Normal 段: {:?}", relative_name));
                         }
                     }
                 }
@@ -492,8 +472,8 @@ impl EngineInstaller {
             tag: tag.clone(),
             installed_at: now.to_string(),
         };
-        let version_json =
-            serde_json::to_string_pretty(&version_info).map_err(|e| format!("序列化版本信息失败: {}", e))?;
+        let version_json = serde_json::to_string_pretty(&version_info)
+            .map_err(|e| format!("序列化版本信息失败: {}", e))?;
         std::fs::write(engine_dir.join("version.json"), version_json)
             .map_err(|e| format!("写入版本信息失败: {}", e))?;
 
@@ -529,14 +509,8 @@ impl EngineInstaller {
 
     /// 比较两个版本号 (bXXXX)
     fn compare_versions(current: &str, latest: &str) -> bool {
-        let cur_num = current
-            .trim_start_matches('b')
-            .parse::<u64>()
-            .unwrap_or(0);
-        let lat_num = latest
-            .trim_start_matches('b')
-            .parse::<u64>()
-            .unwrap_or(0);
+        let cur_num = current.trim_start_matches('b').parse::<u64>().unwrap_or(0);
+        let lat_num = latest.trim_start_matches('b').parse::<u64>().unwrap_or(0);
         lat_num > cur_num
     }
 }

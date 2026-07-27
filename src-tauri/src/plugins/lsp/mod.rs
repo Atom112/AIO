@@ -11,7 +11,7 @@ pub mod transport;
 
 use dashmap::DashMap;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 pub use client::LspClient;
 pub use error::LspResult;
@@ -99,7 +99,7 @@ impl LspManager {
     }
 
     /// 根据项目根路径自动检测应该启动哪些语言服务器
-    pub fn auto_detect(&self, project_path: &PathBuf) -> Vec<LanguageServerConfig> {
+    pub fn auto_detect(&self, project_path: &Path) -> Vec<LanguageServerConfig> {
         let mut detected = Vec::new();
 
         for lang in &self.languages {
@@ -131,28 +131,24 @@ impl LspManager {
     }
 
     /// 获取或创建客户端 key
-    fn client_key(project_path: &PathBuf, language_id: &str) -> String {
+    fn client_key(project_path: &Path, language_id: &str) -> String {
         format!("{}/{}", project_path.to_string_lossy(), language_id)
     }
 
     /// 注册一个活跃客户端
-    pub fn register_client(&self, project_path: &PathBuf, language_id: &str, client: LspClient) {
+    pub fn register_client(&self, project_path: &Path, language_id: &str, client: LspClient) {
         let key = Self::client_key(project_path, language_id);
         self.clients.insert(key, client);
     }
 
     /// 获取活跃客户端
-    pub fn get_client(&self, project_path: &PathBuf, language_id: &str) -> Option<LspClient> {
+    pub fn get_client(&self, project_path: &Path, language_id: &str) -> Option<LspClient> {
         let key = Self::client_key(project_path, language_id);
         self.clients.get(&key).map(|c| c.clone())
     }
 
     /// 移除并关闭客户端
-    pub async fn remove_client(
-        &self,
-        project_path: &PathBuf,
-        language_id: &str,
-    ) -> LspResult<()> {
+    pub async fn remove_client(&self, project_path: &Path, language_id: &str) -> LspResult<()> {
         let key = Self::client_key(project_path, language_id);
         if let Some((_, client)) = self.clients.remove(&key) {
             client.shutdown().await?;
@@ -176,7 +172,7 @@ impl LspManager {
     /// 获取指定项目的所有诊断
     pub fn get_all_diagnostics(
         &self,
-        project_path: &PathBuf,
+        project_path: &Path,
         file_path: Option<&str>,
     ) -> BTreeMap<String, Vec<lsp_types::Diagnostic>> {
         let mut result = BTreeMap::new();
@@ -190,10 +186,7 @@ impl LspManager {
             }
             let client = entry.value();
             for (uri, diags) in client.get_diagnostics(file_path) {
-                result
-                    .entry(uri)
-                    .or_insert_with(Vec::new)
-                    .extend(diags);
+                result.entry(uri).or_insert_with(Vec::new).extend(diags);
             }
         }
 

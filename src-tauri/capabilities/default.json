@@ -24,9 +24,7 @@
     "updater:allow-download-and-install",
     {
       "identifier": "core:default",
-      "allow": [
-        { "protocol": "asset", "path": "**" }
-      ]
+      "allow": [{ "protocol": "asset", "path": "**" }]
     },
     {
       "identifier": "fs:scope-appdata-recursive",
@@ -54,9 +52,7 @@
     },
     {
       "identifier": "fs:allow-write-file",
-      "allow": [
-        { "path": "$HOME/**" }
-      ]
+      "allow": [{ "path": "$HOME/**" }]
     }
   ]
 }

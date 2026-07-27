@@ -1,6 +1,8 @@
 //! Skill 配置管理命令。
 
-use crate::core::models::{MarketSkill, ProjectsFile, SkillConfig, SkillMarketCategory, SkillsFile};
+use crate::core::models::{
+    MarketSkill, ProjectsFile, SkillConfig, SkillMarketCategory, SkillsFile,
+};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -27,13 +29,11 @@ struct MarketCacheEntry {
 }
 
 fn skills_file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path()
-        .app_data_dir()
-        .map_err(|e| {
-            let msg = format!("app_data_dir 解析失败: {e}");
-            tracing::error!("[skills] {msg}");
-            msg
-        })?;
+    let dir = app.path().app_data_dir().map_err(|e| {
+        let msg = format!("app_data_dir 解析失败: {e}");
+        tracing::error!("[skills] {msg}");
+        msg
+    })?;
     let path = dir.join(SKILLS_FILE);
     tracing::info!("[skills] 数据文件路径: {}", path.display());
     Ok(path)
@@ -71,17 +71,27 @@ fn load_file(app: &AppHandle) -> SkillsFile {
         return SkillsFile::default();
     };
     if !path.exists() {
-        tracing::info!("[skills] load_file: 文件不存在 ({})，返回空配置", path.display());
+        tracing::info!(
+            "[skills] load_file: 文件不存在 ({})，返回空配置",
+            path.display()
+        );
         return SkillsFile::default();
     }
     match std::fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<SkillsFile>(&content) {
             Ok(file) => {
-                tracing::info!("[skills] load_file: 加载 {} 条 skill (from {})", file.skills.len(), path.display());
+                tracing::info!(
+                    "[skills] load_file: 加载 {} 条 skill (from {})",
+                    file.skills.len(),
+                    path.display()
+                );
                 file
             }
             Err(e) => {
-                tracing::error!("[skills] load_file: JSON 解析失败 ({}): {e}", path.display());
+                tracing::error!(
+                    "[skills] load_file: JSON 解析失败 ({}): {e}",
+                    path.display()
+                );
                 SkillsFile::default()
             }
         },
@@ -111,7 +121,11 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
         tracing::error!("[skills] save_file: {msg} ({})", path.display());
         msg
     })?;
-    tracing::info!("[skills] save_file: 保存 {} 条 skill → {}", file.skills.len(), path.display());
+    tracing::info!(
+        "[skills] save_file: 保存 {} 条 skill → {}",
+        file.skills.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -121,22 +135,35 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
 fn load_project_file(project_path: &str) -> SkillsFile {
     let path = crate::commands::project::project_skills_path(project_path);
     if !path.exists() {
-        tracing::info!("[skills] load_project_file: 文件不存在 ({})，返回空配置", path.display());
+        tracing::info!(
+            "[skills] load_project_file: 文件不存在 ({})，返回空配置",
+            path.display()
+        );
         return SkillsFile::default();
     }
     match std::fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<SkillsFile>(&content) {
             Ok(file) => {
-                tracing::info!("[skills] load_project_file: 加载 {} 条 skill (from {})", file.skills.len(), path.display());
+                tracing::info!(
+                    "[skills] load_project_file: 加载 {} 条 skill (from {})",
+                    file.skills.len(),
+                    path.display()
+                );
                 file
             }
             Err(e) => {
-                tracing::error!("[skills] load_project_file: JSON 解析失败 ({}): {e}", path.display());
+                tracing::error!(
+                    "[skills] load_project_file: JSON 解析失败 ({}): {e}",
+                    path.display()
+                );
                 SkillsFile::default()
             }
         },
         Err(e) => {
-            tracing::error!("[skills] load_project_file: 读取文件失败 ({}): {e}", path.display());
+            tracing::error!(
+                "[skills] load_project_file: 读取文件失败 ({}): {e}",
+                path.display()
+            );
             SkillsFile::default()
         }
     }
@@ -162,7 +189,11 @@ fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String
         tracing::error!("[skills] save_project_file: {msg} ({})", path.display());
         msg
     })?;
-    tracing::info!("[skills] save_project_file: 保存 {} 条 skill → {}", file.skills.len(), path.display());
+    tracing::info!(
+        "[skills] save_project_file: 保存 {} 条 skill → {}",
+        file.skills.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -191,7 +222,10 @@ fn load_projects_index(app: &AppHandle) -> ProjectsFile {
 }
 
 /// 合并全局和项目 Skill：项目同 ID 覆盖全局。
-fn merge_skills(global: BTreeMap<String, SkillConfig>, project: BTreeMap<String, SkillConfig>) -> BTreeMap<String, SkillConfig> {
+fn merge_skills(
+    global: BTreeMap<String, SkillConfig>,
+    project: BTreeMap<String, SkillConfig>,
+) -> BTreeMap<String, SkillConfig> {
     let mut merged = global;
     for (id, skill) in project {
         merged.insert(id, skill);
@@ -288,22 +322,30 @@ fn decode_html(value: &str) -> String {
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&nbsp;", " ");
-    let numeric = Regex::new(r"&#(?:x([0-9A-Fa-f]+)|([0-9]+));").expect("valid numeric entity regex");
+    let numeric =
+        Regex::new(r"&#(?:x([0-9A-Fa-f]+)|([0-9]+));").expect("valid numeric entity regex");
     output = numeric
         .replace_all(&output, |caps: &regex::Captures<'_>| {
             let parsed = caps
                 .get(1)
                 .and_then(|value| u32::from_str_radix(value.as_str(), 16).ok())
-                .or_else(|| caps.get(2).and_then(|value| value.as_str().parse::<u32>().ok()));
-            parsed.and_then(char::from_u32).map(|c| c.to_string()).unwrap_or_default()
+                .or_else(|| {
+                    caps.get(2)
+                        .and_then(|value| value.as_str().parse::<u32>().ok())
+                });
+            parsed
+                .and_then(char::from_u32)
+                .map(|c| c.to_string())
+                .unwrap_or_default()
         })
         .into_owned();
     output
 }
 
 fn strip_html(value: &str) -> String {
-    let block_tags = Regex::new(r"(?i)</?(?:p|div|h[1-6]|li|ul|ol|pre|table|tr|blockquote|br)[^>]*>")
-        .expect("valid block tag regex");
+    let block_tags =
+        Regex::new(r"(?i)</?(?:p|div|h[1-6]|li|ul|ol|pre|table|tr|blockquote|br)[^>]*>")
+            .expect("valid block tag regex");
     let tags = Regex::new(r"(?s)<[^>]+>").expect("valid html tag regex");
     let comments = Regex::new(r"<!--.*?-->").expect("valid comment regex");
     let with_lines = block_tags.replace_all(value, "\n");
@@ -325,7 +367,10 @@ fn parse_compact_number(value: &str) -> u64 {
         Some('M') | Some('m') => (&cleaned[..cleaned.len() - 1], 1_000_000_f64),
         _ => (cleaned.as_str(), 1_f64),
     };
-    number.parse::<f64>().map(|value| (value * multiplier) as u64).unwrap_or(0)
+    number
+        .parse::<f64>()
+        .map(|value| (value * multiplier) as u64)
+        .unwrap_or(0)
 }
 
 fn parse_weekly_installs(value: &str) -> Vec<u64> {
@@ -346,10 +391,9 @@ fn parse_market_skills(html: &str) -> Vec<MarketSkill> {
         .expect("valid description regex");
     let weekly_re = Regex::new(r#"aria-label="Weekly installs: ([^"]+)""#)
         .expect("valid weekly installs regex");
-    let installs_re = Regex::new(
-        r#"<span class="font-mono text-sm text-foreground">([^<]+)</span>"#,
-    )
-    .expect("valid installs regex");
+    let installs_re =
+        Regex::new(r#"<span class="font-mono text-sm text-foreground">([^<]+)</span>"#)
+            .expect("valid installs regex");
 
     let mut seen = HashSet::new();
     anchor
@@ -402,10 +446,9 @@ fn parse_market_skills(html: &str) -> Vec<MarketSkill> {
 }
 
 fn parse_topic_skill_descriptions(html: &str) -> HashMap<String, String> {
-    let anchor = Regex::new(
-        r#"(?s)<a class="group grid[^"]*" href="/([^/"]+/[^/"]+/[^/"]+)">(.*?)</a>"#,
-    )
-    .expect("valid topic skill regex");
+    let anchor =
+        Regex::new(r#"(?s)<a class="group grid[^"]*" href="/([^/"]+/[^/"]+/[^/"]+)">(.*?)</a>"#)
+            .expect("valid topic skill regex");
     let description = Regex::new(r#"(?s)<p class="lg:col-span-9[^"]*">(.*?)</p>"#)
         .expect("valid topic description regex");
     anchor
@@ -427,7 +470,8 @@ fn parse_categories(html: &str) -> Vec<SkillMarketCategory> {
     let category = Regex::new(r#"(?s)<a[^>]*href="/topic/([^"]+)"[^>]*>(.*?)</a>"#)
         .expect("valid category regex");
     let name_re = Regex::new(r#"(?s)<h2[^>]*>(.*?)</h2>"#).expect("valid category name regex");
-    let paragraphs = Regex::new(r#"(?s)<p[^>]*>(.*?)</p>"#).expect("valid category paragraph regex");
+    let paragraphs =
+        Regex::new(r#"(?s)<p[^>]*>(.*?)</p>"#).expect("valid category paragraph regex");
     let count_re = Regex::new(r"([0-9]+)").expect("valid category count regex");
     category
         .captures_iter(html)
@@ -474,8 +518,13 @@ pub fn list_skills(app: AppHandle, project_id: Option<String>) -> Result<Vec<Ski
 
 /// 新增或更新一个 Skill。project_id 存在时写入项目级文件。
 #[tauri::command]
-pub fn save_skill(app: AppHandle, skill: SkillConfig, project_id: Option<String>) -> Result<(), String> {
-    if skill.id.trim().is_empty() || skill.name.trim().is_empty() || skill.content.trim().is_empty() {
+pub fn save_skill(
+    app: AppHandle,
+    skill: SkillConfig,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    if skill.id.trim().is_empty() || skill.name.trim().is_empty() || skill.content.trim().is_empty()
+    {
         return Err("Skill id、名称和指令内容不能为空".to_string());
     }
     match project_id {
@@ -538,16 +587,12 @@ pub async fn list_skill_market(
         "hot" => "/hot",
         _ => "/",
     };
-    let mut skills = parse_market_skills(
-        &fetch_market_page_cached(&app, path, force_refresh).await?,
-    );
+    let mut skills =
+        parse_market_skills(&fetch_market_page_cached(&app, path, force_refresh).await?);
     if let Some(category_id) = category.filter(|value| !value.is_empty() && value != "all") {
-        let topic_html = fetch_market_page_cached(
-            &app,
-            &format!("/topic/{}", category_id),
-            force_refresh,
-        )
-        .await?;
+        let topic_html =
+            fetch_market_page_cached(&app, &format!("/topic/{}", category_id), force_refresh)
+                .await?;
         let topic_skills = parse_topic_skill_descriptions(&topic_html);
         skills.retain_mut(|skill| {
             let path = format!("{}/{}/{}", skill.owner, skill.repo, skill.slug);
@@ -606,7 +651,9 @@ pub async fn download_market_skill(
         .unwrap_or(0);
 
     let marker = "<span>SKILL.md</span>";
-    let marker_index = html.find(marker).ok_or_else(|| "详情页缺少 SKILL.md".to_string())?;
+    let marker_index = html
+        .find(marker)
+        .ok_or_else(|| "详情页缺少 SKILL.md".to_string())?;
     let prose_start = html[marker_index..]
         .find("<div class=\"prose ")
         .map(|index| marker_index + index)
@@ -618,7 +665,11 @@ pub async fn download_market_skill(
     let content_end = html[content_start..]
         .find("<div class=\"relative\">")
         .map(|index| content_start + index)
-        .or_else(|| html[content_start..].find("<section class=\"mt-16\">").map(|index| content_start + index))
+        .or_else(|| {
+            html[content_start..]
+                .find("<section class=\"mt-16\">")
+                .map(|index| content_start + index)
+        })
         .ok_or_else(|| "无法确定 Skill 内容边界".to_string())?;
     let content = strip_html(&html[content_start..content_end]);
     if content.trim().is_empty() {
@@ -680,7 +731,10 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
 
     // 拒绝 shell 元字符
     for ch in package_name.chars() {
-        if matches!(ch, ';' | '|' | '&' | '$' | '`' | '\\' | '\'' | '"' | '<' | '>' | '!' | '\n' | '\r' | '\t') {
+        if matches!(
+            ch,
+            ';' | '|' | '&' | '$' | '`' | '\\' | '\'' | '"' | '<' | '>' | '!' | '\n' | '\r' | '\t'
+        ) {
             return Err(format!("包名包含禁止字符: '{}'", ch));
         }
     }
@@ -698,7 +752,9 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
             return Err("scoped 包名格式错误: scope 或 name 为空".into());
         }
         // 验证 scope
-        if !scope.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.') {
+        if !scope.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
+        }) {
             return Err("scoped 包名 scope 部分包含非法字符".into());
         }
         name_part
@@ -710,25 +766,56 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > 214 {
         return Err(format!("包名长度不合法: {} 字符（最大 214）", name.len()));
     }
-    if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.')
+    {
         return Err("包名包含非法字符（仅允许小写字母、数字、-、_、.）".into());
     }
 
     // 拒绝伪装成 Node.js 内置模块
     let node_builtins = [
-        "child_process", "fs", "os", "path", "process", "buffer",
-        "stream", "net", "tls", "http", "https", "dns", "dgram",
-        "crypto", "util", "events", "assert", "vm", "v8",
-        "worker_threads", "cluster", "module",
+        "child_process",
+        "fs",
+        "os",
+        "path",
+        "process",
+        "buffer",
+        "stream",
+        "net",
+        "tls",
+        "http",
+        "https",
+        "dns",
+        "dgram",
+        "crypto",
+        "util",
+        "events",
+        "assert",
+        "vm",
+        "v8",
+        "worker_threads",
+        "cluster",
+        "module",
     ];
     let lower_name = name.to_lowercase();
-    let base_name = if let Some(pos) = lower_name.rfind('/') { &lower_name[pos + 1..] } else { &lower_name };
+    let base_name = if let Some(pos) = lower_name.rfind('/') {
+        &lower_name[pos + 1..]
+    } else {
+        &lower_name
+    };
     if node_builtins.contains(&base_name) {
-        return Err(format!("包名 '{}' 伪装为 Node.js 内置模块，拒绝导入", package_name));
+        return Err(format!(
+            "包名 '{}' 伪装为 Node.js 内置模块，拒绝导入",
+            package_name
+        ));
     }
 
     // 拒绝 git 协议 URL 伪装
-    if package_name.starts_with("git://") || package_name.starts_with("git+") || package_name.starts_with("ssh://") {
+    if package_name.starts_with("git://")
+        || package_name.starts_with("git+")
+        || package_name.starts_with("ssh://")
+    {
         return Err("包名不是合法的 npm 包名".into());
     }
 
@@ -752,7 +839,10 @@ pub struct NpxSkillInfo {
 pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, String> {
     let mut discovered: Vec<NpxSkillInfo> = Vec::new();
     let existing = load_file(&app).skills;
-    tracing::info!("[skills] discover_npx: 当前已导入 {} 条 skill（用于 already_imported 标记）", existing.len());
+    tracing::info!(
+        "[skills] discover_npx: 当前已导入 {} 条 skill（用于 already_imported 标记）",
+        existing.len()
+    );
 
     // 1) 主要方式：通过 `npx skills list --json` 获取已安装 skill 列表
     tracing::info!("[skills] discover_npx: 正在执行 npx --yes skills list -g --json ...");
@@ -781,12 +871,19 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
 
         // 截断输出到 1MB
         let stdout = if output.stdout.len() > 1_048_576 {
-            tracing::warn!("[skills] discover npx stdout 过大 ({}B)，已截断", output.stdout.len());
+            tracing::warn!(
+                "[skills] discover npx stdout 过大 ({}B)，已截断",
+                output.stdout.len()
+            );
             output.stdout[..1_048_576].to_vec()
         } else {
             output.stdout
         };
-        Ok((output.status.success(), String::from_utf8_lossy(&stdout).to_string(), String::from_utf8_lossy(&output.stderr).to_string()))
+        Ok((
+            output.status.success(),
+            String::from_utf8_lossy(&stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ))
     })
     .await
     .unwrap_or_else(|_| Err("npx 线程 panic".to_string()));
@@ -797,7 +894,10 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             if success {
                 match serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
                     Ok(json_list) => {
-                        tracing::info!("[skills] discover_npx: skills CLI 返回 {} 条 skill", json_list.len());
+                        tracing::info!(
+                            "[skills] discover_npx: skills CLI 返回 {} 条 skill",
+                            json_list.len()
+                        );
                         for entry in &json_list {
                             let name = entry["name"].as_str().unwrap_or("").to_string();
                             let path_str = entry["path"].as_str().unwrap_or("").to_string();
@@ -810,7 +910,12 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
                             if discovered.iter().any(|d| d.package_name == name) {
                                 continue;
                             }
-                            tracing::info!("[skills] discover_npx:   - {} (v{}, already_imported={})", name, version, already);
+                            tracing::info!(
+                                "[skills] discover_npx:   - {} (v{}, already_imported={})",
+                                name,
+                                version,
+                                already
+                            );
                             discovered.push(NpxSkillInfo {
                                 package_name: name,
                                 version,
@@ -823,11 +928,17 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
                     }
                     Err(e) => {
                         tracing::warn!("[skills] discover_npx: skills CLI JSON 解析失败: {e}");
-                        tracing::warn!("[skills] discover_npx: stdout 前 200 字符: {}", &stdout.chars().take(200).collect::<String>());
+                        tracing::warn!(
+                            "[skills] discover_npx: stdout 前 200 字符: {}",
+                            &stdout.chars().take(200).collect::<String>()
+                        );
                     }
                 }
             } else {
-                tracing::warn!("[skills] discover_npx: skills CLI 退出码非 0 (stderr: {})", stderr.trim());
+                tracing::warn!(
+                    "[skills] discover_npx: skills CLI 退出码非 0 (stderr: {})",
+                    stderr.trim()
+                );
             }
         }
         Err(e) => {
@@ -869,9 +980,9 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             .output();
         if let Ok(output) = npm_output {
             if output.status.success() {
-                if let Ok(json) =
-                    serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout))
-                {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(
+                    &String::from_utf8_lossy(&output.stdout),
+                ) {
                     if let Some(deps) = json.get("dependencies").and_then(|v| v.as_object()) {
                         for (name, info) in deps {
                             let is_skill_pkg = name.contains("skill")
@@ -881,7 +992,8 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
                                 continue;
                             }
                             let version = info["version"].as_str().unwrap_or("0.0.0").to_string();
-                            let description = info["description"].as_str().unwrap_or("").to_string();
+                            let description =
+                                info["description"].as_str().unwrap_or("").to_string();
                             let already = existing.contains_key(&format!("npx-{}", name));
                             if discovered.iter().any(|d| d.package_name == *name) {
                                 continue;
@@ -903,7 +1015,10 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
 
     // 按名称排序
     discovered.sort_by(|a, b| a.package_name.cmp(&b.package_name));
-    tracing::info!("[skills] discover_npx: 最终发现 {} 条 npx skill", discovered.len());
+    tracing::info!(
+        "[skills] discover_npx: 最终发现 {} 条 npx skill",
+        discovered.len()
+    );
     Ok(discovered)
 }
 
@@ -1051,9 +1166,16 @@ fn sanitize_skill_content(raw: &str) -> Result<String, String> {
     }
 
     // 5. 检查前 512 字节中可打印字符比例（拒绝二进制 blob）
-    let sample = if cleaned.len() > 512 { &cleaned[..512] } else { &cleaned };
-    let printable_count = sample.chars().filter(|c| c.is_ascii_graphic() || c.is_whitespace()).count();
-    if sample.len() > 0 && (printable_count as f64 / sample.len() as f64) < 0.5 {
+    let sample = if cleaned.len() > 512 {
+        &cleaned[..512]
+    } else {
+        &cleaned
+    };
+    let printable_count = sample
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || c.is_whitespace())
+        .count();
+    if !sample.is_empty() && (printable_count as f64 / sample.len() as f64) < 0.5 {
         return Err("内容看似为二进制数据，拒绝导入".into());
     }
 
@@ -1072,23 +1194,21 @@ pub async fn import_npx_skill(
 
     // 沙箱执行 npx <package> 获取 skill 内容（spawn_blocking 避免阻塞 async worker）
     let pkg = package_name.clone();
-    let raw_content = tokio::task::spawn_blocking(move || {
-        run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
-    })
-    .await
-    .map_err(|_| "npx 线程 panic".to_string())??
-    .ok_or_else(|| format!("npx {} 未返回任何内容", package_name))?;
+    let raw_content =
+        tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
+            .await
+            .map_err(|_| "npx 线程 panic".to_string())??
+            .ok_or_else(|| format!("npx {} 未返回任何内容", package_name))?;
 
     // 清洗内容（去除 ANSI 序列、null 字节、控制字符）
     let content = sanitize_skill_content(&raw_content)?;
 
     // 尝试从 package.json 获取元数据（spawn_blocking 避免阻塞 async worker）
     let pkg2 = package_name.clone();
-    let (name, description, version) = tokio::task::spawn_blocking(move || {
-        try_read_package_meta(&pkg2)
-    })
-    .await
-    .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
+    let (name, description, version) =
+        tokio::task::spawn_blocking(move || try_read_package_meta(&pkg2))
+            .await
+            .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
 
     let skill = SkillConfig {
         id: format!("npx-{}", package_name),
@@ -1155,21 +1275,18 @@ pub async fn refresh_npx_skill(
 
     // 沙箱刷新执行（spawn_blocking 避免阻塞 async worker）
     let pkg = pkg_name.to_string();
-    let raw_content = tokio::task::spawn_blocking(move || {
-        run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
-    })
-    .await
-    .map_err(|_| "npx 线程 panic".to_string())??
-    .ok_or_else(|| format!("npx {} 未返回任何内容", pkg_name))?;
+    let raw_content =
+        tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
+            .await
+            .map_err(|_| "npx 线程 panic".to_string())??
+            .ok_or_else(|| format!("npx {} 未返回任何内容", pkg_name))?;
 
     let content = sanitize_skill_content(&raw_content)?;
 
     let pkg2 = pkg_name.to_string();
-    let (_, _, version) = tokio::task::spawn_blocking(move || {
-        try_read_package_meta(&pkg2)
-    })
-    .await
-    .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
+    let (_, _, version) = tokio::task::spawn_blocking(move || try_read_package_meta(&pkg2))
+        .await
+        .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
 
     let updated = SkillConfig {
         content,
@@ -1218,17 +1335,22 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
         let _ = tx.send((status, stdout));
     });
 
-    let (status, stdout): (std::io::Result<std::process::ExitStatus>, Vec<u8>) = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
-        Ok((s, o)) => (s, o),
-        Err(_) => return (String::new(), String::new(), "0.0.0".to_string()),
-    };
+    let (status, stdout): (std::io::Result<std::process::ExitStatus>, Vec<u8>) =
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok((s, o)) => (s, o),
+            Err(_) => return (String::new(), String::new(), "0.0.0".to_string()),
+        };
 
-    if !status.map_or(false, |s: std::process::ExitStatus| s.success()) {
+    if !status.is_ok_and(|s: std::process::ExitStatus| s.success()) {
         return (String::new(), String::new(), "0.0.0".to_string());
     }
 
     // 输出上限 256KB
-    let capped = if stdout.len() > 256 * 1024 { &stdout[..256 * 1024] } else { &stdout };
+    let capped = if stdout.len() > 256 * 1024 {
+        &stdout[..256 * 1024]
+    } else {
+        &stdout
+    };
     let json_str = String::from_utf8_lossy(capped);
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
@@ -1236,9 +1358,21 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
             .get("dependencies")
             .and_then(|deps| deps.get(package_name))
         {
-            let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or(package_name).to_string();
-            let desc = dep.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let ver = dep.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0").to_string();
+            let name = dep
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(package_name)
+                .to_string();
+            let desc = dep
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ver = dep
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0.0.0")
+                .to_string();
             return (name, desc, ver);
         }
     }
@@ -1260,7 +1394,8 @@ fn resolve_command(command: &str) -> String {
             Some(f) => f.to_string_lossy(),
             None => return command.to_string(),
         };
-        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
+        let pathext =
+            std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
         let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
         let dirs: Vec<PathBuf> = match p.parent() {
             Some(d) if !d.as_os_str().is_empty() => vec![d.to_path_buf()],
@@ -1324,7 +1459,10 @@ mod tests {
             fetched_at: 1_000,
             html: "cached".to_string(),
         };
-        assert!(cache_entry_is_fresh(&entry, 1_000 + MARKET_CACHE_TTL_SECS - 1));
+        assert!(cache_entry_is_fresh(
+            &entry,
+            1_000 + MARKET_CACHE_TTL_SECS - 1
+        ));
         assert!(!cache_entry_is_fresh(&entry, 1_000 + MARKET_CACHE_TTL_SECS));
     }
 }

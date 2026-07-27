@@ -519,17 +519,13 @@ pub struct McpCatalogInstallRequest {
 /// MCP server 运行时状态
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum McpStatus {
+    #[default]
     Disconnected,
     Connecting,
     Connected,
     Error,
-}
-
-impl Default for McpStatus {
-    fn default() -> Self {
-        Self::Disconnected
-    }
 }
 
 /// MCP server 状态信息（暴露给前端）
@@ -572,19 +568,15 @@ impl Default for McpServersFile {
 /// Skill 来源类型。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SkillSource {
     /// 手动创建或旧数据（缺省值）
+    #[default]
     Local,
     /// 从 skills.sh 市场下载
     Market,
     /// 从 npm/npx 生态导入
     Npx,
-}
-
-impl Default for SkillSource {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 /// 可复用的助手系统指令模块。
@@ -678,8 +670,10 @@ pub struct SkillMarketCategory {
 /// Agent 执行模式。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum AgentMode {
     /// 对话模式（不使用 Agent 功能）
+    #[default]
     Off,
     /// 普通模式：文件写入/删除需要用户确认
     Normal,
@@ -689,12 +683,6 @@ pub enum AgentMode {
     Plan,
     /// 工作流模式：强制拆解任务为工作流并自动执行
     Workflow,
-}
-
-impl Default for AgentMode {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 /// 旧数据无 assistant_type 时默认为 "project"
@@ -824,9 +812,6 @@ pub struct ProjectsFile {
     pub projects: BTreeMap<String, Project>,
 }
 
-// ====== npx Skill 发现 ======
-
-/// npx skill 发现结果：系统上检测到的可导入 Skill 包。
 // ====== Token 用量日志 ======
 
 /// 用量摘要：按天聚合的 token 用量。

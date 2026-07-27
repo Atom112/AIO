@@ -1,14 +1,12 @@
 /// 数据库模块：负责初始化 SQLite 数据库连接，创建必要的表结构，并提供数据库访问接口。
-
 use rusqlite::{Connection, Result};
 use std::fs;
 use tauri::AppHandle;
 use tauri::Manager;
 
 pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
-
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    
+
     if !app_dir.exists() {
         fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
     }
@@ -16,11 +14,12 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     // 启用外键支持
-    conn.execute("PRAGMA foreign_keys = ON;", []).map_err(|e| e.to_string())?;
+    conn.execute("PRAGMA foreign_keys = ON;", [])
+        .map_err(|e| e.to_string())?;
 
     // 创建表结构
     conn.execute_batch(
-    "CREATE TABLE IF NOT EXISTS assistants (
+        "CREATE TABLE IF NOT EXISTS assistants (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         prompt TEXT
@@ -66,8 +65,9 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
     CREATE INDEX IF NOT EXISTS idx_topics_assistant_id ON topics(assistant_id);
     CREATE INDEX IF NOT EXISTS idx_message_attachments_attachment_id
-        ON message_attachments(attachment_id);"
-).map_err(|e| e.to_string())?;
+        ON message_attachments(attachment_id);",
+    )
+    .map_err(|e| e.to_string())?;
     // 上次异常退出可能留下尚未关联消息的临时上传；应用启动时安全清理。
     let mut orphan_stmt = conn
         .prepare(
@@ -133,7 +133,12 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     add_column_if_missing(&conn, "assistants", "project_id", "TEXT")?;
 
     // 迁移：Agent 模式开关（Off = 对话模式，旧数据缺省）
-    add_column_if_missing(&conn, "assistants", "agent_mode", "TEXT NOT NULL DEFAULT 'off'")?;
+    add_column_if_missing(
+        &conn,
+        "assistants",
+        "agent_mode",
+        "TEXT NOT NULL DEFAULT 'off'",
+    )?;
 
     // 迁移：项目表（首次创建）
     conn.execute_batch(
@@ -143,8 +148,9 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
             path TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );"
-    ).map_err(|e| e.to_string())?;
+        );",
+    )
+    .map_err(|e| e.to_string())?;
 
     // 迁移：消息级 token 用量持久化（修复重启清零）
     add_column_if_missing(&conn, "messages", "input_tokens", "INTEGER")?;
@@ -170,11 +176,17 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
             FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_usage_log_timestamp ON usage_log(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_usage_log_topic ON usage_log(topic_id);"
-    ).map_err(|e| e.to_string())?;
+        CREATE INDEX IF NOT EXISTS idx_usage_log_topic ON usage_log(topic_id);",
+    )
+    .map_err(|e| e.to_string())?;
 
     // 迁移：助理类型（chat = 对话模式专属，project = 项目助理）
-    add_column_if_missing(&conn, "assistants", "assistant_type", "TEXT NOT NULL DEFAULT 'project'")?;
+    add_column_if_missing(
+        &conn,
+        "assistants",
+        "assistant_type",
+        "TEXT NOT NULL DEFAULT 'project'",
+    )?;
     // 将 default-assistant-id 标记为 chat 类型
     conn.execute(
         "UPDATE assistants SET assistant_type = 'chat' WHERE id = 'default-assistant-id' AND (assistant_type IS NULL OR assistant_type != 'chat')",
@@ -183,12 +195,18 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
 
     // 迁移：会话分支树 — 消息级父子关系
     add_column_if_missing(&conn, "messages", "parent_message_id", "TEXT")?;
-    add_column_if_missing(&conn, "messages", "branch_index", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(
+        &conn,
+        "messages",
+        "branch_index",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     // 为 parent_message_id 建立索引以加速分支查询
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id)",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     // 迁移：话题分支 — 话题级分支来源和树结构
     add_column_if_missing(&conn, "topics", "branched_from_message_id", "TEXT")?;

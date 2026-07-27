@@ -1,14 +1,13 @@
 /// 本地推理引擎插件系统
 /// 提供统一的 LocalEnginePlugin trait 和 EngineManager 注册中心
-
 pub mod installer;
 pub mod llama_cpp;
 pub mod vllm;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::future::Future;
 use tauri::AppHandle;
 
 /// 本地推理引擎插件 trait

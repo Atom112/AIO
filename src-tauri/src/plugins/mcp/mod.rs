@@ -397,7 +397,7 @@ pub fn resolve_env_placeholders(
             v.clone()
         };
         // 防止把 keyring account 名误传给子进程：server_id 占位
-        let actual = actual.replace(&format!("${{SERVER_ID}}"), server_id);
+        let actual = actual.replace(&"${SERVER_ID}".to_string(), server_id);
         resolved.insert(k.clone(), actual);
     }
     Ok(resolved)

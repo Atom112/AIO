@@ -158,6 +158,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   let scrollContainerRef: HTMLDivElement | undefined;
   const [autoScroll, setAutoScroll] = createSignal(true);
   // 抑制程序滚动触发的 scroll 事件，避免误判为用户滚动
+  const fsStatus = createMemo(() => mcpServerStatus()['__aio-filesystem__']?.status);
   let suppressScroll = false;
   // 平滑滚动动画的 rAF ID
   let smoothScrollRAF: number | undefined;
@@ -1515,19 +1516,19 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     class="w-2 h-2 rounded-full shrink-0"
                     style={{
                       background: (() => {
-                        const s = mcpServerStatus()['__aio-filesystem__']?.status;
+                        const s = fsStatus();
                         return s === 'connected'
                           ? '#4ade80'
-                          : s === 'connecting'
+                          : s === 'connecting' || s === undefined
                             ? '#facc15'
                             : '#f87171';
                       })(),
                     }}
                     title={(() => {
-                      const s = mcpServerStatus()['__aio-filesystem__']?.status;
+                      const s = fsStatus();
                       return s === 'connected'
                         ? t('chat.filesystemConnected')
-                        : s === 'connecting'
+                        : s === 'connecting' || s === undefined
                           ? t('chat.filesystemConnecting')
                           : t('chat.filesystemError');
                     })()}

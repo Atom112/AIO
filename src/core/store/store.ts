@@ -932,9 +932,8 @@ export const initMcpServers = async (projectId?: string | null) => {
     for (const cfg of list) map[cfg.id] = cfg;
     setMcpServers(map);
 
-    // 同步后端已连接状态
     const statusMap = await invoke<Record<string, McpServerStatusInfo>>('list_mcp_server_status');
-    setMcpServerStatus(statusMap);
+    setMcpServerStatus((prev) => ({ ...prev, ...statusMap }));
 
     // 监听后台状态推送
     listen<McpServerStatusInfo>('mcp-server-status', (event) => {
@@ -953,7 +952,7 @@ export const initMcpServers = async (projectId?: string | null) => {
     // 自动启动标记为 autoStart 的 server（跳过已连接的，避免重复启动）
     // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）
     const autoStartIds = Object.values(map)
-      .filter((cfg) => cfg.autoStart && !statusMap[cfg.id])
+      .filter((cfg) => cfg.autoStart && statusMap[cfg.id]?.status !== 'connected')
       .map((cfg) => cfg.id);
     if (autoStartIds.length > 0) {
       const pid = projectId ?? null;

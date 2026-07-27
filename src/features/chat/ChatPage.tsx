@@ -2476,9 +2476,11 @@ ${asstObj.prompt}`;
   });
 
   // 项目切换时初始化 MCP 服务器（含内置文件系统 MCP 的自动连接）
+  // 必须等 projects 加载完毕，否则 currentProject 为 null，MCP config 读不到
   createEffect(() => {
     const pid = currentProjectId();
-    if (pid) {
+    const loaded = projects().length > 0 || !pid;
+    if (pid && loaded) {
       void initMcpServers(pid);
     }
   });

@@ -903,6 +903,7 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
 /// - Linux: ~/.config/autostart/aio.desktop
 #[tauri::command]
 pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     let app_name = "AIO";
     // 获取当前可执行文件路径
     let exe_path = std::env::current_exe().map_err(|e| format!("无法获取可执行文件路径: {}", e))?;

@@ -557,6 +557,8 @@
   "provider.localStarted": "Local model {{name}} started ({{engine}})",
   "provider.localStarting": "Starting local engine...",
   "provider.localStopped": "Local engine stopped",
+  "provider.ollamaNotRunning": "Ollama service is not running. Please start Ollama first.",
+  "provider.ollamaPullHint": "Run ollama pull &lt;model&gt; in terminal to download models.",
   "provider.localSuccess": "Local server is ready. You can start chatting!",
   "provider.localTimeout": "Server startup timed out. Check GPU memory or model file.",
   "provider.modelCount": "{{count}} models",

@@ -557,6 +557,8 @@
   "provider.localStarted": "本地模型 {{name}} 已启动 ({{engine}})",
   "provider.localStarting": "正在启动本地引擎...",
   "provider.localStopped": "本地引擎已停止",
+  "provider.ollamaNotRunning": "Ollama 服务未运行，请先启动 Ollama 后再试",
+  "provider.ollamaPullHint": "在终端运行 ollama pull &lt;模型名&gt; 来下载模型",
   "provider.localSuccess": "本地服务器启动成功，可以开始对话了！",
   "provider.localTimeout": "服务器启动超时，请检查显存空间或模型文件。",
   "provider.modelCount": "{{count}} 个模型",

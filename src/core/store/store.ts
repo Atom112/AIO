@@ -466,8 +466,9 @@ export const allAvailableModels = (): ActivatedModel[] => {
         owned_by: m.providerName,
         api_url: m.apiUrl,
         api_key: m.apiKey,
-        provider_id: m.provider,
-        ...(m.local_path ? { local_path: m.local_path, engine_type: m.engine_type } : {}),
+        ...(m.engine_type
+          ? { engine_type: m.engine_type, ...(m.local_path ? { local_path: m.local_path } : {}) }
+          : {}),
       }) as ActivatedModel & { provider_id: string },
   );
   // 旧版本地模型：仅保留与 providerConfigs 不重叠的（向后兼容）

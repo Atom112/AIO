@@ -211,10 +211,26 @@ const ProviderDetail: Component = () => {
   /** 启动本地引擎 */
   const handleStartEngine = async () => {
     const def = localEngineDef();
-    if (!def || def.engineType === 'ollama') return;
+    if (!def) return;
     setEngineActionLoading(true);
     try {
       const u = userCfg();
+      if (def.engineType === 'ollama') {
+        const apiUrl = u?.apiUrl || def.defaultApiUrl;
+        const alive = await invoke<boolean>('probe_engine_health', {
+          apiUrl,
+          engineType: 'ollama',
+        });
+        if (alive) {
+          setIsServerAlive('alive');
+          setToast({ msg: t('provider.localReady'), ok: true });
+        } else {
+          setIsServerAlive('dead');
+          setToast({ msg: t('provider.ollamaNotRunning'), ok: false });
+        }
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
       const paths = u?.localModelPaths ?? {};
       const modelPath = Object.values(paths)[0];
       if (!modelPath) {
@@ -243,13 +259,18 @@ const ProviderDetail: Component = () => {
       setEngineActionLoading(false);
     }
   };
-
   /** 停止本地引擎 */
   const handleStopEngine = async () => {
     const def = localEngineDef();
-    if (!def || def.engineType === 'ollama') return;
+    if (!def) return;
     setEngineActionLoading(true);
     try {
+      if (def.engineType === 'ollama') {
+        setIsServerAlive('dead');
+        setToast({ msg: t('provider.localStopped'), ok: true });
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
       await invoke('stop_local_server', { engineType: def.engineType });
       setIsServerAlive('dead');
       setToast({ msg: t('provider.localStopped'), ok: true });
@@ -700,11 +721,7 @@ const ProviderDetail: Component = () => {
                 : t('provider.testConnection')}
             </button>
             <Show
-              when={
-                !isLocalEngine() ||
-                ((localEngineDef()?.supportsFetchModels ?? false) &&
-                  localEngineDef()!.engineType !== 'ollama')
-              }
+              when={!isLocalEngine()}
             >
               <button
                 type="button"
@@ -787,7 +804,6 @@ const ProviderDetail: Component = () => {
                     : t('engine.stopped')}
               </span>
 
-              <Show when={localEngineDef()!.engineType !== 'ollama'}>
                 <Show when={isServerAlive() !== 'alive'}>
                   <button
                     type="button"
@@ -820,7 +836,6 @@ const ProviderDetail: Component = () => {
                     {t('engine.stop')}
                   </button>
                 </Show>
-              </Show>
             </div>
           </div>
         </Show>
@@ -999,59 +1014,62 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* Ollama 等支持 API 拉取的引擎：展示已拉取的模型 */}
-        <Show
-          when={
-            isLocalEngine() &&
-            (localEngineDef()?.supportsFetchModels ?? false) &&
-            (userCfg()?.fetchedModels?.length ?? 0) > 0
-          }
-        >
-          <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '90ms' }}>
-            <div class="section-label mb-3">
-              {t('provider.customModels', {
-                count: formatNumber(userCfg()?.fetchedModels?.length ?? 0),
-              })}
-            </div>
-            <div class="space-y-1.5">
-              <For each={userCfg()?.fetchedModels ?? []}>
-                {(m, i) => (
-                  <div class="animate-row-in" style={{ 'animation-delay': `${i() * 30}ms` }}>
-                    <ModelRow
-                      meta={
-                        {
-                          id: m.id,
-                          provider: providerId(),
-                          providerName: userCfg()?.displayName ?? providerId(),
-                          displayName: m.displayName || m.id,
-                          family: null,
-                          releaseDate: m.releasedAt ?? null,
-                          lastUpdated: null,
-                          knowledgeCutoff: null,
-                          contextWindow: 0,
-                          maxOutputTokens: null,
-                          capabilities: {} as any,
-                          modalities: { input: ['text'], output: ['text'] },
-                          pricing: null,
-                          status: 'active',
-                          deprecationDate: null,
-                          replacedBy: null,
-                          aliases: [],
-                          isAggregator: false,
-                          sources: [],
-                        } as any
-                      }
-                      enabled={(userCfg()?.enabledModels ?? []).includes(m.id)}
-                      onToggle={() => toggleModel(m.id)}
-                      showPricing={false}
-                    />
-                  </div>
-                )}
-              </For>
-            </div>
+        {/* Ollama 模型选择 */}
+        <Show when={isLocalEngine() && localEngineDef()?.engineType === 'ollama'}>
+          <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '75ms' }}>
+            <div class="section-label mb-3">{t('provider.localModels')}</div>
+            <Show
+              when={isServerAlive() === 'alive'}
+              fallback={
+                <div class="text-xs text-[#888]">{t('provider.ollamaNotRunning')}</div>
+              }
+            >
+              <Show
+                when={(userCfg()?.fetchedModels?.length ?? 0) > 0}
+                fallback={
+                  <div class="text-xs text-[#888]">{t('provider.ollamaPullHint')}</div>
+                }
+              >
+                <div class="space-y-1.5">
+                  <For each={userCfg()?.fetchedModels ?? []}>
+                    {(m, i) => (
+                      <div class="animate-row-in" style={{ 'animation-delay': `${i() * 30}ms` }}>
+                        <ModelRow
+                          meta={
+                            {
+                              id: m.id,
+                              provider: providerId(),
+                              providerName: userCfg()?.displayName ?? providerId(),
+                              displayName: m.displayName || m.id,
+                              family: null,
+                              releaseDate: m.releasedAt ?? null,
+                              lastUpdated: null,
+                              knowledgeCutoff: null,
+                              contextWindow: 0,
+                              maxOutputTokens: null,
+                              capabilities: {} as any,
+                              modalities: { input: ['text'], output: ['text'] },
+                              pricing: null,
+                              status: 'active',
+                              deprecationDate: null,
+                              replacedBy: null,
+                              aliases: [],
+                              isAggregator: false,
+                              sources: [],
+                            } as any
+                          }
+                          enabled={(userCfg()?.enabledModels ?? []).includes(m.id)}
+                          onToggle={() => toggleModel(m.id)}
+                          showPricing={false}
+                        />
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </Show>
           </div>
         </Show>
-
         <Show when={!isCustom() && isCatalogProvider()}>
           <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '90ms' }}>
             <div class="flex items-center gap-3 mb-3 flex-wrap">

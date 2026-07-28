@@ -638,16 +638,17 @@ const checkServerHealth = async (baseUrl: string): Promise<boolean> => {
 /**
  * Start the local inference engine for the selected model.
  * Engine connection state is exposed through localEngineConnected / localEngineName signals;
- * chat messages are no longer inserted.
  * @param model - The local model (needs local_path or engine_type for Ollama)
  */
 export const startLocalEngineForAssistant = async (
   model: ActivatedModel,
   _asstId: string,
 ): Promise<void> => {
-  void _asstId; // parameter kept for call-site compatibility
+  void _asstId;
   const isExternalEngine = !model.local_path && !!model.engine_type;
   if (!model.local_path && !isExternalEngine) return;
+
+  const engineType = model.engine_type || 'llama_cpp';
 
   if (!isExternalEngine) {
     if (!isLocalAutoStartConfirmed()) {
@@ -658,11 +659,15 @@ export const startLocalEngineForAssistant = async (
       setLocalAutoStartConfirmed();
     }
     const engineName = engineDisplayName(model.engine_type);
-    const isRunning = await invoke<boolean>('is_local_server_running');
-    if (isRunning) {
-      setLocalEngineName(engineName);
-      setLocalEngineConnected(true);
-      return;
+    // Ollama：始终调用 start_local_server 以确保模型已导入（插件内部处理"已运行"情况）
+    // 其他引擎：若已在运行则跳过
+    if (engineType !== 'ollama') {
+      const isRunning = await invoke<boolean>('is_local_server_running', { engineType });
+      if (isRunning) {
+        setLocalEngineName(engineName);
+        setLocalEngineConnected(true);
+        return;
+      }
     }
   }
 
@@ -673,13 +678,14 @@ export const startLocalEngineForAssistant = async (
     setLocalModelStartProgress(0);
 
     if (!isExternalEngine) {
+      const port = engineType === 'ollama' ? 11434 : engineType === 'vllm' ? 8000 : 8080;
       await invoke('start_local_server', {
         modelPath: model.local_path,
-        port: 8080,
+        port,
         gpuLayers: 99,
-        engineType: model.engine_type || 'llama_cpp',
+        engineType,
         trustRemoteCode:
-          model.engine_type === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
+          engineType === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
       });
     }
 

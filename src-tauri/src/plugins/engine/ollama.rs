@@ -42,7 +42,7 @@ fn detect_ollama_on_path() -> bool {
     }
 }
 
-/// 检查指定 host:port 的 Ollama HTTP 端点是否可达
+/// 检查指定 host:port 的 Ollama HTTP 端点是否可达（同步，供 trait 方法使用）
 fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
     std::thread::spawn(move || {
@@ -54,6 +54,17 @@ fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
     })
     .join()
     .unwrap_or(false)
+}
+
+/// 异步版本：检查 Ollama HTTP 端点是否可达（供 start() 内部轮询使用）
+async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
+    let url = format!("http://{}:{}/api/version", host, port);
+    reqwest::Client::new()
+        .get(&url)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .is_ok()
 }
 
 /// 检查默认端口 11434 是否可达
@@ -94,24 +105,26 @@ fn model_name_from_path(model_path: &str) -> String {
         .to_string()
 }
 
-/// 通过 ollama create 将 GGUF 文件导入 Ollama
-/// 返回模型名；若模型已存在则跳过导入
-fn import_model(model_path: &str, api_url: &str) -> Result<String, String> {
+/// 通过 ollama create 将 GGUF 文件导入 Ollama（异步，避免阻塞 tokio runtime）。
+/// 返回模型名；若模型已存在则跳过导入。
+async fn import_model(model_path: &str, api_url: &str) -> Result<String, String> {
     let model_name = model_name_from_path(model_path);
 
-    // 检查模型是否已存在于 ollama
+    // 检查模型是否已存在于 ollama（必须检查 HTTP 状态码，不能仅靠 is_ok）
     let check_url = format!("{}/api/show", api_url);
     let body = serde_json::json!({ "name": model_name });
-    let client = reqwest::blocking::Client::new();
-    if client
+    let client = reqwest::Client::new();
+    let resp = client
         .post(&check_url)
         .timeout(Duration::from_secs(3))
         .json(&body)
         .send()
-        .is_ok()
-    {
-        debug!("[ollama] 模型 {} 已存在，跳过导入", model_name);
-        return Ok(model_name);
+        .await;
+    if let Ok(r) = resp {
+        if r.status().is_success() {
+            debug!("[ollama] 模型 {} 已存在，跳过导入", model_name);
+            return Ok(model_name);
+        }
     }
 
     debug!("[ollama] 导入 GGUF 模型: {} -> {}", model_path, model_name);
@@ -125,8 +138,8 @@ fn import_model(model_path: &str, api_url: &str) -> Result<String, String> {
         .map_err(|e| format!("无法写入 Modelfile: {}", e))?;
     drop(f);
 
-    // 执行 ollama create
-    let output = std::process::Command::new("ollama")
+    // 执行 ollama create（异步，避免阻塞 runtime）
+    let output = tokio::process::Command::new("ollama")
         .arg("create")
         .arg(&model_name)
         .arg("-f")
@@ -134,6 +147,7 @@ fn import_model(model_path: &str, api_url: &str) -> Result<String, String> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()
+        .await
         .map_err(|e| format!("无法执行 ollama create: {}", e))?;
 
     // 清理 Modelfile
@@ -227,7 +241,7 @@ impl LocalEnginePlugin for OllamaPlugin {
             }
 
             // 1. 确保 Ollama 服务运行
-            let already_running = ollama_http_reachable_at("127.0.0.1", port);
+            let already_running = ollama_http_reachable_async("127.0.0.1", port).await;
             if !already_running {
                 debug!("[ollama] 服务未在端口 {} 运行，尝试拉起 ollama serve", port);
                 let exe_path = PathBuf::from("ollama");
@@ -249,7 +263,7 @@ impl LocalEnginePlugin for OllamaPlugin {
                     if std::time::Instant::now() > deadline {
                         return Err("Ollama 服务启动超时".to_string());
                     }
-                    if ollama_http_reachable_at("127.0.0.1", port) {
+                    if ollama_http_reachable_async("127.0.0.1", port).await {
                         debug!("[ollama] 服务就绪");
                         break;
                     }
@@ -260,7 +274,7 @@ impl LocalEnginePlugin for OllamaPlugin {
             }
 
             // 2. 导入 GGUF 模型（若尚未导入）
-            let model_name = match import_model(model_path, &api_url) {
+            let model_name = match import_model(model_path, &api_url).await {
                 Ok(name) => name,
                 Err(e) => {
                     warn!("[ollama] 模型导入失败: {}", e);

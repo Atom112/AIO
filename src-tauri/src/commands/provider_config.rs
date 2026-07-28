@@ -53,6 +53,10 @@ pub struct ProviderConfig {
     /// 旧配置无此字段时反序列化为空数组。
     #[serde(default)]
     pub fetched_models: Vec<LiveModel>,
+    /// 本地引擎专属：模型文件路径映射 { modelId → localPath }。
+    /// 旧配置无此字段时反序列化为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_model_paths: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -207,10 +211,18 @@ fn save_provider_configs_internal(
 #[tauri::command]
 pub fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result<(), String> {
     let mut f = file;
+    // 已知的本地引擎 provider ID
+    const LOCAL_ENGINE_IDS: &[&str] = &["local-llamacpp", "local-vllm", "ollama"];
+
     // M5 校验：所有 provider 的 api_url 必须是合法 http/https URL
     for (id, cfg) in f.providers.iter() {
+        let opts = if LOCAL_ENGINE_IDS.contains(&id.as_str()) {
+            crate::utils::url_validation::HttpUrlOptions::local_engine()
+        } else {
+            crate::utils::url_validation::HttpUrlOptions::default()
+        };
         if !cfg.api_url.is_empty() {
-            if let Err(e) = validate_api_url(&cfg.api_url) {
+            if let Err(e) = crate::utils::url_validation::validate_http_url(&cfg.api_url, &opts) {
                 return Err(format!("provider[{}].apiUrl 非法: {}", id, e));
             }
         }
@@ -226,16 +238,34 @@ pub fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result
     save_provider_configs_internal(&app, &f)
 }
 
-/// 测试 provider 连接（按 host 派发到对应 provider 插件）
+/// 测试 provider 连接（按 host 派发到对应 provider 插件；local engine 使用 OpenAI-compat 端点）
 #[tauri::command]
 pub async fn test_provider_connection(
     api_url: String,
     api_key: String,
     proxy_url: Option<String>,
+    engine_type: Option<String>,
 ) -> Result<TestConnectionResult, String> {
     let started = std::time::Instant::now();
-    let mgr = ProviderManager::new();
-    let plugin = mgr.for_url(&api_url);
+
+    // local engine (llama_cpp / vllm) → 绕过 host 匹配直接走 OpenAI-compat
+    let use_openai_compat =
+        engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
+
+    let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
+        Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
+    } else {
+        let mgr = ProviderManager::new();
+        // for_url returns &dyn ProviderPlugin; we need an owned Box
+        // to avoid lifetime issues. Reconstruct via identifier.
+        let matched = mgr.for_url(&api_url);
+        match matched.identifier() {
+            "google" => Box::new(crate::plugins::provider::google::GoogleProvider),
+            "anthropic" => Box::new(crate::plugins::provider::anthropic::AnthropicProvider),
+            "ollama" => Box::new(crate::plugins::provider::ollama::OllamaProvider),
+            _ => Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider),
+        }
+    };
 
     let client = plugin.build_client(proxy_url.as_deref(), TEST_TIMEOUT_SECS)?;
     let url = plugin.models_url(&api_url);
@@ -311,16 +341,31 @@ pub async fn test_provider_connection(
     })
 }
 
-/// 从 provider 的 API 拉取模型列表（按 host 派发到对应 provider 插件）
+/// 从 provider 的 API 拉取模型列表（按 host 派发到对应 provider 插件；local engine 使用 OpenAI-compat 端点）
 #[tauri::command]
 pub async fn fetch_provider_models(
     api_url: String,
     api_key: String,
     proxy_url: Option<String>,
+    engine_type: Option<String>,
 ) -> Result<FetchLiveModelsResult, String> {
     let started = std::time::Instant::now();
-    let mgr = ProviderManager::new();
-    let plugin = mgr.for_url(&api_url);
+
+    let use_openai_compat =
+        engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
+
+    let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
+        Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
+    } else {
+        let mgr = ProviderManager::new();
+        let matched = mgr.for_url(&api_url);
+        match matched.identifier() {
+            "google" => Box::new(crate::plugins::provider::google::GoogleProvider),
+            "anthropic" => Box::new(crate::plugins::provider::anthropic::AnthropicProvider),
+            "ollama" => Box::new(crate::plugins::provider::ollama::OllamaProvider),
+            _ => Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider),
+        }
+    };
 
     let client = plugin.build_client(proxy_url.as_deref(), DEFAULT_TIMEOUT_SECS)?;
     let url = plugin.models_url(&api_url);
@@ -387,4 +432,40 @@ pub async fn fetch_provider_models(
         error: None,
         elapsed_ms: started.elapsed().as_millis(),
     })
+}
+
+/// 探测本地引擎健康状态 (llama.cpp / vLLM / Ollama).
+///
+/// - llama.cpp / vLLM: 使用 `/health` 端点 (比 `/v1/models` 更轻量).
+/// - Ollama: 使用 `/api/version` 端点 (Ollama 无 /health).
+/// - 请求超时 3 秒连接 + 5 秒完整响应; 失败统一返回 false, 不抛错误.
+#[tauri::command]
+pub async fn probe_engine_health(
+    api_url: String,
+    engine_type: Option<String>,
+) -> Result<bool, String> {
+    let base = api_url.trim_end_matches('/');
+
+    let health_url = if engine_type.as_deref() == Some("ollama") {
+        format!("{}/api/version", base)
+    } else {
+        // 去掉 /v1, /v1beta, /models 后缀, 再拼接 /health
+        let stripped = base
+            .trim_end_matches("/v1beta")
+            .trim_end_matches("/v1")
+            .trim_end_matches("/models");
+        format!("{}/health", stripped)
+    };
+
+    let client = reqwest::Client::builder()
+        .user_agent("AIO-Desktop/0.4")
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    match client.get(&health_url).send().await {
+        Ok(r) => Ok(r.status().is_success()),
+        Err(_) => Ok(false),
+    }
 }

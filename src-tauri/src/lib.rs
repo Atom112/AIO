@@ -70,9 +70,8 @@ pub fn run() {
             commands::engine::start_local_server,
             commands::engine::stop_local_server,
             commands::engine::is_local_server_running,
-            commands::engine::get_engines_status,
-            commands::engine::install_engine,
-            commands::engine::check_llama_update,
+            commands::engine::scan_installed_engines,
+            commands::engine::list_engine_models,
             commands::attachment::process_file_content,
             commands::config::upload_avatar,
             commands::llm::summarize_history,
@@ -95,6 +94,7 @@ pub fn run() {
             commands::provider_config::load_provider_configs,
             commands::provider_config::save_provider_configs,
             commands::provider_config::test_provider_connection,
+            commands::provider_config::probe_engine_health,
             commands::provider_config::fetch_provider_models,
             commands::provider_config::read_provider_api_key,
             commands::provider_config::delete_provider_api_key,
@@ -167,14 +167,15 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                // 清理本地引擎子进程
+                // 清理本地引擎子进程（所有引擎）
                 let state = window.state::<LocalEngineState>();
-                let child_opt = {
-                    let mut inner = state.lock();
-                    inner.child_process.take()
-                };
-                if let Some(mut child) = child_opt {
-                    let _ = child.kill();
+                {
+                    let mut engines = state.lock();
+                    for (_, mut inner) in engines.drain() {
+                        if let Some(mut child) = inner.child_process.take() {
+                            let _ = child.kill();
+                        }
+                    }
                 }
                 // 清理活跃 LLM 流任务：cancel 所有 token（任务自身负责 emit done + 移除）
                 let stream_mgr = window.state::<StreamManager>();

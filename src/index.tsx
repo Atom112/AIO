@@ -13,6 +13,7 @@ import {
   initProjects,
   initProfileModelOverrides,
   initCustomSubagentProfiles,
+  initEngineScan,
 } from './core/store/store';
 import { t } from './core/i18n';
 
@@ -25,6 +26,8 @@ initSkills();
 initProfileModelOverrides();
 // 应用启动时初始化自定义子智能体配置文件
 initCustomSubagentProfiles();
+// 应用启动时扫描已安装的推理引擎
+initEngineScan();
 
 const Settings = lazy(() => import('./features/settings/SettingsPage'));
 const ProviderList = lazy(() => import('./features/settings/components/ProviderList'));

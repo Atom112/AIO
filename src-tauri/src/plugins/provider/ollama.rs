@@ -58,6 +58,16 @@ impl ProviderPlugin for OllamaProvider {
         req
     }
 
+    fn chat_completions_url(&self, api_url: &str) -> String {
+        let base = api_url.trim_end_matches('/');
+        // Ollama 的 OpenAI 兼容端点在 /v1 路径下
+        if base.ends_with("/v1") {
+            format!("{}/chat/completions", base)
+        } else {
+            format!("{}/v1/chat/completions", base)
+        }
+    }
+
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel> {
         let arr = body
             .get("models")

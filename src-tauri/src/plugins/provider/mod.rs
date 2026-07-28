@@ -46,6 +46,16 @@ pub trait ProviderPlugin: Send + Sync {
 
     /// 从 JSON 响应解析为统一 LiveModel 列表
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel>;
+
+    /// 计算 chat completions 端点 URL（含 provider 特定路径前缀）。
+    /// 默认行为：去除尾部斜杠和已有 /chat/completions 后缀，再拼接 /chat/completions。
+    /// Ollama 等 provider 可 override 以插入 /v1 等前缀。
+    fn chat_completions_url(&self, api_url: &str) -> String {
+        let base = api_url
+            .trim_end_matches('/')
+            .replace("/chat/completions", "");
+        format!("{}/chat/completions", base)
+    }
 }
 
 /// Provider 插件管理器：按 host 派发到第一个匹配的插件

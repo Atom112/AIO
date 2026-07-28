@@ -39,6 +39,7 @@ import {
   ensureProjectAssistant,
   setShowProjectCreateModal,
   getLastAgentProjectId,
+  initMcpServers,
 } from '../../core/store/store';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import {
@@ -1177,7 +1178,7 @@ ${asstObj.prompt}`;
       if (isChatMode()) {
         await invoke('call_llm_stream', {
           apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key,
+          apiKey: currentMdl.api_key ?? '',
           model: currentMdl.model_id,
           assistantId: asstId,
           topicId: topicId,
@@ -1199,14 +1200,14 @@ ${asstObj.prompt}`;
               profileId,
               modelId: mdl.model_id,
               apiUrl: mdl.api_url,
-              apiKey: mdl.api_key,
+              apiKey: mdl.api_key ?? '',
             });
           }
         }
 
         await invoke('run_agent_turn', {
           apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key,
+          apiKey: currentMdl.api_key ?? '',
           model: currentMdl.model_id,
           assistantId: asstId,
           topicId: topicId,
@@ -2472,6 +2473,16 @@ ${asstObj.prompt}`;
         console.debug('[LSP] 自动检测失败:', e);
       }
     })();
+  });
+
+  // 项目切换时初始化 MCP 服务器（含内置文件系统 MCP 的自动连接）
+  // 必须等 projects 加载完毕，否则 currentProject 为 null，MCP config 读不到
+  createEffect(() => {
+    const pid = currentProjectId();
+    const loaded = projects().length > 0 || !pid;
+    if (pid && loaded) {
+      void initMcpServers(pid);
+    }
   });
 
   /**

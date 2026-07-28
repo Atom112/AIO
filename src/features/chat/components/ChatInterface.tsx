@@ -20,14 +20,14 @@ import {
   globalUserAvatar,
   selectedModel,
   isStartingLocalModel,
-  localModelStartProgress,
+  localEngineConnected,
+  localEngineName,
   currentProject,
   datas,
   setDatas,
   currentAssistantId,
   currentTopicId,
   isChatMode,
-  mcpServerStatus,
   gitBranch,
   gitBranches,
   switchBranch,
@@ -157,7 +157,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   let textareaRef: HTMLTextAreaElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
   const [autoScroll, setAutoScroll] = createSignal(true);
-  // 抑制程序滚动触发的 scroll 事件，避免误判为用户滚动
+  // 文件系统工具的就绪状态指示。
+  // Agent 的文件操作已改为 in-process 直接调用（见 commands/llm/mod.rs 中
+  // file_tools::get_file_tool_specs 注入，归 __builtin__），不再依赖已废弃的
+  // __aio-filesystem__ stdio 子进程握手。因此就绪 = 当前已加载项目，
+  // 避免小圆点跟随一个无关且脆弱的子进程握手状态而常驻"连接中"黄色。
+  const fsStatus = createMemo<'connected' | 'connecting' | 'error'>(() =>
+    currentProject() ? 'connected' : 'connecting',
+  );
+  const fsColor = createMemo(() => (fsStatus() === 'connected' ? '#4ade80' : '#facc15'));
+  const fsTooltip = createMemo(() =>
+    fsStatus() === 'connected' ? t('chat.filesystemConnected') : t('chat.filesystemConnecting'),
+  );
   let suppressScroll = false;
   // 平滑滚动动画的 rAF ID
   let smoothScrollRAF: number | undefined;
@@ -520,40 +531,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         onWheel={handleWheel}
         class="flex-grow overflow-y-auto pb-[15px] z-[1]"
       >
-        <Show when={isStartingLocalModel()}>
-          <div
-            class="w-full mb-4 p-4 rounded-lg"
-            style={{
-              background: 'rgba(var(--text-base-rgb),0.04)',
-              border: '1px solid var(--border-dim)',
-            }}
-          >
-            <div class="flex items-center gap-3 mb-2">
-              <span style={{ color: 'rgba(var(--primary-rgb),0.6)' }}>
-                <Icon src="/icons/app-logo/loading.svg" class="w-5 h-5 animate-spin" />
-              </span>
-              <span style={{ color: 'rgba(var(--text-base-rgb),0.85)', 'font-size': '0.875rem' }}>
-                {t('chat.localEngineStarting')}
-              </span>
-            </div>
-            <div
-              class="w-full h-2 rounded-full"
-              style={{ background: 'rgba(var(--text-base-rgb),0.06)' }}
-            >
-              <div
-                class="h-2 rounded-full transition-all duration-300"
-                style={{
-                  width: `${localModelStartProgress()}%`,
-                  background: 'rgba(var(--primary-rgb),0.4)',
-                }}
-              />
-            </div>
-            <div class="text-right text-xs mt-1" style={{ color: 'rgba(var(--primary-rgb),0.4)' }}>
-              {Math.round(localModelStartProgress())}%
-            </div>
-          </div>
-        </Show>
-
         <Show when={!props.activeTopic || (props.activeTopic?.history?.length ?? 0) === 0}>
           <div class="min-h-full flex items-center justify-center">
             <WelcomeScreen
@@ -1513,25 +1490,40 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 <Show when={project}>
                   <span
                     class="w-2 h-2 rounded-full shrink-0"
-                    style={{
-                      background: (() => {
-                        const s = mcpServerStatus()['__aio-filesystem__']?.status;
-                        return s === 'connected'
-                          ? '#4ade80'
-                          : s === 'connecting'
-                            ? '#facc15'
-                            : '#f87171';
-                      })(),
-                    }}
-                    title={(() => {
-                      const s = mcpServerStatus()['__aio-filesystem__']?.status;
-                      return s === 'connected'
-                        ? t('chat.filesystemConnected')
-                        : s === 'connecting'
-                          ? t('chat.filesystemConnecting')
-                          : t('chat.filesystemError');
-                    })()}
+                    style={{ background: fsColor() }}
+                    title={fsTooltip()}
                   />
+                </Show>
+                <Show when={project && selectedModel()?.engine_type && localEngineName()}>
+                  <span
+                    class="w-px h-3 shrink-0"
+                    style={{ background: 'rgba(var(--text-base-rgb),0.15)' }}
+                  />
+                </Show>
+                <Show when={selectedModel()?.engine_type && localEngineName()}>
+                  <span
+                    class="inline-flex items-center gap-1 text-[11px] shrink-0"
+                    style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
+                  >
+                    <Show
+                      when={isStartingLocalModel()}
+                      fallback={
+                        <Show when={localEngineConnected()}>
+                          <span style={{ color: '#4ade80' }}>
+                            {t('chat.localEngineConnected', { engine: localEngineName() })}
+                          </span>
+                        </Show>
+                      }
+                    >
+                      <Icon
+                        src="/icons/app-logo/loading.svg"
+                        class="w-3 h-3 animate-spin shrink-0"
+                      />
+                      <span style={{ color: 'rgba(var(--primary-rgb),0.6)' }}>
+                        {t('chat.localEngineConnecting', { engine: localEngineName() })}
+                      </span>
+                    </Show>
+                  </span>
                 </Show>
               </div>
             );

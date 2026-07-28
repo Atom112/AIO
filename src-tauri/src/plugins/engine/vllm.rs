@@ -40,6 +40,18 @@ fn check_vllm_installed() -> bool {
         .unwrap_or(false)
 }
 
+/// 获取 vLLM 版本号
+fn get_vllm_version() -> Option<String> {
+    let mut cmd = create_progress_cmd("python", &["-c", "import vllm; print(vllm.__version__)"]);
+    match cmd.output() {
+        Ok(output) => {
+            let raw = String::from_utf8_lossy(&output.stdout);
+            Some(raw.trim().to_string())
+        }
+        Err(_) => None,
+    }
+}
+
 fn find_python() -> Result<String, String> {
     for python in ["python", "python3"] {
         let mut cmd = create_progress_cmd(python, &["--version"]);
@@ -125,8 +137,17 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn is_installed(&self, _app: &AppHandle) -> bool {
-        // 通过 Python 包检查 vLLM 是否已安装
         check_vllm_installed()
+    }
+
+    fn detect_installation(&self, app: &AppHandle) -> crate::core::models::EngineInstallInfo {
+        let installed = self.is_installed(app);
+        let version = if installed { get_vllm_version() } else { None };
+        crate::core::models::EngineInstallInfo { installed, version }
+    }
+
+    fn default_port(&self) -> u16 {
+        8000
     }
 
     fn progress_event_name(&self) -> &'static str {
@@ -309,9 +330,12 @@ impl LocalEnginePlugin for VllmPlugin {
                 }
             }
 
-            let mut inner = state.lock();
-            inner.engine_type = self.identifier().to_string();
-            inner.child_process = Some(child);
+            state.lock().insert(
+                self.identifier().to_string(),
+                crate::core::state::LocalEngineInner {
+                    child_process: Some(child),
+                },
+            );
 
             Ok(format!("http://127.0.0.1:{}/v1", port))
         })

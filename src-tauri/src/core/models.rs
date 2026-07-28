@@ -90,6 +90,7 @@ pub struct FileChange {
 #[serde(rename_all = "camelCase")]
 pub struct LiveModel {
     pub id: String,
+    #[serde(default)]
     pub owned_by: String,
     /// 厂商返回的展示名（Google/Anthropic 有；OpenAI/Ollama 无 → None）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -937,4 +938,14 @@ pub struct CustomSubagentProfilesFile {
     pub version: u32,
     pub updated_at: String,
     pub profiles: Vec<CustomSubagentProfile>,
+}
+
+// ====== Engine Scanner ======
+
+/// 引擎安装检测结果：是否已安装在系统上及版本号。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineInstallInfo {
+    pub installed: bool,
+    pub version: Option<String>,
 }

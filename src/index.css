@@ -601,6 +601,27 @@ body {
   }
 }
 
+/* ══════════════════════════════════════════════
+   Catppuccin Mocha — VSCode icon CSS variables
+   ══════════════════════════════════════════════ */
+:root {
+  --vscode-ctp-rosewater: #f5e0dc;
+  --vscode-ctp-flamingo: #f2cdcd;
+  --vscode-ctp-pink: #f5c2e7;
+  --vscode-ctp-mauve: #cba6f7;
+  --vscode-ctp-red: #f38ba8;
+  --vscode-ctp-maroon: #eba0ac;
+  --vscode-ctp-peach: #fab387;
+  --vscode-ctp-yellow: #f9e2af;
+  --vscode-ctp-green: #a6e3a1;
+  --vscode-ctp-teal: #94e2d5;
+  --vscode-ctp-sky: #89dceb;
+  --vscode-ctp-sapphire: #74c7ec;
+  --vscode-ctp-blue: #89b4fa;
+  --vscode-ctp-lavender: #b4befe;
+  --vscode-ctp-text: #cdd6f4;
+}
+
 /* ── Theme-aware text colors (use in place of text-white/XX) ── */
 .text-theme-primary {
   color: rgba(var(--text-base-rgb), 0.87);

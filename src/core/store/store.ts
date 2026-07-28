@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { readFile } from '@tauri-apps/plugin-fs';
 import type { Catalog, CatalogSourceTag, ProviderConfig } from '../utils/models';
+import { isLocalEngineProvider, getLocalEngineProvider } from '../utils/models';
 import type {
   McpServerConfig,
   McpServerStatusInfo,
@@ -404,6 +405,10 @@ export interface ActiveModelEntry {
   apiUrl: string;
   apiKey: string;
   isCustom: boolean;
+  /** 本地引擎模型文件路径 */
+  local_path?: string;
+  /** 本地引擎类型 */
+  engine_type?: string;
 }
 
 export const activeProviderModels = (): ActiveModelEntry[] => {
@@ -412,14 +417,23 @@ export const activeProviderModels = (): ActiveModelEntry[] => {
   for (const cfg of Object.values(cfgs)) {
     if (!cfg.enabled) continue;
     for (const mid of cfg.enabledModels) {
-      out.push({
+      const entry: ActiveModelEntry = {
         provider: cfg.id,
         providerName: cfg.displayName,
         modelId: mid,
         apiUrl: cfg.apiUrl,
         apiKey: cfg.apiKey,
         isCustom: cfg.isCustom,
-      });
+      };
+      // 本地引擎：附加 engine_type（始终设置）+ local_path（有路径时）
+      if (isLocalEngineProvider(cfg.id)) {
+        entry.engine_type = getLocalEngineProvider(cfg.id)?.engineType;
+        const localPath = cfg.localModelPaths?.[mid];
+        if (localPath) {
+          entry.local_path = localPath;
+        }
+      }
+      out.push(entry);
     }
   }
   return out;
@@ -441,11 +455,10 @@ export const modelKey = (m: ActivatedModel): string => {
 
 /**
  * 当前可用的全部模型列表（云端 + 本地合并）。
- * 云端模型来自 providerConfigs，本地模型来自 datas.activatedModels。
+ * 云端模型来自 providerConfigs，本地引擎模型通过 providerConfigs 的 localModelPaths 注入。
  * 供助手设置弹窗的模型选择器与 resolveAssistantModel 解析使用。
  */
 export const allAvailableModels = (): ActivatedModel[] => {
-  // 云端模型：派生自 providerConfigs (lobehub 形态)
   const cloud = activeProviderModels().map(
     (m) =>
       ({
@@ -453,11 +466,16 @@ export const allAvailableModels = (): ActivatedModel[] => {
         owned_by: m.providerName,
         api_url: m.apiUrl,
         api_key: m.apiKey,
-        provider_id: m.provider,
+        ...(m.engine_type
+          ? { engine_type: m.engine_type, ...(m.local_path ? { local_path: m.local_path } : {}) }
+          : {}),
       }) as ActivatedModel & { provider_id: string },
   );
-  // 本地模型：activatedModels 中带 local_path / engine_type 的项
-  const local = datas.activatedModels.filter((m) => isLocalModel(m));
+  // 旧版本地模型：仅保留与 providerConfigs 不重叠的（向后兼容）
+  const providerModelIds = new Set(cloud.map((m) => m.model_id + '@' + m.api_url));
+  const local = datas.activatedModels.filter(
+    (m) => isLocalModel(m) && !providerModelIds.has(m.model_id + '@' + (m.api_url ?? '')),
+  );
   return [...cloud, ...local];
 };
 
@@ -588,6 +606,19 @@ export const deleteCustomSubagentProfile = async (profileId: string) => {
   setCustomSubagentProfiles((prev) => prev.filter((p) => p.id !== profileId));
 };
 
+/** engine_type → 展示名称 */
+const engineDisplayName = (engineType?: string): string => {
+  switch (engineType) {
+    case 'llama_cpp':
+      return 'llama.cpp';
+    case 'vllm':
+      return 'vLLM';
+    case 'ollama':
+      return 'Ollama';
+    default:
+      return engineType || '';
+  }
+};
 /**
  * 检查本地推理引擎服务是否就绪（2s 超时）
  */
@@ -605,123 +636,95 @@ const checkServerHealth = async (baseUrl: string): Promise<boolean> => {
 };
 
 /**
- * 为指定助手启动本地推理引擎，并把启动进度以占位消息写入该助手首个话题。
- * 从 NavBar 的 startLocalModel 逻辑提取，供助手设置弹窗选本地模型时复用。
- * @param model - 本地模型（需带 local_path）
- * @param asstId - 目标助手 ID（loading 消息落点）
+ * Start the local inference engine for the selected model.
+ * Engine connection state is exposed through localEngineConnected / localEngineName signals;
+ * @param model - The local model (needs local_path or engine_type for Ollama)
  */
 export const startLocalEngineForAssistant = async (
   model: ActivatedModel,
-  asstId: string,
+  _asstId: string,
 ): Promise<void> => {
-  if (!model.local_path) return;
-  // M13 防护：未确认时不静默启动
-  if (!isLocalAutoStartConfirmed()) {
-    const ok = confirm(
-      t('provider.autoStartConfirm', { name: model.model_id, path: model.local_path }),
-    );
-    if (!ok) return;
-    setLocalAutoStartConfirmed();
-  }
-  const isRunning = await invoke<boolean>('is_local_server_running');
-  if (isRunning) return;
+  void _asstId;
+  const isExternalEngine = !model.local_path && !!model.engine_type;
+  if (!model.local_path && !isExternalEngine) return;
 
-  const assistant = datas.assistants.find((a: any) => a.id === asstId);
-  if (!assistant) return;
-  const topicId = assistant.topics?.[0]?.id;
-  const loadingText = '**' + t('provider.localLoading') + '**';
+  const engineType = model.engine_type || 'llama_cpp';
 
-  if (topicId) {
-    setDatas(
-      'assistants',
-      (a) => a.id === asstId,
-      'topics',
-      (t) => t.id === topicId,
-      'history',
-      (h) => [...h, { role: 'assistant', content: loadingText }],
-    );
+  if (!isExternalEngine) {
+    if (!isLocalAutoStartConfirmed()) {
+      const ok = confirm(
+        t('provider.autoStartConfirm', { name: model.model_id, path: model.local_path! }),
+      );
+      if (!ok) return;
+      setLocalAutoStartConfirmed();
+    }
+    const engineName = engineDisplayName(model.engine_type);
+    // Ollama：始终调用 start_local_server 以确保模型已导入（插件内部处理"已运行"情况）
+    // 其他引擎：若已在运行则跳过
+    if (engineType !== 'ollama') {
+      const isRunning = await invoke<boolean>('is_local_server_running', { engineType });
+      if (isRunning) {
+        setLocalEngineName(engineName);
+        setLocalEngineConnected(true);
+        return;
+      }
+    }
   }
+
+  setLocalEngineName(engineDisplayName(model.engine_type));
 
   try {
     setIsStartingLocalModel(true);
     setLocalModelStartProgress(0);
-    await invoke('start_local_server', {
-      modelPath: model.local_path,
-      port: 8080,
-      gpuLayers: 99,
-      engineType: model.engine_type || 'llama_cpp',
-      trustRemoteCode:
-        model.engine_type === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
-    });
 
+    if (!isExternalEngine) {
+      const port = engineType === 'ollama' ? 11434 : engineType === 'vllm' ? 8000 : 8080;
+      await invoke('start_local_server', {
+        modelPath: model.local_path,
+        port,
+        gpuLayers: 99,
+        engineType,
+        trustRemoteCode: engineType === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
+      });
+    }
+
+    const healthBaseUrl = model.api_url.replace(/\/+$/, '');
     let attempts = 0;
-    const maxAttempts = 60;
+    const maxAttempts = isExternalEngine ? 5 : 60;
     const poll = setInterval(async () => {
       attempts++;
-      const isReady = await checkServerHealth('http://127.0.0.1:8080/v1');
+      const isReady =
+        isExternalEngine || engineType === 'ollama'
+          ? await invoke<boolean>('probe_engine_health', {
+              apiUrl: healthBaseUrl,
+              engineType: model.engine_type,
+            }).catch(() => false)
+          : await checkServerHealth(healthBaseUrl);
       if (isReady) {
         clearInterval(poll);
         setLocalModelStartProgress(100);
+        setLocalEngineConnected(true);
         setTimeout(() => {
           setIsStartingLocalModel(false);
           setLocalModelStartProgress(0);
         }, 1000);
-        if (topicId) {
-          setDatas(
-            'assistants',
-            (a) => a.id === asstId,
-            'topics',
-            (t) => t.id === topicId,
-            'history',
-            (h) =>
-              h.map((msg: any) =>
-                msg.content === loadingText
-                  ? { ...msg, content: '**' + t('provider.localSuccess') + '**' }
-                  : msg,
-              ),
-          );
-        }
       } else if (attempts >= maxAttempts) {
         clearInterval(poll);
         setLocalModelStartProgress(100);
+        setLocalEngineConnected(false);
         setTimeout(() => {
           setIsStartingLocalModel(false);
           setLocalModelStartProgress(0);
         }, 1000);
-        if (topicId) {
-          setDatas(
-            'assistants',
-            (a) => a.id === asstId,
-            'topics',
-            (t) => t.id === topicId,
-            'history',
-            (h) => [...h, { role: 'assistant', content: '**' + t('provider.localTimeout') + '**' }],
-          );
-        }
       }
     }, 500);
-  } catch (err) {
+  } catch {
     setLocalModelStartProgress(100);
+    setLocalEngineConnected(false);
     setTimeout(() => {
       setIsStartingLocalModel(false);
       setLocalModelStartProgress(0);
     }, 1000);
-    if (topicId) {
-      setDatas(
-        'assistants',
-        (a) => a.id === asstId,
-        'topics',
-        (t) => t.id === topicId,
-        'history',
-        (h) => [
-          ...h,
-          {
-            role: 'assistant',
-            content: '**' + t('provider.localFailed', { error: String(err) }) + '**',
-          },
-        ],
-      );
-    }
   }
 };
 
@@ -743,6 +746,11 @@ export const setAssistantModel = async (asstId: string, model: ActivatedModel): 
 export const [isStartingLocalModel, setIsStartingLocalModel] = createSignal(false);
 /** 本地模型启动进度百分比 */
 export const [localModelStartProgress, setLocalModelStartProgress] = createSignal(0);
+
+/** 本地推理引擎是否已连接（健康检查通过） */
+export const [localEngineConnected, setLocalEngineConnected] = createSignal(false);
+/** 已连接的本地推理引擎展示名（由 engine_type 映射） */
+export const [localEngineName, setLocalEngineName] = createSignal('');
 
 // ====== 应用更新状态 ======
 
@@ -890,6 +898,28 @@ export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({})
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
 
 /**
+ * 一次性安装 MCP 后台事件监听器（mcp-server-status / mcp-server-stderr）。
+ * 监听器进程级唯一：`initMcpServers` 被多处并发调用时不会重复注册，
+ * 避免旧实现里 `listen()` 未 await、监听器堆叠、事件丢失等竞态。
+ */
+let mcpListenersInstalled = false;
+const installMcpListeners = async () => {
+  if (mcpListenersInstalled) return;
+  mcpListenersInstalled = true;
+  // 监听器进程级唯一、随应用生命周期存活，无需显式 unlisten。
+  await listen<McpServerStatusInfo>('mcp-server-status', (event) => {
+    const info = event.payload;
+    setMcpServerStatus((prev) => ({ ...prev, [info.id]: info }));
+  });
+  await listen<{ id: string; line: string }>('mcp-server-stderr', (event) => {
+    const { id, line } = event.payload;
+    if (import.meta.env.DEV) {
+      console.debug(`[mcp:${id}] ${line}`);
+    }
+  });
+};
+
+/**
  * 加载并初始化 MCP 服务器列表 + 同步后端已连接状态 + 自动启动标记为 autoStart 的 server
  */
 export const initMcpServers = async (projectId?: string | null) => {
@@ -901,28 +931,16 @@ export const initMcpServers = async (projectId?: string | null) => {
     for (const cfg of list) map[cfg.id] = cfg;
     setMcpServers(map);
 
-    // 同步后端已连接状态
     const statusMap = await invoke<Record<string, McpServerStatusInfo>>('list_mcp_server_status');
-    setMcpServerStatus(statusMap);
+    setMcpServerStatus((prev) => ({ ...prev, ...statusMap }));
 
-    // 监听后台状态推送
-    listen<McpServerStatusInfo>('mcp-server-status', (event) => {
-      const info = event.payload;
-      setMcpServerStatus((prev) => ({ ...prev, [info.id]: info }));
-    });
+    // 先安装进程级唯一的后台事件监听器（await 成功后再触发 autoStart，避免事件丢失）
+    await installMcpListeners();
 
-    // 监听 MCP server stderr 日志（仅 dev 模式，避免生产环境泄露密钥）
-    listen<{ id: string; line: string }>('mcp-server-stderr', (event) => {
-      const { id, line } = event.payload;
-      if (import.meta.env.DEV) {
-        console.debug(`[mcp:${id}] ${line}`);
-      }
-    });
-
-    // 自动启动标记为 autoStart 的 server
+    // 自动启动标记为 autoStart 的 server（跳过已连接的，避免重复启动）
     // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）
     const autoStartIds = Object.values(map)
-      .filter((cfg) => cfg.autoStart)
+      .filter((cfg) => cfg.autoStart && statusMap[cfg.id]?.status !== 'connected')
       .map((cfg) => cfg.id);
     if (autoStartIds.length > 0) {
       const pid = projectId ?? null;
@@ -1214,3 +1232,30 @@ export interface WorkflowState {
 
 /** 当前活跃的工作流状态，null 表示无活跃工作流 */
 export const [workflowState, setWorkflowState] = createSignal<WorkflowState | null>(null);
+
+// ====== 引擎扫描缓存（应用启动时扫一次） ======
+
+export interface EngineScanEntry {
+  id: string;
+  name: string;
+  installed: boolean;
+  version: string | null;
+  defaultPort: number;
+  defaultApiUrl: string;
+}
+
+/** 引擎扫描结果缓存，null = 尚未扫描 */
+export const [engineScanResults, setEngineScanResults] = createSignal<EngineScanEntry[] | null>(
+  null,
+);
+
+/** 应用启动时扫描一次已安装的推理引擎 */
+export const initEngineScan = async () => {
+  try {
+    const results = await invoke<EngineScanEntry[]>('scan_installed_engines');
+    setEngineScanResults(results);
+  } catch (e) {
+    console.error('[engine] init scan failed:', e);
+    setEngineScanResults([]);
+  }
+};

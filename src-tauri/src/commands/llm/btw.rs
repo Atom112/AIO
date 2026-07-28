@@ -43,10 +43,7 @@ pub async fn ask_btw_question(
 
     let client = super::streaming_http_client();
     let body = json!({ "model": model, "messages": messages, "stream": true });
-    let base_url = api_url
-        .trim_end_matches('/')
-        .replace("/chat/completions", "");
-    let endpoint = format!("{}/chat/completions", base_url);
+    let endpoint = super::normalize_chat_url(&api_url);
 
     let res = match tokio::time::timeout(
         std::time::Duration::from_secs(60),

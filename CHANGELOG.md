@@ -2,6 +2,34 @@
 
 # Changelog
 
+## [v0.7.4]
+
+<sup>Released on **2026-07-28**</sup>
+
+### ✨ Added（新增）
+
+- **Catppuccin VSCode 语言图标**：代码块页眉语言类型前添加官方 Catppuccin vscode-icons SVG 图标（40+ 语言），CSS 变量定义 Mocha 调色板
+- **引擎扫描与多引擎状态**：启动时自动扫描本地引擎（llama.cpp / Ollama / vLLM），Provider 详情页集成引擎状态与启停按钮
+- **Ollama Provider 统一**：Ollama 设置页新增 GGUF 文件选择器、进程管理与模型选择卡片，与 llama.cpp 体验一致
+
+### ⚡️ Changed（变更）
+
+- **代码块页眉高度减半**：`py-2.5` → `h-6`（24px），上下圆角构成完美半圆
+- **复制按钮重构**：从页眉移至代码区右上角悬浮，`position: sticky` 实现垂直滚动跟随（`overflow-clip` 容器），半透明玻璃效果，悬停代码块时渐显
+- **本地引擎状态指示器简化**：去除绿色圆点，改用绿色文字，与文件系统指示器分隔
+
+### 🐛 Fixed（修复）
+
+- **Ollama 模型导入修复**：异步 `ollama create`、正确的 HTTP 状态码检查、健康检查改用 `/api/version`
+- **Ollama/Local 引擎调用修复**：chat invoke 中防御性 apiKey 回退、模型选择时的端口与引擎类型路由
+- **文件系统指示器**：修复启动时卡在黄色状态的问题
+- **`LiveModel.owned_by` 后向兼容**：添加 `serde(default)` 避免反序列化旧配置崩溃
+- **新启引擎自动停止其他引擎**：避免多引擎同时运行冲突
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.7.4]: https://github.com/Atom112/AIO/releases/tag/v0.7.4
+
 ## [v0.7.3]
 
 <sup>Released on **2026-07-27**</sup>

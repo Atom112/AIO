@@ -31,10 +31,12 @@ renderer.code = (token: Tokens.Code) => {
   const lang = token.lang || 'plaintext';
 
   return `
-        <div class="my-5 rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.06]">
-            <div class="flex items-center justify-between px-4 py-2.5 select-none bg-white/[0.03] border-b border-white/[0.05]">
+        <div class="group relative code-block my-5 rounded-xl overflow-clip bg-white/[0.04] border border-white/[0.06]">
+            <div class="flex items-center h-6 px-4 select-none bg-white/[0.03] border-b border-white/[0.05] rounded-b-xl">
                 <span class="text-xs font-mono tracking-wide text-white/35 lowercase">${lang}</span>
-                <button class="copy-code-button flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs cursor-pointer transition-all duration-200 text-white/35 bg-transparent border border-transparent opacity-0 hover:text-white/70 hover:bg-white/[0.06] hover:border-white/[0.08] active:scale-[0.96]" title="${t('chat.markdown.copyCode')}" aria-label="Copy code">
+            </div>
+            <div class="sticky top-3 z-10 h-0">
+                <button class="copy-code-button absolute right-3 top-1.5 flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs cursor-pointer transition-all duration-200 text-white/40 bg-[rgba(0,0,0,0.15)] backdrop-blur-sm border border-white/[0.06] opacity-0 group-hover:opacity-100 hover:text-white/80 hover:bg-[rgba(0,0,0,0.35)] hover:border-white/[0.12] active:scale-[0.96]" title="${t('chat.markdown.copyCode')}" aria-label="Copy code">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
                     </svg>
@@ -170,9 +172,7 @@ const Markdown: Component<MarkdownProps> = (props) => {
     const btn = target.closest('.copy-code-button');
     if (!btn) return;
 
-    const wrapper = btn.closest(
-      '.my-5 rounded-xl overflow-hidden bg-white/[0.04] border border-white/[0.06]',
-    );
+    const wrapper = btn.closest('.code-block');
     const codeElement = wrapper?.querySelector('.code-body pre code');
     if (codeElement) {
       const textToCopy = (codeElement as HTMLElement).innerText;

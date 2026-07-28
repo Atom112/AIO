@@ -694,7 +694,7 @@ export const startLocalEngineForAssistant = async (
     const maxAttempts = isExternalEngine ? 5 : 60;
     const poll = setInterval(async () => {
       attempts++;
-      const isReady = isExternalEngine
+      const isReady = (isExternalEngine || engineType === 'ollama')
         ? await invoke<boolean>('probe_engine_health', {
             apiUrl: healthBaseUrl,
             engineType: model.engine_type,

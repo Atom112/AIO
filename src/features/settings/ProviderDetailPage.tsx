@@ -698,9 +698,7 @@ const ProviderDetail: Component = () => {
                 ? t('provider.testing')
                 : t('provider.testConnection')}
             </button>
-            <Show
-              when={!isLocalEngine()}
-            >
+            <Show when={!isLocalEngine()}>
               <button
                 type="button"
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -782,38 +780,38 @@ const ProviderDetail: Component = () => {
                     : t('engine.stopped')}
               </span>
 
-                <Show when={isServerAlive() !== 'alive'}>
-                  <button
-                    type="button"
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={engineActionLoading()}
-                    onClick={handleStartEngine}
+              <Show when={isServerAlive() !== 'alive'}>
+                <button
+                  type="button"
+                  class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={engineActionLoading()}
+                  onClick={handleStartEngine}
+                >
+                  <Show
+                    when={!engineActionLoading()}
+                    fallback={<Icon name="spinner" size={13} class="animate-spin" />}
                   >
-                    <Show
-                      when={!engineActionLoading()}
-                      fallback={<Icon name="spinner" size={13} class="animate-spin" />}
-                    >
-                      <Icon name="play" size={13} />
-                    </Show>
-                    {t('engine.start')}
-                  </button>
-                </Show>
-                <Show when={isServerAlive() === 'alive'}>
-                  <button
-                    type="button"
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-red-400/30 bg-red-400/10 text-red-400 hover:bg-red-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={engineActionLoading()}
-                    onClick={handleStopEngine}
+                    <Icon name="play" size={13} />
+                  </Show>
+                  {t('engine.start')}
+                </button>
+              </Show>
+              <Show when={isServerAlive() === 'alive'}>
+                <button
+                  type="button"
+                  class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-red-400/30 bg-red-400/10 text-red-400 hover:bg-red-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={engineActionLoading()}
+                  onClick={handleStopEngine}
+                >
+                  <Show
+                    when={!engineActionLoading()}
+                    fallback={<Icon name="spinner" size={13} class="animate-spin" />}
                   >
-                    <Show
-                      when={!engineActionLoading()}
-                      fallback={<Icon name="spinner" size={13} class="animate-spin" />}
-                    >
-                      <Icon name="stop" size={13} />
-                    </Show>
-                    {t('engine.stop')}
-                  </button>
-                </Show>
+                    <Icon name="stop" size={13} />
+                  </Show>
+                  {t('engine.stop')}
+                </button>
+              </Show>
             </div>
           </div>
         </Show>

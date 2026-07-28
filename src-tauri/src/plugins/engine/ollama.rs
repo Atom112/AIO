@@ -132,10 +132,9 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
     // 写入临时 Modelfile
     let tmpdir = std::env::temp_dir();
     let modelfile_path = tmpdir.join(format!("aio-ollama-{}.Modelfile", model_name));
-    let mut f = std::fs::File::create(&modelfile_path)
-        .map_err(|e| format!("无法创建 Modelfile: {}", e))?;
-    writeln!(f, "FROM {}", model_path)
-        .map_err(|e| format!("无法写入 Modelfile: {}", e))?;
+    let mut f =
+        std::fs::File::create(&modelfile_path).map_err(|e| format!("无法创建 Modelfile: {}", e))?;
+    writeln!(f, "FROM {}", model_path).map_err(|e| format!("无法写入 Modelfile: {}", e))?;
     drop(f);
 
     // 执行 ollama create（异步，避免阻塞 runtime）
@@ -246,14 +245,14 @@ impl LocalEnginePlugin for OllamaPlugin {
                 debug!("[ollama] 服务未在端口 {} 运行，尝试拉起 ollama serve", port);
                 let exe_path = PathBuf::from("ollama");
                 let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
-                let child = cmd.spawn().map_err(|e| format!("启动 ollama serve 失败: {}", e))?;
+                let child = cmd
+                    .spawn()
+                    .map_err(|e| format!("启动 ollama serve 失败: {}", e))?;
 
                 // 注册子进程到状态，供 stop 命令管理
                 {
                     let mut engines = state.lock();
-                    let inner = engines
-                        .entry(self.identifier().to_string())
-                        .or_default();
+                    let inner = engines.entry(self.identifier().to_string()).or_default();
                     inner.child_process = Some(child);
                 }
 

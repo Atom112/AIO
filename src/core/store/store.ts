@@ -684,8 +684,7 @@ export const startLocalEngineForAssistant = async (
         port,
         gpuLayers: 99,
         engineType,
-        trustRemoteCode:
-          engineType === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
+        trustRemoteCode: engineType === 'vllm' ? window.confirm(t('provider.vllmWarning')) : false,
       });
     }
 
@@ -694,12 +693,13 @@ export const startLocalEngineForAssistant = async (
     const maxAttempts = isExternalEngine ? 5 : 60;
     const poll = setInterval(async () => {
       attempts++;
-      const isReady = (isExternalEngine || engineType === 'ollama')
-        ? await invoke<boolean>('probe_engine_health', {
-            apiUrl: healthBaseUrl,
-            engineType: model.engine_type,
-          }).catch(() => false)
-        : await checkServerHealth(healthBaseUrl);
+      const isReady =
+        isExternalEngine || engineType === 'ollama'
+          ? await invoke<boolean>('probe_engine_health', {
+              apiUrl: healthBaseUrl,
+              engineType: model.engine_type,
+            }).catch(() => false)
+          : await checkServerHealth(healthBaseUrl);
       if (isReady) {
         clearInterval(poll);
         setLocalModelStartProgress(100);

@@ -622,7 +622,6 @@ body {
   --vscode-ctp-text: #cdd6f4;
 }
 
-
 /* ── Theme-aware text colors (use in place of text-white/XX) ── */
 .text-theme-primary {
   color: rgba(var(--text-base-rgb), 0.87);

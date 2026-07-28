@@ -157,6 +157,8 @@
   "chat.input.placeholder": "输入消息...（Ctrl + Enter 换行）",
   "chat.inputTokens": "输入 tokens",
   "chat.localEngineStarting": "正在启动本地推理引擎...",
+  "chat.localEngineConnected": "\u5df2\u8fde\u63a5 {{engine}}",
+  "chat.localEngineConnecting": "{{engine}} \u542f\u52a8\u4e2d",
   "chat.markdown.copied": "已复制",
   "chat.markdown.copyCode": "复制代码",
   "chat.model.cloud": "线上模型",

@@ -157,6 +157,8 @@
   "chat.input.placeholder": "Message AIO... (Ctrl + Enter for a new line)",
   "chat.inputTokens": "Input tokens",
   "chat.localEngineStarting": "Starting the local inference engine...",
+  "chat.localEngineConnected": "Connected {{engine}}",
+  "chat.localEngineConnecting": "Starting {{engine}}...",
   "chat.markdown.copied": "Copied",
   "chat.markdown.copyCode": "Copy code",
   "chat.model.cloud": "Cloud models",

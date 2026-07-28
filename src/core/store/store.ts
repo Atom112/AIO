@@ -605,6 +605,19 @@ export const deleteCustomSubagentProfile = async (profileId: string) => {
   setCustomSubagentProfiles((prev) => prev.filter((p) => p.id !== profileId));
 };
 
+/** engine_type → 展示名称 */
+const engineDisplayName = (engineType?: string): string => {
+  switch (engineType) {
+    case 'llama_cpp':
+      return 'llama.cpp';
+    case 'vllm':
+      return 'vLLM';
+    case 'ollama':
+      return 'Ollama';
+    default:
+      return engineType || '';
+  }
+};
 /**
  * 检查本地推理引擎服务是否就绪（2s 超时）
  */
@@ -622,21 +635,20 @@ const checkServerHealth = async (baseUrl: string): Promise<boolean> => {
 };
 
 /**
- * 为指定助手启动本地推理引擎，并把启动进度以占位消息写入该助手首个话题。
- * 从 NavBar 的 startLocalModel 逻辑提取，供助手设置弹窗选本地模型时复用。
- * @param model - 本地模型（需带 local_path）
- * @param asstId - 目标助手 ID（loading 消息落点）
+ * Start the local inference engine for the selected model.
+ * Engine connection state is exposed through localEngineConnected / localEngineName signals;
+ * chat messages are no longer inserted.
+ * @param model - The local model (needs local_path or engine_type for Ollama)
  */
 export const startLocalEngineForAssistant = async (
   model: ActivatedModel,
-  asstId: string,
+  _asstId: string,
 ): Promise<void> => {
-  // 外部引擎（Ollama）：无需启动进程，仅做运行态检测
+  void _asstId; // parameter kept for call-site compatibility
   const isExternalEngine = !model.local_path && !!model.engine_type;
   if (!model.local_path && !isExternalEngine) return;
 
   if (!isExternalEngine) {
-    // M13 防护：未确认时不静默启动
     if (!isLocalAutoStartConfirmed()) {
       const ok = confirm(
         t('provider.autoStartConfirm', { name: model.model_id, path: model.local_path! }),
@@ -644,25 +656,16 @@ export const startLocalEngineForAssistant = async (
       if (!ok) return;
       setLocalAutoStartConfirmed();
     }
+    const engineName = engineDisplayName(model.engine_type);
     const isRunning = await invoke<boolean>('is_local_server_running');
-    if (isRunning) return;
+    if (isRunning) {
+      setLocalEngineName(engineName);
+      setLocalEngineConnected(true);
+      return;
+    }
   }
 
-  const assistant = datas.assistants.find((a: any) => a.id === asstId);
-  if (!assistant) return;
-  const topicId = assistant.topics?.[0]?.id;
-  const loadingText = '**' + t('provider.localLoading') + '**';
-
-  if (topicId) {
-    setDatas(
-      'assistants',
-      (a) => a.id === asstId,
-      'topics',
-      (t) => t.id === topicId,
-      'history',
-      (h) => [...h, { role: 'assistant', content: loadingText }],
-    );
-  }
+  setLocalEngineName(engineDisplayName(model.engine_type));
 
   try {
     setIsStartingLocalModel(true);
@@ -693,66 +696,28 @@ export const startLocalEngineForAssistant = async (
       if (isReady) {
         clearInterval(poll);
         setLocalModelStartProgress(100);
+        setLocalEngineConnected(true);
         setTimeout(() => {
           setIsStartingLocalModel(false);
           setLocalModelStartProgress(0);
         }, 1000);
-        if (topicId) {
-          setDatas(
-            'assistants',
-            (a) => a.id === asstId,
-            'topics',
-            (t) => t.id === topicId,
-            'history',
-            (h) =>
-              h.map((msg: any) =>
-                msg.content === loadingText
-                  ? { ...msg, content: '**' + t('provider.localSuccess') + '**' }
-                  : msg,
-              ),
-          );
-        }
       } else if (attempts >= maxAttempts) {
         clearInterval(poll);
         setLocalModelStartProgress(100);
+        setLocalEngineConnected(false);
         setTimeout(() => {
           setIsStartingLocalModel(false);
           setLocalModelStartProgress(0);
         }, 1000);
-        if (topicId) {
-          setDatas(
-            'assistants',
-            (a) => a.id === asstId,
-            'topics',
-            (t) => t.id === topicId,
-            'history',
-            (h) => [...h, { role: 'assistant', content: '**' + t('provider.localTimeout') + '**' }],
-          );
-        }
       }
     }, 500);
-  } catch (err) {
+  } catch {
     setLocalModelStartProgress(100);
+    setLocalEngineConnected(false);
     setTimeout(() => {
       setIsStartingLocalModel(false);
       setLocalModelStartProgress(0);
     }, 1000);
-    if (topicId) {
-      setDatas(
-        'assistants',
-        (a) => a.id === asstId,
-        'topics',
-        (t) => t.id === topicId,
-        'history',
-        (h) => [
-          ...h,
-          {
-            role: 'assistant',
-            content: '**' + t('provider.localFailed', { error: String(err) }) + '**',
-          },
-        ],
-      );
-    }
   }
 };
 
@@ -774,6 +739,11 @@ export const setAssistantModel = async (asstId: string, model: ActivatedModel): 
 export const [isStartingLocalModel, setIsStartingLocalModel] = createSignal(false);
 /** 本地模型启动进度百分比 */
 export const [localModelStartProgress, setLocalModelStartProgress] = createSignal(0);
+
+/** 本地推理引擎是否已连接（健康检查通过） */
+export const [localEngineConnected, setLocalEngineConnected] = createSignal(false);
+/** 已连接的本地推理引擎展示名（由 engine_type 映射） */
+export const [localEngineName, setLocalEngineName] = createSignal('');
 
 // ====== 应用更新状态 ======
 
@@ -921,6 +891,28 @@ export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({})
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
 
 /**
+ * 一次性安装 MCP 后台事件监听器（mcp-server-status / mcp-server-stderr）。
+ * 监听器进程级唯一：`initMcpServers` 被多处并发调用时不会重复注册，
+ * 避免旧实现里 `listen()` 未 await、监听器堆叠、事件丢失等竞态。
+ */
+let mcpListenersInstalled = false;
+const installMcpListeners = async () => {
+  if (mcpListenersInstalled) return;
+  mcpListenersInstalled = true;
+  // 监听器进程级唯一、随应用生命周期存活，无需显式 unlisten。
+  await listen<McpServerStatusInfo>('mcp-server-status', (event) => {
+    const info = event.payload;
+    setMcpServerStatus((prev) => ({ ...prev, [info.id]: info }));
+  });
+  await listen<{ id: string; line: string }>('mcp-server-stderr', (event) => {
+    const { id, line } = event.payload;
+    if (import.meta.env.DEV) {
+      console.debug(`[mcp:${id}] ${line}`);
+    }
+  });
+};
+
+/**
  * 加载并初始化 MCP 服务器列表 + 同步后端已连接状态 + 自动启动标记为 autoStart 的 server
  */
 export const initMcpServers = async (projectId?: string | null) => {
@@ -935,19 +927,8 @@ export const initMcpServers = async (projectId?: string | null) => {
     const statusMap = await invoke<Record<string, McpServerStatusInfo>>('list_mcp_server_status');
     setMcpServerStatus((prev) => ({ ...prev, ...statusMap }));
 
-    // 监听后台状态推送
-    listen<McpServerStatusInfo>('mcp-server-status', (event) => {
-      const info = event.payload;
-      setMcpServerStatus((prev) => ({ ...prev, [info.id]: info }));
-    });
-
-    // 监听 MCP server stderr 日志（仅 dev 模式，避免生产环境泄露密钥）
-    listen<{ id: string; line: string }>('mcp-server-stderr', (event) => {
-      const { id, line } = event.payload;
-      if (import.meta.env.DEV) {
-        console.debug(`[mcp:${id}] ${line}`);
-      }
-    });
+    // 先安装进程级唯一的后台事件监听器（await 成功后再触发 autoStart，避免事件丢失）
+    await installMcpListeners();
 
     // 自动启动标记为 autoStart 的 server（跳过已连接的，避免重复启动）
     // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）

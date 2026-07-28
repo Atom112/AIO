@@ -1,16 +1,21 @@
-/// Ollama 本地推理引擎插件（轻量级，不做进程管理）。
+/// Ollama 本地推理引擎插件。
 ///
-/// Ollama 由用户自行管理生命周期（systemd / launchd / docker / 手动启动），
-/// 本插件仅提供引擎标识与运行态检测，不调用外部进程。
+/// 支持 GGUF 模型文件：用户选择 .gguf 文件后，插件负责确保 Ollama 服务运行、
+/// 将模型导入 Ollama，并返回 API Base URL。
+///
+/// 进程生命周期：若 Ollama 已由用户自行启动（systemd / launchd / docker），
+/// 插件直接使用现有服务；否则自动拉起 ollama serve 子进程。
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::future::Future;
+use std::io::Write;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::time::Duration;
 use tauri::AppHandle;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// 检查 PATH 上是否存在 `ollama` 二进制
 fn detect_ollama_on_path() -> bool {
@@ -20,6 +25,7 @@ fn detect_ollama_on_path() -> bool {
             .arg("ollama")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            .creation_flags(0x08000000)
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
@@ -36,27 +42,23 @@ fn detect_ollama_on_path() -> bool {
     }
 }
 
-/// 检查 Ollama HTTP 端点是否可达
-fn ollama_http_reachable() -> bool {
-    std::thread::spawn(|| {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let client = reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(2))
-                .timeout(std::time::Duration::from_secs(3))
-                .build()
-                .ok();
-            match client {
-                Some(c) => match c.get("http://localhost:11434/api/version").send().await {
-                    Ok(r) => r.status().is_success(),
-                    Err(_) => false,
-                },
-                None => false,
-            }
-        })
+/// 检查指定 host:port 的 Ollama HTTP 端点是否可达
+fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
+    let url = format!("http://{}:{}/api/version", host, port);
+    std::thread::spawn(move || {
+        reqwest::blocking::Client::new()
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .is_ok()
     })
     .join()
     .unwrap_or(false)
+}
+
+/// 检查默认端口 11434 是否可达
+fn ollama_http_reachable() -> bool {
+    ollama_http_reachable_at("127.0.0.1", 11434)
 }
 
 /// 通过 `ollama --version` 获取版本号
@@ -69,18 +71,83 @@ fn ollama_version_from_cli() -> Option<String> {
     cmd.creation_flags(0x08000000);
     match cmd.output() {
         Ok(output) => {
-            let raw = String::from_utf8_lossy(if output.stdout.is_empty() {
-                &output.stderr
-            } else {
+            let raw = String::from_utf8_lossy(if output.stderr.is_empty() {
                 &output.stdout
+            } else {
+                &output.stderr
             });
-            let first_line = raw.lines().next().map(|s| s.trim().to_string());
-            // Ollama output: "ollama version is 0.5.7" → extract version number
-            first_line.and_then(|s| s.split_whitespace().last().map(|v| v.to_string()))
+            raw.lines()
+                .next()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
         }
         Err(_) => None,
     }
 }
+
+/// 从 GGUF 文件路径派生模型名（取文件名去扩展名）
+fn model_name_from_path(model_path: &str) -> String {
+    Path::new(model_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("aio-model")
+        .to_string()
+}
+
+/// 通过 ollama create 将 GGUF 文件导入 Ollama
+/// 返回模型名；若模型已存在则跳过导入
+fn import_model(model_path: &str, api_url: &str) -> Result<String, String> {
+    let model_name = model_name_from_path(model_path);
+
+    // 检查模型是否已存在于 ollama
+    let check_url = format!("{}/api/show", api_url);
+    let body = serde_json::json!({ "name": model_name });
+    let client = reqwest::blocking::Client::new();
+    if client
+        .post(&check_url)
+        .timeout(Duration::from_secs(3))
+        .json(&body)
+        .send()
+        .is_ok()
+    {
+        debug!("[ollama] 模型 {} 已存在，跳过导入", model_name);
+        return Ok(model_name);
+    }
+
+    debug!("[ollama] 导入 GGUF 模型: {} -> {}", model_path, model_name);
+
+    // 写入临时 Modelfile
+    let tmpdir = std::env::temp_dir();
+    let modelfile_path = tmpdir.join(format!("aio-ollama-{}.Modelfile", model_name));
+    let mut f = std::fs::File::create(&modelfile_path)
+        .map_err(|e| format!("无法创建 Modelfile: {}", e))?;
+    writeln!(f, "FROM {}", model_path)
+        .map_err(|e| format!("无法写入 Modelfile: {}", e))?;
+    drop(f);
+
+    // 执行 ollama create
+    let output = std::process::Command::new("ollama")
+        .arg("create")
+        .arg(&model_name)
+        .arg("-f")
+        .arg(&modelfile_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("无法执行 ollama create: {}", e))?;
+
+    // 清理 Modelfile
+    let _ = std::fs::remove_file(&modelfile_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ollama create 失败: {}", stderr.trim()));
+    }
+
+    debug!("[ollama] 模型 {} 导入成功", model_name);
+    Ok(model_name)
+}
+
 pub struct OllamaPlugin;
 
 impl LocalEnginePlugin for OllamaPlugin {
@@ -93,16 +160,14 @@ impl LocalEnginePlugin for OllamaPlugin {
     }
 
     fn supported_extensions(&self) -> &[&'static str] {
-        &[] // Ollama 通过 API 管理模型，无本地模型文件
+        &["gguf"]
     }
 
     fn install_path(&self, _app: &AppHandle) -> PathBuf {
-        // Ollama 无独立安装路径（用户自行安装）
         PathBuf::new()
     }
 
     fn is_installed(&self, _app: &AppHandle) -> bool {
-        // 检查 PATH 上是否有 ollama 二进制，或 HTTP 端点可达
         detect_ollama_on_path() || ollama_http_reachable()
     }
 
@@ -122,36 +187,101 @@ impl LocalEnginePlugin for OllamaPlugin {
         11434
     }
 
-    fn start<'a>(
-        &'a self,
-        _app: AppHandle,
-        _state: &'a LocalEngineState,
-        model_path: &'a str,
-        _port: u16,
-        _gpu_layers: i32,
-        _trust_remote_code: bool,
-    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
-        Box::pin(async move {
-            debug!(
-                "Ollama 引擎由用户自行管理，跳过启动流程 (model_path={})",
-                model_path
-            );
-            // 直接返回 api_url（Ollama 的 model_path 实际是 base URL）
-            Ok(model_path.to_string())
-        })
-    }
     fn build_command(
         &self,
         _exe_path: &Path,
         _model_path: &str,
-        _port: u16,
+        port: u16,
         _gpu_layers: i32,
     ) -> std::process::Command {
-        // Ollama 不需要构建启动命令
-        std::process::Command::new("echo")
+        let mut cmd = std::process::Command::new("ollama");
+        cmd.arg("serve")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        if port != 11434 {
+            cmd.env("OLLAMA_HOST", format!("127.0.0.1:{}", port));
+        }
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+        cmd
     }
 
-    fn parse_progress_from_log(&self, _line: &str) -> Option<f64> {
-        None // Ollama 无启动进度日志
+    fn start<'a>(
+        &'a self,
+        _app: AppHandle,
+        state: &'a LocalEngineState,
+        model_path: &'a str,
+        port: u16,
+        gpu_layers: i32,
+        _trust_remote_code: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let api_url = format!("http://127.0.0.1:{}", port);
+            debug!(
+                "[ollama] 启动 - 模型: {}, 端口: {}, GPU层数: {}",
+                model_path, port, gpu_layers
+            );
+
+            if !Path::new(model_path).exists() {
+                return Err(format!("模型文件不存在: {}", model_path));
+            }
+
+            // 1. 确保 Ollama 服务运行
+            let already_running = ollama_http_reachable_at("127.0.0.1", port);
+            if !already_running {
+                debug!("[ollama] 服务未在端口 {} 运行，尝试拉起 ollama serve", port);
+                let exe_path = PathBuf::from("ollama");
+                let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
+                let child = cmd.spawn().map_err(|e| format!("启动 ollama serve 失败: {}", e))?;
+
+                // 注册子进程到状态，供 stop 命令管理
+                {
+                    let mut engines = state.lock();
+                    let inner = engines
+                        .entry(self.identifier().to_string())
+                        .or_default();
+                    inner.child_process = Some(child);
+                }
+
+                // 等待 ollama 就绪（轮询 /api/version）
+                let deadline = std::time::Instant::now() + Duration::from_secs(30);
+                loop {
+                    if std::time::Instant::now() > deadline {
+                        return Err("Ollama 服务启动超时".to_string());
+                    }
+                    if ollama_http_reachable_at("127.0.0.1", port) {
+                        debug!("[ollama] 服务就绪");
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            } else {
+                debug!("[ollama] 服务已在运行，复用现有实例");
+            }
+
+            // 2. 导入 GGUF 模型（若尚未导入）
+            let model_name = match import_model(model_path, &api_url) {
+                Ok(name) => name,
+                Err(e) => {
+                    warn!("[ollama] 模型导入失败: {}", e);
+                    return Err(e);
+                }
+            };
+
+            debug!("[ollama] 模型 {} 已就绪，API: {}", model_name, api_url);
+            Ok(api_url)
+        })
+    }
+
+    fn parse_progress_from_log(&self, line: &str) -> Option<f64> {
+        if line.contains("listening") || line.contains("Listening") {
+            Some(0.3)
+        } else if line.contains("creating") || line.contains("importing") {
+            Some(0.5)
+        } else if line.contains("success") || line.contains("ready") {
+            Some(0.9)
+        } else {
+            None
+        }
     }
 }

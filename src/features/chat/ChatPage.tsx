@@ -1178,7 +1178,7 @@ ${asstObj.prompt}`;
       if (isChatMode()) {
         await invoke('call_llm_stream', {
           apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key,
+          apiKey: currentMdl.api_key ?? '',
           model: currentMdl.model_id,
           assistantId: asstId,
           topicId: topicId,
@@ -1200,14 +1200,14 @@ ${asstObj.prompt}`;
               profileId,
               modelId: mdl.model_id,
               apiUrl: mdl.api_url,
-              apiKey: mdl.api_key,
+              apiKey: mdl.api_key ?? '',
             });
           }
         }
 
         await invoke('run_agent_turn', {
           apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key,
+          apiKey: currentMdl.api_key ?? '',
           model: currentMdl.model_id,
           assistantId: asstId,
           topicId: topicId,

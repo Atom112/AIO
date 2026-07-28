@@ -40,12 +40,25 @@ pub async fn start_local_server(
     } else {
         validate_model_path(&model_path)?
     };
-    // 启动前清理：停止同类型引擎的旧进程
+    // 启动前清理：停止所有其他类型的引擎（同时间只允许一个本地引擎运行）
+    {
+        let engines = state.lock();
+        let other_ids: Vec<String> = engines
+            .keys()
+            .filter(|k| *k != &engine_id)
+            .cloned()
+            .collect();
+        drop(engines);
+        for id in other_ids {
+            tracing::info!("[engine] 停止旧引擎 {} 以启动 {}", id, engine_id);
+            stop_engine_internal(&state, &id);
+        }
+    }
+    // 如果同类型引擎已在运行，也先停止（清理旧进程）
     if is_engine_running_internal(&state, &engine_id) {
         stop_engine_internal(&state, &engine_id);
         sleep(Duration::from_millis(500)).await;
     }
-
     // 调用插件启动
     let url = plugin
         .start(

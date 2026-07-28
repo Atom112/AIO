@@ -90,6 +90,7 @@ pub struct FileChange {
 #[serde(rename_all = "camelCase")]
 pub struct LiveModel {
     pub id: String,
+    #[serde(default)]
     pub owned_by: String,
     /// 厂商返回的展示名（Google/Anthropic 有；OpenAI/Ollama 无 → None）
     #[serde(default, skip_serializing_if = "Option::is_none")]

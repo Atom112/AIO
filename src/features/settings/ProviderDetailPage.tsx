@@ -190,7 +190,7 @@ const ProviderDetail: Component = () => {
         const next = { ...current, [modelId]: file };
         const enabled = userCfg()?.enabledModels ?? [];
         const nextEnabled = enabled.includes(modelId) ? enabled : [...enabled, modelId];
-        persist({ localModelPaths: next, enabledModels: nextEnabled });
+        persist({ localModelPaths: next, enabledModels: nextEnabled, enabled: true });
       }
     } catch {
       /* user cancelled dialog */

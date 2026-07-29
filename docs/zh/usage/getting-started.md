@@ -13,7 +13,7 @@
 
 ## 配置远程模型
 
-![Provider 设置](../assets/screenshots/provider-settings.webp)
+![Provider 设置](../../assets/screenshots/provider-settings.webp)
 
 1. 打开“设置 → 供应商设置”。
 2. 选择目录中的供应商，或添加自定义 OpenAI-compatible 供应商。

@@ -7,7 +7,7 @@
 
 两者都支持全局和项目范围。项目配置位于绑定目录的 `.aio/` 中，切换项目时重新加载；下载或安装并不代表已经绑定到当前助手。
 
-![MCP Catalog 与 Server 管理](../assets/screenshots/mcp-catalog.webp)
+![MCP Catalog 与 Server 管理](../../assets/screenshots/mcp-catalog.webp)
 
 ## MCP Server
 
@@ -137,6 +137,8 @@ Catalog 页面读取官方 MCP Registry：
 | `priority`    | 数值越大越优先；匹配到的拒绝规则优先于允许规则 |
 
 当前 glob 只支持完整匹配以及开头或结尾的单个 `*`，不要按完整 glob 语法理解。修改权限文件后应重新进入项目，让配置重新加载。
+
+> 完整规则参考见[权限系统参考](../reference/permissions.md)，包含三层模型、评估顺序和内置默认规则。
 
 ## Resources 与 Prompts
 

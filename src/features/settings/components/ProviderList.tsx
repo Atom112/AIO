@@ -295,8 +295,7 @@ const ProviderList: Component = () => {
           <div
             class="bg-[rgba(var(--surface-bg),0.85)] border border-white/[0.08] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] p-6 w-[440px] max-w-[90%]"
             style={{
-              'backdrop-filter': 'blur(60px) saturate(180%)',
-              '-webkit-backdrop-filter': 'blur(60px) saturate(180%)',
+              'backdrop-filter': 'blur(30px) saturate(180%)',
               animation: 'modalIn 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards',
             }}
             onClick={(e) => e.stopPropagation()}
@@ -590,8 +589,7 @@ const ProviderList: Component = () => {
           }}
           style={{
             background: 'rgba(var(--surface-bg), 0.88)',
-            'backdrop-filter': 'blur(30px) saturate(180%)',
-            '-webkit-backdrop-filter': 'blur(30px) saturate(180%)',
+            'backdrop-filter': 'blur(20px) saturate(150%)',
             animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
           }}
         >

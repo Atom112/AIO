@@ -210,7 +210,6 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
           style={{
             background: 'var(--acrylic-bg)',
             'backdrop-filter': 'blur(var(--acrylic-blur))',
-            '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))',
             border: '1px solid var(--acrylic-border)',
           }}
         >
@@ -338,7 +337,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                               <Show when={noKey()}>
                                 <span
                                   class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 inline-flex items-center gap-0.5"
-                                  title="该 provider 未配置 API Key"
+                                  title={t('project.noKeyTitle') as string}
                                 >
                                   <Icon name="alert-triangle" size={9} />{' '}
                                   {t('project.noKeyConfigured')}

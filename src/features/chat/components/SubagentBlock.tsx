@@ -163,26 +163,20 @@ const SubStepRow: Component<{ step: SubagentStep }> = (props) => {
 const SubagentBlock: Component<SubagentBlockProps> = (props) => {
   const profileStyle = () => getProfileStyle(props.step.subagentProfile);
   const [elapsedMs, setElapsedMs] = createSignal(0);
-  let rafId: number | null = null;
 
   createEffect(() => {
     if (props.isActive && props.step.status === 'running' && props.step.timestamp) {
-      const tick = () => {
-        if (props.step.status !== 'running') return;
+      const intervalId = setInterval(() => {
+        if (props.step.status !== 'running') {
+          clearInterval(intervalId);
+          return;
+        }
         setElapsedMs(Date.now() - props.step.timestamp);
-        rafId = requestAnimationFrame(tick);
-      };
-      rafId = requestAnimationFrame(tick);
+      }, 100);
+      onCleanup(() => clearInterval(intervalId));
     } else if (props.step.status !== 'running' && props.step.timestamp) {
-      if (rafId) cancelAnimationFrame(rafId);
       setElapsedMs((props.step.duration ?? 0) || Date.now() - props.step.timestamp);
-    } else {
-      if (rafId) cancelAnimationFrame(rafId);
     }
-  });
-
-  onCleanup(() => {
-    if (rafId) cancelAnimationFrame(rafId);
   });
 
   const steps = () => props.step.subagentSteps || [];

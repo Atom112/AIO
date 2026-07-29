@@ -471,7 +471,6 @@ const ShareModal: Component<ShareModalProps> = (props) => {
             style={{
               background: 'rgba(34, 38, 54, 0.82)',
               'backdrop-filter': 'blur(var(--acrylic-blur))',
-              '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))',
               border: '1px solid var(--acrylic-border)',
             }}
           >
@@ -680,7 +679,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         onClick={() => handleDownload('markdown')}
                       >
                         <Icon name="download" class="w-3.5 h-3.5" />
-                        下载 .md
+                        {t('export.downloadMd')}
                       </button>
                     </div>
                   </div>
@@ -729,7 +728,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         onClick={() => handleDownload('json')}
                       >
                         <Icon name="download" class="w-3.5 h-3.5" />
-                        下载 .json
+                        {t('export.downloadJson')}
                       </button>
                     </div>
                   </div>

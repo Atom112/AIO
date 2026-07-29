@@ -127,8 +127,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
         class={`absolute z-[100] min-w-full mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top ${props.align === 'right' ? 'right-0' : 'left-0'} top-full`}
         style={{
           background: 'rgba(var(--surface-bg), 0.88)',
-          'backdrop-filter': 'blur(40px) saturate(180%)',
-          '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+          'backdrop-filter': 'blur(24px) saturate(150%)',
           border: '1px solid var(--border-dim)',
           'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
         }}

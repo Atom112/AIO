@@ -98,7 +98,7 @@ const ModelSelector: Component = () => {
         style={{
           background: 'rgba(var(--surface-bg),0.96)',
           border: '1px solid var(--border-dim)',
-          'backdrop-filter': 'blur(12px)',
+          'backdrop-filter': 'blur(10px)',
           'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
           'max-height': '340px',
         }}

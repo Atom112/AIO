@@ -28,84 +28,90 @@ fn attachment_storage_path(
 #[tauri::command]
 pub async fn store_chat_attachment(
     app: AppHandle,
-    state: tauri::State<'_, DbState>,
+    _state: tauri::State<'_, DbState>,
     path: String,
 ) -> Result<StoredAttachment, String> {
-    let source = validate_attachment_path(&path)?;
-    let bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
-    let sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let extension = source
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("bin")
-        .to_lowercase();
-    let mime_type = attachment_mime_type(&extension).to_string();
-    let file_name = source
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("attachment")
-        .to_string();
+    tokio::task::spawn_blocking(move || {
+        let source = validate_attachment_path(&path)?;
+        let bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
+        let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let extension = source
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin")
+            .to_lowercase();
+        let mime_type = attachment_mime_type(&extension).to_string();
+        let file_name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("attachment")
+            .to_string();
 
-    {
-        let conn = state.0.lock();
-        if let Ok(mut existing) = conn.query_row(
-            "SELECT id, file_name, mime_type, size, storage_path
-             FROM attachments WHERE sha256 = ?1",
-            [&sha256],
-            |row| {
-                Ok(StoredAttachment {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    mime_type: row.get(2)?,
-                    size: row.get::<_, i64>(3)? as u64,
-                    storage_path: row.get(4)?,
-                })
-            },
-        ) {
-            existing.name = file_name;
-            return Ok(existing);
+        {
+            let db_state = app.state::<DbState>();
+            let conn = db_state.0.lock();
+            if let Ok(mut existing) = conn.query_row(
+                "SELECT id, file_name, mime_type, size, storage_path
+                 FROM attachments WHERE sha256 = ?1",
+                [&sha256],
+                |row| {
+                    Ok(StoredAttachment {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        mime_type: row.get(2)?,
+                        size: row.get::<_, i64>(3)? as u64,
+                        storage_path: row.get(4)?,
+                    })
+                },
+            ) {
+                existing.name = file_name;
+                return Ok(existing);
+            }
         }
-    }
 
-    let destination = attachment_storage_path(&app, &sha256, &extension)?;
-    if !destination.exists() {
-        std::fs::write(&destination, &bytes).map_err(|e| e.to_string())?;
-    }
-
-    let extracted_text = match extract_file_content(&source, &extension) {
-        Ok(text) => text,
-        Err(error) => {
-            let _ = std::fs::remove_file(&destination);
-            return Err(error);
+        let destination = attachment_storage_path(&app, &sha256, &extension)?;
+        if !destination.exists() {
+            std::fs::write(&destination, &bytes).map_err(|e| e.to_string())?;
         }
-    };
-    let id = uuid::Uuid::new_v4().to_string();
-    let size = bytes.len() as u64;
-    let storage_path = destination.to_string_lossy().to_string();
-    let conn = state.0.lock();
-    conn.execute(
-        "INSERT INTO attachments
-         (id, sha256, file_name, mime_type, size, storage_path, extracted_text)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
+
+        let extracted_text = match extract_file_content(&source, &extension) {
+            Ok(text) => text,
+            Err(error) => {
+                let _ = std::fs::remove_file(&destination);
+                return Err(error);
+            }
+        };
+        let id = uuid::Uuid::new_v4().to_string();
+        let size = bytes.len() as u64;
+        let storage_path = destination.to_string_lossy().to_string();
+        let db_state = app.state::<DbState>();
+        let conn = db_state.0.lock();
+        conn.execute(
+            "INSERT INTO attachments
+             (id, sha256, file_name, mime_type, size, storage_path, extracted_text)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                id,
+                sha256,
+                file_name,
+                mime_type,
+                size as i64,
+                storage_path,
+                extracted_text
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(StoredAttachment {
             id,
-            sha256,
-            file_name,
+            name: file_name,
             mime_type,
-            size as i64,
+            size,
             storage_path,
-            extracted_text
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(StoredAttachment {
-        id,
-        name: file_name,
-        mime_type,
-        size,
-        storage_path,
+        })
     })
+    .await
+    .map_err(|_| "文件处理线程异常".to_string())?
 }
 
 /// Deletes an unattached pending upload. Files referenced by any message are retained.

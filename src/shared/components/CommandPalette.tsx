@@ -261,7 +261,6 @@ const CommandPalette: Component = () => {
         class="fixed inset-0 z-[9999] flex items-start justify-center pt-[18vh] bg-black/50"
         style={{
           'backdrop-filter': 'blur(6px)',
-          '-webkit-backdrop-filter': 'blur(6px)',
           animation: 'command-palette-fade-in 0.12s ease-out',
         }}
         onClick={onOverlayClick}

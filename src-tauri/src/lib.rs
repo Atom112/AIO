@@ -34,6 +34,8 @@ pub fn run() {
     init_tracing();
     tauri::Builder::default()
         .setup(|app| {
+            let window = app.get_webview_window("main").unwrap();
+            let _ = window.set_background_color(Some(tauri::webview::Color(10, 14, 26, 255)));
             let conn = core::db::init_db(app.handle())?;
             app.manage(DbState(parking_lot::Mutex::new(conn)));
             Ok(())

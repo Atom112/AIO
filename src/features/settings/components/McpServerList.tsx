@@ -335,7 +335,7 @@ const McpServerList: Component = () => {
         </Show>
 
         <Show when={!loading() && view() === 'market'}>
-          <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <For
               each={catalog()}
               fallback={

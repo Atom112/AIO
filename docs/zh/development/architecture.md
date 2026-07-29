@@ -45,7 +45,7 @@ Rust commands
 ## 插件边界
 
 - Provider：Google、Anthropic、Ollama 和 OpenAI-compatible。
-- Local Engine：llama.cpp 与 vLLM；当前 UI 仅开放 llama.cpp。
+- Local Engine：llama.cpp、Ollama 与 vLLM（通过引擎扫描自动发现，参见 [providers-and-models.md → 引擎扫描](../usage/providers-and-models.md#引擎扫描与自动发现)）。
 - MCP Transport：stdio、HTTP 与 Streamable HTTP。
 - LSP：管理不同语言服务器的启动、请求、诊断和关闭。
 
@@ -70,6 +70,12 @@ Manager 在启动时注册插件，command 根据标识符查找实现。新增�
 - 子智能体执行句柄。
 
 窗口销毁时会取消流任务、终止本地引擎、清空 MCP 连接并中止在途工具调用。
+
+### 近期性能变更
+
+- **阻塞 I/O 迁移**：shell 命令执行（`shell_tools::execute_command`）、Git 操作（`git_tools::execute_git_tool`）、文件操作（`file_tools::execute_file_tool`）均在 tokio `spawn_blocking` 池中执行，不阻塞主运行时线程。
+- **图片懒加载**：`ChatInterface` 使用 `ResizeObserver` 实现流式自动滚动，图片加载完成后进行滚动位置修正。
+- **代码块页眉**：缩减页眉高度，增加粘性复制按钮以减少滚动距离。
 
 ## 普通聊天数据流
 

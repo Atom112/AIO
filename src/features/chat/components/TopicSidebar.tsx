@@ -173,8 +173,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         width: props.isCollapsed ? '0%' : `${props.width}%`,
         padding: props.isCollapsed ? '0' : '15px',
         background: props.isCollapsed ? 'none' : 'rgba(var(--surface-bg), 0.15)',
-        'backdrop-filter': props.isCollapsed ? 'none' : 'blur(30px)',
-        '-webkit-backdrop-filter': props.isCollapsed ? 'none' : 'blur(30px)',
+        'backdrop-filter': props.isCollapsed ? 'none' : 'blur(16px)',
         border: props.isCollapsed ? 'none' : '1px solid var(--border-dim)',
         'border-radius': '12px',
         'box-shadow': props.isCollapsed
@@ -202,7 +201,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
             props.onToggle(e);
           }}
         >
-          {props.isCollapsed ? '〈' : '〉'}
+          <Icon name={props.isCollapsed ? 'chevron-left' : 'chevron-right'} size={10} />
         </div>
       </div>
 
@@ -339,8 +338,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
               top: `${topicMenuState().y}px`,
               left: `${topicMenuState().x}px`,
               background: 'var(--acrylic-bg)',
-              'backdrop-filter': 'blur(40px) saturate(180%)',
-              '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+              'backdrop-filter': 'blur(24px) saturate(150%)',
               border: '1px solid var(--acrylic-border)',
               animation: isTopicMenuAnimatingOut()
                 ? 'contextMenuOut 0.14s ease-in forwards'

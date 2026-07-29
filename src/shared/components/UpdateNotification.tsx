@@ -105,8 +105,7 @@ const UpdateNotification: Component = () => {
           class="fixed bottom-5 left-5 z-[9999] w-[340px] rounded-2xl overflow-hidden select-none"
           style={{
             background: 'rgba(var(--surface-bg), 0.88)',
-            'backdrop-filter': 'blur(40px)',
-            '-webkit-backdrop-filter': 'blur(40px)',
+            'backdrop-filter': 'blur(24px)',
             border: '1px solid var(--border-dim)',
             'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
           }}

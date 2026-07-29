@@ -145,7 +145,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         await saveSingleAssistantToBackend(asst.id);
       }
     } catch (e) {
-      alert('重命名失败: ' + e);
+      alert(t('project.renameFailed') + '\n' + e);
     }
   };
 
@@ -165,7 +165,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       await invoke('delete_project', { id: projectId });
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (e) {
-      alert('删除项目失败: ' + e);
+      alert(t('project.deleteFailed') + '\n' + e);
     }
     closeMenu();
   };
@@ -214,8 +214,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         width: props.isCollapsed ? '48px' : `${props.width}%`,
         padding: props.isCollapsed ? '6px 4px' : '15px',
         background: 'rgba(var(--surface-bg), 0.15)',
-        'backdrop-filter': 'blur(30px)',
-        '-webkit-backdrop-filter': 'blur(30px)',
+        'backdrop-filter': 'blur(16px)',
         border: '1px solid var(--border-dim)',
         'border-radius': '12px',
         'box-shadow':
@@ -355,7 +354,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
               style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
               onClick={switchToChat}
-              title="对话"
+              title={t('project.sidebar.dialog') as string}
             >
               <Icon name="chat" size={16} />
             </button>
@@ -400,8 +399,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               top: `${menuState().y}px`,
               left: `${menuState().x}px`,
               background: 'var(--acrylic-bg)',
-              'backdrop-filter': 'blur(40px) saturate(180%)',
-              '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+              'backdrop-filter': 'blur(24px) saturate(150%)',
               border: '1px solid var(--acrylic-border)',
               animation: isMenuAnimatingOut()
                 ? 'contextMenuOut 0.14s ease-in forwards'
@@ -471,7 +469,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             props.onToggle(e);
           }}
         >
-          {props.isCollapsed ? '〉' : '〈'}
+          <Icon name={props.isCollapsed ? 'chevron-right' : 'chevron-left'} size={10} />
         </div>
       </div>
     </div>

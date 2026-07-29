@@ -28,25 +28,21 @@ const ThinkBlock: Component<ThinkBlockProps> = (props) => {
 
   const [elapsedMs, setElapsedMs] = createSignal(0);
   let startTs = 0;
-  let rafId: number | null = null;
 
   createEffect(() => {
     if (props.isStreaming) {
       startTs = performance.now();
-      const tick = () => {
-        if (!props.isStreaming) return;
+      const intervalId = setInterval(() => {
+        if (!props.isStreaming) {
+          clearInterval(intervalId);
+          return;
+        }
         setElapsedMs(performance.now() - startTs);
-        rafId = requestAnimationFrame(tick);
-      };
-      rafId = requestAnimationFrame(tick);
+      }, 100);
+      onCleanup(() => clearInterval(intervalId));
     } else {
-      if (rafId) cancelAnimationFrame(rafId);
       if (startTs) setElapsedMs(performance.now() - startTs);
     }
-  });
-
-  onCleanup(() => {
-    if (rafId) cancelAnimationFrame(rafId);
   });
 
   const formatDuration = (ms: number) => {

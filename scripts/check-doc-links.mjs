@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 
 const root = process.cwd();
-const files = [join(root, 'README.md')];
+const files = [join(root, 'README.md'), join(root, 'README.zh-CN.md')];
 const walk = (dir) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);

@@ -266,7 +266,7 @@ const SubagentModelSettings: Component = () => {
     if (!id) id = slugify(name);
     // Validate uniqueness
     if (BUILTIN_PROFILE_IDS.has(id) || customSubagentProfiles().some((c) => c.id === id)) {
-      alert(`角色 ID "${id}" 已存在，请使用其他 ID`);
+      alert(t('subagent.duplicateProfileId', { id }));
       return;
     }
     const profile: CustomSubagentProfile = {
@@ -287,7 +287,8 @@ const SubagentModelSettings: Component = () => {
             .map((s) => s.trim())
             .filter(Boolean)
         : [],
-      systemPromptExtension: newSystemPrompt().trim() || `你是${name}，请完成任务。`,
+      systemPromptExtension:
+        newSystemPrompt().trim() || t('subagent.systemPromptPlaceholder', { name }),
     };
     await saveCustomSubagentProfile(profile);
     // Reset form
@@ -305,8 +306,7 @@ const SubagentModelSettings: Component = () => {
       <div class="pb-3 border-b border-[var(--border-dim)] animate-row-in">
         <h2 class="text-lg text-white font-semibold m-0">{t('subagent.title')}</h2>
         <p class="text-xs text-white/35 mt-1.5 leading-relaxed">
-          为每个子智能体类型独立指定使用的模型和 API Provider。 未设置的子智能体将跟随主 Agent
-          使用同一模型。 你也可以创建自定义子智能体角色。
+          {t('subagent.settingsDescription')}
         </p>
       </div>
 
@@ -432,7 +432,8 @@ const SubagentModelSettings: Component = () => {
                               </Show>
                               <Show when={noKey()}>
                                 <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 inline-flex items-center gap-0.5">
-                                  <Icon name="alert-triangle" size={9} /> 未配置 Key
+                                  <Icon name="alert-triangle" size={9} />{' '}
+                                  {t('project.noKeyConfigured')}
                                 </span>
                               </Show>
                             </div>
@@ -452,12 +453,12 @@ const SubagentModelSettings: Component = () => {
                         class="text-[10px] mt-1.5 leading-relaxed"
                         style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
                       >
-                        去{' '}
+                        {t('subagent.goToProviderSettings.prefix')}{' '}
                         <span style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-weight': 500 }}>
-                          设置中心 → 供应商设置
+                          {t('subagent.goToProviderSettings.linkText')}
                         </span>
                         <br />
-                        启用 provider 并填写 API Key
+                        {t('subagent.goToProviderSettings.suffix')}
                       </div>
                     </div>
                   </Show>
@@ -532,7 +533,7 @@ const SubagentModelSettings: Component = () => {
               when={availableTools().length > 0}
               fallback={
                 <div class="text-[11px] text-white/25 py-3 text-center">
-                  暂无可选工具 — 请先在 MCP 设置中连接服务器
+                  {t('subagent.noToolsAvailable')}
                 </div>
               }
             >
@@ -561,8 +562,7 @@ const SubagentModelSettings: Component = () => {
                       class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 max-h-[200px] overflow-y-auto transition-all duration-150 ease-out origin-top"
                       style={{
                         background: 'rgba(var(--surface-bg), 0.92)',
-                        'backdrop-filter': 'blur(40px) saturate(180%)',
-                        '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+                        'backdrop-filter': 'blur(24px) saturate(150%)',
                         border: '1px solid var(--border-dim)',
                         'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
                       }}
@@ -622,8 +622,7 @@ const SubagentModelSettings: Component = () => {
                       class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 max-h-[200px] overflow-y-auto transition-all duration-150 ease-out origin-top"
                       style={{
                         background: 'rgba(var(--surface-bg), 0.92)',
-                        'backdrop-filter': 'blur(40px) saturate(180%)',
-                        '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+                        'backdrop-filter': 'blur(24px) saturate(150%)',
                         border: '1px solid var(--border-dim)',
                         'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
                       }}
@@ -669,7 +668,7 @@ const SubagentModelSettings: Component = () => {
               <textarea
                 value={newSystemPrompt()}
                 onInput={(e) => setNewSystemPrompt(e.currentTarget.value)}
-                placeholder={`你是${newName() || '助手'}，请完成任务。`}
+                placeholder={t('subagent.systemPromptPlaceholder', { name: newName() || '助手' })}
                 rows={3}
                 class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[var(--border-dim)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors resize-none"
               />

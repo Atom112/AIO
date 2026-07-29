@@ -95,7 +95,9 @@ const TokenBar: Component<TokenBarProps> = (props) => {
         </Show>
 
         <Show when={props.messageCount > 0}>
-          <span class="text-gray-600 whitespace-nowrap">· {props.messageCount} 条消息</span>
+          <span class="text-gray-600 whitespace-nowrap">
+            · {t('chat.messageCount', { count: props.messageCount })}
+          </span>
         </Show>
       </div>
     </Show>

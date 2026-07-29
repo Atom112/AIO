@@ -106,10 +106,8 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 └── knowledge.json
 ```
 
-- `permissions.json`：项目工具的允许、询问和拒绝规则；
+- `permissions.json`：项目工具的允许、询问和拒绝规则，详见[权限系统参考](permissions.md)；
 - `knowledge.json`：跨会话知识，类别为 `decision`、`pattern`、`convention` 或 `note`，最多保留 50 条。
-
-项目路径和元数据登记在应用的 `projects.json`，对应项目助手及其 `project_id` 关联保存在 SQLite。MCP 与权限格式示例见[MCP 与 Skill](../usage/mcp-and-skills.md)。
 
 ## 附件白名单
 

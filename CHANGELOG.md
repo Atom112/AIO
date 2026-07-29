@@ -2,6 +2,22 @@
 
 # Changelog
 
+## [v0.7.5]
+
+<sup>Released on **2026-07-29**</sup>
+
+### 📝 Documentation（文档）
+
+- **中英文文档重构**：原有 13 份中文文档迁移至 `docs/zh/`，新增 14 份英文文档至 `docs/en/`，目录结构完全镜像
+- **Agent 工具参考文档**（`docs/zh|en/usage/agent-tools.md`）：28 个内置工具的完整参考，跨 6 类别（文件/Git/LSP/Web/命令/编排/知识），每项含参数表、返回值、限制和安全特征
+- **权限系统参考文档**（`docs/zh|en/reference/permissions.md`）：三层模型、评估顺序、5 种 Agent 模式内置默认规则、`.aio/permissions.json` 文件格式与字段参考
+- **新增文档索引页**：`docs/README.md` 中英双语快速跳转
+- **根 README 全英文化**：`README.md` 改为纯英文，原双语版保留为 `README.zh-CN.md`
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.7.5]: https://github.com/Atom112/AIO/releases/tag/v0.7.5
+
 ## [v0.7.4]
 
 <sup>Released on **2026-07-29**</sup>

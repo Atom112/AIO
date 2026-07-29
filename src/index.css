@@ -57,6 +57,18 @@
   --animate-welcome-card-in: welcomeCardIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 
+/* 尊重操作系统无障碍 / 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ══════════════════════════════════════════════
    CSS 变量
    ══════════════════════════════════════════════ */
@@ -662,7 +674,6 @@ input[type='range']::-webkit-slider-thumb {
   border-radius: 6px;
   background: rgba(var(--text-base-rgb), 0.15);
   backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   border: 2.5px solid var(--border-dim);
   box-shadow:
     0 4px 12px rgba(0, 0, 0, 0.4),

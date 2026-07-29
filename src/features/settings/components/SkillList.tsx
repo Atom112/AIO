@@ -109,7 +109,7 @@ const SkillList: Component = () => {
       setNpxSkills(list);
       npxScanned = true;
     } catch (e) {
-      setError(`npx 扫描失败: ${e}`);
+      setError(t('skill.scanFailed', { error: String(e) }));
     } finally {
       setNpxLoading(false);
     }
@@ -117,9 +117,7 @@ const SkillList: Component = () => {
 
   const importNpx = async (pkgName: string) => {
     // 安全确认：npx 导入会执行来自 npm 的未审查代码
-    const confirmed = window.confirm(
-      `[!] 安全警告\n\n即将从 npm 导入 "${pkgName}"。\n\n此操作将执行 ${pkgName} 包中的代码以提取 Skill 内容。\n该代码将以当前用户权限运行，可能存在安全风险。\n\n仅导入来自可信来源的 Skill。\n\n确认导入？`,
-    );
+    const confirmed = window.confirm(t('skill.importNpxConfirm', { name: pkgName }));
     if (!confirmed) return;
 
     setNpxImportingId(pkgName);
@@ -135,7 +133,7 @@ const SkillList: Component = () => {
         prev.map((s) => (s.packageName === pkgName ? { ...s, alreadyImported: true } : s)),
       );
     } catch (e) {
-      setError(`导入失败: ${e}`);
+      setError(t('skill.importFailed', { error: String(e) }));
     } finally {
       setNpxImportingId(null);
     }
@@ -143,9 +141,7 @@ const SkillList: Component = () => {
 
   const refreshNpx = async (id: string) => {
     // 安全确认
-    const confirmed = window.confirm(
-      '[!] 刷新 Skill 将重新执行 npm 包代码以获取最新内容。确认刷新？',
-    );
+    const confirmed = window.confirm(t('skill.refreshConfirm'));
     if (!confirmed) return;
 
     setNpxRefreshingId(id);
@@ -157,7 +153,7 @@ const SkillList: Component = () => {
       });
       setSkills({ ...skills(), [updated.id]: updated });
     } catch (e) {
-      setError(`刷新失败: ${e}`);
+      setError(t('skill.refreshFailed') + ': ' + e);
     } finally {
       setNpxRefreshingId(null);
     }
@@ -195,7 +191,7 @@ const SkillList: Component = () => {
         setLastRefreshedAt(new Date(updatedAt));
       }
     } catch (e) {
-      setError(`加载 skills.sh 失败: ${e}`);
+      setError(t('skill.loadShFailed', { error: String(e) }));
     } finally {
       setLoading(false);
     }
@@ -231,7 +227,7 @@ const SkillList: Component = () => {
       });
       setLastRefreshedAt(new Date(updatedAt));
     } catch (e) {
-      setError(`加载 Skill 市场失败: ${e}`);
+      setError(t('skill.loadMarketFailed', { error: String(e) }));
     } finally {
       setLoading(false);
     }
@@ -313,7 +309,7 @@ const SkillList: Component = () => {
         marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [sort()]: updatedAt },
       });
       setLastRefreshedAt(new Date(updatedAt));
-      setRefreshResult({ ok: true, msg: `已更新 ${marketList.length} 个 Skill` });
+      setRefreshResult({ ok: true, msg: t('skill.updateCount', { count: marketList.length }) });
     } catch {
       setRefreshResult({ ok: false, msg: t('skill.refreshFailed') });
     } finally {
@@ -334,7 +330,7 @@ const SkillList: Component = () => {
       });
       setSkills({ ...skills(), [downloaded.id]: downloaded });
     } catch (e) {
-      setError(`下载失败: ${e}`);
+      setError(t('skill.downloadFailed', { error: String(e) }));
     } finally {
       setDownloadingId(null);
     }
@@ -349,7 +345,7 @@ const SkillList: Component = () => {
     const skill = editing();
     if (!skill) return;
     if (!skill.name.trim() || !skill.content.trim()) {
-      setError('Skill 名称和指令内容不能为空');
+      setError(t('skill.nameAndInstructionRequired'));
       return;
     }
     try {
@@ -357,7 +353,7 @@ const SkillList: Component = () => {
       setSkills({ ...skills(), [skill.id]: skill });
       setEditing(null);
     } catch (e) {
-      setError(`保存失败: ${e}`);
+      setError(t('skill.saveFailed', { error: String(e) }));
     }
   };
 
@@ -382,7 +378,7 @@ const SkillList: Component = () => {
       }
       await Promise.all(affectedAssistantIds.map(saveSingleAssistantToBackend));
     } catch (e) {
-      setError(`移除失败: ${e}`);
+      setError(t('skill.removeFailed', { error: String(e) }));
     }
   };
 
@@ -553,7 +549,7 @@ const SkillList: Component = () => {
         </Show>
 
         <Show when={!loading() && view() === 'market'}>
-          <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <For
               each={filteredMarketSkills()}
               fallback={
@@ -572,7 +568,7 @@ const SkillList: Component = () => {
                   <div
                     class="animate-row-in flex flex-col gap-3 rounded-xl p-4"
                     style={{
-                      'animation-delay': `${(index() + 3) * 30}ms`,
+                      'animation-delay': `${Math.min((index() + 3) * 10, 500)}ms`,
                       background: 'rgba(var(--text-base-rgb),0.035)',
                       border: '1px solid var(--border-dim)',
                     }}

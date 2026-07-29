@@ -50,8 +50,7 @@ const UserDropdown: Component<UserDropdownProps> = (props) => {
         classList={{ 'invisible opacity-0': !isVisible(), 'visible opacity-100': isVisible() }}
         style={{
           background: 'rgba(var(--surface-bg), 0.85)',
-          'backdrop-filter': 'blur(30px)',
-          '-webkit-backdrop-filter': 'blur(30px)',
+          'backdrop-filter': 'blur(16px)',
           border: '1px solid var(--border-dim)',
         }}
       >

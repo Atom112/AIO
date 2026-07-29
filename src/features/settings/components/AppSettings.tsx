@@ -431,11 +431,11 @@ const AppSettings: Component = () => {
   });
 
   const presetThemes = [
-    { name: '柔雾蓝', color: '#7c9abf' },
-    { name: '灰粉', color: '#b8929e' },
-    { name: '暖灰', color: '#a8a098' },
-    { name: '鼠尾绿', color: '#9aab9a' },
-    { name: '薰衣草', color: '#a89cc8' },
+    { name: t('app.theme.softBlue'), color: '#7c9abf' },
+    { name: t('app.theme.ashPink'), color: '#b8929e' },
+    { name: t('app.theme.warmGray'), color: '#a8a098' },
+    { name: t('app.theme.sageGreen'), color: '#9aab9a' },
+    { name: t('app.theme.lavender'), color: '#a89cc8' },
   ];
 
   const langOptions = createMemo(() => [
@@ -449,7 +449,7 @@ const AppSettings: Component = () => {
         class="rounded-xl p-6 animate-row-in"
         style={{
           background: 'rgba(var(--text-base-rgb), 0.035)',
-          'backdrop-filter': 'blur(30px)',
+          'backdrop-filter': 'blur(16px)',
           border: '1px solid var(--border-dim)',
         }}
       >
@@ -634,7 +634,6 @@ const AppSettings: Component = () => {
         class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in"
         style={{
           'backdrop-filter': 'blur(var(--acrylic-blur))',
-          '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))',
           border: '1px solid var(--acrylic-border)',
           'border-radius': 'var(--acrylic-radius)',
           'animation-delay': '30ms',
@@ -771,7 +770,6 @@ const AppSettings: Component = () => {
         class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in"
         style={{
           'backdrop-filter': 'blur(var(--acrylic-blur))',
-          '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))',
           border: '1px solid var(--acrylic-border)',
           'border-radius': 'var(--acrylic-radius)',
           'animation-delay': '60ms',

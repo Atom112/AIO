@@ -102,7 +102,7 @@ const ReasoningButton: Component = () => {
         class="absolute left-0 bottom-full mb-2 w-[280px] rounded-xl p-1.5 z-[1500] transition-all duration-150 ease-out origin-bottom"
         style={{
           background: 'rgba(var(--surface-bg),0.96)',
-          'backdrop-filter': 'blur(12px)',
+          'backdrop-filter': 'blur(10px)',
           border: '1px solid var(--border-dim)',
           'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
         }}

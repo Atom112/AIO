@@ -316,9 +316,8 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
   // ---- 时间线自动滚动（复用 ChatInterface 模式） ----
   let stepsContainerRef: HTMLDivElement | undefined;
   const [autoScrollSteps, setAutoScrollSteps] = createSignal(true);
-  let userScrolledUpSteps = false; // 纯变量：rAF 回调需同步感知
+  let userScrolledUpSteps = false; // 纯变量：ResizeObserver 回调需同步感知
   let suppressScrollSteps = false; // 纯变量：抑制 programmatic scroll 事件
-  let streamScrollRafId: number | null = null;
 
   const isStepsAtBottom = () => {
     if (!stepsContainerRef) return true;
@@ -335,10 +334,6 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
   const handleStepsWheel = (e: WheelEvent) => {
     if (e.deltaY < 0) {
       userScrolledUpSteps = true;
-      if (streamScrollRafId) {
-        cancelAnimationFrame(streamScrollRafId);
-        streamScrollRafId = null;
-      }
       suppressScrollSteps = false;
       setAutoScrollSteps(false);
     }
@@ -362,7 +357,6 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   // 实时计时器（整体耗时）
   const [elapsedMs, setElapsedMs] = createSignal(0);
-  let rafId: number | null = null;
 
   // 从 agentSteps 数据推导冻结耗时（不受 remount 影响，避免 Date.now() 漂移）
   const frozenElapsed = (): number => {
@@ -382,34 +376,31 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   createEffect(() => {
     if (props.isActive && props.startTime) {
-      const tick = () => {
-        if (!props.isActive) return;
+      const intervalId = setInterval(() => {
+        if (!props.isActive) {
+          clearInterval(intervalId);
+          return;
+        }
         setElapsedMs(Date.now() - props.startTime!);
-        rafId = requestAnimationFrame(tick);
-      };
-      rafId = requestAnimationFrame(tick);
+      }, 100);
+      onCleanup(() => clearInterval(intervalId));
     } else if (!props.isActive && props.startTime) {
-      if (rafId) cancelAnimationFrame(rafId);
       setElapsedMs(frozenElapsed());
-    } else {
-      if (rafId) cancelAnimationFrame(rafId);
     }
   });
 
-  onCleanup(() => {
-    if (rafId) cancelAnimationFrame(rafId);
-    if (streamScrollRafId) cancelAnimationFrame(streamScrollRafId);
-  });
+  onCleanup(() => {});
 
-  // 流式滚动：工作中每帧贴底
+  // 流式滚动：内容增长时贴底（ResizeObserver，仅在尺寸变化时触发）
   createEffect(() => {
-    if (props.isActive) {
-      const tick = () => {
-        if (!props.isActive || userScrolledUpSteps || !autoScrollSteps()) return;
-        snapStepsToBottom();
-        streamScrollRafId = requestAnimationFrame(tick);
-      };
-      streamScrollRafId = requestAnimationFrame(tick);
+    if (props.isActive && stepsContainerRef) {
+      const observer = new ResizeObserver(() => {
+        if (!userScrolledUpSteps && autoScrollSteps()) {
+          snapStepsToBottom();
+        }
+      });
+      observer.observe(stepsContainerRef);
+      onCleanup(() => observer.disconnect());
     }
   });
 
@@ -529,7 +520,9 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
           onClick={toggleOuter}
           aria-expanded={isExpanded()}
         >
-          <span class="font-medium flex-none">{props.isActive ? '正在工作' : '已工作'}</span>
+          <span class="font-medium flex-none">
+            {props.isActive ? t('agent.status.working') : t('agent.status.worked')}
+          </span>
           <span class="font-mono text-white/30 text-[11px] flex-none ml-0.5">
             {props.startTime ? formatDuration(elapsedMs()) : ''}
           </span>

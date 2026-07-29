@@ -122,7 +122,6 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
         style={{
           background: 'var(--acrylic-bg)',
           'backdrop-filter': 'blur(var(--acrylic-blur))',
-          '-webkit-backdrop-filter': 'blur(var(--acrylic-blur))',
           border: '1px solid var(--acrylic-border)',
           'border-radius': 'var(--acrylic-radius)',
         }}

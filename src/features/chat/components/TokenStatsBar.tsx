@@ -15,6 +15,7 @@ import {
 import { getCachedCatalog } from '../../../core/utils/models';
 import type { Topic } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
+import { t } from '../../../core/i18n';
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -94,7 +95,14 @@ const TokenStatsBar: Component = () => {
     <Show when={stats().messages > 0}>
       <div
         class="flex items-center gap-1.5 px-1 py-0.5 text-[10px] select-none"
-        title={`会话 tokens: ↗${fmt(stats().input)} / ↘${fmt(stats().output)}\n${stats().messages} 条消息 · ${stats().tools} 次工具调用\n上下文窗口: ${fmt(stats().maxContext)} (${(pct() * 100).toFixed(0)}%)`}
+        title={t('chat.statsTooltip', {
+          input: fmt(stats().input),
+          output: fmt(stats().output),
+          messages: stats().messages,
+          toolCalls: stats().tools,
+          maxContext: fmt(stats().maxContext),
+          pct: (pct() * 100).toFixed(0),
+        })}
       >
         {/* 微型进度条 */}
         <div
@@ -133,7 +141,7 @@ const TokenStatsBar: Component = () => {
 
         <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
         <span class="whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}>
-          {stats().messages}条
+          {t('chat.messageCount', { count: stats().messages })}
         </span>
 
         <Show when={stats().tools > 0}>

@@ -1126,8 +1126,7 @@ const ProviderDetail: Component = () => {
             }}
             style={{
               background: 'rgba(var(--surface-bg), 0.88)',
-              'backdrop-filter': 'blur(30px) saturate(180%)',
-              '-webkit-backdrop-filter': 'blur(30px) saturate(180%)',
+              'backdrop-filter': 'blur(20px) saturate(150%)',
               animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
             }}
           >

@@ -145,7 +145,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         await saveSingleAssistantToBackend(asst.id);
       }
     } catch (e) {
-      alert('重命名失败: ' + e);
+      alert(t('project.renameFailed') + '\n' + e);
     }
   };
 
@@ -165,7 +165,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       await invoke('delete_project', { id: projectId });
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (e) {
-      alert('删除项目失败: ' + e);
+      alert(t('project.deleteFailed') + '\n' + e);
     }
     closeMenu();
   };
@@ -354,7 +354,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
               style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
               onClick={switchToChat}
-              title="对话"
+              title={t('project.sidebar.dialog') as string}
             >
               <Icon name="chat" size={16} />
             </button>

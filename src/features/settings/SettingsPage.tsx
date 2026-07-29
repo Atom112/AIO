@@ -74,7 +74,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
           class="w-[200px] flex flex-col rounded-lg overflow-hidden shrink-0"
           style={{
             background: 'rgba(var(--surface-bg), 0.25)',
-            'backdrop-filter': 'blur(30px)',
+            'backdrop-filter': 'blur(16px)',
             border: '1px solid var(--border-dim)',
           }}
         >

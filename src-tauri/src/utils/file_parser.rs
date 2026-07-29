@@ -210,46 +210,50 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
 /// Office (docx/pptx): 返回提取内容文本。
 /// 其他: 尝试按 UTF-8 编码读取为纯文本。
 pub async fn process_file_content(path: String) -> Result<String, String> {
-    let path_obj = Path::new(&path);
+    tokio::task::spawn_blocking(move || {
+        let path_obj = Path::new(&path);
 
-    // 沙箱校验
-    if let Err(e) = path_in_sandbox(path_obj) {
-        return Err(format!("文件路径沙箱拒绝: {}", e));
-    }
+        // 沙箱校验
+        if let Err(e) = path_in_sandbox(path_obj) {
+            return Err(format!("文件路径沙箱拒绝: {}", e));
+        }
 
-    let extension = path_obj
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
+        let extension = path_obj
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
-    match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "webp" => {
-            check_extension(path_obj, &["png", "jpg", "jpeg", "webp"])?;
-            check_size(path_obj, MAX_IMAGE_BYTES)?;
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let b64 = general_purpose::STANDARD.encode(bytes);
-            Ok(format!("data:image/{};base64,{}", extension, b64))
+        match extension.as_str() {
+            "png" | "jpg" | "jpeg" | "webp" => {
+                check_extension(path_obj, &["png", "jpg", "jpeg", "webp"])?;
+                check_size(path_obj, MAX_IMAGE_BYTES)?;
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let b64 = general_purpose::STANDARD.encode(bytes);
+                Ok(format!("data:image/{};base64,{}", extension, b64))
+            }
+            "pdf" => {
+                check_size(path_obj, MAX_DOC_BYTES)?;
+                pdf_extract::extract_text(&path).map_err(|e| format!("PDF解析失败: {}", e))
+            }
+            "docx" | "pptx" => {
+                check_size(path_obj, MAX_DOC_BYTES)?;
+                read_office_file(&path, &extension)
+            }
+            "txt" | "md" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "ini" | "tsv" => {
+                check_size(path_obj, MAX_TEXT_BYTES)?;
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
+                Ok(res.into_owned())
+            }
+            _ => Err(format!(
+                "扩展名 {:?} 不在白名单内（支持 png/jpg/jpeg/webp/pdf/docx/pptx/txt/md/json/csv/log/xml/yaml/ini/tsv）",
+                extension
+            )),
         }
-        "pdf" => {
-            check_size(path_obj, MAX_DOC_BYTES)?;
-            pdf_extract::extract_text(&path).map_err(|e| format!("PDF解析失败: {}", e))
-        }
-        "docx" | "pptx" => {
-            check_size(path_obj, MAX_DOC_BYTES)?;
-            read_office_file(&path, &extension)
-        }
-        "txt" | "md" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "ini" | "tsv" => {
-            check_size(path_obj, MAX_TEXT_BYTES)?;
-            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
-            Ok(res.into_owned())
-        }
-        _ => Err(format!(
-            "扩展名 {:?} 不在白名单内（支持 png/jpg/jpeg/webp/pdf/docx/pptx/txt/md/json/csv/log/xml/yaml/ini/tsv）",
-            extension
-        )),
-    }
+    })
+    .await
+    .map_err(|_| "文件处理线程异常".to_string())?
 }
 
 /// 校验模型路径安全性（不限制目录，仅验证路径合法 + 文件存在）。

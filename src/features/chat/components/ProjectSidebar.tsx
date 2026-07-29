@@ -214,8 +214,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         width: props.isCollapsed ? '48px' : `${props.width}%`,
         padding: props.isCollapsed ? '6px 4px' : '15px',
         background: 'rgba(var(--surface-bg), 0.15)',
-        'backdrop-filter': 'blur(30px)',
-        '-webkit-backdrop-filter': 'blur(30px)',
+        'backdrop-filter': 'blur(16px)',
         border: '1px solid var(--border-dim)',
         'border-radius': '12px',
         'box-shadow':
@@ -400,8 +399,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               top: `${menuState().y}px`,
               left: `${menuState().x}px`,
               background: 'var(--acrylic-bg)',
-              'backdrop-filter': 'blur(40px) saturate(180%)',
-              '-webkit-backdrop-filter': 'blur(40px) saturate(180%)',
+              'backdrop-filter': 'blur(24px) saturate(150%)',
               border: '1px solid var(--acrylic-border)',
               animation: isMenuAnimatingOut()
                 ? 'contextMenuOut 0.14s ease-in forwards'
@@ -471,7 +469,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             props.onToggle(e);
           }}
         >
-          {props.isCollapsed ? '〉' : '〈'}
+          <Icon name={props.isCollapsed ? 'chevron-right' : 'chevron-left'} size={10} />
         </div>
       </div>
     </div>

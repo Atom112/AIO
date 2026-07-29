@@ -140,6 +140,7 @@ const UserMessageAvatar: Component = () => {
       <img
         src={avatarSrc()}
         alt={t('common.user')}
+        loading="lazy"
         class="w-full h-full object-cover"
         onError={(e) => {
           e.currentTarget.src = '/icons/app-logo/user.svg';
@@ -181,8 +182,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   let animatedMessageIds = new Set<string>();
   // 重新发送/编辑时跳过消息动画（不播退场 + 不播入场）
   const [skipMessageAnimation, setSkipMessageAnimation] = createSignal(false);
-  // 流式 rAF 循环的最新 ID，始终指向最后一个排期的帧，保证能正确取消
-  let streamRAFId: number | undefined;
   // Git 分支下拉状态
   const [branchOpen, setBranchOpen] = createSignal(false);
   const [branchToast, setBranchToast] = createSignal<string | null>(null);
@@ -267,11 +266,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     if (e.deltaY < 0) {
       // 直接可变标志：下个 rAF 帧立刻感知，零延迟停止跟底
       userScrolledUp = true;
-      // 取消流式 rAF 循环的最新帧
-      if (streamRAFId !== undefined) {
-        cancelAnimationFrame(streamRAFId);
-        streamRAFId = undefined;
-      }
       if (smoothScrollRAF !== undefined) {
         cancelAnimationFrame(smoothScrollRAF);
         smoothScrollRAF = undefined;
@@ -400,27 +394,17 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     lastHistoryLen = len;
   });
 
-  /** 流式输出期间：rAF 循环跟随内容增长平滑滚动 */
+  /** 流式输出期间：ResizeObserver 跟随内容增长贴底（仅在容器尺寸变化时触发） */
   createEffect(() => {
     if (!props.isThinking || !scrollContainerRef) return;
-
-    let running = true;
-    const scroll = () => {
-      // userScrolledUp 为直接可变变量，确保滚轮事件后最速响应
-      if (!running || userScrolledUp || !autoScroll()) return;
-      snapToBottom();
-      streamRAFId = requestAnimationFrame(scroll);
-    };
-    streamRAFId = requestAnimationFrame(scroll);
-    onCleanup(() => {
-      running = false;
-      if (streamRAFId !== undefined) {
-        cancelAnimationFrame(streamRAFId);
-        streamRAFId = undefined;
+    const observer = new ResizeObserver(() => {
+      if (!userScrolledUp && autoScroll()) {
+        snapToBottom();
       }
     });
+    observer.observe(scrollContainerRef);
+    onCleanup(() => observer.disconnect());
   });
-
   /** 组件销毁时清理平滑滚动动画 */
   onCleanup(() => {
     if (smoothScrollRAF !== undefined) {
@@ -454,7 +438,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full"
       style={{
         background: 'rgba(var(--surface-bg), 0.12)',
-        'backdrop-filter': 'blur(20px)',
+        'backdrop-filter': 'blur(12px)',
         border: '1px solid var(--border-dim)',
         'box-shadow': 'inset 0 0 1px rgba(var(--text-base-rgb),0.04)',
       }}
@@ -588,6 +572,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                       }
                     }}
                     class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) && !skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                    style={{
+                      'content-visibility': 'auto',
+                      'contain-intrinsic-size': '100px',
+                    }}
                   >
                     <div
                       class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}
@@ -641,7 +629,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               msg.role === 'assistant'
                                 ? '1px solid rgba(var(--text-base-rgb),0.04)'
                                 : '1px solid rgba(var(--primary-rgb),0.06)',
-                            'backdrop-filter': 'blur(8px)',
+                            'backdrop-filter': 'blur(6px)',
                           }}
                         >
                           <Show
@@ -1330,7 +1318,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                   </span>
                 }
               >
-                <img src={file.previewUrl} class="w-5 h-5 object-cover mr-1 rounded-[2px]" />
+                <img
+                  src={file.previewUrl}
+                  loading="lazy"
+                  class="w-5 h-5 object-cover mr-1 rounded-[2px]"
+                />
               </Show>
               {file.name}
               <button

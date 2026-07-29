@@ -54,7 +54,9 @@ export type IconName =
   | 'clipboard'
   | 'trending-up'
   | 'zap'
-  | 'git-branch';
+  | 'git-branch'
+  | 'chevron-left'
+  | 'chevron-right';
 
 /**
  * 图标路径工厂表。
@@ -276,6 +278,8 @@ const PATHS: Record<IconName, () => JSX.Element> = {
       <path d="M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9v9a3 3 0 0 1-3 3h-3" />
     </>
   ),
+  'chevron-left': () => <path d="M15 18l-6-6 6-6" />,
+  'chevron-right': () => <path d="M9 18l6-6-6-6" />,
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

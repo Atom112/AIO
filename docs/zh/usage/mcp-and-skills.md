@@ -7,7 +7,7 @@
 
 两者都支持全局和项目范围。项目配置位于绑定目录的 `.aio/` 中，切换项目时重新加载；下载或安装并不代表已经绑定到当前助手。
 
-![MCP Catalog 与 Server 管理](../assets/screenshots/mcp-catalog.webp)
+![MCP Catalog 与 Server 管理](../../assets/screenshots/mcp-catalog.webp)
 
 ## MCP Server
 

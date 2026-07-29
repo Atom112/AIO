@@ -112,23 +112,23 @@ cargo check
 ```
 
 > [!TIP]
-> Linux 依赖、发布构建和模型目录说明都整理在[开发环境文档](docs/development/getting-started.md)中。
+> Linux 依赖、发布构建和模型目录说明都整理在[开发环境文档](docs/zh/development/getting-started.md)中。
 
 ---
 
 ## 📖 文档导航 | Documentation
 
-| 想了解什么                   | 从这里开始                                                   |
-| ---------------------------- | ------------------------------------------------------------ |
-| 安装、首次配置与第一次对话   | [快速开始](docs/usage/getting-started.md)                    |
-| Provider 与本地模型          | [供应商与模型](docs/usage/providers-and-models.md)           |
-| 助手、项目、Agent 与子智能体 | [聊天与 Agent](docs/usage/chat-and-agent.md)                 |
-| MCP、Skill 与工具权限        | [MCP 与 Skill](docs/usage/mcp-and-skills.md)                 |
-| 主题、更新与快捷键           | [应用设置与快捷键](docs/usage/app-settings-and-shortcuts.md) |
-| 架构与扩展开发               | [开发指南](docs/README.md#开发指南)                          |
-| 连接、引擎或构建问题         | [故障排查](docs/troubleshooting.md)                          |
+| 想了解什么                   | 从这里开始                                                      |
+| ---------------------------- | --------------------------------------------------------------- |
+| 安装、首次配置与第一次对话   | [快速开始](docs/zh/usage/getting-started.md)                    |
+| Provider 与本地模型          | [供应商与模型](docs/zh/usage/providers-and-models.md)           |
+| 助手、项目、Agent 与子智能体 | [聊天与 Agent](docs/zh/usage/chat-and-agent.md)                 |
+| MCP、Skill 与工具权限        | [MCP 与 Skill](docs/zh/usage/mcp-and-skills.md)                 |
+| 主题、更新与快捷键           | [应用设置与快捷键](docs/zh/usage/app-settings-and-shortcuts.md) |
+| 架构与扩展开发               | [开发指南](docs/zh/README.md#开发指南)                          |
+| 连接、引擎或构建问题         | [故障排查](docs/zh/troubleshooting.md)                          |
 
-完整目录见 [AIO 文档中心](docs/README.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+完整目录见 [AIO 文档中心](docs/zh/README.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

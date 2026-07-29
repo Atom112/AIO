@@ -73,7 +73,7 @@
 
 自动和工作流模式会显著减少交互确认，但不是安全边界的绕过开关。项目 `.aio/permissions.json` 中的 `deny` 规则优先于 `allow`，文件路径仍限制在项目根目录内。
 
-![Agent 文件 Diff 与审批](../assets/screenshots/agent-diff-approval.webp)
+![Agent 文件 Diff 与审批](../../assets/screenshots/agent-diff-approval.webp)
 
 ## Agent 内置工具
 

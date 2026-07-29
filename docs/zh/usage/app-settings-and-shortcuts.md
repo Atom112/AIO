@@ -2,7 +2,7 @@
 
 “设置 → 应用设置”集中管理应用状态、视觉主题和快捷键。Provider、MCP、Skill、用量与子智能体模型分别位于设置侧栏的其他页面。
 
-![应用设置与快捷键](../assets/screenshots/app-settings-shortcuts.webp)
+![应用设置与快捷键](../../assets/screenshots/app-settings-shortcuts.webp)
 
 ## 界面语言
 
@@ -47,9 +47,26 @@ AIO 支持简体中文（`zh-CN`）和英语（`en-US`）。首次启动会读�
 
 主题色可以通过色环、饱和度与亮度滑块调整，也可以选择内置预设。颜色立即应用，并保存在 WebView 的 `localStorage` 中；它不会写入项目 `.aio/`。
 
+### 暗色模式
+
+在"设置 → 应用设置 → 颜色模式"中选择深色或浅色。
+
+- 切换时设置 `document.documentElement` 的 `data-theme` 属性，覆盖 CSS 变量（`--surface-bg`、`--surface-alt-bg` 等）；
+- 选择结果通过 `localStorage` 持久化，重启后保持；
+- 状态信号 `isDarkMode` / `setIsDarkMode` 位于 `src/core/store/store.ts`；
+- i18n keys: `app.darkMode.title` / `app.darkMode.description` / `app.darkMode.on` / `app.darkMode.off`。
+
 ## 命令面板
 
-按 `Ctrl+K` 打开命令面板，输入名称搜索当前已注册的导航、聊天和侧边栏操作。使用方向键选择，`Enter` 执行，`Esc` 关闭。
+按 `Ctrl+K` 打开命令面板，输入名称进行模糊搜索，匹配命令名称和描述。命令按分类分组显示：
+
+- **导航**：切换页面、聚焦输入框等。
+- **聊天**：新建话题、切换助手、切换 Agent 模式等。
+- **侧边栏**：切换左右侧边栏等。
+
+每项命令右侧显示当前快捷键绑定（如有）。使用方向键选择，`Enter` 执行，`Esc` 关闭。
+
+命令面板注册的命令在所有页面可见，即使某命令的注册页面不是当前页面，也能在命令面板中搜索到并执行。
 
 macOS 会把快捷键显示为对应的 `⌃`、`⌥`、`⇧`、`⌘` 符号；Windows 和 Linux 使用 `Ctrl`、`Alt`、`Shift`，并把 `Meta` 显示为 `Win`。
 
@@ -76,6 +93,8 @@ macOS 会把快捷键显示为对应的 `⌃`、`⌥`、`⇧`、`⌘` 符号；W
 “切换 Agent 模式”按“对话 → 普通 → 自动 → Plan”循环，不会进入工作流模式；工作流需要从模式选择器中显式选择。
 
 “新建助手”和“新建项目”当前共享同一个默认组合键；实际执行项取决于当前页面注册的命令。若这个默认行为影响使用，可为其中一项设置独立组合键。
+
+侧边栏折叠快捷键对应的 i18n key 为 `command.toggleLeftSidebar` 和 `command.toggleRightSidebar`，允许用户在自定义绑定中搜索到这两个操作。折叠行为详见[聊天与 Agent → 话题管理](../usage/chat-and-agent.md#消息与话题)。
 
 ## 自定义与恢复
 

@@ -138,6 +138,8 @@ Catalog 页面读取官方 MCP Registry：
 
 当前 glob 只支持完整匹配以及开头或结尾的单个 `*`，不要按完整 glob 语法理解。修改权限文件后应重新进入项目，让配置重新加载。
 
+> 完整规则参考见[权限系统参考](../reference/permissions.md)，包含三层模型、评估顺序和内置默认规则。
+
 ## Resources 与 Prompts
 
 连接成功的 Server 可以暴露：

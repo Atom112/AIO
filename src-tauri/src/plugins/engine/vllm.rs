@@ -2,14 +2,12 @@
 ///
 /// ⚠️ 注意：vLLM 官方仅支持 Linux 和 macOS，Windows 上不提供此引擎选项。
 /// 启动策略：
-/// 1. 检查系统是否已安装 vllm (python -c "import vllm")
-/// 2. 若未安装但 resources/engines/vllm/ 下有 .whl 文件，自动 pip install
-/// 3. 通过 python -m vllm.entrypoints.openai.api_server 启动 OpenAI 兼容服务
+/// 1. 扫描候选 Python 解释器，找到已安装 vllm 的那个
+/// 2. 通过 python -m vllm.entrypoints.openai.api_server 启动 OpenAI 兼容服务
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task;
 use tokio::time::{sleep, Duration};
@@ -173,125 +171,12 @@ fn find_python_impl(verify: impl Fn(&str) -> bool) -> Result<String, String> {
     Err("未找到 Python 运行时。请安装 Python 3.8+ 并确保已加入 PATH。".to_string())
 }
 
-/// 返回第一个能运行的 Python 解释器路径。
-fn find_python() -> Result<String, String> {
-    find_python_impl(python_runs)
-}
-
 /// 扫描所有候选 Python，返回第一个**同时满足**「能运行」且「已安装 vllm」的解释器。
 ///
-/// 与 `find_python()` 的区别：后者找到第一个能跑的解释器就返回（可能是系统 Python 不含 vllm），
-/// 而本函数继续尝试后续候选（如 `~/.local/bin/python3`、conda env、pyenv shims），
+/// 逐候选尝试（如 `~/.local/bin/python3`、conda env、pyenv shims），
 /// 解决桌面启动器环境下 PATH 不完整导致的 "dev 能识别、打包后识别不到" 问题。
 fn find_python_with_vllm() -> Result<String, String> {
-    for python in python_candidates() {
-        if python_runs(&python) && check_vllm_installed(&python) {
-            return Ok(python);
-        }
-    }
-    Err("未找到已安装 vllm 的 Python 解释器。请执行: pip install --user vllm".to_string())
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn restore_env(key: &str, old: Option<std::ffi::OsString>) {
-        match old {
-            Some(v) => std::env::set_var(key, v),
-            None => std::env::remove_var(key),
-        }
-    }
-
-    #[test]
-    fn find_python_prefers_path_name_when_working() {
-        let result = find_python_impl(|c| c == "python3");
-        assert_eq!(result, Ok("python3".to_string()));
-    }
-
-    #[test]
-    fn find_python_falls_back_to_home_venv() {
-        let tmp = std::env::temp_dir().join(format!("aio-vllm-test-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let old_home = std::env::var_os("HOME");
-        std::env::set_var("HOME", &tmp);
-        // Remove other vars to isolate
-        let old_conda = std::env::var_os("CONDA_PREFIX");
-        let old_venv = std::env::var_os("VIRTUAL_ENV");
-        std::env::remove_var("CONDA_PREFIX");
-        std::env::remove_var("VIRTUAL_ENV");
-
-        let expected = tmp.join(".venv").join("bin").join("python").display().to_string();
-        let result = find_python_impl(|c| c == expected);
-        assert_eq!(result, Ok(expected));
-
-        // restore env
-        restore_env("HOME", old_home);
-        match old_conda {
-            Some(v) => std::env::set_var("CONDA_PREFIX", v),
-            None => std::env::remove_var("CONDA_PREFIX"),
-        }
-        match old_venv {
-            Some(v) => std::env::set_var("VIRTUAL_ENV", v),
-            None => std::env::remove_var("VIRTUAL_ENV"),
-        }
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    #[test]
-    fn python_candidates_includes_local_bin() {
-        // 验证 ~/.local/bin/python3 在候选列表中（HOME 设置了才生效）
-        // 使用当前进程的 HOME 而非设置临时 HOME，避免并行测试的 env 竞争
-        if let Ok(home) = std::env::var("HOME") {
-            let candidates = python_candidates();
-            let expected = Path::new(&home)
-                .join(".local")
-                .join("bin")
-                .join("python3")
-                .display()
-                .to_string();
-            assert!(
-                candidates.contains(&expected),
-                "候选列表应包含 ~/.local/bin/python3 (pip install --user)，实际列表: {:?}",
-                candidates
-            );
-        }
-        // HOME 未设置时，此候选不加入列表，跳过断言
-    }
-
-    #[test]
-    fn python_candidates_starts_with_path_names() {
-        // 验证候选列表的前两个条目是 PATH 名称
-        let old_conda = std::env::var_os("CONDA_PREFIX");
-        let old_venv = std::env::var_os("VIRTUAL_ENV");
-        std::env::remove_var("CONDA_PREFIX");
-        std::env::remove_var("VIRTUAL_ENV");
-
-        let candidates = python_candidates();
-        assert_eq!(candidates[0], "python3", "第一个候选应为 python3");
-        assert_eq!(candidates[1], "python", "第二个候选应为 python");
-
-        restore_env("CONDA_PREFIX", old_conda);
-        restore_env("VIRTUAL_ENV", old_venv);
-    }
-
-    #[test]
-    fn find_python_with_vllm_returns_err_when_not_installed() {
-        // 当没有任何 Python 安装了 vllm 时，应返回 Err（而非 panic）
-        // 使用一个不存在的路径作为 HOME 来隔离系统环境干扰
-        let old_home = std::env::var_os("HOME");
-        let old_conda = std::env::var_os("CONDA_PREFIX");
-        let old_venv = std::env::var_os("VIRTUAL_ENV");
-        std::env::set_var("HOME", "/nonexistent-aaaa");
-        std::env::remove_var("CONDA_PREFIX");
-        std::env::remove_var("VIRTUAL_ENV");
-
-        let result = find_python_with_vllm();
-        assert!(result.is_err(), "无 vllm 时应返回 Err: {:?}", result);
-
-        restore_env("HOME", old_home);
-        restore_env("CONDA_PREFIX", old_conda);
-        restore_env("VIRTUAL_ENV", old_venv);
-    }
+    find_python_impl(|p| python_runs(p) && check_vllm_installed(p))
 }
 
 /// 检查 vLLM 服务是否已在默认端口 8000 运行（HTTP 兜底，与 ollama 插件一致：
@@ -307,48 +192,6 @@ fn vllm_http_reachable() -> bool {
     })
     .join()
     .unwrap_or(false)
-}
-
-fn find_bundled_wheels(resource_dir: &Path) -> Vec<std::path::PathBuf> {
-    let mut wheels = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(resource_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext == "whl" {
-                    wheels.push(path);
-                }
-            }
-        }
-    }
-    wheels.sort();
-    wheels
-}
-
-fn install_from_wheels(python: &str, wheels: &[std::path::PathBuf]) -> Result<(), String> {
-    let mut args = vec!["-m", "pip", "install", "--quiet"];
-    for w in wheels {
-        args.push(
-            w.to_str()
-                .ok_or_else(|| format!("无效的 wheel 路径: {:?}", w))?,
-        );
-    }
-
-    debug!("[vLLM] 正在从 bundled .whl 安装 vllm...");
-    let mut cmd = create_progress_cmd(python, &args);
-    let status = cmd
-        .spawn()
-        .map_err(|e| format!("pip install 启动失败: {}", e))?
-        .wait()
-        .map_err(|e| format!("pip install 执行失败: {}", e))?;
-
-    if !status.success() {
-        return Err(
-            "pip install vllm 失败。请检查 Python 环境和 CUDA 工具链是否正确安装。".to_string(),
-        );
-    }
-    debug!("[vLLM] vllm 安装成功");
-    Ok(())
 }
 
 impl LocalEnginePlugin for VllmPlugin {
@@ -380,7 +223,7 @@ impl LocalEnginePlugin for VllmPlugin {
 
     fn is_installed(&self, _app: &AppHandle) -> bool {
         // 扫描所有候选 Python 解释器，只要有一个已安装 vllm 即视为已就绪。
-        // 相比旧版 find_python() + check_vllm_installed，try_all 解决桌面启动器 PATH 不完整问题。
+        // 逐候选尝试解决桌面启动器 PATH 不完整问题。
         // 兜底：8000 端口已有 vLLM 服务在运行（用户手动启动的情况）。
         find_python_with_vllm().is_ok() || vllm_http_reachable()
     }
@@ -453,8 +296,7 @@ impl LocalEnginePlugin for VllmPlugin {
             let _ = app.emit(self.progress_event_name(), 0.02);
 
             // Step 1: 优先尝试 find_python_with_vllm() — 扫描所有候选，找到已安装 vllm 的解释器。
-            // 这比先 find_python() 再 check_vllm_installed 更可靠：桌面启动器环境下 PATH 不完整，
-            // 系统 Python 可能不含 vllm，但 ~/.local/bin/python3、conda env、pyenv shims 等仍有。
+            // 逐个候选验证（系统 Python 可能不含 vllm，但 ~/.local/bin/python3、conda env、pyenv shims 等仍有）。
             let python = match tokio::task::spawn_blocking(find_python_with_vllm)
                 .await
                 .map_err(|_| "python 检测线程 panic".to_string())?
@@ -464,39 +306,11 @@ impl LocalEnginePlugin for VllmPlugin {
                     p
                 }
                 Err(_) => {
-                    // Step 2: fallback — 找任何一个能跑的 Python + 从 bundled .whl 安装
-                    debug!("[vLLM] 未找到已安装 vllm 的 Python，尝试从 bundled .whl 安装");
-                    let fallback_python = tokio::task::spawn_blocking(find_python)
-                        .await
-                        .map_err(|_| "python 检测线程 panic".to_string())??;
-
-                    let resource_dir = app
-                        .path()
-                        .resolve("resources/engines/vllm", BaseDirectory::Resource)
-                        .map_err(|e| format!("无法解析资源路径: {}", e))?;
-
-                    let wheels = find_bundled_wheels(&resource_dir);
-
-                    if wheels.is_empty() {
-                        return Err(
-                            "未找到已安装 vllm 的 Python 解释器，且无 bundled .whl 可供自动安装。\n\
-                             请执行: pip install --user vllm\n\
-                             或: pip install vllm\n\n\
-                             注意：vLLM 仅支持 Linux/macOS，需要 CUDA 工具链支持。"
-                                .to_string(),
-                        );
-                    }
-
-                    let _ = app.emit(self.progress_event_name(), 0.1);
-                    let wheels_clone = wheels.clone();
-                    let python_clone = fallback_python.clone();
-                    tokio::task::spawn_blocking(move || {
-                        install_from_wheels(&python_clone, &wheels_clone)
-                    })
-                    .await
-                    .map_err(|_| "pip install 线程 panic".to_string())??;
-
-                    fallback_python
+                    return Err("未找到已安装 vllm 的 Python 解释器。\n\
+                         请执行: pip install --user vllm\n\
+                         或: pip install vllm\n\n\
+                         注意：vLLM 仅支持 Linux/macOS，需要 CUDA 工具链支持。"
+                        .to_string());
                 }
             };
 
@@ -598,5 +412,113 @@ impl LocalEnginePlugin for VllmPlugin {
 
             Ok(format!("http://127.0.0.1:{}/v1", port))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn restore_env(key: &str, old: Option<std::ffi::OsString>) {
+        match old {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn find_python_prefers_path_name_when_working() {
+        let result = find_python_impl(|c| c == "python3");
+        assert_eq!(result, Ok("python3".to_string()));
+    }
+
+    #[test]
+    fn find_python_falls_back_to_home_venv() {
+        let tmp = std::env::temp_dir().join(format!("aio-vllm-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let old_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &tmp);
+        // Remove other vars to isolate
+        let old_conda = std::env::var_os("CONDA_PREFIX");
+        let old_venv = std::env::var_os("VIRTUAL_ENV");
+        std::env::remove_var("CONDA_PREFIX");
+        std::env::remove_var("VIRTUAL_ENV");
+
+        let expected = tmp
+            .join(".venv")
+            .join("bin")
+            .join("python")
+            .display()
+            .to_string();
+        let result = find_python_impl(|c| c == expected);
+        assert_eq!(result, Ok(expected));
+
+        // restore env
+        restore_env("HOME", old_home);
+        match old_conda {
+            Some(v) => std::env::set_var("CONDA_PREFIX", v),
+            None => std::env::remove_var("CONDA_PREFIX"),
+        }
+        match old_venv {
+            Some(v) => std::env::set_var("VIRTUAL_ENV", v),
+            None => std::env::remove_var("VIRTUAL_ENV"),
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn python_candidates_includes_local_bin() {
+        // 验证 ~/.local/bin/python3 在候选列表中（HOME 设置了才生效）
+        // 使用当前进程的 HOME 而非设置临时 HOME，避免并行测试的 env 竞争
+        if let Ok(home) = std::env::var("HOME") {
+            let candidates = python_candidates();
+            let expected = Path::new(&home)
+                .join(".local")
+                .join("bin")
+                .join("python3")
+                .display()
+                .to_string();
+            assert!(
+                candidates.contains(&expected),
+                "候选列表应包含 ~/.local/bin/python3 (pip install --user)，实际列表: {:?}",
+                candidates
+            );
+        }
+        // HOME 未设置时，此候选不加入列表，跳过断言
+    }
+
+    #[test]
+    fn python_candidates_starts_with_path_names() {
+        // 验证候选列表的前两个条目是 PATH 名称
+        let old_conda = std::env::var_os("CONDA_PREFIX");
+        let old_venv = std::env::var_os("VIRTUAL_ENV");
+        std::env::remove_var("CONDA_PREFIX");
+        std::env::remove_var("VIRTUAL_ENV");
+
+        let candidates = python_candidates();
+        assert_eq!(candidates[0], "python3", "第一个候选应为 python3");
+        assert_eq!(candidates[1], "python", "第二个候选应为 python");
+
+        restore_env("CONDA_PREFIX", old_conda);
+        restore_env("VIRTUAL_ENV", old_venv);
+    }
+
+    #[test]
+    fn find_python_with_vllm_returns_err_when_not_installed() {
+        // 当没有任何 Python 安装了 vllm 时，应返回 Err（而非 panic）
+        // 使用一个不存在的路径作为 HOME 来隔离系统环境干扰
+        let old_home = std::env::var_os("HOME");
+        let old_conda = std::env::var_os("CONDA_PREFIX");
+        let old_venv = std::env::var_os("VIRTUAL_ENV");
+        std::env::set_var("HOME", "/nonexistent-aaaa");
+        std::env::remove_var("CONDA_PREFIX");
+        std::env::remove_var("VIRTUAL_ENV");
+
+        let result = find_python_with_vllm();
+        assert!(result.is_err(), "无 vllm 时应返回 Err: {:?}", result);
+
+        restore_env("HOME", old_home);
+        restore_env("CONDA_PREFIX", old_conda);
+        restore_env("VIRTUAL_ENV", old_venv);
     }
 }

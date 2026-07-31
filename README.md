@@ -13,6 +13,8 @@
   </p>
 </div>
 
+**English** | [简体中文](README.zh-CN.md)
+
 ---
 
 ![AIO Chat Workspace](docs/assets/screenshots/chat-overview.webp)

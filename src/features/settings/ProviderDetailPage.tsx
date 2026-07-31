@@ -16,6 +16,7 @@ import {
   setProviderConfigs,
   modelsCatalog,
   engineScanResults,
+  initEngineScan,
 } from '../../core/store/store';
 import { loadModelsCatalog } from '../../core/utils/models';
 import {
@@ -62,7 +63,7 @@ const ProviderDetail: Component = () => {
   const [search, setSearch] = createSignal('');
   const [sortKey, setSortKey] = createSignal<SortKey>('releaseDesc');
   const [isServerAlive, setIsServerAlive] = createSignal<'checking' | 'alive' | 'dead'>('checking');
-  // ===== 引擎安装状态（从应用启动时缓存的扫描结果中派生） =====
+  // ===== 引擎安装状态（启动时扫描一次 + 进入本页时刷新） =====
   const engineInstallInfo = createMemo(() => {
     if (!isLocalEngine()) return null;
     const results = engineScanResults();
@@ -77,6 +78,10 @@ const ProviderDetail: Component = () => {
       await loadModelsCatalog();
     }
     setCatalogReady(true);
+    // 本地引擎页打开时刷新一次安装状态（启动扫描可能已过期，如用户新装了引擎）
+    if (isLocalEngine()) {
+      await initEngineScan();
+    }
   });
 
   // ===== derived =====

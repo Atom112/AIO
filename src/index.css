@@ -95,6 +95,13 @@
   --acrylic-border: rgba(var(--border-rgb), 0.06);
   --acrylic-blur: 40px;
   --acrylic-radius: 12px;
+
+  /* ── 应用背景（浅色/默认主题）：与 VaporGit 同款（四角点状光晕 + #2f2f2f 底色） ── */
+  --app-bg:
+    radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.55) 0, transparent 500px),
+    radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.4) 0, transparent 500px),
+    radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.35) 0, transparent 500px),
+    radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.35) 0, transparent 500px), #2f2f2f;
 }
 
 /* ── Dark mode: CSS variable overrides for surface/text/border ── */
@@ -107,6 +114,13 @@
 
   --acrylic-bg: rgba(var(--surface-bg), 0.85);
   --acrylic-border: rgba(var(--border-rgb), 0.1);
+
+  /* 与 VaporGit dark 同款（微弱四角光晕 + 纯黑底） */
+  --app-bg:
+    radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.06) 0, transparent 500px),
+    radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.04) 0, transparent 500px),
+    radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.03) 0, transparent 500px),
+    radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.03) 0, transparent 500px), #000;
 }
 
 /* ══════════════════════════════════════════════

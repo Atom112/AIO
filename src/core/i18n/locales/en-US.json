@@ -535,7 +535,6 @@
   "provider.enabledCount": "Enabled ({{count}})",
   "provider.enabledModels": "{{count}} enabled",
   "provider.engineInstalled": "Engine installed",
-  "provider.engineMissing": "The engine will be downloaded when first started.",
   "provider.localEngines": "Local Inference",
   "provider.localRunning": "Running",
   "provider.notRunning": "Not running",

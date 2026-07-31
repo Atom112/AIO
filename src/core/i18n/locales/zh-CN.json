@@ -535,7 +535,6 @@
   "provider.enabledCount": "已启用（{{count}}）",
   "provider.enabledModels": "已启用 {{count}} 个",
   "provider.engineInstalled": "引擎已安装",
-  "provider.engineMissing": "引擎未安装，首次启动时会自动下载。",
   "provider.localEngines": "\u672c\u5730\u63a8\u7406\u5f15\u64ce",
   "provider.localRunning": "\u8fd0\u884c\u4e2d",
   "provider.notRunning": "未运行",

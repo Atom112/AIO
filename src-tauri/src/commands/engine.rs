@@ -138,7 +138,7 @@ pub struct EngineScanResult {
     pub default_api_url: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_installed_engines(
     app: AppHandle,
     engine_mgr: State<'_, EngineManager>,

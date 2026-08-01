@@ -876,7 +876,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               src="/icons/app-logo/clipboard-copy.svg"
                               class="w-[13px] h-[13px]"
                             />
-                            <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                            <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                               {t('common.copy')}
                             </span>
                           </button>
@@ -899,7 +899,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 size={13}
                                 style={{ display: 'inline', 'vertical-align': 'middle' }}
                               />
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                                 {t('chat.branch')}
                               </span>
                             </button>
@@ -989,7 +989,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182"
                                 />
                               </svg>
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                                 {t('chat.resendMessage')}
                               </span>
                             </button>
@@ -1075,7 +1075,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
                                 />
                               </svg>
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                                 {t('common.edit')}
                               </span>
                             </button>
@@ -1564,7 +1564,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         src="/icons/app-logo/loading.svg"
                         class="w-3 h-3 animate-spin shrink-0"
                       />
-                      <span style={{ color: 'rgba(var(--primary-rgb),0.6)' }}>
+                      <span class="text-white/80">
                         {t('chat.localEngineConnecting', { engine: localEngineName() })}
                       </span>
                     </Show>

@@ -263,14 +263,14 @@ const McpServerList: Component = () => {
         >
           <button
             class="px-3 py-1.5 rounded-md text-sm"
-            classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
+            classList={{ 'bg-pri-20 text-white': view() === 'market' }}
             onClick={() => setView('market')}
           >
             {t('mcp.market')}
           </button>
           <button
             class="px-3 py-1.5 rounded-md text-sm"
-            classList={{ 'bg-pri-20 text-pri': view() === 'downloaded' }}
+            classList={{ 'bg-pri-20 text-white': view() === 'downloaded' }}
             onClick={() => setView('downloaded')}
           >
             {t('mcp.downloaded', { count: formatNumber(sortedServers().length) })}

@@ -402,21 +402,21 @@ const SkillList: Component = () => {
           >
             <button
               class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
+              classList={{ 'bg-pri-20 text-white': view() === 'market' }}
               onClick={() => setView('market')}
             >
               {t('skill.tabMarket')}
             </button>
             <button
               class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-pri': view() === 'downloaded' }}
+              classList={{ 'bg-pri-20 text-white': view() === 'downloaded' }}
               onClick={() => setView('downloaded')}
             >
               {t('skill.tabDownloaded', { count: Object.keys(skills()).length })}
             </button>
             <button
               class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-pri': view() === 'npx' }}
+              classList={{ 'bg-pri-20 text-white': view() === 'npx' }}
               onClick={() => {
                 setView('npx');
                 if (!npxScanned) discoverNpx();
@@ -433,14 +433,14 @@ const SkillList: Component = () => {
             >
               <button
                 class="px-2.5 py-1 rounded-md text-xs"
-                classList={{ 'bg-pri-20 text-pri': scope() === 'global' }}
+                classList={{ 'bg-pri-20 text-white': scope() === 'global' }}
                 onClick={() => setScope('global')}
               >
                 {t('skill.scopeGlobal')}
               </button>
               <button
                 class="px-2.5 py-1 rounded-md text-xs"
-                classList={{ 'bg-pri-20 text-pri': scope() === 'project' }}
+                classList={{ 'bg-pri-20 text-white': scope() === 'project' }}
                 onClick={() => setScope('project')}
               >
                 {t('skill.scopeProject', { name: currentProject()?.name ?? '' })}
@@ -481,7 +481,7 @@ const SkillList: Component = () => {
               {([value, label]) => (
                 <button
                   class="px-3 py-1.5 rounded-md text-xs"
-                  classList={{ 'bg-pri-20 text-pri': sort() === value }}
+                  classList={{ 'bg-pri-20 text-white': sort() === value }}
                   style={sort() === value ? '' : 'background: rgba(var(--text-base-rgb),0.04);'}
                   onClick={() => selectSort(value)}
                 >

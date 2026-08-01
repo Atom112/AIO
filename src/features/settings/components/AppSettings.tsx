@@ -520,7 +520,7 @@ const AppSettings: Component = () => {
                     <div
                       class="flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none"
                       classList={{
-                        'text-pri bg-pri-10': sel(),
+                        'text-white bg-pri-10': sel(),
                         'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
                       }}
                       role="option"
@@ -552,7 +552,7 @@ const AppSettings: Component = () => {
               type="button"
               class="px-3 py-1 text-xs transition-all duration-200"
               classList={{
-                'bg-pri-10 text-pri': !isDarkMode(),
+                'bg-pri-10 text-white': !isDarkMode(),
                 'text-white/35 hover:text-white/60': isDarkMode(),
               }}
               onClick={() => setIsDarkMode(false)}
@@ -563,7 +563,7 @@ const AppSettings: Component = () => {
               type="button"
               class="px-3 py-1 text-xs transition-all duration-200"
               classList={{
-                'bg-pri-10 text-pri': isDarkMode(),
+                'bg-pri-10 text-white': isDarkMode(),
                 'text-white/35 hover:text-white/60': !isDarkMode(),
               }}
               onClick={() => setIsDarkMode(true)}
@@ -672,7 +672,7 @@ const AppSettings: Component = () => {
             class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
             style={{
               background: 'rgba(var(--primary-rgb), 0.18)',
-              color: 'var(--primary-color)',
+              color: '#fff',
               border: '1px solid rgba(var(--primary-rgb), 0.25)',
             }}
             disabled={checkUpdating()}
@@ -980,7 +980,7 @@ const AppSettings: Component = () => {
                             fallback={
                               <span
                                 class="text-[11px] font-medium"
-                                style={{ color: 'var(--primary-color)' }}
+                                style={{ color: '#fff' }}
                               >
                                 {t('app.shortcuts.recording')}
                               </span>

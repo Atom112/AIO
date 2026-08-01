@@ -689,7 +689,7 @@ const ProviderDetail: Component = () => {
             </button>
             <button
               type="button"
-              class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-white hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={testState().status === 'testing'}
               onClick={handleTestConnection}
             >
@@ -706,7 +706,7 @@ const ProviderDetail: Component = () => {
             <Show when={!isLocalEngine()}>
               <button
                 type="button"
-                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-white hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={fetchState().status === 'fetching'}
                 onClick={handleFetchModels}
               >
@@ -828,7 +828,7 @@ const ProviderDetail: Component = () => {
             classList={{
               'bg-green-400/[0.08] border-green-400/25 text-green-300': testState().status === 'ok',
               'bg-red-400/[0.08] border-red-400/25 text-red-300': testState().status === 'fail',
-              'bg-pri/5 border-pri text-pri': testState().status === 'testing',
+              'bg-pri/5 border-pri text-white': testState().status === 'testing',
             }}
           >
             <Show

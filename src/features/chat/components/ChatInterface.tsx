@@ -11,7 +11,7 @@ import {
   on,
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import Markdown from '../../../shared/components/Markdown';
+import Markdown, { getLangIcon } from '../../../shared/components/Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
 import {
@@ -36,7 +36,7 @@ import {
 } from '../../../core/store/store';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { copyFile } from '@tauri-apps/plugin-fs';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
 import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
@@ -654,44 +654,59 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         >
                           <Show
                             when={
-                              msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0
+                              msg.role === 'user' &&
+                              msg.displayFiles &&
+                              msg.displayFiles.length > 0
                             }
                           >
-                            <For each={msg.displayFiles}>
-                              {(file: any) => (
-                                <div
-                                  class="flex items-center rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 first:mt-3"
-                                  style={{
-                                    background: 'rgba(var(--primary-rgb),0.06)',
-                                    border: '1px solid rgba(var(--primary-rgb),0.12)',
-                                  }}
-                                >
-                                  <div
-                                    class="flex flex-shrink-0 items-center justify-center w-10 h-10 rounded-md mr-3"
-                                    style={{
-                                      background: 'rgba(var(--primary-rgb),0.08)',
-                                      color: 'rgba(var(--primary-rgb),0.6)',
-                                    }}
-                                  >
-                                    <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
-                                  </div>
-                                  <div class="flex-grow overflow-hidden">
-                                    <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">
-                                      {file.name}
-                                    </div>
+                            <div class="flex flex-col gap-2 mb-2 first:mt-3">
+                              <For each={msg.displayFiles}>
+                                {(file: any) => {
+                                  const isImage = (file.mimeType || '').startsWith('image/');
+                                  const ext = (file.name.split('.').pop() || '').toLowerCase();
+                                  return (
                                     <div
+                                      class="flex items-center cursor-default gap-3 max-w-[300px] px-[14px] py-[5px] rounded-lg transition-all duration-200"
                                       style={{
-                                        color: 'rgba(var(--primary-rgb),0.4)',
-                                        'font-size': '0.75rem',
-                                        'margin-top': '2px',
+                                        background: 'rgba(var(--primary-rgb),0.06)',
+                                        border: '1px solid rgba(var(--primary-rgb),0.12)',
                                       }}
                                     >
-                                      {t('chat.parsed')}
+                                      {/* 统一的缩略图/图标框：图片与附件同尺寸 */}
+                                      <Show
+                                        when={isImage && file.storagePath}
+                                        fallback={
+                                          <div
+                                            class="flex flex-shrink-0 items-center justify-center w-7 h-7 rounded-md [&_svg]:w-4 [&_svg]:h-4"
+                                            style={{
+                                              background: 'rgba(var(--primary-rgb),0.08)',
+                                              color: 'rgba(var(--primary-rgb),0.7)',
+                                            }}
+                                          >
+                                            <span
+                                              ref={(node) => {
+                                                node.innerHTML = getLangIcon(ext);
+                                              }}
+                                            />
+                                          </div>
+                                        }
+                                      >
+                                        <img
+                                          src={convertFileSrc(file.storagePath)}
+                                          loading="lazy"
+                                          class="w-7 h-7 flex-shrink-0 object-cover rounded-md border border-white/[0.08]"
+                                        />
+                                      </Show>
+                                      <div class="flex-grow overflow-hidden">
+                                        <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">
+                                          {file.name}
+                                        </div>
+                                      </div>
                                     </div>
-                                  </div>
-                                </div>
-                              )}
-                            </For>
+                                  );
+                                }}
+                              </For>
+                            </div>
                           </Show>
 
                           <div class="mt-1">

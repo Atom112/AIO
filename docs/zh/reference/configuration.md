@@ -111,13 +111,14 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 
 ## 附件白名单
 
-| 类型 | 扩展名                                            | 大小上限 |
-| ---- | ------------------------------------------------- | -------- |
-| 图片 | png、jpg、jpeg、webp                              | 10 MiB   |
-| 文档 | pdf、docx、pptx                                   | 30 MiB   |
-| 文本 | txt、md、json、csv、log、xml、yaml、yml、ini、tsv | 5 MiB    |
+| 类型 | 扩展名                                                                                                                                   | 大小上限 |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 图片 | png、jpg、jpeg、webp                                                                                                                     | 10 MiB   |
+| 文档 | pdf、docx、pptx                                                                                                                          | 30 MiB   |
+| 文本 | txt、md、json、csv、log、xml、yaml、yml、ini、tsv                                                                                       | 5 MiB    |
+| 源码 | rs、c、h、cpp、hpp、cc、cxx、cs、go、java、rb、py、js、mjs、cjs、ts、tsx、jsx、php、swift、kt、kts、scala、lua、sql、toml、sh、bash、zsh、dart、html、css、scss、less、vue、svelte、gradle、properties、r、pl | 5 MiB    |
 
-解析前会检查扩展名、大小和沙箱路径。图片转换为 base64 数据 URI 供模型请求使用；其他类型提取为文本。原附件按哈希复制到应用数据目录，数据库保存引用关系。
+解析前会检查扩展名、大小和路径安全（要求绝对路径且不含 `..`）；不限制文件所在目录，用户通过系统文件选择器主动指定的文件可位于磁盘任意位置。图片转换为 base64 数据 URI 供模型请求使用；其他类型提取为文本。原附件按哈希复制到应用数据目录，数据库保存引用关系。
 
 ## 网络与命令安全
 

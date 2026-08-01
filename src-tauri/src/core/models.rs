@@ -114,6 +114,9 @@ pub struct FileMeta {
     pub mime_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    /// 附件在磁盘上的绝对路径，用于前端渲染图片缩略图（convertFileSrc 资产 URL）；仅新数据可能携带
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_path: Option<String>,
 }
 
 /// 上传到应用附件目录后的完整元数据。

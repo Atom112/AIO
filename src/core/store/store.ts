@@ -114,6 +114,8 @@ export interface AttachmentMeta {
   name: string;
   mimeType?: string;
   size?: number;
+  /** 附件在磁盘上的绝对路径，用于渲染图片缩略图（convertFileSrc 资产 URL） */
+  storagePath?: string;
 }
 
 /** 模型生成的图像元数据（assistant 消息），用于下载按钮与历史回放 */

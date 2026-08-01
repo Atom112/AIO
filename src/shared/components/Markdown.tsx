@@ -191,7 +191,7 @@ ICONS.makefile = _s(
   `<path fill="none" stroke="var(--vscode-ctp-peach)" stroke-linecap="round" stroke-linejoin="round" d="M3.5 1.5h-2v13h2m9-13h2v13h-2m-8-11h7v3h-2v6h-3v-6h-2z"/>`,
 );
 
-function getLangIcon(lang: string): string {
+export function getLangIcon(lang: string): string {
   const key = lang.toLowerCase().trim();
   return ICONS[key] ?? _FALLBACK;
 }

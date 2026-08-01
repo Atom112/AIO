@@ -371,16 +371,16 @@ const SubagentModelSettings: Component = () => {
                   <div
                     class="flex items-center gap-2.5 p-2.5 rounded-lg cursor-pointer select-none transition-all text-sm"
                     classList={{
-                      'text-white/50 hover:bg-white/[0.04] hover:text-white/80': !current(),
-                      'text-pri bg-pri-10': !!current(),
+                      'text-pri bg-pri-10': !current(),
+                      'text-white/50 hover:bg-white/[0.04] hover:text-white/80': !!current(),
                     }}
                     onClick={() => void handlePickModel(profile.id, null)}
                   >
                     <span>{t('subagent.followMainModel')}</span>
-                    <Show when={!current()}>
+                    <Show when={!!current()}>
                       <Icon name="arrow-left" size={13} class="text-white/30 ml-auto" />
                     </Show>
-                    <Show when={current()}>
+                    <Show when={!current()}>
                       <Icon name="check" size={13} class="ml-auto" />
                     </Show>
                   </div>

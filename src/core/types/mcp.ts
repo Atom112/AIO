@@ -201,6 +201,8 @@ export interface LlmStreamPayload {
   input_tokens?: number;
   /** 本轮输出 tokens（done=true 时由服务端返回） */
   output_tokens?: number;
+  /** 模型生成的图像元数据（done=true 且有图时携带） */
+  images?: import('../../core/store/store').GeneratedImageInfo[];
 }
 
 /** 新一轮开始负载（llm-round-start） */

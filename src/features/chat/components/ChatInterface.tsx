@@ -32,8 +32,10 @@ import {
   gitBranches,
   switchBranch,
   type FileChangeInfo,
+  type GeneratedImageInfo,
 } from '../../../core/store/store';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { copyFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
@@ -253,6 +255,24 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const getModelLogo = (modelName: string) => {
     return getLogoByIds(null, modelName);
   };
+
+  /** 下载模型生成的图片到用户选择的目录 */
+  const downloadGeneratedImage = async (img: GeneratedImageInfo) => {
+    try {
+      const dest = await save({ defaultPath: img.name });
+      if (!dest) return;
+      await copyFile(img.storagePath, dest);
+    } catch (e) {
+      console.error('保存图片失败:', e);
+      alert(t('error.save'));
+    }
+  };
+
+  /** 人类可读的文件大小 */
+  const formatSize = (n: number) =>
+    n >= 1024 * 1024
+      ? `${(n / 1024 / 1024).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(n / 1024))} KB`;
 
   /** 检测是否已滚动到底部（阈值 50px） */
   const isAtBottom = () => {
@@ -627,8 +647,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 : 'rgba(var(--primary-rgb),0.08)',
                             border:
                               msg.role === 'assistant'
-                                ? '1px solid rgba(var(--text-base-rgb),0.04)'
-                                : '1px solid rgba(var(--primary-rgb),0.06)',
+                                ? '1px solid rgba(var(--text-base-rgb),0.13)'
+                                : '1px solid rgba(var(--primary-rgb),0.16)',
                             'backdrop-filter': 'blur(6px)',
                           }}
                         >
@@ -643,7 +663,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   class="flex items-center rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 first:mt-3"
                                   style={{
                                     background: 'rgba(var(--primary-rgb),0.06)',
-                                    border: '1px solid rgba(var(--primary-rgb),0.04)',
+                                    border: '1px solid rgba(var(--primary-rgb),0.12)',
                                   }}
                                 >
                                   <div
@@ -729,6 +749,24 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             </Show>
                           </div>
                         </div>
+
+                        <Show when={msg.images && msg.images.length > 0}>
+                          <div class="flex flex-wrap gap-1.5 mt-2">
+                            <For each={msg.images}>
+                              {(img) => (
+                                <button
+                                  class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer transition-all duration-200 bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08]"
+                                  onClick={() => downloadGeneratedImage(img)}
+                                  title={t('common.download')}
+                                >
+                                  <Icon name="download" class="w-3 h-3" />
+                                  <span class="max-w-[160px] truncate">{img.name}</span>
+                                  <span class="opacity-60">{formatSize(img.size)}</span>
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
 
                         <Show
                           when={
@@ -1306,7 +1344,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               class="flex items-center rounded-[16px] text-[12px] px-[10px] py-1 transition-all duration-200"
               style={{
                 background: 'rgba(var(--primary-rgb),0.08)',
-                border: '1px solid rgba(var(--primary-rgb),0.04)',
+                border: '1px solid rgba(var(--primary-rgb),0.12)',
                 color: 'rgba(var(--primary-rgb),0.6)',
               }}
             >
@@ -1707,7 +1745,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 class="flex items-center justify-center w-[60px] h-20 rounded-md opacity-60 scale-[0.85] translate-y-[10px] rotate-12 -translate-x-[15px] z-[1]"
                 style={{
                   background: 'rgba(var(--primary-rgb),0.06)',
-                  border: '1px solid rgba(var(--primary-rgb),0.04)',
+                  border: '1px solid rgba(var(--primary-rgb),0.12)',
                 }}
               >
                 <span style={{ color: 'rgba(var(--primary-rgb),0.4)' }}>

@@ -1,6 +1,7 @@
 import { marked, Tokens } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import DOMPurify from 'dompurify';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { createMemo, Component, Index, Show } from 'solid-js';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
@@ -222,6 +223,22 @@ renderer.code = (token: Tokens.Code) => {
             </div>
         </div>
     `;
+};
+
+// aio-image://<base64(absPath)> → convertFileSrc 可显示的本地资源 URL
+renderer.image = ({ href, title, text }: Tokens.Image) => {
+  let src = href || '';
+  if (src.startsWith('aio-image://')) {
+    try {
+      const bytes = Uint8Array.from(atob(src.slice('aio-image://'.length)), (c) => c.charCodeAt(0));
+      src = convertFileSrc(new TextDecoder().decode(bytes));
+    } catch {
+      /* 非法 token 原样保留 */
+    }
+  }
+  const alt = text ? ` alt="${text}"` : '';
+  const ttl = title ? ` title="${title}"` : '';
+  return `<img src="${src}"${alt}${ttl} class="aio-chat-image" loading="lazy" />`;
 };
 
 marked.use({ renderer });

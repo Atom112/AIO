@@ -89,7 +89,7 @@
   --text-base-rgb: 255, 255, 255;
   --border-rgb: 255, 255, 255;
 
-  --border-dim: rgba(255, 255, 255, 0.06);
+  --border-dim: rgba(255, 255, 255, 0.16);
 
   --acrylic-bg: rgba(var(--surface-bg), 0.72);
   --acrylic-border: rgba(var(--border-rgb), 0.06);
@@ -892,6 +892,11 @@ input[type='range']::-webkit-slider-thumb:active {
   @apply px-2 py-[6px] text-white/50 text-[0.85em] caption-bottom;
 }
 
+.markdown-body img.aio-chat-image {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
 /* ══════════════════════════════════════════════
    消息流式输出动画
    ══════════════════════════════════════════════ */
@@ -966,4 +971,36 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 [data-theme='dark'] .border-white\/\[0\.15\] {
   border-color: rgba(240, 240, 240, 0.3) !important;
+}
+
+/* ── Light mode: 主页面各元素边框加亮（与暗色 boost 平行；暗色保持原样） ── */
+[data-theme='light'] .border-white\/5 {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+[data-theme='light'] .border-white\/10 {
+  border-color: rgba(255, 255, 255, 0.21) !important;
+}
+[data-theme='light'] .border-white\/15 {
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+[data-theme='light'] .border-white\/20 {
+  border-color: rgba(255, 255, 255, 0.34) !important;
+}
+[data-theme='light'] .border-white\/\[0\.03\] {
+  border-color: rgba(255, 255, 255, 0.11) !important;
+}
+[data-theme='light'] .border-white\/\[0\.04\] {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+[data-theme='light'] .border-white\/\[0\.05\] {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+[data-theme='light'] .border-white\/\[0\.06\] {
+  border-color: rgba(255, 255, 255, 0.17) !important;
+}
+[data-theme='light'] .border-white\/\[0\.08\] {
+  border-color: rgba(255, 255, 255, 0.19) !important;
+}
+[data-theme='light'] .border-white\/\[0\.15\] {
+  border-color: rgba(255, 255, 255, 0.3) !important;
 }

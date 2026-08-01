@@ -387,6 +387,23 @@ export function detectProviderByUrl(url: string): string | null {
   return null;
 }
 
+/**
+ * 是否走 /images/generations 专用端点（否则走 chat/completions 内嵌图像）。
+ *
+ * - `dall-e-2`/`dall-e-3`：无 chat 模式，只能走专用端点。
+ * - `gpt-image-*`：优先 chat 模式（流式数组块）更优。
+ * - 其它：查目录 `modalities.output` 是否含 `image`。
+ */
+export function isImageGenModel(modelId: string, apiUrl?: string): boolean {
+  const lower = (modelId || '').toLowerCase();
+  if (/^dall-e-[23]$/.test(lower)) return true; // 无 chat 模式，只能专用端点
+  if (/^gpt-image-/.test(lower)) return false; // chat 模式（流式数组块）更优
+  const provider = apiUrl ? detectProviderByUrl(apiUrl) : null;
+  const catalog = getCachedCatalog();
+  const meta = provider && catalog ? findModel(catalog, provider, modelId) : null;
+  return !!meta?.modalities?.output?.includes('image');
+}
+
 /** 列表页搜索: 仅匹配 provider id / name, 不含模型名 */
 export function searchProviders(catalog: Catalog, query: string): ProviderMeta[] {
   if (!query.trim()) return catalog.providers;

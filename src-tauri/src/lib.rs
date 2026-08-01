@@ -66,6 +66,7 @@ pub fn run() {
             commands::attachment::store_chat_attachment,
             commands::attachment::discard_chat_attachment,
             commands::llm::call_llm_stream,
+            commands::image_gen::generate_image,
             commands::llm::stop_llm_stream,
             commands::llm::run_agent_turn,
             commands::llm::fetch_models,

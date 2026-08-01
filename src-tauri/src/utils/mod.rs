@@ -1,5 +1,6 @@
 pub mod file_parser;
 pub mod file_tools;
+pub mod generated_images;
 pub mod git_tools;
 pub mod knowledge;
 pub mod lsp_agent_tools;

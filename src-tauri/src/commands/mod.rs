@@ -3,6 +3,7 @@ pub mod catalog;
 pub mod config;
 pub mod engine;
 pub mod git;
+pub mod image_gen;
 pub mod llm;
 pub mod lsp;
 pub mod mcp;

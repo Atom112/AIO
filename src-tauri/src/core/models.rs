@@ -39,6 +39,9 @@ pub struct StreamPayload {
     /// 用于前端进度条展示，区别于 input_tokens（跨轮累计，用于成本统计）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u32>,
+    /// 模型生成的图像元数据（done=true 且有图时携带）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<GeneratedImage>>,
 }
 
 /// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。
@@ -124,6 +127,16 @@ pub struct StoredAttachment {
     pub storage_path: String,
 }
 
+/// 模型生成的图像元数据（assistant 消息）。用于前端下载按钮与历史回放（重新展开为 image_url 块）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedImage {
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+    pub storage_path: String,
+}
+
 /// 单条聊天消息模型。
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +187,9 @@ pub struct Message {
     /// 分支索引：从同一父消息分叉时递增（0 = 原始/主干）
     #[serde(default)]
     pub branch_index: i32,
+    /// 模型生成的图像元数据（仅 assistant 消息），用于下载与历史回放
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<GeneratedImage>>,
     /// 完整工具执行结果（LLM 上下文中只包含截断版），仅 role=tool 消息有效，会话级内存字段不持久化到 SQLite
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_tool_result: Option<String>,

@@ -208,7 +208,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
             let mut topic = topic.map_err(|e| e.to_string())?;
 
             // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计）
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -248,6 +248,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         agent_start_time: row.get(14)?, // index 14: agent_start_time
                         parent_message_id: row.get(15)?, // index 15: parent_message_id
                         branch_index: row.get(16)?,    // index 16: branch_index
+                        images: row
+                            .get::<_, Option<String>>(17)?
+                            .and_then(|s| serde_json::from_str(&s).ok()), // index 17: images_json
                         full_tool_result: None,        // 会话级内存字段，不持久化
                     })
                 })
@@ -380,8 +383,8 @@ pub async fn save_assistant(
             // 写入 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计。
             // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    reasoning = excluded.reasoning,
@@ -396,8 +399,9 @@ pub async fn save_assistant(
                    interim_content = excluded.interim_content,
                    agent_start_time = excluded.agent_start_time,
                    parent_message_id = excluded.parent_message_id,
-                   branch_index = excluded.branch_index",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index],
+                   branch_index = excluded.branch_index,
+                   images_json = excluded.images_json",
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok()],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
         }
@@ -1055,7 +1059,8 @@ pub async fn branch_topic(
         .prepare(
             "SELECT id, role, content, model_id, display_files, display_text, reasoning,
              tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
-             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index
+             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index,
+             images_json
              FROM messages WHERE topic_id = ?1 ORDER BY timestamp ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -1086,6 +1091,9 @@ pub async fn branch_topic(
                 agent_start_time: row.get(14)?,
                 parent_message_id: row.get(15)?,
                 branch_index: row.get(16)?,
+                images: row
+                    .get::<_, Option<String>>(17)?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
                 full_tool_result: None,
             })
         })

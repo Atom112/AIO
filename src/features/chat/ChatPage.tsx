@@ -50,6 +50,7 @@ import {
   getCommandDisplayDescription,
 } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
+import { isImageGenModel } from '../../core/utils/models';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
@@ -619,6 +620,8 @@ const ChatPage: Component = () => {
    */
   function buildApiMessages(m: any): any[] {
     const obj: any = { role: m.role, content: m.content };
+    if (m.images?.length) obj.images = m.images; // 后端据此剥离 aio-image 标记并展开 image_url 块
+    if (m.displayFiles?.length) obj.displayFiles = m.displayFiles; // 携带附件（含图片），后端据此读取并展开 image_url 块
     if (m.toolCallId) obj.toolCallId = m.toolCallId;
     if (m.name) obj.name = m.name;
     if (!m.toolCalls || m.toolCalls.length === 0) return [obj];
@@ -1103,7 +1106,7 @@ ${asstObj.prompt}`;
           ]
         : []),
       ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
-      { role: 'user', content: newUserMsg.content },
+      { role: 'user', content: newUserMsg.content, displayFiles: newUserMsg.displayFiles },
     ];
     // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
     messagesForAI = ensureToolMessagesComplete(messagesForAI);
@@ -1175,7 +1178,17 @@ ${asstObj.prompt}`;
     try {
       // 聊天模式：纯对话，直接调用 call_llm_stream（无 agent 循环、无工具调用）
       // 项目模式/Agent 模式：调用 run_agent_turn（含工具调用、子智能体等）
-      if (isChatMode()) {
+      if (isChatMode() && isImageGenModel(currentMdl.model_id, currentMdl.api_url)) {
+        // 专用端点（dall-e-2/3 等）：非流式生成，结果经 llm-chunk(done) 回传
+        await invoke('generate_image', {
+          apiUrl: currentMdl.api_url,
+          apiKey: currentMdl.api_key ?? '',
+          model: currentMdl.model_id,
+          assistantId: asstId,
+          topicId: topicId,
+          prompt: userInput,
+        });
+      } else if (isChatMode()) {
         await invoke('call_llm_stream', {
           apiUrl: currentMdl.api_url,
           apiKey: currentMdl.api_key ?? '',
@@ -1780,6 +1793,7 @@ ${asstObj.prompt}`;
           input_tokens,
           output_tokens,
           context_tokens,
+          images,
         } = e.payload;
         if (done) {
           // 刷新可能残余的 rAF 批量内容
@@ -1846,6 +1860,9 @@ ${asstObj.prompt}`;
               if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
               if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
               if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
+              // 模型生成的图像元数据（下载按钮）+ 后端重写（去 token 标记）后的最终文本
+              if (images) updatedMsg.images = images;
+              if (!error && content) updatedMsg.content = content;
               // 孤儿 toolCalls：仍为 calling 的条目标记为中断错误
               if (toolCalls.some((tc: any) => tc.state === 'calling')) {
                 updatedMsg.toolCalls = toolCalls.map((tc: any) =>

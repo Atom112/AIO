@@ -33,6 +33,10 @@ pub async fn ask_btw_question(
                 obj.insert("tool_calls".to_string(), v);
             }
         }
+        // 剥离 aio-image 生成图片标记，防止 token 泄漏到 LLM
+        if let Some(serde_json::Value::String(s)) = msg.get_mut("content") {
+            *s = crate::utils::generated_images::strip_generated_image_tokens(s);
+        }
     }
 
     // SSRF 防护

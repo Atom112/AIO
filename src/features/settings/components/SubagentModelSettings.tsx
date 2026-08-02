@@ -334,7 +334,7 @@ const SubagentModelSettings: Component = () => {
                   <button
                     class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all border font-medium flex items-center gap-1.5"
                     classList={{
-                      'bg-pri-20 border-pri-30 text-pri': !!current(),
+                      'bg-pri-20 border-pri-30 text-white': !!current(),
                       'bg-white/[0.04] border-[var(--border-dim)] text-white/40 hover:text-white hover:bg-white/[0.06]':
                         !current(),
                     }}
@@ -371,16 +371,16 @@ const SubagentModelSettings: Component = () => {
                   <div
                     class="flex items-center gap-2.5 p-2.5 rounded-lg cursor-pointer select-none transition-all text-sm"
                     classList={{
-                      'text-white/50 hover:bg-white/[0.04] hover:text-white/80': !current(),
-                      'text-pri bg-pri-10': !!current(),
+                      'text-white bg-pri-10': !current(),
+                      'text-white/50 hover:bg-white/[0.04] hover:text-white/80': !!current(),
                     }}
                     onClick={() => void handlePickModel(profile.id, null)}
                   >
                     <span>{t('subagent.followMainModel')}</span>
-                    <Show when={!current()}>
+                    <Show when={!!current()}>
                       <Icon name="arrow-left" size={13} class="text-white/30 ml-auto" />
                     </Show>
-                    <Show when={current()}>
+                    <Show when={!current()}>
                       <Icon name="check" size={13} class="ml-auto" />
                     </Show>
                   </div>
@@ -580,7 +580,7 @@ const SubagentModelSettings: Component = () => {
                             <div
                               class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] cursor-pointer transition-[background,color] duration-[120ms] select-none"
                               classList={{
-                                'text-pri bg-pri-10': sel(),
+                                'text-white bg-pri-10': sel(),
                                 'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
                               }}
                               onClick={() => toggleTool(toolName, true)}
@@ -685,7 +685,7 @@ const SubagentModelSettings: Component = () => {
                 {t('common.cancel')}
               </button>
               <button
-                class="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all bg-pri-20 border border-pri-30 text-pri hover:bg-pri-30"
+                class="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all bg-pri-20 border border-pri-30 text-white hover:bg-pri-30"
                 onClick={() => void handleCreate()}
               >
                 {t('subagent.create')}

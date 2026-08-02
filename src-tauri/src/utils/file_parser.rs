@@ -15,10 +15,70 @@ const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_DOC_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 5 * 1024 * 1024;
 
-/// 校验路径在沙箱内
-/// 允许的根：用户 home、AppData/config、AppData、临时目录
-fn path_in_sandbox(path: &Path) -> Result<(), String> {
-    // 必须为绝对路径且无 ParentDir 段
+/// 图片扩展名
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
+/// 富文档扩展名（PDF / Office）
+const DOC_EXTENSIONS: &[&str] = &["pdf", "docx", "pptx"];
+/// 纯文本 / 源代码扩展名（按 UTF-8 读取为文本注入上下文）
+const TEXT_EXTENSIONS: &[&str] = &[
+    "txt",
+    "md",
+    "json",
+    "csv",
+    "log",
+    "xml",
+    "yaml",
+    "yml",
+    "ini",
+    "tsv",
+    // 源代码
+    "rs",
+    "c",
+    "h",
+    "cpp",
+    "hpp",
+    "cc",
+    "cxx",
+    "cs",
+    "go",
+    "java",
+    "rb",
+    "py",
+    "js",
+    "mjs",
+    "cjs",
+    "ts",
+    "tsx",
+    "jsx",
+    "php",
+    "swift",
+    "kt",
+    "kts",
+    "scala",
+    "lua",
+    "sql",
+    "toml",
+    "sh",
+    "bash",
+    "zsh",
+    "dart",
+    "html",
+    "css",
+    "scss",
+    "less",
+    "vue",
+    "svelte",
+    "gradle",
+    "properties",
+    "r",
+    "pl",
+];
+
+/// 校验用户通过文件选择器主动指定的文件路径（与模型路径一致）。
+/// 附件/文件源自系统文件选择器/拖拽，用户主动发起，可位于磁盘任意位置。
+/// 仅作路径穿越防御：必须为绝对路径且不含 ParentDir 段。
+/// 真正的读取防线在于：不在白名单的扩展名一律拒绝 + 大小上限。
+fn validate_safe_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
         return Err("路径必须为绝对路径".into());
     }
@@ -27,36 +87,8 @@ fn path_in_sandbox(path: &Path) -> Result<(), String> {
             return Err("路径不允许包含 ..".into());
         }
     }
-
-    let canonical = std::fs::canonicalize(path).map_err(|e| format!("路径无法解析: {}", e))?;
-    let canonical_str = canonical.to_string_lossy().to_lowercase();
-
-    let mut allowed_roots: Vec<PathBuf> = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        allowed_roots.push(home);
-    }
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        allowed_roots.push(PathBuf::from(appdata));
-    }
-    if let Some(config) = dirs::config_dir() {
-        allowed_roots.push(config);
-    }
-    if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
-        allowed_roots.push(PathBuf::from(xdg_data));
-    }
-    // Tauri 标准 app_data_dir
-    if let Some(local) = dirs::data_local_dir() {
-        allowed_roots.push(local);
-    }
-
-    for root in allowed_roots {
-        let root_canon = std::fs::canonicalize(&root).unwrap_or(root);
-        let root_str = root_canon.to_string_lossy().to_lowercase();
-        if canonical_str.starts_with(&root_str) {
-            return Ok(());
-        }
-    }
-    Err("路径不在允许的沙箱目录内".into())
+    let _ = std::fs::canonicalize(path).map_err(|e| format!("路径无法解析: {}", e))?;
+    Ok(())
 }
 
 /// 扩展名白名单校验
@@ -101,6 +133,7 @@ pub fn attachment_mime_type(extension: &str) -> &'static str {
         "xml" => "application/xml",
         "yaml" | "yml" => "application/yaml",
         "tsv" => "text/tab-separated-values",
+        _ if TEXT_EXTENSIONS.contains(&extension) => "text/plain",
         _ => "application/octet-stream",
     }
 }
@@ -108,17 +141,14 @@ pub fn attachment_mime_type(extension: &str) -> &'static str {
 /// Validates a user-selected attachment path, extension, sandbox location, and size.
 pub fn validate_attachment_path(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
-    path_in_sandbox(&path)?;
+    validate_safe_path(&path)?;
     let extension = check_extension(
         &path,
-        &[
-            "png", "jpg", "jpeg", "webp", "pdf", "docx", "pptx", "txt", "md", "json", "csv", "log",
-            "xml", "yaml", "yml", "ini", "tsv",
-        ],
+        &[IMAGE_EXTENSIONS, DOC_EXTENSIONS, TEXT_EXTENSIONS].concat(),
     )?;
-    let max = if ["png", "jpg", "jpeg", "webp"].contains(&extension.as_str()) {
+    let max = if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
         MAX_IMAGE_BYTES
-    } else if ["pdf", "docx", "pptx"].contains(&extension.as_str()) {
+    } else if DOC_EXTENSIONS.contains(&extension.as_str()) {
         MAX_DOC_BYTES
     } else {
         MAX_TEXT_BYTES
@@ -140,7 +170,11 @@ pub fn extract_file_content(path: &Path, extension: &str) -> Result<Option<Strin
             extension,
         )
         .map(Some),
-        "txt" | "md" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "ini" | "tsv" => {
+        "txt" | "md" | "json" | "csv" | "log" | "xml" | "yaml" | "yml" | "ini" | "tsv" | "rs"
+        | "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" | "cs" | "go" | "java" | "rb" | "py" | "js"
+        | "mjs" | "cjs" | "ts" | "tsx" | "jsx" | "php" | "swift" | "kt" | "kts" | "scala"
+        | "lua" | "sql" | "toml" | "sh" | "bash" | "zsh" | "dart" | "html" | "css" | "scss"
+        | "less" | "vue" | "svelte" | "gradle" | "properties" | "r" | "pl" => {
             let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
             let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
             Ok(Some(res.into_owned()))
@@ -213,10 +247,7 @@ pub async fn process_file_content(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let path_obj = Path::new(&path);
 
-        // 沙箱校验
-        if let Err(e) = path_in_sandbox(path_obj) {
-            return Err(format!("文件路径沙箱拒绝: {}", e));
-        }
+        validate_safe_path(path_obj).map_err(|e| format!("文件路径校验失败: {}", e))?;
 
         let extension = path_obj
             .extension()
@@ -246,8 +277,14 @@ pub async fn process_file_content(path: String) -> Result<String, String> {
                 let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
                 Ok(res.into_owned())
             }
+            _ if TEXT_EXTENSIONS.contains(&extension.as_str()) => {
+                check_size(path_obj, MAX_TEXT_BYTES)?;
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
+                Ok(res.into_owned())
+            }
             _ => Err(format!(
-                "扩展名 {:?} 不在白名单内（支持 png/jpg/jpeg/webp/pdf/docx/pptx/txt/md/json/csv/log/xml/yaml/ini/tsv）",
+                "扩展名 {:?} 不在白名单内（支持图片/富文档/文本与常用源代码格式）",
                 extension
             )),
         }

@@ -11,7 +11,7 @@ import {
   on,
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
-import Markdown from '../../../shared/components/Markdown';
+import Markdown, { getLangIcon } from '../../../shared/components/Markdown';
 import AgentProcessBlock from './AgentProcessBlock';
 import ModelSelector from './ModelSelector';
 import {
@@ -32,9 +32,10 @@ import {
   gitBranches,
   switchBranch,
   type FileChangeInfo,
+  type GeneratedImageInfo,
 } from '../../../core/store/store';
-import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
 import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
@@ -187,6 +188,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const [branchToast, setBranchToast] = createSignal<string | null>(null);
   // 消息 DOM 元素映射（id → HTMLElement），用于退场动画
   const messageEls = new Map<string, HTMLElement>();
+  // PERF-02：仅保留当前话题仍在渲染的消息，避免跨话题/删除后累积累积 DOM 引用导致无界增长。
+  createEffect(() => {
+    const history = props.activeTopic?.history;
+    if (!Array.isArray(history)) return;
+    const live = new Set<string>();
+    for (const m of history) {
+      if (m && m.id) live.add(m.id as string);
+    }
+    for (const id of Array.from(messageEls.keys())) {
+      if (!live.has(id)) messageEls.delete(id);
+    }
+  });
   // 已撤销的消息 ID 集合（本地信号，不持久化）
   const [revertedMessages, setRevertedMessages] = createSignal<Set<string>>(new Set());
 
@@ -253,6 +266,24 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const getModelLogo = (modelName: string) => {
     return getLogoByIds(null, modelName);
   };
+
+  /** 下载模型生成的图片到用户选择的目录 */
+  const downloadGeneratedImage = async (img: GeneratedImageInfo) => {
+    try {
+      const dest = await save({ defaultPath: img.name });
+      if (!dest) return;
+      await invoke('copy_stored_image', { src: img.storagePath, dest });
+    } catch (e) {
+      console.error('保存图片失败:', e);
+      alert(t('error.save'));
+    }
+  };
+
+  /** 人类可读的文件大小 */
+  const formatSize = (n: number) =>
+    n >= 1024 * 1024
+      ? `${(n / 1024 / 1024).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(n / 1024))} KB`;
 
   /** 检测是否已滚动到底部（阈值 50px） */
   const isAtBottom = () => {
@@ -627,8 +658,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 : 'rgba(var(--primary-rgb),0.08)',
                             border:
                               msg.role === 'assistant'
-                                ? '1px solid rgba(var(--text-base-rgb),0.04)'
-                                : '1px solid rgba(var(--primary-rgb),0.06)',
+                                ? '1px solid rgba(var(--text-base-rgb),0.13)'
+                                : '1px solid rgba(var(--primary-rgb),0.16)',
                             'backdrop-filter': 'blur(6px)',
                           }}
                         >
@@ -637,41 +668,54 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0
                             }
                           >
-                            <For each={msg.displayFiles}>
-                              {(file: any) => (
-                                <div
-                                  class="flex items-center rounded-lg cursor-default mb-2 max-w-[300px] px-[14px] py-[10px] transition-all duration-200 first:mt-3"
-                                  style={{
-                                    background: 'rgba(var(--primary-rgb),0.06)',
-                                    border: '1px solid rgba(var(--primary-rgb),0.04)',
-                                  }}
-                                >
-                                  <div
-                                    class="flex flex-shrink-0 items-center justify-center w-10 h-10 rounded-md mr-3"
-                                    style={{
-                                      background: 'rgba(var(--primary-rgb),0.08)',
-                                      color: 'rgba(var(--primary-rgb),0.6)',
-                                    }}
-                                  >
-                                    <Icon src="/icons/app-logo/file-document.svg" class="w-6 h-6" />
-                                  </div>
-                                  <div class="flex-grow overflow-hidden">
-                                    <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">
-                                      {file.name}
-                                    </div>
+                            <div class="flex flex-col gap-2 mb-2 first:mt-3">
+                              <For each={msg.displayFiles}>
+                                {(file: any) => {
+                                  const isImage = (file.mimeType || '').startsWith('image/');
+                                  const ext = (file.name.split('.').pop() || '').toLowerCase();
+                                  return (
                                     <div
+                                      class="flex items-center cursor-default gap-3 max-w-[300px] px-[14px] py-[5px] rounded-lg transition-all duration-200"
                                       style={{
-                                        color: 'rgba(var(--primary-rgb),0.4)',
-                                        'font-size': '0.75rem',
-                                        'margin-top': '2px',
+                                        background: 'rgba(var(--primary-rgb),0.06)',
+                                        border: '1px solid rgba(var(--primary-rgb),0.12)',
                                       }}
                                     >
-                                      {t('chat.parsed')}
+                                      {/* 统一的缩略图/图标框：图片与附件同尺寸 */}
+                                      <Show
+                                        when={isImage && file.storagePath}
+                                        fallback={
+                                          <div
+                                            class="flex flex-shrink-0 items-center justify-center w-7 h-7 rounded-md [&_svg]:w-4 [&_svg]:h-4"
+                                            style={{
+                                              background: 'rgba(var(--primary-rgb),0.08)',
+                                              color: 'rgba(var(--primary-rgb),0.7)',
+                                            }}
+                                          >
+                                            <span
+                                              ref={(node) => {
+                                                node.innerHTML = getLangIcon(ext);
+                                              }}
+                                            />
+                                          </div>
+                                        }
+                                      >
+                                        <img
+                                          src={convertFileSrc(file.storagePath)}
+                                          loading="lazy"
+                                          class="w-7 h-7 flex-shrink-0 object-cover rounded-md border border-white/[0.08]"
+                                        />
+                                      </Show>
+                                      <div class="flex-grow overflow-hidden">
+                                        <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">
+                                          {file.name}
+                                        </div>
+                                      </div>
                                     </div>
-                                  </div>
-                                </div>
-                              )}
-                            </For>
+                                  );
+                                }}
+                              </For>
+                            </div>
                           </Show>
 
                           <div class="mt-1">
@@ -729,6 +773,24 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             </Show>
                           </div>
                         </div>
+
+                        <Show when={msg.images && msg.images.length > 0}>
+                          <div class="flex flex-wrap gap-1.5 mt-2">
+                            <For each={msg.images}>
+                              {(img) => (
+                                <button
+                                  class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer transition-all duration-200 bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08]"
+                                  onClick={() => downloadGeneratedImage(img)}
+                                  title={t('common.download')}
+                                >
+                                  <Icon name="download" class="w-3 h-3" />
+                                  <span class="max-w-[160px] truncate">{img.name}</span>
+                                  <span class="opacity-60">{formatSize(img.size)}</span>
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
 
                         <Show
                           when={
@@ -823,7 +885,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               src="/icons/app-logo/clipboard-copy.svg"
                               class="w-[13px] h-[13px]"
                             />
-                            <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                            <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                               {t('common.copy')}
                             </span>
                           </button>
@@ -846,7 +908,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 size={13}
                                 style={{ display: 'inline', 'vertical-align': 'middle' }}
                               />
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                                 {t('chat.branch')}
                               </span>
                             </button>
@@ -936,7 +998,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182"
                                 />
                               </svg>
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                                 {t('chat.resendMessage')}
                               </span>
                             </button>
@@ -1022,7 +1084,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
                                 />
                               </svg>
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
                                 {t('common.edit')}
                               </span>
                             </button>
@@ -1306,7 +1368,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               class="flex items-center rounded-[16px] text-[12px] px-[10px] py-1 transition-all duration-200"
               style={{
                 background: 'rgba(var(--primary-rgb),0.08)',
-                border: '1px solid rgba(var(--primary-rgb),0.04)',
+                border: '1px solid rgba(var(--primary-rgb),0.12)',
                 color: 'rgba(var(--primary-rgb),0.6)',
               }}
             >
@@ -1511,7 +1573,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         src="/icons/app-logo/loading.svg"
                         class="w-3 h-3 animate-spin shrink-0"
                       />
-                      <span style={{ color: 'rgba(var(--primary-rgb),0.6)' }}>
+                      <span class="text-white/80">
                         {t('chat.localEngineConnecting', { engine: localEngineName() })}
                       </span>
                     </Show>
@@ -1707,7 +1769,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 class="flex items-center justify-center w-[60px] h-20 rounded-md opacity-60 scale-[0.85] translate-y-[10px] rotate-12 -translate-x-[15px] z-[1]"
                 style={{
                   background: 'rgba(var(--primary-rgb),0.06)',
-                  border: '1px solid rgba(var(--primary-rgb),0.04)',
+                  border: '1px solid rgba(var(--primary-rgb),0.12)',
                 }}
               >
                 <span style={{ color: 'rgba(var(--primary-rgb),0.4)' }}>

@@ -12,6 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
+use url::Url;
 
 // ====== 常量 ======
 
@@ -19,6 +20,7 @@ const MAX_BYTES: u64 = 1_000_000; // 默认响应体上限 1MB
 const FETCH_TIMEOUT: u64 = 30; // web_fetch 总超时（秒）
 const CONNECT_TIMEOUT: u64 = 5; // 连接超时（秒）
 const RATE_LIMIT_SECS: u64 = 3; // web_search 最小间隔（秒）
+const MAX_REDIRECTS: u32 = 5; // web_fetch 手动跟随的最大重定向次数
 
 // ====== 限流 ======
 
@@ -52,6 +54,17 @@ fn http_client() -> reqwest::Client {
         .timeout(Duration::from_secs(FETCH_TIMEOUT))
         .user_agent("AIO/0.6 (web_fetch; +https://github.com/Atom112/AIO)")
         .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .expect("构建 HTTP client 失败")
+}
+
+/// web_fetch 专用：关闭自动重定向，改为逐跳手动校验（AGT-06 SSRF 修复）。
+fn http_client_no_redirect() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT))
+        .timeout(Duration::from_secs(FETCH_TIMEOUT))
+        .user_agent("AIO/0.6 (web_fetch; +https://github.com/Atom112/AIO)")
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("构建 HTTP client 失败")
 }
@@ -158,59 +171,89 @@ pub fn get_web_tool_specs() -> Vec<ToolSpec> {
 
 // ====== 工具执行 ======
 
+/// 解析重定向 Location（支持相对路径）为绝对 URL。
+fn resolve_redirect(base: &str, location: &str) -> Option<String> {
+    Url::parse(base)
+        .ok()?
+        .join(location)
+        .ok()
+        .map(|u| u.to_string())
+}
+
 /// 执行 web_fetch：GET 请求指定 URL，返回纯文本。
+/// 重定向：逐跳手动跟随并在每一跳重新执行 SSRF 校验（AGT-06）。
 pub async fn execute_web_fetch(url_str: &str, max_bytes: Option<u64>) -> ToolResult {
-    // SSRF 校验
-    if let Err(e) = is_safe_url(url_str) {
-        return tool_err(&e);
-    }
     let limit = max_bytes.unwrap_or(MAX_BYTES).min(5_000_000); // 硬上限 5MB
 
-    let client = http_client();
-    match client.get(url_str).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            if !status.is_success() {
-                return tool_err(&format!("HTTP {status}"));
-            }
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .to_string();
-            // 只处理 text/* 和 application/json
-            let is_text = ct.starts_with("text/")
-                || ct.contains("json")
-                || ct.contains("xml")
-                || ct.contains("javascript");
-            let is_html = ct.contains("html");
-            match resp.bytes().await {
-                Ok(bytes) => {
-                    if bytes.len() as u64 > limit {
-                        return tool_err(&format!("响应体过大 ({}B > {limit}B)", bytes.len()));
-                    }
-                    let text = String::from_utf8_lossy(&bytes).to_string();
-                    let result = if is_text && is_html {
-                        strip_html(&text)
-                    } else {
-                        text
-                    };
-                    tool_ok(truncate(&result, limit))
-                }
-                Err(e) => tool_err(&format!("读取响应失败: {e}")),
-            }
+    let client = http_client_no_redirect();
+    let mut current = url_str.to_string();
+
+    for _hop in 0..=MAX_REDIRECTS {
+        // 每一跳都重新校验（入口 + 每个重定向目标）
+        if let Err(e) = is_safe_url(&current) {
+            return tool_err(&e);
         }
-        Err(e) => {
-            if e.is_timeout() {
-                tool_err("请求超时")
-            } else if e.is_connect() {
-                tool_err(&format!("无法连接: {e}"))
-            } else {
-                tool_err(&format!("请求失败: {e}"))
+
+        let resp = match client.get(&current).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                if e.is_timeout() {
+                    return tool_err("请求超时");
+                } else if e.is_connect() {
+                    return tool_err(&format!("无法连接: {e}"));
+                } else {
+                    return tool_err(&format!("请求失败: {e}"));
+                }
             }
+        };
+
+        // 3xx 重定向：解析 Location 并继续下一跳（重新校验）
+        if resp.status().is_redirection() {
+            let loc = match resp.headers().get("location").and_then(|v| v.to_str().ok()) {
+                Some(l) => l,
+                None => return tool_err("重定向缺少 Location 头"),
+            };
+            current = match resolve_redirect(&current, loc) {
+                Some(u) => u,
+                None => return tool_err("无法解析重定向地址"),
+            };
+            continue;
+        }
+
+        let status = resp.status();
+        if !status.is_success() {
+            return tool_err(&format!("HTTP {status}"));
+        }
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        // 只处理 text/* 和 application/json
+        let is_text = ct.starts_with("text/")
+            || ct.contains("json")
+            || ct.contains("xml")
+            || ct.contains("javascript");
+        let is_html = ct.contains("html");
+        match resp.bytes().await {
+            Ok(bytes) => {
+                if bytes.len() as u64 > limit {
+                    return tool_err(&format!("响应体过大 ({}B > {limit}B)", bytes.len()));
+                }
+                let text = String::from_utf8_lossy(&bytes).to_string();
+                let result = if is_text && is_html {
+                    strip_html(&text)
+                } else {
+                    text
+                };
+                return tool_ok(truncate(&result, limit));
+            }
+            Err(e) => return tool_err(&format!("读取响应失败: {e}")),
         }
     }
+
+    tool_err(&format!("重定向次数超过上限 ({MAX_REDIRECTS})"))
 }
 
 /// 执行 web_search：DuckDuckGo Instant Answer API。

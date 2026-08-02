@@ -161,6 +161,9 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     add_column_if_missing(&conn, "messages", "interim_content", "TEXT")?;
     add_column_if_missing(&conn, "messages", "agent_start_time", "INTEGER")?;
 
+    // 迁移：模型生成图像元数据（JSON GeneratedImage[]），用于下载与历史回放
+    add_column_if_missing(&conn, "messages", "images_json", "TEXT")?;
+
     // 用量日志表：不可变 append-only 记录，每轮 LLM 调用一行
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS usage_log (

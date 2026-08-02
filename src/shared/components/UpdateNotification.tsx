@@ -104,21 +104,12 @@ const UpdateNotification: Component = () => {
         <div
           class="fixed bottom-5 left-5 z-[9999] w-[340px] rounded-2xl overflow-hidden select-none"
           style={{
-            background: 'rgba(var(--surface-bg), 0.88)',
-            'backdrop-filter': 'blur(24px)',
+            background: 'var(--acrylic-bg)',
+            'backdrop-filter': 'blur(var(--acrylic-blur))',
             border: '1px solid var(--border-dim)',
             'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
           }}
         >
-          {/* 顶部装饰条 */}
-          <div
-            class="h-[3px] w-full"
-            style={{
-              background:
-                'linear-gradient(90deg, var(--primary-color), color-mix(in srgb, var(--primary-color), transparent 30%))',
-            }}
-          />
-
           <div class="p-4 flex flex-col gap-3">
             {/* 标题行 */}
             <div class="flex items-center gap-2.5">

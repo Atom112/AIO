@@ -1,6 +1,7 @@
 import { marked, Tokens } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import DOMPurify from 'dompurify';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { createMemo, Component, Index, Show } from 'solid-js';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
@@ -190,7 +191,7 @@ ICONS.makefile = _s(
   `<path fill="none" stroke="var(--vscode-ctp-peach)" stroke-linecap="round" stroke-linejoin="round" d="M3.5 1.5h-2v13h2m9-13h2v13h-2m-8-11h7v3h-2v6h-3v-6h-2z"/>`,
 );
 
-function getLangIcon(lang: string): string {
+export function getLangIcon(lang: string): string {
   const key = lang.toLowerCase().trim();
   return ICONS[key] ?? _FALLBACK;
 }
@@ -222,6 +223,22 @@ renderer.code = (token: Tokens.Code) => {
             </div>
         </div>
     `;
+};
+
+// aio-image://<base64(absPath)> → convertFileSrc 可显示的本地资源 URL
+renderer.image = ({ href, title, text }: Tokens.Image) => {
+  let src = href || '';
+  if (src.startsWith('aio-image://')) {
+    try {
+      const bytes = Uint8Array.from(atob(src.slice('aio-image://'.length)), (c) => c.charCodeAt(0));
+      src = convertFileSrc(new TextDecoder().decode(bytes));
+    } catch {
+      /* 非法 token 原样保留 */
+    }
+  }
+  const alt = text ? ` alt="${text}"` : '';
+  const ttl = title ? ` title="${title}"` : '';
+  return `<img src="${src}"${alt}${ttl} class="aio-chat-image" loading="lazy" />`;
 };
 
 marked.use({ renderer });
@@ -280,10 +297,17 @@ const parseSegments = (text: string): Segment[] => {
   return segments;
 };
 
+// PERF-01：有限大小的呈现缓存（内容→HTML），跳过对未变化分段重复执行 marked+hljs+DOMPurify。
+// 有界（LRU 退化版：满则清空），避免缓存自身造成内存增长。
+const RENDER_CACHE_MAX = 64;
+const renderCache = new Map<string, string>();
+
 const renderMarkdownHtml = (raw: string): string => {
   if (!raw.trim()) return '';
+  const cached = renderCache.get(raw);
+  if (cached !== undefined) return cached;
   const html = marked.parse(raw) as string;
-  return DOMPurify.sanitize(html, {
+  const out = DOMPurify.sanitize(html, {
     ADD_TAGS: [
       'button',
       'svg',
@@ -323,6 +347,11 @@ const renderMarkdownHtml = (raw: string): string => {
     ],
     USE_PROFILES: { html: true, svg: true },
   });
+  if (renderCache.size >= RENDER_CACHE_MAX) {
+    renderCache.clear();
+  }
+  renderCache.set(raw, out);
+  return out;
 };
 
 interface MarkdownProps {

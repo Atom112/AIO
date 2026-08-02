@@ -89,12 +89,19 @@
   --text-base-rgb: 255, 255, 255;
   --border-rgb: 255, 255, 255;
 
-  --border-dim: rgba(255, 255, 255, 0.06);
+  --border-dim: rgba(255, 255, 255, 0.16);
 
   --acrylic-bg: rgba(var(--surface-bg), 0.72);
   --acrylic-border: rgba(var(--border-rgb), 0.06);
   --acrylic-blur: 40px;
   --acrylic-radius: 12px;
+
+  /* ── 应用背景（浅色/默认主题）：与 VaporGit 同款（四角点状光晕 + #2f2f2f 底色） ── */
+  --app-bg:
+    radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.55) 0, transparent 500px),
+    radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.4) 0, transparent 500px),
+    radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.35) 0, transparent 500px),
+    radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.35) 0, transparent 500px), #2f2f2f;
 }
 
 /* ── Dark mode: CSS variable overrides for surface/text/border ── */
@@ -107,6 +114,13 @@
 
   --acrylic-bg: rgba(var(--surface-bg), 0.85);
   --acrylic-border: rgba(var(--border-rgb), 0.1);
+
+  /* 与 VaporGit dark 同款（微弱四角光晕 + 纯黑底） */
+  --app-bg:
+    radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.06) 0, transparent 500px),
+    radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.04) 0, transparent 500px),
+    radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.03) 0, transparent 500px),
+    radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.03) 0, transparent 500px), #000;
 }
 
 /* ══════════════════════════════════════════════
@@ -180,6 +194,35 @@
   100% {
     opacity: 0;
     transform: scale(0.96) translateY(-4px);
+  }
+}
+
+/* ── PERF-04：Linux/WebKitGTK 性能降级（仅该平台生效，win/mac 视觉不变） ── */
+[data-webkitgtk] *,
+[data-webkitgtk] *::before,
+[data-webkitgtk] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 消息动画在 WebKitGTK 上改为仅 opacity，避免大元素 transform 反复栅格化 */
+[data-webkitgtk] {
+  --animate-message-in: message-in-kgtk 0.4s ease-out forwards;
+  --animate-message-out: message-out-kgtk 0.25s ease-in forwards;
+}
+@keyframes message-in-kgtk {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes message-out-kgtk {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 
@@ -878,6 +921,11 @@ input[type='range']::-webkit-slider-thumb:active {
   @apply px-2 py-[6px] text-white/50 text-[0.85em] caption-bottom;
 }
 
+.markdown-body img.aio-chat-image {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
 /* ══════════════════════════════════════════════
    消息流式输出动画
    ══════════════════════════════════════════════ */
@@ -952,4 +1000,36 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 [data-theme='dark'] .border-white\/\[0\.15\] {
   border-color: rgba(240, 240, 240, 0.3) !important;
+}
+
+/* ── Light mode: 主页面各元素边框加亮（与暗色 boost 平行；暗色保持原样） ── */
+[data-theme='light'] .border-white\/5 {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+[data-theme='light'] .border-white\/10 {
+  border-color: rgba(255, 255, 255, 0.21) !important;
+}
+[data-theme='light'] .border-white\/15 {
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+[data-theme='light'] .border-white\/20 {
+  border-color: rgba(255, 255, 255, 0.34) !important;
+}
+[data-theme='light'] .border-white\/\[0\.03\] {
+  border-color: rgba(255, 255, 255, 0.11) !important;
+}
+[data-theme='light'] .border-white\/\[0\.04\] {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+[data-theme='light'] .border-white\/\[0\.05\] {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+[data-theme='light'] .border-white\/\[0\.06\] {
+  border-color: rgba(255, 255, 255, 0.17) !important;
+}
+[data-theme='light'] .border-white\/\[0\.08\] {
+  border-color: rgba(255, 255, 255, 0.19) !important;
+}
+[data-theme='light'] .border-white\/\[0\.15\] {
+  border-color: rgba(255, 255, 255, 0.3) !important;
 }

@@ -14,6 +14,8 @@
   </p>
 </div>
 
+[English](README.md) | **简体中文**
+
 ---
 
 ![AIO 聊天工作区](docs/assets/screenshots/chat-overview.webp)

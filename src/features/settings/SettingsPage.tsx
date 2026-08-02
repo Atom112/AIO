@@ -90,7 +90,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
                   class={`relative px-5 py-4 my-1 cursor-pointer flex items-center gap-3 rounded-lg border border-transparent transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group overflow-hidden no-underline
                                     ${
                                       isActive(item.path)
-                                        ? 'bg-pri-10 text-pri [text-shadow:0_0_8px_var(--primary-5)] border-pri-20 shadow-[inset_0_0_10px_var(--primary-10)]'
+                                        ? 'bg-pri-10 text-white [text-shadow:0_0_8px_var(--primary-5)] border-pri-20 shadow-[inset_0_0_10px_var(--primary-10)]'
                                         : 'text-[#aaa] hover:bg-pri-10 hover:text-white hover:pl-6'
                                     }`}
                 >

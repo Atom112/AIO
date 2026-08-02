@@ -59,7 +59,7 @@ fn non_streaming_http_client() -> reqwest::Client {
 
 /// 单轮流式调用后的累积结果。
 struct RoundResult {
-    /// 本轮 assistant 文本内容
+    /// 本轮 assistant 文本内容（含重写后的 aio-image 标记）
     content: String,
     /// 本轮思维链内容（实时已通过 llm-reasoning 事件下发，此处仅留档供调试）
     #[allow(dead_code)]
@@ -70,6 +70,10 @@ struct RoundResult {
     input_tokens: u32,
     /// 服务端返回的 completion tokens（输出用量）
     output_tokens: u32,
+    /// 本轮生成/落盘的图像元数据
+    images: Vec<GeneratedImage>,
+    /// 回送 API / 持久化的原始载荷形态（未重写 token 的数组或字符串），用于下一轮请求
+    api_content: serde_json::Value,
 }
 
 /// 累积完成的单个工具调用。
@@ -157,6 +161,36 @@ fn message_for_api(
                 );
                 serde_json::Value::Array(parts)
             };
+        }
+    }
+
+    // 模型生成图像：剥离 aio-image 标记并把 images 元数据展开回 image_url 块（历史回放）
+    if let Some(images) = &message.images {
+        if !images.is_empty() {
+            let base_text = match &content {
+                serde_json::Value::String(text) => {
+                    crate::utils::generated_images::strip_generated_image_tokens(text)
+                }
+                other => extract_text_content(other),
+            };
+            let mut parts = vec![json!({ "type": "text", "text": base_text })];
+            for img in images {
+                if let Ok(bytes) = std::fs::read(&img.storage_path) {
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!(
+                                "data:{};base64,{}",
+                                img.mime_type,
+                                general_purpose::STANDARD.encode(bytes)
+                            )
+                        }
+                    }));
+                } else {
+                    tracing::warn!("读取生成图片失败: {}", img.storage_path);
+                }
+            }
+            content = serde_json::Value::Array(parts);
         }
     }
 
@@ -285,6 +319,8 @@ async fn stream_one_round(
     assistant_id: &str,
     topic_id: &str,
     suppress_events: bool,
+    app: Option<&AppHandle>,
+    process_images: bool,
 ) -> Result<RoundResult, String> {
     let final_url = normalize_chat_url(&api_url);
 
@@ -326,6 +362,9 @@ async fn stream_one_round(
 
     let mut content_buf = String::new();
     let mut reasoning_buf = String::new();
+    // 流式数组 delta 里解析出的 image_url 与原始 API 载荷（回送下一轮时用未重写形态，防 token 泄漏）
+    let mut image_urls: Vec<String> = Vec::new();
+    let mut round_api_parts: Vec<serde_json::Value> = Vec::new();
     let mut saw_done = false;
     // 从 SSE 流末尾提取 token 用量（服务端返回）
     let mut input_tokens: u32 = 0;
@@ -377,8 +416,53 @@ async fn stream_one_round(
                                     input_tokens: None,
                                     output_tokens: None,
                                     context_tokens: None,
+                                    images: None,
                                 },
                             );
+                        }
+                    } else if let Some(parts) = val["choices"][0]["delta"]["content"].as_array() {
+                        // 图像类模型（vLLM Qwen-Image、OpenAI gpt-image-1 chat 模式等）以数组
+                        // 交付文本与图片块。文本逐块推送；图片块收集 URL，待流结束后落盘重写。
+                        for part in parts {
+                            match part.get("type").and_then(|v| v.as_str()) {
+                                Some("text") => {
+                                    if let Some(s) = part.get("text").and_then(|v| v.as_str()) {
+                                        content_buf.push_str(s);
+                                        if !suppress_events {
+                                            let _ = window.emit(
+                                                "llm-chunk",
+                                                StreamPayload {
+                                                    assistant_id: assistant_id.to_string(),
+                                                    topic_id: topic_id.to_string(),
+                                                    content: s.to_string(),
+                                                    done: false,
+                                                    error: None,
+                                                    input_tokens: None,
+                                                    output_tokens: None,
+                                                    context_tokens: None,
+                                                    images: None,
+                                                },
+                                            );
+                                        }
+                                        round_api_parts.push(json!({ "type": "text", "text": s }));
+                                    }
+                                }
+                                Some("image_url") | Some("output_image") => {
+                                    let url = part
+                                        .get("image_url")
+                                        .and_then(|v| v.get("url"))
+                                        .and_then(|v| v.as_str())
+                                        .or_else(|| part.get("url").and_then(|v| v.as_str()));
+                                    if let Some(u) = url {
+                                        image_urls.push(u.to_string());
+                                        round_api_parts.push(json!({
+                                            "type": "image_url",
+                                            "image_url": { "url": u }
+                                        }));
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     if let Some(reasoning) = val["choices"][0]["delta"]["reasoning_content"]
@@ -399,6 +483,7 @@ async fn stream_one_round(
                                         input_tokens: None,
                                         output_tokens: None,
                                         context_tokens: None,
+                                        images: None,
                                     },
                                 );
                             }
@@ -496,12 +581,39 @@ async fn stream_one_round(
         }
     }
 
+    // 回送 API 的载荷形态：有数组块时用原始数组（未重写 token），否则退回纯文本字符串。
+    let api_content = if round_api_parts.is_empty() {
+        json!(content_buf)
+    } else {
+        json!(round_api_parts)
+    };
+    let (final_content, images) = if process_images && !image_urls.is_empty() {
+        let mut c = content_buf.clone();
+        match crate::utils::generated_images::save_generated_images(
+            app.unwrap(),
+            &mut c,
+            &image_urls,
+        )
+        .await
+        {
+            Ok(imgs) => (c, imgs),
+            Err(e) => {
+                tracing::warn!("保存生成图片失败: {}", e);
+                (content_buf.clone(), vec![])
+            }
+        }
+    } else {
+        (content_buf.clone(), vec![])
+    };
+
     Ok(RoundResult {
-        content: content_buf,
+        content: final_content,
         reasoning: reasoning_buf,
         tool_calls,
         input_tokens,
         output_tokens,
+        images,
+        api_content,
     })
 }
 
@@ -589,6 +701,8 @@ pub async fn call_llm_stream(
             &assistant_id_c,
             &topic_id_c,
             false,
+            Some(&app_handle),
+            true,
         )
         .await;
 
@@ -610,12 +724,21 @@ pub async fn call_llm_stream(
                     StreamPayload {
                         assistant_id: assistant_id_c.clone(),
                         topic_id: topic_id_c.clone(),
-                        content: "".into(),
+                        content: if round.images.is_empty() {
+                            "".into()
+                        } else {
+                            round.content.clone()
+                        },
                         done: true,
                         error: None,
                         input_tokens: Some(round.input_tokens),
                         output_tokens: Some(round.output_tokens),
                         context_tokens: Some(round.input_tokens),
+                        images: if round.images.is_empty() {
+                            None
+                        } else {
+                            Some(round.images.clone())
+                        },
                     },
                 );
             }
@@ -637,6 +760,7 @@ pub async fn call_llm_stream(
                         input_tokens: None,
                         output_tokens: None,
                         context_tokens: None,
+                        images: None,
                     },
                 );
             }
@@ -1188,11 +1312,18 @@ async fn handle_delegate_task(
     arguments: &serde_json::Value,
     project_id: Option<&str>,
     agent_mode: &AgentMode,
+    semaphore: Arc<Semaphore>,
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
     locale: &str,
 ) -> Result<ToolResult, String> {
+    // AGT-11：单发/后台 delegate_task 也受全局并发上限约束（与批量 delegate_tasks 共享同一信号量）。
+    let _permit = semaphore
+        .acquire()
+        .await
+        .map_err(|_| "并发控制信号量已关闭".to_string())?;
+
     // 解析参数
     let profile_id = arguments["profile"].as_str().unwrap_or("general");
     let task_desc = arguments["task"].as_str().unwrap_or("").to_string();
@@ -1269,6 +1400,7 @@ async fn handle_delegate_task(
         &context_files,
         None, // extra_context — 单数调用不注入共享上下文
         project_id,
+        agent_mode,
         token,
         profile_model_overrides,
         custom_profiles,
@@ -1299,6 +1431,7 @@ async fn execute_single_delegate(
     context_files: &[String],
     extra_context: Option<&str>,
     project_id: Option<&str>,
+    agent_mode: &AgentMode,
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
@@ -1339,6 +1472,7 @@ async fn execute_single_delegate(
         extra_context,
         &project_root,
         project_id,
+        agent_mode,
         token,
         locale,
     )
@@ -1492,6 +1626,7 @@ async fn handle_delegate_tasks(
         let customs_clone = custom_profiles.to_vec();
         let sem_clone = semaphore.clone();
         let locale_clone = locale.to_string();
+        let mode_clone = agent_mode.clone();
 
         unordered.push(async move {
             let _permit = sem_clone
@@ -1513,6 +1648,7 @@ async fn handle_delegate_tasks(
                 &task_context_files,
                 extra_ctx.as_deref(),
                 pid_clone.as_deref(),
+                &mode_clone,
                 &token_clone,
                 &overrides_clone,
                 &customs_clone,
@@ -1588,6 +1724,7 @@ async fn execute_workflow(
     parent_topic_id: &str,
     workflow: &Workflow,
     project_id: Option<&str>,
+    semaphore: Arc<Semaphore>,
     custom_profiles: &[CustomSubagentProfile],
     profile_model_overrides: &[ProfileModelOverride],
     token: &CancellationToken,
@@ -1656,6 +1793,7 @@ async fn execute_workflow(
             &arguments,
             project_id,
             &AgentMode::Auto, // 工作流步骤以 Auto 模式执行（无需用户逐个确认）
+            semaphore.clone(),
             token,
             profile_model_overrides,
             custom_profiles,
@@ -1772,6 +1910,7 @@ async fn execute_subagent(
     extra_context: Option<&str>,
     project_root: &str,
     project_id: Option<&str>,
+    agent_mode: &AgentMode,
     token: &CancellationToken,
     locale: &str,
 ) -> Result<ToolResult, String> {
@@ -1841,6 +1980,8 @@ async fn execute_subagent(
             parent_assistant_id,
             parent_topic_id,
             true, // suppress events for sub-agent (uses subagent-* events instead)
+            None, // 子 Agent 图像输出 v1 不支持：不入盘、不重写，仅保留文本
+            false,
         )
         .await;
 
@@ -1849,7 +1990,7 @@ async fn execute_subagent(
                 // 追加 assistant 消息到子 Agent 上下文
                 let mut asst_obj = serde_json::Map::new();
                 asst_obj.insert("role".into(), json!("assistant"));
-                asst_obj.insert("content".into(), json!(rr.content));
+                asst_obj.insert("content".into(), rr.api_content.clone());
                 if !rr.tool_calls.is_empty() {
                     let tcs: Vec<serde_json::Value> = rr
                         .tool_calls
@@ -1918,11 +2059,8 @@ async fn execute_subagent(
                     }
 
                     let tool_result = execute_builtin_tool(
-                        app,
-                        &tc.name,
-                        &args_val,
-                        project_id,
-                        &AgentMode::Auto, // 子 Agent 内部固定 Auto，避免权限审批阻塞
+                        app, &tc.name, &args_val, project_id,
+                        agent_mode, // AGT-03：子 Agent 继承父 agent_mode，写/删/执行按父模式走审批
                         token,
                     )
                     .await;
@@ -2177,6 +2315,7 @@ pub async fn run_agent_turn(
                 knowledge_enabled: false,
                 auto_start_enabled: false,
                 max_concurrent_subagents: None,
+                max_tool_rounds: None,
             });
 
         // 子 Agent 并发上限控制
@@ -2281,6 +2420,9 @@ pub async fn run_agent_turn(
         let mut total_output_tokens: u32 = 0;
         // 上下文峰值 tokens：最后一轮 API 调用的 input_tokens（用于上下文窗口展示）
         let mut context_input_tokens: u32 = 0;
+        // 跨轮累计的最终文本与生成图像（用于 done 时一次性回传，幂等替换前端 chunk 累积）
+        let mut accumulated_content = String::new();
+        let mut all_images: Vec<GeneratedImage> = Vec::new();
 
         // Workflow 模式：在 LLM 循环前注入强制系统消息
         if agent_mode == AgentMode::Workflow {
@@ -2323,11 +2465,41 @@ pub async fn run_agent_turn(
         // 上下文预算追踪（字符级近似，保守估计）
         const CONTEXT_BUDGET_CRITICAL: usize = 95_000;
 
+        // AGT-01：可配置的单次最大工具调用轮数（默认 25，最低 1）
+        let max_rounds = app_config
+            .max_tool_rounds
+            .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS)
+            .max(1);
+        // AGT-02：Workflow 模式下提醒调用 create_workflow 的最大次数（有限次，避免无限循环）
+        let max_workflow_reminders: u32 = 2;
+        let mut workflow_reminders: u32 = 0;
+
         'outer: loop {
             round += 1;
             if token_inner.is_cancelled() {
                 was_cancelled = true;
                 break;
+            }
+
+            // AGT-01：达到最大工具调用轮数 → 优雅收尾（不 abort，产出提示后自然结束）
+            if round > max_rounds {
+                let note = "\n\n⚠️ 已达本轮最大工具调用轮数，任务未完成。如需继续，请再次发送。";
+                accumulated_content.push_str(note);
+                let _ = window.emit(
+                    "llm-chunk",
+                    StreamPayload {
+                        assistant_id: assistant_id_c.clone(),
+                        topic_id: topic_id_c.clone(),
+                        content: note.into(),
+                        done: false,
+                        error: None,
+                        input_tokens: None,
+                        output_tokens: None,
+                        context_tokens: None,
+                        images: None,
+                    },
+                );
+                break 'outer;
             }
 
             // 通知前端：新一轮开始，push 空 assistant 占位
@@ -2356,6 +2528,8 @@ pub async fn run_agent_turn(
                 &assistant_id_c,
                 &topic_id_c,
                 false,
+                Some(&app_c),
+                true,
             )
             .await;
 
@@ -2376,6 +2550,9 @@ pub async fn run_agent_turn(
             total_output_tokens += round_result.output_tokens;
             // 记录峰值上下文（最后一轮的 input_tokens）
             context_input_tokens = round_result.input_tokens;
+            // 累计最终文本与生成图像（含 aio-image 标记，供 done 回传）
+            accumulated_content.push_str(&round_result.content);
+            all_images.extend(round_result.images.clone());
 
             // 持久化本轮 token 用量到 usage_log
             insert_usage_log(
@@ -2393,10 +2570,9 @@ pub async fn run_agent_turn(
             asst_obj.insert("role".into(), json!("assistant"));
             asst_obj.insert(
                 "content".into(),
-                if round_result.content.is_empty() {
-                    json!(null)
-                } else {
-                    json!(round_result.content)
+                match &round_result.api_content {
+                    serde_json::Value::String(s) if s.is_empty() => json!(null),
+                    other => other.clone(),
                 },
             );
             if !round_result.tool_calls.is_empty() {
@@ -2418,12 +2594,33 @@ pub async fn run_agent_turn(
             // 无工具调用 → 任务完成，整轮结束
             if round_result.tool_calls.is_empty() {
                 if agent_mode == AgentMode::Workflow && !workflow_called {
-                    // Workflow 模式下不允许退出——注入强制消息后继续
-                    messages_for_api.push(serde_json::json!({
-                        "role": "system",
-                        "content": "【工作流模式强制指令】你尚未调用 create_workflow 工具。请立即分析用户请求并调用 create_workflow 来创建和执行工作流。"
-                    }));
-                    continue;
+                    // Workflow 模式：提醒次数有限（max_workflow_reminders），避免无限续环（AGT-02）
+                    if workflow_reminders < max_workflow_reminders {
+                        workflow_reminders += 1;
+                        messages_for_api.push(serde_json::json!({
+                            "role": "system",
+                            "content": "【工作流模式强制指令】你尚未调用 create_workflow 工具。请立即分析用户请求并调用 create_workflow 来创建和执行工作流。"
+                        }));
+                        continue;
+                    }
+                    // 有限次提醒后模型仍拒绝 → 尊重退出信号，优雅收尾
+                    let note = "\n\n⚠️ 模型未按工作流模式调用 create_workflow，已停止。您可以切回普通/自动模式继续。";
+                    accumulated_content.push_str(note);
+                    let _ = window.emit(
+                        "llm-chunk",
+                        StreamPayload {
+                            assistant_id: assistant_id_c.clone(),
+                            topic_id: topic_id_c.clone(),
+                            content: note.into(),
+                            done: false,
+                            error: None,
+                            input_tokens: None,
+                            output_tokens: None,
+                            context_tokens: None,
+                            images: None,
+                        },
+                    );
+                    break 'outer;
                 }
                 break 'outer;
             }
@@ -2480,6 +2677,7 @@ pub async fn run_agent_turn(
                         let custom_profiles_clone = custom_profiles_c.clone();
                         let token_clone = token_inner.clone();
                         let locale_clone = locale_c.clone();
+                        let sem_clone = subagent_semaphore.clone();
                         let subagent_id = uuid::Uuid::new_v4().to_string();
                         let sid = subagent_id.clone();
                         let app_c2 = app_c.clone();
@@ -2496,6 +2694,7 @@ pub async fn run_agent_turn(
                                 &args_val_clone,
                                 project_id_clone.as_deref(),
                                 &agent_mode_clone,
+                                sem_clone,
                                 &token_clone,
                                 &profile_overrides_clone,
                                 &custom_profiles_clone,
@@ -2534,6 +2733,7 @@ pub async fn run_agent_turn(
                         let custom_profiles_clone = custom_profiles_c.clone();
                         let token_clone = token_inner.clone();
                         let locale_clone = locale_c.clone();
+                        let sem_clone = subagent_semaphore.clone();
 
                         let fut = Box::pin(async move {
                             handle_delegate_task(
@@ -2548,6 +2748,7 @@ pub async fn run_agent_turn(
                                 &args_val_clone,
                                 project_id_clone.as_deref(),
                                 &agent_mode_clone,
+                                sem_clone,
                                 &token_clone,
                                 &profile_overrides_clone,
                                 &custom_profiles_clone,
@@ -2654,6 +2855,7 @@ pub async fn run_agent_turn(
                                     &topic_id_c,
                                     &workflow,
                                     project_id_c.as_deref(),
+                                    subagent_semaphore.clone(),
                                     &custom_profiles_c,
                                     &profile_overrides_c,
                                     &token_inner,
@@ -2936,6 +3138,8 @@ pub async fn run_agent_turn(
                 topic_id: topic_id_c.clone(),
                 content: if let Some(ref e) = final_error {
                     format!("\n[Error: {}]", e)
+                } else if !all_images.is_empty() {
+                    std::mem::take(&mut accumulated_content)
                 } else {
                     "".into()
                 },
@@ -2955,6 +3159,11 @@ pub async fn run_agent_turn(
                     Some(context_input_tokens)
                 } else {
                     None
+                },
+                images: if all_images.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(&mut all_images))
                 },
             },
         );
@@ -3097,7 +3306,15 @@ pub async fn summarize_history(
 
     let mut messages_for_api: Vec<serde_json::Value> = messages
         .iter()
-        .map(|m| json!({ "role": &m["role"], "content": &m["content"] }))
+        .map(|m| {
+            let content = match &m["content"] {
+                serde_json::Value::String(s) => {
+                    json!(crate::utils::generated_images::strip_generated_image_tokens(s))
+                }
+                other => other.clone(),
+            };
+            json!({ "role": &m["role"], "content": content })
+        })
         .collect();
 
     messages_for_api.push(json!({
@@ -3268,8 +3485,9 @@ pub async fn append_message(
         "INSERT INTO messages
          (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
           tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
-          agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+          agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index,
+          images_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             message_id,
             topic_id,
@@ -3289,6 +3507,7 @@ pub async fn append_message(
             message.agent_start_time,
             message.parent_message_id,
             message.branch_index,
+            serde_json::to_string(&message.images).ok(),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -3472,7 +3691,12 @@ pub async fn generate_topic_title(
     })];
 
     for m in &messages {
-        let text = extract_text_content(&m["content"]);
+        let text = match &m["content"] {
+            serde_json::Value::String(s) => {
+                crate::utils::generated_images::strip_generated_image_tokens(s)
+            }
+            other => extract_text_content(other),
+        };
         if text.trim().is_empty() {
             continue;
         }
@@ -3553,4 +3777,69 @@ pub async fn generate_topic_title(
 #[tauri::command]
 pub fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
     crate::utils::token_counter::count_tokens_cmd(model, text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::models::GeneratedImage;
+
+    fn conn() -> rusqlite::Connection {
+        rusqlite::Connection::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn message_for_api_expands_images_and_strips_token() {
+        let dir = std::env::temp_dir().join(format!("aio-msg-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img_path = dir.join("g.png");
+        std::fs::write(&img_path, b"\x89PNG").unwrap();
+        let abs = img_path
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        let token = crate::utils::generated_images::image_token_for(&abs);
+        let content_html = format!("text before ![img]({})", token);
+        let msg = Message {
+            id: None,
+            role: "assistant".into(),
+            content: serde_json::json!(content_html),
+            model_id: None,
+            display_files: None,
+            display_text: None,
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            reasoning: None,
+            input_tokens: None,
+            output_tokens: None,
+            agent_steps: None,
+            interim_content: None,
+            agent_start_time: None,
+            parent_message_id: None,
+            branch_index: 0,
+            images: Some(vec![GeneratedImage {
+                name: "g.png".into(),
+                mime_type: "image/png".into(),
+                size: 4,
+                storage_path: abs.clone(),
+            }]),
+            full_tool_result: None,
+        };
+        let out = message_for_api(&conn(), &msg).unwrap();
+        let obj = out.as_object().unwrap();
+        let parts = obj.get("content").unwrap().as_array().unwrap();
+        // 文本部分已剥离 aio-image 标记（防 token 泄漏）
+        let text = parts[0]["text"].as_str().unwrap();
+        assert!(!text.contains("aio-image://"));
+        assert!(text.contains("text before"));
+        // 图像部分重新展开为 image_url data URI（历史回放）
+        assert_eq!(parts[1]["type"], "image_url");
+        let url = parts[1]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

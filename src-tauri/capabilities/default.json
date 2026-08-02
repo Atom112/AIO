@@ -52,7 +52,7 @@
     },
     {
       "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "$HOME/**" }]
+      "allow": [{ "path": "$APPDATA/**" }]
     }
   ]
 }

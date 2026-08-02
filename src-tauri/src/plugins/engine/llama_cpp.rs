@@ -2,14 +2,13 @@
 ///
 /// 启动策略：
 /// 1. 优先使用 app data 下通过自动安装的引擎（EngineInstaller）
-/// 2. 回退到 resources/engines/llama-cpp/ 下的 bundled 版本（旧版打包兼容）
+/// 2. 回退到系统安装的 llama-server（PATH / WinGet / conda / brew / nix）
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::installer::EngineInstaller;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::task;
 use tokio::time::{sleep, Duration};
 use tracing::debug;
@@ -345,25 +344,16 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                 return Err("GPU 层数必须大于 0，建议设置为 99 或 999".to_string());
             }
 
-            // 优先级：AIO bundled > resources fallback > 系统安装 (WinGet/conda/brew/nix/PATH)
+            // 优先级：app data 安装 > 系统安装 (PATH/WinGet/conda/brew/nix)
             let exe_path = if EngineInstaller::get_exe_path(&app).exists() {
                 EngineInstaller::get_exe_path(&app)
+            } else if let Some(found) = Self::find_llama_server() {
+                found
             } else {
-                let resource_dir = app
-                    .path()
-                    .resolve("resources/engines/llama-cpp", BaseDirectory::Resource)
-                    .map_err(|e| format!("无法解析资源路径: {}", e))?;
-                #[cfg(target_os = "windows")]
-                let fallback = resource_dir.join("llama-server.exe");
-                #[cfg(not(target_os = "windows"))]
-                let fallback = resource_dir.join("llama-server");
-                if fallback.exists() {
-                    fallback
-                } else if let Some(found) = Self::find_llama_server() {
-                    found
-                } else {
-                    return Err("找不到 llama.cpp 引擎。请先在设置页面中安装引擎。".to_string());
-                }
+                return Err(
+                    "找不到 llama.cpp 引擎。请安装 llama-server 并确保其在 PATH 中，或参照设置页面的安装指南。"
+                        .to_string(),
+                );
             };
 
             if !Path::new(model_path).exists() {

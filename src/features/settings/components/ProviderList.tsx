@@ -278,7 +278,7 @@ const ProviderList: Component = () => {
         </div>
         <button
           type="button"
-          class="px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-pri hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
+          class="px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-white hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
           onClick={() => setShowAddCustom(true)}
         >
           + {t('provider.addCustom')}

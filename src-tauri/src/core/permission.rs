@@ -5,6 +5,7 @@
 //!
 //! 规则可自定义存储在项目 `.aio/permissions.json` 中，覆盖内置默认配置。
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -623,22 +624,37 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
 
 // ====== 简单 Glob 匹配 ======
 
-/// 简单的 glob 匹配，仅支持 `*`（匹配任意字符序列）。
-/// 不处理 `?` 或 `[...]`。
+/// 简单 glob → 正则。
+/// 支持 `*`（任意字符序列，不跨路径分隔符）与 `**`（任意层级，含路径分隔符）。
+/// 其余字符（含 `?`、`[`、`]`）按字面转义，保持与旧实现一致。
+fn glob_to_regex(pattern: &str) -> String {
+    let mut out = String::from("^");
+    let mut it = pattern.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '*' {
+            if it.peek() == Some(&'*') {
+                it.next();
+                out.push_str(".*");
+            } else {
+                out.push_str("[^/]*");
+            }
+        } else {
+            out.push_str(&regex::escape(&c.to_string()));
+        }
+    }
+    out.push('$');
+    out
+}
+
+/// 简单的 glob 匹配，支持 `*` 与 `**`。
+/// `*` 匹配任意字符序列（不跨 `/`），`**` 匹配任意层级（可跨 `/`）。
 fn glob_match(pattern: &str, name: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if let Some(suffix) = pattern.strip_prefix('*') {
-        // 模式以 * 开头：如 `*_file` 匹配任何以 `_file` 结尾的
-        return name.ends_with(suffix);
-    }
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        // 模式以 * 结尾：如 `search_*` 匹配任何以 `search_` 开头的
-        return name.starts_with(prefix);
-    }
-    // 无通配符：精确匹配
-    pattern == name
+    Regex::new(&glob_to_regex(pattern))
+        .map(|re| re.is_match(name))
+        .unwrap_or(false)
 }
 
 // ====== 路径匹配 ======
@@ -806,6 +822,22 @@ mod tests {
         assert!(glob_match("*_file", "write_file"));
         assert!(glob_match("*_file", "delete_file"));
         assert!(!glob_match("*_file", "list_directory"));
+
+        // ** 递归匹配路径（AGT-08）：dir/** 应匹配深层路径
+        assert!(glob_match("dir/**", "dir/a/b"));
+        assert!(glob_match("dir/**", "dir/file.txt"));
+        assert!(!glob_match("dir/**", "other/a"));
+        assert!(!glob_match("dir/**", "beta/x"));
+        // * 不跨 `/`：dir/* 只匹配单层
+        assert!(glob_match("dir/*", "dir/a.rs"));
+        assert!(!glob_match("dir/*", "dir/a/b.rs"));
+        // .env* 保持现有语义
+        assert!(glob_match(".env*", ".env"));
+        assert!(glob_match(".env*", ".env.local"));
+        assert!(!glob_match(".env*", "x.env"));
+        // ? / [ ] 按字面处理
+        assert!(glob_match("a?b", "a?b"));
+        assert!(!glob_match("a?b", "axb"));
     }
 
     #[test]

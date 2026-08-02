@@ -640,14 +640,28 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         ("sh", "-c")
     };
 
-    let child = match Command::new(shell)
-        .arg(shell_arg)
-        .arg(command)
-        .current_dir(project_root)
+    // 沙箱包装（Linux/macOS best-effort）：可用则替换启动 argv；否则保持原生执行
+    let sandbox_argv =
+        crate::utils::sandbox::sandbox_command_prefix(shell, shell_arg, command, project_root);
+    let mut cmd = if let Some(argv) = sandbox_argv {
+        let mut c = Command::new(&argv[0]);
+        c.args(&argv[1..]);
+        c
+    } else {
+        let mut c = Command::new(shell);
+        c.arg(shell_arg).arg(command);
+        c
+    };
+    cmd.current_dir(project_root)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    // 非 Windows：让命令自成进程组，便于超时/清理时把整个子树一并杀掉（AGT-05）
+    #[cfg(unix)]
     {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return tool_err(&format!("启动命令失败: {e}")),
     };
@@ -678,8 +692,17 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         Ok(Ok(status)) => (status.code(), false),
         Ok(Err(_)) => return tool_err("等待命令进程失败"),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            // 超时 → 杀掉进程
+            // 超时 → 杀掉进程（非 Windows 连进程组一并清理）
             if let Ok(mut c) = child_arc.lock() {
+                #[cfg(unix)]
+                {
+                    let pid = c.id();
+                    if pid > 0 {
+                        let _ = std::process::Command::new("kill")
+                            .args(["-KILL", &format!("-{pid}")])
+                            .status();
+                    }
+                }
                 let _ = c.kill();
                 let _ = c.wait();
             }

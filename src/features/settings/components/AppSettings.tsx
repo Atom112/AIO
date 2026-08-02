@@ -36,7 +36,6 @@ import {
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
-import Dropdown from '../../../shared/components/Dropdown';
 import { locale, setLocale, t, type Locale } from '../../../core/i18n';
 
 /**
@@ -63,6 +62,8 @@ const AppSettings: Component = () => {
   const [l, setL] = createSignal(0); // 亮度 (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
   const [knowledgeEnabled, setKnowledgeEnabled] = createSignal(false);
+  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // 单次 Agent 最大工具调用轮数（默认 25）
+  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // 并发子智能体上限（默认 5）
   const [version, setVersion] = createSignal(''); // 应用版本号
   const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
   const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
@@ -75,7 +76,17 @@ const AppSettings: Component = () => {
     conflictActionId: string;
   } | null>(null); // 冲突确认对话框状态
   const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // 重置全部确认状态
+  const [langOpen, setLangOpen] = createSignal(false); // 语言切换下拉开关
+  let langRef: HTMLDivElement | undefined; // 语言切换下拉容器
   let recordingCleanup: (() => void) | null = null; // 录制模式清理函数
+
+  onMount(() => {
+    const onDocMouse = (e: MouseEvent) => {
+      if (langOpen() && langRef && !langRef.contains(e.target as Node)) setLangOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouse);
+    onCleanup(() => document.removeEventListener('mousedown', onDocMouse));
+  });
 
   /**
    * 初始化 HSL 状态和获取应用版本
@@ -101,6 +112,12 @@ const AppSettings: Component = () => {
       }
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
+      }
+      if (typeof cfg?.maxToolRounds === 'number' && cfg.maxToolRounds > 0) {
+        setMaxToolRounds(cfg.maxToolRounds);
+      }
+      if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents > 0) {
+        setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
       }
     } catch (e) {
       console.warn('加载应用配置失败:', e);
@@ -477,12 +494,60 @@ const AppSettings: Component = () => {
               {t('app.language.description')} {t('app.language.system')}
             </p>
           </div>
-          <Dropdown
-            value={locale()}
-            onChange={(v) => setLocale(v as Locale)}
-            options={langOptions()}
-            class="min-w-[150px]"
-          />
+          <div class="relative min-w-[150px]" ref={langRef}>
+            <button
+              type="button"
+              class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-xs text-left cursor-pointer outline-none border border-[var(--border-dim)] transition-all duration-150"
+              onClick={() => setLangOpen(!langOpen())}
+              aria-haspopup="listbox"
+              aria-expanded={langOpen()}
+            >
+              <span class="truncate text-white/80">
+                {locale() === 'zh-CN' ? t('app.language.zhCN') : t('app.language.enUS')}
+              </span>
+              <span class="text-white/30 text-[10px]">&#9662;</span>
+            </button>
+            <div
+              class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top"
+              style={{
+                background: 'rgba(var(--surface-bg), 0.92)',
+                'backdrop-filter': 'blur(24px) saturate(150%)',
+                border: '1px solid var(--border-dim)',
+                'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
+              }}
+              classList={{
+                'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !langOpen(),
+                'visible opacity-100 scale-100 translate-y-0': langOpen(),
+              }}
+              role="listbox"
+            >
+              <For each={langOptions()}>
+                {(opt) => {
+                  const sel = () => locale() === opt.value;
+                  return (
+                    <div
+                      class="flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none"
+                      classList={{
+                        'text-white bg-pri-10': sel(),
+                        'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
+                      }}
+                      role="option"
+                      aria-selected={sel()}
+                      onClick={() => {
+                        setLocale(opt.value);
+                        setLangOpen(false);
+                      }}
+                    >
+                      <span class="grow truncate">{opt.label}</span>
+                      <Show when={sel()}>
+                        <Icon name="check" size={12} class="text-pri" />
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
@@ -495,7 +560,7 @@ const AppSettings: Component = () => {
               type="button"
               class="px-3 py-1 text-xs transition-all duration-200"
               classList={{
-                'bg-pri-10 text-pri': !isDarkMode(),
+                'bg-pri-10 text-white': !isDarkMode(),
                 'text-white/35 hover:text-white/60': isDarkMode(),
               }}
               onClick={() => setIsDarkMode(false)}
@@ -506,7 +571,7 @@ const AppSettings: Component = () => {
               type="button"
               class="px-3 py-1 text-xs transition-all duration-200"
               classList={{
-                'bg-pri-10 text-pri': isDarkMode(),
+                'bg-pri-10 text-white': isDarkMode(),
                 'text-white/35 hover:text-white/60': !isDarkMode(),
               }}
               onClick={() => setIsDarkMode(true)}
@@ -572,6 +637,70 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
+            <span class="block text-[#eee] text-[14px]">{t('app.maxToolRounds.title')}</span>
+            <p class="text-xs text-white/35 mt-1">{t('app.maxToolRounds.description')}</p>
+          </div>
+
+          <input
+            type="number"
+            min={1}
+            max={200}
+            step={1}
+            value={maxToolRounds()}
+            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
+            onInput={async (e) => {
+              const raw = Number(e.currentTarget.value);
+              const clamped = Number.isFinite(raw)
+                ? Math.min(200, Math.max(1, Math.round(raw)))
+                : 25;
+              setMaxToolRounds(clamped);
+              try {
+                const cfg: any = await invoke('load_app_config').catch(() => null);
+                if (cfg) {
+                  await invoke('save_app_config', { config: { ...cfg, maxToolRounds: clamped } });
+                }
+              } catch (err) {
+                console.warn('保存最大工具轮数配置失败:', err);
+              }
+            }}
+          />
+        </div>
+
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div>
+            <span class="block text-[#eee] text-[14px]">
+              {t('app.maxConcurrentSubagents.title')}
+            </span>
+            <p class="text-xs text-white/35 mt-1">{t('app.maxConcurrentSubagents.description')}</p>
+          </div>
+
+          <input
+            type="number"
+            min={1}
+            max={32}
+            step={1}
+            value={maxConcurrentSubagents()}
+            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
+            onInput={async (e) => {
+              const raw = Number(e.currentTarget.value);
+              const clamped = Number.isFinite(raw) ? Math.min(32, Math.max(1, Math.round(raw))) : 5;
+              setMaxConcurrentSubagents(clamped);
+              try {
+                const cfg: any = await invoke('load_app_config').catch(() => null);
+                if (cfg) {
+                  await invoke('save_app_config', {
+                    config: { ...cfg, maxConcurrentSubagents: clamped },
+                  });
+                }
+              } catch (err) {
+                console.warn('保存并发子智能体上限配置失败:', err);
+              }
+            }}
+          />
+        </div>
+
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div>
             <span class="block text-[#eee] text-[14px]">{t('app.openSource.title')}</span>
             <p class="text-xs text-white/35 mt-1">{t('app.openSource.description')}</p>
           </div>
@@ -579,9 +708,9 @@ const AppSettings: Component = () => {
           <div
             class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
             style={{
-              background: 'rgba(var(--primary-rgb),0.08)',
-              color: 'rgba(var(--text-base-rgb),0.5)',
-              border: '1px solid rgba(var(--primary-rgb),0.08)',
+              background: 'rgba(var(--primary-rgb), 0.18)',
+              color: '#fff',
+              border: '1px solid rgba(var(--primary-rgb), 0.25)',
             }}
             onClick={() => open('https://github.com/Atom112/AIO')}
             title={t('app.openSource.visit')}
@@ -615,7 +744,7 @@ const AppSettings: Component = () => {
             class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
             style={{
               background: 'rgba(var(--primary-rgb), 0.18)',
-              color: 'var(--primary-color)',
+              color: '#fff',
               border: '1px solid rgba(var(--primary-rgb), 0.25)',
             }}
             disabled={checkUpdating()}
@@ -921,10 +1050,7 @@ const AppSettings: Component = () => {
                           <Show
                             when={!isRecording()}
                             fallback={
-                              <span
-                                class="text-[11px] font-medium"
-                                style={{ color: 'var(--primary-color)' }}
-                              >
+                              <span class="text-[11px] font-medium" style={{ color: '#fff' }}>
                                 {t('app.shortcuts.recording')}
                               </span>
                             }

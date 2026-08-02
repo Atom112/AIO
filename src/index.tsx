@@ -29,6 +29,24 @@ initCustomSubagentProfiles();
 // 应用启动时扫描已安装的推理引擎
 initEngineScan();
 
+/**
+ * PERF-04：识别 Linux/WebKitGTK 弱渲染引擎，仅在该平台上启用性能降级样式
+ * （`backdrop-filter:none`、消息动画改纯 opacity）。Windows(WebView2)/macOS(WKWebView)
+ * 不设置 `data-webkitgtk`，视觉与效果完全不变。
+ */
+function enableWebKitGTKDegrade() {
+  try {
+    const ua = navigator.userAgent.toLowerCase();
+    const isWebKitGTK = ua.includes('linux') && ua.includes('webkit') && !ua.includes('chrome');
+    if (isWebKitGTK) {
+      document.documentElement.setAttribute('data-webkitgtk', '');
+    }
+  } catch {
+    /* 非浏览器环境忽略 */
+  }
+}
+enableWebKitGTKDegrade();
+
 const Settings = lazy(() => import('./features/settings/SettingsPage'));
 const ProviderList = lazy(() => import('./features/settings/components/ProviderList'));
 const ProviderDetail = lazy(() => import('./features/settings/ProviderDetailPage'));

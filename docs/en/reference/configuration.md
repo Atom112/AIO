@@ -111,13 +111,14 @@ Additional files may appear after feature usage:
 
 ## Attachment Whitelist
 
-| Type  | Extensions                                        | Size Limit |
-| ----- | ------------------------------------------------- | ---------- |
-| Image | png, jpg, jpeg, webp                              | 10 MiB     |
-| Doc   | pdf, docx, pptx                                   | 30 MiB     |
-| Text  | txt, md, json, csv, log, xml, yaml, yml, ini, tsv | 5 MiB      |
+| Type   | Extensions                                                                                                                                                                                                    | Size Limit |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| Image  | png, jpg, jpeg, webp                                                                                                                                                                                          | 10 MiB     |
+| Doc    | pdf, docx, pptx                                                                                                                                                                                               | 30 MiB     |
+| Text   | txt, md, json, csv, log, xml, yaml, yml, ini, tsv                                                                                                                                                             | 5 MiB      |
+| Source | rs, c, h, cpp, hpp, cc, cxx, cs, go, java, rb, py, js, mjs, cjs, ts, tsx, jsx, php, swift, kt, kts, scala, lua, sql, toml, sh, bash, zsh, dart, html, css, scss, less, vue, svelte, gradle, properties, r, pl | 5 MiB      |
 
-Extension, size, and sandbox path are checked before parsing. Images are converted to base64 data URIs for model requests; other types are extracted as text. Original attachments are copied by hash into the app data directory, and the database maintains reference relationships.
+Extension, size, and path safety (absolute path, no `..`) are checked before parsing. The file location is not restricted: files the user explicitly picks via the system file picker may live anywhere on disk. Images are converted to base64 data URIs for model requests; other types are extracted as text. Original attachments are copied by hash into the app data directory, and the database maintains reference relationships.
 
 ## Network and Command Security
 

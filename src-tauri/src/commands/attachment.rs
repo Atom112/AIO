@@ -219,7 +219,7 @@ pub fn load_message_attachments_batch(
         .map(|(i, _)| format!("?{}", i + 1))
         .collect();
     let sql = format!(
-        "SELECT ma.message_id, a.id, a.file_name, a.mime_type, a.size
+        "SELECT ma.message_id, a.id, a.file_name, a.mime_type, a.size, a.storage_path
          FROM message_attachments ma
          JOIN attachments a ON a.id = ma.attachment_id
          WHERE ma.message_id IN ({}) ORDER BY ma.sort_order",
@@ -242,6 +242,7 @@ pub fn load_message_attachments_batch(
                     name: row.get(2)?,
                     mime_type: Some(row.get(3)?),
                     size: Some(row.get::<_, i64>(4)? as u64),
+                    storage_path: row.get(5)?,
                 },
             ))
         })

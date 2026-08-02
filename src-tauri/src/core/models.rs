@@ -39,6 +39,9 @@ pub struct StreamPayload {
     /// 用于前端进度条展示，区别于 input_tokens（跨轮累计，用于成本统计）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u32>,
+    /// 模型生成的图像元数据（done=true 且有图时携带）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<GeneratedImage>>,
 }
 
 /// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。
@@ -111,6 +114,9 @@ pub struct FileMeta {
     pub mime_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    /// 附件在磁盘上的绝对路径，用于前端渲染图片缩略图（convertFileSrc 资产 URL）；仅新数据可能携带
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_path: Option<String>,
 }
 
 /// 上传到应用附件目录后的完整元数据。
@@ -118,6 +124,16 @@ pub struct FileMeta {
 #[serde(rename_all = "camelCase")]
 pub struct StoredAttachment {
     pub id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+    pub storage_path: String,
+}
+
+/// 模型生成的图像元数据（assistant 消息）。用于前端下载按钮与历史回放（重新展开为 image_url 块）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedImage {
     pub name: String,
     pub mime_type: String,
     pub size: u64,
@@ -174,6 +190,9 @@ pub struct Message {
     /// 分支索引：从同一父消息分叉时递增（0 = 原始/主干）
     #[serde(default)]
     pub branch_index: i32,
+    /// 模型生成的图像元数据（仅 assistant 消息），用于下载与历史回放
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<GeneratedImage>>,
     /// 完整工具执行结果（LLM 上下文中只包含截断版），仅 role=tool 消息有效，会话级内存字段不持久化到 SQLite
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_tool_result: Option<String>,
@@ -376,7 +395,13 @@ pub struct AppConfig {
     /// 最大并发子智能体数量（None = 使用默认值 5）。用于限制 delegate_tasks 和多个 delegate_task 的并发数。
     #[serde(default, rename = "maxConcurrentSubagents")]
     pub max_concurrent_subagents: Option<u32>,
+    /// 单次 Agent 运行最大工具调用轮数（None = 使用默认值）。命中时优雅收尾而非硬中断，防无界 API 成本。
+    #[serde(default, rename = "maxToolRounds")]
+    pub max_tool_rounds: Option<u32>,
 }
+
+/// 单次 Agent 运行默认最大工具调用轮数。
+pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 25;
 
 fn default_auto_retry_enabled() -> bool {
     true

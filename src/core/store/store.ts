@@ -77,6 +77,7 @@ export interface Message {
   contextTokens?: number; // 上下文峰值 tokens（最后一轮 API 调用的 input_tokens），用于上下文窗口进度条
   parentMessageId?: string; // 父消息 ID（用于会话分支树）
   branchIndex: number; // 分支索引（默认 0）
+  images?: GeneratedImageInfo[]; // 模型生成的图片（assistant 消息），用于下载与历史回放
 }
 
 /** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */
@@ -113,6 +114,16 @@ export interface AttachmentMeta {
   name: string;
   mimeType?: string;
   size?: number;
+  /** 附件在磁盘上的绝对路径，用于渲染图片缩略图（convertFileSrc 资产 URL） */
+  storagePath?: string;
+}
+
+/** 模型生成的图像元数据（assistant 消息），用于下载按钮与历史回放 */
+export interface GeneratedImageInfo {
+  name: string;
+  mimeType: string;
+  size: number;
+  storagePath: string;
 }
 
 export interface StoredAttachment extends AttachmentMeta {

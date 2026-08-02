@@ -83,19 +83,8 @@ pub trait McpServerPlugin: Send + Sync {
 }
 
 /// 默认调用工具超时
-#[allow(dead_code)]
-pub const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// 单个 server 最多允许的工具数（防御 tools/list 爆炸）
 pub const MAX_TOOLS_PER_SERVER: usize = 100;
-
-/// 单个工具结果最大体积（64KB）
-#[allow(dead_code)]
-pub const MAX_TOOL_RESULT_BYTES: usize = 64 * 1024;
-
-/// 5 轮工具调用上限（防 LLM 死循环）
-#[allow(dead_code)]
-pub const MAX_TOOL_CALL_ROUNDS: usize = 5;
 
 /// MCP 插件注册中心
 pub struct McpServerManager {

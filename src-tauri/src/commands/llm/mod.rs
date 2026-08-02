@@ -1312,11 +1312,18 @@ async fn handle_delegate_task(
     arguments: &serde_json::Value,
     project_id: Option<&str>,
     agent_mode: &AgentMode,
+    semaphore: Arc<Semaphore>,
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
     locale: &str,
 ) -> Result<ToolResult, String> {
+    // AGT-11：单发/后台 delegate_task 也受全局并发上限约束（与批量 delegate_tasks 共享同一信号量）。
+    let _permit = semaphore
+        .acquire()
+        .await
+        .map_err(|_| "并发控制信号量已关闭".to_string())?;
+
     // 解析参数
     let profile_id = arguments["profile"].as_str().unwrap_or("general");
     let task_desc = arguments["task"].as_str().unwrap_or("").to_string();
@@ -1393,6 +1400,7 @@ async fn handle_delegate_task(
         &context_files,
         None, // extra_context — 单数调用不注入共享上下文
         project_id,
+        agent_mode,
         token,
         profile_model_overrides,
         custom_profiles,
@@ -1423,6 +1431,7 @@ async fn execute_single_delegate(
     context_files: &[String],
     extra_context: Option<&str>,
     project_id: Option<&str>,
+    agent_mode: &AgentMode,
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
@@ -1463,6 +1472,7 @@ async fn execute_single_delegate(
         extra_context,
         &project_root,
         project_id,
+        agent_mode,
         token,
         locale,
     )
@@ -1616,6 +1626,7 @@ async fn handle_delegate_tasks(
         let customs_clone = custom_profiles.to_vec();
         let sem_clone = semaphore.clone();
         let locale_clone = locale.to_string();
+        let mode_clone = agent_mode.clone();
 
         unordered.push(async move {
             let _permit = sem_clone
@@ -1637,6 +1648,7 @@ async fn handle_delegate_tasks(
                 &task_context_files,
                 extra_ctx.as_deref(),
                 pid_clone.as_deref(),
+                &mode_clone,
                 &token_clone,
                 &overrides_clone,
                 &customs_clone,
@@ -1712,6 +1724,7 @@ async fn execute_workflow(
     parent_topic_id: &str,
     workflow: &Workflow,
     project_id: Option<&str>,
+    semaphore: Arc<Semaphore>,
     custom_profiles: &[CustomSubagentProfile],
     profile_model_overrides: &[ProfileModelOverride],
     token: &CancellationToken,
@@ -1780,6 +1793,7 @@ async fn execute_workflow(
             &arguments,
             project_id,
             &AgentMode::Auto, // 工作流步骤以 Auto 模式执行（无需用户逐个确认）
+            semaphore.clone(),
             token,
             profile_model_overrides,
             custom_profiles,
@@ -1896,6 +1910,7 @@ async fn execute_subagent(
     extra_context: Option<&str>,
     project_root: &str,
     project_id: Option<&str>,
+    agent_mode: &AgentMode,
     token: &CancellationToken,
     locale: &str,
 ) -> Result<ToolResult, String> {
@@ -2044,11 +2059,8 @@ async fn execute_subagent(
                     }
 
                     let tool_result = execute_builtin_tool(
-                        app,
-                        &tc.name,
-                        &args_val,
-                        project_id,
-                        &AgentMode::Auto, // 子 Agent 内部固定 Auto，避免权限审批阻塞
+                        app, &tc.name, &args_val, project_id,
+                        agent_mode, // AGT-03：子 Agent 继承父 agent_mode，写/删/执行按父模式走审批
                         token,
                     )
                     .await;
@@ -2303,6 +2315,7 @@ pub async fn run_agent_turn(
                 knowledge_enabled: false,
                 auto_start_enabled: false,
                 max_concurrent_subagents: None,
+                max_tool_rounds: None,
             });
 
         // 子 Agent 并发上限控制
@@ -2452,11 +2465,41 @@ pub async fn run_agent_turn(
         // 上下文预算追踪（字符级近似，保守估计）
         const CONTEXT_BUDGET_CRITICAL: usize = 95_000;
 
+        // AGT-01：可配置的单次最大工具调用轮数（默认 25，最低 1）
+        let max_rounds = app_config
+            .max_tool_rounds
+            .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS)
+            .max(1);
+        // AGT-02：Workflow 模式下提醒调用 create_workflow 的最大次数（有限次，避免无限循环）
+        let max_workflow_reminders: u32 = 2;
+        let mut workflow_reminders: u32 = 0;
+
         'outer: loop {
             round += 1;
             if token_inner.is_cancelled() {
                 was_cancelled = true;
                 break;
+            }
+
+            // AGT-01：达到最大工具调用轮数 → 优雅收尾（不 abort，产出提示后自然结束）
+            if round > max_rounds {
+                let note = "\n\n⚠️ 已达本轮最大工具调用轮数，任务未完成。如需继续，请再次发送。";
+                accumulated_content.push_str(note);
+                let _ = window.emit(
+                    "llm-chunk",
+                    StreamPayload {
+                        assistant_id: assistant_id_c.clone(),
+                        topic_id: topic_id_c.clone(),
+                        content: note.into(),
+                        done: false,
+                        error: None,
+                        input_tokens: None,
+                        output_tokens: None,
+                        context_tokens: None,
+                        images: None,
+                    },
+                );
+                break 'outer;
             }
 
             // 通知前端：新一轮开始，push 空 assistant 占位
@@ -2551,12 +2594,33 @@ pub async fn run_agent_turn(
             // 无工具调用 → 任务完成，整轮结束
             if round_result.tool_calls.is_empty() {
                 if agent_mode == AgentMode::Workflow && !workflow_called {
-                    // Workflow 模式下不允许退出——注入强制消息后继续
-                    messages_for_api.push(serde_json::json!({
-                        "role": "system",
-                        "content": "【工作流模式强制指令】你尚未调用 create_workflow 工具。请立即分析用户请求并调用 create_workflow 来创建和执行工作流。"
-                    }));
-                    continue;
+                    // Workflow 模式：提醒次数有限（max_workflow_reminders），避免无限续环（AGT-02）
+                    if workflow_reminders < max_workflow_reminders {
+                        workflow_reminders += 1;
+                        messages_for_api.push(serde_json::json!({
+                            "role": "system",
+                            "content": "【工作流模式强制指令】你尚未调用 create_workflow 工具。请立即分析用户请求并调用 create_workflow 来创建和执行工作流。"
+                        }));
+                        continue;
+                    }
+                    // 有限次提醒后模型仍拒绝 → 尊重退出信号，优雅收尾
+                    let note = "\n\n⚠️ 模型未按工作流模式调用 create_workflow，已停止。您可以切回普通/自动模式继续。";
+                    accumulated_content.push_str(note);
+                    let _ = window.emit(
+                        "llm-chunk",
+                        StreamPayload {
+                            assistant_id: assistant_id_c.clone(),
+                            topic_id: topic_id_c.clone(),
+                            content: note.into(),
+                            done: false,
+                            error: None,
+                            input_tokens: None,
+                            output_tokens: None,
+                            context_tokens: None,
+                            images: None,
+                        },
+                    );
+                    break 'outer;
                 }
                 break 'outer;
             }
@@ -2613,6 +2677,7 @@ pub async fn run_agent_turn(
                         let custom_profiles_clone = custom_profiles_c.clone();
                         let token_clone = token_inner.clone();
                         let locale_clone = locale_c.clone();
+                        let sem_clone = subagent_semaphore.clone();
                         let subagent_id = uuid::Uuid::new_v4().to_string();
                         let sid = subagent_id.clone();
                         let app_c2 = app_c.clone();
@@ -2629,6 +2694,7 @@ pub async fn run_agent_turn(
                                 &args_val_clone,
                                 project_id_clone.as_deref(),
                                 &agent_mode_clone,
+                                sem_clone,
                                 &token_clone,
                                 &profile_overrides_clone,
                                 &custom_profiles_clone,
@@ -2667,6 +2733,7 @@ pub async fn run_agent_turn(
                         let custom_profiles_clone = custom_profiles_c.clone();
                         let token_clone = token_inner.clone();
                         let locale_clone = locale_c.clone();
+                        let sem_clone = subagent_semaphore.clone();
 
                         let fut = Box::pin(async move {
                             handle_delegate_task(
@@ -2681,6 +2748,7 @@ pub async fn run_agent_turn(
                                 &args_val_clone,
                                 project_id_clone.as_deref(),
                                 &agent_mode_clone,
+                                sem_clone,
                                 &token_clone,
                                 &profile_overrides_clone,
                                 &custom_profiles_clone,
@@ -2787,6 +2855,7 @@ pub async fn run_agent_turn(
                                     &topic_id_c,
                                     &workflow,
                                     project_id_c.as_deref(),
+                                    subagent_semaphore.clone(),
                                     &custom_profiles_c,
                                     &profile_overrides_c,
                                     &token_inner,

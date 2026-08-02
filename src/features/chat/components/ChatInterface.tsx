@@ -35,7 +35,6 @@ import {
   type GeneratedImageInfo,
 } from '../../../core/store/store';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { copyFile } from '@tauri-apps/plugin-fs';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
@@ -189,6 +188,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const [branchToast, setBranchToast] = createSignal<string | null>(null);
   // 消息 DOM 元素映射（id → HTMLElement），用于退场动画
   const messageEls = new Map<string, HTMLElement>();
+  // PERF-02：仅保留当前话题仍在渲染的消息，避免跨话题/删除后累积累积 DOM 引用导致无界增长。
+  createEffect(() => {
+    const history = props.activeTopic?.history;
+    if (!Array.isArray(history)) return;
+    const live = new Set<string>();
+    for (const m of history) {
+      if (m && m.id) live.add(m.id as string);
+    }
+    for (const id of Array.from(messageEls.keys())) {
+      if (!live.has(id)) messageEls.delete(id);
+    }
+  });
   // 已撤销的消息 ID 集合（本地信号，不持久化）
   const [revertedMessages, setRevertedMessages] = createSignal<Set<string>>(new Set());
 
@@ -261,7 +272,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     try {
       const dest = await save({ defaultPath: img.name });
       if (!dest) return;
-      await copyFile(img.storagePath, dest);
+      await invoke('copy_stored_image', { src: img.storagePath, dest });
     } catch (e) {
       console.error('保存图片失败:', e);
       alert(t('error.save'));
@@ -654,9 +665,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         >
                           <Show
                             when={
-                              msg.role === 'user' &&
-                              msg.displayFiles &&
-                              msg.displayFiles.length > 0
+                              msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0
                             }
                           >
                             <div class="flex flex-col gap-2 mb-2 first:mt-3">

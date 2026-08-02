@@ -13,12 +13,21 @@ use crate::core::models::GeneratedImage;
 use base64::Engine;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+use url::Url;
 
 /// 前端 Markdown 渲染器识别本地生成图片的 URL scheme。
 pub const IMAGE_TOKEN_SCHEME: &str = "aio-image://";
 
 /// 单张图片最大字节数（20MB），超出则跳过。
 const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// 仅允许栅格图片类型落盘；拒绝 SVG 及其它非安全类型（AGT-07）。
+fn is_safe_raster_mime(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "image/avif" | "image/bmp"
+    )
+}
 
 /// 解码 `data:(image/...);base64,<data>` 形式的 data URI。
 ///
@@ -150,6 +159,11 @@ async fn save_images_to_dir(
     for url in urls {
         match fetch_image(&url).await {
             Ok(Some((mime, bytes))) => {
+                // AGT-07：拒绝 SVG 等非栅格类型，避免未消毒矢量内容落盘
+                if !is_safe_raster_mime(&mime) {
+                    tracing::warn!("跳过非栅格生成图片 mime ({:?}): {}", mime, url);
+                    continue;
+                }
                 if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
                     tracing::warn!("跳过生成图片(尺寸超限或为空): {}", url);
                     continue;
@@ -205,26 +219,60 @@ async fn save_images_to_dir(
     Ok(images)
 }
 
+/// 解析重定向 Location（支持相对路径）为绝对 URL。
+fn resolve_redirect(base: &str, location: &str) -> Option<String> {
+    Url::parse(base)
+        .ok()?
+        .join(location)
+        .ok()
+        .map(|u| u.to_string())
+}
+
 /// 获取单张图片字节。
 ///
-/// - data URI → 直接解码
-/// - http(s) → SSRF 校验后下载（30s 超时，无鉴权头）
+/// - data URI → 直接解码（mime 由调用方按安全白名单校验）
+/// - http(s) → 逐跳 SSRF 校验后下载（30s 超时，无鉴权头；重定向每跳重新校验，AGT-06/07）
 /// - 其它 → `Ok(None)`
 async fn fetch_image(url: &str) -> Result<Option<(String, Vec<u8>)>, String> {
     if url.starts_with("data:image/") {
-        Ok(decode_data_uri(url))
-    } else if url.starts_with("http://") || url.starts_with("https://") {
+        return Ok(decode_data_uri(url));
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut current = url.to_string();
+    for _hop in 0..=5u32 {
         crate::utils::url_validation::validate_http_url(
-            url,
+            &current,
             &crate::utils::url_validation::HttpUrlOptions::local_engine(),
         )
         .map_err(|e| e.to_string())?;
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
+
+        let resp = client
+            .get(&current)
+            .send()
+            .await
             .map_err(|e| e.to_string())?;
-        let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+
+        if resp.status().is_redirection() {
+            let loc = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| "重定向缺少 Location 头".to_string())?;
+            current =
+                resolve_redirect(&current, loc).ok_or_else(|| "无法解析重定向地址".to_string())?;
+            continue;
+        }
+
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
@@ -235,10 +283,10 @@ async fn fetch_image(url: &str) -> Result<Option<(String, Vec<u8>)>, String> {
             .unwrap_or("image/png")
             .to_string();
         let bytes = resp.bytes().await.map_err(|e| e.to_string())?.to_vec();
-        Ok(Some((mime, bytes)))
-    } else {
-        Ok(None)
+        return Ok(Some((mime, bytes)));
     }
+
+    Err("重定向次数超过上限 (5)".into())
 }
 
 #[cfg(test)]

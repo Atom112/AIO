@@ -2,6 +2,7 @@ pub mod attachment;
 pub mod catalog;
 pub mod config;
 pub mod engine;
+pub mod export;
 pub mod git;
 pub mod image_gen;
 pub mod llm;

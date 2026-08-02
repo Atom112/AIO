@@ -297,10 +297,17 @@ const parseSegments = (text: string): Segment[] => {
   return segments;
 };
 
+// PERF-01：有限大小的呈现缓存（内容→HTML），跳过对未变化分段重复执行 marked+hljs+DOMPurify。
+// 有界（LRU 退化版：满则清空），避免缓存自身造成内存增长。
+const RENDER_CACHE_MAX = 64;
+const renderCache = new Map<string, string>();
+
 const renderMarkdownHtml = (raw: string): string => {
   if (!raw.trim()) return '';
+  const cached = renderCache.get(raw);
+  if (cached !== undefined) return cached;
   const html = marked.parse(raw) as string;
-  return DOMPurify.sanitize(html, {
+  const out = DOMPurify.sanitize(html, {
     ADD_TAGS: [
       'button',
       'svg',
@@ -340,6 +347,11 @@ const renderMarkdownHtml = (raw: string): string => {
     ],
     USE_PROFILES: { html: true, svg: true },
   });
+  if (renderCache.size >= RENDER_CACHE_MAX) {
+    renderCache.clear();
+  }
+  renderCache.set(raw, out);
+  return out;
 };
 
 interface MarkdownProps {

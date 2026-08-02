@@ -62,6 +62,8 @@ const AppSettings: Component = () => {
   const [l, setL] = createSignal(0); // 亮度 (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
   const [knowledgeEnabled, setKnowledgeEnabled] = createSignal(false);
+  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // 单次 Agent 最大工具调用轮数（默认 25）
+  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // 并发子智能体上限（默认 5）
   const [version, setVersion] = createSignal(''); // 应用版本号
   const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
   const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
@@ -110,6 +112,12 @@ const AppSettings: Component = () => {
       }
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
+      }
+      if (typeof cfg?.maxToolRounds === 'number' && cfg.maxToolRounds > 0) {
+        setMaxToolRounds(cfg.maxToolRounds);
+      }
+      if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents > 0) {
+        setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
       }
     } catch (e) {
       console.warn('加载应用配置失败:', e);
@@ -629,6 +637,70 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
+            <span class="block text-[#eee] text-[14px]">{t('app.maxToolRounds.title')}</span>
+            <p class="text-xs text-white/35 mt-1">{t('app.maxToolRounds.description')}</p>
+          </div>
+
+          <input
+            type="number"
+            min={1}
+            max={200}
+            step={1}
+            value={maxToolRounds()}
+            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
+            onInput={async (e) => {
+              const raw = Number(e.currentTarget.value);
+              const clamped = Number.isFinite(raw)
+                ? Math.min(200, Math.max(1, Math.round(raw)))
+                : 25;
+              setMaxToolRounds(clamped);
+              try {
+                const cfg: any = await invoke('load_app_config').catch(() => null);
+                if (cfg) {
+                  await invoke('save_app_config', { config: { ...cfg, maxToolRounds: clamped } });
+                }
+              } catch (err) {
+                console.warn('保存最大工具轮数配置失败:', err);
+              }
+            }}
+          />
+        </div>
+
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div>
+            <span class="block text-[#eee] text-[14px]">
+              {t('app.maxConcurrentSubagents.title')}
+            </span>
+            <p class="text-xs text-white/35 mt-1">{t('app.maxConcurrentSubagents.description')}</p>
+          </div>
+
+          <input
+            type="number"
+            min={1}
+            max={32}
+            step={1}
+            value={maxConcurrentSubagents()}
+            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
+            onInput={async (e) => {
+              const raw = Number(e.currentTarget.value);
+              const clamped = Number.isFinite(raw) ? Math.min(32, Math.max(1, Math.round(raw))) : 5;
+              setMaxConcurrentSubagents(clamped);
+              try {
+                const cfg: any = await invoke('load_app_config').catch(() => null);
+                if (cfg) {
+                  await invoke('save_app_config', {
+                    config: { ...cfg, maxConcurrentSubagents: clamped },
+                  });
+                }
+              } catch (err) {
+                console.warn('保存并发子智能体上限配置失败:', err);
+              }
+            }}
+          />
+        </div>
+
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div>
             <span class="block text-[#eee] text-[14px]">{t('app.openSource.title')}</span>
             <p class="text-xs text-white/35 mt-1">{t('app.openSource.description')}</p>
           </div>
@@ -978,10 +1050,7 @@ const AppSettings: Component = () => {
                           <Show
                             when={!isRecording()}
                             fallback={
-                              <span
-                                class="text-[11px] font-medium"
-                                style={{ color: '#fff' }}
-                              >
+                              <span class="text-[11px] font-medium" style={{ color: '#fff' }}>
                                 {t('app.shortcuts.recording')}
                               </span>
                             }

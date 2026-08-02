@@ -1,6 +1,6 @@
 import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   datas,
   mcpServers,
@@ -397,7 +397,7 @@ const McpServerList: Component = () => {
                         class="text-[11px] hover:underline"
                         style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
                         disabled={!server.repositoryUrl && !server.websiteUrl}
-                        onClick={() => void openUrl(server.repositoryUrl || server.websiteUrl)}
+                        onClick={() => void openSafeUrl(server.repositoryUrl || server.websiteUrl)}
                       >
                         Official MCP Registry
                       </button>

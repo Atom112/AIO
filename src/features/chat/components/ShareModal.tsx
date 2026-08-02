@@ -14,8 +14,8 @@ import {
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { toCanvas, toPng } from 'html-to-image';
+import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { jsPDF } from 'jspdf';
@@ -49,7 +49,7 @@ async function downloadBlob(content: string | Blob, filename: string, mime: stri
     const buf = new Uint8Array(await blob.arrayBuffer());
     const filePath = await save({ defaultPath: filename });
     if (filePath) {
-      await writeFile(filePath, buf);
+      await invoke('save_binary_file', { path: filePath, bytes: Array.from(buf) });
       return;
     }
     // 用户取消了保存对话框 → 静默结束
@@ -386,7 +386,10 @@ const ShareModal: Component<ShareModalProps> = (props) => {
       });
 
       if (filePath) {
-        await writeFile(filePath, new Uint8Array(pdfBytes));
+        await invoke('save_binary_file', {
+          path: filePath,
+          bytes: Array.from(new Uint8Array(pdfBytes)),
+        });
       }
     } catch (e) {
       console.error('PDF export failed:', e);

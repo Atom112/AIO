@@ -217,3 +217,158 @@ pub fn assign_to_job(child: &std::process::Child) -> Result<(), String> {
         Ok(())
     }
 }
+
+// ====== Linux / macOS 命令沙箱（AGT-05） ======
+//
+// 在 Unix 上 Agent 命令默认无进程隔离。这里做 best-effort 包装：
+// - Linux：若 `bwrap`(bubblewrap) 可用，以“系统只读 + 仅项目目录可写 + 私有 /tmp +
+//   独立 PID 命名空间”的方式执行；命令可正常联网/写项目，无法写到系统其它位置。
+// - macOS：若 `sandbox-exec` 可用，以 SBPL 配置“仅项目目录可写”。
+// 两者都仅在对应工具存在时启用；不存在则回退原生执行（由 `setpgid` 进程组清理兜底），
+// 保证任何环境都不会因缺失依赖而回归。
+
+/// 在 PATH 中查找可执行文件（仅 Unix 使用）。
+#[cfg(unix)]
+fn find_in_path(bin: &str) -> bool {
+    let path = match std::env::var_os("PATH") {
+        Some(p) => p,
+        None => return false,
+    };
+    std::env::split_paths(&path).any(|d| d.join(bin).is_file())
+}
+
+/// Linux bubblewrap 包装 argv（完整替换“sh -c cmd”的启动 argv）。纯函数，跨平台可单测。
+#[allow(dead_code)]
+pub fn build_bwrap_argv(
+    project_root: &str,
+    shell: &str,
+    shell_arg: &str,
+    command: &str,
+) -> Option<Vec<String>> {
+    let root = std::path::Path::new(project_root)
+        .canonicalize()
+        .ok()?
+        .to_string_lossy()
+        .into_owned();
+    Some(vec![
+        "bwrap".into(),
+        "--die-with-parent".into(),
+        "--new-session".into(),
+        "--ro-bind".into(),
+        "/".into(),
+        "/".into(),
+        "--bind".into(),
+        root.clone(),
+        root.clone(),
+        "--tmpfs".into(),
+        "/tmp".into(),
+        "--dev".into(),
+        "/dev".into(),
+        "--proc".into(),
+        "/proc".into(),
+        "--unshare-pid".into(),
+        "--unshare-user".into(),
+        "--".into(),
+        shell.to_string(),
+        shell_arg.to_string(),
+        command.to_string(),
+    ])
+}
+
+/// macOS sandbox-exec 包装 argv（写保护：仅项目目录可写）。纯函数，跨平台可单测。
+#[allow(dead_code)]
+pub fn build_sandbox_exec_argv(
+    project_root: &str,
+    shell: &str,
+    shell_arg: &str,
+    command: &str,
+) -> Option<Vec<String>> {
+    let root = std::path::Path::new(project_root)
+        .canonicalize()
+        .ok()?
+        .to_string_lossy()
+        .into_owned();
+    let profile = format!(
+        "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{}\"))\n",
+        root
+    );
+    Some(vec![
+        "sandbox-exec".into(),
+        "-p".into(),
+        profile,
+        shell.to_string(),
+        shell_arg.to_string(),
+        command.to_string(),
+    ])
+}
+
+/// 若可用则为命令返回替换后的启动 argv（argv[0] 为沙箱二进制）；否则 None（保持原生执行）。
+/// Windows 走 Job Object，恒返回 None。
+#[allow(unused_variables)]
+pub fn sandbox_command_prefix(
+    shell: &str,
+    shell_arg: &str,
+    command: &str,
+    project_root: &str,
+) -> Option<Vec<String>> {
+    #[cfg(target_os = "linux")]
+    {
+        if !find_in_path("bwrap") {
+            return None;
+        }
+        build_bwrap_argv(project_root, shell, shell_arg, command)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if !find_in_path("sandbox-exec") {
+            return None;
+        }
+        build_sandbox_exec_argv(project_root, shell, shell_arg, command)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bwrap_argv_shape() {
+        let root = std::env::temp_dir();
+        let root = root.to_string_lossy().into_owned();
+        let argv = build_bwrap_argv(&root, "sh", "-c", "echo hi").expect("argl");
+        assert_eq!(argv[0], "bwrap");
+        assert!(argv.contains(&"--die-with-parent".to_string()));
+        assert!(argv.contains(&"--ro-bind".to_string()));
+        assert!(argv.contains(&"--unshare-pid".to_string()));
+        let n = argv.len();
+        assert_eq!(
+            &argv[n - 4..],
+            &[
+                "--".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo hi".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_exec_argv_shape() {
+        let root = std::env::temp_dir();
+        let root = root.to_string_lossy().into_owned();
+        let argv = build_sandbox_exec_argv(&root, "sh", "-c", "echo hi").expect("argv");
+        assert_eq!(argv[0], "sandbox-exec");
+        assert_eq!(argv[1], "-p");
+        assert!(argv[2].contains("deny file-write*"));
+        assert!(argv[2].contains("(subpath \""));
+        let n = argv.len();
+        assert_eq!(
+            &argv[n - 3..],
+            &["sh".to_string(), "-c".to_string(), "echo hi".to_string()]
+        );
+    }
+}

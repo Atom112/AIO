@@ -395,7 +395,13 @@ pub struct AppConfig {
     /// 最大并发子智能体数量（None = 使用默认值 5）。用于限制 delegate_tasks 和多个 delegate_task 的并发数。
     #[serde(default, rename = "maxConcurrentSubagents")]
     pub max_concurrent_subagents: Option<u32>,
+    /// 单次 Agent 运行最大工具调用轮数（None = 使用默认值）。命中时优雅收尾而非硬中断，防无界 API 成本。
+    #[serde(default, rename = "maxToolRounds")]
+    pub max_tool_rounds: Option<u32>,
 }
+
+/// 单次 Agent 运行默认最大工具调用轮数。
+pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 25;
 
 fn default_auto_retry_enabled() -> bool {
     true

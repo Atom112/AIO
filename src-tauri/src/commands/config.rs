@@ -19,6 +19,21 @@ struct AppConfigDisk {
     knowledge_enabled: bool,
     #[serde(default, rename = "autoStartEnabled")]
     auto_start_enabled: bool,
+    #[serde(default = "default_max_tool_rounds", rename = "maxToolRounds")]
+    max_tool_rounds: u32,
+    #[serde(
+        default = "default_max_concurrent_subagents",
+        rename = "maxConcurrentSubagents"
+    )]
+    max_concurrent_subagents: u32,
+}
+
+fn default_max_tool_rounds() -> u32 {
+    crate::core::models::DEFAULT_MAX_TOOL_ROUNDS
+}
+
+fn default_max_concurrent_subagents() -> u32 {
+    5
 }
 
 /// 保存应用程序通用配置
@@ -51,6 +66,10 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
         local_model_path: config.local_model_path,
         knowledge_enabled: config.knowledge_enabled,
         auto_start_enabled: config.auto_start_enabled,
+        max_tool_rounds: config
+            .max_tool_rounds
+            .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS),
+        max_concurrent_subagents: config.max_concurrent_subagents.unwrap_or(5),
     };
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
     // 原子写入
@@ -86,7 +105,8 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     auto_retry_delay_ms: 500,
                     knowledge_enabled: disk.knowledge_enabled,
                     auto_start_enabled: disk.auto_start_enabled,
-                    max_concurrent_subagents: None,
+                    max_concurrent_subagents: Some(disk.max_concurrent_subagents),
+                    max_tool_rounds: Some(disk.max_tool_rounds),
                 });
             }
             // 兼容旧 schema（含明文 api_key）：读出后迁出到 keyring
@@ -104,6 +124,8 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     local_model_path: legacy.local_model_path.clone(),
                     knowledge_enabled: false,
                     auto_start_enabled: false,
+                    max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
+                    max_concurrent_subagents: 5,
                 };
                 disk.api_url = legacy.api_url;
                 disk.default_model = legacy.default_model;
@@ -122,7 +144,8 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     auto_retry_delay_ms: 500,
                     knowledge_enabled: false,
                     auto_start_enabled: false,
-                    max_concurrent_subagents: None,
+                    max_concurrent_subagents: Some(disk.max_concurrent_subagents),
+                    max_tool_rounds: Some(disk.max_tool_rounds),
                 });
             }
         }
@@ -139,6 +162,7 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
         knowledge_enabled: false,
         auto_start_enabled: false,
         max_concurrent_subagents: None,
+        max_tool_rounds: None,
     })
 }
 
@@ -293,13 +317,26 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
     Ok(assistants)
 }
 
-#[tauri::command]
-pub async fn save_assistant(
-    state: tauri::State<'_, DbState>,
-    assistant: Assistant,
-) -> Result<(), String> {
-    let conn = state.0.lock();
+/// 同步执行助手持久化（在 spawn_blocking 中调用，避免阻塞异步运行时 —— PERF-05）。
+///
+/// 外层包一个 SQLite 事务（PERF-03）：避免逐条自动提交的大量 fsync，随历史增长显著降本。
+fn persist_assistant(conn: &rusqlite::Connection, assistant: &Assistant) -> Result<(), String> {
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| e.to_string())?;
+    let result = persist_assistant_inner(conn, assistant);
+    if result.is_ok() {
+        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+    } else {
+        let _ = conn.execute_batch("ROLLBACK");
+    }
+    result
+}
 
+/// persist_assistant 的事务内主体。
+fn persist_assistant_inner(
+    conn: &rusqlite::Connection,
+    assistant: &Assistant,
+) -> Result<(), String> {
     // 1. 保存/更新助手基本信息
     let mcp_ids_json =
         serde_json::to_string(&assistant.mcp_server_ids).unwrap_or_else(|_| "[]".to_string());
@@ -329,15 +366,15 @@ pub async fn save_assistant(
 
     for db_id in db_topic_ids {
         if !current_topic_ids.contains(&db_id) {
-            let attachment_ids = attachment_ids_for_topic(&conn, &db_id)?;
+            let attachment_ids = attachment_ids_for_topic(conn, &db_id)?;
             conn.execute("DELETE FROM topics WHERE id = ?", params![db_id])
                 .map_err(|e| e.to_string())?;
-            cleanup_attachment_ids(&conn, &attachment_ids)?;
+            cleanup_attachment_ids(conn, &attachment_ids)?;
         }
     }
 
     // 3. 遍历话题执行增量同步
-    for topic in assistant.topics {
+    for topic in &assistant.topics {
         conn.execute(
             "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7",
@@ -363,14 +400,14 @@ pub async fn save_assistant(
         drop(message_stmt);
         for db_message_id in db_message_ids {
             if !current_message_ids.contains(&db_message_id) {
-                let attachment_ids = attachment_ids_for_message(&conn, &db_message_id)?;
+                let attachment_ids = attachment_ids_for_message(conn, &db_message_id)?;
                 conn.execute("DELETE FROM messages WHERE id = ?1", [&db_message_id])
                     .map_err(|e| e.to_string())?;
-                cleanup_attachment_ids(&conn, &attachment_ids)?;
+                cleanup_attachment_ids(conn, &attachment_ids)?;
             }
         }
 
-        for msg in topic.history {
+        for msg in &topic.history {
             // 假设 Message 结构体现在也有了 id 字段
             let msg_id = msg
                 .id
@@ -403,11 +440,22 @@ pub async fn save_assistant(
                    images_json = excluded.images_json",
                 params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok()],
             ).map_err(|e| e.to_string())?;
-            sync_message_attachments(&conn, &msg_id, msg.display_files.as_ref())?;
+            sync_message_attachments(conn, &msg_id, msg.display_files.as_ref())?;
         }
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn save_assistant(app: tauri::AppHandle, assistant: Assistant) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let db_state = app.state::<DbState>();
+        let conn = db_state.0.lock();
+        persist_assistant(&conn, &assistant)
+    })
+    .await
+    .map_err(|e| format!("保存助手线程失败: {e}"))?
 }
 
 #[tauri::command]

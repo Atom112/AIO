@@ -229,13 +229,13 @@ function mdToHtml(md: string): string {
     (_m, lang, code: string) => `<pre><code>${escapeHtml(code.trimEnd())}</code></pre>`,
   );
   // 行内代码 `...`
-  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  html = html.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${escapeHtml(code)}</code>`);
   // 粗体 **...**
-  html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, (_m, s: string) => `<strong>${escapeHtml(s)}</strong>`);
   // 斜体 *...*
-  html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+  html = html.replace(/\*([^*\n]+)\*/g, (_m, s: string) => `<em>${escapeHtml(s)}</em>`);
   // 列表项 - ...
-  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/^- (.+)$/gm, (_m, s: string) => `<li>${escapeHtml(s)}</li>`);
   // wrap consecutive <li> in <ul>
   html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
   // 双换行 → 段落

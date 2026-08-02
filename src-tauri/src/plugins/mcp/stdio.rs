@@ -20,6 +20,41 @@ use tokio::process::{Child, Command};
 
 pub struct StdioPlugin;
 
+/// MCP stdio 子进程透传的系统环境变量白名单（CONF-04）。
+/// 不再继承完整宿主环境，仅放行 node/npm/npx 与常见 MCP server 运行必需项 +
+/// 常用代理/区域设置；用户对该 server 显式配置的 env 可在此基础上追加/覆盖。
+fn inherited_env_whitelist() -> std::collections::HashMap<String, String> {
+    const KEYS: &[&str] = &[
+        "PATH",
+        "HOME",
+        "USER",
+        "USERNAME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "PATHEXT",
+        "ComSpec",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "NO_PROXY",
+    ];
+    let mut out = std::collections::HashMap::new();
+    for k in KEYS {
+        if let Some(v) = std::env::var_os(k) {
+            out.insert(k.to_string(), v.to_string_lossy().into_owned());
+        }
+    }
+    out
+}
+
 #[async_trait]
 impl super::McpServerPlugin for StdioPlugin {
     fn identifier(&self) -> &'static str {
@@ -54,8 +89,9 @@ impl super::McpServerPlugin for StdioPlugin {
         let program = command.clone();
 
         // 构造 tokio::process::Command
-        // 继承系统 env（npx/node 依赖 PATH/APPDATA/TEMP 等），用户配置的 env 覆盖同名变量。
+        // CONF-04：不继承完整系统 env，先清空再透传白名单 + 用户显式配置的 env（用户配置覆盖白名单）。
         let mut cmd = Command::new(&program);
+        cmd.env_clear().envs(inherited_env_whitelist());
         cmd.args(&args)
             .envs(env)
             .stdin(Stdio::piped())

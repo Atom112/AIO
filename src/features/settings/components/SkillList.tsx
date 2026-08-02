@@ -9,7 +9,7 @@ import {
   onMount,
 } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   datas,
   saveSingleAssistantToBackend,
@@ -585,7 +585,7 @@ const SkillList: Component = () => {
                         <button
                           class="text-xs font-mono truncate hover:underline"
                           style={{ color: 'rgba(var(--primary-rgb),0.8)' }}
-                          onClick={() => void openUrl(skill.sourceUrl)}
+                          onClick={() => void openSafeUrl(skill.sourceUrl)}
                         >
                           {skill.owner}/{skill.repo}
                         </button>
@@ -681,7 +681,7 @@ const SkillList: Component = () => {
                       <button
                         class="px-2 py-1 rounded text-xs"
                         style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                        onClick={() => void openUrl(skill.sourceUrl!)}
+                        onClick={() => void openSafeUrl(skill.sourceUrl!)}
                       >
                         {t('skill.source')}
                       </button>

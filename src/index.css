@@ -197,6 +197,35 @@
   }
 }
 
+/* ── PERF-04：Linux/WebKitGTK 性能降级（仅该平台生效，win/mac 视觉不变） ── */
+[data-webkitgtk] *,
+[data-webkitgtk] *::before,
+[data-webkitgtk] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 消息动画在 WebKitGTK 上改为仅 opacity，避免大元素 transform 反复栅格化 */
+[data-webkitgtk] {
+  --animate-message-in: message-in-kgtk 0.4s ease-out forwards;
+  --animate-message-out: message-out-kgtk 0.25s ease-in forwards;
+}
+@keyframes message-in-kgtk {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes message-out-kgtk {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 @keyframes shimmer {
   0% {
     background-position: -200% 0;

@@ -1,6 +1,6 @@
 [package]
 name = "aio"
-version = "0.7.5"
+version = "0.7.6"
 description = "A lightweight cross-platform AI assistant desktop client"
 authors = ["Loch"]
 edition = "2021"

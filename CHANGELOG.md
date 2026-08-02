@@ -2,6 +2,34 @@
 
 # Changelog
 
+## [v0.7.6]
+
+<sup>Released on **2026-08-02**</sup>
+
+### 🛡 Security（安全加固）
+
+- **Agent 工具循环上限（AGT-01/02）**：单次 Agent 最大工具调用轮数可配置（默认 25，设置 → 应用 → 最大工具调用轮数），命中时优雅收尾而非硬中断；Workflow 模式强制续环改为最多 2 次提醒后退出，避免无界 API 成本
+- **子智能体权限继承（AGT-03）**：子智能体工具执行继承父 Agent 模式，Normal/Plan 下写删/执行按父模式走审批，profile 工具白名单保留
+- **子智能体并发上限统一（AGT-11）**：单发/后台 `delegate_task` 与批量 `delegate_tasks` 共享同一并发信号量（默认 5，可配置），后台子智能体跨轮不再无界累积
+- **web_fetch SSRF 加固（AGT-06/07）**：逐跳重定向 SSRF 校验；生成图片仅允许栅格格式并拒绝 SVG
+- **Linux/macOS 命令沙箱（AGT-05）**：bwrap（Linux）/ sandbox-exec（macOS）+ setpgid 进程组清理
+- **capability 收窄（CONF-02）**：`fs:allow-write-file` 由 `$HOME/**` 收窄到 `$APPDATA/**`，导出/另存改走 Rust 命令
+- **MCP 环境白名单化（CONF-04）**：stdio 子进程仅透传必要环境变量 + 用户显式配置
+- **导出 HTML 注入修复（D5）**、外链 scheme 校验（D4）、glob `**` 权限匹配（AGT-08）
+
+### ⚡️ Performance（性能）
+
+- **WebKitGTK（Linux）性能降级**：`backdrop-filter` 关闭、消息动画改纯 opacity，Windows/macOS 视觉不变
+- Markdown 渲染缓存、聊天历史 `messageEls` 剪枝、持久化单事务、`save_assistant` 走 `spawn_blocking`
+
+### 🐛 Fixed（其它修复）
+
+- 修复审查发现的格式漂移（prettier 四文件）
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.7.6]: https://github.com/Atom112/AIO/releases/tag/v0.7.6
+
 ## [v0.7.5]
 
 <sup>Released on **2026-07-29**</sup>

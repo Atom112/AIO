@@ -70,10 +70,6 @@ const UsageSummaryCards: Component<Props> = (props) => {
     return { input, output, cached, requests, activeDays: props.summary.length };
   });
 
-  // 缓存命中率 = 命中输入 / 总输入（所选时间范围）
-  const cacheHitPct = () =>
-    totals().input > 0 ? Math.round((totals().cached / totals().input) * 100) : 0;
-
   const cost = createMemo(() => {
     let total = 0;
     const cat = catalog();
@@ -86,7 +82,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
   const totalTokens = () => totals().input + totals().output;
 
   return (
-    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
       {/* 总 Token */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
@@ -185,31 +181,6 @@ const UsageSummaryCards: Component<Props> = (props) => {
         </span>
         <span class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
           {t('usage.daysRecorded')}
-        </span>
-      </div>
-
-      {/* 缓存命中率 */}
-      <div
-        class="rounded-xl p-4 flex flex-col gap-1.5"
-        style={{
-          background: 'rgba(var(--text-base-rgb), 0.035)',
-          border: '1px solid var(--border-dim)',
-        }}
-      >
-        <span
-          class="text-[10px] uppercase tracking-widest font-bold"
-          style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
-        >
-          {t('usage.cacheHitRate')}
-        </span>
-        <span
-          class="text-xl font-bold font-mono"
-          style={{ color: totals().cached > 0 ? '#22c55e' : 'rgba(var(--text-base-rgb),0.45)' }}
-        >
-          {cacheHitPct()}%
-        </span>
-        <span class="text-[10px] font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
-          {fmt(totals().cached)} / {fmt(totals().input)}
         </span>
       </div>
     </div>

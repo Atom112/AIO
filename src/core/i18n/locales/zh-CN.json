@@ -813,7 +813,6 @@
   "usage.count": "{{count}} 次",
   "usage.dailyActivity": "每日活动",
   "usage.daysRecorded": "天有使用记录",
-  "usage.cacheHitRate": "缓存命中率",
   "usage.estimatedCost": "预估费用",
   "usage.inputTokens": "输入 Token",
   "usage.less": "少",

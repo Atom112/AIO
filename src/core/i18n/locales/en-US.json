@@ -813,7 +813,6 @@
   "usage.count": "{{count}} times",
   "usage.dailyActivity": "Daily activity",
   "usage.daysRecorded": "days with usage",
-  "usage.cacheHitRate": "Cache Hit Rate",
   "usage.estimatedCost": "Estimated cost",
   "usage.inputTokens": "Input tokens",
   "usage.less": "Less",

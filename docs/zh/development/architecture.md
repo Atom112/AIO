@@ -43,14 +43,14 @@ Rust commands
 - `commands/lsp.rs`、`commands/git.rs`：项目语言服务和 Git 操作。
 - `commands/memory.rs`、`commands/embedding.rs`：项目记忆（RAG）事实 CRUD/检索与嵌入供给；
 - `services/memory/`：每项目记忆库（facts + FTS5 + 向量打分）、混合检索与记忆工具；
-- `plugins/embed/`：嵌入（向量化）插件（Ollama / OpenAI 兼容）。
+- `plugins/embed/`：嵌入（向量化）插件（本地内置 / 在线 OpenAI 兼容）。
 
 ## 插件边界
 
 - Provider：Google、Anthropic、Ollama 和 OpenAI-compatible。
 - Local Engine：llama.cpp、Ollama 与 vLLM（通过引擎扫描自动发现，参见 [providers-and-models.md → 引擎扫描](../usage/providers-and-models.md#引擎扫描与自动发现)）。
 - MCP Transport：stdio、HTTP 与 Streamable HTTP。
-- Embed：Ollama 与 OpenAI 兼容的文本嵌入（向量化），为项目记忆提供语义检索。
+- Embed：本地内置与在线 OpenAI 兼容的文本嵌入（向量化），为项目记忆提供语义检索。
 - LSP：管理不同语言服务器的启动、请求、诊断和关闭。
 
 Manager 在启动时注册插件，command 根据标识符查找实现。新增实现应复用现有 trait，不新增平行调度层。
@@ -119,7 +119,7 @@ Agent 中止或流式事件失败时，已经产生的步骤、工具输出和�
 
 启用 `knowledgeEnabled` 后，系统提示词注入 `.aio/knowledge.json` 中的现有条目，并向 Agent 增加 `remember`、`recall` 工具。知识按项目隔离、按 key 更新，最多保留 50 条。
 
-启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入由 `plugins/embed` 提供（Ollama 默认，或 OpenAI 兼容），未配置嵌入时自动降级为关键词检索。
+启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入由 `plugins/embed` 提供（本地内置 all-MiniLM-L6-v2 开箱即用、离线可用，或切换在线 OpenAI 兼容 API），未配置嵌入时自动降级为关键词检索。本地模型随应用打包，无需下载与配置。
 
 P2 起实现自进化：Agent 轮次结束后后台异步提取事实（sleep-time compute，去抖 + 每项目开关），写入时对向量近邻高分事实由 LLM 仲裁（merge / update / supersede / keep_separate，失败 fail-safe），`fact_versions` 表记录完整版本审计链；每项目活跃事实超过上限时按 importance 乘访问衰减归档最低分非 pinned 事实。前端提供记忆面板（搜索 / 列表 / 编辑 / 钉住 / 归档 / 删除 / 版本历史 / 重建索引 / 清理超额 / 清空）。
 

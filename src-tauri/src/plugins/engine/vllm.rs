@@ -426,6 +426,10 @@ mod tests {
         }
     }
 
+    // 下列测试会读写进程级环境变量（HOME / CONDA_PREFIX / VIRTUAL_ENV），
+    // Rust 测试并行运行时会相互竞争导致偶发失败，故用全局锁串行化。
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn find_python_prefers_path_name_when_working() {
         let result = find_python_impl(|c| c == "python3");
@@ -436,6 +440,7 @@ mod tests {
     fn find_python_falls_back_to_home_venv() {
         let tmp = std::env::temp_dir().join(format!("aio-vllm-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
+        let _guard = ENV_LOCK.lock().unwrap();
         let old_home = std::env::var_os("HOME");
         std::env::set_var("HOME", &tmp);
         // Remove other vars to isolate
@@ -468,8 +473,8 @@ mod tests {
 
     #[test]
     fn python_candidates_includes_local_bin() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // 验证 ~/.local/bin/python3 在候选列表中（HOME 设置了才生效）
-        // 使用当前进程的 HOME 而非设置临时 HOME，避免并行测试的 env 竞争
         if let Ok(home) = std::env::var("HOME") {
             let candidates = python_candidates();
             let expected = Path::new(&home)
@@ -489,6 +494,7 @@ mod tests {
 
     #[test]
     fn python_candidates_starts_with_path_names() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // 验证候选列表的前两个条目是 PATH 名称
         let old_conda = std::env::var_os("CONDA_PREFIX");
         let old_venv = std::env::var_os("VIRTUAL_ENV");
@@ -505,6 +511,7 @@ mod tests {
 
     #[test]
     fn find_python_with_vllm_returns_err_when_not_installed() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // 当没有任何 Python 安装了 vllm 时，应返回 Err（而非 panic）
         // 使用一个不存在的路径作为 HOME 来隔离系统环境干扰
         let old_home = std::env::var_os("HOME");

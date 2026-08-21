@@ -374,11 +374,11 @@ pub struct ModelsResponse {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MemoryEmbeddingConfig {
-    /// 嵌入 provider：ollama | openai_compat
+    /// 嵌入 provider：local（内置，开箱即用）| online（在线 OpenAI 兼容）
     pub provider: String,
-    /// 嵌入模型名，如 bge-m3:latest / text-embedding-3-small
+    /// 嵌入模型名（local 时为内置模型名；online 时为所选在线模型）
     pub model: String,
-    /// 服务地址：Ollama base 或 OpenAI 兼容 /v1 前缀；空 = Ollama 默认本地 11434
+    /// 在线服务地址（OpenAI 兼容 /v1 前缀）；local 时忽略
     pub api_url: String,
     /// 向量维度（配置值；实际以首次嵌入返回为准）
     pub dimensions: usize,
@@ -392,10 +392,10 @@ pub struct MemoryEmbeddingConfig {
 impl Default for MemoryEmbeddingConfig {
     fn default() -> Self {
         Self {
-            provider: "ollama".into(),
-            model: "bge-m3:latest".into(),
+            provider: "local".into(),
+            model: "all-MiniLM-L6-v2".into(),
             api_url: String::new(),
-            dimensions: 1024,
+            dimensions: 384,
             enabled: true,
             api_key: String::new(),
         }

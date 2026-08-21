@@ -60,3 +60,4 @@ lsp-types = "0.97"
 tiktoken-rs = "0.6"
 auto-launch = "0.6"
 sqlite-vec = "0.1.9"
+fastembed = { version = "4", default-features = false, features = ["ort-download-binaries"] }

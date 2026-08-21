@@ -60,8 +60,8 @@
 ## 新增嵌入 Provider（Embedder）
 
 1. 在 `src-tauri/src/plugins/embed/` 添加实现，实现 `Embedder` trait（`id`、`model_key`、`dimensions`、`embed`、`is_available`），trait 使用 `async_trait` 以保证 dyn-compatible。
-2. 在 `EmbedderManager` 或 `resolve()` 的匹配分支登记（`ollama` / `openai_compat` 之外的新 id）。
-3. 嵌入 provider/模型为全局配置（`AppConfig.memoryEmbedding`），API Key 走 `secure_store`（account `embedding_api_key`），不落盘。
+2. 在 `EmbedderManager` 或 `resolve()` 的匹配分支登记（`local` / `openai_compat` 之外的新 id）。
+3. 嵌入 provider/模型为全局配置（`AppConfig.memoryEmbedding`，`local` 为随应用打包的内置模型，`online` 为 OpenAI 兼容在线端点），API Key 走 `secure_store`（account `embedding_api_key`），不落盘。
 4. 新增 provider 时同步扩展 `embedding_test` 的配置注入与前端 provider 选择。
 
 ## 验证

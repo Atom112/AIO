@@ -99,7 +99,7 @@ export interface MemoryListPage {
 
 /** 嵌入配置（与后端 MemoryEmbeddingConfig 对应） */
 export interface MemoryEmbeddingConfig {
-  provider: 'ollama' | 'openai_compat';
+  provider: 'local' | 'online';
   model: string;
   apiUrl: string;
   dimensions: number;
@@ -114,23 +114,5 @@ export interface EmbeddingTestResult {
   model: string;
   dimensions: number;
   latencyMs: number;
-  error?: string;
-}
-
-/** Ollama 模型信息 */
-export interface OllamaModelInfo {
-  name: string;
-  sizeBytes: number;
-  digest?: string;
-}
-
-/** embedding-download-progress 事件负载 */
-export interface EmbeddingDownloadProgress {
-  provider: string;
-  model: string;
-  status: string;
-  completed?: number;
-  total?: number;
-  digest?: string;
   error?: string;
 }

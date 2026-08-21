@@ -1,8 +1,8 @@
-//! 嵌入（向量化）插件层：Ollama 与 OpenAI 兼容 /v1/embeddings。
+//! 嵌入（向量化）插件层：本地内置（开箱即用）与在线 OpenAI 兼容 /v1/embeddings。
 //!
 //! 设计遵循 extensions.md 的插件规范：trait + 独立实现 + 注册表（EmbedderManager）。
 
-pub mod ollama;
+pub mod local_onnx;
 pub mod openai_compat;
 
 use crate::core::models::MemoryEmbeddingConfig;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 /// 向量化插件 trait。
 #[async_trait::async_trait]
 pub trait Embedder: Send + Sync {
-    /// 插件标识：ollama | openai_compat
+    /// 插件标识：local | openai_compat
     fn id(&self) -> &str;
     /// 当前嵌入模型名。
     fn model_key(&self) -> String;
@@ -41,9 +41,10 @@ pub fn resolve(cfg: &MemoryEmbeddingConfig) -> Result<Arc<dyn Embedder>, String>
     if !cfg.enabled {
         return Err("嵌入未启用".into());
     }
+    // 兼容旧配置：ollama（已移除本地自选）归入内置；openai_compat 即在线。
     match cfg.provider.as_str() {
-        "ollama" => Ok(Arc::new(ollama::OllamaEmbedder::new(cfg))),
-        "openai_compat" => Ok(Arc::new(openai_compat::OpenAiCompatEmbedder::new(cfg)?)),
+        "local" | "ollama" => Ok(Arc::new(local_onnx::LocalEmbedder::new(cfg))),
+        "online" | "openai_compat" => Ok(Arc::new(openai_compat::OpenAiCompatEmbedder::new(cfg)?)),
         other => Err(format!("不支持的嵌入 provider: {other}")),
     }
 }

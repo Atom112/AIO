@@ -27,17 +27,17 @@ AIO 使用 Tauri 提供的应用数据目录和系统配置目录，应用标识
 
 `config.json` 当前持久化：
 
-| 字段                          | 行为                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `api_url`                     | 兼容旧版的默认 API URL                                                                       |
-| `default_model`               | 兼容旧版的默认模型                                                                           |
-| `local_model_path`            | 兼容旧版的本地模型路径                                                                       |
-| `knowledgeEnabled`            | 是否启用项目跨会话记忆，默认 `false`                                                         |
-| `memoryEnabled`               | 项目级语义记忆（RAG）的全局默认，默认 `false`；每项目可在项目设置中覆盖                      |
-| `memoryEmbedding`             | 嵌入配置：`provider`（`ollama`/`openai_compat`）、`model`、`apiUrl`、`dimensions`、`enabled` |
-| `memoryMaxFacts`              | 每项目活跃事实上限，默认 `2000`                                                              |
-| `memoryInjectionBudgetTokens` | 记忆注入系统提示词的 token 预算，默认 `3000`                                                 |
-| `autoStartEnabled`            | 是否随系统启动，默认 `false`                                                                 |
+| 字段                          | 行为                                                                                                                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_url`                     | 兼容旧版的默认 API URL                                                                                                                                                                       |
+| `default_model`               | 兼容旧版的默认模型                                                                                                                                                                           |
+| `local_model_path`            | 兼容旧版的本地模型路径                                                                                                                                                                       |
+| `knowledgeEnabled`            | 是否启用项目跨会话记忆，默认 `false`                                                                                                                                                         |
+| `memoryEnabled`               | 项目级语义记忆（RAG）的全局默认，默认 `false`；每项目可在项目设置中覆盖                                                                                                                      |
+| `memoryEmbedding`             | 嵌入配置：`provider`（`local`=随应用打包的内置模型，`online`=OpenAI 兼容在线端点）、`model`、`apiUrl`、`dimensions`、`enabled`；默认 `local`（all-MiniLM-L6-v2，384 维，开箱即用、离线可用） |
+| `memoryMaxFacts`              | 每项目活跃事实上限，默认 `2000`                                                                                                                                                              |
+| `memoryInjectionBudgetTokens` | 记忆注入系统提示词的 token 预算，默认 `3000`                                                                                                                                                 |
+| `autoStartEnabled`            | 是否随系统启动，默认 `false`                                                                                                                                                                 |
 
 后端 `AppConfig` 还包含以下运行字段：
 

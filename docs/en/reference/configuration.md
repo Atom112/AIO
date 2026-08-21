@@ -27,17 +27,17 @@ The repository retains legacy read/write paths for `activated_models.json` and `
 
 `config.json` currently persists:
 
-| Field                         | Behavior                                                                                                                   |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `api_url`                     | Default API URL for backward compatibility                                                                                 |
-| `default_model`               | Default model for backward compatibility                                                                                   |
-| `local_model_path`            | Local model path for backward compatibility                                                                                |
-| `knowledgeEnabled`            | Whether cross-session project memory is enabled, default `false`                                                           |
-| `memoryEnabled`               | Global default for project-level semantic memory (RAG), default `false`; can be overridden per project in project settings |
-| `memoryEmbedding`             | Embedding config: `provider` (`ollama`/`openai_compat`), `model`, `apiUrl`, `dimensions`, `enabled`                        |
-| `memoryMaxFacts`              | Max active facts per project, default `2000`                                                                               |
-| `memoryInjectionBudgetTokens` | Token budget for injecting memory into the system prompt, default `3000`                                                   |
-| `autoStartEnabled`            | Whether to launch at system startup, default `false`                                                                       |
+| Field                         | Behavior                                                                                                                                                                                                             |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_url`                     | Default API URL for backward compatibility                                                                                                                                                                           |
+| `default_model`               | Default model for backward compatibility                                                                                                                                                                             |
+| `local_model_path`            | Local model path for backward compatibility                                                                                                                                                                          |
+| `knowledgeEnabled`            | Whether cross-session project memory is enabled, default `false`                                                                                                                                                     |
+| `memoryEnabled`               | Global default for project-level semantic memory (RAG), default `false`; can be overridden per project in project settings                                                                                           |
+| `memoryEmbedding`             | Embedding config: `provider` (`local`=bundled in-app model, `online`=OpenAI-compatible endpoint), `model`, `apiUrl`, `dimensions`, `enabled`; default `local` (all-MiniLM-L6-v2, 384 dims, out-of-the-box & offline) |
+| `memoryMaxFacts`              | Max active facts per project, default `2000`                                                                                                                                                                         |
+| `memoryInjectionBudgetTokens` | Token budget for injecting memory into the system prompt, default `3000`                                                                                                                                             |
+| `autoStartEnabled`            | Whether to launch at system startup, default `false`                                                                                                                                                                 |
 
 The backend `AppConfig` also includes the following runtime fields:
 

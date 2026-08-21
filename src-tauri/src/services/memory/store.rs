@@ -253,7 +253,7 @@ impl MemoryStore {
                 .optional()
                 .map_err(|e| e.to_string())?
                 .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(1024);
+                .unwrap_or(384);
             crate::services::memory::vec0::ensure_vec_table(&conn, dim)
                 .map_err(|e| e.to_string())?;
         }

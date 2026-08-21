@@ -4,7 +4,6 @@ import type {
   CodeChunkHit,
   CodeIndexResult,
   CodeIndexStatus,
-  EmbeddingDownloadProgress,
   EmbeddingTestResult,
   FactVersion,
   MemoryEmbeddingConfig,
@@ -12,7 +11,6 @@ import type {
   MemoryListPage,
   MemoryStats,
   MemoryStatus,
-  OllamaModelInfo,
   ScoredFact,
 } from '../types/memory';
 
@@ -103,15 +101,6 @@ export const embeddingStatus = () =>
     enabled: boolean;
   }>('embedding_status');
 
-export const embeddingListOllamaModels = (apiUrl?: string) =>
-  invoke<OllamaModelInfo[]>('embedding_list_ollama_models', { apiUrl });
-
-export const embeddingPullOllamaModel = (model: string, apiUrl?: string) =>
-  invoke<string>('embedding_pull_ollama_model', { model, apiUrl });
-
-export const embeddingDeleteOllamaModel = (model: string, apiUrl?: string) =>
-  invoke<void>('embedding_delete_ollama_model', { model, apiUrl });
-
 export const embeddingSaveApiKey = (key: string) => invoke<void>('embedding_save_api_key', { key });
 
-export type { EmbeddingDownloadProgress, MemoryEmbeddingConfig };
+export type { MemoryEmbeddingConfig };

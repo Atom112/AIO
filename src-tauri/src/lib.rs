@@ -198,9 +198,6 @@ pub fn run() {
             commands::embedding::embedding_test,
             commands::embedding::embedding_save_api_key,
             commands::embedding::embedding_status,
-            commands::embedding::embedding_list_ollama_models,
-            commands::embedding::embedding_pull_ollama_model,
-            commands::embedding::embedding_delete_ollama_model,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

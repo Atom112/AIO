@@ -613,4 +613,6 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 4. 记忆注入预算暂定 3000 tokens，P1 实测后校准。
 5. 本地嵌入模型**不打包进安装包**：启用项目记忆并选择本地嵌入时才按需下载（Ollama pull 或 P4 的 ONNX 缓存到 app data），UI 展示模型体积与下载进度、可选轻量模型；是否内置极轻量兜底模型（如 ~46 MB 的 MiniLM）留待 P4 评审。
 
+> **决策更新（实施后）**：已落地内置**开箱即用**的极轻量本地嵌入模型 all-MiniLM-L6-v2 量化版（int8，约 23 MB，384 维，`fastembed-rs` 进程内 ONNX 推理），模型文件随应用打包（`include_bytes!` 编译进二进制），**无需联网、无需 Ollama、无需下载**。相应地**取消本地嵌入模型自选**：嵌入 provider 简化为 `local`（内置，默认）与 `online`（OpenAI 兼容在线端点，供更强的语义检索）二选一；旧的 `ollama` / `openai_compat` 配置在解析层自动映射（`ollama`→`local`、`openai_compat`→`online`）。embedding-download-progress、Ollama 模型拉取/删除等命令与 UI 一并移除。
+
 （完）

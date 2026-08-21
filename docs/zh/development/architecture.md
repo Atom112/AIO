@@ -117,7 +117,7 @@ Agent 中止或流式事件失败时，已经产生的步骤、工具输出和�
 
 ### 项目记忆（RAG）
 
-启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入由 `plugins/embed` 提供（本地内置 all-MiniLM-L6-v2 开箱即用、离线可用，或切换在线 OpenAI 兼容 API），未配置嵌入时自动降级为关键词检索。本地模型随应用打包，无需下载与配置。
+启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入模型按项目配置（存于项目记忆库 meta，记忆面板中切换；默认本地内置 all-MiniLM-L6-v2 开箱即用、离线可用，也可切在线 OpenAI 兼容 API；切换会清空该项目全部向量并自动重新嵌入），未配置嵌入时自动降级为关键词检索。本地模型随应用打包，无需下载与配置。
 
 P2 起实现自进化：Agent 轮次结束后后台异步提取事实（sleep-time compute，去抖 + 每项目开关），写入时对向量近邻高分事实由 LLM 仲裁（merge / update / supersede / keep_separate，失败 fail-safe），`fact_versions` 表记录完整版本审计链；每项目活跃事实超过上限时按 importance 乘访问衰减归档最低分非 pinned 事实。前端提供记忆面板（搜索 / 列表 / 编辑 / 钉住 / 归档 / 删除 / 版本历史 / 重建索引 / 清理超额 / 清空）。
 

@@ -35,23 +35,3 @@ pub async fn embedding_test(
     inject_key(&app, &mut cfg);
     crate::plugins::embed::test(&cfg).await
 }
-
-/// 当前嵌入配置与可用状态。
-#[tauri::command]
-pub fn embedding_status(app: AppHandle) -> Result<serde_json::Value, String> {
-    let cfg = crate::commands::config::load_app_config(app.clone()).map_err(|e| e.to_string())?;
-    let mut cfg2 = cfg.memory_embedding.clone();
-    inject_key(&app, &mut cfg2);
-    let (configured, available, dims) = match crate::plugins::embed::resolve(&cfg2) {
-        Ok(e) => (true, e.is_available(), e.dimensions()),
-        Err(_) => (cfg2.enabled, false, cfg2.dimensions),
-    };
-    Ok(serde_json::json!({
-        "provider": cfg2.provider,
-        "model": cfg2.model,
-        "configured": configured,
-        "available": available,
-        "dimensions": dims,
-        "enabled": cfg2.enabled,
-    }))
-}

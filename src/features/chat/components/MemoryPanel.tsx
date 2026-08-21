@@ -1,12 +1,16 @@
 import { Component, createEffect, createSignal, For, Show } from 'solid-js';
+import { listen } from '@tauri-apps/api/event';
 import { t } from '../../../core/i18n';
 import {
+  embeddingSaveApiKey,
+  embeddingTest,
   memoryArchive,
   memoryClear,
   memoryCodeIndex,
   memoryCodeSearch,
   memoryCodeStatus,
   memoryExport,
+  memoryGetStatus,
   memoryImport,
   memoryDelete,
   memoryGetVersions,
@@ -17,19 +21,24 @@ import {
   memorySetPinned,
   memoryStats,
   memoryUpdate,
+  memoryUpdateEmbedding,
 } from '../../../core/utils/memory';
 import type {
   CodeChunkHit,
   CodeIndexStatus,
+  EmbeddingTestResult,
   FactVersion,
+  MemoryEmbeddingConfig,
   MemoryFact,
   MemoryStats,
 } from '../../../core/types/memory';
 import {
   btnBadge,
+  btnGhost,
   btnPrimarySm,
   btnSecondarySm,
   btnDanger,
+  btnTabMd,
   btnTabXs,
   tabActive,
   tabInactive,
@@ -57,6 +66,20 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   const [codeQuery, setCodeQuery] = createSignal('');
   const [codeHits, setCodeHits] = createSignal<CodeChunkHit[]>([]);
   const [indexing, setIndexing] = createSignal(false);
+  // 项目级嵌入模型（由 memory_get_status 提供，切换保存在项目记忆库 meta）
+  const [embedding, setEmbedding] = createSignal<MemoryEmbeddingConfig | null>(null);
+  const [editingEmbedding, setEditingEmbedding] = createSignal(false);
+  const [ebProvider, setEbProvider] = createSignal<'local' | 'online'>('local');
+  const [ebModel, setEbModel] = createSignal('');
+  const [ebApiUrl, setEbApiUrl] = createSignal('');
+  const [ebApiKey, setEbApiKey] = createSignal('');
+  const [ebTesting, setEbTesting] = createSignal(false);
+  const [ebTestResult, setEbTestResult] = createSignal<EmbeddingTestResult | null>(null);
+  const [ebSaving, setEbSaving] = createSignal(false);
+  const [reindexProgress, setReindexProgress] = createSignal<{
+    done: number;
+    total: number;
+  } | null>(null);
 
   const loadStats = async () => {
     try {
@@ -83,8 +106,18 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       void loadStats();
       void loadList();
       void loadCodeStatus();
+      void loadEmbedding();
     }
   });
+
+  const loadEmbedding = async () => {
+    try {
+      const st = await memoryGetStatus(props.projectId);
+      setEmbedding(st.embedding);
+    } catch {
+      // 记忆库未创建时忽略
+    }
+  };
 
   const loadCodeStatus = async () => {
     try {
@@ -245,6 +278,94 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     }
   };
 
+  // 当前嵌入模型的展示文案（provider · model · dims）
+  const embeddingLabel = () => {
+    const e = embedding();
+    if (!e) return t('app.memory.providerLocal');
+    const kind =
+      e.provider === 'online' ? t('app.memory.providerOnline') : t('app.memory.providerLocal');
+    const model = e.model || (e.provider === 'online' ? '-' : t('app.memory.localModel'));
+    return t('project.memoryPanel.embeddingCurrent', {
+      kind,
+      model,
+      dims: String(e.dimensions),
+    });
+  };
+
+  const openEmbeddingEditor = () => {
+    const cur: MemoryEmbeddingConfig = embedding() ?? {
+      provider: 'local',
+      model: 'all-MiniLM-L6-v2',
+      apiUrl: '',
+      dimensions: 384,
+      enabled: true,
+    };
+    setEbProvider(cur.provider === 'online' ? 'online' : 'local');
+    setEbModel(cur.model);
+    setEbApiUrl(cur.apiUrl);
+    setEbApiKey('');
+    setEbTestResult(null);
+    setEditingEmbedding(true);
+  };
+
+  const testEmbedding = async () => {
+    setEbTesting(true);
+    try {
+      setEbTestResult(
+        await embeddingTest({
+          provider: ebProvider(),
+          model: ebModel(),
+          apiUrl: ebApiUrl(),
+          dimensions: 384,
+          enabled: true,
+          apiKey: ebApiKey() || undefined,
+        }),
+      );
+    } catch {
+      setEbTestResult(null);
+    } finally {
+      setEbTesting(false);
+    }
+  };
+
+  const saveEmbedding = async () => {
+    if (ebProvider() === 'online' && (!ebApiUrl().trim() || !ebModel().trim())) {
+      setNotice(t('project.memoryPanel.embeddingNeedOnline'));
+      return;
+    }
+    // 切换会清空本项目全部向量并重新嵌入（事实文本保留），再次确认
+    if (!window.confirm(t('project.memoryPanel.embeddingSwitchConfirm'))) return;
+    setEbSaving(true);
+    let unlisten: (() => void) | undefined;
+    try {
+      if (ebProvider() === 'online') {
+        await embeddingSaveApiKey(ebApiKey());
+      }
+      unlisten = await listen('reindex-progress', (ev) => {
+        const p = ev.payload as { done?: number; total?: number };
+        setReindexProgress({ done: p.done ?? 0, total: p.total ?? 0 });
+      });
+      const st = await memoryUpdateEmbedding(props.projectId, {
+        provider: ebProvider(),
+        model: ebModel(),
+        apiUrl: ebApiUrl(),
+        dimensions: 384,
+        enabled: true,
+      });
+      setEmbedding(st.embedding);
+      setNotice(t('project.memoryPanel.embeddingSaved'));
+      setEditingEmbedding(false);
+      await loadStats();
+      await loadList();
+    } catch {
+      setNotice(t('project.memoryPanel.embeddingSaveFail'));
+    } finally {
+      unlisten?.();
+      setReindexProgress(null);
+      setEbSaving(false);
+    }
+  };
+
   const prune = async () => {
     try {
       const n = await memoryPrune(props.projectId);
@@ -306,6 +427,108 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 embedded: String(stats()!.embeddedFacts),
                 size: formatSize(stats()!.dbSizeBytes),
               })}
+            </div>
+          </Show>
+
+          {/* 嵌入模型（项目级；切换会清空本项目全部向量并重新嵌入） */}
+          <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-white/5">
+            <div class="min-w-0 text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
+              <span class="mr-1">{t('project.memoryPanel.embeddingTitle')}:</span>
+              <span>{embeddingLabel()}</span>
+              <Show when={reindexProgress()}>
+                <span class="ml-2 text-pri">
+                  {t('project.memoryPanel.reindexing', {
+                    done: String(reindexProgress()!.done),
+                    total: String(reindexProgress()!.total),
+                  })}
+                </span>
+              </Show>
+            </div>
+            <Show
+              when={!editingEmbedding()}
+              fallback={
+                <button class={btnGhost} onClick={() => setEditingEmbedding(false)}>
+                  {t('common.cancel')}
+                </button>
+              }
+            >
+              <button class={btnBadge} onClick={openEmbeddingEditor}>
+                {t('project.memoryPanel.embeddingSwitch')}
+              </button>
+            </Show>
+          </div>
+
+          <Show when={editingEmbedding()}>
+            <div class="flex flex-col gap-2 px-4 py-2 border-b border-white/5">
+              <div class="flex gap-2">
+                <button
+                  class={`${btnTabMd} ${ebProvider() === 'local' ? tabActive : tabInactive}`}
+                  onClick={() => setEbProvider('local')}
+                >
+                  {t('app.memory.providerLocal')}
+                </button>
+                <button
+                  class={`${btnTabMd} ${ebProvider() === 'online' ? tabActive : tabInactive}`}
+                  onClick={() => setEbProvider('online')}
+                >
+                  {t('app.memory.providerOnline')}
+                </button>
+              </div>
+              <Show when={ebProvider() === 'local'}>
+                <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
+                  {t('app.memory.localModelDesc')}
+                </div>
+              </Show>
+              <Show when={ebProvider() === 'online'}>
+                <input
+                  class="w-full p-2 bg-dark-300 border border-dark-100 rounded-lg text-sm text-[#e0e0e0] placeholder:text-white/25 focus:outline-none focus:border-pri-30"
+                  placeholder={t('app.memory.model')}
+                  value={ebModel()}
+                  onInput={(e) => setEbModel(e.currentTarget.value)}
+                />
+                <input
+                  class="w-full p-2 bg-dark-300 border border-dark-100 rounded-lg text-sm text-[#e0e0e0] placeholder:text-white/25 focus:outline-none focus:border-pri-30"
+                  placeholder={t('app.memory.apiUrl')}
+                  value={ebApiUrl()}
+                  onInput={(e) => setEbApiUrl(e.currentTarget.value)}
+                />
+                <input
+                  class="w-full p-2 bg-dark-300 border border-dark-100 rounded-lg text-sm text-[#e0e0e0] placeholder:text-white/25 focus:outline-none focus:border-pri-30"
+                  type="password"
+                  placeholder={t('app.memory.apiKey')}
+                  value={ebApiKey()}
+                  onInput={(e) => setEbApiKey(e.currentTarget.value)}
+                />
+              </Show>
+              <Show when={ebTestResult()}>
+                <div
+                  class="text-[11px]"
+                  style={{ color: ebTestResult()!.ok ? '#7cd9a0' : '#ff8a8a' }}
+                >
+                  {ebTestResult()!.ok
+                    ? t('app.memory.testOk', {
+                        dims: String(ebTestResult()!.dimensions),
+                        ms: String(ebTestResult()!.latencyMs),
+                      })
+                    : t('app.memory.testFail', { error: ebTestResult()!.error ?? '' })}
+                </div>
+              </Show>
+              <div class="flex items-center justify-end gap-2">
+                <button
+                  class={btnSecondarySm}
+                  disabled={ebTesting()}
+                  onClick={() => void testEmbedding()}
+                >
+                  {ebTesting() ? t('app.memory.testing') : t('app.memory.test')}
+                </button>
+                <button
+                  class={btnPrimarySm}
+                  disabled={ebSaving()}
+                  onClick={() => void saveEmbedding()}
+                >
+                  {ebSaving() ? t('project.memoryPanel.embeddingSaving') : t('app.memory.save')}
+                </button>
+              </div>
             </div>
           </Show>
 

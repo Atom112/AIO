@@ -91,16 +91,10 @@ export const memoryCodeStatus = (projectId: string) =>
 export const embeddingTest = (config: MemoryEmbeddingConfig) =>
   invoke<EmbeddingTestResult>('embedding_test', { config });
 
-export const embeddingStatus = () =>
-  invoke<{
-    provider: string;
-    model: string;
-    configured: boolean;
-    available: boolean;
-    dimensions: number;
-    enabled: boolean;
-  }>('embedding_status');
-
 export const embeddingSaveApiKey = (key: string) => invoke<void>('embedding_save_api_key', { key });
+
+/** 切换项目嵌入模型：后端会清空本项目全部向量并自动重建索引（带 reindex-progress 事件） */
+export const memoryUpdateEmbedding = (projectId: string, config: MemoryEmbeddingConfig) =>
+  invoke<MemoryStatus>('memory_update_embedding', { projectId, config });
 
 export type { MemoryEmbeddingConfig };

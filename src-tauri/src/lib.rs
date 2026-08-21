@@ -215,10 +215,10 @@ pub fn run() {
             commands::memory::memory_delete,
             commands::memory::memory_clear,
             commands::memory::memory_reindex,
+            commands::memory::memory_update_embedding,
             commands::memory::memory_stats,
             commands::embedding::embedding_test,
             commands::embedding::embedding_save_api_key,
-            commands::embedding::embedding_status,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

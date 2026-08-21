@@ -89,6 +89,8 @@ export interface MemoryStatus {
   storePath: string;
   stats: MemoryStats;
   embedder: EmbedderStatus;
+  /** 本项目当前嵌入配置（项目级，存于记忆库 meta） */
+  embedding: MemoryEmbeddingConfig;
 }
 
 /** 记忆列表分页 */

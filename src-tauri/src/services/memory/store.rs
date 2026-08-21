@@ -3,6 +3,7 @@
 //! 每个项目一个独立 SQLite 文件：<项目根>/.aio/memory/memory.sqlite。
 //! 向量以 float32 BLOB 存在 facts.embedding，检索先用 Rust 暴力余弦（P3 换 sqlite-vec）。
 
+use crate::core::models::MemoryEmbeddingConfig;
 use crate::utils::knowledge;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,11 @@ pub struct MemoryStore {
     conn: Mutex<Connection>,
     project_root: String,
 }
+
+/// 项目级嵌入配置的 meta 键（与向量库绑定，随项目记忆库持久化）。
+const META_EMBED_PROVIDER: &str = "project_embedding_provider";
+const META_EMBED_MODEL: &str = "project_embedding_model";
+const META_EMBED_API_URL: &str = "project_embedding_api_url";
 
 /// 建表语句（幂等；参数化写入，DDL 不含字符串字面量）。
 const SCHEMA: &str = concat!(
@@ -679,6 +685,58 @@ impl MemoryStore {
     }
 
     /// 读取 meta 键值。
+    /// 读取项目级嵌入配置（未设置时返回 (本地默认, false)）。
+    pub fn embedding_cfg(&self) -> (MemoryEmbeddingConfig, bool) {
+        let provider = self.meta_get(META_EMBED_PROVIDER).ok().flatten();
+        let model = self.meta_get(META_EMBED_MODEL).ok().flatten();
+        let api_url = self.meta_get(META_EMBED_API_URL).ok().flatten();
+        let dims = self
+            .meta_get(META_EMBEDDING_DIM)
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(384);
+        match provider {
+            Some(p) => (
+                MemoryEmbeddingConfig {
+                    provider: if p == "online" {
+                        "online".into()
+                    } else {
+                        "local".into()
+                    },
+                    model: model.unwrap_or_default(),
+                    api_url: api_url.unwrap_or_default(),
+                    dimensions: dims,
+                    enabled: true,
+                    api_key: String::new(),
+                },
+                true,
+            ),
+            None => (MemoryEmbeddingConfig::default(), false),
+        }
+    }
+
+    /// 写入项目级嵌入配置（provider/model/apiUrl/维度；apiKey 不落盘，仍在 secure_store）。
+    pub fn set_embedding_cfg(&self, cfg: &MemoryEmbeddingConfig) -> Result<(), String> {
+        self.meta_put(META_EMBED_PROVIDER, cfg.provider.as_str())?;
+        self.meta_put(META_EMBED_MODEL, cfg.model.as_str())?;
+        self.meta_put(META_EMBED_API_URL, cfg.api_url.as_str())?;
+        self.meta_put(
+            META_EMBEDDING_DIM,
+            &cfg.dimensions.clamp(1, 8192).to_string(),
+        )
+    }
+
+    /// 清空全部向量（切换嵌入模型后调用）：事实与代码块保留文本，仅弃用向量；
+    /// vec0/vec_code 表删除，由后续写入按新维度重建。
+    pub fn reset_vectors(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute_batch(
+            "UPDATE facts SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE embedding IS NOT NULL;              UPDATE code_chunks SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE embedding IS NOT NULL;              DROP TABLE IF EXISTS vec_facts; DROP TABLE IF EXISTS vec_code;",
+        )
+        .map_err(|e| format!("清空向量失败: {e}"))
+    }
+
     pub fn meta_get(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.query_row("SELECT v FROM meta WHERE k = ?1", [key], |r| r.get(0))

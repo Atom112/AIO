@@ -3,11 +3,12 @@
 //! 与事实库（facts）并存于同一 memory.sqlite：code_chunks + fts_code + vec_code。
 //! 索引按需触发（memory_code_index / 记忆面板按钮），增量基于文件 mtime/size。
 
+use crate::core::models::MemoryEmbeddingConfig;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 索引结果统计。
 #[derive(Serialize, Clone, Debug)]
@@ -75,6 +76,30 @@ fn open_conn(project_root: &str) -> Result<Connection, String> {
     crate::services::memory::store::MemoryStore::open_connection(project_root)
 }
 
+/// 解析项目级嵌入配置（与记忆命令一致；首次使用从旧全局配置迁移，幂等）。
+fn project_embedding_cfg(app: &AppHandle, project_root: &str) -> MemoryEmbeddingConfig {
+    match app
+        .state::<crate::services::memory::MemoryStoreManager>()
+        .open(project_root)
+    {
+        Ok(store) => crate::services::memory::resolve_project_embedding(app, &store),
+        Err(_) => {
+            crate::commands::config::load_app_config(app.clone())
+                .unwrap_or_default()
+                .memory_embedding
+        }
+    }
+}
+
+/// 为在线 provider 注入 API Key（兼容旧 provider 名 openai_compat）。
+fn inject_key(app: &AppHandle, cfg: &mut MemoryEmbeddingConfig) {
+    if (cfg.provider == "online" || cfg.provider == "openai_compat") && cfg.api_key.is_empty() {
+        if let Ok(Some(key)) = crate::core::secure_store::get(app, "embedding_api_key") {
+            cfg.api_key = key;
+        }
+    }
+}
+
 /// 索引项目代码（增量：mtime/size 未变化且非 force 时跳过）。
 pub async fn index_code(
     app: &AppHandle,
@@ -84,7 +109,7 @@ pub async fn index_code(
 ) -> Result<CodeIndexResult, String> {
     let started = std::time::Instant::now();
     let conn = open_conn(project_root)?;
-    ensure_code_vec_table(app, &conn)?;
+    ensure_code_vec_table(app, project_root, &conn)?;
     let files = collect_files(project_root);
     let mut result = CodeIndexResult {
         files: files.len(),
@@ -142,7 +167,7 @@ pub async fn index_code(
         )
         .map_err(|e| e.to_string())?;
         let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-        let vecs = embed_batch(app, &texts).await;
+        let vecs = embed_batch(app, project_root, &texts).await;
         for (i, chunk) in chunks.iter().enumerate() {
             let id = uuid::Uuid::new_v4().to_string();
             let vec = vecs.get(i).cloned().flatten();
@@ -203,13 +228,8 @@ pub fn search_code(
     let conn = open_conn(project_root)?;
     let k = k.clamp(1, 30);
     let mut vec_ranks: HashMap<String, usize> = HashMap::new();
-    let cfg = crate::commands::config::load_app_config(app.clone()).unwrap_or_default();
-    let mut ecfg = cfg.memory_embedding;
-    if ecfg.provider == "openai_compat" && ecfg.api_key.is_empty() {
-        if let Ok(Some(key)) = crate::core::secure_store::get(app, "embedding_api_key") {
-            ecfg.api_key = key;
-        }
-    }
+    let mut ecfg = project_embedding_cfg(app, project_root);
+    inject_key(app, &mut ecfg);
     if let Ok(embedder) = crate::plugins::embed::resolve(&ecfg) {
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let q = query.to_string();
@@ -387,14 +407,13 @@ fn collect_files(root: &str) -> Vec<PathBuf> {
 }
 
 /// 批量嵌入（失败项为 None）。
-async fn embed_batch(app: &AppHandle, texts: &[String]) -> Vec<Option<Vec<f32>>> {
-    let cfg = crate::commands::config::load_app_config(app.clone()).unwrap_or_default();
-    let mut ecfg = cfg.memory_embedding;
-    if ecfg.provider == "openai_compat" && ecfg.api_key.is_empty() {
-        if let Ok(Some(key)) = crate::core::secure_store::get(app, "embedding_api_key") {
-            ecfg.api_key = key;
-        }
-    }
+async fn embed_batch(
+    app: &AppHandle,
+    project_root: &str,
+    texts: &[String],
+) -> Vec<Option<Vec<f32>>> {
+    let mut ecfg = project_embedding_cfg(app, project_root);
+    inject_key(app, &mut ecfg);
     let Ok(embedder) = crate::plugins::embed::resolve(&ecfg) else {
         return texts.iter().map(|_| None).collect();
     };
@@ -417,12 +436,17 @@ async fn embed_batch(app: &AppHandle, texts: &[String]) -> Vec<Option<Vec<f32>>>
 }
 
 /// 确保代码 vec0 表存在（按配置维度）。
-fn ensure_code_vec_table(app: &AppHandle, conn: &Connection) -> Result<(), String> {
+fn ensure_code_vec_table(
+    app: &AppHandle,
+    project_root: &str,
+    conn: &Connection,
+) -> Result<(), String> {
     if !crate::services::memory::vec0::vec0_available() {
         return Ok(());
     }
-    let cfg = crate::commands::config::load_app_config(app.clone()).unwrap_or_default();
-    let dim = cfg.memory_embedding.dimensions.clamp(1, 8192);
+    let dim = project_embedding_cfg(app, project_root)
+        .dimensions
+        .clamp(1, 8192);
     let sql = format!(
         "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(embedding float[{dim}] distance_metric=cosine, chunk_id text +)"
     );

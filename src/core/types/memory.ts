@@ -17,6 +17,31 @@ export interface MemoryFact {
   pinned: boolean;
 }
 
+export interface CodeIndexResult {
+  files: number;
+  chunks: number;
+  embedded: number;
+  failed: number;
+  skipped: number;
+  elapsedMs: number;
+  error?: string;
+}
+
+export interface CodeChunkHit {
+  chunkId: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  score: number;
+}
+
+export interface CodeIndexStatus {
+  chunks: number;
+  files: number;
+  indexedFiles: number;
+  lastIndexAt?: string;
+}
 export interface FactVersion {
   id: number;
   factId: string;

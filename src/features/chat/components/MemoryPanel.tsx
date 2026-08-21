@@ -3,6 +3,11 @@ import { t } from '../../../core/i18n';
 import {
   memoryArchive,
   memoryClear,
+  memoryCodeIndex,
+  memoryCodeSearch,
+  memoryCodeStatus,
+  memoryExport,
+  memoryImport,
   memoryDelete,
   memoryGetVersions,
   memoryList,
@@ -13,7 +18,13 @@ import {
   memoryStats,
   memoryUpdate,
 } from '../../../core/utils/memory';
-import type { FactVersion, MemoryFact, MemoryStats } from '../../../core/types/memory';
+import type {
+  CodeChunkHit,
+  CodeIndexStatus,
+  FactVersion,
+  MemoryFact,
+  MemoryStats,
+} from '../../../core/types/memory';
 
 interface MemoryPanelProps {
   show: boolean;
@@ -33,6 +44,10 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   const [query, setQuery] = createSignal('');
   const [expanded, setExpanded] = createSignal<Record<string, FactVersion[]>>({});
   const [notice, setNotice] = createSignal('');
+  const [codeStatus, setCodeStatus] = createSignal<CodeIndexStatus | null>(null);
+  const [codeQuery, setCodeQuery] = createSignal('');
+  const [codeHits, setCodeHits] = createSignal<CodeChunkHit[]>([]);
+  const [indexing, setIndexing] = createSignal(false);
 
   const loadStats = async () => {
     try {
@@ -58,8 +73,63 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     if (props.show) {
       void loadStats();
       void loadList();
+      void loadCodeStatus();
     }
   });
+
+  const loadCodeStatus = async () => {
+    try {
+      setCodeStatus(await memoryCodeStatus(props.projectId));
+    } catch {
+      setCodeStatus(null);
+    }
+  };
+
+  const doCodeIndex = async () => {
+    setIndexing(true);
+    try {
+      const res = await memoryCodeIndex(props.projectId, false);
+      setNotice(`${t('project.memoryPanel.codeStatus')}: ${res.chunks} / ${res.files}`);
+      await loadCodeStatus();
+    } catch {
+      setNotice(t('project.memoryPanel.codeIndexFail'));
+    } finally {
+      setIndexing(false);
+    }
+  };
+
+  const doCodeSearch = async () => {
+    const q = codeQuery().trim();
+    if (!q) return;
+    try {
+      setCodeHits(await memoryCodeSearch(props.projectId, q, 10));
+    } catch {
+      setCodeHits([]);
+    }
+  };
+
+  const doExport = async () => {
+    try {
+      const json = await memoryExport(props.projectId);
+      await navigator.clipboard.writeText(json);
+      setNotice(t('project.memoryPanel.exportDone'));
+    } catch {
+      setNotice(t('project.memoryPanel.exportFail'));
+    }
+  };
+
+  const doImport = async () => {
+    const text = window.prompt(t('project.memoryPanel.importPrompt'));
+    if (!text) return;
+    try {
+      const n = await memoryImport(props.projectId, text);
+      setNotice(t('project.memoryPanel.importDone', { n: String(n) }));
+      await loadList();
+      await loadStats();
+    } catch {
+      setNotice(t('project.memoryPanel.importFail'));
+    }
+  };
 
   const doSearch = async () => {
     const q = query().trim();
@@ -272,6 +342,57 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </For>
           </div>
 
+          {/* 代码索引与检索 */}
+          <div class="flex items-center gap-2 px-4 py-2 border-b border-white/5">
+            <button
+              class="px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-pri-20 text-pri border border-pri/30 cursor-pointer hover:bg-pri-30 transition-colors"
+              disabled={indexing()}
+              onClick={() => void doCodeIndex()}
+            >
+              {indexing() ? '...' : t('project.memoryPanel.codeIndex')}
+            </button>
+            <input
+              class="flex-1 p-2 bg-dark-300 border border-dark-100 rounded-lg text-xs text-[#e0e0e0] focus:outline-none focus:border-white/20"
+              value={codeQuery()}
+              onInput={(e) => setCodeQuery(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void doCodeSearch();
+              }}
+              placeholder={t('project.memoryPanel.codeSearch')}
+            />
+            <button
+              class="px-2.5 py-1.5 rounded-md text-[11px] bg-dark-300 border border-dark-100 text-white/60 cursor-pointer hover:bg-dark-200"
+              onClick={() => void doCodeSearch()}
+            >
+              {t('project.memoryPanel.codeSearch')}
+            </button>
+          </div>
+          <Show when={codeStatus()}>
+            <div
+              class="px-4 py-1 text-[10px] border-b border-white/5"
+              style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
+            >
+              {t('project.memoryPanel.codeStatus', {
+                chunks: String(codeStatus()!.chunks),
+                files: String(codeStatus()!.files),
+              })}
+            </div>
+          </Show>
+          <Show when={codeHits().length > 0}>
+            <div class="px-4 py-1.5 border-b border-white/5 flex flex-col gap-1">
+              <For each={codeHits()}>
+                {(h) => (
+                  <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
+                    <span class="text-pri/80">
+                      {h.filePath}:{h.startLine}-{h.endLine}
+                    </span>
+                    <div class="text-white/60 line-clamp-2 whitespace-pre-wrap">{h.content}</div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+
           {/* 列表 */}
           <div class="flex-1 overflow-y-auto px-4 py-2 scrollbar-thin">
             <For each={facts()}>
@@ -380,6 +501,18 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
               onClick={() => void prune()}
             >
               {t('project.memoryPanel.prune')}
+            </button>
+            <button
+              class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
+              onClick={() => void doExport()}
+            >
+              {t('project.memoryPanel.export')}
+            </button>
+            <button
+              class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
+              onClick={() => void doImport()}
+            >
+              {t('project.memoryPanel.import')}
             </button>
             <button
               class="px-2.5 py-1.5 rounded-md text-[11px] text-red-400/90 border border-red-400/20 hover:bg-red-400/10 cursor-pointer"

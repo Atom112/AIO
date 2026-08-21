@@ -1,6 +1,9 @@
 // 记忆相关 Tauri 命令封装（与 commands/memory.rs、commands/embedding.rs 对应）
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  CodeChunkHit,
+  CodeIndexResult,
+  CodeIndexStatus,
   EmbeddingDownloadProgress,
   EmbeddingTestResult,
   FactVersion,
@@ -72,6 +75,20 @@ export const memorySetPinned = (projectId: string, id: string, pinned: boolean) 
   invoke<MemoryFact>('memory_set_pinned', { projectId, id, pinned });
 
 export const memoryPrune = (projectId: string) => invoke<number>('memory_prune', { projectId });
+
+export const memoryExport = (projectId: string) => invoke<string>('memory_export', { projectId });
+
+export const memoryImport = (projectId: string, json: string) =>
+  invoke<number>('memory_import', { projectId, json });
+
+export const memoryCodeIndex = (projectId: string, force?: boolean) =>
+  invoke<CodeIndexResult>('memory_code_index', { projectId, force });
+
+export const memoryCodeSearch = (projectId: string, query: string, k?: number) =>
+  invoke<CodeChunkHit[]>('memory_code_search', { projectId, query, k });
+
+export const memoryCodeStatus = (projectId: string) =>
+  invoke<CodeIndexStatus>('memory_code_status', { projectId });
 
 export const embeddingTest = (config: MemoryEmbeddingConfig) =>
   invoke<EmbeddingTestResult>('embedding_test', { config });

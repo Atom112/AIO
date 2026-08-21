@@ -1220,6 +1220,13 @@ fn build_subagent_tools(
             tools.push(spec);
         }
     }
+    // 记忆只读工具（子智能体可检索项目记忆与代码；执行时按记忆开关判定）
+    for spec in crate::services::memory::tools::get_readonly_memory_specs() {
+        if profile.is_tool_allowed(&spec.function.name) {
+            tool_map.insert(spec.function.name.clone(), "__builtin__".into());
+            tools.push(spec);
+        }
+    }
 
     (tools, tool_map)
 }

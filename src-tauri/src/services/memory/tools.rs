@@ -19,6 +19,7 @@ pub fn get_memory_tool_specs() -> Vec<ToolSpec> {
         search_memory_spec(),
         update_memory_spec(),
         forget_memory_spec(),
+        search_code_spec(),
     ]
 }
 
@@ -130,6 +131,29 @@ fn forget_memory_spec() -> ToolSpec {
     }
 }
 
+fn search_code_spec() -> ToolSpec {
+    ToolSpec {
+        kind: "function".to_string(),
+        function: ToolFunctionSpec {
+            name: "search_code".to_string(),
+            description: "检索项目代码（语义 + 关键词），返回相关文件路径与行号；需先索引代码库（memory_code_index）".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "检索意图，如某个函数/配置/实现的位置" },
+                    "k": { "type": "integer", "description": "返回条数（默认 10）" }
+                },
+                "required": ["query"],
+            }),
+        },
+    }
+}
+
+/// 只读记忆工具（供子智能体使用：recall + search_code）。
+pub fn get_readonly_memory_specs() -> Vec<ToolSpec> {
+    vec![recall_spec(), search_code_spec()]
+}
+
 /// 解析项目记忆是否启用（每项目覆盖优先，其次全局默认）。
 pub fn memory_effective(app: &AppHandle, project_root: &str) -> bool {
     let cfg = crate::commands::config::load_app_config(app.clone()).unwrap_or_default();
@@ -174,8 +198,44 @@ pub async fn execute_memory_tool(
         "search_memory" => execute_search(app, &store, arguments).await,
         "update_memory" => execute_update(app, &store, arguments).await,
         "forget_memory" => execute_forget(&store, arguments),
+        "search_code" => execute_search_code(app, project_root, arguments),
         _ => Err(format!("未知记忆工具: {tool_name}")),
     }
+}
+
+fn execute_search_code(
+    app: &AppHandle,
+    project_root: &str,
+    args: &Value,
+) -> Result<ToolResult, String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "缺少参数 query".to_string())?;
+    let k = args
+        .get("k")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(10);
+    let hits = crate::services::memory::code::search_code(app, project_root, query, k)?;
+    if hits.is_empty() {
+        return Ok(tool_ok(
+            "未找到相关代码。可先索引代码库（记忆面板 -> 索引代码库，或 memory_code_index 命令）"
+                .to_string(),
+        ));
+    }
+    let mut out = format!("找到 {} 个相关代码块:\n", hits.len());
+    for (i, h) in hits.iter().enumerate() {
+        out.push_str(&format!(
+            "{}. {}:{}-{}  {}\n\n",
+            i + 1,
+            h.file_path,
+            h.start_line,
+            h.end_line,
+            h.content,
+        ));
+    }
+    Ok(tool_ok(out))
 }
 
 /// 嵌入单条文本；失败返回 None（降级为关键词）。
@@ -248,6 +308,9 @@ async fn execute_remember(
                             JudgeAction::KeepSeparate => {}
                             JudgeAction::Update => {
                                 store.update_content(&existing.id, content, "update")?;
+                                if let Some(emb) = &embedding {
+                                    store.set_embedding(&existing.id, Some(emb.clone()))?;
+                                }
                                 resolved_id = Some(existing.id);
                             }
                             JudgeAction::Merge => {
@@ -257,6 +320,13 @@ async fn execute_remember(
                                     merged
                                 };
                                 store.update_content(&existing.id, &merged_content, "merge")?;
+                                // 合并后的内容重新向量化（失败不阻塞）
+                                if let Some((model, dim, vec)) =
+                                    embed_one(app, &merged_content).await
+                                {
+                                    let _ =
+                                        store.set_embedding(&existing.id, Some((model, dim, vec)));
+                                }
                                 resolved_id = Some(existing.id);
                             }
                             JudgeAction::Supersede => {

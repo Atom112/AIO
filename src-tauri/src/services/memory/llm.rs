@@ -1,6 +1,5 @@
 //! 记忆管线用的 LLM 调用封装：复用主 Agent 的非流式请求路径（含 Anthropic 适配）。
 
-use crate::core::models::AppConfig;
 use serde_json::Value;
 use std::time::Duration;
 use tauri::AppHandle;

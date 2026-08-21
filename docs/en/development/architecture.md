@@ -123,6 +123,8 @@ With project memory enabled (`memoryEnabled`, overridable per project in project
 
 Self-evolution landed in P2: after each agent turn, facts are extracted asynchronously in the background (sleep-time compute, debounced, per-project opt-in); near-duplicate high-similarity facts are arbitrated by the LLM (merge / update / supersede / keep_separate, fail-safe on errors), with a full audit trail in `fact_versions`; when active facts exceed the per-project cap, lowest-scoring non-pinned facts are archived by importance x access decay. A memory panel (search / list / edit / pin / archive / delete / version history / reindex / prune / clear) is available in project settings.
 
+P3 integrates sqlite-vec (vec0 virtual tables) for in-SQLite vector search (auto-registered via sqlite3_auto_extension, falling back to brute-force cosine when unavailable); memory can be exported/imported as JSON (no vectors; reindex after import) and reindexing emits progress events. P4 adds code-level RAG: parallel `code_chunks` + `fts_code` + `vec_code` stores, incremental `memory_code_index` (skips unchanged files by mtime/size and ignores .git/node_modules/target etc.), a `search_code` tool plus `memory_code_search` command doing vector + keyword fusion; subagents (explorer/architect, etc.) get read-only `recall` / `search_code` tools.
+
 ## MCP Data Flow
 
 1. Load global configuration and overlay project configuration.

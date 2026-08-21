@@ -56,7 +56,7 @@ pub fn parse_response(v: &serde_json::Value) -> (JudgeAction, String) {
     let fallback = JudgeResponse {
         action: "keep_separate".into(),
         merged_content: String::new(),
-        reason: String::new(),
+        _reason: String::new(),
     };
     let resp = serde_json::from_value::<JudgeResponse>(v.clone()).unwrap_or(fallback);
     let action = match resp.action.as_str() {

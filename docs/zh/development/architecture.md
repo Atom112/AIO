@@ -123,6 +123,8 @@ Agent 中止或流式事件失败时，已经产生的步骤、工具输出和�
 
 P2 起实现自进化：Agent 轮次结束后后台异步提取事实（sleep-time compute，去抖 + 每项目开关），写入时对向量近邻高分事实由 LLM 仲裁（merge / update / supersede / keep_separate，失败 fail-safe），`fact_versions` 表记录完整版本审计链；每项目活跃事实超过上限时按 importance 乘访问衰减归档最低分非 pinned 事实。前端提供记忆面板（搜索 / 列表 / 编辑 / 钉住 / 归档 / 删除 / 版本历史 / 重建索引 / 清理超额 / 清空）。
 
+P3 接入 sqlite-vec（vec0 虚拟表）作为 SQLite 内向量检索（自动注册 sqlite3_auto_extension，不可用时回退 Rust 暴力余弦，功能等价）；记忆可导出/导入 JSON（不含向量，导入后重建），重建索引带进度事件。P4 提供代码级 RAG：`code_chunks` + `fts_code` + `vec_code` 并行存储，`memory_code_index` 增量索引（mtime/size 跳过未变化文件，忽略 .git/node_modules/target 等目录），`search_code` 工具与 `memory_code_search` 命令做向量 + 关键词融合检索；子智能体（explorer/architect 等）获得只读 `recall` / `search_code` 工具。
+
 ## MCP 数据流
 
 1. 加载全局配置并叠加项目配置。

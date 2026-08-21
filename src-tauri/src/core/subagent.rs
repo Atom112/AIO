@@ -84,6 +84,8 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
                 "read_lints".into(),
                 "web_search".into(),
                 "web_fetch".into(),
+                "recall".into(),
+                "search_code".into(),
             ],
             denied_tools: vec![
                 "write_file".into(),
@@ -144,6 +146,8 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
                 "read_lints".into(),
                 "web_search".into(),
                 "web_fetch".into(),
+                "recall".into(),
+                "search_code".into(),
             ],
             denied_tools: vec![
                 "write_file".into(),
@@ -206,6 +210,8 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
                 "read_lints".into(),
                 "web_search".into(),
                 "web_fetch".into(),
+                "recall".into(),
+                "search_code".into(),
             ],
             denied_tools: vec![
                 "write_file".into(),

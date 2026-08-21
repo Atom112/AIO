@@ -8,7 +8,7 @@ use crate::services::memory::store::{
     FactVersion, MemoryFact, MemoryStats, NewFact, ScoredFact, SearchOptions,
 };
 use crate::utils::file_tools;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 嵌入器就绪状态（memory_get_status 返回）。
 #[derive(serde::Serialize, Clone, Debug)]
@@ -325,6 +325,69 @@ pub fn memory_prune(app: AppHandle, project_id: String) -> Result<usize, String>
         .prune_to_capacity(cfg.memory_max_facts.max(100))
 }
 
+/// 导出全部记忆事实为 JSON（不含向量）。
+#[tauri::command]
+pub fn memory_export(app: AppHandle, project_id: String) -> Result<String, String> {
+    let root = resolve_root(&app, &project_id)?;
+    app.state::<MemoryStoreManager>()
+        .open(&root)?
+        .export_facts()
+}
+
+/// 从 JSON 导入记忆事实（按 key 去重；向量需重建）。
+#[tauri::command]
+pub fn memory_import(app: AppHandle, project_id: String, json: String) -> Result<usize, String> {
+    let root = resolve_root(&app, &project_id)?;
+    app.state::<MemoryStoreManager>()
+        .open(&root)?
+        .import_facts(&json)
+}
+
+/// 索引项目代码（P4 代码级 RAG；增量跳过未变化文件）。
+#[tauri::command]
+pub async fn memory_code_index(
+    window: tauri::Window,
+    app: AppHandle,
+    project_id: String,
+    force: Option<bool>,
+) -> Result<crate::services::memory::code::CodeIndexResult, String> {
+    let root = resolve_root(&app, &project_id)?;
+    crate::services::memory::code::index_code(
+        &app,
+        &root,
+        force.unwrap_or(false),
+        move |done, total| {
+            let _ = window.emit(
+                "code-index-progress",
+                serde_json::json!({ "done": done, "total": total }),
+            );
+        },
+    )
+    .await
+}
+
+/// 代码语义检索（search_code 工具的后端）。
+#[tauri::command]
+pub fn memory_code_search(
+    app: AppHandle,
+    project_id: String,
+    query: String,
+    k: Option<usize>,
+) -> Result<Vec<crate::services::memory::code::CodeChunkHit>, String> {
+    let root = resolve_root(&app, &project_id)?;
+    crate::services::memory::code::search_code(&app, &root, &query, k.unwrap_or(10))
+}
+
+/// 代码索引状态。
+#[tauri::command]
+pub fn memory_code_status(
+    app: AppHandle,
+    project_id: String,
+) -> Result<crate::services::memory::code::CodeIndexStatus, String> {
+    let root = resolve_root(&app, &project_id)?;
+    crate::services::memory::code::code_status(&app, &root)
+}
+
 /// 清空项目记忆。
 #[tauri::command]
 pub fn memory_clear(app: AppHandle, project_id: String) -> Result<(), String> {
@@ -360,9 +423,13 @@ pub fn memory_list(
     Ok(MemoryListPage { facts, total })
 }
 
-/// 重建/补建向量索引（为无 embedding 的 active 事实生成向量）。
+/// 重建/补建向量索引（为无 embedding 的 active 事实生成向量；经 reindex-progress 事件回报进度）。
 #[tauri::command]
-pub async fn memory_reindex(app: AppHandle, project_id: String) -> Result<(usize, usize), String> {
+pub async fn memory_reindex(
+    window: tauri::Window,
+    app: AppHandle,
+    project_id: String,
+) -> Result<(usize, usize), String> {
     let cfg = load_cfg(&app);
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
@@ -370,17 +437,25 @@ pub async fn memory_reindex(app: AppHandle, project_id: String) -> Result<(usize
     inject_key(&app, &mut cfg);
     let embedder = crate::plugins::embed::resolve(&cfg)?;
     store
-        .reindex(|content| {
-            let embedder = embedder.clone();
-            async move {
-                match embedder.embed(&[content]).await {
-                    Ok(v) => Ok(v
-                        .into_iter()
-                        .next()
-                        .map(|vec| (embedder.model_key(), vec.len(), vec))),
-                    Err(e) => Err(e),
+        .reindex(
+            |content| {
+                let embedder = embedder.clone();
+                async move {
+                    match embedder.embed(&[content]).await {
+                        Ok(v) => Ok(v
+                            .into_iter()
+                            .next()
+                            .map(|vec| (embedder.model_key(), vec.len(), vec))),
+                        Err(e) => Err(e),
+                    }
                 }
-            }
-        })
+            },
+            |done, total| {
+                let _ = window.emit(
+                    "reindex-progress",
+                    serde_json::json!({ "done": done, "total": total }),
+                );
+            },
+        )
         .await
 }

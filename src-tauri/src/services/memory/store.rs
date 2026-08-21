@@ -193,11 +193,47 @@ const SCHEMA: &str = concat!(
     "source_type,",
     "tokenize=trigram",
     ");",
+    // P4 代码级 RAG：索引文件分块
+    "CREATE TABLE IF NOT EXISTS code_chunks (",
+    "id TEXT PRIMARY KEY,",
+    "file_path TEXT NOT NULL,",
+    "start_line INTEGER NOT NULL,",
+    "end_line INTEGER NOT NULL,",
+    "content TEXT NOT NULL,",
+    "embedding BLOB,",
+    "embedding_model TEXT,",
+    "embedding_dim INTEGER,",
+    "created_at TEXT NOT NULL",
+    ");",
+    "CREATE INDEX IF NOT EXISTS idx_code_path ON code_chunks(file_path);",
+    "CREATE TABLE IF NOT EXISTS code_file_state (",
+    "file_path TEXT PRIMARY KEY,",
+    "mtime_nanos INTEGER NOT NULL,",
+    "size_bytes INTEGER NOT NULL",
+    ");",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS fts_code USING fts5(",
+    "chunk_id UNINDEXED,",
+    "content,",
+    "file_path,",
+    "tokenize=trigram",
+    ");",
 );
 
 impl MemoryStore {
     /// 打开（或创建）项目记忆库：<项目根>/.aio/memory/memory.sqlite。
+    /// 若 sqlite-vec 可用则启用 vec0 虚拟表（P3），不可用时回退暴力余弦。
     pub fn open(project_root: &str) -> Result<Self, String> {
+        let conn = Self::open_connection(project_root)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            project_root: project_root.to_string(),
+        })
+    }
+
+    /// 打开到项目记忆库的独立连接（供 code.rs 等场景使用；WAL 支持多连接并发）。
+    pub fn open_connection(project_root: &str) -> Result<Connection, String> {
+        // 必须先注册自动扩展，再打开连接
+        let _ = crate::services::memory::vec0::vec0_available();
         let dir = Path::new(project_root).join(".aio").join("memory");
         std::fs::create_dir_all(&dir).map_err(|e| format!("创建记忆目录失败: {e}"))?;
         let path = dir.join("memory.sqlite");
@@ -207,10 +243,21 @@ impl MemoryStore {
         conn.pragma_update(None, "busy_timeout", 5000)
             .map_err(|e| e.to_string())?;
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-            project_root: project_root.to_string(),
-        })
+        if crate::services::memory::vec0::vec0_available() {
+            let dim = conn
+                .query_row(
+                    "SELECT v FROM meta WHERE k = ?1",
+                    [META_EMBEDDING_DIM],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(1024);
+            crate::services::memory::vec0::ensure_vec_table(&conn, dim)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(conn)
     }
 
     /// 写入/更新一条事实：key 存在则原地更新（P2 起叠加向量近邻仲裁）；
@@ -284,13 +331,9 @@ impl MemoryStore {
                 new_id
             }
         };
-        // 显式提供向量时（新增或更新都生效）
-        if let Some((model, dim, vec)) = &embedding {
-            tx.execute(
-                "UPDATE facts SET embedding = ?1, embedding_model = ?2, embedding_dim = ?3 WHERE id = ?4",
-                params![f32_to_bytes(vec), model, *dim as i64, fid],
-            )
-            .map_err(|e| e.to_string())?;
+        // 显式提供向量时（新增或更新都生效；同步 vec0）
+        if let Some(emb) = &embedding {
+            self.write_embedding(&tx, &fid, emb)?;
         }
         // FTS5 同步（facts 表隐式 rowid）
         tx.execute(
@@ -387,6 +430,9 @@ impl MemoryStore {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM fts_facts WHERE fact_id = ?1", [id])
             .map_err(|e| e.to_string())?;
+        if crate::services::memory::vec0::vec0_available() {
+            crate::services::memory::vec0::vec0_delete(&tx, id).map_err(|e| e.to_string())?;
+        }
         tx.execute("DELETE FROM facts WHERE id = ?1", [id])
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
@@ -407,6 +453,9 @@ impl MemoryStore {
             params![status, valid_until, now, id],
         )
         .map_err(|e| e.to_string())?;
+        if status != STATUS_ACTIVE && crate::services::memory::vec0::vec0_available() {
+            crate::services::memory::vec0::vec0_delete(&conn, id).map_err(|e| e.to_string())?;
+        }
         drop(conn);
         self.get_fact(id)
     }
@@ -467,6 +516,168 @@ impl MemoryStore {
         self.get_fact(id)
     }
 
+    /// 写入向量（facts BLOB + vec0 同步；维度变化时重建 vec0 表）。
+    fn write_embedding(
+        &self,
+        conn: &Connection,
+        id: &str,
+        embedding: &(String, usize, Vec<f32>),
+    ) -> Result<(), String> {
+        let (model, dim, vec) = embedding;
+        conn.execute(
+            "UPDATE facts SET embedding = ?1, embedding_model = ?2, embedding_dim = ?3 WHERE id = ?4",
+            params![f32_to_bytes(vec), model, *dim as i64, id],
+        )
+        .map_err(|e| e.to_string())?;
+        let _ = self.meta_put_inner(conn, META_EMBEDDING_DIM, &dim.to_string());
+        if crate::services::memory::vec0::vec0_available() {
+            let current = crate::services::memory::vec0::vec0_dim(conn);
+            if current != Some(*dim) {
+                conn.execute_batch("DROP TABLE IF EXISTS vec_facts")
+                    .map_err(|e| e.to_string())?;
+                crate::services::memory::vec0::ensure_vec_table(conn, *dim)
+                    .map_err(|e| e.to_string())?;
+            }
+            crate::services::memory::vec0::vec0_upsert(conn, id, vec).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// 向量检索：vec0 优先，失败回退暴力余弦（表缺失/维度变化等）。
+    fn vector_search(
+        &self,
+        conn: &Connection,
+        query: &[f32],
+        k: usize,
+    ) -> Result<Vec<(String, f32)>, String> {
+        if crate::services::memory::vec0::vec0_available() {
+            if let Ok(rows) = crate::services::memory::vec0::vec0_search(conn, query, k) {
+                if !rows.is_empty() || k == 0 {
+                    return Ok(rows);
+                }
+            }
+        }
+        let mut stmt = conn
+            .prepare("SELECT id, embedding FROM facts WHERE status = ?1 AND embedding IS NOT NULL")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, Vec<u8>)> = stmt
+            .query_map(params![STATUS_ACTIVE], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        let decoded: Vec<(String, Vec<f32>)> = rows
+            .iter()
+            .map(|(id, b)| (id.clone(), bytes_to_f32(b)))
+            .collect();
+        Ok(brute_force_topk(&decoded, query, k))
+    }
+
+    /// 单独更新事实向量（仲裁订正内容后调用；None 表示清除向量）。
+    pub fn set_embedding(
+        &self,
+        id: &str,
+        embedding: Option<(String, usize, Vec<f32>)>,
+    ) -> Result<MemoryFact, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        if let Some(emb) = &embedding {
+            self.write_embedding(&conn, id, emb)?;
+        } else {
+            conn.execute("UPDATE facts SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE id = ?1", [id])
+                .map_err(|e| e.to_string())?;
+            if crate::services::memory::vec0::vec0_available() {
+                crate::services::memory::vec0::vec0_delete(&conn, id).map_err(|e| e.to_string())?;
+            }
+        }
+        drop(conn);
+        self.get_fact(id)
+    }
+
+    /// 导出全部事实为 JSON（不含向量；导入后重新向量化）。
+    pub fn export_facts(&self) -> Result<String, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT key, content, category, importance, status, source_type, source_refs, pinned, created_at, updated_at FROM facts")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(serde_json::json!({
+                    "key": r.get::<_, Option<String>>(0)?,
+                    "content": r.get::<_, String>(1)?,
+                    "category": r.get::<_, String>(2)?,
+                    "importance": r.get::<_, f32>(3)?,
+                    "status": r.get::<_, String>(4)?,
+                    "sourceType": r.get::<_, Option<String>>(5)?,
+                    "sourceRefs": r.get::<_, Option<String>>(6)?,
+                    "pinned": r.get::<_, i64>(7)? != 0,
+                    "createdAt": r.get::<_, String>(8)?,
+                    "updatedAt": r.get::<_, String>(9)?,
+                }))
+            })
+            .map_err(|e| e.to_string())?;
+        let facts: Vec<serde_json::Value> = rows.filter_map(|r| r.ok()).collect();
+        serde_json::to_string_pretty(&serde_json::json!({
+            "version": 1,
+            "exportedAt": now_iso(),
+            "facts": facts,
+        }))
+        .map_err(|e| e.to_string())
+    }
+
+    /// 从导出的 JSON 导入事实（按 key 去重；返回导入条数）。
+    pub fn import_facts(&self, json: &str) -> Result<usize, String> {
+        let parsed: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| format!("解析导入数据失败: {e}"))?;
+        let facts = parsed
+            .get("facts")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "导入数据缺少 facts 数组".to_string())?;
+        let mut count = 0usize;
+        for item in facts {
+            let fact = NewFact {
+                key: item
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                content: item
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                category: item
+                    .get("category")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("note")
+                    .to_string(),
+                importance: item
+                    .get("importance")
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as f32)
+                    .unwrap_or(0.5),
+                source_type: item
+                    .get("sourceType")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                source_refs: item
+                    .get("sourceRefs")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                pinned: item
+                    .get("pinned")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            };
+            if fact.content.trim().is_empty() {
+                continue;
+            }
+            self.upsert_fact(&fact, None)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// 读取 meta 键值。
     pub fn meta_get(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
@@ -478,6 +689,10 @@ impl MemoryStore {
     /// 写入 meta 键值。
     pub fn meta_put(&self, key: &str, value: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        self.meta_put_inner(&conn, key, value)
+    }
+
+    fn meta_put_inner(&self, conn: &Connection, key: &str, value: &str) -> Result<(), String> {
         conn.execute(
             "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
             params![key, value],
@@ -556,6 +771,10 @@ impl MemoryStore {
             params![STATUS_SUPERSEDED, now, now, source_id],
         )
         .map_err(|e| e.to_string())?;
+        if crate::services::memory::vec0::vec0_available() {
+            crate::services::memory::vec0::vec0_delete(&tx, source_id)
+                .map_err(|e| e.to_string())?;
+        }
         tx.execute(
             "INSERT OR REPLACE INTO fts_facts (rowid, fact_id, content, category, source_type) SELECT rowid, id, content, category, COALESCE(source_type, ?1) FROM facts WHERE id = ?2",
             params!["", target_id],
@@ -691,27 +910,10 @@ impl MemoryStore {
         let k = opts.k.clamp(1, 50);
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
 
-        // 1) 向量召回（暴力余弦）
+        // 1) 向量召回（vec0 加速，不可用时暴力余弦）
         let mut vector_ranks: Vec<(String, usize)> = Vec::new();
         if let Some(qv) = query_vec {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, embedding FROM facts WHERE status = ?1 AND embedding IS NOT NULL",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows: Vec<(String, Vec<u8>)> = stmt
-                .query_map(params![STATUS_ACTIVE], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
-                })
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-            drop(stmt);
-            let decoded: Vec<(String, Vec<f32>)> = rows
-                .iter()
-                .map(|(id, b)| (id.clone(), bytes_to_f32(b)))
-                .collect();
-            let top = brute_force_topk(&decoded, qv, k * 2);
+            let top = self.vector_search(&conn, qv, k * 2)?;
             for (i, (id, _)) in top.iter().enumerate() {
                 vector_ranks.push((id.clone(), i));
             }
@@ -900,11 +1102,38 @@ impl MemoryStore {
 
     /// 重建/补建向量：为所有无 embedding 的 active 事实生成向量。
     /// 闭包返回 (模型名, 向量)；async 以支持网络嵌入。
-    pub async fn reindex<F, Fut>(&self, mut embed_one: F) -> Result<(usize, usize), String>
+    pub async fn reindex<F, Fut, P>(
+        &self,
+        mut embed_one: F,
+        mut on_progress: P,
+    ) -> Result<(usize, usize), String>
     where
         F: FnMut(String) -> Fut,
         Fut: std::future::Future<Output = Result<Option<(String, usize, Vec<f32>)>, String>>,
+        P: FnMut(usize, usize) + Send,
     {
+        // 嵌入模型/维度变化时，旧向量全部作废，强制全量重建
+        {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            let meta_dim = conn
+                .query_row(
+                    "SELECT v FROM meta WHERE k = ?1",
+                    [META_EMBEDDING_DIM],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .and_then(|v| v.parse::<usize>().ok());
+            let vec_dim = crate::services::memory::vec0::vec0_dim(&conn);
+            if meta_dim.is_some() && vec_dim.is_some() && meta_dim != vec_dim {
+                conn.execute(
+                    "UPDATE facts SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE embedding IS NOT NULL",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+                let _ = crate::services::memory::vec0::vec0_clear(&conn);
+            }
+        }
         let ids: Vec<String> = {
             let conn = self.conn.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn
@@ -917,16 +1146,15 @@ impl MemoryStore {
         };
         let mut embedded = 0usize;
         let mut failed = 0usize;
+        let total = ids.len();
         for id in ids {
             let content = self.get_fact(&id).map(|f| f.content).unwrap_or_default();
+            on_progress(embedded, total);
             match embed_one(content).await {
                 Ok(Some((model, dim, v))) => {
                     let conn = self.conn.lock().map_err(|e| e.to_string())?;
-                    conn.execute(
-                        "UPDATE facts SET embedding = ?1, embedding_dim = ?2, embedding_model = ?3 WHERE id = ?4",
-                        params![f32_to_bytes(&v), dim as i64, model, id],
-                    )
-                    .map_err(|e| e.to_string())?;
+                    self.write_embedding(&conn, &id, &(model, dim, v))
+                        .map_err(|e| e.to_string())?;
                     drop(conn);
                     embedded += 1;
                 }
@@ -1018,6 +1246,7 @@ impl MemoryStore {
 }
 
 const META_LAST_REINDEX: &str = "last_reindex_at";
+const META_EMBEDDING_DIM: &str = "embedding_dim";
 const META_MIGRATED_KNOWLEDGE: &str = "knowledge_json_migrated";
 const META_PROJECT_ENABLED: &str = "project_memory_enabled";
 
@@ -1221,6 +1450,79 @@ mod tests {
             res.iter().map(|f| f.content.clone()).collect::<Vec<_>>(),
         );
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_hybrid_ndcg_sanity() {
+        // 构造 8 条事实（8 维正交基向量）+ 2 个查询，验证向量检索排序质量（NDCG@5=1）
+        let root = temp_project("ndcg");
+        let store = MemoryStore::open(&root).unwrap();
+        let tags = [
+            "alpha", "beta", "gamma", "delta", "eps", "zeta", "eta", "theta",
+        ];
+        for (i, tag) in tags.iter().enumerate() {
+            let mut v = vec![0.0f32; 8];
+            v[i] = 1.0;
+            store
+                .upsert_fact(
+                    &fact(&format!("feature {tag}"), None),
+                    Some(("test".into(), 8, v)),
+                )
+                .unwrap();
+        }
+        let mut q1 = vec![0.0f32; 8];
+        q1[0] = 1.0;
+        let res = store
+            .search_hybrid(
+                "feature alpha",
+                Some(&q1),
+                &SearchOptions {
+                    category: None,
+                    k: 5,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(res[0].content, "feature alpha");
+        let ndcg = ndcg_at_k(&res, &["feature alpha"], 5);
+        assert!((ndcg - 1.0).abs() < 1e-5, "NDCG@5 应为 1.0，实际 {ndcg}");
+        let mut q2 = vec![0.0f32; 8];
+        q2[1] = 1.0;
+        let res2 = store
+            .search_hybrid(
+                "feature beta",
+                Some(&q2),
+                &SearchOptions {
+                    category: None,
+                    k: 5,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(res2[0].content, "feature beta");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    fn ndcg_at_k(results: &[ScoredFact], relevant: &[&str], k: usize) -> f64 {
+        let k = k.min(results.len());
+        let mut dcg = 0.0f64;
+        for (i, f) in results.iter().take(k).enumerate() {
+            let rel = if relevant.contains(&f.content.as_str()) {
+                1.0
+            } else {
+                0.0
+            };
+            dcg += rel / (i as f64 + 2.0).log2();
+        }
+        let mut idcg = 0.0f64;
+        for i in 0..relevant.len().min(k) {
+            idcg += 1.0 / (i as f64 + 2.0).log2();
+        }
+        if idcg == 0.0 {
+            0.0
+        } else {
+            dcg / idcg
+        }
     }
 
     #[test]

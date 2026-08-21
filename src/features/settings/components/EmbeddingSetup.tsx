@@ -26,6 +26,7 @@ const EmbeddingSetup: Component = () => {
   const [ollamaModels, setOllamaModels] = createSignal<OllamaModelInfo[]>([]);
   const [downloading, setDownloading] = createSignal<Record<string, number>>({});
   const [saveState, setSaveState] = createSignal<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [pullName, setPullName] = createSignal('');
 
   let unlisten: UnlistenFn | null = null;
 
@@ -38,6 +39,7 @@ const EmbeddingSetup: Component = () => {
         if (ec) {
           setProvider(ec.provider === 'openai_compat' ? 'openai_compat' : 'ollama');
           setModel(ec.model || 'bge-m3:latest');
+          setPullName(ec.model || 'bge-m3:latest');
           setApiUrl(ec.apiUrl || '');
           if (typeof ec.dimensions === 'number' && ec.dimensions > 0) setDims(ec.dimensions);
         }
@@ -147,6 +149,12 @@ const EmbeddingSetup: Component = () => {
       console.warn('发起下载失败:', err);
       setDownloading((prev) => ({ ...prev, [m]: -1 }));
     }
+  };
+
+  // 按名称拉取尚未安装的模型（独立于已安装列表）。
+  const pullByName = () => {
+    const name = pullName().trim();
+    if (name) void download(name);
   };
 
   const removeModel = async (m: string) => {
@@ -267,6 +275,21 @@ const EmbeddingSetup: Component = () => {
 
       <Show when={provider() === 'ollama'}>
         <div class="flex flex-col gap-1">
+          <label class={labelCls}>{t('app.memory.pullModelLabel')}</label>
+          <div class="flex gap-2">
+            <input
+              class={inputCls}
+              value={pullName()}
+              onInput={(e) => setPullName(e.currentTarget.value)}
+              placeholder={t('app.memory.pullPlaceholder')}
+            />
+            <button
+              class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-pri-20 text-pri border border-pri/30 shrink-0 cursor-pointer hover:bg-pri-30 transition-colors"
+              onClick={pullByName}
+            >
+              {t('app.memory.pullBy')}
+            </button>
+          </div>
           <label class={labelCls}>{t('app.memory.ollamaModels')}</label>
           <For each={ollamaModels()}>
             {(m) => {
@@ -305,7 +328,7 @@ const EmbeddingSetup: Component = () => {
             }}
           </For>
           <Show when={ollamaModels().length === 0}>
-            <div class="text-xs text-white/30">-</div>
+            <div class="text-xs text-white/30">{t('app.memory.noModels')}</div>
           </Show>
         </div>
       </Show>

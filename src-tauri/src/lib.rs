@@ -36,7 +36,28 @@ pub fn run() {
     init_tracing();
     tauri::Builder::default()
         .setup(|app| {
-            let window = app.get_webview_window("main").unwrap();
+            // 主窗口改为代码创建：仅 Windows/macOS 开启透明（圆角面板四角透出桌面）；
+            // Linux/WebKitGTK 下透明窗口需整窗 ARGB 合成、性能开销大（与 PERF-04 同源），保持不透明直角窗口。
+            #[cfg(not(target_os = "linux"))]
+            let transparent = true;
+            #[cfg(target_os = "linux")]
+            let transparent = false;
+            let window = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("AIO")
+            .inner_size(1600.0, 900.0)
+            .min_inner_size(960.0, 540.0)
+            .decorations(false)
+            .transparent(transparent)
+            .shadow(false)
+            .build()?;
+            // 网页基色：非 Linux 用透明（圆角外透出桌面）；Linux 不透明，避免透明合成开销
+            #[cfg(not(target_os = "linux"))]
+            let _ = window.set_background_color(Some(tauri::webview::Color(0, 0, 0, 0)));
+            #[cfg(target_os = "linux")]
             let _ = window.set_background_color(Some(tauri::webview::Color(10, 14, 26, 255)));
             let conn = core::db::init_db(app.handle())?;
             app.manage(DbState(parking_lot::Mutex::new(conn)));

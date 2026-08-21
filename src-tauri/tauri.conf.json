@@ -10,18 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "minHeight": 540,
-        "minWidth": 960,
-        "title": "AIO",
-        "width": 1600,
-        "height": 900,
-        "decorations": false,
-        "transparent": false,
-        "shadow": false
-      }
-    ],
+    "macOSPrivateApi": true,
     "security": {
       "assetProtocol": {
         "enable": true,

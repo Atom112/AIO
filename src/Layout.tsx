@@ -8,8 +8,9 @@ import UpdateNotification from './shared/components/UpdateNotification';
 import GlobalKeyboardHandler from './shared/components/GlobalKeyboardHandler';
 import CommandPalette from './shared/components/CommandPalette';
 import { Transition } from 'solid-transition-group';
-import { Component, onCleanup, onMount, ParentProps } from 'solid-js';
+import { Component, createSignal, onCleanup, onMount, ParentProps } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { Window } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from './core/utils/models';
@@ -38,7 +39,11 @@ import type { ProviderConfigFile } from './core/utils/models';
  * @returns 返回一个包含通用导航和过渡动画的内容区域
  */
 const Layout: Component<ParentProps> = (props) => {
+  // 窗口是否处于最大化（透明窗口下最大化时应取消圆角，避免四角透出桌面）
+  const [windowMaximized, setWindowMaximized] = createSignal(false);
+  const appWindow = new Window('main');
   let unlistenDiagnostics: (() => void) | undefined;
+  let unlistenResized: (() => void) | undefined;
 
   /**
    * 应用启动时自动检查更新
@@ -47,6 +52,12 @@ const Layout: Component<ParentProps> = (props) => {
    */
   onMount(async () => {
     const currentVersion = await getVersion().catch(() => '');
+
+    // 初始化最大化状态，并在窗口尺寸变化时同步（控制圆角）
+    setWindowMaximized(await appWindow.isMaximized().catch(() => false));
+    unlistenResized = await appWindow.onResized(async () => {
+      setWindowMaximized(await appWindow.isMaximized().catch(() => false));
+    });
 
     // 启动时重置一次性状态（防止上次会话残留）
     setAppUpdateAvailable(false);
@@ -136,13 +147,15 @@ const Layout: Component<ParentProps> = (props) => {
   });
 
   onCleanup(() => {
-    // 清理 LSP 事件监听
+    // 清理 LSP 事件监听与窗口尺寸监听
     unlistenDiagnostics?.();
+    unlistenResized?.();
   });
 
   return (
     <div
       class="app-container h-screen flex flex-col overflow-hidden rounded-xl"
+      classList={{ 'rounded-none': windowMaximized() }}
       style={{ background: 'var(--app-bg)' }}
     >
       <GlobalKeyboardHandler />

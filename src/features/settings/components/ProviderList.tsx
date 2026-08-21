@@ -17,6 +17,13 @@ import { useNavigate } from '@solidjs/router';
 import { invoke } from '@tauri-apps/api/core';
 import Icon from '../../../shared/components/Icon';
 import {
+  btnBadge,
+  btnDanger,
+  btnPrimary,
+  btnPrimarySm,
+  btnSecondary,
+} from '../../../shared/components/buttonStyles';
+import {
   providerConfigs,
   setProviderConfigs,
   modelsCatalog,
@@ -86,12 +93,7 @@ const CatalogStats: Component = () => {
         <span class="text-[10px] text-white/30">
           {t('provider.updatedAt', { time: formatRelativeTime(modelsCatalogGeneratedAt()) })}
         </span>
-        <button
-          type="button"
-          class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50"
-          onClick={handleSync}
-          disabled={updating()}
-        >
+        <button type="button" class={btnBadge} onClick={handleSync} disabled={updating()}>
           <Show when={updating()} fallback={<Icon name="refresh" size={11} />}>
             <Icon name="spinner" size={11} class="animate-spin" />
           </Show>
@@ -276,11 +278,7 @@ const ProviderList: Component = () => {
             onInput={(e) => setSearch(e.currentTarget.value)}
           />
         </div>
-        <button
-          type="button"
-          class="px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-white hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95"
-          onClick={() => setShowAddCustom(true)}
-        >
+        <button type="button" class={btnPrimarySm} onClick={() => setShowAddCustom(true)}>
           + {t('provider.addCustom')}
         </button>
       </div>
@@ -329,7 +327,7 @@ const ProviderList: Component = () => {
             <div class="flex justify-end gap-2">
               <button
                 type="button"
-                class="px-4 py-1.5 text-xs rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200"
+                class={btnSecondary}
                 onClick={() => {
                   setShowAddCustom(false);
                   setNewCustomName('');
@@ -338,12 +336,7 @@ const ProviderList: Component = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button
-                type="button"
-                class="px-4 py-1.5 text-xs rounded-md font-semibold transition-all duration-200 active:scale-95"
-                style={{ 'background-color': 'var(--primary-color)', color: '#0e121f' }}
-                onClick={addCustomProvider}
-              >
+              <button type="button" class={btnPrimary} onClick={addCustomProvider}>
                 {t('common.add')}
               </button>
             </div>
@@ -486,7 +479,7 @@ const ProviderList: Component = () => {
                     </button>
                     <button
                       type="button"
-                      class="px-2.5 py-1 text-[11px] rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95"
+                      class={btnDanger}
                       onClick={(e) => {
                         e.stopPropagation();
                         removeCustomProvider(cfg.id);
@@ -563,7 +556,7 @@ const ProviderList: Component = () => {
                     </button>
                     <button
                       type="button"
-                      class="px-2.5 py-1 text-[11px] rounded-md border border-danger/40 text-danger hover:bg-danger hover:text-white transition-all duration-200 active:scale-95"
+                      class={btnDanger}
                       onClick={(e) => {
                         e.stopPropagation();
                         removeCustomProvider(cfg.id);

@@ -2,6 +2,7 @@ import { Component, createSignal, onCleanup, onMount } from 'solid-js';
 import Cropper from 'cropperjs';
 import 'cropperjs/dist/cropper.css';
 import { t } from '../../core/i18n';
+import { btnClose, btnPrimary, btnSecondary } from '../components/buttonStyles';
 
 interface AvatarCropModalProps {
   imageSrc: string; // 待裁剪的图片源
@@ -128,10 +129,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
       >
         <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-dark-300 text-pri font-bold">
           <span>{t('crop.title')}</span>
-          <button
-            onClick={handleClose}
-            class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80"
-          >
+          <button onClick={handleClose} class={btnClose}>
             &times;
           </button>
         </div>
@@ -177,16 +175,10 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
           </div>
 
           <div class="flex justify-end gap-3">
-            <button
-              onClick={handleClose}
-              class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-dark-100 text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-dark-50"
-            >
+            <button onClick={handleClose} class={btnSecondary}>
               {t('crop.cancel')}
             </button>
-            <button
-              onClick={handleSave}
-              class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-pri text-black rounded-lg hover:scale-105 transition-all duration-200"
-            >
+            <button onClick={handleSave} class={btnPrimary}>
               {t('crop.save')}
             </button>
           </div>

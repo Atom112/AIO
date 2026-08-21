@@ -7,6 +7,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import AvatarCropModal from './AvatarCropModel';
 import UserDropdown from './UserDropdown';
 import Icon from './Icon';
+import { btnIcon } from '../components/buttonStyles';
 import {
   datas,
   setDatas,
@@ -195,7 +196,10 @@ const NavBar: Component = () => {
 
         <div class="absolute right-5 flex items-center [app-region:no-drag]">
           <button
-            class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10"
+            class={
+              'w-[30px] h-[30px] ml-1 text-lg text-white/40 hover:text-white hover:bg-white/10 ' +
+              btnIcon
+            }
             onClick={handleMinimize}
             title={t('nav.minimize')}
           >
@@ -203,7 +207,10 @@ const NavBar: Component = () => {
           </button>
 
           <button
-            class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-white/10"
+            class={
+              'w-[30px] h-[30px] ml-1 text-lg text-white/40 hover:text-white hover:bg-white/10 ' +
+              btnIcon
+            }
             onClick={handleToggleMaximize}
             title={isMaximized() ? t('nav.restore') : t('nav.maximize')}
           >
@@ -215,7 +222,10 @@ const NavBar: Component = () => {
           </button>
 
           <button
-            class="w-[30px] h-[30px] flex justify-center items-center bg-transparent border-none text-lg cursor-pointer rounded-md transition-all ml-1 text-white/40 hover:text-white hover:bg-danger"
+            class={
+              'w-[30px] h-[30px] ml-1 text-lg text-white/40 hover:text-white hover:bg-danger ' +
+              btnIcon
+            }
             onClick={handleClose}
             title={t('nav.close')}
           >

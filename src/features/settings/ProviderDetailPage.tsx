@@ -32,6 +32,13 @@ import { getProviderLogo } from '../../core/utils/modelLogo';
 import ModelRow from '../../shared/components/ModelRow';
 import Icon from '../../shared/components/Icon';
 import Dropdown from '../../shared/components/Dropdown';
+import {
+  btnDanger,
+  btnIcon,
+  btnPrimarySm,
+  btnSecondarySm,
+  btnSuccess,
+} from '../../shared/components/buttonStyles';
 import { formatNumber, reportError, t } from '../../core/i18n';
 
 type SortKey = 'releaseDesc' | 'nameAsc';
@@ -467,11 +474,7 @@ const ProviderDetail: Component = () => {
       <div class="max-w-5xl mx-auto p-4 sm:p-6">
         {/* 顶部返回 + 标题 */}
         <div class="flex items-center gap-3 mb-5 animate-row-in">
-          <button
-            type="button"
-            class="px-3 py-1.5 text-sm rounded-md border border-white/10 text-[#ccc] hover:border-pri-30 hover:text-white hover:bg-white/5 transition-all duration-200 active:scale-95 flex items-center gap-1.5"
-            onClick={() => navigate('/settings')}
-          >
+          <button type="button" class={btnSecondarySm} onClick={() => navigate('/settings')}>
             <Icon name="arrow-left" size={14} class="text-pri" /> {t('provider.back')}
           </button>
           <Show when={!catalogReady()}>
@@ -689,7 +692,7 @@ const ProviderDetail: Component = () => {
             </button>
             <button
               type="button"
-              class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-white hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              class={btnPrimarySm}
               disabled={testState().status === 'testing'}
               onClick={handleTestConnection}
             >
@@ -706,7 +709,7 @@ const ProviderDetail: Component = () => {
             <Show when={!isLocalEngine()}>
               <button
                 type="button"
-                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-pri-30 bg-pri-10 text-white hover:bg-pri-20 hover:border-pri-50 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                class={btnPrimarySm}
                 disabled={fetchState().status === 'fetching'}
                 onClick={handleFetchModels}
               >
@@ -788,7 +791,7 @@ const ProviderDetail: Component = () => {
               <Show when={isServerAlive() !== 'alive'}>
                 <button
                   type="button"
-                  class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  class={btnSuccess}
                   disabled={engineActionLoading()}
                   onClick={handleStartEngine}
                 >
@@ -804,7 +807,7 @@ const ProviderDetail: Component = () => {
               <Show when={isServerAlive() === 'alive'}>
                 <button
                   type="button"
-                  class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-red-400/30 bg-red-400/10 text-red-400 hover:bg-red-400/20 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  class={btnDanger}
                   disabled={engineActionLoading()}
                   onClick={handleStopEngine}
                 >
@@ -923,7 +926,7 @@ const ProviderDetail: Component = () => {
                       <span class="flex-1 text-xs text-white font-mono truncate">{path}</span>
                       <button
                         type="button"
-                        class="w-5 h-5 flex items-center justify-center rounded hover:bg-white/10 text-[#888] hover:text-red-400"
+                        class={'w-5 h-5 text-[#888] hover:text-red-400 ' + btnIcon}
                         onClick={() => removeLocalModelFile(modelId)}
                       >
                         ×
@@ -935,7 +938,7 @@ const ProviderDetail: Component = () => {
             </Show>
             <button
               type="button"
-              class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-dashed border-white/20 text-[#aaa] hover:border-pri-30 hover:text-pri transition-all duration-200"
+              class={`${btnSecondarySm} border-dashed`}
               onClick={pickLocalModelFile}
             >
               <Icon name="plus" size={12} />

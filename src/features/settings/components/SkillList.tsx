@@ -21,6 +21,16 @@ import {
 } from '../../../core/store/store';
 import Dropdown from '../../../shared/components/Dropdown';
 import Icon from '../../../shared/components/Icon';
+import {
+  btnBadge,
+  btnDanger,
+  btnPrimarySm,
+  btnSecondarySm,
+  btnSuccess,
+  btnTabMd,
+  btnTabXs,
+  tabActive,
+} from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 import type {
   MarketSkill,
@@ -401,22 +411,22 @@ const SkillList: Component = () => {
             style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
           >
             <button
-              class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-white': view() === 'market' }}
+              class={btnTabMd}
+              classList={{ [tabActive]: view() === 'market' }}
               onClick={() => setView('market')}
             >
               {t('skill.tabMarket')}
             </button>
             <button
-              class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-white': view() === 'downloaded' }}
+              class={btnTabMd}
+              classList={{ [tabActive]: view() === 'downloaded' }}
               onClick={() => setView('downloaded')}
             >
               {t('skill.tabDownloaded', { count: Object.keys(skills()).length })}
             </button>
             <button
-              class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-white': view() === 'npx' }}
+              class={btnTabMd}
+              classList={{ [tabActive]: view() === 'npx' }}
               onClick={() => {
                 setView('npx');
                 if (!npxScanned) discoverNpx();
@@ -432,15 +442,15 @@ const SkillList: Component = () => {
               style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
             >
               <button
-                class="px-2.5 py-1 rounded-md text-xs"
-                classList={{ 'bg-pri-20 text-white': scope() === 'global' }}
+                class={btnTabXs}
+                classList={{ [tabActive]: scope() === 'global' }}
                 onClick={() => setScope('global')}
               >
                 {t('skill.scopeGlobal')}
               </button>
               <button
-                class="px-2.5 py-1 rounded-md text-xs"
-                classList={{ 'bg-pri-20 text-white': scope() === 'project' }}
+                class={btnTabXs}
+                classList={{ [tabActive]: scope() === 'project' }}
                 onClick={() => setScope('project')}
               >
                 {t('skill.scopeProject', { name: currentProject()?.name ?? '' })}
@@ -480,8 +490,8 @@ const SkillList: Component = () => {
             >
               {([value, label]) => (
                 <button
-                  class="px-3 py-1.5 rounded-md text-xs"
-                  classList={{ 'bg-pri-20 text-white': sort() === value }}
+                  class={btnTabMd}
+                  classList={{ [tabActive]: sort() === value }}
                   style={sort() === value ? '' : 'background: rgba(var(--text-base-rgb),0.04);'}
                   onClick={() => selectSort(value)}
                 >
@@ -498,7 +508,7 @@ const SkillList: Component = () => {
           />
           <button
             type="button"
-            class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50 ml-auto"
+            class={btnBadge + ' ml-auto'}
             disabled={refreshing()}
             onClick={() => void refreshMarket()}
           >
@@ -615,13 +625,8 @@ const SkillList: Component = () => {
                           : t('skill.communityContent')}
                       </span>
                       <button
-                        class="px-3 py-1.5 rounded-md text-xs"
+                        class={downloaded() ? btnSuccess : btnPrimarySm}
                         disabled={downloaded() || downloadingId() === skill.id}
-                        style={
-                          downloaded()
-                            ? 'background: rgba(124,217,160,0.12); color: #7cd9a0;'
-                            : 'background: rgba(var(--primary-rgb),0.2); border: 1px solid rgba(var(--primary-rgb),0.3);'
-                        }
                         onClick={() => void download(skill)}
                       >
                         {downloaded()
@@ -678,26 +683,14 @@ const SkillList: Component = () => {
                   </div>
                   <div class="flex gap-2 ml-3">
                     <Show when={skill.sourceUrl}>
-                      <button
-                        class="px-2 py-1 rounded text-xs"
-                        style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                        onClick={() => void openSafeUrl(skill.sourceUrl!)}
-                      >
+                      <button class={btnBadge} onClick={() => void openSafeUrl(skill.sourceUrl!)}>
                         {t('skill.source')}
                       </button>
                     </Show>
-                    <button
-                      class="px-2 py-1 rounded text-xs"
-                      style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                      onClick={() => setEditing({ ...skill })}
-                    >
+                    <button class={btnBadge} onClick={() => setEditing({ ...skill })}>
                       {t('skill.edit')}
                     </button>
-                    <button
-                      class="px-2 py-1 rounded text-xs"
-                      style={{ background: 'rgba(255,77,77,0.1)', color: 'rgba(255,107,107,0.9)' }}
-                      onClick={() => void remove(skill.id)}
-                    >
+                    <button class={btnDanger} onClick={() => void remove(skill.id)}>
                       {t('skill.remove')}
                     </button>
                   </div>
@@ -714,12 +707,7 @@ const SkillList: Component = () => {
               <p class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
                 {t('skill.npxHint')}
               </p>
-              <button
-                class="px-3 py-1.5 rounded-md text-xs"
-                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                onClick={() => discoverNpx()}
-                disabled={npxLoading()}
-              >
+              <button class={btnSecondarySm} onClick={() => discoverNpx()} disabled={npxLoading()}>
                 {npxLoading() ? t('skill.scanning') : t('skill.rescan')}
               </button>
             </div>
@@ -779,7 +767,7 @@ const SkillList: Component = () => {
                           when={item.alreadyImported}
                           fallback={
                             <button
-                              class="px-3 py-1 rounded text-xs bg-pri text-black disabled:opacity-50"
+                              class={btnPrimarySm}
                               onClick={() => importNpx(item.packageName)}
                               disabled={npxImportingId() === item.packageName}
                             >
@@ -799,8 +787,7 @@ const SkillList: Component = () => {
                             {t('skill.imported')}
                           </span>
                           <button
-                            class="px-2 py-1 rounded text-xs"
-                            style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
+                            class={btnBadge}
                             onClick={() => refreshNpx(`npx-${item.packageName}`)}
                             disabled={npxRefreshingId() === `npx-${item.packageName}`}
                           >
@@ -861,17 +848,10 @@ const SkillList: Component = () => {
               />
             </label>
             <div class="flex justify-end gap-2">
-              <button
-                class="px-3 py-1.5 rounded text-sm"
-                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                onClick={() => setEditing(null)}
-              >
+              <button class={btnSecondarySm} onClick={() => setEditing(null)}>
                 {t('skill.cancel')}
               </button>
-              <button
-                class="px-3 py-1.5 rounded text-sm bg-pri text-black"
-                onClick={() => void save()}
-              >
+              <button class={btnPrimarySm} onClick={() => void save()}>
                 {t('skill.save')}
               </button>
             </div>

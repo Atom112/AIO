@@ -36,6 +36,16 @@ import {
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
+import {
+  btnIcon,
+  btnPrimary,
+  btnPrimarySm,
+  btnSecondary,
+  btnSecondarySm,
+  btnTabXs,
+  tabActive,
+  tabInactive,
+} from '../../../shared/components/buttonStyles';
 import { locale, setLocale, t, type Locale } from '../../../core/i18n';
 import EmbeddingSetup from './EmbeddingSetup';
 
@@ -559,22 +569,16 @@ const AppSettings: Component = () => {
           <div class="flex rounded-md border border-white/10 overflow-hidden">
             <button
               type="button"
-              class="px-3 py-1 text-xs transition-all duration-200"
-              classList={{
-                'bg-pri-10 text-white': !isDarkMode(),
-                'text-white/35 hover:text-white/60': isDarkMode(),
-              }}
+              class={btnTabXs}
+              classList={{ [tabActive]: !isDarkMode(), [tabInactive]: isDarkMode() }}
               onClick={() => setIsDarkMode(false)}
             >
               {t('app.darkMode.off')}
             </button>
             <button
               type="button"
-              class="px-3 py-1 text-xs transition-all duration-200"
-              classList={{
-                'bg-pri-10 text-white': isDarkMode(),
-                'text-white/35 hover:text-white/60': !isDarkMode(),
-              }}
+              class={btnTabXs}
+              classList={{ [tabActive]: isDarkMode(), [tabInactive]: !isDarkMode() }}
               onClick={() => setIsDarkMode(true)}
             >
               {t('app.darkMode.on')}
@@ -744,12 +748,7 @@ const AppSettings: Component = () => {
           </div>
 
           <button
-            class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-            style={{
-              background: 'rgba(var(--primary-rgb), 0.18)',
-              color: '#fff',
-              border: '1px solid rgba(var(--primary-rgb), 0.25)',
-            }}
+            class={btnPrimarySm}
             disabled={checkUpdating()}
             onClick={handleManualCheck}
             title={t('app.update.check')}
@@ -913,12 +912,7 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.shortcuts.description')}</p>
           </div>
           <button
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-200"
-            style={{
-              background: 'rgba(var(--text-base-rgb), 0.04)',
-              color: 'rgba(var(--text-base-rgb), 0.40)',
-              border: '1px solid var(--border-dim)',
-            }}
+            class={btnSecondarySm}
             onClick={() => setResetAllConfirm(true)}
             title={t('app.shortcuts.restoreDefaults')}
           >
@@ -942,14 +936,11 @@ const AppSettings: Component = () => {
                 {t('app.shortcuts.resetMessage')}
               </p>
               <div class="flex justify-end gap-2">
-                <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel"
-                  onClick={() => setResetAllConfirm(false)}
-                >
+                <button class={btnSecondary} onClick={() => setResetAllConfirm(false)}>
                   {t('common.cancel')}
                 </button>
                 <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm"
+                  class={btnPrimary}
                   onClick={() => {
                     resetAllShortcutBindings();
                     setResetAllConfirm(false);
@@ -987,16 +978,10 @@ const AppSettings: Component = () => {
                 })}
               </p>
               <div class="flex justify-end gap-2">
-                <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel"
-                  onClick={handleConflictCancel}
-                >
+                <button class={btnSecondary} onClick={handleConflictCancel}>
                   {t('common.cancel')}
                 </button>
-                <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm"
-                  onClick={handleConflictOverride}
-                >
+                <button class={btnPrimary} onClick={handleConflictOverride}>
                   {t('app.shortcuts.replace')}
                 </button>
               </div>
@@ -1076,7 +1061,7 @@ const AppSettings: Component = () => {
                         {/* 重置按钮（仅修改后显示） */}
                         <Show when={modified()}>
                           <button
-                            class="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[5px] border-none bg-white/[0.04] text-white/30 cursor-pointer transition-all duration-150 p-0 hover:bg-white/[0.08] hover:text-white/60"
+                            class={'w-[22px] h-[22px] text-white/30 hover:text-white/60 ' + btnIcon}
                             onClick={(e) => {
                               e.stopPropagation();
                               resetShortcutBinding(cmd.id);

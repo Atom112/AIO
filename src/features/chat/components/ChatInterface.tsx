@@ -56,6 +56,13 @@ import AgentModeSelector from './AgentModeSelector';
 import WelcomeScreen from './WelcomeScreen';
 import DiffView from '../../../shared/components/DiffView';
 import BtwResponseBox from './BtwResponseBox';
+import {
+  btnBadge,
+  btnGhost,
+  btnIcon,
+  btnPrimarySm,
+  btnSecondarySm,
+} from '../../../shared/components/buttonStyles';
 
 /** 聚合后的文件变更条目，与 FileChangeInfo 同形但条目唯一 */
 type AggregatedFileChange = FileChangeInfo;
@@ -514,16 +521,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         {/* 选择模式工具栏 */}
         <div class="flex items-center justify-between px-1 pb-3 shrink-0 animate-fade-in">
           <div class="flex items-center gap-2">
-            <button
-              class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
-              onClick={() => props.onSelectAll()}
-            >
+            <button class={btnSecondarySm} onClick={() => props.onSelectAll()}>
               {t('common.selectAll')}
             </button>
-            <button
-              class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 bg-white/[0.04] border border-white/[0.08] text-white/60 hover:bg-white/[0.08] hover:text-white/80"
-              onClick={() => props.onCancelSelection()}
-            >
+            <button class={btnSecondarySm} onClick={() => props.onCancelSelection()}>
               {t('common.cancel')}
             </button>
           </div>
@@ -532,13 +533,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               {t('chat.selectedMessages', { count: formatNumber(props.selectedMessageIds.size) })}
             </span>
             <button
-              class="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200"
-              classList={{
-                'bg-[rgba(var(--primary-rgb),0.12)] border border-[rgba(var(--primary-rgb),0.3)] text-[rgba(var(--primary-rgb),0.9)] hover:bg-[rgba(var(--primary-rgb),0.2)]':
-                  props.selectedMessageIds.size > 0,
-                'bg-white/[0.02] border border-white/[0.04] text-white/25 cursor-not-allowed':
-                  props.selectedMessageIds.size === 0,
-              }}
+              class={btnPrimarySm}
               disabled={props.selectedMessageIds.size === 0}
               onClick={() => props.onConfirmSelection()}
             >
@@ -791,7 +786,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             <For each={msg.images}>
                               {(img) => (
                                 <button
-                                  class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] cursor-pointer transition-all duration-200 bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08]"
+                                  class={btnBadge}
                                   onClick={() => downloadGeneratedImage(img)}
                                   title={t('common.download')}
                                 >
@@ -1263,11 +1258,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               <Show when={showUndo()}>
                                 <button
                                   type="button"
-                                  class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium transition-colors hover:bg-white/[0.06] border-none cursor-pointer"
-                                  style={{
-                                    color: 'rgba(var(--text-base-rgb),0.35)',
-                                    background: 'transparent',
-                                  }}
+                                  class={'px-1.5 py-0.5 text-[12px] font-medium ' + btnGhost}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleUndoAll();
@@ -1451,7 +1442,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                   <div class="branch-dropdown-container relative inline-block">
                     <button
                       type="button"
-                      class="flex items-center gap-0.5 cursor-pointer border-none rounded-md px-1.5 py-0.5 transition-colors duration-150 bg-[rgba(var(--surface-alt-bg),0.5)]"
+                      class={'px-1.5 py-0.5 bg-[rgba(var(--surface-alt-bg),0.5)] ' + btnGhost}
                       style={{ color: 'rgba(var(--text-base-rgb),0.5)', 'font-weight': '400' }}
                       classList={{ '!bg-[rgba(var(--surface-bg),0.7)]': branchOpen() }}
                       onClick={(e) => {
@@ -1643,7 +1634,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               <WebSearchButton />
 
               <button
-                class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
+                class={'p-1.5 ' + btnIcon}
                 style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 title={t('chat.attachFile')}
                 onClick={async () => {
@@ -1667,7 +1658,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               </button>
 
               <button
-                class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
+                class={'p-1.5 ' + btnIcon}
                 style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 title={t('chat.uploadImage')}
                 onClick={async () => {
@@ -1696,7 +1687,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               {/* LSP 问题面板切换 */}
               <Show when={hasDiagnostics()}>
                 <button
-                  class="relative flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1.5 transition-all duration-200"
+                  class={'relative p-1.5 ' + btnIcon}
                   style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                   title={t('chat.diagnostics', {
                     errors: formatNumber(totalErrors()),

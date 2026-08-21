@@ -20,6 +20,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import { formatNumber, t, type TranslationKey } from '../../../core/i18n';
+import { btnTabXs, tabActive, tabInactive, btnIcon } from '../../../shared/components/buttonStyles';
 
 /** 诊断严重级别对应的图标和颜色 */
 const SEVERITY_CONFIG: Record<string, { icon: IconName; color: string; bgColor: string }> = {
@@ -81,11 +82,7 @@ const ProblemsPanel: Component = () => {
               <For each={FILTER_OPTIONS}>
                 {(opt) => (
                   <button
-                    class={`text-xs px-2 py-1 transition-colors ${
-                      activeFilter() === opt.value
-                        ? 'bg-blue-600/40 text-blue-300'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                    }`}
+                    class={`${btnTabXs} ${activeFilter() === opt.value ? tabActive : tabInactive}`}
                     onClick={() => setSeverityFilter(opt.value as any)}
                   >
                     {t(opt.labelKey)}
@@ -96,7 +93,7 @@ const ProblemsPanel: Component = () => {
 
             {/* 关闭按钮 */}
             <button
-              class="text-gray-400 hover:text-gray-200 p-1 rounded hover:bg-gray-700/50"
+              class={'p-1 text-white/50 hover:text-white hover:bg-white/10 ' + btnIcon}
               onClick={() => setProblemsPanelVisible(false)}
               title={t('chat.closePanel')}
             >

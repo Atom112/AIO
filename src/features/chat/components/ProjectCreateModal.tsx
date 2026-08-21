@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { Project } from '../../../core/store/store';
 import { reportError, t } from '../../../core/i18n';
+import { btnGhost, btnPrimary, btnSecondary } from '../../../shared/components/buttonStyles';
 
 interface Props {
   onClose: () => void;
@@ -131,11 +132,7 @@ export default function ProjectCreateModal(props: Props) {
             value={path()}
             readOnly
           />
-          <button
-            class="px-3 py-2 bg-white/10 hover:bg-white/20 text-white/80 text-sm
-                               rounded-lg transition-colors border border-white/10 shrink-0"
-            onClick={handleSelectDir}
-          >
+          <button class={btnSecondary} onClick={handleSelectDir}>
             {t('project.browse')}
           </button>
         </div>
@@ -147,18 +144,10 @@ export default function ProjectCreateModal(props: Props) {
 
         {/* 按钮 */}
         <div class="flex justify-end gap-3">
-          <button
-            class="px-4 py-2 text-sm text-white/60 hover:text-white/90 transition-colors"
-            onClick={handleClose}
-          >
+          <button class={'px-4 py-2 text-sm ' + btnGhost} onClick={handleClose}>
             {t('common.cancel')}
           </button>
-          <button
-            class="px-5 py-2 text-sm bg-[#7c9abf] hover:bg-[#6b8aaf] text-white
-                               rounded-lg transition-colors disabled:opacity-50"
-            onClick={handleCreate}
-            disabled={loading()}
-          >
+          <button class={btnPrimary} onClick={handleCreate} disabled={loading()}>
             {loading() ? t('project.creating') : t('project.create')}
           </button>
         </div>

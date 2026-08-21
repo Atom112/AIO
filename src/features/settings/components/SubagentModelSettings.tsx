@@ -25,6 +25,12 @@ import {
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import Icon from '../../../shared/components/Icon';
+import {
+  btnIcon,
+  btnPrimarySm,
+  btnSecondarySm,
+  tabActive,
+} from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 
 // --- Profile descriptions (mirrors subagent::builtin_profiles) ---
@@ -332,12 +338,8 @@ const SubagentModelSettings: Component = () => {
                 </div>
                 <div class="flex items-center gap-2 ml-3 shrink-0">
                   <button
-                    class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all border font-medium flex items-center gap-1.5"
-                    classList={{
-                      'bg-pri-20 border-pri-30 text-white': !!current(),
-                      'bg-white/[0.04] border-[var(--border-dim)] text-white/40 hover:text-white hover:bg-white/[0.06]':
-                        !current(),
-                    }}
+                    class={btnSecondarySm}
+                    classList={{ [tabActive]: !!current() }}
                     onClick={() => setOpenDropdown(isOpen() ? null : profile.id)}
                   >
                     {current() ? getModelLogo(current()!.model_id) : null}
@@ -348,7 +350,9 @@ const SubagentModelSettings: Component = () => {
                   </button>
                   <Show when={!isBuiltin(profile.id)}>
                     <button
-                      class="w-6 h-6 rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent border-none text-white/25 hover:text-red-400 hover:bg-red-400/10"
+                      class={
+                        'w-6 h-6 text-white/25 hover:text-red-400 hover:bg-red-400/10 ' + btnIcon
+                      }
                       onClick={() => void handleDeleteCustom(profile.id)}
                       title={t('subagent.deleteCustom')}
                     >
@@ -676,7 +680,7 @@ const SubagentModelSettings: Component = () => {
 
             <div class="flex gap-2 justify-end pt-1">
               <button
-                class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all bg-white/[0.04] border border-[var(--border-dim)] text-white/40 hover:text-white hover:bg-white/[0.06]"
+                class={btnSecondarySm}
                 onClick={() => {
                   setShowCreateForm(false);
                   setNewName('');
@@ -684,10 +688,7 @@ const SubagentModelSettings: Component = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button
-                class="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all bg-pri-20 border border-pri-30 text-white hover:bg-pri-30"
-                onClick={() => void handleCreate()}
-              >
+              <button class={btnPrimarySm} onClick={() => void handleCreate()}>
                 {t('subagent.create')}
               </button>
             </div>

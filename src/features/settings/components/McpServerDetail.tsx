@@ -2,6 +2,13 @@ import { Component, createSignal, For, Show, onMount, untrack } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
 import { t } from '../../../core/i18n';
+import {
+  btnBadge,
+  btnDanger,
+  btnPrimarySm,
+  btnSecondarySm,
+  btnSuccess,
+} from '../../../shared/components/buttonStyles';
 
 interface Props {
   config: McpServerConfig;
@@ -235,11 +242,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
                   >
                     {t('mcp.detail.args')}
-                    <button
-                      class="text-xs px-2 py-0.5 rounded"
-                      style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
-                      onClick={addStdioArg}
-                    >
+                    <button class={btnBadge} onClick={addStdioArg}>
                       {t('mcp.detail.add')}
                     </button>
                   </label>
@@ -256,14 +259,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           value={arg}
                           onInput={(e) => updateStdioArg(idx(), e.currentTarget.value)}
                         />
-                        <button
-                          class="px-2 py-1 rounded text-xs"
-                          style={{
-                            background: 'rgba(255,77,77,0.1)',
-                            color: 'rgba(255,107,107,0.9)',
-                          }}
-                          onClick={() => removeStdioArg(idx())}
-                        >
+                        <button class={btnDanger} onClick={() => removeStdioArg(idx())}>
                           ×
                         </button>
                       </div>
@@ -276,11 +272,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
                   >
                     {t('mcp.detail.env')}
-                    <button
-                      class="text-xs px-2 py-0.5 rounded"
-                      style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
-                      onClick={addEnvEntry}
-                    >
+                    <button class={btnBadge} onClick={addEnvEntry}>
                       {t('mcp.detail.add')}
                     </button>
                   </label>
@@ -319,14 +311,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         >
                           {t('mcp.detail.saveToKeychain')}
                         </button>
-                        <button
-                          class="px-2 py-1 rounded text-xs"
-                          style={{
-                            background: 'rgba(255,77,77,0.1)',
-                            color: 'rgba(255,107,107,0.9)',
-                          }}
-                          onClick={() => removeEnvEntry(k)}
-                        >
+                        <button class={btnDanger} onClick={() => removeEnvEntry(k)}>
                           ×
                         </button>
                       </div>
@@ -385,15 +370,7 @@ const McpServerDetail: Component<Props> = (props) => {
 
         {/* 测试连接 */}
         <div class="flex items-center gap-2">
-          <button
-            class="px-3 py-1.5 rounded text-sm cursor-pointer transition-colors"
-            style={{
-              background: 'rgba(var(--primary-rgb),0.2)',
-              border: '1px solid rgba(var(--primary-rgb),0.3)',
-            }}
-            disabled={testing()}
-            onClick={handleTest}
-          >
+          <button class={btnSuccess} disabled={testing()} onClick={handleTest}>
             {testing() ? t('mcp.detail.testing') : t('mcp.detail.testConnection')}
           </button>
           <Show when={testResult()}>
@@ -473,24 +450,10 @@ const McpServerDetail: Component<Props> = (props) => {
 
         {/* 按钮 */}
         <div class="flex justify-end gap-2 mt-2">
-          <button
-            class="px-3 py-1.5 rounded text-sm cursor-pointer"
-            style={{
-              background: 'rgba(var(--text-base-rgb),0.05)',
-              border: '1px solid var(--border-dim)',
-            }}
-            onClick={() => props.onCancel()}
-          >
+          <button class={btnSecondarySm} onClick={() => props.onCancel()}>
             {t('common.cancel')}
           </button>
-          <button
-            class="px-3 py-1.5 rounded text-sm cursor-pointer"
-            style={{
-              background: 'rgba(124,217,160,0.2)',
-              border: '1px solid rgba(124,217,160,0.3)',
-            }}
-            onClick={() => props.onSave(config())}
-          >
+          <button class={btnPrimarySm} onClick={() => props.onSave(config())}>
             {t('common.save')}
           </button>
         </div>

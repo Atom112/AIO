@@ -8,6 +8,7 @@ import { Component, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
+import { btnDanger, btnSuccess } from '../../../shared/components/buttonStyles';
 
 export interface PendingApproval {
   approvalId: string;
@@ -135,19 +136,11 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
         </div>
       </Show>
       <div class="flex gap-2 justify-end">
-        <button
-          type="button"
-          class="flex items-center gap-1 px-3 py-[5px] rounded-md text-xs font-medium border-none cursor-pointer transition-all duration-150 bg-white/[0.06] text-white/60 hover:bg-[#ff4d4d]/15 hover:text-[#ff4d4d]/80"
-          onClick={handleReject}
-        >
+        <button type="button" class={btnDanger} onClick={handleReject}>
           <Icon name="x" size={13} />
           <span>{t('agent.approval.deny')}</span>
         </button>
-        <button
-          type="button"
-          class="flex items-center gap-1 px-3 py-[5px] rounded-md text-xs font-medium border-none cursor-pointer transition-all duration-150 bg-[#4af908]/10 text-[#4af908]/70 hover:bg-[#4af908]/20 hover:text-[#4af908]/90"
-          onClick={handleApprove}
-        >
+        <button type="button" class={btnSuccess} onClick={handleApprove}>
           <Icon name="check" size={13} />
           <span>{t('agent.approval.approve')}</span>
         </button>

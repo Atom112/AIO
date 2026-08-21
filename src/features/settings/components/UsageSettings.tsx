@@ -10,6 +10,7 @@ import type { UsageSummary, UsageSummaryByModel } from './UsageSummaryCards';
 import UsageHeatmap from './UsageHeatmap';
 import ModelBreakdown from './ModelBreakdown';
 import Icon from '../../../shared/components/Icon';
+import { btnIcon, btnTabXs, tabActive, tabInactive } from '../../../shared/components/buttonStyles';
 import { reportError, t, type TranslationKey } from '../../../core/i18n';
 
 type Range = { labelKey: TranslationKey; days: number };
@@ -120,15 +121,7 @@ const UsageSettings: Component = () => {
             <For each={RANGES}>
               {(r) => (
                 <button
-                  class="px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 border-none cursor-pointer"
-                  style={{
-                    background:
-                      r.days === range().days ? 'rgba(var(--primary-rgb), 0.2)' : 'transparent',
-                    color:
-                      r.days === range().days
-                        ? 'rgba(var(--text-base-rgb),0.9)'
-                        : 'rgba(var(--text-base-rgb),0.4)',
-                  }}
+                  class={`${btnTabXs} ${r.days === range().days ? tabActive : tabInactive}`}
                   onClick={() => {
                     setSelectedDate(null);
                     setRange(r);
@@ -232,12 +225,8 @@ const UsageSettings: Component = () => {
                     >
                       <span>{t('usage.selectedModelBreakdown', { date: selectedDate()! })}</span>
                       <button
-                        class="border-none cursor-pointer flex items-center justify-center w-4 h-4 rounded-full hover:bg-white/[0.1] transition-colors"
-                        style={{
-                          color: 'rgba(var(--text-base-rgb),0.4)',
-                          'font-size': '10px',
-                          'line-height': '1',
-                        }}
+                        class={'w-4 h-4 text-white/40 ' + btnIcon}
+                        style={{ 'font-size': '10px', 'line-height': '1' }}
                         onClick={() => {
                           setSelectedDate(null);
                           fetchRangeData(range().days);

@@ -23,6 +23,7 @@ import {
 } from '../../../core/store/store';
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import { t, type TranslationKey } from '../../../core/i18n';
+import { btnSecondary } from '../../../shared/components/buttonStyles';
 
 interface ModeOption {
   value: AgentMode;
@@ -276,15 +277,7 @@ const AgentModeSelector: Component = () => {
             </div>
 
             <div class="flex justify-end gap-3">
-              <button
-                type="button"
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-none"
-                style={{
-                  background: 'rgba(var(--text-base-rgb),0.06)',
-                  color: 'rgba(var(--text-base-rgb),0.5)',
-                }}
-                onClick={() => setShowAutoWarning(false)}
-              >
+              <button type="button" class={btnSecondary} onClick={() => setShowAutoWarning(false)}>
                 {t('common.cancel')}
               </button>
               <button

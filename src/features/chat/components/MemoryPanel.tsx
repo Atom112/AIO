@@ -25,6 +25,15 @@ import type {
   MemoryFact,
   MemoryStats,
 } from '../../../core/types/memory';
+import {
+  btnBadge,
+  btnPrimarySm,
+  btnSecondarySm,
+  btnDanger,
+  btnTabXs,
+  tabActive,
+  tabInactive,
+} from '../../../shared/components/buttonStyles';
 
 interface MemoryPanelProps {
   show: boolean;
@@ -278,10 +287,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
           {/* 头部 */}
           <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
             <span class="text-sm font-semibold text-[#eee]">{t('project.memoryPanel.title')}</span>
-            <button
-              class="px-2 py-1 rounded text-xs text-white/50 hover:bg-white/5 cursor-pointer"
-              onClick={() => props.onClose()}
-            >
+            <button class={btnBadge} onClick={() => props.onClose()}>
               ✕
             </button>
           </div>
@@ -314,10 +320,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
               }}
               placeholder={t('project.memoryPanel.searchPlaceholder')}
             />
-            <button
-              class="px-3 py-2 rounded-lg text-xs font-semibold bg-pri-20 text-pri border border-pri/30 cursor-pointer hover:bg-pri-30 transition-colors"
-              onClick={() => void doSearch()}
-            >
+            <button class={btnPrimarySm} onClick={() => void doSearch()}>
               {t('project.memoryPanel.search')}
             </button>
           </div>
@@ -326,11 +329,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             <For each={tabs}>
               {(tb) => (
                 <button
-                  class={
-                    tab() === tb.key
-                      ? 'px-2.5 py-1 rounded-md text-[11px] font-semibold bg-pri-20 text-pri cursor-pointer'
-                      : 'px-2.5 py-1 rounded-md text-[11px] text-white/50 hover:bg-white/5 cursor-pointer'
-                  }
+                  class={`${btnTabXs} ${tab() === tb.key ? tabActive : tabInactive}`}
                   onClick={() => {
                     setTab(tb.key);
                     setQuery('');
@@ -344,11 +343,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
 
           {/* 代码索引与检索 */}
           <div class="flex items-center gap-2 px-4 py-2 border-b border-white/5">
-            <button
-              class="px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-pri-20 text-pri border border-pri/30 cursor-pointer hover:bg-pri-30 transition-colors"
-              disabled={indexing()}
-              onClick={() => void doCodeIndex()}
-            >
+            <button class={btnPrimarySm} disabled={indexing()} onClick={() => void doCodeIndex()}>
               {indexing() ? '...' : t('project.memoryPanel.codeIndex')}
             </button>
             <input
@@ -360,10 +355,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
               }}
               placeholder={t('project.memoryPanel.codeSearch')}
             />
-            <button
-              class="px-2.5 py-1.5 rounded-md text-[11px] bg-dark-300 border border-dark-100 text-white/60 cursor-pointer hover:bg-dark-200"
-              onClick={() => void doCodeSearch()}
-            >
+            <button class={btnSecondarySm} onClick={() => void doCodeSearch()}>
               {t('project.memoryPanel.codeSearch')}
             </button>
           </div>
@@ -417,36 +409,21 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                       </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
-                      <button
-                        class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-                        onClick={() => void editFact(f)}
-                      >
+                      <button class={btnBadge} onClick={() => void editFact(f)}>
                         {t('project.memoryPanel.edit')}
                       </button>
-                      <button
-                        class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-                        onClick={() => void togglePin(f)}
-                      >
+                      <button class={btnBadge} onClick={() => void togglePin(f)}>
                         {f.pinned ? t('project.memoryPanel.unpin') : t('project.memoryPanel.pin')}
                       </button>
                       <Show when={f.status === 'active'}>
-                        <button
-                          class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-                          onClick={() => void archiveFact(f)}
-                        >
+                        <button class={btnBadge} onClick={() => void archiveFact(f)}>
                           {t('project.memoryPanel.archive')}
                         </button>
                       </Show>
-                      <button
-                        class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-                        onClick={() => void deleteFact(f)}
-                      >
+                      <button class={btnBadge} onClick={() => void deleteFact(f)}>
                         {t('project.memoryPanel.delete')}
                       </button>
-                      <button
-                        class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-                        onClick={() => void toggleVersions(f.id)}
-                      >
+                      <button class={btnBadge} onClick={() => void toggleVersions(f.id)}>
                         {t('project.memoryPanel.versions')}
                       </button>
                     </div>
@@ -490,34 +467,19 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             <Show when={notice()}>
               <span class="flex-1 text-[11px] text-pri/80">{notice()}</span>
             </Show>
-            <button
-              class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-              onClick={() => void reindex()}
-            >
+            <button class={btnBadge} onClick={() => void reindex()}>
               {t('project.memoryPanel.reindex')}
             </button>
-            <button
-              class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-              onClick={() => void prune()}
-            >
+            <button class={btnBadge} onClick={() => void prune()}>
               {t('project.memoryPanel.prune')}
             </button>
-            <button
-              class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-              onClick={() => void doExport()}
-            >
+            <button class={btnBadge} onClick={() => void doExport()}>
               {t('project.memoryPanel.export')}
             </button>
-            <button
-              class="px-2 py-1 rounded-md text-[11px] text-white/60 border border-dark-100 bg-dark-300 hover:bg-dark-200 cursor-pointer"
-              onClick={() => void doImport()}
-            >
+            <button class={btnBadge} onClick={() => void doImport()}>
               {t('project.memoryPanel.import')}
             </button>
-            <button
-              class="px-2.5 py-1.5 rounded-md text-[11px] text-red-400/90 border border-red-400/20 hover:bg-red-400/10 cursor-pointer"
-              onClick={() => void clearAll()}
-            >
+            <button class={btnDanger} onClick={() => void clearAll()}>
               {t('project.memoryPanel.clear')}
             </button>
           </div>

@@ -17,6 +17,7 @@ import {
   setIgnoredUpdateVersion,
 } from '../../core/store/store';
 import { formatNumber, t } from '../../core/i18n';
+import { btnPrimary, btnSecondary } from '../components/buttonStyles';
 
 /**
  * 左下角应用更新提示 Toast
@@ -193,38 +194,19 @@ const UpdateNotification: Component = () => {
               <Show
                 when={!appUpdateReady()}
                 fallback={
-                  <button
-                    class="flex-1 py-2 rounded-lg text-sm font-semibold cursor-pointer border-none text-black transition-all duration-200 hover:opacity-90 active:scale-95"
-                    style={{
-                      background:
-                        'linear-gradient(135deg, var(--primary-color), color-mix(in srgb, var(--primary-color), white 20%))',
-                    }}
-                    onClick={handleRestart}
-                  >
+                  <button class={'flex-1 ' + btnPrimary} onClick={handleRestart}>
                     {t('update.restart')}
                   </button>
                 }
               >
                 <button
-                  class="flex-1 py-2 rounded-lg text-sm font-semibold cursor-pointer border-none text-black transition-all duration-200 hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    background:
-                      'linear-gradient(135deg, var(--primary-color), color-mix(in srgb, var(--primary-color), white 20%))',
-                  }}
+                  class={'flex-1 ' + btnPrimary}
                   disabled={appUpdateDownloading()}
                   onClick={handleUpdate}
                 >
                   {appUpdateDownloading() ? t('update.downloading') : t('update.install')}
                 </button>
-                <button
-                  class="px-4 py-2 rounded-lg text-sm cursor-pointer transition-all duration-200 hover:bg-white/10 active:scale-95"
-                  style={{
-                    background: 'rgba(var(--text-base-rgb), 0.05)',
-                    color: 'rgba(var(--text-base-rgb), 0.7)',
-                    border: '1px solid var(--border-dim)',
-                  }}
-                  onClick={handleDismiss}
-                >
+                <button class={btnSecondary} onClick={handleDismiss}>
                   {t('update.later')}
                 </button>
               </Show>

@@ -21,6 +21,16 @@ import type {
 } from '../../../core/types/mcp';
 import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
 import Icon from '../../../shared/components/Icon';
+import {
+  btnBadge,
+  btnDanger,
+  btnPrimarySm,
+  btnSecondary,
+  btnSecondarySm,
+  btnSuccess,
+  btnTabMd,
+  tabActive,
+} from '../../../shared/components/buttonStyles';
 import McpServerDetail from './McpServerDetail';
 import { formatNumber, reportError, t } from '../../../core/i18n';
 
@@ -262,15 +272,15 @@ const McpServerList: Component = () => {
           style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
         >
           <button
-            class="px-3 py-1.5 rounded-md text-sm"
-            classList={{ 'bg-pri-20 text-white': view() === 'market' }}
+            class={btnTabMd}
+            classList={{ [tabActive]: view() === 'market' }}
             onClick={() => setView('market')}
           >
             {t('mcp.market')}
           </button>
           <button
-            class="px-3 py-1.5 rounded-md text-sm"
-            classList={{ 'bg-pri-20 text-white': view() === 'downloaded' }}
+            class={btnTabMd}
+            classList={{ [tabActive]: view() === 'downloaded' }}
             onClick={() => setView('downloaded')}
           >
             {t('mcp.downloaded', { count: formatNumber(sortedServers().length) })}
@@ -299,7 +309,7 @@ const McpServerList: Component = () => {
           <Show when={view() === 'market'}>
             <button
               type="button"
-              class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50"
+              class={btnBadge}
               disabled={refreshing()}
               onClick={() => void refresh()}
             >
@@ -402,13 +412,8 @@ const McpServerList: Component = () => {
                         Official MCP Registry
                       </button>
                       <button
-                        class="px-3 py-1.5 rounded-md text-xs"
+                        class={installed() ? btnSuccess : btnPrimarySm}
                         disabled={installed() || installingId() === server.id}
-                        style={
-                          installed()
-                            ? 'background: rgba(124,217,160,0.12); color: #7cd9a0;'
-                            : 'background: rgba(var(--primary-rgb),0.2); border: 1px solid rgba(var(--primary-rgb),0.3);'
-                        }
                         onClick={() => openInstall(server)}
                       >
                         {installed()
@@ -426,12 +431,8 @@ const McpServerList: Component = () => {
           <Show when={nextCursor()}>
             <div class="flex justify-center py-5">
               <button
-                class="px-4 py-2 rounded text-xs"
+                class={btnSecondary}
                 disabled={loadingMore()}
-                style={{
-                  background: 'rgba(var(--text-base-rgb),0.05)',
-                  border: '1px solid var(--border-dim)',
-                }}
                 onClick={() => void loadCatalog(false, nextCursor())}
               >
                 {loadingMore() ? t('common.loading') : t('mcp.loadMore')}
@@ -493,38 +494,19 @@ const McpServerList: Component = () => {
                     </div>
                     <div class="flex items-center gap-2 ml-3">
                       <Show when={status() !== 'connected' && status() !== 'connecting'}>
-                        <button
-                          class="px-2 py-1 rounded text-xs"
-                          style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
-                          onClick={() => void handleStart(config.id)}
-                        >
+                        <button class={btnSuccess} onClick={() => void handleStart(config.id)}>
                           {t('mcp.start')}
                         </button>
                       </Show>
                       <Show when={status() === 'connected'}>
-                        <button
-                          class="px-2 py-1 rounded text-xs"
-                          style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                          onClick={() => void handleStop(config.id)}
-                        >
+                        <button class={btnDanger} onClick={() => void handleStop(config.id)}>
                           {t('mcp.stop')}
                         </button>
                       </Show>
-                      <button
-                        class="px-2 py-1 rounded text-xs"
-                        style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                        onClick={() => setEditingConfig({ ...config })}
-                      >
+                      <button class={btnBadge} onClick={() => setEditingConfig({ ...config })}>
                         {t('common.edit')}
                       </button>
-                      <button
-                        class="px-2 py-1 rounded text-xs"
-                        style={{
-                          background: 'rgba(255,77,77,0.1)',
-                          color: 'rgba(255,107,107,0.9)',
-                        }}
-                        onClick={() => void handleRemove(config.id)}
-                      >
+                      <button class={btnDanger} onClick={() => void handleRemove(config.id)}>
                         {t('common.delete')}
                       </button>
                     </div>
@@ -625,15 +607,11 @@ const McpServerList: Component = () => {
               </For>
             </Show>
             <div class="flex justify-end gap-2">
-              <button
-                class="px-3 py-1.5 rounded text-sm"
-                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                onClick={() => setInstalling(null)}
-              >
+              <button class={btnSecondarySm} onClick={() => setInstalling(null)}>
                 {t('common.cancel')}
               </button>
               <button
-                class="px-3 py-1.5 rounded text-sm bg-pri text-black"
+                class={btnPrimarySm}
                 disabled={installingId() !== null || !runtimeAvailable()}
                 onClick={() => void install()}
               >

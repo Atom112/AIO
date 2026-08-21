@@ -1,6 +1,13 @@
 import { Component, createEffect, createSignal, Show } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { t } from '../../../core/i18n';
+import {
+  btnPrimarySm,
+  btnSecondarySm,
+  btnTabMd,
+  tabActive,
+  tabInactive,
+} from '../../../shared/components/buttonStyles';
 import { embeddingSaveApiKey, embeddingTest } from '../../../core/utils/memory';
 import type { MemoryEmbeddingConfig } from '../../../core/types/memory';
 
@@ -109,21 +116,13 @@ const EmbeddingSetup: Component = () => {
         <label class={labelCls}>{t('app.memory.provider')}</label>
         <div class="flex gap-2">
           <button
-            class={
-              provider() === 'local'
-                ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-pri-20 text-pri border border-pri/30'
-                : 'px-3 py-1.5 rounded-lg text-xs bg-dark-300 border border-dark-100 text-white/50'
-            }
+            class={`${btnTabMd} ${provider() === 'local' ? tabActive : tabInactive}`}
             onClick={() => setProvider('local')}
           >
             {t('app.memory.providerLocal')}
           </button>
           <button
-            class={
-              provider() === 'online'
-                ? 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-pri-20 text-pri border border-pri/30'
-                : 'px-3 py-1.5 rounded-lg text-xs bg-dark-300 border border-dark-100 text-white/50'
-            }
+            class={`${btnTabMd} ${provider() === 'online' ? tabActive : tabInactive}`}
             onClick={() => setProvider('online')}
           >
             {t('app.memory.providerOnline')}
@@ -170,10 +169,7 @@ const EmbeddingSetup: Component = () => {
       </Show>
 
       <div class="flex items-center gap-2">
-        <button
-          class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-pri-20 text-pri border border-pri/30 cursor-pointer hover:bg-pri-30 transition-colors"
-          onClick={save}
-        >
+        <button class={btnPrimarySm} onClick={save}>
           {saveState() === 'saving'
             ? '...'
             : saveState() === 'saved'
@@ -182,11 +178,7 @@ const EmbeddingSetup: Component = () => {
                 ? '✗'
                 : t('app.memory.save')}
         </button>
-        <button
-          class="px-3 py-1.5 rounded-lg text-xs bg-dark-300 border border-dark-100 text-white/60 cursor-pointer hover:bg-dark-200 transition-colors"
-          disabled={testing()}
-          onClick={test}
-        >
+        <button class={btnSecondarySm} disabled={testing()} onClick={test}>
           {testing() ? t('app.memory.testing') : t('app.memory.test')}
         </button>
       </div>

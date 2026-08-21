@@ -23,6 +23,7 @@ import { memoryGetStatus, memorySetEnabled } from '../../../core/utils/memory';
 import type { MemoryStatus } from '../../../core/types/memory';
 import MemoryPanel from './MemoryPanel';
 import Icon from '../../../shared/components/Icon';
+import { btnClose, btnPrimarySm, btnSecondary } from '../../../shared/components/buttonStyles';
 import Switch from '../../../shared/components/Switch';
 import { t } from '../../../core/i18n';
 
@@ -253,10 +254,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
           >
             <div class="flex justify-between items-center border-b border-[#444] pb-3">
               <h2 class="m-0 text-xl">{t('project.settings')}</h2>
-              <button
-                onClick={handleClose}
-                class="w-8 h-8 rounded-lg bg-transparent border-none text-2xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80"
-              >
+              <button onClick={handleClose} class={btnClose}>
                 &times;
               </button>
             </div>
@@ -534,7 +532,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                 </div>
                 <div class="flex justify-end">
                   <button
-                    class="px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-pri-20 text-pri border border-pri/30 cursor-pointer hover:bg-pri-30 transition-colors"
+                    class={btnPrimarySm}
                     onClick={() => {
                       // 先退出项目设置弹窗，再打开记忆面板（避免面板被设置弹窗遮住）
                       setShowPanel(true);
@@ -657,10 +655,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
             </div>
 
             <div class="flex justify-end gap-3">
-              <button
-                onClick={handleClose}
-                class="px-5 py-2.5 border-0 cursor-pointer font-bold bg-dark-100 text-[#e0e0e0] rounded-lg transition-all duration-200 hover:bg-dark-50"
-              >
+              <button onClick={handleClose} class={btnSecondary}>
                 {t('common.close')}
               </button>
             </div>

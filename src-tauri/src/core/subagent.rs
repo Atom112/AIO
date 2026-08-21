@@ -339,19 +339,10 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
         function: super::models::ToolFunctionSpec {
             name: "delegate_task".into(),
             description: concat!(
-                "【推荐方式】创建一个子智能体来执行独立的子任务。收到复杂任务时应优先使用此工具。\n\n",
-                "当你面对复杂任务时，可以将任务拆分为子任务并委托给子智能体：\n",
-                "- 使用 explorer 子智能体搜索和探索代码库\n",
-                "- 使用 coder 子智能体编写或修改具体的代码文件\n",
-                "- 使用 general 子智能体处理需要完整能力的子任务\n",
-                "- 使用 architect 子智能体进行架构分析和设计评估\n",
-                "- 使用 debugger 子智能体进行错误调查和根因分析\n",
-                "- 使用 reviewer 子智能体进行代码审查和质量评估\n",
-                "- 使用 writer 子智能体撰写文档和注释\n",
-                "- 使用 tester 子智能体生成和执行测试\n",
-                "- 使用 requirements 子智能体分析用户需求并拆解任务\n\n",
-                "也可以使用用户自定义的子智能体角色 ID。\n",
-                "子智能体会独立执行并在完成后返回工作总结。你可以在同一轮中并行创建多个子智能体。"
+                "创建一个子智能体执行独立子任务，复杂/多步任务应优先委托。可用角色：",
+                "explorer(只读探索)、coder(实现)、general(全能力)、architect(架构)、debugger(诊断)、",
+                "reviewer(审查)、writer(文档)、tester(测试)、requirements(需求分析)或自定义角色 ID。",
+                "子智能体独立执行并在完成后返回工作总结；同一轮可并行创建多个子智能体。"
             )
             .into(),
             parameters: serde_json::json!({
@@ -391,16 +382,9 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
         function: super::models::ToolFunctionSpec {
             name: "delegate_tasks".into(),
             description: concat!(
-                "批量创建多个子智能体并行执行。所有子任务在同一轮启动，并发执行。\n\n",
-                "与逐个调用 delegate_task 相比，delegate_tasks 的优势：\n",
-                "- 所有子任务同时启动，总耗时约等于最慢的子任务\n",
-                "- context 参数注入公共背景信息，避免每个子任务重复描述\n",
-                "- 单次权限审批即可启动所有子智能体\n\n",
-                "适用场景：\n",
-                "- 同时探索多个独立目录或模块\n",
-                "- 并行执行代码实现和测试编写\n",
-                "- 多个独立的分析任务（如 review + explore 同时进行）\n",
-                "- 任何彼此独立、互不依赖的子任务组合"
+                "批量创建多个子智能体并行执行。所有子任务同时启动，总耗时约等于最慢的子任务；",
+                "context 参数注入公共背景，避免每个子任务重复描述；单次调用启动全部子智能体。",
+                "适用场景：同时探索多个独立目录、并行实现+测试、多个独立分析任务等彼此独立的子任务组合。"
             )
             .into(),
             parameters: serde_json::json!({

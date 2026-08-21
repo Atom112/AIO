@@ -10,7 +10,7 @@
  * - 支持折叠/展开
  * - 颜色区分不同 profile：explorer（蓝）、coder（绿）、general（紫）
  */
-import { Component, createSignal, Show, For, onCleanup, createEffect } from 'solid-js';
+import { Component, createSignal, Show, For, onCleanup, createEffect, untrack } from 'solid-js';
 import type { AgentStep, SubagentStep } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
@@ -159,8 +159,20 @@ const SubStepRow: Component<{ step: SubagentStep }> = (props) => {
   );
 };
 
+// 已播放入场动画的子 Agent 步骤 ID 集合（模块级）。
+// store 流式更新 agentSteps 会产生新的消息/步骤对象引用，导致 AgentProcessBlock 及其
+// 嵌套的 SubagentBlock 每次事件都重挂载——动画类必须只在首次挂载时应用，否则每个 LLM 轮次
+// 都会重播一遍入场动画。
+const animatedSubagentStepIds = new Set<string>();
+
 // ---- 主组件 ----
 const SubagentBlock: Component<SubagentBlockProps> = (props) => {
+  // 入场动画去重：步骤 id（subagent-<uuid>）在子 Agent 生命周期内稳定
+  const stepId = untrack(() => props.step.id || props.step.subagentId || '');
+  const isNew = !animatedSubagentStepIds.has(stepId);
+  if (isNew) {
+    animatedSubagentStepIds.add(stepId);
+  }
   const profileStyle = () => getProfileStyle(props.step.subagentProfile);
   const [elapsedMs, setElapsedMs] = createSignal(0);
 
@@ -186,7 +198,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
 
   return (
     <div
-      class="subagent-block rounded-lg overflow-hidden border animate-expand-width"
+      class="subagent-block rounded-lg overflow-hidden border"
       style={
         {
           '--sa-color': profileStyle().color,
@@ -197,6 +209,7 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
         } as any
       }
       classList={{
+        'animate-expand-width': isNew,
         'opacity-90': props.step.status === 'complete',
       }}
     >

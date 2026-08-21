@@ -33,7 +33,7 @@ When the model catalog provides context window information, the interface shows 
 - **TokenBar**: Context window progress bar with color coding (green -> yellow -> red), showing used tokens / max tokens in real time.
 - **TokenStatsBar**: Summary bar showing total tokens, request count, and estimated cost.
 
-When usage reaches approximately 75% and there are more than 10 messages, AIO summarizes older messages while keeping approximately the most recent 30%. You can also use `/compact` to compress manually.
+When usage reaches approximately 75% and there are more than 10 messages, AIO summarizes older messages while keeping the most recent messages within a token budget (about 20k tokens, at least one full turn); the new summary fully replaces the old one to avoid bloat. You can also use `/compact` to compress manually.
 
 Components are located in `src/features/chat/components/` (`SessionStats.tsx`, `TokenBar.tsx`, `TokenStatsBar.tsx`).
 

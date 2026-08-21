@@ -62,6 +62,7 @@ const ModelBreakdown: Component<Props> = (props) => {
         modelId: '__other__',
         inputTokens: otherInput,
         outputTokens: otherOutput,
+        cachedInputTokens: rest.reduce((s, it) => s + (it.cachedInputTokens || 0), 0),
         requestCount: rest.reduce((s, it) => s + it.requestCount, 0),
         total: otherTotal,
         displayName: t('usage.other'),

@@ -33,7 +33,7 @@
 - **TokenBar**：上下文窗口进度条，颜色编码（绿 → 黄 → 红），实时显示已用 Token / 最大 Token。
 - **TokenStatsBar**：汇总栏展示总计 Token、请求数、预估费用。
 
-使用量达到约 75% 且历史超过 10 条时，AIO 会总结较早消息、保留较新的约 30%；也可以使用 `/compact` 主动压缩。
+使用量达到约 75% 且历史超过 10 条时，AIO 会总结较早消息、按 token 预算保留最近消息（约 2 万 token，最少一个完整回合），新摘要会整体替换旧摘要避免膨胀；也可以使用 `/compact` 主动压缩。
 
 组件位于 `src/features/chat/components/`（`SessionStats.tsx`、`TokenBar.tsx`、`TokenStatsBar.tsx`）。
 

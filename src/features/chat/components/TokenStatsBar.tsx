@@ -46,6 +46,7 @@ const TokenStatsBar: Component = () => {
       return {
         input: 0,
         output: 0,
+        cached: 0,
         messages: 0,
         tools: 0,
         maxContext: 128_000,
@@ -54,12 +55,14 @@ const TokenStatsBar: Component = () => {
       };
     let input = 0,
       output = 0,
+      cached = 0,
       tools = 0;
     let contextInput = 0;
     for (const msg of topic.history || []) {
       if (msg.role === 'assistant') {
         input += msg.inputTokens || 0;
         output += msg.outputTokens || 0;
+        cached += msg.cachedInputTokens || 0;
         tools += msg.toolCalls?.length || 0;
         contextInput = msg.contextTokens || msg.inputTokens || 0;
       }
@@ -79,6 +82,7 @@ const TokenStatsBar: Component = () => {
     return {
       input,
       output,
+      cached,
       messages: topic.history?.length || 0,
       tools,
       maxContext: maxCtx,
@@ -86,6 +90,10 @@ const TokenStatsBar: Component = () => {
       price,
     };
   });
+
+  // 缓存命中率 = 命中输入 / 总输入（本话题累计）
+  const cachePct = () =>
+    stats().input > 0 ? Math.round((stats().cached / stats().input) * 100) : 0;
 
   const total = () => stats().contextInput;
   const pct = () => Math.min(total() / stats().maxContext, 1);
@@ -102,6 +110,7 @@ const TokenStatsBar: Component = () => {
           toolCalls: stats().tools,
           maxContext: fmt(stats().maxContext),
           pct: (pct() * 100).toFixed(0),
+          cacheHit: stats().input > 0 ? `${cachePct()}%` : '-',
         })}
       >
         {/* 微型进度条 */}
@@ -161,6 +170,18 @@ const TokenStatsBar: Component = () => {
             style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}
           >
             {fmtPrice(stats().price)}
+          </span>
+        </Show>
+
+        {/* 缓存命中率（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens） */}
+        <Show when={stats().cached > 0 && stats().input > 0}>
+          <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
+          <span
+            class="font-mono whitespace-nowrap"
+            style={{ color: '#22c55e' }}
+            title={t('chat.statsCacheHit', { pct: cachePct() })}
+          >
+            {cachePct()}%
           </span>
         </Show>
       </div>

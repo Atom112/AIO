@@ -70,10 +70,14 @@ struct RoundResult {
     input_tokens: u32,
     /// 服务端返回的 completion tokens（输出用量）
     output_tokens: u32,
+    /// 缓存命中的输入 tokens（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens）
+    cached_input_tokens: u32,
     /// 本轮生成/落盘的图像元数据
     images: Vec<GeneratedImage>,
     /// 回送 API / 持久化的原始载荷形态（未重写 token 的数组或字符串），用于下一轮请求
     api_content: serde_json::Value,
+    /// 服务端返回的 finish_reason（如 "stop" / "tool_calls" / "length"），用于截断恢复
+    finish_reason: Option<String>,
 }
 
 /// 累积完成的单个工具调用。
@@ -264,6 +268,7 @@ fn verify_tool_messages(messages: &[serde_json::Value]) {
 /// 将单轮 LLM 调用的 token 用量写入 usage_log 表（不可变 append-only 记录）。
 ///
 /// 跳过 input + output 均为 0 的空记录（本地引擎可能不返回 usage）。
+#[allow(clippy::too_many_arguments)]
 fn insert_usage_log(
     app: &AppHandle,
     assistant_id: &str,
@@ -272,6 +277,7 @@ fn insert_usage_log(
     round: u32,
     input_tokens: u32,
     output_tokens: u32,
+    cached_input_tokens: u32,
 ) {
     if input_tokens == 0 && output_tokens == 0 {
         return;
@@ -280,8 +286,17 @@ fn insert_usage_log(
     let conn = db.0.lock();
     let id = uuid::Uuid::new_v4().to_string();
     let _ = conn.execute(
-        "INSERT INTO usage_log (id, assistant_id, topic_id, model_id, round, input_tokens, output_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        rusqlite::params![id, assistant_id, topic_id, model_id, round, input_tokens, output_tokens],
+        "INSERT INTO usage_log (id, assistant_id, topic_id, model_id, round, input_tokens, output_tokens, cached_input_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            id,
+            assistant_id,
+            topic_id,
+            model_id,
+            round,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens
+        ],
     );
 }
 
@@ -291,6 +306,74 @@ fn normalize_chat_url(api_url: &str) -> String {
     let mgr = crate::plugins::provider::ProviderManager::new();
     let plugin = mgr.for_url(api_url);
     plugin.chat_completions_url(api_url)
+}
+
+/// 发送聊天补全请求，自动适配 Anthropic 原生协议（URL / 鉴权 / 请求体转换）。
+/// 返回 (response, is_anthropic)，调用方据此解析响应。
+async fn post_chat_completion(
+    client: &reqwest::Client,
+    api_url: &str,
+    api_key: &str,
+    body: &serde_json::Value,
+) -> Result<(reqwest::Response, bool), String> {
+    let endpoint = normalize_chat_url(api_url);
+    let is_anthropic = crate::plugins::provider::anthropic::is_anthropic_url(api_url);
+    if is_anthropic {
+        let anthropic_body = crate::plugins::provider::anthropic::to_anthropic_body(body)?;
+        let res = client
+            .post(&endpoint)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&anthropic_body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok((res, true))
+    } else {
+        let res = client
+            .post(&endpoint)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok((res, false))
+    }
+}
+
+/// 从非流式响应提取错误信息（OpenAI 与 Anthropic 同为 {error:{message}} 形状）。
+fn chat_error_message(val: &serde_json::Value) -> Option<String> {
+    val.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .map(String::from)
+}
+
+/// 从非流式响应提取文本内容（OpenAI choices[0].message.content / Anthropic content 文本块）。
+fn chat_text_content(val: &serde_json::Value, is_anthropic: bool) -> String {
+    if is_anthropic {
+        crate::plugins::provider::anthropic::anthropic_text_content(val)
+    } else {
+        val["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+}
+
+/// 提取非流式响应的 finish_reason（用于标题生成空响应诊断）。
+fn chat_finish_reason(val: &serde_json::Value, is_anthropic: bool) -> String {
+    if is_anthropic {
+        val.get("stop_reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string()
+    } else {
+        val["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string()
+    }
 }
 
 /// 单轮流式请求：构造 body → POST → 解析 SSE → 累积 content/reasoning/tool_calls → emit 增量事件。
@@ -321,9 +404,8 @@ async fn stream_one_round(
     suppress_events: bool,
     app: Option<&AppHandle>,
     process_images: bool,
+    max_output_tokens: Option<u32>,
 ) -> Result<RoundResult, String> {
-    let final_url = normalize_chat_url(&api_url);
-
     let mut body_map = serde_json::Map::new();
     body_map.insert("model".into(), json!(model));
     body_map.insert("messages".into(), json!(messages));
@@ -334,15 +416,16 @@ async fn stream_one_round(
             body_map.insert("tool_choice".into(), json!("auto"));
         }
     }
+    // 可选的输出长度上限：防止单轮输出无界膨胀（推理类模型 o1/o3/gpt-5 系列需用
+    // max_completion_tokens，这里由调用方负责按模型类型决定是否传入）
+    if let Some(mt) = max_output_tokens {
+        body_map.insert("max_tokens".into(), json!(mt));
+    }
     let body = serde_json::Value::Object(body_map);
 
-    let response = client
-        .post(&final_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    // 统一请求入口：Anthropic 原生协议（/v1/messages + x-api-key + body 转换）自动适配
+    let (response, is_anthropic_request) =
+        post_chat_completion(client, &api_url, api_key, &body).await?;
 
     let status = response.status();
     if !status.is_success() {
@@ -362,6 +445,8 @@ async fn stream_one_round(
 
     let mut content_buf = String::new();
     let mut reasoning_buf = String::new();
+    // 服务端返回的 finish_reason（"stop" / "tool_calls" / "length"），供调用方做截断恢复
+    let mut finish_reason: Option<String> = None;
     // 流式数组 delta 里解析出的 image_url 与原始 API 载荷（回送下一轮时用未重写形态，防 token 泄漏）
     let mut image_urls: Vec<String> = Vec::new();
     let mut round_api_parts: Vec<serde_json::Value> = Vec::new();
@@ -369,6 +454,7 @@ async fn stream_one_round(
     // 从 SSE 流末尾提取 token 用量（服务端返回）
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
+    let mut cached_input_tokens: u32 = 0;
 
     loop {
         // 三重竞争：取消信号 / stream chunk / 120s inactivity 超时
@@ -402,7 +488,26 @@ async fn stream_one_round(
 
             if let Some(json_str) = line.strip_prefix("data: ") {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
+                    if is_anthropic_request {
+                        // Anthropic Messages 流式事件：内容/思考/工具调用/用量统一累积
+                        crate::plugins::provider::anthropic::handle_anthropic_stream_event(
+                            &val,
+                            window,
+                            assistant_id,
+                            topic_id,
+                            &mut content_buf,
+                            &mut reasoning_buf,
+                            &mut tc_accum,
+                            &mut finish_reason,
+                            &mut input_tokens,
+                            &mut output_tokens,
+                            &mut cached_input_tokens,
+                        );
+                        if val.get("type").and_then(|v| v.as_str()) == Some("message_stop") {
+                            saw_done = true;
+                            break;
+                        }
+                    } else if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         content_buf.push_str(content);
                         if !suppress_events {
                             let _ = window.emit(
@@ -416,6 +521,7 @@ async fn stream_one_round(
                                     input_tokens: None,
                                     output_tokens: None,
                                     context_tokens: None,
+                                    cached_input_tokens: None,
                                     images: None,
                                 },
                             );
@@ -440,6 +546,7 @@ async fn stream_one_round(
                                                     input_tokens: None,
                                                     output_tokens: None,
                                                     context_tokens: None,
+                                                    cached_input_tokens: None,
                                                     images: None,
                                                 },
                                             );
@@ -483,6 +590,7 @@ async fn stream_one_round(
                                         input_tokens: None,
                                         output_tokens: None,
                                         context_tokens: None,
+                                        cached_input_tokens: None,
                                         images: None,
                                     },
                                 );
@@ -519,6 +627,9 @@ async fn stream_one_round(
                     // finish_reason="tool_calls" 时不必立即 flush（累积器已存好），
                     // 统一在末尾按 index 升序构造。这里仅触发提前 flush 事件通知前端。
                     let finish = val["choices"][0]["finish_reason"].as_str().unwrap_or("");
+                    if !finish.is_empty() {
+                        finish_reason = Some(finish.to_string());
+                    }
                     if finish == "tool_calls" && !suppress_events {
                         for (id, name, args) in tc_accum.values() {
                             if !id.is_empty() && !name.is_empty() {
@@ -543,8 +654,21 @@ async fn stream_one_round(
                         if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                             output_tokens = ct as u32;
                         }
+                        // 缓存命中统计：OpenAI 在 prompt_tokens_details.cached_tokens，DeepSeek 在 prompt_cache_hit_tokens
+                        if let Some(cached) = usage
+                            .get("prompt_tokens_details")
+                            .and_then(|d| d.get("cached_tokens"))
+                            .and_then(|v| v.as_u64())
+                            .or_else(|| {
+                                usage
+                                    .get("prompt_cache_hit_tokens")
+                                    .and_then(|v| v.as_u64())
+                            })
+                        {
+                            cached_input_tokens = cached as u32;
+                        }
                     }
-                }
+                } // else 分支结束（OpenAI 兼容解析）
             }
         }
         if saw_done {
@@ -612,8 +736,10 @@ async fn stream_one_round(
         tool_calls,
         input_tokens,
         output_tokens,
+        cached_input_tokens,
         images,
         api_content,
+        finish_reason,
     })
 }
 
@@ -703,6 +829,7 @@ pub async fn call_llm_stream(
             false,
             Some(&app_handle),
             true,
+            None,
         )
         .await;
 
@@ -718,6 +845,7 @@ pub async fn call_llm_stream(
                     1,
                     round.input_tokens,
                     round.output_tokens,
+                    round.cached_input_tokens,
                 );
                 let _ = window.emit(
                     "llm-chunk",
@@ -734,6 +862,7 @@ pub async fn call_llm_stream(
                         input_tokens: Some(round.input_tokens),
                         output_tokens: Some(round.output_tokens),
                         context_tokens: Some(round.input_tokens),
+                        cached_input_tokens: Some(round.cached_input_tokens),
                         images: if round.images.is_empty() {
                             None
                         } else {
@@ -760,6 +889,7 @@ pub async fn call_llm_stream(
                         input_tokens: None,
                         output_tokens: None,
                         context_tokens: None,
+                        cached_input_tokens: None,
                         images: None,
                     },
                 );
@@ -1089,17 +1219,419 @@ fn is_git_repo(dir: &str) -> bool {
 }
 
 /// 截断过长的工具返回内容，防止 LLM 上下文膨胀。完整内容保留在 agentSteps 中供用户查看。
-/// MAX_LEN = 10000 字符，覆盖大多数工具返回（代码片段、文件列表、搜索结果），约占 ~2500 tokens。
+/// 头尾保留式截断：前 60% + 后 40%（20k 字符 ≈ 5-10k tokens），避免只留头部把
+/// read_file 已保留的文件首尾再次砍掉，导致探索看不到关键内容。
 fn truncate_tool_result(s: &str) -> String {
-    const MAX_LEN: usize = 10000;
+    // 空结果统一替换为极短占位，避免垃圾进上下文（参考 oh-my-pi 的 useless-result elision）
+    if s.trim().is_empty() {
+        return "[无结果]".to_string();
+    }
+    const MAX_LEN: usize = 20_000;
     if s.len() <= MAX_LEN {
         s.to_string()
     } else {
-        let safe_end = s.floor_char_boundary(MAX_LEN);
-        format!("{}\n\n... [已截断: 共{}字符]", &s[..safe_end], s.len())
+        let head = (MAX_LEN * 6) / 10;
+        let tail = MAX_LEN - head;
+        let head_end = s.floor_char_boundary(head.min(s.len()));
+        let tail_start = s.floor_char_boundary(s.len().saturating_sub(tail));
+        if tail_start > head_end {
+            format!(
+                "{}\n\n... [已截断: 共{}字符，保留首尾] ...\n\n{}",
+                &s[..head_end],
+                s.len(),
+                &s[tail_start..]
+            )
+        } else {
+            let safe_end = s.floor_char_boundary(MAX_LEN.min(s.len()));
+            format!("{}\n\n... [已截断: 共{}字符]", &s[..safe_end], s.len())
+        }
     }
 }
 
+/// 头部+尾部截断：保留前 60% 与后 40% 字符，中间以省略标记分隔。
+/// 用于工作流步骤上下文等「需要保留首尾关键信息」的拼接场景。
+fn truncate_head_tail(s: &str, max_chars: usize) -> String {
+    let total = s.chars().count();
+    if total <= max_chars {
+        return s.to_string();
+    }
+    let head = (max_chars * 6) / 10;
+    let tail = max_chars - head;
+    let head_str: String = s.chars().take(head).collect();
+    let tail_str: String = s.chars().skip(total - tail).collect();
+    format!(
+        "{}\n… [已省略 {} 字符] …\n{}",
+        head_str,
+        total - head - tail,
+        tail_str
+    )
+}
+
+/// 估算单条 API 消息的 token 数（tiktoken 本地计数；失败时回退到字符数/2）。
+/// 用于上下文压缩触发与保留预算的判定。
+fn estimate_message_tokens(model: &str, msg: &serde_json::Value) -> usize {
+    let s = serde_json::to_string(msg).unwrap_or_default();
+    crate::utils::token_counter::count_tokens(model, &s).unwrap_or(s.len() / 2)
+}
+
+/// 上下文 token 估算（带粗估预检）：先用 字符数/3 粗估，远低于预算时直接返回，
+/// 避免每轮对全部消息做 tiktoken 编码拖慢 Agent 循环；接近预算时才精确统计。
+fn estimate_context_tokens(model: &str, messages: &[serde_json::Value], budget: usize) -> usize {
+    let rough: usize = messages
+        .iter()
+        .map(|m| serde_json::to_string(m).map(|s| s.len() / 3).unwrap_or(0))
+        .sum();
+    if rough < budget.saturating_sub(10_000) {
+        return rough;
+    }
+    messages
+        .iter()
+        .map(|m| estimate_message_tokens(model, m))
+        .sum()
+}
+
+/// 判断 API 错误是否由上下文超限导致（用于溢出自动恢复：压缩后重试一次）。
+fn is_context_overflow_error(e: &str) -> bool {
+    let e = e.to_lowercase();
+    [
+        "context length",
+        "context_length",
+        "context window",
+        "maximum context",
+        "max context",
+        "token limit",
+        "too many tokens",
+        "tokens exceeded",
+        "input is too long",
+        "prompt is too long",
+        "exceeds the maximum",
+        "ctx_len",
+        "requested tokens",
+        "maximum input tokens",
+    ]
+    .iter()
+    .any(|k| e.contains(k))
+}
+
+/// read_skill 工具的 ToolSpec：让模型按需读取已启用 Skill 的完整说明。
+/// 配合前端「技能目录」注入，避免把每个 Skill 的全量内容随每次请求发送。
+pub fn skill_read_tool_spec() -> ToolSpec {
+    ToolSpec {
+        kind: "function".into(),
+        function: ToolFunctionSpec {
+            name: "read_skill".into(),
+            description: "读取一个已启用 Skill 的完整说明与使用指令。当任务涉及某个技能（如文档处理、表格、演示文稿等）时，先用此工具获取其完整内容再执行。".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "技能名称（如 docx、xlsx）"}
+                },
+                "required": ["name"]
+            }),
+        },
+    }
+}
+
+/// 执行 read_skill：按名称（不区分大小写）或 ID 查找技能并返回完整内容。
+fn execute_skill_read(skills: &[SkillConfig], name: &str) -> Result<ToolResult, String> {
+    if name.is_empty() {
+        return Err("read_skill 缺少 name 参数".to_string());
+    }
+    if let Some(skill) = skills
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(name) || s.id == name)
+    {
+        Ok(file_tools::tool_ok(format!(
+            "[Skill: {}]\n{}",
+            skill.name, skill.content
+        )))
+    } else {
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        Err(format!(
+            "未找到技能: {name}；可用技能: {}",
+            names.join(", ")
+        ))
+    }
+}
+
+/// read_artifact 工具的 ToolSpec：读取压缩时本地归档的历史档案（snapcompact 式）。
+/// 摘要生成失败或需要恢复早期细节时，模型按 [历史归档 #id] 占位中的 id 调用本工具。
+pub fn artifact_read_tool_spec() -> ToolSpec {
+    ToolSpec {
+        kind: "function".into(),
+        function: ToolFunctionSpec {
+            name: "read_artifact".into(),
+            description: "读取本地历史归档的完整内容（压缩早期对话时自动归档；需要早期细节时按 [历史归档 #id] 占位中的 id 调用）。".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "artifact_id": {"type": "string", "description": "历史归档 ID（如 a1b2c3d4…）"}
+                },
+                "required": ["artifact_id"]
+            }),
+        },
+    }
+}
+
+/// 执行 read_artifact：读取 {app_data}/archives/{id}.txt 并截断返回。
+fn execute_artifact_read(app: &AppHandle, artifact_id: &str) -> Result<ToolResult, String> {
+    if artifact_id.is_empty() {
+        return Err("read_artifact 缺少 artifact_id 参数".to_string());
+    }
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取数据目录失败: {e}"))?
+        .join("archives");
+    let path = dir.join(format!("{}.txt", artifact_id));
+    if !path.exists() {
+        return Err(format!(
+            "未找到历史归档 #{artifact_id}（档案已清理或目录不存在）"
+        ));
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(file_tools::tool_ok(format!(
+        "[历史归档 #{}]\n{}",
+        artifact_id,
+        truncate_head_tail(&content, 30_000)
+    )))
+}
+
+/// 从子智能体上下文提取已完成工作的进度摘要（命中轮数上限或未产出最终文本时使用），
+/// 保证即使任务被截断也能向主 Agent 返回有效信息。
+fn build_subagent_progress_summary(sub_msgs: &[serde_json::Value], max_rounds: usize) -> String {
+    let mut last_assistant_text: Option<String> = None;
+    let mut summary_text: Option<String> = None;
+    let mut files: Vec<String> = Vec::new();
+    let mut tool_count: usize = 0;
+
+    for msg in sub_msgs {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "assistant" {
+            if let Some(s) = msg.get("content").and_then(|v| v.as_str()) {
+                if !s.trim().is_empty() {
+                    last_assistant_text = Some(s.to_string());
+                }
+            }
+            if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+                tool_count += tcs.len();
+                for tc in tcs {
+                    if let Some(args) = tc
+                        .get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .and_then(|v| v.as_str())
+                    {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(args) {
+                            if let Some(p) = v.get("path").and_then(|x| x.as_str()) {
+                                if !files.contains(&p.to_string()) {
+                                    files.push(p.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if role == "system" {
+            if let Some(s) = msg.get("content").and_then(|v| v.as_str()) {
+                if s.contains("历史摘要") || s.contains("历史归档") {
+                    summary_text = Some(s.to_string());
+                }
+            }
+        }
+    }
+
+    let last_text = last_assistant_text
+        .map(|s| {
+            let t = &s[..s.floor_char_boundary(s.len().min(600))];
+            t.to_string()
+        })
+        .unwrap_or_else(|| "（无中间文本输出）".to_string());
+    let summary_part = match summary_text {
+        Some(s) => format!(
+            "\n\n压缩摘要（早期发现）：{}\n",
+            truncate_head_tail(&s, 800)
+        ),
+        None => String::new(),
+    };
+    let file_list = if files.is_empty() {
+        "（未记录）".to_string()
+    } else {
+        files
+            .iter()
+            .map(|f| format!("- {}", f))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        "[已达子智能体最大轮数限制（{} 轮），任务未完成。已完成工作如下（共 {} 次工具调用）：\n\n最后输出：{}\n{}涉及文件：\n{}\n\n请基于以上进度继续或让用户决定下一步。]",
+        max_rounds, tool_count, last_text, summary_part, file_list
+    )
+}
+/// 本地归档早期消息（snapcompact 式零成本压缩回退）：
+/// 写入 {app_data}/archives/{uuid}.txt，返回 [历史归档 #id] 占位文本（含条数/token 估算/涉及工具）。
+fn archive_early_messages(
+    window: &Window,
+    early: &[serde_json::Value],
+    model: &str,
+) -> Result<String, String> {
+    let app = window.app_handle();
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取数据目录失败: {e}"))?
+        .join("archives");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let artifact_id = uuid::Uuid::new_v4().simple().to_string();
+
+    let mut out = String::new();
+    let mut total_tokens: usize = 0;
+    let mut tool_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for msg in early {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+        let text = match msg.get("content") {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+            None => String::new(),
+        };
+        let text = &text[..text.floor_char_boundary(text.len().min(2000))];
+        total_tokens += estimate_message_tokens(model, msg);
+        if let Some(name) = msg.get("name").and_then(|v| v.as_str()) {
+            tool_names.insert(name.to_string());
+        }
+        out.push_str(&format!("[{}]: {}\n", role, text));
+    }
+    let path = dir.join(format!("{}.txt", artifact_id));
+    std::fs::write(&path, &out).map_err(|e| e.to_string())?;
+
+    let names = if tool_names.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "涉及工具: {}。",
+            tool_names.into_iter().collect::<Vec<_>>().join(", ")
+        )
+    };
+    Ok(format!(
+        "[历史归档 #{}] 早期对话已本地归档（{} 条消息，约 {} tokens）。{}需要细节时用 read_artifact 工具读取。",
+        artifact_id,
+        early.len(),
+        total_tokens,
+        names
+    ))
+}
+/// 生成工作交接文档（handoff）：写入 {app_data}/handoffs/{assistant}-{topic}-{ts}.md。
+/// 内容：时间/状态、已完成内容（截断）、涉及文件（从工具调用参数提取）、未完成原因。
+fn write_handoff_doc(
+    app: &AppHandle,
+    assistant_id: &str,
+    topic_id: &str,
+    accumulated: &str,
+    messages: &[serde_json::Value],
+    final_error: &Option<String>,
+) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取数据目录失败: {e}"))?
+        .join("handoffs");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    // 收集涉及文件（从 assistant 消息的 tool_calls 参数中提取 path）
+    let mut files: Vec<String> = Vec::new();
+    for msg in messages {
+        if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+            for tc in tcs {
+                let name = tc
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if [
+                    "read_file",
+                    "write_file",
+                    "replace_in_file",
+                    "delete_file",
+                    "make_directory",
+                ]
+                .contains(&name)
+                {
+                    if let Some(args) = tc
+                        .get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .and_then(|v| v.as_str())
+                    {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(args) {
+                            if let Some(p) = v.get("path").and_then(|x| x.as_str()) {
+                                if !files.contains(&p.to_string()) {
+                                    files.push(p.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let safe_a: String = assistant_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(12)
+        .collect();
+    let safe_t: String = topic_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(12)
+        .collect();
+    let path = dir.join(format!("{}-{}-{}.md", safe_a, safe_t, ts));
+
+    let files_section = if files.is_empty() {
+        "（无）".to_string()
+    } else {
+        files
+            .iter()
+            .map(|f| format!("- {}", f))
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            )
+    };
+    let body = format!(
+        "# 工作交接文档（未完成任务）
+
+- 时间: {}
+- 助手: {}
+- 话题: {}
+- 错误: {}
+
+## 已完成内容
+
+{}
+
+## 涉及文件
+
+{}
+
+## 下一步
+
+请基于以上状态继续未完成的工作。
+",
+        ts,
+        assistant_id,
+        topic_id,
+        final_error.as_deref().unwrap_or("无"),
+        truncate_head_tail(accumulated, 4000),
+        files_section
+    );
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
 /// 为文件修改工具预计算 diff 预览（审批前展示用）。
 /// 返回 (preview_diff, file_path)。
 fn compute_diff_preview(
@@ -1814,13 +2346,13 @@ async fn execute_workflow(
                     .unwrap_or("(done)")
                     .to_string();
 
-                // 追加到上下文
+                // 追加到上下文（头部+尾部截断，防止多步工作流的上下文无限累积）
                 context.push_str(&format!(
                     "\n## 步骤 {} ({}): {}\n{}",
                     idx + 1,
                     step.name,
                     step.profile_id,
-                    step_result_text
+                    truncate_head_tail(&step_result_text, 1200)
                 ));
                 all_results.push(format!(
                     "步骤 {} ({}): {}",
@@ -1947,10 +2479,25 @@ async fn execute_subagent(
 
     let mut round: usize = 0;
     let mut final_text = String::new();
+    // 输出截断（finish_reason="length"）续写重试次数（最多 1 次）
+    let mut length_retries: u32 = 0;
+    // 上下文溢出自动恢复次数（压缩后重试）
+    let mut sub_overflow_retries: u32 = 0;
+    // 子 Agent 轮数上限：对齐 oh-my-pi「不设低轮数上限、靠上下文管理兜底」的思路，
+    // 100 轮仅作失控保护（防模型死循环），正常长任务（如大规模探索）不受限；
+    // 命中上限时返回已完成的进度摘要而非空结果。
+    const MAX_SUBAGENT_ROUNDS: usize = 100;
+    // 子 Agent 上下文安全阀预算（token）：超限触发压缩，无需模型窗口信息
+    const SUBAGENT_CONTEXT_BUDGET: usize = 45_000;
 
     loop {
         round += 1;
         if token.is_cancelled() {
+            break;
+        }
+        if round > MAX_SUBAGENT_ROUNDS {
+            // 命中失控保护：把已完成的工作整理成有效返回，而不是丢弃
+            final_text = build_subagent_progress_summary(&sub_msgs, MAX_SUBAGENT_ROUNDS);
             break;
         }
 
@@ -1982,6 +2529,7 @@ async fn execute_subagent(
             true, // suppress events for sub-agent (uses subagent-* events instead)
             None, // 子 Agent 图像输出 v1 不支持：不入盘、不重写，仅保留文本
             false,
+            None, // 子 Agent 输出上限由 round cap 兜底，不额外注入 max_tokens
         )
         .await;
 
@@ -2028,6 +2576,19 @@ async fn execute_subagent(
                         summary: step_content,
                     },
                 );
+
+                // 输出被截断（finish_reason="length"）且无工具调用：追加续写指令后重试一次
+                if rr.finish_reason.as_deref() == Some("length")
+                    && rr.tool_calls.is_empty()
+                    && length_retries < 1
+                {
+                    length_retries += 1;
+                    sub_msgs.push(json!({
+                        "role": "system",
+                        "content": "[输出被截断] 请直接继续完成上一条回复中未完成的内容，不要重复已经输出的部分。"
+                    }));
+                    continue;
+                }
 
                 // 无工具调用 → 子 Agent 完成
                 if rr.tool_calls.is_empty() {
@@ -2097,18 +2658,72 @@ async fn execute_subagent(
                         },
                     );
 
-                    // 回填 tool 消息
+                    // 回填 tool 消息：空结果占位 + 截断防上下文膨胀（与主循环一致）
+                    let truncated_content = if content_text.trim().is_empty() {
+                        "[无结果]".to_string()
+                    } else {
+                        truncate_tool_result(&content_text)
+                    };
                     sub_msgs.push(json!({
                         "role": "tool",
-                        "content": content_text,
+                        "content": truncated_content,
                         "tool_call_id": tc.id,
                         "name": tc.name,
                     }));
+                }
+
+                // 子 Agent 上下文安全阀：估算 token 超保守预算时压缩（无需模型窗口信息，
+                // 对绝大多数 ≥64k 窗口的模型都安全；压缩保留最近 token 预算）
+                let sub_est: usize =
+                    estimate_context_tokens(model_to_use, &sub_msgs, SUBAGENT_CONTEXT_BUDGET);
+                if sub_est > SUBAGENT_CONTEXT_BUDGET && sub_msgs.len() > 4 {
+                    let keep = (SUBAGENT_CONTEXT_BUDGET / 2).clamp(4_000, 20_000);
+                    let mut msgs = std::mem::take(&mut sub_msgs);
+                    let _ = compress_context(
+                        window,
+                        client,
+                        api_url,
+                        api_key,
+                        model_to_use,
+                        &mut msgs,
+                        parent_assistant_id,
+                        parent_topic_id,
+                        token,
+                        keep,
+                        "subagent",
+                    )
+                    .await;
+                    sub_msgs = msgs;
                 }
             }
             Err(e) => {
                 if e == "cancelled" {
                     break;
+                }
+                // 上下文溢出自动恢复：压缩后重试一次
+                if sub_overflow_retries < 1 && is_context_overflow_error(&e) && sub_msgs.len() > 4 {
+                    sub_overflow_retries += 1;
+                    let keep = (SUBAGENT_CONTEXT_BUDGET / 2).clamp(4_000, 20_000);
+                    let mut msgs = std::mem::take(&mut sub_msgs);
+                    let res = compress_context(
+                        window,
+                        client,
+                        api_url,
+                        api_key,
+                        model_to_use,
+                        &mut msgs,
+                        parent_assistant_id,
+                        parent_topic_id,
+                        token,
+                        keep,
+                        "subagent",
+                    )
+                    .await;
+                    sub_msgs = msgs;
+                    if res.is_ok() {
+                        tracing::warn!("[subagent overflow] 上下文溢出，已压缩并重试: {}", e);
+                        continue;
+                    }
                 }
                 // API 错误：记录并返回
                 let _ = window.emit(
@@ -2127,7 +2742,8 @@ async fn execute_subagent(
 
     // 子 Agent 完成：发射 done 事件
     let result_text = if final_text.is_empty() {
-        "[子 Agent 未产出最终文本]".to_string()
+        // 无最终文本时回退为已完成工作摘要，保证主 Agent 始终拿到有效返回
+        build_subagent_progress_summary(&sub_msgs, MAX_SUBAGENT_ROUNDS)
     } else {
         final_text
     };
@@ -2235,6 +2851,8 @@ pub async fn run_agent_turn(
     profile_model_overrides: Vec<ProfileModelOverride>,
     custom_subagent_profiles: Vec<crate::core::models::CustomSubagentProfile>,
     locale: Option<String>,
+    context_window: Option<u32>,
+    skills: Option<Vec<SkillConfig>>,
 ) -> Result<(), String> {
     // 诊断日志：打印 messages 每个元素的 role 和关键字段是否存在
     for (i, m) in messages.iter().enumerate() {
@@ -2290,6 +2908,26 @@ pub async fn run_agent_turn(
 
     let is_agent_mode = agent_mode != AgentMode::Off;
 
+    // ===== Token 效率：模型感知的上下文预算 =====
+    // 基于模型上下文窗口（前端从模型目录传入，缺省 128k）推导压缩触发阈值，
+    // 参考 oh-my-pi 的 reserve 策略：reserve = max(16384, 15% 窗口)。
+    let context_window_n = context_window.unwrap_or(128_000).max(16_000) as usize;
+    let context_reserve = 16_384usize.max(context_window_n / 100 * 15);
+    let context_budget = context_window_n.saturating_sub(context_reserve); // 触发压缩的 token 阈值
+    let keep_recent_tokens = (context_budget / 2).clamp(4_000, 20_000); // 压缩时保留的最近 token 预算
+
+    // 推理类模型（OpenAI o1/o3/o4、gpt-5 系列）不接受 max_tokens 字段（需 max_completion_tokens），
+    // 对其不注入输出上限避免 API 报错；其余模型注入窗口一半的输出预算。
+    let model_lower = model.to_lowercase();
+    let is_reasoning_model = ["o1", "o3", "o4", "gpt-5"]
+        .iter()
+        .any(|p| model_lower.contains(p));
+    let max_output_tokens = if is_reasoning_model {
+        None
+    } else {
+        Some(((context_window_n / 2) as u32).clamp(1024, 16_384))
+    };
+
     let token = CancellationToken::new();
     let token_inner = token.clone();
     let state_inner = stream_mgr.0.clone();
@@ -2302,6 +2940,8 @@ pub async fn run_agent_turn(
     let custom_profiles_c = custom_subagent_profiles.clone();
 
     let handle = tokio::spawn(async move {
+        // 解包 Skills（前端仅在 Agent 模式下传递；聊天模式为空）
+        let skills = skills.unwrap_or_default();
         // 加载应用配置（含自动重试设置）
         let app_config =
             crate::commands::config::load_app_config(app_c.clone()).unwrap_or_else(|_| AppConfig {
@@ -2408,6 +3048,18 @@ pub async fn run_agent_turn(
                 tools.push(spec);
             }
         }
+        // P1-10：Skills 按需注入 — 仅注入 read_skill 工具，由模型按需读取完整内容
+        if is_agent_mode && !skills.is_empty() {
+            let spec = skill_read_tool_spec();
+            tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
+            tools.push(spec);
+        }
+        // 历史归档读取工具（压缩回退归档的恢复通道）
+        if is_agent_mode {
+            let spec = artifact_read_tool_spec();
+            tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
+            tools.push(spec);
+        }
         let tools_slice: Option<&[ToolSpec]> = if tools.is_empty() { None } else { Some(&tools) };
 
         let mut round: u32 = 0;
@@ -2418,30 +3070,32 @@ pub async fn run_agent_turn(
         // 跨轮累计 token 用量（用于成本统计）
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
+        let mut total_cached_tokens: u32 = 0;
+        // 前缀稳定性回归验证：标记本轮刚发生压缩，用于记录压缩后首轮的缓存命中情况
+        let mut compressed_this_run: bool = false;
+        // 未完成任务跟踪（handoff 交接文档）：强制停止（轮数上限/工作流未调用）或错误
+        let mut incomplete_stop: bool = false;
+        let mut last_finish_reason: Option<String> = None;
         // 上下文峰值 tokens：最后一轮 API 调用的 input_tokens（用于上下文窗口展示）
         let mut context_input_tokens: u32 = 0;
         // 跨轮累计的最终文本与生成图像（用于 done 时一次性回传，幂等替换前端 chunk 累积）
         let mut accumulated_content = String::new();
         let mut all_images: Vec<GeneratedImage> = Vec::new();
 
-        // Workflow 模式：在 LLM 循环前注入强制系统消息
+        // Workflow 模式：在 LLM 循环前注入强制系统消息（置于稳定前缀内，利于 prompt cache 与压缩保护）
         if agent_mode == AgentMode::Workflow {
-            messages_for_api.push(serde_json::json!({
-                "role": "system",
-                "content": concat!(
-                    "你正处于「工作流模式」。\n",
-                    "你的首要任务：分析用户请求 → 调用 `create_workflow` 工具来创建和执行工作流。\n",
-                    "不允许直接修改文件、执行命令或调用其他工具。\n",
-                    "必须使用 create_workflow 来组织多步骤任务。\n\n",
-                    "典型序列示例：\n",
-                    "- requirements → coder → reviewer（分析 + 实现 + 审查）\n",
-                    "- explorer → coder（探索 + 实现）\n",
-                    "- debugger → coder（诊断 + 修复）\n",
-                    "- requirements → architect → coder → tester（完整开发流程）\n\n",
-                    "如果用户请求很简单，可以只用一个步骤的工作流。\n",
-                    "请立即调用 create_workflow 来开始工作。"
-                )
-            }));
+            messages_for_api.insert(
+                2.min(messages_for_api.len()),
+                serde_json::json!({
+                    "role": "system",
+                    "content": concat!(
+                        "你正处于「工作流模式」。首要任务：分析用户请求 → 调用 `create_workflow` 创建并执行工作流。\n",
+                        "不得直接修改文件、执行命令或调用其他工具。\n",
+                        "典型序列：requirements → coder → reviewer；explorer → coder；debugger → coder；requirements → architect → coder → tester。\n",
+                        "简单请求可用单步工作流。请立即调用 create_workflow 开始。"
+                    )
+                }),
+            );
         }
 
         // 注入项目知识到系统提示词（跨 session 记忆）—— 仅当用户在设置中开启时
@@ -2462,9 +3116,7 @@ pub async fn run_agent_turn(
                 }
             }
         }
-        // 上下文预算追踪（字符级近似，保守估计）
-        const CONTEXT_BUDGET_CRITICAL: usize = 95_000;
-
+        // 上下文预算追踪：token 级、模型感知（阈值/保留预算在任务启动前按窗口推导）
         // AGT-01：可配置的单次最大工具调用轮数（默认 25，最低 1）
         let max_rounds = app_config
             .max_tool_rounds
@@ -2473,6 +3125,12 @@ pub async fn run_agent_turn(
         // AGT-02：Workflow 模式下提醒调用 create_workflow 的最大次数（有限次，避免无限循环）
         let max_workflow_reminders: u32 = 2;
         let mut workflow_reminders: u32 = 0;
+        // 输出截断（finish_reason="length"）时的最大续写重试次数
+        const MAX_LENGTH_RETRIES: u32 = 2;
+        let mut length_retries: u32 = 0;
+        // 上下文溢出（context overflow）自动恢复次数：压缩后重试
+        const MAX_OVERFLOW_RETRIES: u32 = 1;
+        let mut overflow_retries: u32 = 0;
 
         'outer: loop {
             round += 1;
@@ -2483,6 +3141,7 @@ pub async fn run_agent_turn(
 
             // AGT-01：达到最大工具调用轮数 → 优雅收尾（不 abort，产出提示后自然结束）
             if round > max_rounds {
+                incomplete_stop = true;
                 let note = "\n\n⚠️ 已达本轮最大工具调用轮数，任务未完成。如需继续，请再次发送。";
                 accumulated_content.push_str(note);
                 let _ = window.emit(
@@ -2496,6 +3155,7 @@ pub async fn run_agent_turn(
                         input_tokens: None,
                         output_tokens: None,
                         context_tokens: None,
+                        cached_input_tokens: None,
                         images: None,
                     },
                 );
@@ -2530,6 +3190,7 @@ pub async fn run_agent_turn(
                 false,
                 Some(&app_c),
                 true,
+                max_output_tokens,
             )
             .await;
 
@@ -2538,9 +3199,37 @@ pub async fn run_agent_turn(
                 Err(e) => {
                     if e == "cancelled" {
                         was_cancelled = true;
-                    } else {
-                        final_error = Some(e);
+                        break 'outer;
                     }
+                    // 上下文溢出自动恢复：压缩早期消息后重试一次，避免长会话直接失败
+                    if overflow_retries < MAX_OVERFLOW_RETRIES
+                        && is_context_overflow_error(&e)
+                        && messages_for_api.len() > 4
+                    {
+                        overflow_retries += 1;
+                        let mut msgs = std::mem::take(&mut messages_for_api);
+                        let res = compress_context(
+                            &window,
+                            &client,
+                            &api_url,
+                            &api_key,
+                            &model,
+                            &mut msgs,
+                            &assistant_id_c,
+                            &topic_id_c,
+                            &token_inner,
+                            keep_recent_tokens,
+                            "main",
+                        )
+                        .await;
+                        messages_for_api = msgs;
+                        if res.is_ok() {
+                            tracing::warn!("[overflow] 上下文溢出，已压缩并重试: {}", e);
+                            continue;
+                        }
+                    }
+                    incomplete_stop = true;
+                    final_error = Some(e);
                     break 'outer;
                 }
             };
@@ -2548,6 +3237,25 @@ pub async fn run_agent_turn(
             // 累计 token 用量
             total_input_tokens += round_result.input_tokens;
             total_output_tokens += round_result.output_tokens;
+            total_cached_tokens += round_result.cached_input_tokens;
+            last_finish_reason = round_result.finish_reason.clone();
+
+            // 前缀稳定性回归验证：压缩后首轮的缓存命中率（稳定前缀块应继续命中）
+            if compressed_this_run {
+                compressed_this_run = false;
+                let hit_pct = if round_result.input_tokens > 0 {
+                    (round_result.cached_input_tokens as f64 / round_result.input_tokens as f64)
+                        * 100.0
+                } else {
+                    0.0
+                };
+                tracing::info!(
+                    "[cache] 压缩后首轮 input_tokens={}, cached_input_tokens={}（命中率 {:.1}%）",
+                    round_result.input_tokens,
+                    round_result.cached_input_tokens,
+                    hit_pct
+                );
+            }
             // 记录峰值上下文（最后一轮的 input_tokens）
             context_input_tokens = round_result.input_tokens;
             // 累计最终文本与生成图像（含 aio-image 标记，供 done 回传）
@@ -2563,6 +3271,7 @@ pub async fn run_agent_turn(
                 round,
                 round_result.input_tokens,
                 round_result.output_tokens,
+                round_result.cached_input_tokens,
             );
 
             // 把本轮 assistant 消息（含 tool_calls）append 到上下文
@@ -2591,6 +3300,20 @@ pub async fn run_agent_turn(
             }
             messages_for_api.push(serde_json::Value::Object(asst_obj));
 
+            // 输出被截断（finish_reason="length"）且无工具调用：追加续写指令后重试（有限次），
+            // 避免半截回复直接结束导致用户重发整条消息浪费 token。
+            if round_result.finish_reason.as_deref() == Some("length")
+                && round_result.tool_calls.is_empty()
+                && length_retries < MAX_LENGTH_RETRIES
+            {
+                length_retries += 1;
+                messages_for_api.push(serde_json::json!({
+                    "role": "system",
+                    "content": "[输出被截断] 请直接继续完成上一条回复中未完成的内容，不要重复已经输出的部分。"
+                }));
+                continue;
+            }
+
             // 无工具调用 → 任务完成，整轮结束
             if round_result.tool_calls.is_empty() {
                 if agent_mode == AgentMode::Workflow && !workflow_called {
@@ -2604,6 +3327,7 @@ pub async fn run_agent_turn(
                         continue;
                     }
                     // 有限次提醒后模型仍拒绝 → 尊重退出信号，优雅收尾
+                    incomplete_stop = true;
                     let note = "\n\n⚠️ 模型未按工作流模式调用 create_workflow，已停止。您可以切回普通/自动模式继续。";
                     accumulated_content.push_str(note);
                     let _ = window.emit(
@@ -2617,6 +3341,7 @@ pub async fn run_agent_turn(
                             input_tokens: None,
                             output_tokens: None,
                             context_tokens: None,
+                            cached_input_tokens: None,
                             images: None,
                         },
                     );
@@ -2903,7 +3628,17 @@ pub async fn run_agent_turn(
                         } else {
                             None
                         };
-                    let tool_result = if server_id.as_deref() == Some("__builtin__") {
+                    let tool_result = if server_id.as_deref() == Some("__builtin__")
+                        && tc.name == "read_artifact"
+                    {
+                        execute_artifact_read(
+                            &app_c,
+                            args_val["artifact_id"].as_str().unwrap_or(""),
+                        )
+                    } else if server_id.as_deref() == Some("__builtin__") && tc.name == "read_skill"
+                    {
+                        execute_skill_read(&skills, args_val["name"].as_str().unwrap_or(""))
+                    } else if server_id.as_deref() == Some("__builtin__") {
                         execute_builtin_tool(
                             &app_c,
                             &tc.name,
@@ -3091,13 +3826,10 @@ pub async fn run_agent_turn(
                 }
             }
 
-            // 上下文预算检查：更新总字符数并标记压缩需求
-            let context_total_chars: usize = messages_for_api
-                .iter()
-                .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
-                .sum();
-            // 在下一轮开始前执行压缩
-            if context_total_chars > CONTEXT_BUDGET_CRITICAL && messages_for_api.len() > 4 {
+            // 上下文预算检查（token 级、模型感知）：估算当前上下文，超阈值则压缩
+            let estimated_tokens: usize =
+                estimate_context_tokens(&model, &messages_for_api, context_budget);
+            if estimated_tokens > context_budget && messages_for_api.len() > 4 {
                 let window_c = window.clone();
                 let client_c = client.clone();
                 let api_url_c = api_url.clone();
@@ -3108,20 +3840,92 @@ pub async fn run_agent_turn(
                 let tok = token_inner.clone();
                 let mut msgs = std::mem::take(&mut messages_for_api);
                 match compress_context(
-                    &window_c, &client_c, &api_url_c, &api_key_c, &model_c, &mut msgs, &a_id,
-                    &t_id, &tok,
+                    &window_c,
+                    &client_c,
+                    &api_url_c,
+                    &api_key_c,
+                    &model_c,
+                    &mut msgs,
+                    &a_id,
+                    &t_id,
+                    &tok,
+                    keep_recent_tokens,
+                    "main",
                 )
                 .await
                 {
                     Ok(_) => {
-                        let _ =
-                            window.emit("llm-compression", json!({"round": round, "result": "ok"}));
+                        compressed_this_run = true;
+                        let _ = window.emit(
+                            "llm-compression",
+                            json!({
+                                "round": round,
+                                "result": "ok",
+                                "estimated_tokens": estimated_tokens,
+                                "keep_recent_tokens": keep_recent_tokens,
+                            }),
+                        );
                     }
                     Err(e) => {
                         let _ = window.emit("llm-compression-failed", json!({"error": e}));
                     }
                 }
                 messages_for_api = msgs;
+            }
+        }
+
+        // ===== 未完成任务 → 工作交接文档（handoff）=====
+        // 触发条件：强制停止（轮数上限/工作流未调用）、错误、或最后一次响应被截断（length）
+        let ended_incomplete = !was_cancelled
+            && (incomplete_stop
+                || final_error.is_some()
+                || last_finish_reason.as_deref() == Some("length"));
+        if ended_incomplete {
+            match write_handoff_doc(
+                &app_c,
+                &assistant_id_c,
+                &topic_id_c,
+                &accumulated_content,
+                &messages_for_api,
+                &final_error,
+            ) {
+                Ok(path) => {
+                    let reason = if final_error.is_some() {
+                        "error"
+                    } else if incomplete_stop {
+                        "max_rounds"
+                    } else {
+                        "incomplete"
+                    };
+                    let _ = window.emit(
+                        "llm-handoff",
+                        json!({
+                            "assistant_id": assistant_id_c,
+                            "topic_id": topic_id_c,
+                            "path": path,
+                            "reason": reason,
+                        }),
+                    );
+                    let note = "\n\n[工作交接] 本次任务未完成，已生成交接文档（含已完成内容与涉及文件，可据此继续）。";
+                    accumulated_content.push_str(note);
+                    let _ = window.emit(
+                        "llm-chunk",
+                        StreamPayload {
+                            assistant_id: assistant_id_c.clone(),
+                            topic_id: topic_id_c.clone(),
+                            content: note.into(),
+                            done: false,
+                            error: None,
+                            input_tokens: None,
+                            output_tokens: None,
+                            context_tokens: None,
+                            cached_input_tokens: None,
+                            images: None,
+                        },
+                    );
+                    tracing::info!("[handoff] 未完成任务已生成交接文档: {}", path);
+                }
+                Err(err) => tracing::warn!("[handoff] 生成交接文档失败: {}", err),
             }
         }
 
@@ -3160,6 +3964,11 @@ pub async fn run_agent_turn(
                 } else {
                     None
                 },
+                cached_input_tokens: if total_cached_tokens > 0 {
+                    Some(total_cached_tokens)
+                } else {
+                    None
+                },
                 images: if all_images.is_empty() {
                     None
                 } else {
@@ -3176,8 +3985,11 @@ pub async fn run_agent_turn(
     Ok(())
 }
 
-/// 上下文自动压缩：将早期消息压缩为摘要，保留最近 2 轮对话。
+/// 上下文自动压缩：将早期消息压缩为摘要，按 token 预算保留最近消息。
 /// 用于 Agent 循环中避免超出模型上下文窗口限制。
+/// - 前置的 system 消息块（稳定提示词前缀：locale / 知识 / 工作流指令等）永不压缩；
+/// - 保留区按 keep_recent_tokens token 预算从尾部累计，并回退到完整轮次边界（不切断 role:tool）；
+/// - 摘要输入有界（最多约 30k 字符，最近优先），并固定带上首条 user 消息（原始任务）。
 #[allow(
     clippy::too_many_arguments,
     reason = "context compression reuses the active stream request context"
@@ -3192,6 +4004,8 @@ async fn compress_context(
     assistant_id: &str,
     topic_id: &str,
     token: &CancellationToken,
+    keep_recent_tokens: usize,
+    source: &str,
 ) -> Result<(), String> {
     if messages.len() <= 4 {
         return Ok(());
@@ -3201,24 +4015,82 @@ async fn compress_context(
     if token.is_cancelled() {
         return Err("cancelled".into());
     }
-    // 保留尾部最近 2 轮（4 条消息：assistant, user, assistant, user）
-    let split_at = messages.len().saturating_sub(4);
-    let early: Vec<serde_json::Value> = messages.drain(0..split_at).collect();
 
-    // 构造摘要提示
-    let mut summary_prompt = String::from(
-        "请总结以下 AI 助手对话的历史，保留关键决策、文件路径、代码变更和结论，控制在 2000 字以内：\n\n"
-    );
-    for msg in &early {
-        if let Some(role) = msg.get("role").and_then(|v| v.as_str()) {
-            if let Some(content) = msg.get("content") {
-                let text = match content {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                summary_prompt.push_str(&format!("[{}]: {}\n", role, &text[..text.len().min(500)]));
-            }
+    // 1) 保护前置 system 消息块（稳定提示词前缀），永不压缩
+    let mut prefix_end = 0usize;
+    while prefix_end < messages.len()
+        && messages[prefix_end].get("role").and_then(|v| v.as_str()) == Some("system")
+    {
+        prefix_end += 1;
+    }
+    if prefix_end >= messages.len() {
+        return Ok(());
+    }
+
+    // 2) 按 token 预算从尾部累计保留区
+    let mut tail_start = messages.len();
+    let mut acc: usize = 0;
+    for i in (prefix_end..messages.len()).rev() {
+        acc += estimate_message_tokens(model, &messages[i]);
+        tail_start = i;
+        if acc >= keep_recent_tokens {
+            break;
         }
+    }
+    if tail_start == messages.len() {
+        return Ok(()); // 整个可压缩区都在预算内，无需压缩
+    }
+    // 切割点不得落在 role:tool 上（避免 tool 消息与其 assistant(tool_calls) 分离导致 API 400）
+    while tail_start < messages.len()
+        && messages[tail_start].get("role").and_then(|v| v.as_str()) == Some("tool")
+    {
+        tail_start += 1;
+    }
+    if tail_start <= prefix_end {
+        return Ok(()); // 保留区已覆盖全部可压缩区
+    }
+
+    let early: Vec<serde_json::Value> = messages.drain(prefix_end..tail_start).collect();
+
+    // 3) 构造有界的摘要提示：首条 user 消息（原始任务）+ 最近的早期消息（最多 ~30k 字符，最近优先）
+    let mut blocks: Vec<String> = Vec::new();
+    let mut budget = 30_000usize;
+    for msg in early.iter().rev() {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+        let text = match msg.get("content") {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+            None => String::new(),
+        };
+        let text = &text[..text.floor_char_boundary(text.len().min(500))];
+        let block = format!("[{}]: {}\n", role, text);
+        if block.len() > budget {
+            break;
+        }
+        budget -= block.len();
+        blocks.push(block);
+    }
+    blocks.reverse(); // 恢复时间顺序
+                      // 固定带上首条 user 消息（原始任务描述），防止其被预算丢弃
+    if let Some(first_user) = early
+        .iter()
+        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+    {
+        if let Some(content) = first_user.get("content") {
+            let text = match content {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let text = &text[..text.floor_char_boundary(text.len().min(300))];
+            blocks.insert(0, format!("[user]: {}\n", text));
+        }
+    }
+
+    let mut summary_prompt = String::from(
+        "请总结以下 AI 助手对话的历史，保留关键决策、文件路径、代码变更和结论，控制在 2000 字以内：\n\n",
+    );
+    for b in &blocks {
+        summary_prompt.push_str(b);
     }
 
     let body = json!({
@@ -3230,38 +4102,49 @@ async fn compress_context(
         "stream": false,
         "max_tokens": 1024
     });
-    let endpoint = normalize_chat_url(api_url);
+    // 摘要生成；失败（超时/网络/API/空）时回退到本地归档（snapcompact 式：零摘要 API 成本，
+    // 细节可经 read_artifact 工具恢复），保证压缩绝不丢失早期上下文。
+    let summary = match (async {
+        let (res, is_anthropic) = tokio::select! {
+            _ = token.cancelled() => return Err("cancelled".to_string()),
+            result = tokio::time::timeout(
+                std::time::Duration::from_secs(45),
+                post_chat_completion(client, api_url, api_key, &body),
+            ) => result,
+        }
+        .map_err(|_| "压缩摘要请求超时（45s）".to_string())?
+        .map_err(|e| e.to_string())?;
 
-    let res = tokio::select! {
-        _ = token.cancelled() => return Err("cancelled".into()),
-        result = tokio::time::timeout(
-            std::time::Duration::from_secs(45),
-            client.post(&endpoint)
-                .header("Authorization", format!("Bearer {}", api_key))
-                .json(&body)
-                .send(),
-        ) => result,
-    }
-    .map_err(|_| "压缩摘要请求超时（45s）".to_string())?
-    .map_err(|e| e.to_string())?;
+        let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
 
-    let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        if let Some(err) = chat_error_message(&val) {
+            return Err(err);
+        }
 
-    if let Some(err) = val.get("error") {
-        return Err(err
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("API Error")
-            .to_string());
-    }
+        let s = chat_text_content(&val, is_anthropic);
+        if s.is_empty() {
+            Err("摘要为空".to_string())
+        } else {
+            Ok(s)
+        }
+    })
+    .await
+    {
+        Ok(s) => s,
+        Err(e) if e == "cancelled" => return Err("cancelled".into()),
+        Err(e) => {
+            let placeholder = archive_early_messages(window, &early, model)?;
+            tracing::warn!(
+                "[compression] 摘要生成失败（{}），已本地归档 {} 条消息",
+                e,
+                early.len()
+            );
+            placeholder
+        }
+    };
 
-    let summary = val["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("无法生成摘要")
-        .to_string();
-
-    // 重建消息列表：摘要 → 尾部消息
-    let tail: Vec<serde_json::Value> = std::mem::take(messages);
+    // 4) 重建消息列表：稳定前缀 → 摘要消息 → 保留尾部
+    let tail: Vec<serde_json::Value> = messages.split_off(prefix_end);
     messages.push(json!({
         "role": "system",
         "content": format!("[历史摘要 — 自动压缩]\n{}", summary)
@@ -3271,6 +4154,8 @@ async fn compress_context(
     let _ = window.emit("llm-compression", json!({
         "assistant_id": assistant_id,
         "topic_id": topic_id,
+        "source": source,
+        "summary": summary,
         "compressed_chars": early.iter().map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0)).sum::<usize>(),
     }));
 
@@ -3325,16 +4210,12 @@ pub async fn summarize_history(
     let body = json!({
         "model": model,
         "messages": messages_for_api,
-        "stream": false
+        "stream": false,
+        "max_tokens": 700
     });
-    let endpoint = normalize_chat_url(&api_url);
-    let res = tokio::time::timeout(
+    let (res, is_anthropic) = tokio::time::timeout(
         std::time::Duration::from_secs(45),
-        client
-            .post(endpoint)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&body)
-            .send(),
+        post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
     .map_err(|_| "摘要请求超时（45s）".to_string())?
@@ -3342,18 +4223,16 @@ pub async fn summarize_history(
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
 
-    if let Some(err) = val.get("error") {
-        return Err(err
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("API Error")
-            .to_string());
+    if let Some(err) = chat_error_message(&val) {
+        return Err(err);
     }
 
-    let summary = val["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("无法生成总结")
-        .to_string();
+    let summary = chat_text_content(&val, is_anthropic);
+    let summary = if summary.is_empty() {
+        "无法生成总结".to_string()
+    } else {
+        summary
+    };
 
     Ok(summary)
 }
@@ -3371,6 +4250,7 @@ pub fn get_usage_summary(
             "SELECT date(timestamp) as day,
                     SUM(input_tokens) as total_input,
                     SUM(output_tokens) as total_output,
+                    COALESCE(SUM(cached_input_tokens), 0) as total_cached,
                     COUNT(*) as request_count
              FROM usage_log
              WHERE timestamp >= datetime('now', ?1)
@@ -3385,7 +4265,8 @@ pub fn get_usage_summary(
                 date: row.get(0)?,
                 input_tokens: row.get(1)?,
                 output_tokens: row.get(2)?,
-                request_count: row.get(3)?,
+                cached_input_tokens: row.get(3)?,
+                request_count: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -3412,6 +4293,7 @@ pub fn get_usage_summary_by_model(
                 "SELECT model_id,
                         SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
+                        COALESCE(SUM(cached_input_tokens), 0) as total_cached,
                         COUNT(*) as request_count
                  FROM usage_log
                  WHERE date(timestamp) = ?1
@@ -3425,7 +4307,8 @@ pub fn get_usage_summary_by_model(
                     model_id: row.get(0)?,
                     input_tokens: row.get(1)?,
                     output_tokens: row.get(2)?,
-                    request_count: row.get(3)?,
+                    cached_input_tokens: row.get(3)?,
+                    request_count: row.get(4)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -3440,6 +4323,7 @@ pub fn get_usage_summary_by_model(
                 "SELECT model_id,
                         SUM(input_tokens) as total_input,
                         SUM(output_tokens) as total_output,
+                        COALESCE(SUM(cached_input_tokens), 0) as total_cached,
                         COUNT(*) as request_count
                  FROM usage_log
                  WHERE timestamp >= datetime('now', ?1)
@@ -3454,7 +4338,8 @@ pub fn get_usage_summary_by_model(
                     model_id: row.get(0)?,
                     input_tokens: row.get(1)?,
                     output_tokens: row.get(2)?,
-                    request_count: row.get(3)?,
+                    cached_input_tokens: row.get(3)?,
+                    request_count: row.get(4)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -3721,14 +4606,9 @@ pub async fn generate_topic_title(
         "temperature": 0.0
     });
 
-    let endpoint = normalize_chat_url(&api_url);
-    let res = tokio::time::timeout(
+    let (res, is_anthropic) = tokio::time::timeout(
         std::time::Duration::from_secs(45),
-        client
-            .post(endpoint)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&body)
-            .send(),
+        post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
     .map_err(|_| "标题生成请求超时（45s）".to_string())?
@@ -3736,25 +4616,16 @@ pub async fn generate_topic_title(
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
 
-    if let Some(err) = val.get("error") {
-        return Err(err
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("API Error")
-            .to_string());
+    if let Some(err) = chat_error_message(&val) {
+        return Err(err);
     }
 
-    let raw = val["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let raw = chat_text_content(&val, is_anthropic);
 
     let cleaned = clean_topic_title(&raw);
 
     if cleaned.is_empty() {
-        let finish = val["choices"][0]["finish_reason"]
-            .as_str()
-            .unwrap_or("unknown");
+        let finish = chat_finish_reason(&val, is_anthropic);
         return Err(format!(
             "模型 {} 返回的标题为空 (finish_reason={}, raw_len={})",
             model,

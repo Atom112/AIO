@@ -66,6 +66,62 @@ function getReasoningPrompt(level: string): string | null {
   if (level === 'high') return t('agent.prompt.reasoningHigh');
   return null;
 }
+
+/**
+ * 获取当前选中模型的上下文窗口大小（从模型目录读取，缺省 128k）。
+ * 用于后端 Agent 循环的 token 预算计算与前端历史压缩阈值。
+ */
+async function getModelContextWindow(): Promise<number> {
+  let maxContext = 128_000; // 默认 128K
+  try {
+    const { getCachedCatalog } = await import('../../core/utils/models');
+    const cat = getCachedCatalog();
+    const mdl = selectedModel();
+    if (cat && mdl) {
+      const modelMeta = cat.models?.find((m: any) => m.id === mdl.model_id);
+      if (modelMeta?.contextWindow && modelMeta.contextWindow > 0) {
+        maxContext = modelMeta.contextWindow;
+      }
+    }
+  } catch {
+    // 模型目录不可用时保持默认值
+  }
+  return maxContext;
+}
+
+/**
+ * 构建 Skill 系统消息（token 效率）：
+ * - 聊天模式（无 read_skill 工具）：全量注入技能内容（保持原有行为）；
+ * - Agent 模式：小技能（≤800 字符）始终全量注入（避免模型漏读、保持可用性）；
+ *   大技能仅注入目录行（名称+描述），由模型通过 read_skill 工具按需读取完整说明，
+ *   避免 docx/pptx/xlsx 等大技能每次请求全量计费。
+ */
+function buildSkillMessages(asst: any, fullInject: boolean): { role: 'system'; content: string }[] {
+  const skills = resolveAssistantSkills(asst);
+  if (skills.length === 0) return [];
+  if (fullInject) {
+    return skills.map((skill) => ({
+      role: 'system' as const,
+      content: '[Skill: ' + skill.name + ']\n' + skill.content,
+    }));
+  }
+  const SMALL_SKILL_MAX_CHARS = 800;
+  const small = skills.filter((s) => s.content.length <= SMALL_SKILL_MAX_CHARS);
+  const large = skills.filter((s) => s.content.length > SMALL_SKILL_MAX_CHARS);
+  const msgs = small.map((skill) => ({
+    role: 'system' as const,
+    content: '[Skill: ' + skill.name + ']\n' + skill.content,
+  }));
+  if (large.length > 0) {
+    msgs.push({
+      role: 'system' as const,
+      content:
+        '[已启用 Skills] 处理相关任务前，先用 read_skill 工具读取对应技能的完整说明：\n' +
+        large.map((s) => '- ' + s.name + ': ' + (s.description || s.name)).join('\n'),
+    });
+  }
+  return msgs;
+}
 import type { PendingApproval } from './components/ToolApprovalBubble';
 import { clearAllDiagnostics } from '../../core/store/diagnostics';
 
@@ -373,25 +429,13 @@ const ChatPage: Component = () => {
    * 检查并总结对话历史（Token-based）
    * 当会话累计 token 数超过模型上下文窗口的 75% 时，触发压缩。
    */
-  const checkAndSummarize = async () => {
+  const checkAndSummarize = async (keepBudgetOverride?: number) => {
     const topic = activeTopic();
     const currentMdl = selectedModel();
     if (!topic || !currentMdl) return;
 
     // 获取当前模型的上下文窗口大小
-    let maxContext = 128_000; // 默认 128K
-    try {
-      const { getCachedCatalog } = await import('../../core/utils/models');
-      const cat = getCachedCatalog();
-      if (cat) {
-        const modelMeta = cat.models?.find((m: any) => m.id === currentMdl.model_id);
-        if (modelMeta?.contextWindow && modelMeta.contextWindow > 0) {
-          maxContext = modelMeta.contextWindow;
-        }
-      }
-    } catch {
-      // The default context size remains valid when the catalog is unavailable.
-    }
+    const maxContext = await getModelContextWindow();
 
     // 统计实际上下文占用（使用最后一条 assistant 消息的 contextTokens，不跨消息累加）
     let totalUsed = 0;
@@ -418,9 +462,31 @@ const ChatPage: Component = () => {
       `[Context] 触发压缩: ${(usageRatio * 100).toFixed(0)}% (${totalUsed}/${maxContext} tokens, ${topic.history.length} 条消息)`,
     );
 
-    const keepCount = Math.max(4, Math.floor(topic.history.length * 0.3));
+    // Token 预算制保留：默认从尾部累计约 2 万 token（至少保留最近 4 条消息，即一个完整回合）；
+    // 可通过 `/compact <n>` 指定本次保留预算
+    const KEEP_TOKEN_BUDGET =
+      keepBudgetOverride && keepBudgetOverride > 0 ? keepBudgetOverride : 20_000;
+    const estimateMsgTokens = (m: any): number => {
+      const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
+      return Math.ceil(text.length / 4) + 8;
+    };
+    let keepCount = 0;
+    let acc = 0;
+    for (let i = topic.history.length - 1; i >= 0; i--) {
+      acc += estimateMsgTokens(topic.history[i]);
+      keepCount = topic.history.length - i;
+      if (acc >= KEEP_TOKEN_BUDGET) break;
+    }
+    keepCount = Math.max(keepCount, 4);
     const summarizeCount = topic.history.length - keepCount;
-    const messagesToSummarize = topic.history.slice(0, summarizeCount);
+    if (summarizeCount <= 0) return;
+    // 覆盖式摘要：把旧摘要作为输入上下文注入，新摘要整体替换旧摘要，避免拼接式膨胀
+    const messagesToSummarize = topic.summary
+      ? [
+          { role: 'system' as const, content: '[历史背景]: ' + topic.summary },
+          ...topic.history.slice(0, summarizeCount),
+        ]
+      : topic.history.slice(0, summarizeCount);
 
     try {
       const newSummarySnippet = await invoke<string>('summarize_history', {
@@ -432,9 +498,6 @@ const ChatPage: Component = () => {
       const latestTopic = activeTopic();
       if (!latestTopic) return;
       const updatedHistory = latestTopic.history.slice(summarizeCount);
-      const combinedSummary = latestTopic.summary
-        ? `[历史背景]: ${latestTopic.summary}\n[近期增补]: ${newSummarySnippet}`
-        : newSummarySnippet;
       setDatas(
         'assistants',
         (a) => a.id === currentAssistantId(),
@@ -442,7 +505,7 @@ const ChatPage: Component = () => {
         (t) => t.id === latestTopic.id,
         {
           history: updatedHistory,
-          summary: combinedSummary,
+          summary: newSummarySnippet,
         },
       );
       await saveSingleAssistantToBackend(currentAssistantId()!);
@@ -645,10 +708,25 @@ const ChatPage: Component = () => {
   /** 中断/取消导致的工具调用占位结果文本（标记给模型看，保证上下文可理解） */
   const TOOL_INTERRUPTED = '[Interrupted by user]';
 
-  /** 截断过长的工具返回内容，防止 LLM 上下文膨胀。完整内容保留在 agentSteps 中供用户查看。 */
+  /**
+   * 截断过长的工具返回内容（头尾保留式，与后端 truncate_tool_result 对齐：前 60% + 后 40%，
+   * 20k 字符），防止 LLM 上下文膨胀，同时保留 read_file 已保留的文件首尾。
+   * 完整内容保留在 agentSteps 中供用户查看。
+   */
   const truncateToolResult = (content: string): string => {
-    const MAX_LEN = 10000;
+    const MAX_LEN = 20000;
     if (content.length <= MAX_LEN) return content;
+    const head = Math.floor((MAX_LEN * 6) / 10);
+    const tail = MAX_LEN - head;
+    const headEnd = head;
+    const tailStart = content.length - tail;
+    if (tailStart > headEnd) {
+      return (
+        content.slice(0, headEnd) +
+        `\n\n... [已截断: 共${content.length}字符，保留首尾] ...\n\n` +
+        content.slice(tailStart)
+      );
+    }
     return content.slice(0, MAX_LEN) + `\n\n... [已截断: 共${content.length}字符]`;
   };
 
@@ -883,10 +961,7 @@ ${asstObj.prompt}`;
 
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
-      ...resolveAssistantSkills(currentAsst).map((skill) => ({
-        role: 'system',
-        content: `[Skill: ${skill.name}]\n${skill.content}`,
-      })),
+      ...buildSkillMessages(currentAsst, agentMode === 'off'),
       ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
@@ -937,6 +1012,8 @@ ${asstObj.prompt}`;
         projectId: currentProjectId() ?? null,
         webSearchEnabled: webSearchEnabled(),
         locale: locale(),
+        contextWindow: await getModelContextWindow(),
+        skills: agentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
       });
     } catch (err) {
       alert(err);
@@ -976,8 +1053,8 @@ ${asstObj.prompt}`;
       ],
     );
 
-    // 执行 handler
-    await cmd.handler();
+    // 执行 handler（Action 型命令可携带参数，如 `/compact 10000` 指定保留 token 预算）
+    await cmd.handler(resolved.args);
 
     // 根据命令类型给出反馈消息
     let feedback = '';
@@ -1132,10 +1209,7 @@ ${asstObj.prompt}`;
       : [];
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
-      ...resolveAssistantSkills(currentAsst).map((skill) => ({
-        role: 'system',
-        content: `[Skill: ${skill.name}]\n${skill.content}`,
-      })),
+      ...buildSkillMessages(currentAsst, isChatMode()),
       ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
@@ -1274,6 +1348,8 @@ ${asstObj.prompt}`;
           profileModelOverrides: resolvedOverrides,
           customSubagentProfiles: customSubagentProfiles(),
           locale: locale(),
+          contextWindow: await getModelContextWindow(),
+          skills: isChatMode() ? [] : resolveAssistantSkills(currentAsst),
         });
       }
     } catch (err) {
@@ -1637,10 +1713,14 @@ ${asstObj.prompt}`;
 
     const cmdSlashCompact = registerCommand({
       id: 'slash-compact',
-      handler: async () => {
+      handler: async (args?: string) => {
+        // 可选参数：保留的 token 预算（`/compact 10000`），默认 2 万
+        const budgetArg = args ? Number(args.trim()) : NaN;
         setIsThinking(true);
         try {
-          await checkAndSummarize();
+          await checkAndSummarize(
+            Number.isFinite(budgetArg) && budgetArg > 0 ? budgetArg : undefined,
+          );
         } finally {
           setIsThinking(false);
         }
@@ -1835,6 +1915,7 @@ ${asstObj.prompt}`;
           input_tokens,
           output_tokens,
           context_tokens,
+          cached_input_tokens,
           images,
         } = e.payload;
         if (done) {
@@ -1902,6 +1983,7 @@ ${asstObj.prompt}`;
               if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
               if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
               if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
+              if (cached_input_tokens != null) updatedMsg.cachedInputTokens = cached_input_tokens;
               // 模型生成的图像元数据（下载按钮）+ 后端重写（去 token 标记）后的最终文本
               if (images) updatedMsg.images = images;
               if (!error && content) updatedMsg.content = content;
@@ -2214,6 +2296,42 @@ ${asstObj.prompt}`;
               return { ...m, toolCalls: newToolCalls, agentSteps: newSteps };
             }),
         );
+      }),
+      // 运行内上下文压缩事件：仅主 Agent 压缩会更新会话记忆——
+      // 覆盖式更新 topic.summary 并按 token 预算裁剪历史，使后续轮次不再全量重发已压缩部分（P1-5）
+      listen<any>('llm-compression', (e) => {
+        const { assistant_id, topic_id, source, summary } = e.payload;
+        if (!assistant_id || !topic_id) return;
+        if (source === 'subagent') return; // 子智能体上下文压缩与主会话无关
+        if (!summary || typeof summary !== 'string' || summary.trim() === '') return;
+        const asst = datas.assistants.find((a: any) => a.id === assistant_id);
+        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
+        if (!topic) return;
+        // 与后端 keep_recent_tokens 对齐：从尾部累计约 2 万 token，至少保留最近 4 条（一个完整回合）
+        const KEEP_TOKEN_BUDGET = 20_000;
+        const estTokens = (m: any): number => {
+          const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
+          return Math.ceil(text.length / 4) + 8;
+        };
+        let keepCount = 0;
+        let acc = 0;
+        const hist = topic.history;
+        for (let i = hist.length - 1; i >= 0; i--) {
+          acc += estTokens(hist[i]);
+          keepCount = hist.length - i;
+          if (acc >= KEEP_TOKEN_BUDGET) break;
+        }
+        keepCount = Math.max(keepCount, 4);
+        const trimmed = keepCount < hist.length ? hist.slice(hist.length - keepCount) : hist;
+        if (trimmed.length === hist.length && topic.summary === summary) return;
+        setDatas(
+          'assistants',
+          (a: any) => a.id === assistant_id,
+          'topics',
+          (t: Topic) => t.id === topic_id,
+          { history: trimmed, summary },
+        );
+        saveSingleAssistantToBackend(assistant_id);
       }),
       // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
       listen<any>('tool-approval-requested', (e) => {

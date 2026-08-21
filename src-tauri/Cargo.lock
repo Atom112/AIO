@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "aio"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "aes-gcm",
  "async-trait",

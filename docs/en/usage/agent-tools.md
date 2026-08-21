@@ -32,6 +32,8 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 | `delegate_task`   | Orchestration | Ask            | Allow        | Ask          |
 | `delegate_tasks`  | Orchestration | Ask            | Allow        | Ask          |
 | `create_workflow` | Orchestration | Ask            | Allow        | Ask          |
+| `read_skill`      | Orchestration | Allow          | Allow        | Allow        |
+| `read_artifact`   | Orchestration | Allow          | Allow        | Allow        |
 | `remember`        | Knowledge     | Ask            | Allow        | Ask          |
 | `recall`          | Knowledge     | Ask            | Allow        | Ask          |
 
@@ -49,13 +51,13 @@ All file tool paths are restricted by the project root directory sandbox (`safe_
 
 Read file content.
 
-| Item            | Value                                                                                         |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| **Description** | Read the content of a specified file within the project directory. Binary files are rejected. |
-| **Parameters**  | `path` (string, required) -- file path                                                        |
-| **Return**      | Text content of the file                                                                      |
-| **Limits**      | Maximum 1MB; truncated with a notice if exceeded                                              |
-| **Permission**  | Read operation: Normal/Allow, Auto/Allow, Plan/Allow                                          |
+| Item            | Value                                                                                                                                                                                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Read the content of a specified file within the project directory. Binary files are rejected.                                                                                                                                                                           |
+| **Parameters**  | `path` (string, required) -- file path; `max_lines` (integer, optional) -- max lines, default 300, pass -1 for unlimited; `max_bytes` (integer, optional) -- max bytes, default 32KB; `with_hash` (boolean, optional) -- return file SHA-256 digest (hashline protocol) |
+| **Return**      | Text content of the file; when limited, returns head+tail with omitted counts                                                                                                                                                                                           |
+| **Limits**      | Default max 300 lines / 32KB; hard cap 1MB                                                                                                                                                                                                                              |
+| **Permission**  | Read operation: Normal/Allow, Auto/Allow, Plan/Allow                                                                                                                                                                                                                    |
 
 ### `write_file`
 
@@ -107,15 +109,15 @@ Search file contents with a regular expression.
 
 ### `replace_in_file`
 
-Perform an exact string replacement in a file.
+Perform a replacement in a file (exact match or line-range anchored).
 
-| Item            | Value                                                                                                                                                                             |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Replace `old_string` with `new_string`. `old_string` must appear exactly once in the file, otherwise an error is raised requesting more context.                                  |
-| **Parameters**  | `path` (string, required) -- file path; `old_string` (string, required) -- original string to replace (must match exactly); `new_string` (string, required) -- replacement string |
-| **Return**      | Replacement confirmation and matched line number                                                                                                                                  |
-| **Limits**      | Content after replacement must not exceed 5MB; binary files cannot be replaced                                                                                                    |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny                                                                                                                                                 |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Two modes: 1) exact replacement of `old_string` (must appear exactly once); 2) line-range anchored -- leave `old_string` empty and pass `start_line`/`end_line` (1-based); the tool reads the current line range and replaces it with `new_string`, so large edits do not require resending the old code (token-efficient). If line numbers are stale, it errors and asks you to re-read. |
+| **Parameters**  | `path` (string, required) -- file path; `old_string` (string, optional) -- original string to replace (must match exactly); `new_string` (string, required) -- replacement string; `start_line`/`end_line` (integer, optional) -- line-range mode boundaries; `anchor_hash` (string, optional) -- file SHA-256 digest (hashline drift protection)                                         |
+| **Return**      | Replacement confirmation and matched line number                                                                                                                                                                                                                                                                                                                                          |
+| **Limits**      | Content after replacement must not exceed 5MB; binary files cannot be replaced                                                                                                                                                                                                                                                                                                            |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny                                                                                                                                                                                                                                                                                                                                                         |
 
 ### `delete_file`
 
@@ -356,6 +358,28 @@ Create a sequentially-executing sub-agent workflow.
 | **Parameters**  | `title` (string, required) -- workflow title; `steps` (array, required, >=2 items) -- list of steps, each with `profile`, `name`, `task` |
 | **Return**      | Work summary for each step                                                                                                               |
 | **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                         |
+
+### `read_skill`
+
+Read the full instructions of an enabled Skill on demand (token efficiency: in Agent mode only a skill directory is injected; full content is read on demand).
+
+| Item            | Value                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| **Description** | Read the full instructions of an enabled Skill. Call this tool first when a task involves a skill. |
+| **Parameters**  | `name` (string, required) -- skill name (e.g. `docx`, `xlsx`)                                      |
+| **Return**      | Full skill instruction text; when not found, returns the list of available skills                  |
+| **Permission**  | Allow in all modes                                                                                 |
+
+### `read_artifact`
+
+Read a locally archived history artifact (snapcompact-style: when summarization fails, early messages are archived locally and a `[History archive #id]` placeholder is inserted; read details on demand).
+
+| Item            | Value                                                                    |
+| --------------- | ------------------------------------------------------------------------ |
+| **Description** | Read the archived content of early conversation messages by artifact id. |
+| **Parameters**  | `artifact_id` (string, required) -- history archive ID                   |
+| **Return**      | Archived content (truncated to ~30k chars)                               |
+| **Permission**  | Allow in all modes                                                       |
 
 ### `think`
 

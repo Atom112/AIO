@@ -175,6 +175,7 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
             round INTEGER NOT NULL DEFAULT 1,
             input_tokens INTEGER NOT NULL DEFAULT 0,
             output_tokens INTEGER NOT NULL DEFAULT 0,
+            cached_input_tokens INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(assistant_id) REFERENCES assistants(id) ON DELETE CASCADE,
             FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
         );
@@ -182,6 +183,9 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         CREATE INDEX IF NOT EXISTS idx_usage_log_topic ON usage_log(topic_id);",
     )
     .map_err(|e| e.to_string())?;
+
+    // 迁移：缓存命中 tokens（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens）
+    add_column_if_missing(&conn, "usage_log", "cached_input_tokens", "INTEGER")?;
 
     // 迁移：助理类型（chat = 对话模式专属，project = 项目助理）
     add_column_if_missing(

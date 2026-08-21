@@ -39,6 +39,10 @@ pub struct StreamPayload {
     /// 用于前端进度条展示，区别于 input_tokens（跨轮累计，用于成本统计）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u32>,
+    /// 缓存命中的输入 tokens（仅 done=true 时有意义）。
+    /// 来源：OpenAI `usage.prompt_tokens_details.cached_tokens`；DeepSeek `usage.prompt_cache_hit_tokens`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u32>,
     /// 模型生成的图像元数据（done=true 且有图时携带）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<GeneratedImage>>,
@@ -848,6 +852,7 @@ pub struct UsageSummary {
     pub date: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub cached_input_tokens: i64,
     pub request_count: i64,
 }
 
@@ -858,6 +863,7 @@ pub struct UsageSummaryByModel {
     pub model_id: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub cached_input_tokens: i64,
     pub request_count: i64,
 }
 // ====== Per-Profile Model Override ======

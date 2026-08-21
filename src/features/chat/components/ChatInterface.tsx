@@ -171,7 +171,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const fsTooltip = createMemo(() =>
     fsStatus() === 'connected' ? t('chat.filesystemConnected') : t('chat.filesystemConnecting'),
   );
-  let suppressScroll = false;
+  // 程序性滚动待消费次数：每次程序性设置 scrollTop 前 +1，滚动事件消费一次；
+  // 只有计数器为 0 时滚动事件才进入真实逻辑（判断用户是否在底部），
+  // 避免浏览器对一次赋值触发多次 scroll 事件导致自动跟底被误关闭。
+  let pendingSnaps = 0;
   // 平滑滚动动画的 rAF ID
   let smoothScrollRAF: number | undefined;
   // 上一次记录到的历史消息数量，用于判断是否新增了消息
@@ -301,15 +304,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         cancelAnimationFrame(smoothScrollRAF);
         smoothScrollRAF = undefined;
       }
-      suppressScroll = false;
+      pendingSnaps = 0;
       setAutoScroll(false);
     }
   };
 
   /** 滚动事件：区分用户滚动与程序滚动 */
   const handleScroll = () => {
-    if (suppressScroll) {
-      suppressScroll = false;
+    if (pendingSnaps > 0) {
+      pendingSnaps -= 1;
       return;
     }
     const atBottom = isAtBottom();
@@ -320,14 +323,14 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     }
   };
 
-  /** 瞬时滚动到底部（流式期间使用，抑制 scroll 事件） */
+  /** 瞬时滚动到底部（流式期间使用，只向下滚动） */
   const snapToBottom = () => {
     if (!scrollContainerRef) return;
     const el = scrollContainerRef;
-    const target = el.scrollHeight - el.clientHeight;
+    const target = Math.max(0, el.scrollHeight - el.clientHeight);
     if (el.scrollTop < target) {
-      suppressScroll = true;
-      el.scrollTop = el.scrollHeight;
+      pendingSnaps += 1;
+      el.scrollTop = target;
     }
   };
 
@@ -335,9 +338,14 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const smoothScrollToBottom = () => {
     if (!scrollContainerRef) return;
     const el = scrollContainerRef;
-    const target = el.scrollHeight - el.clientHeight;
+    const target = Math.max(0, el.scrollHeight - el.clientHeight);
     const start = el.scrollTop;
     const distance = target - start;
+    // 目标不高于当前位置：绝不向上滚动（防止内容短暂塌缩时把视图弹回顶部）
+    if (target <= start) {
+      el.scrollTop = target;
+      return;
+    }
     if (Math.abs(distance) < 2) {
       el.scrollTop = target;
       return;
@@ -353,7 +361,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       const elapsed = now - startTime;
       const progress = Math.min(elapsed / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
-      suppressScroll = true;
+      pendingSnaps += 1;
       scrollContainerRef.scrollTop = start + distance * eased;
       if (progress < 1) {
         smoothScrollRAF = requestAnimationFrame(animate);
@@ -604,8 +612,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     }}
                     class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) && !skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
                     style={{
+                      // content-visibility 跳过离屏渲染以省性能；contain-intrinsic-size 用
+                      // `auto <len>` 记住元素上次真实渲染高度，避免被跳过时塌缩成 100px 占位，
+                      // 导致底部跟随时总高度骤减、浏览器把 scrollTop 向上钳制（表现为每次
+                      // 新输出都跳回对话上方）。
                       'content-visibility': 'auto',
-                      'contain-intrinsic-size': '100px',
+                      'contain-intrinsic-size': 'auto 100px',
                     }}
                   >
                     <div

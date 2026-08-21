@@ -8,6 +8,7 @@
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tauri::Manager;
 
@@ -18,6 +19,13 @@ const MAX_W: u64 = 5_000_000; // 写文件上限 5MB
 const MAX_S: usize = 10_000; // 列表/搜索上限 10K 条
 
 // ====== 辅助函数 ======
+
+/// 计算文件内容的 SHA-256 十六进制摘要（hashline 协议：编辑按 hash 锚定防漂移）。
+fn sha256_hex(content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    hex::encode(hasher.finalize())
+}
 
 /// 路径沙箱：解析请求的路径，确保在 `allowed_dir` 以内。
 fn safe_path(allowed_dir: &str, requested: &str, must_exist: bool) -> Result<PathBuf, String> {
@@ -117,8 +125,17 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "read_file".into(),
-                description: "读取项目目录内的文件内容".into(),
-                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"}},"required":["path"]}),
+                description: "读取项目目录内的文件内容。默认最多读取 300 行 / 32KB，超出时返回头部+尾部并提示省略行数；如需完整内容请显式传入更大的 max_lines 或 max_bytes。with_hash=true 时返回文件 SHA-256 摘要（hashline 协议：编辑时用 anchor_hash 锚定防漂移，写/替换工具会返回新 hash 供链式使用）".into(),
+                parameters: json!({
+                    "type":"object",
+                    "properties":{
+                        "path":{"type":"string","description":"文件路径"},
+                        "max_lines":{"type":"integer","description":"最大读取行数（默认 300；传 -1 表示不限行数）"},
+                        "max_bytes":{"type":"integer","description":"最大读取字节数（默认 32768）"},
+                        "with_hash":{"type":"boolean","description":"是否返回文件 SHA-256 摘要（默认 false）"}
+                    },
+                    "required":["path"]
+                }),
             },
         },
         ToolSpec {
@@ -173,8 +190,8 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "replace_in_file".into(),
-                description: "在文件中执行精确字符串替换（old_string → new_string）。old_string 必须在文件中恰好出现一次，否则会报错要求提供更多上下文使匹配唯一".into(),
-                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"old_string":{"type":"string","description":"要被替换的原始字符串（必须与文件内容精确匹配）"},"new_string":{"type":"string","description":"替换后的新字符串"}},"required":["path","old_string","new_string"]}),
+                description: "在文件中执行替换。两种模式（二选一）：1) old_string 精确替换——old_string 必须恰好出现一次；2) 行范围锚定——old_string 留空并传 start_line/end_line（1-based），工具按当前文件内容取该行范围替换为 new_string，大段修改时无需回传整段旧代码，更省 token；若行号已过期会报错，请重新 read_file".into(),
+                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"old_string":{"type":"string","description":"要被替换的原始字符串（必须与文件内容精确匹配）；行范围模式下留空"},"new_string":{"type":"string","description":"替换后的新字符串（可含换行）"},"start_line":{"type":"integer","description":"行范围锚定模式：起始行号（1-based）"},"end_line":{"type":"integer","description":"行范围锚定模式：结束行号（1-based，默认等于 start_line）"},"anchor_hash":{"type":"string","description":"hashline 协议：read_file(with_hash=true) 或上次写/替换返回的文件 SHA-256 摘要。提供时先校验文件未被修改，防止按过期上下文误改"}},"required":["path","new_string"]}),
             },
         },
     ]
@@ -192,6 +209,20 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if path.is_empty() {
                 return tool_err("缺少 path");
             }
+            // 读取上限：默认 300 行 / 32KB（token 效率：防止大文件全文注入上下文）；
+            // max_lines 传 -1 表示不限行数，max_bytes 传 -1 表示不限制字节（仍受 MAX_R 硬上限约束）。
+            let max_lines_arg = arguments["max_lines"].as_i64().unwrap_or(300);
+            let max_lines = if max_lines_arg < 0 {
+                usize::MAX
+            } else {
+                (max_lines_arg as u64).clamp(1, 1_000_000) as usize
+            };
+            let max_bytes_arg = arguments["max_bytes"].as_i64().unwrap_or(32 * 1024);
+            let max_bytes = if max_bytes_arg < 0 {
+                usize::MAX
+            } else {
+                (max_bytes_arg as u64).clamp(1024, MAX_R) as usize
+            };
             let t = match safe_path(project_root, path, true) {
                 Ok(t) => t,
                 Err(e) => return tool_err(&e),
@@ -206,25 +237,69 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Ok(m) => m,
                 Err(e) => return tool_err(&e.to_string()),
             };
-            let c = if meta.len() > MAX_R {
-                let b = match std::fs::read(&t) {
-                    Ok(b) => b,
-                    Err(e) => return tool_err(&e.to_string()),
-                };
+            // 一次性读取字节（1MB 硬上限），并计算文件 SHA-256（hashline 协议用）
+            let bytes = match std::fs::read(&t) {
+                Ok(b) => b,
+                Err(e) => return tool_err(&e.to_string()),
+            };
+            let hash_len = bytes.len().min(MAX_R as usize);
+            let file_hash = sha256_hex(&bytes[..hash_len]);
+            let raw = if meta.len() > MAX_R {
                 format!(
                     "⚠ 文件过大 ({}KB/{}KB截断)\n\n{}",
                     meta.len() / 1024,
                     MAX_R / 1024,
-                    String::from_utf8_lossy(&b[..MAX_R as usize])
+                    String::from_utf8_lossy(&bytes[..hash_len])
                 )
             } else {
-                String::from_utf8_lossy(&match std::fs::read(&t) {
-                    Ok(b) => b,
-                    Err(e) => return tool_err(&e.to_string()),
-                })
-                .into()
+                String::from_utf8_lossy(&bytes).into_owned()
             };
-            tool_ok(c)
+            let total_lines = raw.lines().count();
+            // 行数限制（头部+尾部，保留关键首尾信息）
+            let limited = if total_lines > max_lines {
+                let head_lines = (max_lines * 6) / 10;
+                let tail_lines = max_lines - head_lines;
+                let lines: Vec<&str> = raw.lines().collect();
+                let head_str = lines[..head_lines.min(lines.len())].join("\n");
+                let tail_str = lines[lines.len().saturating_sub(tail_lines)..].join("\n");
+                format!(
+                    "{}\n\n… [已省略 {} 行，共 {} 行；如需更多内容请增大 max_lines] …\n\n{}",
+                    head_str,
+                    total_lines - head_lines - tail_lines,
+                    total_lines,
+                    tail_str
+                )
+            } else {
+                raw
+            };
+            // 字节限制（UTF-8 安全边界，头部+尾部）
+            let c = if limited.len() > max_bytes {
+                let head_bytes = (max_bytes * 6) / 10;
+                let tail_bytes = max_bytes - head_bytes;
+                let head_end = limited.floor_char_boundary(head_bytes.min(limited.len()));
+                let tail_start =
+                    limited.floor_char_boundary(limited.len().saturating_sub(tail_bytes));
+                if tail_start > head_end {
+                    format!(
+                        "{}\n… [已省略 {} 字符] …\n{}",
+                        &limited[..head_end],
+                        limited[head_end..tail_start].chars().count(),
+                        &limited[tail_start..]
+                    )
+                } else {
+                    let end = limited.floor_char_boundary(max_bytes.min(limited.len()));
+                    format!("{}\n… [已截断: 共{}字符]", &limited[..end], limited.len())
+                }
+            } else {
+                limited
+            };
+            // with_hash=true：追加文件摘要，供 replace_in_file 的 anchor_hash 锚定
+            let with_hash = arguments["with_hash"].as_bool().unwrap_or(false);
+            if with_hash {
+                tool_ok(format!("{}\n\n[HASH sha256:{}]", c, file_hash))
+            } else {
+                tool_ok(c)
+            }
         }
         "write_file" => {
             let path = arguments["path"].as_str().unwrap_or("");
@@ -246,7 +321,11 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 let _ = std::fs::create_dir_all(p);
             }
             match std::fs::write(&t, content) {
-                Ok(_) => tool_ok(format!("✓ 写入 {path} ({}B)", content.len())),
+                Ok(_) => tool_ok(format!(
+                    "✓ 写入 {path} ({}B)\n[HASH sha256:{}]",
+                    content.len(),
+                    sha256_hex(content.as_bytes())
+                )),
                 Err(e) => tool_err(&format!("写入失败: {e}")),
             }
         }
@@ -425,13 +504,10 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
         }
         "replace_in_file" => {
             let path = arguments["path"].as_str().unwrap_or("");
-            let old_s = arguments["old_string"].as_str().unwrap_or("");
+            let mut old_s = arguments["old_string"].as_str().unwrap_or("").to_string();
             let new_s = arguments["new_string"].as_str().unwrap_or("");
             if path.is_empty() {
                 return tool_err("缺少 path");
-            }
-            if old_s.is_empty() {
-                return tool_err("old_string 不能为空（若要前置/追加内容，请包含周围的上下文行）");
             }
             let t = match safe_path(project_root, path, true) {
                 Ok(t) => t,
@@ -447,10 +523,55 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Ok(c) => c,
                 Err(e) => return tool_err(&format!("读取失败: {e}")),
             };
+            // hashline 协议：anchor_hash 锚定防漂移——文件当前摘要必须与模型持有的 hash 一致，
+            // 否则说明文件已被修改（或模型上下文过期），要求重新 read_file(with_hash=true)。
+            let anchor_hash = arguments["anchor_hash"].as_str().unwrap_or("");
+            if !anchor_hash.is_empty() {
+                let current_hash = sha256_hex(content.as_bytes());
+                if current_hash != anchor_hash {
+                    return tool_err(&format!(
+                        "[HASH MISMATCH] 文件摘要与 anchor_hash 不一致（期望 {anchor_hash}，当前 {current_hash}）。文件可能已被修改，请重新 read_file(with_hash=true) 获取最新 hash。"
+                    ));
+                }
+            }
+            // 行范围锚定模式（token 效率）：old_string 留空 + start_line/end_line 时，
+            // 由工具从当前文件内容构造待替换文本，模型无需回传整段旧代码。
+            if old_s.is_empty() {
+                match arguments["start_line"].as_i64() {
+                    None => {
+                        return tool_err(
+                            "old_string 与 start_line 至少提供其一：精确匹配用 old_string；行范围锚定用 start_line/end_line（old_string 留空）",
+                        )
+                    }
+                    Some(sl) => {
+                        let el = arguments["end_line"].as_i64().unwrap_or(sl);
+                        if sl < 1 || el < sl {
+                            return tool_err(
+                                "start_line/end_line 无效（1-based，end_line >= start_line）",
+                            );
+                        }
+                        // 构造行范围文本（不含行尾换行，匹配后保留原有换行结构）
+                        let lines: Vec<&str> = content.split('\n').collect();
+                        let last_empty = lines.last().is_some_and(|s| s.is_empty());
+                        let total = if last_empty { lines.len() - 1 } else { lines.len() };
+                        if el as usize > total {
+                            return tool_err(&format!(
+                                "行号越界：文件共 {total} 行，end_line={el}。若文件已被修改，请重新 read_file 获取最新行号。"
+                            ));
+                        }
+                        let sl_u = sl as usize;
+                        let el_u = el as usize;
+                        old_s = lines[sl_u - 1..el_u].join("\n");
+                    }
+                }
+            }
+            if old_s.is_empty() {
+                return tool_err("old_string 不能为空（若要前置/追加内容，请包含周围的上下文行）");
+            }
             // 统计 old_string 出现次数及行号
             let mut matches: Vec<usize> = Vec::new();
             let mut pos = 0;
-            while let Some(found) = content[pos..].find(old_s) {
+            while let Some(found) = content[pos..].find(old_s.as_str()) {
                 let abs_pos = pos + found;
                 let line = content[..abs_pos].chars().filter(|&c| c == '\n').count() + 1;
                 matches.push(line);
@@ -463,14 +584,16 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     ))
                 }
                 1 => {
-                    let new_content = content.replacen(old_s, new_s, 1);
+                    let new_content = content.replacen(old_s.as_str(), new_s, 1);
                     if new_content.len() as u64 > MAX_W {
                         return tool_err(&format!("替换后内容过大 (>{MAX_W}B)"));
                     }
                     match std::fs::write(&t, &new_content) {
                         Ok(_) => tool_ok(format!(
-                            "✓ 替换 {path}\n第 {} 行: {} 处匹配已替换",
-                            matches[0], 1
+                            "✓ 替换 {path}\n第 {} 行: {} 处匹配已替换\n[HASH sha256:{}]",
+                            matches[0],
+                            1,
+                            sha256_hex(new_content.as_bytes())
                         )),
                         Err(e) => tool_err(&format!("写入失败: {e}")),
                     }

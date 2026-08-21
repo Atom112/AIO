@@ -328,7 +328,11 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
   const snapStepsToBottom = () => {
     if (!stepsContainerRef) return;
     suppressScrollSteps = true;
-    stepsContainerRef.scrollTop = stepsContainerRef.scrollHeight;
+    const el = stepsContainerRef;
+    const target = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (el.scrollTop < target) {
+      el.scrollTop = target;
+    }
   };
 
   const handleStepsWheel = (e: WheelEvent) => {

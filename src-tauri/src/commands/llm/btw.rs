@@ -47,15 +47,10 @@ pub async fn ask_btw_question(
 
     let client = super::streaming_http_client();
     let body = json!({ "model": model, "messages": messages, "stream": true });
-    let endpoint = super::normalize_chat_url(&api_url);
 
-    let res = match tokio::time::timeout(
+    let (res, is_anthropic) = match tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        client
-            .post(&endpoint)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&body)
-            .send(),
+        super::post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
     {
@@ -147,7 +142,35 @@ pub async fn ask_btw_question(
                         );
                         return Err(msg.to_string());
                     }
-                    if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
+                    if is_anthropic {
+                        // Anthropic 流式：text_delta → content；message_stop → done
+                        let etype = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if etype == "content_block_delta" {
+                            let dtype = val
+                                .get("delta")
+                                .and_then(|d| d.get("type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if dtype == "text_delta" {
+                                if let Some(content) = val
+                                    .get("delta")
+                                    .and_then(|d| d.get("text"))
+                                    .and_then(|v| v.as_str())
+                                {
+                                    let _ = window.emit(
+                                        "btw-chunk",
+                                        json!({ "overlay_id": overlay_id, "content": content, "done": false }),
+                                    );
+                                }
+                            }
+                        } else if etype == "message_stop" {
+                            let _ = window.emit(
+                                "btw-chunk",
+                                json!({ "overlay_id": overlay_id, "content": "", "done": true }),
+                            );
+                            return Ok(());
+                        }
+                    } else if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         let _ = window.emit(
                             "btw-chunk",
                             json!({ "overlay_id": overlay_id, "content": content, "done": false }),

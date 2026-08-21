@@ -119,6 +119,10 @@ When an Agent is aborted or a streaming event fails, already-produced steps, too
 
 When `knowledgeEnabled` is enabled, the system prompt injects existing entries from `.aio/knowledge.json` and adds `remember` and `recall` tools to the Agent. Knowledge is isolated per project, updated by key, with a maximum of 50 entries.
 
+With project memory enabled (`memoryEnabled`, overridable per project in project settings), the Agent gets five tools (`remember` / `recall` / `search_memory` / `update_memory` / `forget_memory`); facts are written to a per-project `.aio/memory/memory.sqlite` (semantic vectors + FTS5 keyword hybrid retrieval) and auto-injected into the stable system-prompt prefix (index=1) under a token budget. Embedding is provided by `plugins/embed` (Ollama by default, or OpenAI-compatible); keyword retrieval is the automatic fallback when embeddings are not configured.
+
+Self-evolution landed in P2: after each agent turn, facts are extracted asynchronously in the background (sleep-time compute, debounced, per-project opt-in); near-duplicate high-similarity facts are arbitrated by the LLM (merge / update / supersede / keep_separate, fail-safe on errors), with a full audit trail in `fact_versions`; when active facts exceed the per-project cap, lowest-scoring non-pinned facts are archived by importance x access decay. A memory panel (search / list / edit / pin / archive / delete / version history / reindex / prune / clear) is available in project settings.
+
 ## MCP Data Flow
 
 1. Load global configuration and overlay project configuration.

@@ -68,7 +68,7 @@ src-tauri/src/utils/knowledge.rs（364 行）：
 ### 2.3 存储与基础设施
 
 - 全局 SQLite：core/db.rs init_db 创建 app_data_dir/chat_history.db（rusqlite bundled，未启用 load_extension 特性），连接经 DbState（parking_lot Mutex）共享；已有 projects 表（id/name/path）。
-- 项目：commands/project.rs，app_data_dir/projects.json 索引；每个项目初始化 `<项目根>/.aio/`（skills.json、mcp-servers.json（内置 __aio-filesystem__ stdio MCP）、project.json 占位）；file_tools::resolve_project_root(app, project_id) 由 project_id 解析根路径（L973 等复用）。
+- 项目：commands/project.rs，app_data_dir/projects.json 索引；每个项目初始化 `<项目根>/.aio/`（skills.json、mcp-servers.json（内置 **aio-filesystem** stdio MCP）、project.json 占位）；file_tools::resolve_project_root(app, project_id) 由 project_id 解析根路径（L973 等复用）。
 - 依赖现状：Cargo.toml 无向量/ONNX/相似度 crate；已有 tiktoken-rs（utils/token_counter.rs）、regex、futures、dashmap、parking_lot 可复用。
 
 ### 2.4 权限模型
@@ -136,11 +136,11 @@ Claude Code 的 memory 体系：CLAUDE.md 常驻（相当于 core）+ 允许模�
 
 ### 3.6 SQLite 向量插件选型
 
-| 方案 | 形态 | 优点 | 顾虑 |
-| --- | --- | --- | --- |
-| sqlite-vec（asg017） | SQLite 扩展，vec0 虚拟表，纯 SQL kNN（MATCH ... ORDER BY distance），支持 cosine / dot / L2，官方 Rust crate 可静态链接或加载 | 专为 SQLite 设计（正合「针对 SQLite 的向量数据库插件」需求）；API 简单；元数据列可直接过滤；MIT | 0.1.x 预发布版 API 变动；需为 Win/macOS/Linux 打包原生库；macOS 加固运行时签名；维度在建表时固定，换模型需重建索引 |
-| sqlite-vss / VectorLite | 扩展 / Rust 原生 | VectorLite 内置 ONNX 本地嵌入（bge 小模型），离线可用 | 生态/维护一般；ONNX runtime 体积大（数十 MB）；模型文件需随包分发 |
-| 纯 Rust 暴力余弦（自研） | 事实表存 float32 BLOB，内存/游标打分 | 零原生依赖、零打包风险；同一 schema 可平滑升级 | 5 万条 x 1024 维全表扫描约数 ms 到数十 ms（可接受）；无 SQL 内 kNN |
+| 方案                     | 形态                                                                                                                          | 优点                                                                                            | 顾虑                                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| sqlite-vec（asg017）     | SQLite 扩展，vec0 虚拟表，纯 SQL kNN（MATCH ... ORDER BY distance），支持 cosine / dot / L2，官方 Rust crate 可静态链接或加载 | 专为 SQLite 设计（正合「针对 SQLite 的向量数据库插件」需求）；API 简单；元数据列可直接过滤；MIT | 0.1.x 预发布版 API 变动；需为 Win/macOS/Linux 打包原生库；macOS 加固运行时签名；维度在建表时固定，换模型需重建索引 |
+| sqlite-vss / VectorLite  | 扩展 / Rust 原生                                                                                                              | VectorLite 内置 ONNX 本地嵌入（bge 小模型），离线可用                                           | 生态/维护一般；ONNX runtime 体积大（数十 MB）；模型文件需随包分发                                                  |
+| 纯 Rust 暴力余弦（自研） | 事实表存 float32 BLOB，内存/游标打分                                                                                          | 零原生依赖、零打包风险；同一 schema 可平滑升级                                                  | 5 万条 x 1024 维全表扫描约数 ms 到数十 ms（可接受）；无 SQL 内 kNN                                                 |
 
 参考：sqlite-vec：https://github.com/asg017/sqlite-vec；VectorLite：https://github.com/mmailhos/vectorlite
 
@@ -148,12 +148,12 @@ Claude Code 的 memory 体系：CLAUDE.md 常驻（相当于 core）+ 允许模�
 
 ### 3.7 向量化（Embedding）选型
 
-| 来源 | 方式 | 场景 |
-| --- | --- | --- |
-| Ollama（/api/embeddings） | bge-m3（中文强）、nomic-embed-text | 本地优先默认项；复用 EngineManager 探测 base URL；AIO 用户群本地引擎占比高 |
-| OpenAI 兼容 /v1/embeddings | text-embedding-3-small 等 | 云端/网关（OpenAI、SiliconFlow、各家代理）；复用现有 apiUrl/apiKey 或独立配置 |
-| llama.cpp 服务 /v1/embeddings | 需 --embeddings 启动参数 | 已有 llama_cpp 引擎，作为第二本地选项（P3 评估） |
-| 内置 ONNX（VectorLite / fastembed-rs） | bge-small 等 | 完全离线、无外部服务（P4 评估，注意体积） |
+| 来源                                   | 方式                               | 场景                                                                          |
+| -------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| Ollama（/api/embeddings）              | bge-m3（中文强）、nomic-embed-text | 本地优先默认项；复用 EngineManager 探测 base URL；AIO 用户群本地引擎占比高    |
+| OpenAI 兼容 /v1/embeddings             | text-embedding-3-small 等          | 云端/网关（OpenAI、SiliconFlow、各家代理）；复用现有 apiUrl/apiKey 或独立配置 |
+| llama.cpp 服务 /v1/embeddings          | 需 --embeddings 启动参数           | 已有 llama_cpp 引擎，作为第二本地选项（P3 评估）                              |
+| 内置 ONNX（VectorLite / fastembed-rs） | bge-small 等                       | 完全离线、无外部服务（P4 评估，注意体积）                                     |
 
 参考：Ollama 嵌入模型：https://ollama.com/search?c=embedding；nomic-embed-text-v2：https://ollama.com/library/nomic-embed-text-v2-moe
 
@@ -199,11 +199,11 @@ Agent 循环集成点（commands/llm/mod.rs）
 
 ### 4.2 记忆分层映射
 
-| 层 | 载体 | 生命周期 | 本期动作 |
-| --- | --- | --- | --- |
-| Core | .aio/knowledge.json（KnowledgeEntry） | 常驻系统提示词 | 保留；首次启用 RAG 时迁移为事实并标记来源；继续提供 remember/recall 兼容 |
-| Semantic（新） | .aio/memory/memory.sqlite 的 facts 表 + 向量索引 | 按需召回 + 自动注入 | 本期主体 |
-| Episodic | chat_history.db 的 messages 表 | 会话历史 | 不动；作为提取管线的输入源 |
+| 层             | 载体                                             | 生命周期            | 本期动作                                                                 |
+| -------------- | ------------------------------------------------ | ------------------- | ------------------------------------------------------------------------ |
+| Core           | .aio/knowledge.json（KnowledgeEntry）            | 常驻系统提示词      | 保留；首次启用 RAG 时迁移为事实并标记来源；继续提供 remember/recall 兼容 |
+| Semantic（新） | .aio/memory/memory.sqlite 的 facts 表 + 向量索引 | 按需召回 + 自动注入 | 本期主体                                                                 |
+| Episodic       | chat_history.db 的 messages 表                   | 会话历史            | 不动；作为提取管线的输入源                                               |
 
 ### 4.3 存储设计
 
@@ -298,20 +298,20 @@ reason: 一句话理由
 
 ### 4.8 工具面（模型视角）
 
-| 工具 | 动作 | 权限默认（Normal） | 说明 |
-| --- | --- | --- | --- |
-| remember | 新增/更新事实（key+content+category） | Allow（新默认规则） | 升级自现有；语义查重 + 仲裁合并 |
-| recall | 语义/关键词混合检索 top-k | Allow | 升级自现有；返回带分数与来源 |
-| search_memory | 带过滤器检索（category/source/k/时间窗/最低分） | Allow | 新增 |
-| update_memory | 按 id 订正事实 | Ask（可改 Allow） | 新增；受仲裁保护 |
-| forget_memory | 按 id 归档/清除事实 | Ask | 新增；pinned 保护 |
+| 工具          | 动作                                            | 权限默认（Normal）  | 说明                            |
+| ------------- | ----------------------------------------------- | ------------------- | ------------------------------- |
+| remember      | 新增/更新事实（key+content+category）           | Allow（新默认规则） | 升级自现有；语义查重 + 仲裁合并 |
+| recall        | 语义/关键词混合检索 top-k                       | Allow               | 升级自现有；返回带分数与来源    |
+| search_memory | 带过滤器检索（category/source/k/时间窗/最低分） | Allow               | 新增                            |
+| update_memory | 按 id 订正事实                                  | Ask（可改 Allow）   | 新增；受仲裁保护                |
+| forget_memory | 按 id 归档/清除事实                             | Ask                 | 新增；pinned 保护               |
 
 子智能体：v1 不注入记忆工具（保持工具面收敛，事实由主循环提取覆盖）；v2 增加只读 recall。
 
 ### 4.9 权限集成
 
 - 在 permission.rs 的 default_rules_for_mode 为五个记忆工具添加显式规则（Normal/Auto/Workflow/Plan 各一组）：读类（recall/search_memory）全部 Agent 模式 Allow（Plan 含）；写类（remember/update_memory/forget_memory）Normal 下 Ask、Auto/Workflow 下 Allow、Plan 下 Deny。
-- 规则与系统工具共用 server_id __aio-filesystem__ 兼容旧规则；用户可在 .aio/permissions.json 覆盖。
+- 规则与系统工具共用 server_id **aio-filesystem** 兼容旧规则；用户可在 .aio/permissions.json 覆盖。
 - execute_builtin_tool 分发分支新增 memory::execute_* 分支（在现有 remember/recall 分支位置扩展）。
 
 ### 4.10 配置与前端
@@ -396,6 +396,7 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 ```
 
 说明：
+
 - 换嵌入模型/维度：重建 vec_facts（reindex 命令）：清空向量表 → 全量重 embed → 重插；facts 文本与 FTS5 不受影响。
 - 迁移：首次启用 RAG 时把 knowledge.json 条目转为 facts（source_type=user，category 映射，pinned=1 可选），并在 memory/meta 标记已迁移。
 - 删除项目：删除项目目录 .aio 即连带清除；project.rs 的 delete_project 顺带清理 memory 连接缓存。
@@ -406,34 +407,34 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 
 ### 6.1 Rust 后端（新增/修改）
 
-| 文件 | 动作 | 内容 |
-| --- | --- | --- |
-| src-tauri/src/services/memory/（mod.rs + store.rs + extract.rs + retrieval.rs + judge.rs） | 新增（按评审定放 services 或 core 下） | MemoryStore（连接/schema/CRUD/向量打分 trait impl）、事实提取调度、混合检索与注入格式化、仲裁调用 |
-| src-tauri/src/services/mod.rs | 新增 | 声明 services/memory |
-| src-tauri/src/plugins/embed/（mod.rs + ollama.rs + openai_compat.rs） | 新增 | Embedder trait + 两个实现 + EmbedderManager 注册 |
-| src-tauri/src/commands/memory.rs | 新增 | 薄命令层（status/search/list/get/add/update/delete/reindex/clear/stats），doc comment 齐全 |
-| src-tauri/src/commands/embedding.rs | 新增 | 嵌入供给命令（test/status/list_ollama_models/pull/delete）：调 Ollama /api/pull 流式解析状态与进度、经事件推送、下载状态存于 EmbedderManager（DownloadState，单模型单任务 + 可取消）；Ollama 模型列表经 /api/tags 获取 |
-| src-tauri/src/commands/mod.rs | 修改 | 导出 memory |
-| src-tauri/src/commands/llm/mod.rs | 修改 | 工具装配追加记忆工具（L3045 区域扩展）；execute_builtin_tool 分发新增 memory 分支；Epilogue 前 spawn 后台提取；知识块替换为记忆块（index=1 稳定位） |
-| src-tauri/src/core/models.rs | 修改 | AppConfig 新增 memory_* 字段与默认值 |
-| src-tauri/src/core/state.rs + lib.rs | 修改 | MemoryStoreManager、EmbedderManager 注册进 Tauri manage 与清理逻辑 |
-| src-tauri/src/core/permission.rs | 修改 | 五个记忆工具的默认规则（各模式） |
-| src-tauri/src/utils/knowledge.rs | 修改 | 兼容层：RAG 启用时写入同时落 facts；提供迁移辅助 |
-| src-tauri/Cargo.toml | 修改 | 视 P0 结论增加 sqlite-vec 及（可选）相关 crate；rusqlite 增 load_extension 特性 |
-| src-tauri/tauri.conf.json | 修改 | 若采用插件分发：bundle.resources 按靶平台加 sqlite-vec 原生扩展文件 |
+| 文件                                                                                       | 动作                                   | 内容                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| src-tauri/src/services/memory/（mod.rs + store.rs + extract.rs + retrieval.rs + judge.rs） | 新增（按评审定放 services 或 core 下） | MemoryStore（连接/schema/CRUD/向量打分 trait impl）、事实提取调度、混合检索与注入格式化、仲裁调用                                                                                                                      |
+| src-tauri/src/services/mod.rs                                                              | 新增                                   | 声明 services/memory                                                                                                                                                                                                   |
+| src-tauri/src/plugins/embed/（mod.rs + ollama.rs + openai_compat.rs）                      | 新增                                   | Embedder trait + 两个实现 + EmbedderManager 注册                                                                                                                                                                       |
+| src-tauri/src/commands/memory.rs                                                           | 新增                                   | 薄命令层（status/search/list/get/add/update/delete/reindex/clear/stats），doc comment 齐全                                                                                                                             |
+| src-tauri/src/commands/embedding.rs                                                        | 新增                                   | 嵌入供给命令（test/status/list_ollama_models/pull/delete）：调 Ollama /api/pull 流式解析状态与进度、经事件推送、下载状态存于 EmbedderManager（DownloadState，单模型单任务 + 可取消）；Ollama 模型列表经 /api/tags 获取 |
+| src-tauri/src/commands/mod.rs                                                              | 修改                                   | 导出 memory                                                                                                                                                                                                            |
+| src-tauri/src/commands/llm/mod.rs                                                          | 修改                                   | 工具装配追加记忆工具（L3045 区域扩展）；execute_builtin_tool 分发新增 memory 分支；Epilogue 前 spawn 后台提取；知识块替换为记忆块（index=1 稳定位）                                                                    |
+| src-tauri/src/core/models.rs                                                               | 修改                                   | AppConfig 新增 memory_* 字段与默认值                                                                                                                                                                                   |
+| src-tauri/src/core/state.rs + lib.rs                                                       | 修改                                   | MemoryStoreManager、EmbedderManager 注册进 Tauri manage 与清理逻辑                                                                                                                                                     |
+| src-tauri/src/core/permission.rs                                                           | 修改                                   | 五个记忆工具的默认规则（各模式）                                                                                                                                                                                       |
+| src-tauri/src/utils/knowledge.rs                                                           | 修改                                   | 兼容层：RAG 启用时写入同时落 facts；提供迁移辅助                                                                                                                                                                       |
+| src-tauri/Cargo.toml                                                                       | 修改                                   | 视 P0 结论增加 sqlite-vec 及（可选）相关 crate；rusqlite 增 load_extension 特性                                                                                                                                        |
+| src-tauri/tauri.conf.json                                                                  | 修改                                   | 若采用插件分发：bundle.resources 按靶平台加 sqlite-vec 原生扩展文件                                                                                                                                                    |
 
 ### 6.2 前端（新增/修改）
 
-| 文件 | 动作 | 内容 |
-| --- | --- | --- |
-| src/core/types/memory.ts | 新增 | MemoryFact / MemorySearchResult / MemoryStatus / EmbeddingConfig 类型（后端镜像） |
-| src/core/store/store.ts | 修改 | memoryStatus 信号 + 相关 actions（invoke 封装） |
-| src/features/settings/components/AppSettings.tsx | 修改 | 「嵌入与记忆」分区（provider 选择、模型列表/手动输入、下载管理、测试连接、统计、重建索引；不含每项目开关） |
-| src/features/settings/components/EmbeddingSetup.tsx | 新增 | 嵌入供给向导：provider 选择，Ollama 已装模型列表（/api/tags）+ 推荐模型下载入口（bge-m3/nomic/MiniLM，显示体积），流式进度条与取消/重试，删除模型释放空间，连接测试；被 AppSettings 内嵌，并从 ProjectSettingsModal 引导跳转 |
-| src/features/chat/components/ProjectSettingsModal.tsx | 修改 | 模型区块与 MCP 区块之间插入「项目记忆」区块（开关默认关 + 嵌入状态 + 记忆面板入口） |
-| src/features/chat/components/MemoryPanel.tsx | 新增 | 记忆面板（搜索/列表/编辑/删除/版本/迁移） |
-| src/features/chat/components/AgentProcessBlock.tsx | 修改 | 记忆自动注入提示 chip；memory 类 tool_step 时间线样式 |
-| src/core/i18n/locales/zh-CN.json + en-US.json | 修改 | 全部新增文案 key（check:i18n 强制成对） |
+| 文件                                                  | 动作 | 内容                                                                                                                                                                                                                         |
+| ----------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| src/core/types/memory.ts                              | 新增 | MemoryFact / MemorySearchResult / MemoryStatus / EmbeddingConfig 类型（后端镜像）                                                                                                                                            |
+| src/core/store/store.ts                               | 修改 | memoryStatus 信号 + 相关 actions（invoke 封装）                                                                                                                                                                              |
+| src/features/settings/components/AppSettings.tsx      | 修改 | 「嵌入与记忆」分区（provider 选择、模型列表/手动输入、下载管理、测试连接、统计、重建索引；不含每项目开关）                                                                                                                   |
+| src/features/settings/components/EmbeddingSetup.tsx   | 新增 | 嵌入供给向导：provider 选择，Ollama 已装模型列表（/api/tags）+ 推荐模型下载入口（bge-m3/nomic/MiniLM，显示体积），流式进度条与取消/重试，删除模型释放空间，连接测试；被 AppSettings 内嵌，并从 ProjectSettingsModal 引导跳转 |
+| src/features/chat/components/ProjectSettingsModal.tsx | 修改 | 模型区块与 MCP 区块之间插入「项目记忆」区块（开关默认关 + 嵌入状态 + 记忆面板入口）                                                                                                                                          |
+| src/features/chat/components/MemoryPanel.tsx          | 新增 | 记忆面板（搜索/列表/编辑/删除/版本/迁移）                                                                                                                                                                                    |
+| src/features/chat/components/AgentProcessBlock.tsx    | 修改 | 记忆自动注入提示 chip；memory 类 tool_step 时间线样式                                                                                                                                                                        |
+| src/core/i18n/locales/zh-CN.json + en-US.json         | 修改 | 全部新增文案 key（check:i18n 强制成对）                                                                                                                                                                                      |
 
 ### 6.3 命令与事件清单（新增）
 
@@ -466,6 +467,7 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 目标：项目事实能存、能搜、能注入，全链路可测、可回退。
 
 工作项：
+
 1. services/memory 骨架：MemoryStore（schema 幂等初始化、CRUD、knowledge.json 迁移）、MemoryStoreManager（LRU + 每项目连接）；
 2. 向量打分 trait：P1 先实现 Rust 暴力余弦（BLOB 读取 + 归一化点积），预留 Vec0Score 的空实现；
 3. plugins/embed：Embedder trait + ollama + openai_compat 实现 + EmbedderManager；embedding 服务可用性探测；
@@ -476,6 +478,7 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 8. 单元/集成测试（见第 8 节）与 npm run verify 全绿。
 
 **验收**：
+
 - 新建项目 → 开启记忆 → 两轮不同会话内：会话 A 让 agent 记住架构决策，会话 B 提问可检索到并注入系统提示词；
 - embedding 断开时：检索自动降级关键词并提示；恢复后 reindex 补嵌；
 - 下载交互验收：首次启用引导可达；下载中进度/取消/失败重试/空间不足提示符合预期，下载完成即自动可用；下载中嵌入不可用但关键词降级照常；删除模型后可重新下载；
@@ -487,6 +490,7 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 目标：事实自动产生、自动演化，人工维护趋近于零。
 
 工作项：
+
 1. 后台提取管线：extract_facts_from_transcript（输入窗口、schema 约束 JSON 输出、importance 过滤、单轮上限、去抖、per-project 锁、失败静默降级），Epilogue 挂载；
 2. 仲裁与版本链：judge 调用（merge/update/keep_separate/supersede + fail-safe 默认 keep_separate）、fact_versions 落审计、superseded 状态与 valid_until；
 3. 遗忘与容量：score 衰减计算、archived 软删桶、pinned 保护、memory_max_facts 容量治理；
@@ -495,6 +499,7 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 6. 质量探针：检索命中率（用户追问时是否命中原事实）、事实去重率、仲裁动作分布——导出 stats 命令与面板展示。
 
 **验收**：
+
 - 连续 10 轮不同类型任务（改代码/查文档/修 bug）后，事实库自动沉淀 >= 20 条且无重复主题井喷；
 - 同一事实两次写入：第二次触发 update/merge，版本链 >= 2，旧版本可查；
 - 冲突场景（如依赖迁移）：旧事实 superseded、新事实 active，检索返回新事实；
@@ -506,6 +511,7 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 目标：把 P1 的暴力余弦替换为 sqlite-vec（vec0），检索质量与性能双提升。
 
 工作项：
+
 1. vec0 表接入：建表/写入/批量 upsert、Cargo 依赖与资源打包（按 P0 结论）、降级开关（config 或编译特性）；
 2. FTS5 混合：fts_facts 建表与同步、RRF 融合、时新度加成参数化；
 3. 检索质量评测：构造查询集（30-50 条带标注 query），对比三种模式（纯向量 / FTS / 混合）的 NDCG@10，定默认参数；
@@ -518,56 +524,75 @@ CREATE VIRTUAL TABLE fts_facts USING fts5(
 
 - 离线嵌入：VectorLite 或 fastembed-rs（ONNX），完全断网可用；
 - 代码库级索引：结合 file_parser + git 变更，将关键文件摘要/chunk 入向量库（与事实库并行表），实现「代码级 RAG」；
-NaN
+  NaN
 
 ---
+
 ## 8. 测试与质量
+
 ### 8.1 Rust 单元测试（随模块落地）
+
 - schema：初始化幂等、迁移（knowledge.json 转 facts）、外键级联；
 - 写入：key 去重、向量近邻阈值触发的合并判定、pinned 保护、容量裁剪；
 - 仲裁：注入假 judge（trait 注入 mock）覆盖 merge / update / keep_separate / supersede / 失败默认 keep_separate；
 - 检索：固定向量集上的 top-k 正确性（与手算 cosine 比对）、RRF 排序稳定、token 预算裁剪边界；
 - 权限：五个记忆工具在 Normal/Auto/Workflow/Plan 下的 allow/ask/deny（对齐 permission.rs 既有测试模式）；
 - 降级：embedder 不可用路径、vec0 不可用路径的纯关键词检索。
+
 ### 8.2 集成测试
+
 - 脚本化 LLM：替换真实 HTTP 为本地 mock 服务（复用现有 streaming 测试思路），跑完整 run_agent_turn，断言：remember 调用落库、自动提取触发且去抖、注入块出现在 messages_for_api 的 index=1、memory-updated 事件发出；
 - 并发：同一项目两个 topic 同时运行 Agent，确保 per-project 锁串行化提取、无连接争用；
 - 迁移：旧 knowledge.json 数据升级后 recall 仍可命中。
+
 ### 8.3 前端与质量门禁
+
 - check:i18n 双语 key 成对；check:docs 链接有效；prettier / eslint / tsc / vite build 全绿；
 - 手工验收流：设置页测试连接、面板编辑/删除/钉住、权限覆盖、降级提示；
 - 性能探针：注入耗时（每轮 50ms 内为佳，其中检索 10ms 内）、提取任务后台不阻塞交互、内存占用（LRU 连接上限）。
+
 ---
+
 ## 9. 风险与缓解
-| 风险 | 影响 | 缓解 |
-| --- | --- | --- |
-| sqlite-vec 三平台打包/签名困难 | P3 延期或功能不可达 | P0 先验证；存储 trait 隔离，暴力余弦兜底；必要时以 Rust 暴力余弦为正式实现、vec0 仅加速 |
-| Embedding 服务不可用（离线/未配） | 检索退化为关键词 | 事实照常入库；UI 明确状态提示；一键 reindex 补嵌；P4 引入 ONNX 离线嵌入 |
-| 自动提取产生垃圾事实 | 记忆库污染、误导 Agent | importance 阈值 + 类别白名单 + LLM 粗筛 + 用户面板治理 + 容量上限；提取结果可见可删 |
-| 注入 token 开销 | 上下文成本上升、prompt cache 失效 | 预算硬上限（3000） + 内容 hash 变更才替换 + 稳定前缀位置；自动注入可开关 |
-| 并发写/提取竞态 | 事实丢失或重复 | per-project 异步锁 + 串行提取 + upsert 幂等 + 版本链防丢 |
-| 仲裁 LLM 调用成本 | 每周期隐性费用 | 仅在近邻高分或同 key 时仲裁 + 去抖 + 后台执行 + 失败 fail-safe |
-| 旧行为破坏（knowledge 兼容） | 用户升级不适 | 双写兼容期 + 迁移标记 + 可关闭；recall 返回结构向后兼容字段 |
-| 数据隐私 | 项目事实外泄 | 全部本地存储；嵌入走本地 Ollama 或用户自配 API（key 入 secure_store）；无遥测 |
-| 本地嵌入模型体积/RAM | 首拉几千 KB 到 1 GB+，常驻内存 | 默认 bge-m3 可换 nomic/MiniLM；Ollama 空闲自动卸载；P4 引入 ONNX 按需加载；UI 展示下载与内存状态 |
-| 项目目录被误提交 git | 记忆库进入版本库 | 文档建议 .gitignore 忽略 .aio/memory/；项目无 .gitignore 时 AIO 建库时自动追加 |
+
+| 风险                              | 影响                              | 缓解                                                                                             |
+| --------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| sqlite-vec 三平台打包/签名困难    | P3 延期或功能不可达               | P0 先验证；存储 trait 隔离，暴力余弦兜底；必要时以 Rust 暴力余弦为正式实现、vec0 仅加速          |
+| Embedding 服务不可用（离线/未配） | 检索退化为关键词                  | 事实照常入库；UI 明确状态提示；一键 reindex 补嵌；P4 引入 ONNX 离线嵌入                          |
+| 自动提取产生垃圾事实              | 记忆库污染、误导 Agent            | importance 阈值 + 类别白名单 + LLM 粗筛 + 用户面板治理 + 容量上限；提取结果可见可删              |
+| 注入 token 开销                   | 上下文成本上升、prompt cache 失效 | 预算硬上限（3000） + 内容 hash 变更才替换 + 稳定前缀位置；自动注入可开关                         |
+| 并发写/提取竞态                   | 事实丢失或重复                    | per-project 异步锁 + 串行提取 + upsert 幂等 + 版本链防丢                                         |
+| 仲裁 LLM 调用成本                 | 每周期隐性费用                    | 仅在近邻高分或同 key 时仲裁 + 去抖 + 后台执行 + 失败 fail-safe                                   |
+| 旧行为破坏（knowledge 兼容）      | 用户升级不适                      | 双写兼容期 + 迁移标记 + 可关闭；recall 返回结构向后兼容字段                                      |
+| 数据隐私                          | 项目事实外泄                      | 全部本地存储；嵌入走本地 Ollama 或用户自配 API（key 入 secure_store）；无遥测                    |
+| 本地嵌入模型体积/RAM              | 首拉几千 KB 到 1 GB+，常驻内存    | 默认 bge-m3 可换 nomic/MiniLM；Ollama 空闲自动卸载；P4 引入 ONNX 按需加载；UI 展示下载与内存状态 |
+| 项目目录被误提交 git              | 记忆库进入版本库                  | 文档建议 .gitignore 忽略 .aio/memory/；项目无 .gitignore 时 AIO 建库时自动追加                   |
+
 ---
+
 ## 10. 文档与 i18n 同步
+
 - docs/zh|en/usage/：新增「项目记忆与检索」使用说明（开关、配置、面板操作、常见问题）；
 - docs/zh|en/reference/configuration.md：补充 memory_* 配置项说明；
 - docs/zh|en/development/architecture.md：新增 services/memory 与 plugins/embed 模块说明；
 - docs/zh|en/development/extensions.md：新增「新增 Embedder / 接入新向量后端」指南；
 - CHANGELOG：按版本记录；i18n 两个 locale 同步新增文案。
+
 ---
+
 ## 11. 实施验收清单（总）
+
 - [ ] P0 报告评审通过（sqlite-vec 可落地性结论 + 嵌入实测数据）；
 - [ ] 事实库每项目隔离存储，schema 幂等，迁移无损；
 - [ ] 写入三通道（显式工具 / 自动提取 / 迁移）与更新四动作（新增/更新/合并/淘汰）均有测试覆盖；
 - [ ] 混合检索 + 预算注入在真实模型下命中率达标（P3 评测定义基线）；
 - [ ] 权限、i18n、文档、verify 四项门禁全绿；
 - [ ] 三平台冒烟通过，无窗口期明示降级路径。
+
 ---
+
 ## 12. 参考资料
+
 - Letta（MemGPT）上下文工程与记忆块：https://docs.letta.com/guides/agents/context-engineering
 - Letta sleep-time compute 论文：https://arxiv.org/abs/2504.13171
 - Mem0 架构（ADD/SEARCH/UPDATE + 混合记忆）：https://github.com/mem0ai/mem0/blob/main/skills/mem0/references/architecture.md
@@ -577,8 +602,11 @@ NaN
 - sqlite-vec（针对 SQLite 的向量插件，vec0）：https://github.com/asg017/sqlite-vec
 - VectorLite（Rust 原生 + ONNX 本地嵌入）：https://github.com/mmailhos/vectorlite
 - Ollama 嵌入模型目录：https://ollama.com/search?c=embedding；nomic-embed-text-v2：https://ollama.com/library/nomic-embed-text-v2-moe
+
 ---
+
 ## 附：已确认决策（评审结论）
+
 1. 总开关默认**关闭**；开关放「更多 → 项目设置」弹窗，位于模型选择（绑定模型）区块下方、MCP 与 Skill 管理上方，即 ProjectSettingsModal.tsx 模型区块之后新增「项目记忆」区块。
 2. 记忆写工具（remember / update_memory / forget_memory）默认 Allow（Normal / Auto / Workflow；Plan 模式 Deny），用户可经 .aio/permissions.json 覆盖。
 3. 新建 src-tauri/src/services/ 目录承载 services/memory（含 mod.rs 声明）。

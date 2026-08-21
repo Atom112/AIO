@@ -26,6 +26,56 @@ struct AppConfigDisk {
         rename = "maxConcurrentSubagents"
     )]
     max_concurrent_subagents: u32,
+    #[serde(default, rename = "memoryEnabled")]
+    memory_enabled: bool,
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "memoryAutoInject"
+    )]
+    memory_auto_inject: bool,
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "memoryAutoExtract"
+    )]
+    memory_auto_extract: bool,
+    #[serde(
+        default = "crate::core::models::default_max_facts",
+        rename = "memoryMaxFacts"
+    )]
+    memory_max_facts: u32,
+    #[serde(
+        default = "crate::core::models::default_inject_budget",
+        rename = "memoryInjectionBudgetTokens"
+    )]
+    memory_injection_budget_tokens: u32,
+    #[serde(
+        default = "crate::core::models::default_extract_debounce",
+        rename = "memoryExtractDebounceSecs"
+    )]
+    memory_extract_debounce_secs: u64,
+    #[serde(default, rename = "memoryEmbedding")]
+    memory_embedding: MemoryEmbeddingConfig,
+}
+
+impl Default for AppConfigDisk {
+    fn default() -> Self {
+        Self {
+            api_url: String::new(),
+            default_model: String::new(),
+            local_model_path: String::new(),
+            knowledge_enabled: false,
+            auto_start_enabled: false,
+            max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
+            max_concurrent_subagents: 5,
+            memory_enabled: false,
+            memory_auto_inject: crate::core::models::default_true(),
+            memory_auto_extract: crate::core::models::default_true(),
+            memory_max_facts: crate::core::models::default_max_facts(),
+            memory_injection_budget_tokens: crate::core::models::default_inject_budget(),
+            memory_extract_debounce_secs: crate::core::models::default_extract_debounce(),
+            memory_embedding: MemoryEmbeddingConfig::default(),
+        }
+    }
 }
 
 fn default_max_tool_rounds() -> u32 {
@@ -70,6 +120,17 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
             .max_tool_rounds
             .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS),
         max_concurrent_subagents: config.max_concurrent_subagents.unwrap_or(5),
+        memory_enabled: config.memory_enabled,
+        memory_auto_inject: config.memory_auto_inject,
+        memory_auto_extract: config.memory_auto_extract,
+        memory_max_facts: config.memory_max_facts,
+        memory_injection_budget_tokens: config.memory_injection_budget_tokens,
+        memory_extract_debounce_secs: config.memory_extract_debounce_secs,
+        memory_embedding: {
+            let mut e = config.memory_embedding;
+            e.api_key.clear();
+            e
+        },
     };
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
     // 原子写入
@@ -107,6 +168,13 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     auto_start_enabled: disk.auto_start_enabled,
                     max_concurrent_subagents: Some(disk.max_concurrent_subagents),
                     max_tool_rounds: Some(disk.max_tool_rounds),
+                    memory_enabled: disk.memory_enabled,
+                    memory_auto_inject: disk.memory_auto_inject,
+                    memory_auto_extract: disk.memory_auto_extract,
+                    memory_max_facts: disk.memory_max_facts,
+                    memory_injection_budget_tokens: disk.memory_injection_budget_tokens,
+                    memory_extract_debounce_secs: disk.memory_extract_debounce_secs,
+                    memory_embedding: disk.memory_embedding,
                 });
             }
             // 兼容旧 schema（含明文 api_key）：读出后迁出到 keyring
@@ -122,10 +190,7 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     api_url: legacy.api_url.clone(),
                     default_model: legacy.default_model.clone(),
                     local_model_path: legacy.local_model_path.clone(),
-                    knowledge_enabled: false,
-                    auto_start_enabled: false,
-                    max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
-                    max_concurrent_subagents: 5,
+                    ..AppConfigDisk::default()
                 };
                 disk.api_url = legacy.api_url;
                 disk.default_model = legacy.default_model;
@@ -146,6 +211,13 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     auto_start_enabled: false,
                     max_concurrent_subagents: Some(disk.max_concurrent_subagents),
                     max_tool_rounds: Some(disk.max_tool_rounds),
+                    memory_enabled: false,
+                    memory_auto_inject: true,
+                    memory_auto_extract: true,
+                    memory_max_facts: 2000,
+                    memory_injection_budget_tokens: 3000,
+                    memory_extract_debounce_secs: 60,
+                    memory_embedding: MemoryEmbeddingConfig::default(),
                 });
             }
         }
@@ -163,6 +235,13 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
         auto_start_enabled: false,
         max_concurrent_subagents: None,
         max_tool_rounds: None,
+        memory_enabled: false,
+        memory_auto_inject: true,
+        memory_auto_extract: true,
+        memory_max_facts: 2000,
+        memory_injection_budget_tokens: 3000,
+        memory_extract_debounce_secs: 60,
+        memory_embedding: MemoryEmbeddingConfig::default(),
     })
 }
 

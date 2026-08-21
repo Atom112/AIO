@@ -27,13 +27,17 @@ The repository retains legacy read/write paths for `activated_models.json` and `
 
 `config.json` currently persists:
 
-| Field              | Behavior                                                         |
-| ------------------ | ---------------------------------------------------------------- |
-| `api_url`          | Default API URL for backward compatibility                       |
-| `default_model`    | Default model for backward compatibility                         |
-| `local_model_path` | Local model path for backward compatibility                      |
-| `knowledgeEnabled` | Whether cross-session project memory is enabled, default `false` |
-| `autoStartEnabled` | Whether to launch at system startup, default `false`             |
+| Field                         | Behavior                                                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `api_url`                     | Default API URL for backward compatibility                                                                                 |
+| `default_model`               | Default model for backward compatibility                                                                                   |
+| `local_model_path`            | Local model path for backward compatibility                                                                                |
+| `knowledgeEnabled`            | Whether cross-session project memory is enabled, default `false`                                                           |
+| `memoryEnabled`               | Global default for project-level semantic memory (RAG), default `false`; can be overridden per project in project settings |
+| `memoryEmbedding`             | Embedding config: `provider` (`ollama`/`openai_compat`), `model`, `apiUrl`, `dimensions`, `enabled`                        |
+| `memoryMaxFacts`              | Max active facts per project, default `2000`                                                                               |
+| `memoryInjectionBudgetTokens` | Token budget for injecting memory into the system prompt, default `3000`                                                   |
+| `autoStartEnabled`            | Whether to launch at system startup, default `false`                                                                       |
 
 The backend `AppConfig` also includes the following runtime fields:
 
@@ -103,11 +107,13 @@ Additional files may appear after feature usage:
 ```text
 .aio/
 ├── permissions.json
-└── knowledge.json
+├── knowledge.json
+└── memory/memory.sqlite
 ```
 
 - `permissions.json`: Allow, ask, and deny rules for project tools. See [Permissions System Reference](permissions.md);
 - `knowledge.json`: Cross-session knowledge, with categories `decision`, `pattern`, `convention`, or `note`, retaining up to 50 entries.
+- `memory/`: Project-level semantic memory store (`memory.sqlite`: facts, version audit, FTS5, vector indexes); consider adding it to `.gitignore`.
 
 ## Attachment Whitelist
 

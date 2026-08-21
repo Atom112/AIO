@@ -27,13 +27,17 @@ AIO 使用 Tauri 提供的应用数据目录和系统配置目录，应用标识
 
 `config.json` 当前持久化：
 
-| 字段               | 行为                                 |
-| ------------------ | ------------------------------------ |
-| `api_url`          | 兼容旧版的默认 API URL               |
-| `default_model`    | 兼容旧版的默认模型                   |
-| `local_model_path` | 兼容旧版的本地模型路径               |
-| `knowledgeEnabled` | 是否启用项目跨会话记忆，默认 `false` |
-| `autoStartEnabled` | 是否随系统启动，默认 `false`         |
+| 字段                          | 行为                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `api_url`                     | 兼容旧版的默认 API URL                                                                       |
+| `default_model`               | 兼容旧版的默认模型                                                                           |
+| `local_model_path`            | 兼容旧版的本地模型路径                                                                       |
+| `knowledgeEnabled`            | 是否启用项目跨会话记忆，默认 `false`                                                         |
+| `memoryEnabled`               | 项目级语义记忆（RAG）的全局默认，默认 `false`；每项目可在项目设置中覆盖                      |
+| `memoryEmbedding`             | 嵌入配置：`provider`（`ollama`/`openai_compat`）、`model`、`apiUrl`、`dimensions`、`enabled` |
+| `memoryMaxFacts`              | 每项目活跃事实上限，默认 `2000`                                                              |
+| `memoryInjectionBudgetTokens` | 记忆注入系统提示词的 token 预算，默认 `3000`                                                 |
+| `autoStartEnabled`            | 是否随系统启动，默认 `false`                                                                 |
 
 后端 `AppConfig` 还包含以下运行字段：
 
@@ -108,6 +112,7 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 
 - `permissions.json`：项目工具的允许、询问和拒绝规则，详见[权限系统参考](permissions.md)；
 - `knowledge.json`：跨会话知识，类别为 `decision`、`pattern`、`convention` 或 `note`，最多保留 50 条。
+- `memory/`：项目级语义记忆库（`memory.sqlite`：facts、版本审计、FTS5、向量索引），建议加入 `.gitignore`。
 
 ## 附件白名单
 

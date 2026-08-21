@@ -197,8 +197,11 @@ pub fn update_project(app: AppHandle, id: String, name: String) -> Result<(), St
 #[tauri::command]
 pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
     let mut file = load_projects_file(&app);
-    if file.projects.remove(&id).is_some() {
+    if let Some(project) = file.projects.remove(&id) {
         file.updated_at = now_timestamp();
+        // 项目删除时清理记忆库连接缓存（目录级联删除随用户操作）
+        app.state::<crate::services::memory::MemoryStoreManager>()
+            .remove(&project.path);
         save_projects_file(&app, &file)
     } else {
         Err("项目不存在".into())

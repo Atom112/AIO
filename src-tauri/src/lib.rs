@@ -9,12 +9,14 @@ mod commands;
 mod core;
 pub mod mcp_fs_server;
 mod plugins;
+mod services;
 mod utils;
 
 use crate::core::state::{DbState, LocalEngineState, StreamManager, SubagentHandles};
 use crate::plugins::engine::EngineManager;
 use crate::plugins::lsp::LspManager;
 use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
+use crate::services::memory::MemoryStoreManager;
 use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -53,6 +55,7 @@ pub fn run() {
         .manage(McpRequestManager::new())
         .manage(PendingApprovals::new())
         .manage(SubagentHandles::new())
+        .manage(MemoryStoreManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
@@ -169,6 +172,25 @@ pub fn run() {
             commands::config::branch_topic,
             // Token 计数
             commands::llm::count_tokens_cmd,
+            // 项目记忆（RAG）
+            commands::memory::memory_get_status,
+            commands::memory::memory_get,
+            commands::memory::memory_set_enabled,
+            commands::memory::memory_reset_enabled,
+            commands::memory::memory_search,
+            commands::memory::memory_list,
+            commands::memory::memory_add,
+            commands::memory::memory_update,
+            commands::memory::memory_delete,
+            commands::memory::memory_clear,
+            commands::memory::memory_reindex,
+            commands::memory::memory_stats,
+            commands::embedding::embedding_test,
+            commands::embedding::embedding_save_api_key,
+            commands::embedding::embedding_status,
+            commands::embedding::embedding_list_ollama_models,
+            commands::embedding::embedding_pull_ollama_model,
+            commands::embedding::embedding_delete_ollama_model,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

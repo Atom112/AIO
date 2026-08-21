@@ -41,12 +41,16 @@ Routing centers on the chat page and nested settings pages. Provider details wit
 - `commands/skill.rs`: Global/project Skills, marketplace and NPX import;
 - `commands/project.rs`: Project CRUD and `.aio/` initialization;
 - `commands/lsp.rs`, `commands/git.rs`: Project language service and Git operations.
+- `commands/memory.rs`, `commands/embedding.rs`: project memory (RAG) fact CRUD / retrieval and embedding provisioning;
+- `services/memory/`: per-project memory store (facts + FTS5 + vector scoring), hybrid retrieval and memory tools;
+- `plugins/embed/`: embedding (vectorization) plugins (Ollama / OpenAI-compatible).
 
 ## Plugin Boundary
 
 - Provider: Google, Anthropic, Ollama and OpenAI-compatible.
 - Local Engine: llama.cpp, Ollama and vLLM (auto-discovered via engine scanning, see [providers-and-models.md -> Engine Scanning](../usage/providers-and-models.md#engine-scanning-and-auto-discovery)).
 - MCP Transport: stdio, HTTP and Streamable HTTP.
+- Embed: Ollama and OpenAI-compatible text embeddings (vectorization) powering semantic project memory.
 - LSP: Manages startup, requests, diagnostics and shutdown for different language servers.
 
 The Manager registers plugins at startup; commands look up implementations by identifier. New implementations should reuse existing traits rather than adding parallel dispatch layers.
@@ -59,7 +63,8 @@ Long-term data:
 - JSON: Provider, MCP, Skill, model catalog and app settings;
 - System credential store: API Keys and MCP secrets;
 - Project `.aio/`: Project-level MCP, Skill and permissions.
-- Project `.aio/knowledge.json`: Optional cross-session project knowledge.
+- Project `.aio/knowledge.json`: Optional cross-session project knowledge;
+- Project `.aio/memory/memory.sqlite`: project-level semantic memory (RAG) store with facts, version audit, FTS5 full-text and vector indexes.
 
 Runtime state:
 

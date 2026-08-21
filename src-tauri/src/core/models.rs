@@ -370,6 +370,38 @@ pub struct ModelsResponse {
     pub data: Vec<ModelInfo>,
 }
 
+/// 记忆嵌入（向量化）配置。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MemoryEmbeddingConfig {
+    /// 嵌入 provider：ollama | openai_compat
+    pub provider: String,
+    /// 嵌入模型名，如 bge-m3:latest / text-embedding-3-small
+    pub model: String,
+    /// 服务地址：Ollama base 或 OpenAI 兼容 /v1 前缀；空 = Ollama 默认本地 11434
+    pub api_url: String,
+    /// 向量维度（配置值；实际以首次嵌入返回为准）
+    pub dimensions: usize,
+    /// 是否启用嵌入（关闭时检索退化为关键词）
+    pub enabled: bool,
+    /// 运行时注入的 API Key（不随配置持久化，存 secure_store）
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
+}
+
+impl Default for MemoryEmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            provider: "ollama".into(),
+            model: "bge-m3:latest".into(),
+            api_url: String::new(),
+            dimensions: 1024,
+            enabled: true,
+            api_key: String::new(),
+        }
+    }
+}
+
 /// 应用程序全局配置。
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AppConfig {
@@ -393,6 +425,33 @@ pub struct AppConfig {
     /// 跨会话记忆（项目知识持久化）。默认关闭，用户可在设置中开启。
     #[serde(default, rename = "knowledgeEnabled")]
     pub knowledge_enabled: bool,
+    /// 项目级记忆（语义 RAG）总开关。默认关闭，用户在项目设置中开启。
+    #[serde(default, rename = "memoryEnabled")]
+    pub memory_enabled: bool,
+    /// 是否自动注入检索到的记忆到系统提示词（默认 true）
+    #[serde(default = "default_true", rename = "memoryAutoInject")]
+    pub memory_auto_inject: bool,
+    /// 是否后台自动提取事实（默认 true；提取管线随 P2 生效）
+    #[serde(default = "default_true", rename = "memoryAutoExtract")]
+    pub memory_auto_extract: bool,
+    /// 每项目活跃事实上限（默认 2000）
+    #[serde(default = "default_max_facts", rename = "memoryMaxFacts")]
+    pub memory_max_facts: u32,
+    /// 记忆注入系统提示词的 token 预算（默认 3000）
+    #[serde(
+        default = "default_inject_budget",
+        rename = "memoryInjectionBudgetTokens"
+    )]
+    pub memory_injection_budget_tokens: u32,
+    /// 后台自动提取去抖秒数（默认 60）
+    #[serde(
+        default = "default_extract_debounce",
+        rename = "memoryExtractDebounceSecs"
+    )]
+    pub memory_extract_debounce_secs: u64,
+    /// 记忆嵌入配置
+    #[serde(default, rename = "memoryEmbedding")]
+    pub memory_embedding: MemoryEmbeddingConfig,
     /// 系统自启。默认关闭。
     #[serde(default, rename = "autoStartEnabled")]
     pub auto_start_enabled: bool,
@@ -402,6 +461,31 @@ pub struct AppConfig {
     /// 单次 Agent 运行最大工具调用轮数（None = 使用默认值）。命中时优雅收尾而非硬中断，防无界 API 成本。
     #[serde(default, rename = "maxToolRounds")]
     pub max_tool_rounds: Option<u32>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            api_url: String::new(),
+            api_key: String::new(),
+            default_model: String::new(),
+            local_model_path: String::new(),
+            auto_retry_enabled: default_auto_retry_enabled(),
+            auto_retry_count: default_auto_retry_count(),
+            auto_retry_delay_ms: default_auto_retry_delay_ms(),
+            knowledge_enabled: false,
+            auto_start_enabled: false,
+            max_concurrent_subagents: None,
+            max_tool_rounds: None,
+            memory_enabled: false,
+            memory_auto_inject: default_true(),
+            memory_auto_extract: default_true(),
+            memory_max_facts: default_max_facts(),
+            memory_injection_budget_tokens: default_inject_budget(),
+            memory_extract_debounce_secs: default_extract_debounce(),
+            memory_embedding: MemoryEmbeddingConfig::default(),
+        }
+    }
 }
 
 /// 单次 Agent 运行默认最大工具调用轮数。
@@ -415,6 +499,22 @@ fn default_auto_retry_count() -> u32 {
 }
 fn default_auto_retry_delay_ms() -> u64 {
     500
+}
+
+pub(crate) fn default_true() -> bool {
+    true
+}
+
+pub(crate) fn default_max_facts() -> u32 {
+    2000
+}
+
+pub(crate) fn default_inject_budget() -> u32 {
+    3000
+}
+
+pub(crate) fn default_extract_debounce() -> u64 {
+    60
 }
 
 // ====== MCP 服务器配置 ======

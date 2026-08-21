@@ -234,6 +234,52 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 path_pattern: None,
                 priority: 10,
             },
+            // 记忆工具：读放行、写放行（项目内低风险元数据，用户可经 permissions.json 覆盖）
+            PermissionRule {
+                id: "builtin-normal-allow-memory-read".into(),
+                tool_pattern: "recall".into(),
+                server_id: None,
+                modes: vec![AgentMode::Normal],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-normal-allow-memory-search".into(),
+                tool_pattern: "search_memory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Normal],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-normal-allow-memory-write".into(),
+                tool_pattern: "remember".into(),
+                server_id: None,
+                modes: vec![AgentMode::Normal],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-normal-allow-memory-update".into(),
+                tool_pattern: "update_memory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Normal],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-normal-allow-memory-forget".into(),
+                tool_pattern: "forget_memory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Normal],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
             // 其他 MCP 工具（非内置 filesystem）：需要确认
             PermissionRule {
                 id: "builtin-normal-ask-other-tools".into(),
@@ -608,6 +654,52 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 path_pattern: None,
                 priority: 20,
             },
+            // 记忆工具：读放行、写拒绝
+            PermissionRule {
+                id: "builtin-plan-allow-memory-read".into(),
+                tool_pattern: "recall".into(),
+                server_id: None,
+                modes: vec![AgentMode::Plan],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-plan-allow-memory-search".into(),
+                tool_pattern: "search_memory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Plan],
+                action: PermissionAction::Allow,
+                path_pattern: None,
+                priority: 10,
+            },
+            PermissionRule {
+                id: "builtin-plan-deny-memory-write".into(),
+                tool_pattern: "remember".into(),
+                server_id: None,
+                modes: vec![AgentMode::Plan],
+                action: PermissionAction::Deny,
+                path_pattern: None,
+                priority: 20,
+            },
+            PermissionRule {
+                id: "builtin-plan-deny-memory-update".into(),
+                tool_pattern: "update_memory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Plan],
+                action: PermissionAction::Deny,
+                path_pattern: None,
+                priority: 20,
+            },
+            PermissionRule {
+                id: "builtin-plan-deny-memory-forget".into(),
+                tool_pattern: "forget_memory".into(),
+                server_id: None,
+                modes: vec![AgentMode::Plan],
+                action: PermissionAction::Deny,
+                path_pattern: None,
+                priority: 20,
+            },
             // 其他 MCP 工具需要确认
             PermissionRule {
                 id: "builtin-plan-ask-other-tools".into(),
@@ -946,6 +1038,39 @@ mod tests {
             &custom,
         );
         assert_eq!(result, PermissionAction::Deny);
+    }
+
+    #[test]
+    fn test_normal_memory_tools_allowed() {
+        let args = serde_json::json!({});
+        for tool in [
+            "remember",
+            "recall",
+            "search_memory",
+            "update_memory",
+            "forget_memory",
+        ] {
+            let result =
+                check_permission_defaults(tool, "__aio-filesystem__", &args, &AgentMode::Normal);
+            assert_eq!(
+                result,
+                PermissionAction::Allow,
+                "tool {tool} should be allowed in Normal"
+            );
+        }
+    }
+
+    #[test]
+    fn test_plan_memory_read_allowed_write_denied() {
+        let args = serde_json::json!({});
+        assert_eq!(
+            check_permission_defaults("recall", "__aio-filesystem__", &args, &AgentMode::Plan),
+            PermissionAction::Allow,
+        );
+        assert_eq!(
+            check_permission_defaults("remember", "__aio-filesystem__", &args, &AgentMode::Plan),
+            PermissionAction::Deny,
+        );
     }
 
     #[test]

@@ -44,7 +44,7 @@ pub struct KnowledgeFile {
 // ---------------------------------------------------------------------------
 
 /// 返回当前时间的 ISO 8601 字符串（精度到秒，不含时区后缀）。
-fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -53,7 +53,7 @@ fn now_iso() -> String {
 }
 
 /// 将 UNIX 时间戳（秒）转为 `YYYY-MM-DDTHH:MM:SS` 格式。
-fn secs_to_iso(secs: u64) -> String {
+pub(crate) fn secs_to_iso(secs: u64) -> String {
     let (y, mo, d, h, m, s) = secs_to_date_parts(secs);
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}")
 }

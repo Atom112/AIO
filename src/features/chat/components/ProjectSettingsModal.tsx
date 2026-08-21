@@ -19,6 +19,8 @@ import {
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import { transportLabel, statusLabel, statusColor } from '../../../core/utils/mcp';
+import { memoryGetStatus, memorySetEnabled } from '../../../core/utils/memory';
+import type { MemoryStatus } from '../../../core/types/memory';
 import Icon from '../../../shared/components/Icon';
 import Switch from '../../../shared/components/Switch';
 import { t } from '../../../core/i18n';
@@ -39,6 +41,39 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
   const [nameText, setNameText] = createSignal<string>('');
   const [isExiting, setIsExiting] = createSignal(false);
   const [isEntering, setIsEntering] = createSignal(true);
+  const [memoryStatus, setMemoryStatus] = createSignal<MemoryStatus | null>(null);
+
+  /** 弹窗打开时刷新项目记忆状态 */
+  createEffect(() => {
+    if (props.show && currentProjectId()) {
+      void memoryGetStatus(currentProjectId()!)
+        .then(setMemoryStatus)
+        .catch(() => setMemoryStatus(null));
+    }
+  });
+
+  const memoryEnabled = () => memoryStatus()?.enabled ?? false;
+  const memoryReady = () => memoryStatus()?.embedder.available ?? false;
+  const memoryStatsText = () => {
+    const s = memoryStatus()?.stats;
+    if (!s) return '';
+    return t('project.memory.stats', {
+      total: String(s.totalFacts),
+      active: String(s.activeFacts),
+      embedded: String(s.embeddedFacts),
+    });
+  };
+  const toggleMemory = async (enabled: boolean) => {
+    const pid = currentProjectId();
+    if (!pid) return;
+    try {
+      await memorySetEnabled(pid, enabled);
+      const st = await memoryGetStatus(pid);
+      setMemoryStatus(st);
+    } catch (err) {
+      console.warn('切换项目记忆失败:', err);
+    }
+  };
 
   /** 当前编辑的助手对象（响应式） */
   const asst = () =>
@@ -451,6 +486,46 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                   </Show>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* 项目记忆 */}
+          <div class="flex flex-col gap-1.5">
+            <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
+              {t('project.memory.title')}
+              <span
+                class="ml-2 text-[11px] font-normal"
+                style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+              >
+                {t('project.memory.description')}
+              </span>
+            </label>
+            <div class="flex flex-col gap-2 rounded-lg border border-dark-100 p-2.5">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm text-white truncate">{t('project.memory.enabled')}</div>
+                  <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+                    {memoryReady()
+                      ? t('project.memory.statusReady')
+                      : t('project.memory.statusNotReady')}
+                  </div>
+                  <Show when={memoryStatsText()}>
+                    <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
+                      {memoryStatsText()}
+                    </div>
+                  </Show>
+                </div>
+                <Switch
+                  checked={memoryEnabled()}
+                  label={t('project.memory.enabled')}
+                  onChange={(enabled) => void toggleMemory(enabled)}
+                />
+              </div>
+              <Show when={!memoryReady()}>
+                <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+                  {t('project.memory.configureHint')}
+                </div>
+              </Show>
             </div>
           </div>
 

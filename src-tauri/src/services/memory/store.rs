@@ -1,0 +1,980 @@
+//! 项目级记忆库（MemoryStore）：facts / fact_versions / meta / FTS5 四类表 + CRUD + 混合检索。
+//!
+//! 每个项目一个独立 SQLite 文件：<项目根>/.aio/memory/memory.sqlite。
+//! 向量以 float32 BLOB 存在 facts.embedding，检索先用 Rust 暴力余弦（P3 换 sqlite-vec）。
+
+use crate::utils::knowledge;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use super::vector::{brute_force_topk, bytes_to_f32, f32_to_bytes};
+
+pub const STATUS_ACTIVE: &str = "active";
+pub const STATUS_SUPERSEDED: &str = "superseded";
+pub const STATUS_ARCHIVED: &str = "archived";
+
+/// 记忆事实（API 视角，camelCase 序列化）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryFact {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    pub content: String,
+    pub category: String,
+    pub importance: f32,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_refs: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub access_count: i64,
+    pub pinned: bool,
+}
+
+/// 新增/更新事实的输入。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct NewFact {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    pub content: String,
+    #[serde(default = "default_category")]
+    pub category: String,
+    #[serde(default = "default_importance")]
+    pub importance: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_refs: Option<String>,
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+fn default_category() -> String {
+    "note".to_string()
+}
+
+fn default_importance() -> f32 {
+    0.5
+}
+
+/// 记忆库统计。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryStats {
+    pub total_facts: i64,
+    pub active_facts: i64,
+    pub archived_facts: i64,
+    pub superseded_facts: i64,
+    pub embedded_facts: i64,
+    pub db_size_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reindex_at: Option<String>,
+}
+
+/// 检索命中的事实（带融合分数）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoredFact {
+    pub id: String,
+    pub content: String,
+    pub category: String,
+    pub score: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// 检索选项。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default = "default_k")]
+    pub k: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_score: Option<f32>,
+}
+
+fn default_k() -> usize {
+    10
+}
+
+impl Default for SearchOptions {
+    fn default() -> Self {
+        Self {
+            category: None,
+            k: default_k(),
+            min_score: None,
+        }
+    }
+}
+
+/// 每项目记忆库。
+pub struct MemoryStore {
+    conn: Mutex<Connection>,
+    project_root: String,
+}
+
+/// 建表语句（幂等；参数化写入，DDL 不含字符串字面量）。
+const SCHEMA: &str = concat!(
+    "CREATE TABLE IF NOT EXISTS facts (",
+    "id TEXT PRIMARY KEY,",
+    "key TEXT,",
+    "content TEXT NOT NULL,",
+    "category TEXT NOT NULL,",
+    "importance REAL NOT NULL,",
+    "status TEXT NOT NULL,",
+    "embedding BLOB,",
+    "embedding_model TEXT,",
+    "embedding_dim INTEGER,",
+    "confidence REAL,",
+    "source_type TEXT,",
+    "source_refs TEXT,",
+    "valid_from TEXT,",
+    "valid_until TEXT,",
+    "created_at TEXT NOT NULL,",
+    "updated_at TEXT NOT NULL,",
+    "access_count INTEGER NOT NULL,",
+    "last_access_at TEXT,",
+    "pinned INTEGER NOT NULL",
+    ");",
+    "CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status);",
+    "CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category);",
+    "CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(key);",
+    "CREATE TABLE IF NOT EXISTS fact_versions (",
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,",
+    "fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,",
+    "version INTEGER NOT NULL,",
+    "reason TEXT NOT NULL,",
+    "content_before TEXT,",
+    "content_after TEXT,",
+    "related_fact_ids TEXT,",
+    "judge_model TEXT,",
+    "created_at TEXT NOT NULL",
+    ");",
+    "CREATE INDEX IF NOT EXISTS idx_versions_fact ON fact_versions(fact_id);",
+    "CREATE TABLE IF NOT EXISTS meta (",
+    "k TEXT PRIMARY KEY,",
+    "v TEXT NOT NULL",
+    ");",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS fts_facts USING fts5(",
+    "fact_id UNINDEXED,",
+    "content,",
+    "category,",
+    "source_type,",
+    "tokenize=trigram",
+    ");",
+);
+
+impl MemoryStore {
+    /// 打开（或创建）项目记忆库：<项目根>/.aio/memory/memory.sqlite。
+    pub fn open(project_root: &str) -> Result<Self, String> {
+        let dir = Path::new(project_root).join(".aio").join("memory");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建记忆目录失败: {e}"))?;
+        let path = dir.join("memory.sqlite");
+        let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "busy_timeout", 5000)
+            .map_err(|e| e.to_string())?;
+        conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            project_root: project_root.to_string(),
+        })
+    }
+
+    /// 写入/更新一条事实：key 存在则原地更新（P2 起叠加向量近邻仲裁）；
+    /// embedding 为 Some((模型, 维度, 向量)) 时同步更新向量，None 则保留/不写向量。
+    pub fn upsert_fact(
+        &self,
+        fact: &NewFact,
+        embedding: Option<(String, usize, Vec<f32>)>,
+    ) -> Result<MemoryFact, String> {
+        let now = now_iso();
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let existing: Option<String> = if let Some(k) = &fact.key {
+            let sql = "SELECT id FROM facts WHERE key = ?1 AND status != ?2";
+            tx.query_row(sql, params![k, STATUS_ARCHIVED], |r| r.get(0))
+                .optional()
+                .map_err(|e| e.to_string())?
+        } else {
+            None
+        };
+        let fid = match existing {
+            Some(fid) => {
+                tx.execute(
+                    "UPDATE facts SET content = ?1, category = ?2, importance = ?3, updated_at = ?4, source_type = COALESCE(?5, source_type), source_refs = COALESCE(?6, source_refs) WHERE id = ?7",
+                    params![fact.content, fact.category, fact.importance, now, fact.source_type, fact.source_refs, fid],
+                )
+                .map_err(|e| e.to_string())?;
+                fid
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO facts (id, key, content, category, importance, status, embedding, embedding_model, embedding_dim, confidence, source_type, source_refs, valid_from, created_at, updated_at, access_count, pinned) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                    params![
+                        new_id,
+                        fact.key,
+                        fact.content,
+                        fact.category,
+                        fact.importance,
+                        STATUS_ACTIVE,
+                        embedding.as_ref().map(|(_, _, v)| f32_to_bytes(v)),
+                        embedding.as_ref().map(|(m, _, _)| m.clone()),
+                        embedding.as_ref().map(|(_, d, _)| *d as i64),
+                        fact.importance,
+                        fact.source_type,
+                        fact.source_refs,
+                        now,
+                        now,
+                        now,
+                        0i64,
+                        fact.pinned as i64,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                new_id
+            }
+        };
+        // 显式提供向量时（新增或更新都生效）
+        if let Some((model, dim, vec)) = &embedding {
+            tx.execute(
+                "UPDATE facts SET embedding = ?1, embedding_model = ?2, embedding_dim = ?3 WHERE id = ?4",
+                params![f32_to_bytes(vec), model, *dim as i64, fid],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        // FTS5 同步（facts 表隐式 rowid）
+        tx.execute(
+            "INSERT OR REPLACE INTO fts_facts (rowid, fact_id, content, category, source_type) SELECT rowid, id, content, category, COALESCE(source_type, ?1) FROM facts WHERE id = ?2",
+            params!["", fid],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_fact(&fid)
+    }
+
+    /// 按 id 读取事实。
+    pub fn get_fact(&self, id: &str) -> Result<MemoryFact, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT id, key, content, category, importance, status, embedding_model, source_type, source_refs, created_at, updated_at, access_count, pinned FROM facts WHERE id = ?1",
+            [id],
+            |r| {
+                Ok(MemoryFact {
+                    id: r.get(0)?,
+                    key: r.get(1)?,
+                    content: r.get(2)?,
+                    category: r.get(3)?,
+                    importance: r.get(4)?,
+                    status: r.get(5)?,
+                    embedding_model: r.get(6)?,
+                    source_type: r.get(7)?,
+                    source_refs: r.get(8)?,
+                    created_at: r.get(9)?,
+                    updated_at: r.get(10)?,
+                    access_count: r.get(11)?,
+                    pinned: r.get::<_, i64>(12)? != 0,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("事实不存在: {id}"))
+    }
+
+    /// 列出事实（status/category 可选过滤，按更新时间倒序，分页）。
+    pub fn list_facts(
+        &self,
+        status: Option<&str>,
+        category: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<MemoryFact>, i64), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let base = "SELECT id, key, content, category, importance, status, embedding_model, source_type, source_refs, created_at, updated_at, access_count, pinned FROM facts";
+        let where_clause =
+            "WHERE status = COALESCE(?1, status) AND category = COALESCE(?2, category)";
+        let mut stmt = conn
+            .prepare(&format!(
+                "{base} {where_clause} ORDER BY updated_at DESC LIMIT ?3 OFFSET ?4"
+            ))
+            .map_err(|e| e.to_string())?;
+        let facts: Vec<MemoryFact> = stmt
+            .query_map(params![status, category, limit, offset], |r| {
+                Ok(MemoryFact {
+                    id: r.get(0)?,
+                    key: r.get(1)?,
+                    content: r.get(2)?,
+                    category: r.get(3)?,
+                    importance: r.get(4)?,
+                    status: r.get(5)?,
+                    embedding_model: r.get(6)?,
+                    source_type: r.get(7)?,
+                    source_refs: r.get(8)?,
+                    created_at: r.get(9)?,
+                    updated_at: r.get(10)?,
+                    access_count: r.get(11)?,
+                    pinned: r.get::<_, i64>(12)? != 0,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        let total: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM facts {where_clause}"),
+                params![status, category],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        Ok((facts, total))
+    }
+
+    /// 删除事实（级联删除版本审计与 FTS 条目）。
+    pub fn delete_fact(&self, id: &str) -> Result<(), String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM fts_facts WHERE fact_id = ?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM facts WHERE id = ?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// 修改事实状态（active / superseded / archived）。
+    pub fn set_status(
+        &self,
+        id: &str,
+        status: &str,
+        valid_until: Option<&str>,
+    ) -> Result<MemoryFact, String> {
+        let now = now_iso();
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE facts SET status = ?1, valid_until = COALESCE(?2, valid_until), updated_at = ?3 WHERE id = ?4",
+            params![status, valid_until, now, id],
+        )
+        .map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_fact(id)
+    }
+
+    /// 读取本项目记忆开关（meta 覆盖；None = 跟随全局默认）。
+    pub fn project_enabled(&self) -> Result<Option<bool>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let v: Option<String> = conn
+            .query_row(
+                "SELECT v FROM meta WHERE k = ?1",
+                [META_PROJECT_ENABLED],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        Ok(v.and_then(|s| match s.as_str() {
+            "1" => Some(true),
+            "0" => Some(false),
+            _ => None,
+        }))
+    }
+
+    /// 设置本项目记忆开关（None = 清除覆盖，跟随全局默认）。
+    pub fn set_project_enabled(&self, enabled: Option<bool>) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        match enabled {
+            Some(true) => {
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
+                    params![META_PROJECT_ENABLED, "1"],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Some(false) => {
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
+                    params![META_PROJECT_ENABLED, "0"],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            None => {
+                conn.execute("DELETE FROM meta WHERE k = ?1", [META_PROJECT_ENABLED])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 清空全部事实（删除项目记忆）。
+    pub fn clear(&self) -> Result<(), String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM facts", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM fact_versions", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM fts_facts", [])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// 检索计数累加（供使用统计）。
+    pub fn bump_access(&self, ids: &[String]) {
+        if ids.is_empty() {
+            return;
+        }
+        let now = now_iso();
+        if let Ok(conn) = self.conn.lock() {
+            for id in ids {
+                let _ = conn.execute(
+                    "UPDATE facts SET access_count = access_count + 1, last_access_at = ?1 WHERE id = ?2",
+                    params![now, id],
+                );
+            }
+        }
+    }
+
+    /// 混合检索：向量 top-k（query_vec 提供时）+ FTS5 BM25 → RRF 融合 + 时新度加成。
+    pub fn search_hybrid(
+        &self,
+        query_text: &str,
+        query_vec: Option<&[f32]>,
+        opts: &SearchOptions,
+    ) -> Result<Vec<ScoredFact>, String> {
+        let k = opts.k.clamp(1, 50);
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+
+        // 1) 向量召回（暴力余弦）
+        let mut vector_ranks: Vec<(String, usize)> = Vec::new();
+        if let Some(qv) = query_vec {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, embedding FROM facts WHERE status = ?1 AND embedding IS NOT NULL",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows: Vec<(String, Vec<u8>)> = stmt
+                .query_map(params![STATUS_ACTIVE], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            drop(stmt);
+            let decoded: Vec<(String, Vec<f32>)> = rows
+                .iter()
+                .map(|(id, b)| (id.clone(), bytes_to_f32(b)))
+                .collect();
+            let top = brute_force_topk(&decoded, qv, k * 2);
+            for (i, (id, _)) in top.iter().enumerate() {
+                vector_ranks.push((id.clone(), i));
+            }
+        }
+
+        // 2) FTS5 召回（trigram，支持中文子串；非法表达式降级为 LIKE）
+        let mut fts_ranks: Vec<(String, usize)> = Vec::new();
+        let sanitized = sanitize_fts_query(query_text);
+        if !sanitized.trim().is_empty() {
+            let sql = "SELECT fact_id FROM fts_facts WHERE fts_facts MATCH ?1 ORDER BY bm25(fts_facts) LIMIT ?2";
+            let matched: Result<Vec<String>, String> = (|| {
+                let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(params![sanitized, (k * 2) as i64], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .map_err(|e| e.to_string())?;
+                rows.filter_map(|r| r.ok())
+                    .collect::<Vec<String>>()
+                    .pipe(Ok)
+            })();
+            match matched {
+                Ok(ids) => {
+                    for (i, id) in ids.iter().enumerate() {
+                        fts_ranks.push((id.clone(), i));
+                    }
+                }
+                Err(_) => {
+                    // FTS 表达式解析失败时回退 LIKE 模糊匹配
+                    let pattern = format!("%{}%", query_text.trim());
+                    let mut stmt = conn
+                        .prepare("SELECT id FROM facts WHERE status = ?1 AND (content LIKE ?2 OR category LIKE ?2)")
+                        .map_err(|e| e.to_string())?;
+                    let rows = stmt
+                        .query_map(params![STATUS_ACTIVE, pattern], |r| r.get::<_, String>(0))
+                        .map_err(|e| e.to_string())?;
+                    for (i, id) in rows.filter_map(|r| r.ok()).take(k * 2).enumerate() {
+                        fts_ranks.push((id, i));
+                    }
+                }
+            }
+        }
+
+        // 3) RRF 融合
+        let mut rrf: HashMap<String, f32> = HashMap::new();
+        for (id, rank) in vector_ranks.iter().chain(fts_ranks.iter()) {
+            let entry = rrf.entry(id.clone()).or_insert(0.0);
+            *entry += 1.0 / (60.0 + *rank as f32 + 1.0);
+        }
+        if rrf.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 4) 取详情 + 时新度加成 + 排序
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut scored: Vec<ScoredFact> = Vec::new();
+        for (id, score) in rrf.iter() {
+            if let Ok(fact) = self.fetch_scored(id, *score, now_secs, &conn) {
+                if let Some(min) = opts.min_score {
+                    if fact.score < min {
+                        continue;
+                    }
+                }
+                scored.push(fact);
+            }
+        }
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored.truncate(k);
+        Ok(scored)
+    }
+
+    /// 生成注入系统提示词的记忆块（Markdown），按 token 预算裁剪；空结果返回 None。
+    pub fn build_inject_block(
+        &self,
+        query_text: &str,
+        query_vec: Option<&[f32]>,
+        budget_tokens: usize,
+    ) -> Result<Option<String>, String> {
+        if budget_tokens == 0 {
+            return Ok(None);
+        }
+        let results = self.search_hybrid(
+            query_text,
+            query_vec,
+            &SearchOptions {
+                category: None,
+                k: 20,
+                min_score: None,
+            },
+        )?;
+        if results.is_empty() {
+            return Ok(None);
+        }
+        let mut block = String::from("项目记忆（跨会话沉淀，仅作快速参考，以实际代码为准）：\n");
+        let mut used = count_approx(&block);
+        let mut count = 0usize;
+        for f in results {
+            let line = format!(
+                "- [{}] {}（更新时间 {}）\n",
+                f.category,
+                f.content,
+                f.updated_at.clone().unwrap_or_default(),
+            );
+            let t = count_approx(&line);
+            if used + t > budget_tokens && count > 0 {
+                break;
+            }
+            block.push_str(&line);
+            used += t;
+            count += 1;
+        }
+        if count == 0 {
+            return Ok(None);
+        }
+        Ok(Some(block))
+    }
+
+    /// 记忆库统计。
+    pub fn stats(&self) -> Result<MemoryStats, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM facts", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        let active: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE status = ?1",
+                [STATUS_ACTIVE],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let archived: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE status = ?1",
+                [STATUS_ARCHIVED],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let superseded: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE status = ?1",
+                [STATUS_SUPERSEDED],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let embedded: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let last_reindex: Option<String> = conn
+            .query_row(
+                "SELECT v FROM meta WHERE k = ?1",
+                [META_LAST_REINDEX],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        drop(conn);
+        let db_size = std::fs::metadata(
+            Path::new(&self.project_root)
+                .join(".aio")
+                .join("memory")
+                .join("memory.sqlite"),
+        )
+        .map(|m| m.len())
+        .unwrap_or(0);
+        Ok(MemoryStats {
+            total_facts: total,
+            active_facts: active,
+            archived_facts: archived,
+            superseded_facts: superseded,
+            embedded_facts: embedded,
+            db_size_bytes: db_size,
+            last_reindex_at: last_reindex,
+        })
+    }
+
+    /// 重建/补建向量：为所有无 embedding 的 active 事实生成向量。
+    /// 闭包返回 (模型名, 向量)；async 以支持网络嵌入。
+    pub async fn reindex<F, Fut>(&self, mut embed_one: F) -> Result<(usize, usize), String>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Result<Option<(String, usize, Vec<f32>)>, String>>,
+    {
+        let ids: Vec<String> = {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            let mut stmt = conn
+                .prepare("SELECT id, content FROM facts WHERE status = ?1 AND embedding IS NULL")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map(params![STATUS_ACTIVE], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        let mut embedded = 0usize;
+        let mut failed = 0usize;
+        for id in ids {
+            let content = self.get_fact(&id).map(|f| f.content).unwrap_or_default();
+            match embed_one(content).await {
+                Ok(Some((model, dim, v))) => {
+                    let conn = self.conn.lock().map_err(|e| e.to_string())?;
+                    conn.execute(
+                        "UPDATE facts SET embedding = ?1, embedding_dim = ?2, embedding_model = ?3 WHERE id = ?4",
+                        params![f32_to_bytes(&v), dim as i64, model, id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    drop(conn);
+                    embedded += 1;
+                }
+                Ok(None) => {}
+                Err(_) => failed += 1,
+            }
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
+            params![META_LAST_REINDEX, now_iso()],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok((embedded, failed))
+    }
+
+    /// 从旧版 .aio/knowledge.json 迁移事实（幂等，已迁移则跳过）。
+    pub fn migrate_from_knowledge_json(&self) -> Result<usize, String> {
+        let migrated: Option<String> = {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT v FROM meta WHERE k = ?1",
+                [META_MIGRATED_KNOWLEDGE],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+        };
+        if migrated.as_deref() == Some("1") {
+            return Ok(0);
+        }
+        let knowledge = knowledge::load_knowledge(&self.project_root);
+        let mut count = 0usize;
+        for entry in knowledge.entries {
+            let fact = NewFact {
+                key: Some(entry.key.clone()),
+                content: entry.content.clone(),
+                category: entry.category.clone(),
+                importance: 0.5,
+                source_type: Some("user".into()),
+                source_refs: Some(format!("knowledge.json:{}", entry.key)),
+                pinned: false,
+            };
+            if self.upsert_fact(&fact, None).is_ok() {
+                count += 1;
+            }
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
+            params![META_MIGRATED_KNOWLEDGE, "1"],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(count)
+    }
+
+    fn fetch_scored(
+        &self,
+        id: &str,
+        score: f32,
+        now_secs: u64,
+        conn: &Connection,
+    ) -> Result<ScoredFact, String> {
+        let row: (String, String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT content, category, source_type, updated_at FROM facts WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(|e| e.to_string())?;
+        let mut final_score = score;
+        if let Some(upd) = &row.3 {
+            if let Some(secs) = iso_to_secs(upd) {
+                let age_days = now_secs.saturating_sub(secs) / 86400;
+                if age_days <= 90 {
+                    final_score *= 1.1;
+                }
+            }
+        }
+        Ok(ScoredFact {
+            id: id.to_string(),
+            content: row.0,
+            category: row.1,
+            score: final_score,
+            source_type: row.2,
+            updated_at: row.3,
+        })
+    }
+}
+
+const META_LAST_REINDEX: &str = "last_reindex_at";
+const META_MIGRATED_KNOWLEDGE: &str = "knowledge_json_migrated";
+const META_PROJECT_ENABLED: &str = "project_memory_enabled";
+
+/// 简易 token 估算（用于注入预算；精确计数交给 token_counter 的场景除外）。
+fn count_approx(text: &str) -> usize {
+    text.chars().count() / 2 + 1
+}
+
+/// 清洗 FTS 查询：仅保留字母数字（含 CJK），其余替换为空格，避免 FTS 语法错误。
+fn sanitize_fts_query(q: &str) -> String {
+    let mut out = String::new();
+    for c in q.chars() {
+        if c.is_alphanumeric() {
+            out.push(c);
+        } else {
+            out.push(' ');
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// YYYY-MM-DDTHH:MM:SS → Unix 秒。
+fn iso_to_secs(iso: &str) -> Option<u64> {
+    let s = iso.trim();
+    if s.len() < 19 {
+        return None;
+    }
+    let y: u64 = s[0..4].parse().ok()?;
+    let mo: u64 = s[5..7].parse().ok()?;
+    let d: u64 = s[8..10].parse().ok()?;
+    let h: u64 = s[11..13].parse().ok()?;
+    let mi: u64 = s[14..16].parse().ok()?;
+    let se: u64 = s[17..19].parse().ok()?;
+    Some(days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se)
+}
+
+/// 儒略日换算（Howard Hinnant civil_from_days 逆运算的简化版）。
+fn days_from_civil(y: u64, m: u64, d: u64) -> u64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// 当前时间 ISO（复用 knowledge 模块实现）。
+fn now_iso() -> String {
+    knowledge::now_iso()
+}
+
+/// 小型管道辅助（配合闭包链）。
+trait Pipe: Sized {
+    fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
+        f(self)
+    }
+}
+impl<T> Pipe for T {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_project(tag: &str) -> String {
+        let dir =
+            std::env::temp_dir().join(format!("aio-memory-test-{tag}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir.to_string_lossy().to_string()
+    }
+
+    fn fact(content: &str, key: Option<&str>) -> NewFact {
+        NewFact {
+            key: key.map(|s| s.to_string()),
+            content: content.to_string(),
+            category: "note".into(),
+            importance: 0.5,
+            source_type: None,
+            source_refs: None,
+            pinned: false,
+        }
+    }
+
+    #[test]
+    fn test_open_and_schema_idempotent() {
+        let root = temp_project("schema");
+        let s1 = MemoryStore::open(&root).unwrap();
+        let s2 = MemoryStore::open(&root).unwrap();
+        drop(s1);
+        drop(s2);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_upsert_and_get() {
+        let root = temp_project("upsert");
+        let store = MemoryStore::open(&root).unwrap();
+        let saved = store
+            .upsert_fact(&fact("项目使用 rusqlite", Some("k1")), None)
+            .unwrap();
+        assert_eq!(saved.key.as_deref(), Some("k1"));
+        let saved2 = store
+            .upsert_fact(&fact("项目迁移到 sqlite-vec", Some("k1")), None)
+            .unwrap();
+        assert_eq!(saved2.id, saved.id);
+        assert!(saved2.content.contains("sqlite-vec"));
+        let (facts, total) = store.list_facts(Some(STATUS_ACTIVE), None, 10, 0).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(facts.len(), 1);
+        store.delete_fact(&saved.id).unwrap();
+        assert!(store.get_fact(&saved.id).is_err());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_hybrid_search_fts() {
+        let root = temp_project("fts");
+        let store = MemoryStore::open(&root).unwrap();
+        store
+            .upsert_fact(&fact("数据库使用 rusqlite 存储聊天记录", None), None)
+            .unwrap();
+        store
+            .upsert_fact(&fact("前端使用 SolidJS 与 Tailwind CSS", None), None)
+            .unwrap();
+        let res = store
+            .search_hybrid("rusqlite", None, &SearchOptions::default())
+            .unwrap();
+        assert!(!res.is_empty());
+        assert!(res.iter().any(|f| f.content.contains("rusqlite")));
+        let res2 = store
+            .search_hybrid("聊天记录", None, &SearchOptions::default())
+            .unwrap();
+        assert!(
+            res2.iter().any(|f| f.content.contains("聊天记录")),
+            "trigram 应命中中文子串: {:?}",
+            res2.iter().map(|f| f.content.clone()).collect::<Vec<_>>(),
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_vector_scoring() {
+        let root = temp_project("vector");
+        let store = MemoryStore::open(&root).unwrap();
+        let v = vec![1.0f32, 0.0, 0.0, 0.0];
+        store
+            .upsert_fact(&fact("甲", None), Some(("test".into(), 4, v.clone())))
+            .unwrap();
+        store
+            .upsert_fact(
+                &fact("乙", None),
+                Some(("test".into(), 4, vec![0.0, 1.0, 0.0, 0.0])),
+            )
+            .unwrap();
+        let res = store
+            .search_hybrid(
+                "查询",
+                Some(&v),
+                &SearchOptions {
+                    category: None,
+                    k: 5,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(res.len(), 2);
+        assert!(
+            res[0].content == "甲",
+            "与查询向量相同的应排第一: {:?}",
+            res.iter().map(|f| f.content.clone()).collect::<Vec<_>>(),
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_project_enabled_override() {
+        let root = temp_project("override");
+        let store = MemoryStore::open(&root).unwrap();
+        assert_eq!(store.project_enabled().unwrap(), None);
+        store.set_project_enabled(Some(true)).unwrap();
+        assert_eq!(store.project_enabled().unwrap(), Some(true));
+        store.set_project_enabled(Some(false)).unwrap();
+        assert_eq!(store.project_enabled().unwrap(), Some(false));
+        store.set_project_enabled(None).unwrap();
+        assert_eq!(store.project_enabled().unwrap(), None);
+        fs::remove_dir_all(&root).ok();
+    }
+}

@@ -1,6 +1,7 @@
 pub mod attachment;
 pub mod catalog;
 pub mod config;
+pub mod embedding;
 pub mod engine;
 pub mod export;
 pub mod git;
@@ -9,6 +10,7 @@ pub mod llm;
 pub mod lsp;
 pub mod mcp;
 pub mod mcp_catalog;
+pub mod memory;
 pub mod project;
 pub mod provider_config;
 pub mod skill;

@@ -37,6 +37,7 @@ import {
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
 import { locale, setLocale, t, type Locale } from '../../../core/i18n';
+import EmbeddingSetup from './EmbeddingSetup';
 
 /**
  * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）
@@ -634,6 +635,8 @@ const AppSettings: Component = () => {
             <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
           </label>
         </div>
+
+        <EmbeddingSetup />
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>

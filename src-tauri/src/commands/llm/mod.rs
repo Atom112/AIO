@@ -1063,10 +1063,21 @@ async fn execute_builtin_tool(
         lsp_agent_tools::execute_lsp_hover(app, &project_root, arguments).await
     } else if tool_name == "lsp_symbols" {
         lsp_agent_tools::execute_lsp_symbols(app, &project_root, arguments).await
-    } else if tool_name == "remember" {
-        knowledge::execute_remember(&project_root, arguments)
-    } else if tool_name == "recall" {
-        knowledge::execute_recall(&project_root, arguments)
+    } else if matches!(
+        tool_name,
+        "remember" | "recall" | "search_memory" | "update_memory" | "forget_memory"
+    ) {
+        let tool_name_c = tool_name.to_string();
+        let arguments_c = arguments.clone();
+        let root_c = project_root.clone();
+        let app_c2 = app.clone();
+        crate::services::memory::tools::execute_memory_tool(
+            &app_c2,
+            &tool_name_c,
+            &arguments_c,
+            &root_c,
+        )
+        .await
     } else if tool_name == "think" {
         Ok(crate::utils::think::execute(arguments))
     } else if tool_name == "project_map" {
@@ -2956,6 +2967,13 @@ pub async fn run_agent_turn(
                 auto_start_enabled: false,
                 max_concurrent_subagents: None,
                 max_tool_rounds: None,
+                memory_enabled: false,
+                memory_auto_inject: true,
+                memory_auto_extract: true,
+                memory_max_facts: 2000,
+                memory_injection_budget_tokens: 3000,
+                memory_extract_debounce_secs: 60,
+                memory_embedding: crate::core::models::MemoryEmbeddingConfig::default(),
             });
 
         // 子 Agent 并发上限控制
@@ -3042,10 +3060,30 @@ pub async fn run_agent_turn(
         } else {
             (Vec::new(), std::collections::HashMap::new())
         };
-        if is_agent_mode && app_config.knowledge_enabled && project_id_c.is_some() {
-            for spec in knowledge::get_knowledge_tool_specs() {
-                tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
-                tools.push(spec);
+        // 记忆工具：全局默认 + 每项目覆盖决定是否启用；启用时注入记忆工具，否则回退旧知识工具
+        let mut memory_effective = false;
+        if is_agent_mode && project_id_c.is_some() {
+            let root = file_tools::resolve_project_root(&app_c, project_id_c.as_deref()).ok();
+            let override_enabled = root
+                .and_then(|r| {
+                    app_c
+                        .state::<crate::services::memory::MemoryStoreManager>()
+                        .open(&r)
+                        .ok()
+                })
+                .and_then(|s| s.project_enabled().ok())
+                .flatten();
+            memory_effective = override_enabled.unwrap_or(app_config.memory_enabled);
+            if memory_effective {
+                for spec in crate::services::memory::tools::get_memory_tool_specs() {
+                    tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
+                    tools.push(spec);
+                }
+            } else if app_config.knowledge_enabled {
+                for spec in knowledge::get_knowledge_tool_specs() {
+                    tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
+                    tools.push(spec);
+                }
             }
         }
         // P1-10：Skills 按需注入 — 仅注入 read_skill 工具，由模型按需读取完整内容
@@ -3112,6 +3150,54 @@ pub async fn run_agent_turn(
                                 "content": format!("[项目知识 — 来自之前对话]\n{}", prompt)
                             }),
                         );
+                    }
+                }
+            }
+        }
+        // 项目记忆自动注入（P1）：基于首条 user 消息检索一次，插入稳定前缀位（index=1）
+        if memory_effective && app_config.memory_auto_inject {
+            if let Some(pid) = &project_id_c {
+                if let Ok(project_root) = file_tools::resolve_project_root(&app_c, Some(pid)) {
+                    if let Ok(store) = app_c
+                        .state::<crate::services::memory::MemoryStoreManager>()
+                        .open(&project_root)
+                    {
+                        let query = messages_for_api
+                            .iter()
+                            .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+                            .and_then(|m| m.get("content").and_then(|v| v.as_str()))
+                            .unwrap_or("")
+                            .to_string();
+                        let budget = app_config.memory_injection_budget_tokens as usize;
+                        if !query.is_empty() && budget > 0 {
+                            let mut ecfg = app_config.memory_embedding.clone();
+                            if ecfg.provider == "openai_compat" && ecfg.api_key.is_empty() {
+                                if let Ok(Some(key)) =
+                                    crate::core::secure_store::get(&app_c, "embedding_api_key")
+                                {
+                                    ecfg.api_key = key;
+                                }
+                            }
+                            let query_vec = match crate::plugins::embed::resolve(&ecfg) {
+                                Ok(e) => e
+                                    .embed(std::slice::from_ref(&query))
+                                    .await
+                                    .ok()
+                                    .and_then(|v| v.into_iter().next()),
+                                Err(_) => None,
+                            };
+                            if let Ok(Some(block)) =
+                                store.build_inject_block(&query, query_vec.as_deref(), budget)
+                            {
+                                messages_for_api.insert(
+                                    1,
+                                    serde_json::json!({
+                                        "role": "system",
+                                        "content": format!("[项目记忆]\n{}", block)
+                                    }),
+                                );
+                            }
+                        }
                     }
                 }
             }

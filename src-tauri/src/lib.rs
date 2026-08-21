@@ -174,6 +174,11 @@ pub fn run() {
             commands::llm::count_tokens_cmd,
             // 项目记忆（RAG）
             commands::memory::memory_get_status,
+            commands::memory::memory_get_versions,
+            commands::memory::memory_merge_facts,
+            commands::memory::memory_archive,
+            commands::memory::memory_set_pinned,
+            commands::memory::memory_prune,
             commands::memory::memory_get,
             commands::memory::memory_set_enabled,
             commands::memory::memory_reset_enabled,

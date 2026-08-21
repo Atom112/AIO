@@ -95,6 +95,23 @@ pub struct ScoredFact {
     pub updated_at: Option<String>,
 }
 
+/// 版本审计记录。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FactVersion {
+    pub id: i64,
+    pub fact_id: String,
+    pub version: i64,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_fact_ids: Option<String>,
+    pub created_at: String,
+}
+
 /// 检索选项。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -217,11 +234,27 @@ impl MemoryStore {
         };
         let fid = match existing {
             Some(fid) => {
+                // 版本审计：记录旧内容（reason=update）
+                let old_content: Option<String> = tx
+                    .query_row("SELECT content FROM facts WHERE id = ?1", [&fid], |r| {
+                        r.get(0)
+                    })
+                    .optional()
+                    .map_err(|e| e.to_string())?;
                 tx.execute(
                     "UPDATE facts SET content = ?1, category = ?2, importance = ?3, updated_at = ?4, source_type = COALESCE(?5, source_type), source_refs = COALESCE(?6, source_refs) WHERE id = ?7",
                     params![fact.content, fact.category, fact.importance, now, fact.source_type, fact.source_refs, fid],
                 )
                 .map_err(|e| e.to_string())?;
+                log_version_tx(
+                    &tx,
+                    &fid,
+                    "update",
+                    old_content.as_deref(),
+                    Some(&fact.content),
+                    None,
+                    "",
+                )?;
                 fid
             }
             None => {
@@ -420,6 +453,202 @@ impl MemoryStore {
             }
         }
         Ok(())
+    }
+
+    /// 钉住 / 取消钉住。
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<MemoryFact, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE facts SET pinned = ?1 WHERE id = ?2",
+            params![pinned as i64, id],
+        )
+        .map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_fact(id)
+    }
+
+    /// 读取 meta 键值。
+    pub fn meta_get(&self, key: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row("SELECT v FROM meta WHERE k = ?1", [key], |r| r.get(0))
+            .optional()
+            .map_err(|e| e.to_string())
+    }
+
+    /// 写入 meta 键值。
+    pub fn meta_put(&self, key: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
+            params![key, value],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// 直接订正事实内容（不换 key），并写入版本审计（reason=update/merge）。
+    pub fn update_content(
+        &self,
+        id: &str,
+        content: &str,
+        reason: &str,
+    ) -> Result<MemoryFact, String> {
+        let now = now_iso();
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let old: Option<String> = tx
+            .query_row("SELECT content FROM facts WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE facts SET content = ?1, updated_at = ?2 WHERE id = ?3",
+            params![content, now, id],
+        )
+        .map_err(|e| e.to_string())?;
+        log_version_tx(&tx, id, reason, old.as_deref(), Some(content), None, "")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO fts_facts (rowid, fact_id, content, category, source_type) SELECT rowid, id, content, category, COALESCE(source_type, ?1) FROM facts WHERE id = ?2",
+            params!["", id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_fact(id)
+    }
+
+    /// 合并两条事实：target 保留（内容更新），source 标记 superseded 并记录版本审计。
+    pub fn merge_facts(
+        &self,
+        target_id: &str,
+        source_id: &str,
+        merged_content: &str,
+    ) -> Result<MemoryFact, String> {
+        let now = now_iso();
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let old_target: Option<String> = tx
+            .query_row(
+                "SELECT content FROM facts WHERE id = ?1",
+                [target_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE facts SET content = ?1, updated_at = ?2 WHERE id = ?3",
+            params![merged_content, now, target_id],
+        )
+        .map_err(|e| e.to_string())?;
+        log_version_tx(
+            &tx,
+            target_id,
+            "merge",
+            old_target.as_deref(),
+            Some(merged_content),
+            Some(&format!("[{source_id}]")),
+            "",
+        )?;
+        log_version_tx(&tx, source_id, "supersede", None, None, None, "")?;
+        tx.execute(
+            "UPDATE facts SET status = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4",
+            params![STATUS_SUPERSEDED, now, now, source_id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT OR REPLACE INTO fts_facts (rowid, fact_id, content, category, source_type) SELECT rowid, id, content, category, COALESCE(source_type, ?1) FROM facts WHERE id = ?2",
+            params!["", target_id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_fact(target_id)
+    }
+
+    /// 标记事实为 superseded（冲突/过时），记录版本审计。
+    pub fn supersede_fact(&self, id: &str, reason: &str) -> Result<MemoryFact, String> {
+        let now = now_iso();
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let old: Option<String> = tx
+            .query_row("SELECT content FROM facts WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(|e| e.to_string())?;
+        log_version_tx(&tx, id, "supersede", old.as_deref(), None, None, reason)?;
+        tx.execute(
+            "UPDATE facts SET status = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4",
+            params![STATUS_SUPERSEDED, now, now, id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_fact(id)
+    }
+
+    /// 读取事实的版本审计链。
+    pub fn get_versions(&self, fact_id: &str) -> Result<Vec<FactVersion>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT id, fact_id, version, reason, content_before, content_after, related_fact_ids, created_at FROM fact_versions WHERE fact_id = ?1 ORDER BY version DESC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([fact_id], |r| {
+                Ok(FactVersion {
+                    id: r.get(0)?,
+                    fact_id: r.get(1)?,
+                    version: r.get(2)?,
+                    reason: r.get(3)?,
+                    content_before: r.get(4)?,
+                    content_after: r.get(5)?,
+                    related_fact_ids: r.get(6)?,
+                    created_at: r.get(7)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// 容量治理：活跃事实超过上限时，按 score = importance 乘访问衰减归档最低分的非 pinned 事实。
+    pub fn prune_to_capacity(&self, max_facts: u32) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let active: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE status = ?1",
+                [STATUS_ACTIVE],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if active as u32 <= max_facts {
+            return Ok(0);
+        }
+        let excess = (active as u32 - max_facts) as usize;
+        // 最低分优先归档：importance * (1 + 0.1 * min(access_count, 20))
+        let mut stmt = conn
+            .prepare("SELECT id FROM facts WHERE status = ?1 AND pinned = 0 ORDER BY (importance * (1.0 + 0.1 * MIN(access_count, 20))) ASC, updated_at ASC LIMIT ?2")
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt
+            .query_map(params![STATUS_ACTIVE, excess as i64], |r| {
+                r.get::<_, String>(0)
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        let now = now_iso();
+        let mut archived = 0usize;
+        for id in ids {
+            let n = conn
+                .execute(
+                    "UPDATE facts SET status = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![STATUS_ARCHIVED, now, now, id],
+                )
+                .map_err(|e| e.to_string())?;
+            archived += n;
+        }
+        Ok(archived)
     }
 
     /// 清空全部事实（删除项目记忆）。
@@ -811,6 +1040,11 @@ fn sanitize_fts_query(q: &str) -> String {
 }
 
 /// YYYY-MM-DDTHH:MM:SS → Unix 秒。
+/// 公开包装：ISO 时间转 Unix 秒（供提取管线去抖）。
+pub fn iso_to_secs_pub(iso: &str) -> Option<u64> {
+    iso_to_secs(iso)
+}
+
 fn iso_to_secs(iso: &str) -> Option<u64> {
     let s = iso.trim();
     if s.len() < 19 {
@@ -834,6 +1068,31 @@ fn days_from_civil(y: u64, m: u64, d: u64) -> u64 {
     let doy = (153 * mp + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146097 + doe - 719468
+}
+
+/// 在事务内写入版本审计（自动计算下一版本号）。
+fn log_version_tx(
+    tx: &rusqlite::Transaction<'_>,
+    fact_id: &str,
+    reason: &str,
+    before: Option<&str>,
+    after: Option<&str>,
+    related: Option<&str>,
+    judge_model: &str,
+) -> Result<(), String> {
+    let version: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM fact_versions WHERE fact_id = ?1",
+            [fact_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO fact_versions (fact_id, version, reason, content_before, content_after, related_fact_ids, judge_model, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![fact_id, version, reason, before, after, related, judge_model, now_iso()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 当前时间 ISO（复用 knowledge 模块实现）。

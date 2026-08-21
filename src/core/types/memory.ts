@@ -17,6 +17,17 @@ export interface MemoryFact {
   pinned: boolean;
 }
 
+export interface FactVersion {
+  id: number;
+  factId: string;
+  version: number;
+  reason: string;
+  contentBefore?: string;
+  contentAfter?: string;
+  relatedFactIds?: string;
+  createdAt: string;
+}
+
 /** 检索命中的事实 */
 export interface ScoredFact {
   id: string;

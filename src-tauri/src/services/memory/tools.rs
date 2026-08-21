@@ -4,6 +4,7 @@
 //! 记忆未启用时 remember / recall 回退到旧版 knowledge.json 实现，保持向后兼容。
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::manager::MemoryStoreManager;
 use crate::services::memory::store::{MemoryStore, NewFact, SearchOptions};
 use serde_json::{json, Value};
@@ -213,17 +214,75 @@ async fn execute_remember(
         .get("key")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let fact = NewFact {
-        key,
-        content: content.to_string(),
-        category: category.to_string(),
-        importance: 0.5,
-        source_type: Some("agent".into()),
-        source_refs: None,
-        pinned: false,
+    let embedding = embed_one(app, content).await;
+
+    // P2 仲裁：向量近邻高分（>=0.92）时由 LLM 判定 merge / update / supersede / keep_separate
+    let mut resolved_id: Option<String> = None;
+    if let Some((_, _, vec)) = &embedding {
+        if let Ok(dups) = store.search_hybrid(
+            content,
+            Some(vec),
+            &SearchOptions {
+                category: None,
+                k: 1,
+                min_score: Some(0.92),
+            },
+        ) {
+            if let Some(top) = dups.first() {
+                if let Ok(existing) = store.get_fact(&top.id) {
+                    let same_key =
+                        key.as_deref().is_some() && existing.key.as_deref() == key.as_deref();
+                    if !same_key {
+                        let (action, merged) = match crate::services::memory::llm::llm_config(app) {
+                            Ok(cfg) => {
+                                crate::services::memory::judge::judge(
+                                    &cfg,
+                                    &existing.content,
+                                    content,
+                                )
+                                .await
+                            }
+                            Err(_) => (JudgeAction::KeepSeparate, String::new()),
+                        };
+                        match action {
+                            JudgeAction::KeepSeparate => {}
+                            JudgeAction::Update => {
+                                store.update_content(&existing.id, content, "update")?;
+                                resolved_id = Some(existing.id);
+                            }
+                            JudgeAction::Merge => {
+                                let merged_content = if merged.trim().is_empty() {
+                                    format!("{}；{}", existing.content, content)
+                                } else {
+                                    merged
+                                };
+                                store.update_content(&existing.id, &merged_content, "merge")?;
+                                resolved_id = Some(existing.id);
+                            }
+                            JudgeAction::Supersede => {
+                                store.supersede_fact(&existing.id, "被新事实取代")?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let saved = match resolved_id {
+        Some(id) => store.get_fact(&id)?,
+        None => {
+            let fact = NewFact {
+                key,
+                content: content.to_string(),
+                category: category.to_string(),
+                importance: 0.5,
+                source_type: Some("agent".into()),
+                source_refs: None,
+                pinned: false,
+            };
+            store.upsert_fact(&fact, embedding)?
+        }
     };
-    let embedding = embed_one(app, &fact.content).await;
-    let saved = store.upsert_fact(&fact, embedding)?;
     Ok(tool_ok(format!(
         "已记住: {}（{}）",
         saved.content, saved.category

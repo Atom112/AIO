@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   EmbeddingDownloadProgress,
   EmbeddingTestResult,
+  FactVersion,
   MemoryEmbeddingConfig,
   MemoryFact,
   MemoryListPage,
@@ -54,7 +55,23 @@ export const memoryStats = (projectId: string) =>
 export const memoryReindex = (projectId: string) =>
   invoke<[number, number]>('memory_reindex', { projectId });
 
-export const embeddingSaveApiKey = (key: string) => invoke<void>('embedding_save_api_key', { key });
+export const memoryGetVersions = (projectId: string, id: string) =>
+  invoke<FactVersion[]>('memory_get_versions', { projectId, id });
+
+export const memoryMergeFacts = (
+  projectId: string,
+  targetId: string,
+  sourceId: string,
+  mergedContent: string,
+) => invoke<MemoryFact>('memory_merge_facts', { projectId, targetId, sourceId, mergedContent });
+
+export const memoryArchive = (projectId: string, id: string) =>
+  invoke<MemoryFact>('memory_archive', { projectId, id });
+
+export const memorySetPinned = (projectId: string, id: string, pinned: boolean) =>
+  invoke<MemoryFact>('memory_set_pinned', { projectId, id, pinned });
+
+export const memoryPrune = (projectId: string) => invoke<number>('memory_prune', { projectId });
 
 export const embeddingTest = (config: MemoryEmbeddingConfig) =>
   invoke<EmbeddingTestResult>('embedding_test', { config });
@@ -77,5 +94,7 @@ export const embeddingPullOllamaModel = (model: string, apiUrl?: string) =>
 
 export const embeddingDeleteOllamaModel = (model: string, apiUrl?: string) =>
   invoke<void>('embedding_delete_ollama_model', { model, apiUrl });
+
+export const embeddingSaveApiKey = (key: string) => invoke<void>('embedding_save_api_key', { key });
 
 export type { EmbeddingDownloadProgress, MemoryEmbeddingConfig };

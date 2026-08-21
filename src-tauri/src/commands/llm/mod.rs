@@ -49,7 +49,7 @@ pub(crate) fn streaming_http_client() -> reqwest::Client {
 /// 非流式 HTTP 客户端（summarize / generate_title / fetch_models）。
 ///
 /// 短请求应有短超时，60s 对非流式 LLM 调用绰绰有余。
-fn non_streaming_http_client() -> reqwest::Client {
+pub(crate) fn non_streaming_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(60))
@@ -310,7 +310,7 @@ fn normalize_chat_url(api_url: &str) -> String {
 
 /// 发送聊天补全请求，自动适配 Anthropic 原生协议（URL / 鉴权 / 请求体转换）。
 /// 返回 (response, is_anthropic)，调用方据此解析响应。
-async fn post_chat_completion(
+pub(crate) async fn post_chat_completion(
     client: &reqwest::Client,
     api_url: &str,
     api_key: &str,
@@ -342,7 +342,7 @@ async fn post_chat_completion(
 }
 
 /// 从非流式响应提取错误信息（OpenAI 与 Anthropic 同为 {error:{message}} 形状）。
-fn chat_error_message(val: &serde_json::Value) -> Option<String> {
+pub(crate) fn chat_error_message(val: &serde_json::Value) -> Option<String> {
     val.get("error")
         .and_then(|e| e.get("message"))
         .and_then(|m| m.as_str())
@@ -350,7 +350,7 @@ fn chat_error_message(val: &serde_json::Value) -> Option<String> {
 }
 
 /// 从非流式响应提取文本内容（OpenAI choices[0].message.content / Anthropic content 文本块）。
-fn chat_text_content(val: &serde_json::Value, is_anthropic: bool) -> String {
+pub(crate) fn chat_text_content(val: &serde_json::Value, is_anthropic: bool) -> String {
     if is_anthropic {
         crate::plugins::provider::anthropic::anthropic_text_content(val)
     } else {
@@ -4015,6 +4015,28 @@ pub async fn run_agent_turn(
             }
         }
 
+        // P2：后台自动事实提取（sleep-time compute）——不阻塞主流程
+        if memory_effective && app_config.memory_auto_extract {
+            if let Some(pid) = &project_id_c {
+                if let Ok(project_root) = file_tools::resolve_project_root(&app_c, Some(pid)) {
+                    let transcript = build_extract_transcript(&messages_for_api);
+                    let app_x = app_c.clone();
+                    let root_x = project_root;
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = crate::services::memory::extract::extract_and_store(
+                            &app_x,
+                            &root_x,
+                            &transcript,
+                        )
+                        .await
+                        {
+                            tracing::warn!("[memory] 自动事实提取失败: {e}");
+                        }
+                    });
+                }
+            }
+        }
+
         // ===== Epilogue（必达）：无论正常/取消/出错都 emit terminal done =====
         let error_payload = if was_cancelled {
             None
@@ -4069,6 +4091,25 @@ pub async fn run_agent_turn(
 
     stream_mgr.0.insert(task_key, (handle, token));
     Ok(())
+}
+
+/// 为自动事实提取构造对话转写：取最近 12 条非 system 消息，截断到 ~10k 字符。
+fn build_extract_transcript(messages: &[serde_json::Value]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let recent: Vec<&serde_json::Value> = messages.iter().rev().take(12).collect();
+    for m in recent.iter().rev() {
+        let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "system" {
+            continue;
+        }
+        let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        if content.trim().is_empty() {
+            continue;
+        }
+        parts.push(format!("[{role}] {content}"));
+    }
+    let joined = parts.join("\n");
+    joined.chars().take(10_000).collect()
 }
 
 /// 上下文自动压缩：将早期消息压缩为摘要，按 token 预算保留最近消息。

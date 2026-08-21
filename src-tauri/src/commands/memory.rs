@@ -4,7 +4,9 @@
 
 use crate::core::models::{AppConfig, MemoryEmbeddingConfig};
 use crate::services::memory::manager::MemoryStoreManager;
-use crate::services::memory::store::{MemoryFact, MemoryStats, NewFact, ScoredFact, SearchOptions};
+use crate::services::memory::store::{
+    FactVersion, MemoryFact, MemoryStats, NewFact, ScoredFact, SearchOptions,
+};
 use crate::utils::file_tools;
 use tauri::{AppHandle, Manager};
 
@@ -186,17 +188,38 @@ pub async fn memory_update(
     let store = app.state::<MemoryStoreManager>().open(&root)?;
     let existing = store.get_fact(&id)?;
     let new_content = content.unwrap_or(existing.content.clone());
-    let fact = NewFact {
-        key: existing.key.clone(),
-        content: new_content.clone(),
-        category: category.unwrap_or(existing.category),
-        importance: existing.importance,
-        source_type: existing.source_type.clone(),
-        source_refs: existing.source_refs.clone(),
-        pinned: existing.pinned,
+    // key 存在时走 upsert（同 key 原地更新 + 版本审计）；无 key 时直接订正内容
+    let saved = if existing.key.is_some() {
+        let fact = NewFact {
+            key: existing.key.clone(),
+            content: new_content.clone(),
+            category: category.unwrap_or(existing.category),
+            importance: existing.importance,
+            source_type: existing.source_type.clone(),
+            source_refs: existing.source_refs.clone(),
+            pinned: existing.pinned,
+        };
+        let embedding = embed_one(&app, &cfg.memory_embedding, &new_content).await;
+        store.upsert_fact(&fact, embedding)?
+    } else {
+        let updated = store.update_content(&id, &new_content, "update")?;
+        if let Some(embedding) = embed_one(&app, &cfg.memory_embedding, &new_content).await {
+            let _ = store.upsert_fact(
+                &NewFact {
+                    key: None,
+                    content: new_content.clone(),
+                    category: updated.category.clone(),
+                    importance: updated.importance,
+                    source_type: updated.source_type.clone(),
+                    source_refs: updated.source_refs.clone(),
+                    pinned: updated.pinned,
+                },
+                Some(embedding),
+            );
+        }
+        store.get_fact(&id)?
     };
-    let embedding = embed_one(&app, &cfg.memory_embedding, &new_content).await;
-    store.upsert_fact(&fact, embedding)
+    Ok(saved)
 }
 
 /// 删除一条事实。
@@ -231,6 +254,75 @@ pub fn memory_reset_enabled(app: AppHandle, project_id: String) -> Result<(), St
     app.state::<MemoryStoreManager>()
         .open(&root)?
         .set_project_enabled(None)
+}
+
+/// 读取事实的版本审计链。
+#[tauri::command]
+pub fn memory_get_versions(
+    app: AppHandle,
+    project_id: String,
+    id: String,
+) -> Result<Vec<FactVersion>, String> {
+    let root = resolve_root(&app, &project_id)?;
+    app.state::<MemoryStoreManager>()
+        .open(&root)?
+        .get_versions(&id)
+}
+
+/// 手工合并两条事实（target 保留，source 标记 superseded）。
+#[tauri::command]
+pub fn memory_merge_facts(
+    app: AppHandle,
+    project_id: String,
+    target_id: String,
+    source_id: String,
+    merged_content: String,
+) -> Result<MemoryFact, String> {
+    let root = resolve_root(&app, &project_id)?;
+    app.state::<MemoryStoreManager>().open(&root)?.merge_facts(
+        &target_id,
+        &source_id,
+        &merged_content,
+    )
+}
+
+/// 归档（软删除）一条事实。
+#[tauri::command]
+pub fn memory_archive(
+    app: AppHandle,
+    project_id: String,
+    id: String,
+) -> Result<MemoryFact, String> {
+    let root = resolve_root(&app, &project_id)?;
+    app.state::<MemoryStoreManager>().open(&root)?.set_status(
+        &id,
+        crate::services::memory::store::STATUS_ARCHIVED,
+        None,
+    )
+}
+
+/// 钉住 / 取消钉住一条事实。
+#[tauri::command]
+pub fn memory_set_pinned(
+    app: AppHandle,
+    project_id: String,
+    id: String,
+    pinned: bool,
+) -> Result<MemoryFact, String> {
+    let root = resolve_root(&app, &project_id)?;
+    app.state::<MemoryStoreManager>()
+        .open(&root)?
+        .set_pinned(&id, pinned)
+}
+
+/// 容量治理：超出上限时归档最低分非 pinned 事实，返回归档数。
+#[tauri::command]
+pub fn memory_prune(app: AppHandle, project_id: String) -> Result<usize, String> {
+    let cfg = load_cfg(&app);
+    let root = resolve_root(&app, &project_id)?;
+    app.state::<MemoryStoreManager>()
+        .open(&root)?
+        .prune_to_capacity(cfg.memory_max_facts.max(100))
 }
 
 /// 清空项目记忆。

@@ -119,14 +119,15 @@ The `ProblemsPanel` displays diagnostics grouped by severity (Error / Warning / 
 
 - LSP startup failures do not block normal file reading, searching, or Git operations.
 
-## Cross-Session Project Knowledge
+## Project Memory (RAG)
 
-When cross-session memory is enabled in "Settings -> App Settings", the Agent gains:
+Project-level memory (semantic RAG) is enabled in the project settings dialog (replacing the old global "Cross-Session Memory" toggle). Once enabled, the Agent gains:
 
-- `remember`: Save `decision`, `pattern`, `convention`, or `note`;
-- `recall`: Search by keywords and optional category.
+- `remember` / `update_memory` / `forget_memory`: add, update, and delete facts;
+- `recall` / `search_memory`: semantic + keyword hybrid search;
+- `search_code`: code-level search (read-only for subagents).
 
-Entries are stored in `.aio/knowledge.json`, with a maximum of 50 entries, and are injected into subsequent project conversations. They are not shared across projects and are not automatically deleted when the toggle is turned off. See [App Settings and Shortcuts](app-settings-and-shortcuts.md#cross-session-memory) for detailed settings.
+Facts are stored in `.aio/memory/memory.sqlite` and relevant facts are auto-injected into later conversations. A legacy `.aio/knowledge.json` is auto-migrated the first time memory is opened. See [App Settings and Shortcuts](app-settings-and-shortcuts.md#project-memory-rag) for details.
 
 ## Sub-agents
 

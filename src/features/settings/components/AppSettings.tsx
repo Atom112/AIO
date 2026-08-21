@@ -72,7 +72,6 @@ const AppSettings: Component = () => {
   const [s, setS] = createSignal(0); // 饱和度 (0-100%)
   const [l, setL] = createSignal(0); // 亮度 (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
-  const [knowledgeEnabled, setKnowledgeEnabled] = createSignal(false);
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // 单次 Agent 最大工具调用轮数（默认 25）
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // 并发子智能体上限（默认 5）
   const [version, setVersion] = createSignal(''); // 应用版本号
@@ -115,12 +114,9 @@ const AppSettings: Component = () => {
       console.error('获取版本失败', e);
     }
 
-    // 加载跨会话记忆 + 系统自启配置
+    // 加载系统自启配置
     try {
       const cfg: Record<string, unknown> = await invoke('load_app_config');
-      if (typeof cfg?.knowledgeEnabled === 'boolean') {
-        setKnowledgeEnabled(cfg.knowledgeEnabled);
-      }
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
       }
@@ -605,34 +601,6 @@ const AppSettings: Component = () => {
                 } catch (err) {
                   console.warn('设置自启失败:', err);
                   setAutoStart(!val); // 回滚
-                }
-              }}
-            />
-            <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
-          </label>
-        </div>
-
-        <div class="flex justify-between items-center py-3 border-b border-white/5">
-          <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.knowledge.title')}</span>
-            <p class="text-xs text-white/35 mt-1">{t('app.knowledge.description')}</p>
-          </div>
-
-          <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
-            <input
-              class="opacity-0 w-0 h-0 peer"
-              type="checkbox"
-              checked={knowledgeEnabled()}
-              onChange={async (e) => {
-                const val = e.currentTarget.checked;
-                setKnowledgeEnabled(val);
-                try {
-                  const cfg: any = await invoke('load_app_config').catch(() => null);
-                  if (cfg) {
-                    await invoke('save_app_config', { config: { ...cfg, knowledgeEnabled: val } });
-                  }
-                } catch (err) {
-                  console.warn('保存 knowledge 配置失败:', err);
                 }
               }}
             />

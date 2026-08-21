@@ -115,9 +115,7 @@ Tool failures retry up to 2 times by default, with a 500ms interval. The retry w
 
 When an Agent is aborted or a streaming event fails, already-produced steps, tool outputs and file changes are still merged into the current assistant message and persisted, avoiding a blank final reply.
 
-### Cross-session Memory
-
-When `knowledgeEnabled` is enabled, the system prompt injects existing entries from `.aio/knowledge.json` and adds `remember` and `recall` tools to the Agent. Knowledge is isolated per project, updated by key, with a maximum of 50 entries.
+### Project Memory (RAG)
 
 With project memory enabled (`memoryEnabled`, overridable per project in project settings), the Agent gets five tools (`remember` / `recall` / `search_memory` / `update_memory` / `forget_memory`); facts are written to a per-project `.aio/memory/memory.sqlite` (semantic vectors + FTS5 keyword hybrid retrieval) and auto-injected into the stable system-prompt prefix (index=1) under a token budget. Embedding is provided by `plugins/embed` (a bundled all-MiniLM-L6-v2 model that works out of the box and offline, or a swappable online OpenAI-compatible API); keyword retrieval is the automatic fallback when embeddings are not configured. The local model ships with the app - no download or config needed.
 

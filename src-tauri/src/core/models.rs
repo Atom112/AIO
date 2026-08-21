@@ -422,9 +422,6 @@ pub struct AppConfig {
     /// 每次重试间隔（毫秒，默认 500）
     #[serde(default = "default_auto_retry_delay_ms")]
     pub auto_retry_delay_ms: u64,
-    /// 跨会话记忆（项目知识持久化）。默认关闭，用户可在设置中开启。
-    #[serde(default, rename = "knowledgeEnabled")]
-    pub knowledge_enabled: bool,
     /// 项目级记忆（语义 RAG）总开关。默认关闭，用户在项目设置中开启。
     #[serde(default, rename = "memoryEnabled")]
     pub memory_enabled: bool,
@@ -473,7 +470,6 @@ impl Default for AppConfig {
             auto_retry_enabled: default_auto_retry_enabled(),
             auto_retry_count: default_auto_retry_count(),
             auto_retry_delay_ms: default_auto_retry_delay_ms(),
-            knowledge_enabled: false,
             auto_start_enabled: false,
             max_concurrent_subagents: None,
             max_tool_rounds: None,

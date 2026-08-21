@@ -9,7 +9,6 @@ use crate::core::subagent;
 use crate::plugins::mcp::PendingApprovals;
 use crate::utils::file_tools;
 use crate::utils::git_tools;
-use crate::utils::knowledge;
 use crate::utils::lsp_agent_tools;
 use crate::utils::lsp_tools;
 use crate::utils::shell_tools;
@@ -2970,7 +2969,6 @@ pub async fn run_agent_turn(
                 auto_retry_enabled: true,
                 auto_retry_count: 2,
                 auto_retry_delay_ms: 500,
-                knowledge_enabled: false,
                 auto_start_enabled: false,
                 max_concurrent_subagents: None,
                 max_tool_rounds: None,
@@ -3086,11 +3084,6 @@ pub async fn run_agent_turn(
                     tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
                     tools.push(spec);
                 }
-            } else if app_config.knowledge_enabled {
-                for spec in knowledge::get_knowledge_tool_specs() {
-                    tool_server_map.insert(spec.function.name.clone(), "__builtin__".into());
-                    tools.push(spec);
-                }
             }
         }
         // P1-10：Skills 按需注入 — 仅注入 read_skill 工具，由模型按需读取完整内容
@@ -3143,24 +3136,6 @@ pub async fn run_agent_turn(
             );
         }
 
-        // 注入项目知识到系统提示词（跨 session 记忆）—— 仅当用户在设置中开启时
-        if app_config.knowledge_enabled {
-            if let Some(pid) = &project_id_c {
-                if let Ok(project_root) = file_tools::resolve_project_root(&app_c, Some(pid)) {
-                    let project_knowledge = knowledge::load_knowledge(&project_root);
-                    if !project_knowledge.entries.is_empty() {
-                        let prompt = knowledge::knowledge_to_prompt(&project_knowledge);
-                        messages_for_api.insert(
-                            1,
-                            serde_json::json!({
-                                "role": "system",
-                                "content": format!("[项目知识 — 来自之前对话]\n{}", prompt)
-                            }),
-                        );
-                    }
-                }
-            }
-        }
         // 项目记忆自动注入（P1）：基于首条 user 消息检索一次，插入稳定前缀位（index=1）
         if memory_effective && app_config.memory_auto_inject {
             if let Some(pid) = &project_id_c {

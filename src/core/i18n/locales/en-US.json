@@ -70,8 +70,6 @@
   "app.autoStart.description": "Start AIO automatically after you sign in.",
   "app.autoStart.title": "Launch at system startup",
   "app.general.title": "General",
-  "app.knowledge.description": "Let Agents remember project knowledge across conversations.",
-  "app.knowledge.title": "Cross-session project memory",
   "app.memory.title": "Embedding & Memory",
   "app.memory.description": "Configure the embedding model that powers project-level semantic memory (RAG).",
   "app.memory.provider": "Embedding service",

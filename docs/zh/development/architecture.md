@@ -115,9 +115,7 @@ Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任
 
 Agent 中止或流式事件失败时，已经产生的步骤、工具输出和文件变更仍会合并进当前助手消息并持久化，避免只保留空白最终回复。
 
-### 跨会话记忆
-
-启用 `knowledgeEnabled` 后，系统提示词注入 `.aio/knowledge.json` 中的现有条目，并向 Agent 增加 `remember`、`recall` 工具。知识按项目隔离、按 key 更新，最多保留 50 条。
+### 项目记忆（RAG）
 
 启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入由 `plugins/embed` 提供（本地内置 all-MiniLM-L6-v2 开箱即用、离线可用，或切换在线 OpenAI 兼容 API），未配置嵌入时自动降级为关键词检索。本地模型随应用打包，无需下载与配置。
 

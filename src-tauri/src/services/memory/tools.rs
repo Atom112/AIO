@@ -1,7 +1,7 @@
 //! 记忆工具（remember / recall / search_memory / update_memory / forget_memory）：
 //! 模型可见的工具规格与执行实现。
 //!
-//! 记忆未启用时 remember / recall 回退到旧版 knowledge.json 实现，保持向后兼容。
+//! 项目记忆未启用时，工具执行返回错误提示（旧版 knowledge.json 回退路径已随 RAG 移除）。
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
 use crate::services::memory::judge::JudgeAction;
@@ -166,7 +166,7 @@ pub fn memory_effective(app: &AppHandle, project_root: &str) -> bool {
     override_enabled.unwrap_or(cfg.memory_enabled)
 }
 
-/// 执行记忆工具（未启用时 remember/recall 回退旧 knowledge 实现）。
+/// 执行记忆工具（项目记忆未启用时返回错误提示）。
 pub async fn execute_memory_tool(
     app: &AppHandle,
     tool_name: &str,
@@ -174,18 +174,6 @@ pub async fn execute_memory_tool(
     project_root: &str,
 ) -> Result<ToolResult, String> {
     if !memory_effective(app, project_root) {
-        let cfg = crate::commands::config::load_app_config(app.clone()).unwrap_or_default();
-        if cfg.knowledge_enabled {
-            match tool_name {
-                "remember" => {
-                    return crate::utils::knowledge::execute_remember(project_root, arguments)
-                }
-                "recall" => {
-                    return crate::utils::knowledge::execute_recall(project_root, arguments)
-                }
-                _ => {}
-            }
-        }
         return Err("项目记忆未启用（请在项目设置中开启）".into());
     }
     let store = app

@@ -70,8 +70,6 @@
   "app.autoStart.description": "登录系统后自动启动 AIO。",
   "app.autoStart.title": "开机自启",
   "app.general.title": "通用设置",
-  "app.knowledge.description": "允许 Agent 在不同对话间记住项目知识。",
-  "app.knowledge.title": "跨会话项目记忆",
   "app.memory.title": "嵌入与记忆",
   "app.memory.description": "配置向量化嵌入模型，为项目级记忆（RAG）提供语义检索。",
   "app.memory.provider": "嵌入服务",

@@ -15,8 +15,6 @@ struct AppConfigDisk {
     api_url: String,
     default_model: String,
     local_model_path: String,
-    #[serde(default, rename = "knowledgeEnabled")]
-    knowledge_enabled: bool,
     #[serde(default, rename = "autoStartEnabled")]
     auto_start_enabled: bool,
     #[serde(default = "default_max_tool_rounds", rename = "maxToolRounds")]
@@ -63,7 +61,6 @@ impl Default for AppConfigDisk {
             api_url: String::new(),
             default_model: String::new(),
             local_model_path: String::new(),
-            knowledge_enabled: false,
             auto_start_enabled: false,
             max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
             max_concurrent_subagents: 5,
@@ -114,7 +111,6 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
         api_url: config.api_url,
         default_model: config.default_model,
         local_model_path: config.local_model_path,
-        knowledge_enabled: config.knowledge_enabled,
         auto_start_enabled: config.auto_start_enabled,
         max_tool_rounds: config
             .max_tool_rounds
@@ -164,7 +160,6 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     auto_retry_enabled: true,
                     auto_retry_count: 2,
                     auto_retry_delay_ms: 500,
-                    knowledge_enabled: disk.knowledge_enabled,
                     auto_start_enabled: disk.auto_start_enabled,
                     max_concurrent_subagents: Some(disk.max_concurrent_subagents),
                     max_tool_rounds: Some(disk.max_tool_rounds),
@@ -207,7 +202,6 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
                     auto_retry_enabled: true,
                     auto_retry_count: 2,
                     auto_retry_delay_ms: 500,
-                    knowledge_enabled: false,
                     auto_start_enabled: false,
                     max_concurrent_subagents: Some(disk.max_concurrent_subagents),
                     max_tool_rounds: Some(disk.max_tool_rounds),
@@ -231,7 +225,6 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
         auto_retry_enabled: true,
         auto_retry_count: 2,
         auto_retry_delay_ms: 500,
-        knowledge_enabled: false,
         auto_start_enabled: false,
         max_concurrent_subagents: None,
         max_tool_rounds: None,

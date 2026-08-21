@@ -18,18 +18,14 @@ When "Auto-start" is enabled, AIO registers a system startup entry for the curre
 
 Auto-start is not the same as "Local Model Auto-start Confirmation": the former controls whether AIO starts with the system, while the latter only records whether the user has confirmed starting the llama.cpp process after selecting a local model.
 
-### Cross-Session Memory
+### Project Memory (RAG)
 
-When enabled, the project Agent can use `remember` and `recall` to save and retrieve architectural decisions, code patterns, conventions, and notes. Knowledge is stored in the project root:
+Project-level memory (semantic RAG) is enabled in the project settings dialog (replacing the old global "Cross-Session Memory" toggle). Once enabled, the Agent gets memory tools such as `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory`; facts are written to `.aio/memory/memory.sqlite` (vector + keyword hybrid retrieval) and relevant memory is auto-injected into later conversations.
 
-```text
-.aio/knowledge.json
-```
-
-Existing knowledge is injected into subsequent project conversations by category. The same `key` updates an existing entry; the current maximum is 50 entries. Disabling the feature does not delete existing files.
+A legacy `.aio/knowledge.json` is automatically migrated into facts the first time project memory is opened; the old file is kept afterwards and can be deleted manually.
 
 > [!IMPORTANT]
-> `knowledge.json` is project content and may contain internal architecture or business information. Review it before committing to version control.
+> Project memory content may contain internal architecture or business information. Review `.aio/` before committing to version control.
 
 ### Version Updates
 

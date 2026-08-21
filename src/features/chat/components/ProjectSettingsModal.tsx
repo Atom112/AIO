@@ -535,7 +535,11 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                 <div class="flex justify-end">
                   <button
                     class="px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-pri-20 text-pri border border-pri/30 cursor-pointer hover:bg-pri-30 transition-colors"
-                    onClick={() => setShowPanel(true)}
+                    onClick={() => {
+                      // 先退出项目设置弹窗，再打开记忆面板（避免面板被设置弹窗遮住）
+                      setShowPanel(true);
+                      handleClose();
+                    }}
                   >
                     {t('project.memory.openPanel')}
                   </button>

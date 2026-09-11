@@ -1,5 +1,14 @@
 import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  addMcpServer,
+  checkMcpCatalogRuntime,
+  installMcpCatalogServer,
+  listMcpCatalog,
+  listMcpServers,
+  removeMcpServer,
+  stopMcpServer,
+  testMcpServerConnection,
+} from '../../../core/api/mcp';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   datas,
@@ -15,7 +24,6 @@ import {
 import type {
   McpCatalogDelivery,
   McpCatalogInstallRequest,
-  McpCatalogPage,
   McpCatalogServer,
   McpServerConfig,
 } from '../../../core/types/mcp';
@@ -53,9 +61,7 @@ const McpServerList: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
 
   const loadLocal = async () => {
-    const list = await invoke<McpServerConfig[]>('list_mcp_servers', {
-      projectId: currentProjectId(),
-    });
+    const list = await listMcpServers(currentProjectId());
     setMcpServers(Object.fromEntries(list.map((server) => [server.id, server])));
   };
 
@@ -64,7 +70,7 @@ const McpServerList: Component = () => {
     else setLoading(true);
     setError(null);
     try {
-      const page = await invoke<McpCatalogPage>('list_mcp_catalog', {
+      const page = await listMcpCatalog({
         search: query().trim(),
         cursor: cursor ?? null,
         limit: 30,
@@ -138,7 +144,7 @@ const McpServerList: Component = () => {
 
   const handleStop = async (id: string) => {
     try {
-      await invoke('stop_mcp_server', { id });
+      await stopMcpServer(id);
       setMcpServerStatus({
         ...mcpServerStatus(),
         [id]: { id, status: 'disconnected', toolCount: 0, resourceCount: 0, promptCount: 0 },
@@ -151,7 +157,7 @@ const McpServerList: Component = () => {
   const handleRemove = async (id: string) => {
     if (!confirm(t('mcp.removeConfirm'))) return;
     try {
-      await invoke('remove_mcp_server', { id, projectId: currentProjectId() });
+      await removeMcpServer(id, currentProjectId());
       const next = { ...mcpServers() };
       delete next[id];
       setMcpServers(next);
@@ -174,7 +180,7 @@ const McpServerList: Component = () => {
 
   const handleSave = async (config: McpServerConfig) => {
     try {
-      await invoke('add_mcp_server', { config, projectId: currentProjectId() });
+      await addMcpServer(config, currentProjectId());
       setMcpServers({ ...mcpServers(), [config.id]: config });
       setEditingConfig(null);
     } catch (e) {
@@ -184,7 +190,7 @@ const McpServerList: Component = () => {
 
   const handleTest = async (config: McpServerConfig) => {
     try {
-      const tools = await invoke<any[]>('test_mcp_server_connection', { config });
+      const tools = await testMcpServerConnection(config);
       return { ok: true, tools };
     } catch (e) {
       return { ok: false, error: String(e) };
@@ -196,9 +202,7 @@ const McpServerList: Component = () => {
     setInstallValues(
       Object.fromEntries(delivery.inputs.map((input) => [input.name, input.defaultValue ?? ''])),
     );
-    const available = await invoke<boolean>('check_mcp_catalog_runtime', {
-      packageType: delivery.kind,
-    }).catch(() => false);
+    const available = await checkMcpCatalogRuntime(delivery.kind).catch(() => false);
     setRuntimeAvailable(available);
   };
 
@@ -237,7 +241,7 @@ const McpServerList: Component = () => {
         values,
         secrets,
       };
-      const config = await invoke<McpServerConfig>('install_mcp_catalog_server', { request });
+      const config = await installMcpCatalogServer(request);
       setMcpServers({ ...mcpServers(), [config.id]: config });
       setInstalling(null);
       setView('downloaded');
@@ -291,7 +295,7 @@ const McpServerList: Component = () => {
             <Icon
               name="search"
               size={13}
-              class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none"
+              class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[rgba(var(--text-base-rgb),0.4)] pointer-events-none"
             />
             <input
               class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
@@ -325,7 +329,7 @@ const McpServerList: Component = () => {
       <Show when={error()}>
         <div
           class="px-3 py-2 rounded-md text-sm"
-          style={{ background: 'rgba(255,77,77,0.1)', color: '#ff8a8a' }}
+          style={{ background: 'rgba(255,77,77,0.1)', color: 'var(--color-danger)' }}
         >
           {error()}{' '}
           <button class="ml-3 underline" onClick={() => setError(null)}>
@@ -563,7 +567,7 @@ const McpServerList: Component = () => {
             <Show when={selectedDelivery()?.kind !== 'http' && !runtimeAvailable()}>
               <div
                 class="px-3 py-2 rounded text-xs"
-                style={{ background: 'rgba(255,180,77,0.12)', color: '#ffd080' }}
+                style={{ background: 'rgba(250,204,21,0.12)', color: 'var(--color-warn)' }}
               >
                 {selectedDelivery()?.kind === 'npm'
                   ? t('mcp.runtimeMissingNpm')

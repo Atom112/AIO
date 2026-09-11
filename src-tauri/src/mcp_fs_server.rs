@@ -1,17 +1,20 @@
 //! 内置文件系统 MCP Server — 直接实现 MCP JSON-RPC over stdio。
 //!
-//! ⚠ **已废弃（2025-07）**：Agent 模式现在通过 `utils/file_tools.rs` 直接 in-process 调用文件工具，
-//! 不再通过 stdio 子进程。本文件保留仅用于：
-//! 1. 外部 MCP 客户端通过 `--fs-server <path>` 启动独立文件系统 server
-//! 2. 向后兼容：已有脚本/配置可能直接调用 `aio --fs-server <path>`
+//! 当前仍是新项目的默认文件系统服务器：`commands/project.rs` 会在项目创建时把
+//! `__aio-filesystem__`（命令 = 当前 exe + `--fs-server <path>`，autoStart）写入
+//! 项目的 `mcp-servers.json`，因此本文件属于线上代码路径，维护与 Agent 进程内
+//! 文件工具同等对待。后续如要退役，需同时处理存量项目配置的迁移。
+//!
+//! 沙箱与工具辅助（safe_path / is_binary / sz）直接复用 `utils/file_tools.rs`
+//! 的进程内实现，保证两处安全策略永远一致。
 //!
 //! MCP 协议本身很简单（JSON-RPC 2.0 over stdin/stdout），
 //! 手写实现比引入 rmcp 更轻量，且避免了 rmcp 版本 API 兼容问题。
 
+use crate::utils::file_tools::{is_binary, safe_path, sz};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
 
 // ====== JSON-RPC 模型 ======
 
@@ -65,82 +68,14 @@ fn respond_error(id: Option<Value>, code: i32, message: &str) -> String {
 }
 
 // ====== 沙箱 ======
+// safe_path / is_binary / sz 复用 utils::file_tools（见文件头注释）
 
-fn safe_path(allowed_dir: &str, requested: &str, must_exist: bool) -> Result<PathBuf, String> {
-    let base = std::fs::canonicalize(allowed_dir).map_err(|e| format!("项目目录不可访问: {e}"))?;
-    let p = PathBuf::from(requested);
-    let resolved = if p.is_absolute() { p } else { base.join(&p) };
-    let target = if must_exist {
-        std::fs::canonicalize(&resolved).map_err(|e| format!("路径不可访问: {e}"))?
-    } else {
-        match std::fs::canonicalize(&resolved) {
-            Ok(c) => c,
-            Err(_) => {
-                let mut exist = resolved.clone();
-                let mut trail: Vec<std::ffi::OsString> = Vec::new();
-                while !exist.exists() {
-                    if let Some(n) = exist.file_name().map(|n| n.to_os_string()) {
-                        trail.push(n);
-                    }
-                    if !exist.pop() {
-                        let mut r = PathBuf::new();
-                        for c in resolved.components() {
-                            match c {
-                                std::path::Component::ParentDir => {
-                                    r.pop();
-                                }
-                                std::path::Component::CurDir => {}
-                                o => {
-                                    r.push(o);
-                                }
-                            }
-                        }
-                        return Ok(r);
-                    }
-                }
-                let canon =
-                    std::fs::canonicalize(&exist).map_err(|e| format!("路径不可访问: {e}"))?;
-                let mut r = canon;
-                for n in trail.into_iter().rev() {
-                    r.push(n);
-                }
-                r
-            }
-        }
-    };
-    if !target.starts_with(&base) {
-        return Err(format!("路径越界: '{requested}' 不在项目目录内"));
-    }
-    Ok(target)
-}
-
-fn is_binary(p: &std::path::Path) -> bool {
-    [
-        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "pdf", "docx", "pptx", "xlsx",
-        "zip", "tar", "gz", "rar", "exe", "dll", "so", "dylib", "wasm", "bin", "mp3", "mp4", "avi",
-        "mov", "wav", "ogg", "woff", "woff2", "ttf", "eot",
-    ]
-    .contains(&p.extension().and_then(|e| e.to_str()).unwrap_or(""))
-}
-fn sz(b: u64) -> String {
-    if b >= 1_000_000 {
-        format!("{:.1}MB", b as f64 / 1_000_000.0)
-    } else if b >= 1_000 {
-        format!("{:.1}KB", b as f64 / 1_000.0)
-    } else {
-        format!("{b}B")
-    }
-}
 const MAX_R: u64 = 1_000_000;
 const MAX_W: u64 = 5_000_000;
 const MAX_S: usize = 10_000;
 
-fn tool_ok(text: String) -> Value {
-    json!({"content": [{"type": "text", "text": text}], "isError": false})
-}
-fn tool_err(msg: &str) -> Value {
-    json!({"content": [{"type": "text", "text": format!("[Error] {msg}")}], "isError": true})
-}
+// MCP 协议形态的工具结果由 utils::tool_result 提供
+use crate::utils::tool_result::{tool_err_mcp as tool_err, tool_ok_mcp as tool_ok};
 
 // ====== 工具实现 ======
 

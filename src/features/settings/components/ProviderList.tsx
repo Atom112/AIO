@@ -14,7 +14,7 @@
  */
 import { Component, createSignal, For, Show, onMount, createMemo } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
-import { invoke } from '@tauri-apps/api/core';
+import { saveProviderMap } from '../../../core/api/providers';
 import Icon from '../../../shared/components/Icon';
 import {
   btnBadge,
@@ -162,9 +162,7 @@ const ProviderList: Component = () => {
   /** 通用持久化: 把 providers map 写盘 */
   const persist = async (next: Record<string, ProviderConfig>, okMsg?: string) => {
     try {
-      await invoke('save_provider_configs', {
-        file: { version: 2, updatedAt: String(Date.now()), providers: next },
-      });
+      await saveProviderMap(next);
       setProviderConfigs(next);
       if (okMsg) {
         setToast({ msg: okMsg, ok: true });
@@ -222,9 +220,7 @@ const ProviderList: Component = () => {
       fetchedModels: undefined,
     };
     const next = { ...providerConfigs(), [id]: newCfg };
-    invoke('save_provider_configs', {
-      file: { version: 2, updatedAt: String(Date.now()), providers: next },
-    })
+    saveProviderMap(next)
       .then(() => {
         setProviderConfigs(next);
         setShowAddCustom(false);
@@ -246,9 +242,7 @@ const ProviderList: Component = () => {
     const next = { ...providerConfigs() };
     delete next[id];
     try {
-      await invoke('save_provider_configs', {
-        file: { version: 2, updatedAt: String(Date.now()), providers: next },
-      });
+      await saveProviderMap(next);
       setProviderConfigs(next);
     } catch (e) {
       alert(reportError('error.save', e));
@@ -268,7 +262,7 @@ const ProviderList: Component = () => {
           <Icon
             name="search"
             size={14}
-            class="absolute left-3 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none"
+            class="absolute left-3 top-1/2 -translate-y-1/2 text-[rgba(var(--text-base-rgb),0.4)] pointer-events-none"
           />
           <input
             type="text"
@@ -299,7 +293,9 @@ const ProviderList: Component = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 class="text-lg font-bold text-white mb-1">{t('provider.addCustom')}</h3>
-            <p class="text-xs text-[#888] mb-5">{t('provider.customDescription')}</p>
+            <p class="text-xs text-[rgba(var(--text-base-rgb),0.55)] mb-5">
+              {t('provider.customDescription')}
+            </p>
             <div class="mb-3">
               <label class="block text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold mb-1.5">
                 {t('provider.displayName')}
@@ -347,10 +343,16 @@ const ProviderList: Component = () => {
       {/* Provider 列表 (catalog) */}
       <Show
         when={catalogReady()}
-        fallback={<div class="text-center text-[#888] py-8">{t('provider.loadingCatalog')}</div>}
+        fallback={
+          <div class="text-center text-[rgba(var(--text-base-rgb),0.55)] py-8">
+            {t('provider.loadingCatalog')}
+          </div>
+        }
       >
         <Show when={sortedCatalog().enabled.length === 0 && sortedCatalog().disabled.length === 0}>
-          <div class="text-center text-[#666] py-8 italic text-sm">{t('provider.noMatch')}</div>
+          <div class="text-center text-[rgba(var(--text-base-rgb),0.4)] py-8 italic text-sm">
+            {t('provider.noMatch')}
+          </div>
         </Show>
 
         {/* 已启用 */}
@@ -436,18 +438,18 @@ const ProviderList: Component = () => {
                     onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
                   >
                     <div
-                      class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c] font-bold text-[15px]"
-                      style={{ color: '#1a1e2c' }}
+                      class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[var(--color-dark-700)] font-bold text-[15px]"
+                      style={{ color: 'var(--color-dark-700)' }}
                     >
                       {cfg.displayName.charAt(0).toUpperCase()}
                     </div>
                     <div class="grow min-w-0">
                       <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
-                      <div class="text-[10px] text-[#888] font-mono truncate mt-0.5">
+                      <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono truncate mt-0.5">
                         {cfg.apiUrl || `(${t('provider.notConfigured')})`} · {t('provider.custom')}
                       </div>
                     </div>
-                    <span class="text-[10px] text-[#666] hidden sm:inline">
+                    <span class="text-[10px] text-[rgba(var(--text-base-rgb),0.4)] hidden sm:inline">
                       {t('provider.enabledModels', {
                         count: formatNumber(cfg.enabledModels.length),
                       })}
@@ -513,18 +515,18 @@ const ProviderList: Component = () => {
                     onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
                   >
                     <div
-                      class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c] font-bold text-[15px]"
-                      style={{ color: '#1a1e2c' }}
+                      class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[var(--color-dark-700)] font-bold text-[15px]"
+                      style={{ color: 'var(--color-dark-700)' }}
                     >
                       {cfg.displayName.charAt(0).toUpperCase()}
                     </div>
                     <div class="grow min-w-0">
                       <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
-                      <div class="text-[10px] text-[#888] font-mono truncate mt-0.5">
+                      <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono truncate mt-0.5">
                         {cfg.apiUrl || `(${t('provider.notConfigured')})`} · {t('provider.custom')}
                       </div>
                     </div>
-                    <span class="text-[10px] text-[#666] hidden sm:inline">
+                    <span class="text-[10px] text-[rgba(var(--text-base-rgb),0.4)] hidden sm:inline">
                       {t('provider.enabledModels', {
                         count: formatNumber(cfg.enabledModels.length),
                       })}
@@ -632,7 +634,7 @@ const ProviderRow: Component<{
       style={props.style}
       onClick={() => props.onClick()}
     >
-      <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[#1a1e2c]">
+      <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[var(--color-dark-700)]">
         {getProviderLogo(props.provider.id) ? (
           <img
             src={getProviderLogo(props.provider.id)!}
@@ -640,7 +642,7 @@ const ProviderRow: Component<{
             class="w-5 h-5 object-contain"
           />
         ) : (
-          <span class="font-bold text-[15px]" style={{ color: '#1a1e2c' }}>
+          <span class="font-bold text-[15px]" style={{ color: 'var(--color-dark-700)' }}>
             {props.provider.name.charAt(0).toUpperCase()}
           </span>
         )}
@@ -666,7 +668,7 @@ const ProviderRow: Component<{
             </span>
           </Show>
         </div>
-        <div class="text-[10px] text-[#888] font-mono mt-0.5">
+        <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono mt-0.5">
           {t('provider.modelCount', { count: props.provider.modelCount })}
           <Show when={enabledCount() > 0}>
             <span class="ml-2 text-pri">
@@ -700,7 +702,7 @@ const ProviderRow: Component<{
           style={{ transform: isEnabled() ? 'translateX(21px)' : 'translateX(3px)' }}
         />
       </button>
-      <span class="text-[#666] text-lg transition-transform duration-200 group-hover:translate-x-0.5">
+      <span class="text-[rgba(var(--text-base-rgb),0.4)] text-lg transition-transform duration-200 group-hover:translate-x-0.5">
         ›
       </span>
     </div>
@@ -739,7 +741,7 @@ const LocalEngineRow: Component<{
             class="w-5 h-5 object-contain"
           />
         ) : (
-          <Icon name="cpu" class="text-[#1a1e2c]" size={18} />
+          <Icon name="cpu" class="text-[var(--color-dark-700)]" size={18} />
         )}
       </div>
       <div class="grow min-w-0">
@@ -751,11 +753,13 @@ const LocalEngineRow: Component<{
             {status().label}
           </span>
         </div>
-        <div class="text-[10px] text-[#888] font-mono mt-0.5">
+        <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono mt-0.5">
           {t('provider.modelCount', { count: modelCount() })}
         </div>
       </div>
-      <span class="text-[#666] text-lg transition-transform duration-200">›</span>
+      <span class="text-[rgba(var(--text-base-rgb),0.4)] text-lg transition-transform duration-200">
+        ›
+      </span>
     </div>
   );
 };

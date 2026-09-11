@@ -120,7 +120,7 @@ const AgentModeSelector: Component = () => {
         saveLastAgentProjectId(lastId);
         await Promise.all([initSkills(lastId), initMcpServers(lastId)]);
       }
-      // 没有上次的工作目录→ 什么也不做，ProjectSelector 会显示"选择目录..."供用户自行选择或新建
+      // 没有上次的工作目录 → 什么也不做（项目面板在左侧栏 ProjectSidebar 中，供用户自行选择或新建）
     } else if (mode !== 'off' && currentProjectId()) {
       // 已有工作目录，刷新保存为 lastAgentProjectId
       saveLastAgentProjectId(currentProjectId());
@@ -138,7 +138,7 @@ const AgentModeSelector: Component = () => {
     <div ref={containerRef} class="relative inline-block">
       <button
         type="button"
-        class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/40 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
+        class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/40 text-xs font-medium hover:bg-white/[0.06] hover:text-[var(--color-pri)]/60"
         classList={{ 'is-active': currentMode() !== 'off' }}
         style={{
           color:

@@ -19,24 +19,47 @@ pub mod openai_compat;
 
 use crate::core::models::LiveModel;
 
+/// 构造带超时与代理的 reqwest client（4 个插件的共享实现——历史上逐字复制了 4 份）。
+/// user-agent 携带 crate 版本号，避免硬编码版本随发布漂移。
+pub fn build_http_client(
+    proxy_url: Option<&str>,
+    timeout_secs: u64,
+    provider_tag: &str,
+) -> Result<reqwest::Client, String> {
+    let mut b = reqwest::Client::builder()
+        .user_agent(format!(
+            "AIO-Desktop/{} ({}-provider)",
+            env!("CARGO_PKG_VERSION"),
+            provider_tag
+        ))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(timeout_secs));
+    if let Some(p) = proxy_url {
+        if !p.trim().is_empty() {
+            let proxy = reqwest::Proxy::all(p).map_err(|e| format!("代理 URL 非法: {}", e))?;
+            b = b.proxy(proxy);
+        }
+    }
+    b.build()
+        .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
+}
+
 /// Provider 插件 trait —— 各厂商 API 适配器
-#[allow(dead_code)]
 pub trait ProviderPlugin: Send + Sync {
     /// 机器标识符，如 "google" / "anthropic" / "openai_compat" / "ollama"
     fn identifier(&self) -> &'static str;
 
-    /// 人类可读名称
-    fn name(&self) -> &'static str;
-
     /// 通过 host 匹配判断此插件是否适用于该 api_url
     fn matches(&self, api_url: &str) -> bool;
 
-    /// 构造带超时与代理的 reqwest client
+    /// 构造带超时与代理的 reqwest client（默认实现 = build_http_client(identifier 作 tag)）
     fn build_client(
         &self,
         proxy_url: Option<&str>,
         timeout_secs: u64,
-    ) -> Result<reqwest::Client, String>;
+    ) -> Result<reqwest::Client, String> {
+        build_http_client(proxy_url, timeout_secs, self.identifier())
+    }
 
     /// 计算 list models 端点 URL
     fn models_url(&self, api_url: &str) -> String;
@@ -59,7 +82,6 @@ pub trait ProviderPlugin: Send + Sync {
 }
 
 /// Provider 插件管理器：按 host 派发到第一个匹配的插件
-#[allow(dead_code)]
 pub struct ProviderManager {
     plugins: Vec<Box<dyn ProviderPlugin>>,
 }
@@ -94,6 +116,38 @@ impl ProviderManager {
                     .as_ref()
             })
     }
+
+    /// [`for_url`] 的拥有型版本：按 identifier 重建一个 `Box<dyn ProviderPlugin>`。
+    /// 需要把插件移出管理器作用域时使用（如命令层的"测试连接/拉取模型"）；
+    /// 新增插件时必须在此注册一个分支（order 测试会保证兜底在末位）。
+    pub fn boxed_for_url(&self, api_url: &str) -> Box<dyn ProviderPlugin> {
+        let matched = self.for_url(api_url).identifier();
+        match matched {
+            "google" => Box::new(google::GoogleProvider),
+            "anthropic" => Box::new(anthropic::AnthropicProvider),
+            "ollama" => Box::new(ollama::OllamaProvider),
+            _ => Box::new(openai_compat::OpenAICompatProvider),
+        }
+    }
+}
+
+#[cfg(test)]
+mod manager_tests {
+    use super::*;
+
+    /// 注册顺序不变式：openai_compat（兜底）必须始终在末位。
+    /// for_url 的兜底逻辑假设"最后一个插件是 openai_compat"；顺序被改动会静默错派。
+    #[test]
+    fn openai_compat_stays_last() {
+        let mgr = ProviderManager::new();
+        let last = mgr.plugins.last().unwrap();
+        assert_eq!(last.identifier(), "openai_compat");
+        // 通用 URL 必须派发到兜底
+        assert_eq!(
+            mgr.for_url("https://api.example.com/v1").identifier(),
+            "openai_compat"
+        );
+    }
 }
 
 /// 把 reqwest 错误分类为用户友好提示（中文）
@@ -114,26 +168,10 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// 测试连接用较短超时
 pub const TEST_TIMEOUT_SECS: u64 = 20;
 
-/// Unix 秒时间戳 → YYYY-MM-DD（用于 OpenAI `created` 字段）
-/// 不引入 chrono 依赖，手算 Howard Hinnant 日期算法
+/// Unix 秒时间戳 → YYYY-MM-DD（用于 OpenAI `created` 字段）。
+/// 实现统一由 utils::time 提供。
 pub fn unix_to_ymd(secs: i64) -> Option<String> {
-    days_since_epoch_to_ymd(secs.div_euclid(86_400))
-}
-
-/// 自 1970-01-01 起的天数 → YYYY-MM-DD（Gregorian）
-fn days_since_epoch_to_ymd(days: i64) -> Option<String> {
-    // Howard Hinnant 算法：http://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // [0, 399]
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
-    let y = if m <= 2 { y + 1 } else { y };
-    Some(format!("{:04}-{:02}-{:02}", y, m, d))
+    crate::utils::time::unix_to_ymd(secs)
 }
 
 #[cfg(test)]

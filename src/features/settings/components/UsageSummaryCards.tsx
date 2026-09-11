@@ -9,23 +9,10 @@ import { getCachedCatalog } from '../../../core/utils/models';
 import type { ModelMeta } from '@aio/models-data';
 import { formatNumber, t } from '../../../core/i18n';
 
-/** 按天聚合的用量（对应 Rust UsageSummary） */
-export interface UsageSummary {
-  date: string;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  requestCount: number;
-}
+import type { UsageSummary, UsageSummaryByModel } from '../../../core/types/usage';
 
-/** 按模型聚合的用量（对应 Rust UsageSummaryByModel） */
-export interface UsageSummaryByModel {
-  modelId: string;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  requestCount: number;
-}
+// 用量类型已移至 core/types/usage.ts（本组件仅作再导出，保旧导入路径）
+export type { UsageSummary, UsageSummaryByModel };
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;

@@ -208,7 +208,10 @@ pub async fn update_models_catalog(
     let started = std::time::Instant::now();
 
     let client = reqwest::Client::builder()
-        .user_agent("AIO-Desktop/0.4 (aio-models-data-updater)")
+        .user_agent(format!(
+            "AIO-Desktop/{} (aio-models-data-updater)",
+            env!("CARGO_PKG_VERSION")
+        ))
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(5))
         .build()

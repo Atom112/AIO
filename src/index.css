@@ -26,6 +26,10 @@
 
   /* ── 危险/关闭操作色 ── */
   --color-danger: #e08090;
+  /* ── 成功/通过色 ── */
+  --color-success: #50dc64;
+  /* ── 警告色 ── */
+  --color-warn: #facc15;
 
   /* ── 阴影 ── */
   --shadow-theme-inner: inset 0 0 20px rgba(0, 0, 0, 0.3);
@@ -96,6 +100,9 @@
   --acrylic-blur: 40px;
   --acrylic-radius: 12px;
 
+  /* ── 弹窗/面板背景（灰色，避免暗色主题下的纯黑观感） ── */
+  --panel-bg: #3b3f4a;
+
   /* ── 应用背景（浅色/默认主题）：与 VaporGit 同款（四角点状光晕 + #2f2f2f 底色） ── */
   --app-bg:
     radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.55) 0, transparent 500px),
@@ -114,6 +121,9 @@
 
   --acrylic-bg: rgba(var(--surface-bg), 0.85);
   --acrylic-border: rgba(var(--border-rgb), 0.1);
+
+  /* 弹窗/面板背景（暗色主题：灰色而非纯黑） */
+  --panel-bg: #2a2e38;
 
   /* 与 VaporGit dark 同款（微弱四角光晕 + 纯黑底） */
   --app-bg:
@@ -809,7 +819,7 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 .markdown-body a {
-  @apply text-[#7c9abf] no-underline;
+  @apply text-[var(--color-pri)] no-underline;
   border-bottom: 1px solid transparent;
   transition: border-color 0.15s;
 }

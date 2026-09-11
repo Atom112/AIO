@@ -2,6 +2,7 @@ import { Component, createSignal, onCleanup, onMount } from 'solid-js';
 import Cropper from 'cropperjs';
 import 'cropperjs/dist/cropper.css';
 import { t } from '../../core/i18n';
+import Icon from '../components/Icon';
 import { btnClose, btnPrimary, btnSecondary } from '../components/buttonStyles';
 
 interface AvatarCropModalProps {
@@ -121,7 +122,7 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
         }}
         class="bg-dark-850 w-[600px] overflow-hidden flex flex-col transition-all duration-250 ease-out transform"
         style={{
-          background: 'var(--acrylic-bg)',
+          background: 'var(--panel-bg)',
           'backdrop-filter': 'blur(var(--acrylic-blur))',
           border: '1px solid var(--acrylic-border)',
           'border-radius': 'var(--acrylic-radius)',
@@ -129,8 +130,8 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
       >
         <div class="flex items-center justify-between px-[20px] py-[15px] border-b border-dark-300 text-pri font-bold">
           <span>{t('crop.title')}</span>
-          <button onClick={handleClose} class={btnClose}>
-            &times;
+          <button onClick={handleClose} class={btnClose} aria-label={t('common.close')}>
+            <Icon name="x" size={18} class="stroke-[2.5]" />
           </button>
         </div>
 
@@ -149,7 +150,9 @@ const AvatarCropModal: Component<AvatarCropModalProps> = (props) => {
           </div>
 
           <div class="w-[150px] flex flex-col items-center justify-center">
-            <div class="text-[#888] text-[12px] mb-[10px]">{t('crop.preview')}</div>
+            <div class="text-[rgba(var(--text-base-rgb),0.55)] text-[12px] mb-[10px]">
+              {t('crop.preview')}
+            </div>
             <div
               ref={previewElement}
               class="w-[120px] h-[120px] rounded-full overflow-hidden border-2 border-pri bg-black"

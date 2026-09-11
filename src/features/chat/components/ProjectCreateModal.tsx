@@ -3,9 +3,8 @@
  * @description 新建项目弹窗：输入名称 + 选择目录。支持入场/退场过渡动画。
  */
 import { createSignal, onMount } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { createProject, validateProjectPath } from '../../../core/api/project';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { Project } from '../../../core/store/store';
 import { reportError, t } from '../../../core/i18n';
 import { btnGhost, btnPrimary, btnSecondary } from '../../../shared/components/buttonStyles';
 
@@ -46,10 +45,7 @@ export default function ProjectCreateModal(props: Props) {
 
         // 验证路径
         try {
-          const result = await invoke<{ valid: boolean; reason: string; canonicalPath: string }>(
-            'validate_project_path',
-            { path: selected },
-          );
+          const result = await validateProjectPath(selected);
           if (!result.valid) {
             console.warn('[project] invalid path:', result.reason);
             setError(t('project.invalidPath'));
@@ -78,10 +74,7 @@ export default function ProjectCreateModal(props: Props) {
     setLoading(true);
     setError('');
     try {
-      const project = await invoke<Project>('create_project', {
-        name: name().trim(),
-        path: path(),
-      });
+      const project = await createProject(name().trim(), path());
       props.onCreated(project.id);
     } catch (e) {
       setError(reportError('error.save', e));
@@ -104,7 +97,7 @@ export default function ProjectCreateModal(props: Props) {
           'scale-95 opacity-0': isExiting() || isEntering(),
           'scale-100 opacity-100': !isExiting() && !isEntering(),
         }}
-        class="bg-[#1a2540] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
+        class="bg-[var(--color-dark-700)] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 class="text-lg font-semibold text-white mb-4">{t('project.new')}</h2>
@@ -114,7 +107,7 @@ export default function ProjectCreateModal(props: Props) {
         <input
           type="text"
           class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white
-                           text-sm placeholder-white/30 focus:outline-none focus:border-[#7c9abf] mb-4"
+                           text-sm placeholder-white/30 focus:outline-none focus:border-[var(--color-pri)] mb-4"
           placeholder={t('project.namePlaceholder')}
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
@@ -127,7 +120,7 @@ export default function ProjectCreateModal(props: Props) {
           <input
             type="text"
             class="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white
-                               text-sm placeholder-white/30 focus:outline-none focus:border-[#7c9abf]"
+                               text-sm placeholder-white/30 focus:outline-none focus:border-[var(--color-pri)]"
             placeholder={t('project.pathPlaceholder')}
             value={path()}
             readOnly

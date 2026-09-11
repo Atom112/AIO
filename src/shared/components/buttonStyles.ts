@@ -37,6 +37,10 @@ export const btnSecondarySm =
 export const btnDanger =
   'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-danger/30 bg-danger/10 text-danger hover:bg-danger/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
+/** 危险操作徽章按钮（btnBadge 尺寸 + 危险色，用于与行内小按钮对齐的删除/清空操作） */
+export const btnDangerBadge =
+  'inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border border-danger/30 bg-danger/10 text-danger hover:bg-danger/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+
 /** 成功/通过操作按钮（测试连接、批准等） */
 export const btnSuccess =
   'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
@@ -55,7 +59,7 @@ export const btnIcon =
 
 /** 模态框右上角关闭按钮 */
 export const btnClose =
-  'w-8 h-8 rounded-lg bg-transparent border-none text-xl cursor-pointer leading-none p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80';
+  'inline-flex items-center justify-center shrink-0 w-8 h-8 rounded-lg bg-transparent border-none cursor-pointer p-0 transition-all duration-200 text-white/40 hover:text-white hover:bg-danger/80';
 
 /** 分段控件/选项卡：中等尺寸基类 */
 export const btnTabMd =

@@ -480,7 +480,7 @@ pub fn create_workflow_tool_spec() -> ToolSpec {
                             "required": ["profile", "name", "task"]
                         },
                         "description": "工作流步骤列表（按顺序执行）",
-                        "min_items": 2
+                        "minItems": 2
                     }
                 },
                 "required": ["title", "steps"]

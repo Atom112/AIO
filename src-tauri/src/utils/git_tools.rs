@@ -5,7 +5,7 @@
 //!
 //! 参考：Claude Code / Cursor 的 Git 工具设计。
 
-use crate::core::models::{FileChange, ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{FileChange, ToolFunctionSpec, ToolResult, ToolSpec};
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -16,39 +16,11 @@ const MAX_COMMIT_MSG_BYTES: usize = 10_000;
 
 // ====== 辅助函数 ======
 
-pub fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
+// tool_ok / tool_err 统一由 utils::tool_result 提供（消除全仓副本）
+pub use crate::utils::tool_result::{tool_err, tool_ok};
 
-pub fn tool_err(msg: &str) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": format!("[Error] {msg}")}),
-        }],
-        is_error: true,
-    }
-}
-
-fn truncate_output(s: &str, limit: usize) -> String {
-    if s.len() <= limit {
-        s.to_string()
-    } else {
-        let safe_end = s.floor_char_boundary(limit);
-        format!(
-            "{}\n\n⚠ 输出过长已截断 ({}B / {}B)",
-            &s[..safe_end],
-            limit,
-            s.len()
-        )
-    }
-}
+// 截断实现统一由 utils::truncate 提供（命名即语义）
+use crate::utils::truncate::truncate_bytes_head as truncate_output;
 
 /// 执行 git 命令并返回 stdout（stderr 在失败时作为错误信息返回）。
 /// 使用参数数组，永不拼接 shell 字符串。

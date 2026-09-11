@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -38,59 +37,8 @@ pub struct KnowledgeFile {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// 返回当前时间的 ISO 8601 字符串（精度到秒，不含时区后缀）。
-pub(crate) fn now_iso() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    secs_to_iso(secs)
-}
-
-/// 将 UNIX 时间戳（秒）转为 `YYYY-MM-DDTHH:MM:SS` 格式。
-pub(crate) fn secs_to_iso(secs: u64) -> String {
-    let (y, mo, d, h, m, s) = secs_to_date_parts(secs);
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}")
-}
-
-/// 简易公历换算 —— 来自 `config.rs:716-747` 的同款实现。
-fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
-    const SECS_PER_DAY: u64 = 86400;
-    let days = secs / SECS_PER_DAY;
-    let time_secs = secs % SECS_PER_DAY;
-    let hours = time_secs / 3600;
-    let mins = (time_secs % 3600) / 60;
-    let s = time_secs % 60;
-
-    let mut y = 1970u64;
-    let mut remaining = days;
-    loop {
-        let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if remaining < days_in_year {
-            break;
-        }
-        remaining -= days_in_year;
-        y += 1;
-    }
-    let month_days: &[u64] = if is_leap(y) {
-        &[31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        &[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut mo = 1u64;
-    for &md in month_days {
-        if remaining < md {
-            break;
-        }
-        remaining -= md;
-        mo += 1;
-    }
-    (y, mo, remaining + 1, hours, mins, s)
-}
-
-fn is_leap(year: u64) -> bool {
-    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
-}
+// 时间工具已统一收敛到 utils::time（now_iso / secs_to_iso / 公历换算）。
+// 本模块为只读遗留代码，不应再成为新代码的依赖点。
 
 // ---------------------------------------------------------------------------
 // Core functions

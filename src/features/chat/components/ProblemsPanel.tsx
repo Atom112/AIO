@@ -16,7 +16,7 @@ import {
   setProblemsPanelVisible,
   hasDiagnostics,
 } from '../../../core/store/diagnostics';
-import { invoke } from '@tauri-apps/api/core';
+import { openProjectDirectory } from '../../../core/api/project';
 
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import { formatNumber, t, type TranslationKey } from '../../../core/i18n';
@@ -44,7 +44,7 @@ const FILTER_OPTIONS: { value: string; labelKey: TranslationKey }[] = [
  */
 async function openFileInEditor(filePath: string) {
   try {
-    await invoke('open_project_directory', { path: filePath });
+    await openProjectDirectory(filePath);
   } catch {
     // 静默失败
   }

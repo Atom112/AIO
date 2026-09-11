@@ -9,7 +9,8 @@ import GlobalKeyboardHandler from './shared/components/GlobalKeyboardHandler';
 import CommandPalette from './shared/components/CommandPalette';
 import { Transition } from 'solid-transition-group';
 import { Component, createSignal, onCleanup, onMount, ParentProps } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { loadProviderConfigs } from './core/api/config';
+import { checkAppUpdate } from './core/api/update';
 import { Window } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
@@ -31,7 +32,6 @@ import {
   setProviderConfigs,
 } from './core/store/store';
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
-import type { ProviderConfigFile } from './core/utils/models';
 
 /**
  * Layout 组件
@@ -89,7 +89,7 @@ const Layout: Component<ParentProps> = (props) => {
       .catch(() => setModelsCatalogStatus('failed'));
 
     // 异步加载 provider 配置（启动后做一次）
-    invoke<ProviderConfigFile>('load_provider_configs')
+    loadProviderConfigs()
       .then((file) => setProviderConfigs(file.providers))
       .catch((e) => console.warn('[provider-configs] 启动加载失败:', e));
 
@@ -113,17 +113,7 @@ const Layout: Component<ParentProps> = (props) => {
 
     setTimeout(async () => {
       try {
-        type CheckUpdateResult =
-          | { kind: 'up_to_date'; current_version: string }
-          | {
-              kind: 'update_available';
-              info: { version: string; current_version: string; notes?: string; pub_date?: string };
-            }
-          | { kind: 'service_not_ready'; current_version: string; endpoint: string; reason: string }
-          | { kind: 'network'; current_version: string; endpoint: string; reason: string }
-          | { kind: 'failed'; current_version: string; endpoint: string; reason: string };
-
-        const result = await invoke<CheckUpdateResult>('check_app_update');
+        const result = await checkAppUpdate();
 
         if (result.kind === 'update_available') {
           const info = result.info;
@@ -132,9 +122,9 @@ const Layout: Component<ParentProps> = (props) => {
 
           setAppUpdateInfo({
             version: info.version,
-            currentVersion: info.current_version || currentVersion,
+            currentVersion: info.currentVersion || currentVersion,
             notes: info.notes,
-            pubDate: info.pub_date,
+            pubDate: info.pubDate,
           });
           setAppUpdateAvailable(true);
         }

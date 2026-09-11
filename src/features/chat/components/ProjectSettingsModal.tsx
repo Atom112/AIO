@@ -245,17 +245,17 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               'scale-95 opacity-0': isExiting() || isEntering(),
               'scale-100 opacity-100': !isExiting() && !isEntering(),
             }}
-            class="rounded-lg bg-dark-500 text-[#e0e0e0] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
+            class="rounded-lg bg-dark-500 text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
             style={{
-              background: 'var(--acrylic-bg)',
+              background: 'var(--panel-bg)',
               'backdrop-filter': 'blur(var(--acrylic-blur))',
               border: '1px solid var(--acrylic-border)',
             }}
           >
-            <div class="flex justify-between items-center border-b border-[#444] pb-3">
+            <div class="flex justify-between items-center border-b border-[rgba(var(--text-base-rgb),0.27)] pb-3">
               <h2 class="m-0 text-xl">{t('project.settings')}</h2>
-              <button onClick={handleClose} class={btnClose}>
-                &times;
+              <button onClick={handleClose} class={btnClose} aria-label={t('common.close')}>
+                <Icon name="x" size={18} class="stroke-[2.5]" />
               </button>
             </div>
 
@@ -270,7 +270,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                 onBlur={() => saveName()}
                 onKeyDown={(e) => e.key === 'Enter' && saveName()}
                 placeholder={t('project.namePlaceholder')}
-                class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[#e0e0e0] text-sm focus:outline-none focus:border-pri-50"
+                class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-sm focus:outline-none focus:border-pri-50"
               />
             </div>
 
@@ -399,17 +399,17 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                           class="text-[10px] mt-1.5 leading-relaxed"
                           style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}
                         >
-                          去{' '}
+                          {t('chat.model.noCloudGoTo')}{' '}
                           <span
                             style={{
                               color: 'rgba(var(--primary-rgb),0.5)',
                               'font-weight': '500',
                             }}
                           >
-                            设置中心 → 供应商设置
+                            {t('chat.model.noCloudSettingsPath')}
                           </span>
                           <br />
-                          启用 provider 并填写 API Key
+                          {t('chat.model.noCloudEnableProvider')}
                         </div>
                       </div>
                     </Show>

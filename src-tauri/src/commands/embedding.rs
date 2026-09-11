@@ -1,37 +1,16 @@
-//! 嵌入供给命令（embedding_*）：状态、连接测试、在线 API Key 管理。
+//! 嵌入供给命令（embedding_*）：连接测试。
 //!
-//! 本地内置嵌入模型开箱即用，无需任何命令；本模块仅服务在线 OpenAI 兼容端点。
+//! 自 v0.8 起仅支持本地嵌入模型（内置或按需下载），不再支持在线 OpenAI 兼容端点，
+//! 相关 API Key 管理命令（embedding_save_api_key）已移除。
 
 use crate::core::models::MemoryEmbeddingConfig;
 use tauri::AppHandle;
 
-/// 为在线 provider 从 secure_store 注入 API Key。
-fn inject_key(app: &AppHandle, cfg: &mut MemoryEmbeddingConfig) {
-    if cfg.provider == "online" && cfg.api_key.is_empty() {
-        if let Ok(Some(key)) = crate::core::secure_store::get(app, "embedding_api_key") {
-            cfg.api_key = key;
-        }
-    }
-}
-
-/// 保存在线嵌入 API Key（secure_store，不落盘；空值删除）。
-#[tauri::command]
-pub fn embedding_save_api_key(app: AppHandle, key: String) -> Result<(), String> {
-    if key.trim().is_empty() {
-        crate::core::secure_store::delete(&app, "embedding_api_key").map_err(|e| e.to_string())
-    } else {
-        crate::core::secure_store::set(&app, "embedding_api_key", key.trim())
-            .map_err(|e| e.to_string())
-    }
-}
-
-/// 嵌入连接测试（返回维度与延迟；本地内置 provider 无需联网）。
+/// 嵌入连接测试（返回维度与延迟；本地模型无需联网）。
 #[tauri::command]
 pub async fn embedding_test(
     app: AppHandle,
     config: MemoryEmbeddingConfig,
 ) -> crate::plugins::embed::EmbeddingTestResult {
-    let mut cfg = config;
-    inject_key(&app, &mut cfg);
-    crate::plugins::embed::test(&cfg).await
+    crate::plugins::embed::test(&app, &config).await
 }

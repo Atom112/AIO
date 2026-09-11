@@ -91,57 +91,60 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         let _ = fs::remove_file(path);
     }
 
-    // 迁移：给已存在的 topics 表添加 renamed 列（仅当列不存在时执行）
-    // 行为：旧话题行标记为 1（已重命名），避免升级后历史话题被自动改名
-    let has_renamed: i32 = conn
+    // 版本化迁移（PRAGMA user_version 记录进度；每条幂等，历史库可能已部分应用）。
+    crate::core::migrate::run_migrations(&conn, CHAT_DB_MIGRATIONS)?;
+
+    Ok(conn)
+}
+
+// ====== 版本化迁移表（按 version 升序；每条幂等）======
+//
+// 历史：此处曾是 12+ 处手写的 "add column if missing" 序列；现统一走
+// core::migrate 的 user_version 事务化运行器（应用一次，可审计、可回放）。
+
+use crate::core::migrate::{add_column_if_missing, Migration};
+
+/// v1：topics.renamed 列 + 旧话题标记（仅列不存在时执行，
+/// 保留"列新加时把存量话题标记为已重命名"的历史语义——避免升级后历史话题被自动改名）。
+fn m_topics_renamed(c: &Connection) -> Result<(), String> {
+    let has: i32 = c
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('topics') WHERE name='renamed'",
             [],
             |r| r.get(0),
         )
         .unwrap_or(0);
-    if has_renamed == 0 {
-        conn.execute(
+    if has == 0 {
+        c.execute(
             "ALTER TABLE topics ADD COLUMN renamed INTEGER NOT NULL DEFAULT 0",
             [],
         )
         .map_err(|e| e.to_string())?;
-        conn.execute("UPDATE topics SET renamed = 1", [])
+        c.execute("UPDATE topics SET renamed = 1", [])
             .map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
 
-    // 迁移：MCP 工具调用支持（向后兼容）
-    add_column_if_missing(&conn, "messages", "tool_call_id", "TEXT")?;
-    add_column_if_missing(&conn, "messages", "name", "TEXT")?;
-    add_column_if_missing(&conn, "messages", "tool_calls_json", "TEXT")?;
+/// v2：messages 的 MCP 工具调用与思维链列。
+fn m_messages_tool_calls(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "tool_call_id", "TEXT")?;
+    add_column_if_missing(c, "messages", "name", "TEXT")?;
+    add_column_if_missing(c, "messages", "tool_calls_json", "TEXT")?;
+    add_column_if_missing(c, "messages", "reasoning", "TEXT")
+}
 
-    // 迁移：模型原生思维链（reasoning_content）持久化（向后兼容）
-    add_column_if_missing(&conn, "messages", "reasoning", "TEXT")?;
+/// v3：assistants 扩展列（首选模型 / MCP 绑定 / Skill 绑定 / 项目归属）。
+fn m_assistants_extensions(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "assistants", "model_id", "TEXT")?;
+    add_column_if_missing(c, "assistants", "mcp_server_ids", "TEXT")?;
+    add_column_if_missing(c, "assistants", "skill_ids", "TEXT")?;
+    add_column_if_missing(c, "assistants", "project_id", "TEXT")
+}
 
-    // 迁移：助手绑定首选模型（向后兼容）
-    // 旧助手行缺少 model_id 列，反序列化时按 None 处理，视为使用全局默认模型
-    add_column_if_missing(&conn, "assistants", "model_id", "TEXT")?;
-
-    // 迁移：助手独立配置 MCP 服务器（向后兼容）
-    // 旧助手行缺少 mcp_server_ids 列，加载时按空 vec 处理，等价于「该助手不使用任何 MCP 工具」
-    add_column_if_missing(&conn, "assistants", "mcp_server_ids", "TEXT")?;
-
-    // 迁移：助手独立配置 Skill。旧助手默认不启用任何 Skill。
-    add_column_if_missing(&conn, "assistants", "skill_ids", "TEXT")?;
-
-    // 迁移：项目系统 — 助手可属于项目（NULL = 全局助手）
-    add_column_if_missing(&conn, "assistants", "project_id", "TEXT")?;
-
-    // 迁移：Agent 模式开关（Off = 对话模式，旧数据缺省）
-    add_column_if_missing(
-        &conn,
-        "assistants",
-        "agent_mode",
-        "TEXT NOT NULL DEFAULT 'off'",
-    )?;
-
-    // 迁移：项目表（首次创建）
-    conn.execute_batch(
+/// v4：projects 表（首次创建）。
+fn m_projects_table(c: &Connection) -> Result<(), String> {
+    c.execute_batch(
         "CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -150,22 +153,35 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );",
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
 
-    // 迁移：消息级 token 用量持久化（修复重启清零）
-    add_column_if_missing(&conn, "messages", "input_tokens", "INTEGER")?;
-    add_column_if_missing(&conn, "messages", "output_tokens", "INTEGER")?;
+/// v5：assistants.agent_mode（默认 off = 对话模式）。
+fn m_assistants_agent_mode(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "assistants", "agent_mode", "TEXT NOT NULL DEFAULT 'off'")
+}
 
-    // 迁移：Agent 工作过程持久化（跨重启保留 agent_steps / interim_content / agent_start_time）
-    add_column_if_missing(&conn, "messages", "agent_steps_json", "TEXT")?;
-    add_column_if_missing(&conn, "messages", "interim_content", "TEXT")?;
-    add_column_if_missing(&conn, "messages", "agent_start_time", "INTEGER")?;
+/// v6：messages 的 token 用量列（修复重启清零）。
+fn m_messages_tokens(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "input_tokens", "INTEGER")?;
+    add_column_if_missing(c, "messages", "output_tokens", "INTEGER")
+}
 
-    // 迁移：模型生成图像元数据（JSON GeneratedImage[]），用于下载与历史回放
-    add_column_if_missing(&conn, "messages", "images_json", "TEXT")?;
+/// v7：messages 的 Agent 过程列（跨重启保留 agent_steps / interim / start_time）。
+fn m_messages_agent_process(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "agent_steps_json", "TEXT")?;
+    add_column_if_missing(c, "messages", "interim_content", "TEXT")?;
+    add_column_if_missing(c, "messages", "agent_start_time", "INTEGER")
+}
 
-    // 用量日志表：不可变 append-only 记录，每轮 LLM 调用一行
-    conn.execute_batch(
+/// v8：messages.images_json（生成图像元数据，供下载与回放）。
+fn m_messages_images(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "images_json", "TEXT")
+}
+
+/// v9：usage_log 表与索引（不可变 append-only 用量记录）。
+fn m_usage_log(c: &Connection) -> Result<(), String> {
+    c.execute_batch(
         "CREATE TABLE IF NOT EXISTS usage_log (
             id TEXT PRIMARY KEY,
             timestamp TEXT NOT NULL DEFAULT (datetime('now')),
@@ -182,81 +198,113 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         CREATE INDEX IF NOT EXISTS idx_usage_log_timestamp ON usage_log(timestamp);
         CREATE INDEX IF NOT EXISTS idx_usage_log_topic ON usage_log(topic_id);",
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
 
-    // 迁移：缓存命中 tokens（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens）
-    add_column_if_missing(&conn, "usage_log", "cached_input_tokens", "INTEGER")?;
+/// v10：usage_log.cached_input_tokens（OpenAI cached_tokens / DeepSeek cache hit）。
+fn m_usage_cached_tokens(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "usage_log", "cached_input_tokens", "INTEGER")
+}
 
-    // 迁移：助理类型（chat = 对话模式专属，project = 项目助理）
+/// v11：assistants.assistant_type + 内置默认助手标记为 chat。
+fn m_assistants_type(c: &Connection) -> Result<(), String> {
     add_column_if_missing(
-        &conn,
+        c,
         "assistants",
         "assistant_type",
         "TEXT NOT NULL DEFAULT 'project'",
     )?;
-    // 将 default-assistant-id 标记为 chat 类型
-    conn.execute(
+    c.execute(
         "UPDATE assistants SET assistant_type = 'chat' WHERE id = 'default-assistant-id' AND (assistant_type IS NULL OR assistant_type != 'chat')",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
 
-    // 迁移：会话分支树 — 消息级父子关系
-    add_column_if_missing(&conn, "messages", "parent_message_id", "TEXT")?;
-    add_column_if_missing(
-        &conn,
-        "messages",
-        "branch_index",
-        "INTEGER NOT NULL DEFAULT 0",
-    )?;
-    // 为 parent_message_id 建立索引以加速分支查询
-    conn.execute(
+/// v12：messages 分支列 + parent 索引（会话分支树）。
+fn m_messages_branch(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "parent_message_id", "TEXT")?;
+    add_column_if_missing(c, "messages", "branch_index", "INTEGER NOT NULL DEFAULT 0")?;
+    c.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id)",
         [],
     )
     .map_err(|e| e.to_string())?;
-
-    // 迁移：话题分支 — 话题级分支来源和树结构
-    add_column_if_missing(&conn, "topics", "branched_from_message_id", "TEXT")?;
-    add_column_if_missing(&conn, "topics", "parent_topic_id", "TEXT")?;
-
-    Ok(conn)
-}
-
-/// 若指定表缺少指定列，则执行 ALTER TABLE ADD COLUMN。
-/// MCP 集成使用此为 messages 表增加 tool_call_id / name / tool_calls_json 三列。
-///
-/// # 安全
-/// table 和 column 参数仅允许字母、数字、下划线，拒绝任何特殊字符以防注入。
-fn add_column_if_missing(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    col_type: &str,
-) -> Result<(), String> {
-    // 白名单校验：仅允许 SQL 标识符合法字符
-    fn is_valid_ident(s: &str) -> bool {
-        !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_')
-    }
-    if !is_valid_ident(table) {
-        return Err(format!("非法的表名: '{table}'"));
-    }
-    if !is_valid_ident(column) {
-        return Err(format!("非法的列名: '{column}'"));
-    }
-
-    let exists: i32 = conn
-        .query_row(
-            &format!(
-                "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name=?1",
-                table
-            ),
-            [column],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-    if exists == 0 {
-        let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, col_type);
-        conn.execute(&sql, []).map_err(|e| e.to_string())?;
-    }
     Ok(())
 }
+
+/// v13：topics 分支列（话题级分支来源）。
+fn m_topics_branch(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "topics", "branched_from_message_id", "TEXT")?;
+    add_column_if_missing(c, "topics", "parent_topic_id", "TEXT")
+}
+
+/// chat_history.db 的迁移表（严格递增；新增迁移只允许追加，不得修改已发布条目）。
+const CHAT_DB_MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "topics.renamed 列",
+        run: m_topics_renamed,
+    },
+    Migration {
+        version: 2,
+        name: "messages: MCP 工具调用与思维链列",
+        run: m_messages_tool_calls,
+    },
+    Migration {
+        version: 3,
+        name: "assistants: 扩展列",
+        run: m_assistants_extensions,
+    },
+    Migration {
+        version: 4,
+        name: "projects 表",
+        run: m_projects_table,
+    },
+    Migration {
+        version: 5,
+        name: "assistants.agent_mode",
+        run: m_assistants_agent_mode,
+    },
+    Migration {
+        version: 6,
+        name: "messages: token 用量列",
+        run: m_messages_tokens,
+    },
+    Migration {
+        version: 7,
+        name: "messages: agent 过程列",
+        run: m_messages_agent_process,
+    },
+    Migration {
+        version: 8,
+        name: "messages.images_json",
+        run: m_messages_images,
+    },
+    Migration {
+        version: 9,
+        name: "usage_log 表与索引",
+        run: m_usage_log,
+    },
+    Migration {
+        version: 10,
+        name: "usage_log.cached_input_tokens",
+        run: m_usage_cached_tokens,
+    },
+    Migration {
+        version: 11,
+        name: "assistants.assistant_type",
+        run: m_assistants_type,
+    },
+    Migration {
+        version: 12,
+        name: "messages: 分支列与索引",
+        run: m_messages_branch,
+    },
+    Migration {
+        version: 13,
+        name: "topics: 分支列",
+        run: m_topics_branch,
+    },
+];

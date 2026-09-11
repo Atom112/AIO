@@ -1,5 +1,23 @@
 import { Component, createSignal, onMount, onCleanup, createEffect, Show } from 'solid-js';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import {
+  appendMessage,
+  askBtwQuestion as askBtwQuestionCmd,
+  branchTopic,
+  callLlmStream,
+  generateImage,
+  generateTopicTitle,
+  llmCreds,
+  loadAssistants,
+  runAgentTurn,
+  stopLlmStream,
+  summarizeHistory,
+} from '../../core/api/chat';
+import { storeChatAttachment } from '../../core/api/attachment';
+import { registerChatEventListeners } from './hooks/chatEventListeners';
+import { registerChatCommands } from './hooks/chatCommands';
+import { TOOL_INTERRUPTED } from './constants';
+import { autoDetectLsp, startLspServer } from '../../core/api/lsp';
 import { listen } from '@tauri-apps/api/event';
 import { useNavigate } from '@solidjs/router';
 import {
@@ -14,7 +32,6 @@ import {
   Topic,
   Message,
   PendingAttachment,
-  StoredAttachment,
   selectedModel,
   setSelectedModel,
   resolveAssistantModel,
@@ -33,7 +50,6 @@ import {
   customSubagentProfiles,
   workflowState,
   setWorkflowState,
-  type WorkflowState,
   isChatMode,
   projects,
   ensureProjectAssistant,
@@ -41,14 +57,9 @@ import {
   getLastAgentProjectId,
   initMcpServers,
 } from '../../core/store/store';
+import { EVENTS } from '../../core/api/events';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
-import {
-  registerCommand,
-  unregisterCommand,
-  resolveSlashCommand,
-  getSlashCommands,
-  getCommandDisplayDescription,
-} from '../../core/shortcuts';
+import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
 import { isImageGenModel } from '../../core/utils/models';
 import ProjectSidebar from './components/ProjectSidebar';
@@ -116,7 +127,8 @@ function buildSkillMessages(asst: any, fullInject: boolean): { role: 'system'; c
     msgs.push({
       role: 'system' as const,
       content:
-        '[已启用 Skills] 处理相关任务前，先用 read_skill 工具读取对应技能的完整说明：\n' +
+        t('chat.skillCatalogNotice') +
+        '\n' +
         large.map((s) => '- ' + s.name + ': ' + (s.description || s.name)).join('\n'),
     });
   }
@@ -189,15 +201,6 @@ const ChatPage: Component = () => {
   const [isProcessing, setIsProcessing] = createSignal(false); // 是否正在处理文件（控制文件解析加载状态）
   const [isDragging, setIsDragging] = createSignal(false); // 是否正在拖拽文件到窗口（控制拖拽状态样式）
   const [typingIndex, setTypingIndex] = createSignal<number | null>(null); // 当前正在打字机效果显示的消息索引，null 表示无打字效果
-  // setTimeout 批量流式内容合并（50ms 窗口），避免逐 token UI 更新（消除打字机效果）
-  let streamBatch: {
-    assistant_id: string;
-    topic_id: string;
-    content: string;
-    agentStepsContent: string;
-    lastIdx: number;
-  } | null = null;
-  let streamBatchRAF: number | undefined;
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null); // 当前正在编辑名称的话题 ID，null 表示无编辑中
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null); // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
   // 待用户审批的工具调用列表
@@ -404,7 +407,7 @@ const ChatPage: Component = () => {
     }
     setIsProcessing(true);
     try {
-      const stored = await invoke<StoredAttachment>('store_chat_attachment', { path: filePath });
+      const stored = await storeChatAttachment(filePath);
       setPendingFiles((prev) =>
         prev.some((file) => file.id === stored.id)
           ? prev
@@ -483,18 +486,16 @@ const ChatPage: Component = () => {
     // 覆盖式摘要：把旧摘要作为输入上下文注入，新摘要整体替换旧摘要，避免拼接式膨胀
     const messagesToSummarize = topic.summary
       ? [
-          { role: 'system' as const, content: '[历史背景]: ' + topic.summary },
+          { role: 'system' as const, content: t('chat.historyBackground') + topic.summary },
           ...topic.history.slice(0, summarizeCount),
         ]
       : topic.history.slice(0, summarizeCount);
 
     try {
-      const newSummarySnippet = await invoke<string>('summarize_history', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        messagesJson: JSON.stringify(messagesToSummarize),
-      });
+      const newSummarySnippet = await summarizeHistory(
+        llmCreds(currentMdl),
+        JSON.stringify(messagesToSummarize),
+      );
       const latestTopic = activeTopic();
       if (!latestTopic) return;
       const updatedHistory = latestTopic.history.slice(summarizeCount);
@@ -616,12 +617,7 @@ const ChatPage: Component = () => {
     let newName: string | null = null;
     let llmError: unknown = null;
     try {
-      const result = await invoke<string>('generate_topic_title', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        messagesJson: JSON.stringify(sample),
-      });
+      const result = await generateTopicTitle(llmCreds(currentMdl), JSON.stringify(sample));
       // 用户中途切换了话题或触发了新任务：放弃本次结果
       if (task.cancelled) return;
       if (result && result.trim()) {
@@ -705,9 +701,6 @@ const ChatPage: Component = () => {
     console.log(`话题已自动重命名: ${latestTopic.name} → ${newName}`);
   };
 
-  /** 中断/取消导致的工具调用占位结果文本（标记给模型看，保证上下文可理解） */
-  const TOOL_INTERRUPTED = '[Interrupted by user]';
-
   /**
    * 截断过长的工具返回内容（头尾保留式，与后端 truncate_tool_result 对齐：前 60% + 后 40%，
    * 20k 字符），防止 LLM 上下文膨胀，同时保留 read_file 已保留的文件首尾。
@@ -723,11 +716,11 @@ const ChatPage: Component = () => {
     if (tailStart > headEnd) {
       return (
         content.slice(0, headEnd) +
-        `\n\n... [已截断: 共${content.length}字符，保留首尾] ...\n\n` +
+        `\n\n${t('chat.truncatedHeadTail', { total: content.length })}\n\n` +
         content.slice(tailStart)
       );
     }
-    return content.slice(0, MAX_LEN) + `\n\n... [已截断: 共${content.length}字符]`;
+    return content.slice(0, MAX_LEN) + `\n\n${t('chat.truncatedTail', { total: content.length })}`;
   };
 
   /**
@@ -848,7 +841,7 @@ const ChatPage: Component = () => {
       content: string;
       done: boolean;
       error?: string;
-    }>('btw-chunk', (e) => {
+    }>(EVENTS.btwChunk, (e) => {
       const { overlay_id, content, done, error } = e.payload;
       if (overlay_id !== overlayId) return;
 
@@ -890,13 +883,7 @@ ${asstObj.prompt}`;
         { role: 'user', content: question },
       ];
 
-      await invoke('ask_btw_question', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        overlayId,
-        messagesJson: JSON.stringify(messagesForAI),
-      });
+      await askBtwQuestionCmd(llmCreds(currentMdl), overlayId, JSON.stringify(messagesForAI));
     } catch (err) {
       if (!resolved) {
         setBtwOverlays((prev) =>
@@ -980,7 +967,7 @@ ${asstObj.prompt}`;
 
     // 持久化用户消息
     try {
-      await invoke('append_message', { topicId, message: newUserMsg });
+      await appendMessage(topicId, newUserMsg);
     } catch (err) {
       console.error('[chat] save message failed:', err);
       alert(t('error.save'));
@@ -1000,17 +987,17 @@ ${asstObj.prompt}`;
     // 调用 LLM
     try {
       setIsThinking(true);
-      await invoke('run_agent_turn', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
+      await runAgentTurn({
+        ...llmCreds(currentMdl),
         assistantId: asstId,
-        topicId: topicId,
+        topicId,
         messages: messagesForAI,
         mcpServerIds: currentAsst?.mcpServerIds ?? [],
-        agentMode: agentMode,
+        agentMode,
         projectId: currentProjectId() ?? null,
         webSearchEnabled: webSearchEnabled(),
+        profileModelOverrides: [],
+        customSubagentProfiles: [],
         locale: locale(),
         contextWindow: await getModelContextWindow(),
         skills: agentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
@@ -1235,10 +1222,7 @@ ${asstObj.prompt}`;
 
     // 先持久化用户消息和附件关联，避免流式请求期间退出或重复上传导致附件成为孤儿。
     try {
-      await invoke('append_message', {
-        topicId,
-        message: newUserMsg,
-      });
+      await appendMessage(topicId, newUserMsg);
     } catch (err) {
       console.error('save_message_with_attachments failed:', err);
       alert(t('error.save'));
@@ -1296,23 +1280,9 @@ ${asstObj.prompt}`;
       // 项目模式/Agent 模式：调用 run_agent_turn（含工具调用、子智能体等）
       if (isChatMode() && isImageGenModel(currentMdl.model_id, currentMdl.api_url)) {
         // 专用端点（dall-e-2/3 等）：非流式生成，结果经 llm-chunk(done) 回传
-        await invoke('generate_image', {
-          apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key ?? '',
-          model: currentMdl.model_id,
-          assistantId: asstId,
-          topicId: topicId,
-          prompt: userInput,
-        });
+        await generateImage(llmCreds(currentMdl), asstId, topicId, userInput);
       } else if (isChatMode()) {
-        await invoke('call_llm_stream', {
-          apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key ?? '',
-          model: currentMdl.model_id,
-          assistantId: asstId,
-          topicId: topicId,
-          messages: messagesForAI,
-        });
+        await callLlmStream(llmCreds(currentMdl), asstId, topicId, messagesForAI);
       } else {
         // 解析 per-profile 模型覆盖（仅 agent 模式需要）
         const resolvedOverrides: Array<{
@@ -1334,15 +1304,13 @@ ${asstObj.prompt}`;
           }
         }
 
-        await invoke('run_agent_turn', {
-          apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key ?? '',
-          model: currentMdl.model_id,
+        await runAgentTurn({
+          ...llmCreds(currentMdl),
           assistantId: asstId,
-          topicId: topicId,
+          topicId,
           messages: messagesForAI,
           mcpServerIds: currentAsst?.mcpServerIds ?? [],
-          agentMode: agentMode,
+          agentMode,
           projectId: currentProjectId() ?? null,
           webSearchEnabled: webSearchEnabled(),
           profileModelOverrides: resolvedOverrides,
@@ -1364,10 +1332,7 @@ ${asstObj.prompt}`;
    */
   const handleStopGeneration = async () => {
     try {
-      await invoke('stop_llm_stream', {
-        assistantId: currentAssistantId(),
-        topicId: currentTopicId(),
-      });
+      await stopLlmStream(currentAssistantId() ?? '', currentTopicId() ?? '');
     } catch (err) {
       console.error('stop_llm_stream 失败:', err);
     }
@@ -1425,10 +1390,7 @@ ${asstObj.prompt}`;
     const topicId = currentTopicId();
     if (!asstId || !topicId) return;
     try {
-      const newTopic: Topic = await invoke('branch_topic', {
-        sourceTopicId: topicId,
-        sourceMessageId,
-      });
+      const newTopic: Topic = await branchTopic(topicId, sourceMessageId);
       setDatas(
         'assistants',
         (a: any) => a.id === asstId,
@@ -1477,302 +1439,42 @@ ${asstObj.prompt}`;
   onMount(() => {
     const navigate = useNavigate();
 
-    // ---- 注册快捷键命令 ----
-    const cmdToggleLeft = registerCommand({
-      id: 'toggle-left-sidebar',
-      label: '切换左侧边栏',
-      description: '显示或隐藏助手列表侧边栏',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+B',
-      handler: () => {
-        const newState = !isLeftCollapsed();
-        setIsLeftCollapsed(newState);
-        localStorage.setItem('left-collapsed', String(newState));
-        if (!newState && leftPanelWidth() < 5) setLeftPanelWidth(18);
-      },
-    });
-
-    const cmdToggleRight = registerCommand({
-      id: 'toggle-right-sidebar',
-      label: '切换右侧边栏',
-      description: '显示或隐藏话题列表侧边栏',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+Alt+B',
-      handler: () => {
-        const newState = !isRightCollapsed();
-        setIsRightCollapsed(newState);
-        localStorage.setItem('right-collapsed', String(newState));
-        if (!newState && rightPanelWidth() < 5) setRightPanelWidth(18);
-      },
-    });
-
-    const cmdNewTopic = registerCommand({
-      id: 'new-topic',
-      label: '新建话题',
-      description: '在当前助手中创建新的话题',
-      category: 'chat',
-      defaultKeys: 'Ctrl+N',
-      handler: () => {
-        addTopic();
-      },
-    });
-
-    const cmdNewProject = registerCommand({
-      id: 'new-project',
-      label: '新建项目',
-      description: '创建新的项目',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+N',
-      handler: () => {
-        setShowProjectCreateModal(true);
-      },
-    });
-
-    const cmdStopGen = registerCommand({
-      id: 'stop-generation',
-      label: '停止生成',
-      description: '停止当前 AI 回复的生成',
-      category: 'chat',
-      defaultKeys: 'Escape',
-      handler: () => {
-        if (isThinking()) handleStopGeneration();
-      },
-    });
-
-    const cmdPrevAsst = registerCommand({
-      id: 'prev-assistant',
-      label: '上一个',
-      description: '切换到上一个聊天或项目',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+[',
-      handler: () => {
-        // 构建顺序: [chat, ...projects]
-        const projList = projects();
-        const currentProjId = currentAssistant()?.projectId;
-        if (!currentProjId) {
-          // 当前是聊天模式，上一个 = 最后一个项目
-          if (projList.length > 0) {
-            const lastProj = projList[projList.length - 1];
-            void switchToProject(lastProj.id);
-          }
-        } else {
-          const idx = projList.findIndex((p) => p.id === currentProjId);
-          if (idx > 0) {
-            void switchToProject(projList[idx - 1].id);
-          } else {
-            // 第一个项目，上一个 = 聊天
-            switchToChat();
-          }
-        }
-      },
-    });
-
-    const cmdNextAsst = registerCommand({
-      id: 'next-assistant',
-      label: '下一个',
-      description: '切换到下一个聊天或项目',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+]',
-      handler: () => {
-        const projList = projects();
-        const currentProjId = currentAssistant()?.projectId;
-        if (!currentProjId) {
-          // 当前是聊天模式，下一个 = 第一个项目
-          if (projList.length > 0) {
-            void switchToProject(projList[0].id);
-          }
-        } else {
-          const idx = projList.findIndex((p) => p.id === currentProjId);
-          if (idx >= 0 && idx < projList.length - 1) {
-            void switchToProject(projList[idx + 1].id);
-          } else {
-            // 最后一个项目，下一个 = 聊天
-            switchToChat();
-          }
-        }
-      },
-    });
-
-    const cmdPrevTopic = registerCommand({
-      id: 'prev-topic',
-      label: '上一个话题',
-      description: '切换到上一个话题',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+Shift+[',
-      handler: () => {
-        const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
-        if (!asst) return;
-        const idx = asst.topics.findIndex((t: any) => t.id === currentTopicId());
-        if (idx > 0) setCurrentTopicId(asst.topics[idx - 1].id);
-      },
-    });
-
-    const cmdNextTopic = registerCommand({
-      id: 'next-topic',
-      label: '下一个话题',
-      description: '切换到下一个话题',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+Shift+]',
-      handler: () => {
-        const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
-        if (!asst) return;
-        const idx = asst.topics.findIndex((t: any) => t.id === currentTopicId());
-        if (idx >= 0 && idx < asst.topics.length - 1) setCurrentTopicId(asst.topics[idx + 1].id);
-      },
-    });
-
-    const cmdGoSettings = registerCommand({
-      id: 'go-to-settings',
-      label: '打开设置',
-      description: '导航到应用设置页面',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+,',
-      handler: () => {
-        navigate('/settings/app');
-      },
-    });
-
-    const cmdGoChat = registerCommand({
-      id: 'go-to-chat',
-      label: '回到聊天',
-      description: '导航到聊天页面',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+1',
-      handler: () => {
-        navigate('/chat');
-      },
-    });
-
-    const cmdToggleSearch = registerCommand({
-      id: 'toggle-web-search',
-      label: '切换联网搜索',
-      description: '开启或关闭联网搜索功能',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+S',
-      handler: () => {
-        const next = !webSearchEnabled();
-        setWebSearchEnabled(next);
-        localStorage.setItem('chat-web-search', String(next));
-      },
-    });
-
-    const cmdCycleReasoning = registerCommand({
-      id: 'cycle-reasoning',
-      label: '切换推理强度',
-      description: '循环切换推理深度：关闭 → 低 → 中 → 高',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+R',
-      handler: () => {
-        const levels: Array<'off' | 'low' | 'medium' | 'high'> = ['off', 'low', 'medium', 'high'];
-        const current = reasoningLevel();
-        const idx = levels.indexOf(current);
-        const next = levels[(idx + 1) % levels.length];
-        setReasoningLevel(next);
-        localStorage.setItem('chat-reasoning-level', next);
-      },
-    });
-
-    const cmdCycleAgent = registerCommand({
-      id: 'cycle-agent-mode',
-      label: '切换 Agent 模式',
-      description: '循环切换 Agent 执行模式：对话 → 普通 → 自动 → 计划',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+M',
-      handler: async () => {
-        const id = currentAssistantId();
-        if (!id) return;
-        const asst = datas.assistants.find((a: any) => a.id === id);
-        const current = (asst?.agentMode || 'off') as string;
-        const modes = ['off', 'normal', 'auto', 'plan'];
-        const idx = modes.indexOf(current);
-        const next = modes[(idx + 1) % modes.length];
-        setDatas('assistants', (a: any) => a.id === id, 'agentMode', next);
-        await saveSingleAssistantToBackend(id);
-      },
-    });
-
-    // ---- 斜杠命令处理器（覆盖 shortcuts.ts 中的 no-op） ----
-    const cmdSlashClear = registerCommand({
-      id: 'slash-clear',
-      handler: () => {
-        const asstId = currentAssistantId();
-        const topicId = currentTopicId();
-        if (!asstId || !topicId) return;
-        if (!confirm(t('chat.clearConfirm'))) return;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === asstId,
-          'topics',
-          (t: any) => t.id === topicId,
-          'history',
-          [],
-        );
-        saveSingleAssistantToBackend(asstId);
-      },
-    });
-
-    const cmdSlashCompact = registerCommand({
-      id: 'slash-compact',
-      handler: async (args?: string) => {
-        // 可选参数：保留的 token 预算（`/compact 10000`），默认 2 万
-        const budgetArg = args ? Number(args.trim()) : NaN;
-        setIsThinking(true);
-        try {
-          await checkAndSummarize(
-            Number.isFinite(budgetArg) && budgetArg > 0 ? budgetArg : undefined,
-          );
-        } finally {
-          setIsThinking(false);
-        }
-      },
-    });
-
-    const cmdSlashSearch = registerCommand({
-      id: 'slash-search',
-      handler: () => {
-        const next = !webSearchEnabled();
-        setWebSearchEnabled(next);
-        localStorage.setItem('chat-web-search', String(next));
-      },
-    });
-
-    const cmdSlashSettings = registerCommand({
-      id: 'slash-settings',
-      handler: () => {
-        navigate('/settings/app');
-      },
-    });
-
-    const cmdSlashHelp = registerCommand({
-      id: 'slash-help',
-      handler: () => {
-        const asstId = currentAssistantId();
-        const topicId = currentTopicId();
-        if (!asstId || !topicId) return;
-        const allSlash = getSlashCommands();
-        const lines = allSlash.map((c) => `- **${c.label}** — ${getCommandDisplayDescription(c)}`);
-        const helpText = `## ${t('slash.help.title')}\n\n${lines.join('\n')}`;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === asstId,
-          'topics',
-          (t: any) => t.id === topicId,
-          'history',
-          (h: any[]) => [
-            ...h,
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant' as const,
-              content: helpText,
-            },
-          ],
-        );
-      },
+    // 注册全部键盘/斜杠命令（19 个 registerCommand 已抽取为 hooks/chatCommands.ts）。
+    const commandIds = registerChatCommands({
+      isLeftCollapsed,
+      setIsLeftCollapsed,
+      leftPanelWidth,
+      setLeftPanelWidth,
+      isRightCollapsed,
+      setIsRightCollapsed,
+      rightPanelWidth,
+      setRightPanelWidth,
+      addTopic,
+      setShowProjectCreateModal,
+      switchToChat,
+      switchToProject,
+      isThinking,
+      setIsThinking,
+      handleStopGeneration,
+      reasoningLevel,
+      setReasoningLevel,
+      webSearchEnabled,
+      setWebSearchEnabled,
+      datas,
+      setDatas,
+      projects,
+      currentAssistant,
+      currentAssistantId,
+      currentTopicId,
+      setCurrentTopicId,
+      saveSingleAssistantToBackend,
+      checkAndSummarize,
+      navigate,
     });
 
     // ---- 原有初始化逻辑 ----
     // 首次进入：从 SQLite 加载所有助手数据
-    invoke<Assistant[]>('load_assistants')
+    loadAssistants()
       .then(async (loaded) => {
         let finalAssistants = [...loaded];
 
@@ -1780,7 +1482,7 @@ ${asstObj.prompt}`;
         let defaultAsst = finalAssistants.find((a) => a.id === DEFAULT_ASST_ID);
         if (!defaultAsst) {
           // createAssistant 内部已经带了一个“默认话题”
-          defaultAsst = createAssistant('默认助手', DEFAULT_ASST_ID);
+          defaultAsst = createAssistant(t('chat.defaultAssistant'), DEFAULT_ASST_ID);
           finalAssistants = [defaultAsst, ...finalAssistants];
           setDatas('assistants', finalAssistants);
           await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
@@ -1820,765 +1522,28 @@ ${asstObj.prompt}`;
         alert(t('error.load'));
       });
 
-    // 设置多个事件监听器，存储 unlisten 函数用于清理
-    const unlistens = [
-      listen('tauri://drag-enter', () => setIsDragging(true)),
-      listen('tauri://drag-leave', () => setIsDragging(false)),
-      listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
-        setIsDragging(false);
-        for (const p of e.payload.paths) await handleFileUpload(p, 'file');
-      }),
-      // 新一轮 LLM 调用开始：多轮 Agent 工作时复用同一条 assistant 消息
-      listen<any>('llm-round-start', (e) => {
-        const { assistant_id, topic_id, round } = e.payload;
-
-        // 后续轮次：关闭上一轮的步骤，准备新轮次（不再整体压扁到 interimContent）
-        if (round > 1) {
-          const asst = datas.assistants.find((a) => a.id === assistant_id);
-          const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-          if (topic) {
-            const lastIdx = topic.history.length - 1;
-            const lastMsg = topic.history[lastIdx];
-            if (lastMsg?.role === 'assistant') {
-              // 关闭当前运行的步骤
-              const now = Date.now();
-              setDatas(
-                'assistants',
-                (a) => a.id === assistant_id,
-                'topics',
-                (t) => t.id === topic_id,
-                'history',
-                lastIdx,
-                'agentSteps',
-                (steps: any[] = []) => {
-                  if (steps.length === 0) return steps;
-                  const last = steps[steps.length - 1];
-                  if (last.status !== 'running') return steps;
-                  return [
-                    ...steps.slice(0, -1),
-                    { ...last, status: 'complete', duration: now - last.timestamp },
-                  ];
-                },
-              );
-              // 重置 content / reasoning，准备接收新轮次输出
-              setDatas(
-                'assistants',
-                (a) => a.id === assistant_id,
-                'topics',
-                (t) => t.id === topic_id,
-                'history',
-                lastIdx,
-                {
-                  content: '',
-                  reasoning: '',
-                },
-              );
-              // 打字机索引保持不变（仍指向同一条消息）
-              return;
-            }
-          }
-        }
-
-        // 第一轮：创建新 assistant 占位消息
-        const currentMdl = selectedModel();
-        setDatas(
-          'assistants',
-          (a) => a.id === assistant_id,
-          'topics',
-          (t) => t.id === topic_id,
-          'history',
-          (h) => [
-            ...h,
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant' as const,
-              content: '',
-              modelId: currentMdl?.model_id,
-              reasoning: '',
-              agentStartTime: Date.now(),
-              agentSteps: [],
-            },
-          ],
-        );
-        // 设置打字机索引为新 assistant 消息位置
-        const asst = datas.assistants.find((a) => a.id === assistant_id);
-        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-        if (topic) setTypingIndex(topic.history.length - 1);
-      }),
-      listen<any>('llm-chunk', async (e) => {
-        const {
-          assistant_id,
-          topic_id,
-          content,
-          done,
-          error,
-          input_tokens,
-          output_tokens,
-          context_tokens,
-          cached_input_tokens,
-          images,
-        } = e.payload;
-        if (done) {
-          // 刷新可能残余的 rAF 批量内容
-          if (streamBatchRAF !== undefined) {
-            clearTimeout(streamBatchRAF);
-            streamBatchRAF = undefined;
-          }
-          if (streamBatch) {
-            const batch = streamBatch;
-            streamBatch = null;
-            setDatas(
-              'assistants',
-              (a) => a.id === batch.assistant_id,
-              'topics',
-              (t) => t.id === batch.topic_id,
-              'history',
-              batch.lastIdx,
-              'content',
-              (old: string) => old + batch.content,
-            );
-          }
-          // 整轮真正结束（后端 run_agent_turn epilogue 唯一发出 done）
-          if (error) {
-            // 错误：追加错误文本到最后一条 assistant 消息
-            const asst = datas.assistants.find((a) => a.id === assistant_id);
-            const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-            if (topic) {
-              const lastIdx = topic.history.length - 1;
-              if (lastIdx >= 0) {
-                setDatas(
-                  'assistants',
-                  (a) => a.id === assistant_id,
-                  'topics',
-                  (t) => t.id === topic_id,
-                  'history',
-                  lastIdx,
-                  'content',
-                  (old: string) => (old ?? '') + content,
-                );
-              }
-            }
-          }
-          // 关闭未完结状态：最后一个 running 步骤、以及中断产生的孤儿 toolCalls。
-          // 用户点停止时后端 cancel 直接 break，不会为在途工具发 llm-tool-result，
-          // 导致 msg.toolCalls 中残留 state==='calling' 的条目。下一次请求重建 API 载荷时，
-          // 这些条目会被 filter 跳过，assistant.tool_calls 失去配对的 role:tool 消息，
-          // 触发 API 400（missing field tool_call_id）。这里统一标记为 error 并写明中断原因，
-          // 重建逻辑会自动为它们生成配对的 tool 消息，模型也能感知“上次操作被中断”。
-          const finishTime = Date.now();
-          setDatas(
-            'assistants',
-            (a: any) => a.id === assistant_id,
-            'topics',
-            (t: any) => t.id === topic_id,
-            'history',
-            (h: any[]) => {
-              const lastIdx = h.length - 1;
-              if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-              const msg = h[lastIdx];
-              const steps: any[] = msg.agentSteps || [];
-              const toolCalls: any[] = msg.toolCalls || [];
-              const updatedMsg: any = { ...msg };
-              // 保存 token 用量
-              if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
-              if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
-              if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
-              if (cached_input_tokens != null) updatedMsg.cachedInputTokens = cached_input_tokens;
-              // 模型生成的图像元数据（下载按钮）+ 后端重写（去 token 标记）后的最终文本
-              if (images) updatedMsg.images = images;
-              if (!error && content) updatedMsg.content = content;
-              // 孤儿 toolCalls：仍为 calling 的条目标记为中断错误
-              if (toolCalls.some((tc: any) => tc.state === 'calling')) {
-                updatedMsg.toolCalls = toolCalls.map((tc: any) =>
-                  tc.state === 'calling' ? { ...tc, state: 'error', error: TOOL_INTERRUPTED } : tc,
-                );
-              }
-              if (steps.length === 0) {
-                return [...h.slice(0, lastIdx), updatedMsg];
-              }
-              return [
-                ...h.slice(0, lastIdx),
-                {
-                  ...updatedMsg,
-                  agentSteps: steps.map((s: any, i: number) => {
-                    if (s.status !== 'running') return s;
-                    // 中断的 tool_call 步骤与其 toolCall 状态保持一致（标记 error）；
-                    // 其余 running 步骤（含最后一个）按完成关闭
-                    if (s.type === 'tool_call' && s.toolCall?.state === 'calling') {
-                      return {
-                        ...s,
-                        status: 'error',
-                        duration: finishTime - s.timestamp,
-                        toolCall: { ...s.toolCall, state: 'error', error: TOOL_INTERRUPTED },
-                      };
-                    }
-                    return i === steps.length - 1
-                      ? { ...s, status: 'complete', duration: finishTime - s.timestamp }
-                      : s;
-                  }),
-                },
-              ];
-            },
-          );
-          setIsThinking(false);
-          saveSingleAssistantToBackend(assistant_id);
-          setTypingIndex(null);
-          // 串行执行：先尝试自动重命名（非默认话题的首次对话），再触发历史压缩总结
-          setTimeout(async () => {
-            await checkAndRename(assistant_id, topic_id);
-            await checkAndSummarize();
-          }, 500);
-          return;
-        }
-
-        // 流式数据追加：rAF 批量合并，避免逐 token 的打字机效果
-        const asst = datas.assistants.find((a) => a.id === assistant_id);
-        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-        if (topic) {
-          const lastIdx = topic.history.length - 1;
-          if (lastIdx >= 0) {
-            if (!streamBatch) {
-              streamBatch = {
-                assistant_id,
-                topic_id,
-                content,
-                agentStepsContent: content,
-                lastIdx,
-              };
-              streamBatchRAF = window.setTimeout(() => {
-                const batch = streamBatch!;
-                streamBatch = null;
-                streamBatchRAF = undefined;
-                // 一次性应用批量内容（50ms 窗口内累积的所有 token）
-                setDatas(
-                  'assistants',
-                  (a) => a.id === batch.assistant_id,
-                  'topics',
-                  (t) => t.id === batch.topic_id,
-                  'history',
-                  batch.lastIdx,
-                  'content',
-                  (old: string) => old + batch.content,
-                );
-                if (batch.agentStepsContent) {
-                  const batchStepsContent = batch.agentStepsContent;
-                  setDatas(
-                    'assistants',
-                    (a) => a.id === batch.assistant_id,
-                    'topics',
-                    (t) => t.id === batch.topic_id,
-                    'history',
-                    batch.lastIdx,
-                    'agentSteps',
-                    (steps: any[] = []) => {
-                      const lastStep = steps[steps.length - 1];
-                      if (
-                        lastStep &&
-                        lastStep.type === 'content' &&
-                        lastStep.status === 'running'
-                      ) {
-                        return [
-                          ...steps.slice(0, -1),
-                          {
-                            ...lastStep,
-                            contentText: (lastStep.contentText || '') + batchStepsContent,
-                          },
-                        ];
-                      }
-                      const now = Date.now();
-                      const closed =
-                        lastStep && lastStep.status === 'running'
-                          ? [
-                              ...steps.slice(0, -1),
-                              {
-                                ...lastStep,
-                                status: 'complete',
-                                duration: now - lastStep.timestamp,
-                              },
-                            ]
-                          : steps;
-                      return [
-                        ...closed,
-                        {
-                          id: crypto.randomUUID(),
-                          type: 'content',
-                          timestamp: now,
-                          status: 'running',
-                          contentText: batchStepsContent,
-                        },
-                      ];
-                    },
-                  );
-                }
-              }, 80) as unknown as number;
-            } else {
-              streamBatch.content += content;
-              streamBatch.agentStepsContent += content;
-            }
-          }
-        }
-      }),
-      // 思维链片段追加：原生 reasoning_content 流式累积到对应消息的 reasoning 字段
-      // 同时构建 agentSteps 时间线中的 thinking 步骤
-      listen<any>('llm-reasoning', (e) => {
-        if (reasoningLevel() === 'off') return;
-        const { assistant_id, topic_id, content } = e.payload;
-        const asst = datas.assistants.find((a) => a.id === assistant_id);
-        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-        if (topic) {
-          const lastIdx = topic.history.length - 1;
-          if (lastIdx >= 0) {
-            // 追加到 reasoning 字段（保持向后兼容）
-            setDatas(
-              'assistants',
-              (a) => a.id === assistant_id,
-              'topics',
-              (t) => t.id === topic_id,
-              'history',
-              lastIdx,
-              'reasoning',
-              (old: string) => (old ?? '') + content,
-            );
-            // 构建 agentSteps 时间线：若最后一步不是 thinking 则新建，否则追加
-            setDatas(
-              'assistants',
-              (a) => a.id === assistant_id,
-              'topics',
-              (t) => t.id === topic_id,
-              'history',
-              lastIdx,
-              'agentSteps',
-              (steps: any[] = []) => {
-                const lastStep = steps[steps.length - 1];
-                if (lastStep && lastStep.type === 'thinking' && lastStep.status === 'running') {
-                  // 追加到当前 thinking 步骤
-                  return [
-                    ...steps.slice(0, -1),
-                    {
-                      ...lastStep,
-                      thinkingText: (lastStep.thinkingText || '') + content,
-                    },
-                  ];
-                }
-                // 关闭上一步（如果仍在运行），新建 thinking 步骤
-                const now = Date.now();
-                const closed =
-                  lastStep && lastStep.status === 'running'
-                    ? [
-                        ...steps.slice(0, -1),
-                        { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
-                      ]
-                    : steps;
-                return [
-                  ...closed,
-                  {
-                    id: crypto.randomUUID(),
-                    type: 'thinking',
-                    timestamp: now,
-                    status: 'running',
-                    thinkingText: content,
-                  },
-                ];
-              },
-            );
-          }
-        }
-      }),
-      // LLM 工具调用事件：展示"调用中"气泡并构建 agentSteps 时间线
-      listen<any>('llm-tool-call', (e) => {
-        const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
-        const newTc = {
-          id: tool_call_id,
-          type: 'function',
-          function: { name, arguments: argsJson },
-          state: 'calling',
-        };
-        setDatas(
-          'assistants',
-          (a: any) => a.id === assistant_id,
-          'topics',
-          (t: Topic) => t.id === topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx >= 0 && h[lastIdx]?.role === 'assistant') {
-              const msg = h[lastIdx];
-              // 保持 toolCalls 数组（消息重建用）
-              const existing = msg.toolCalls || [];
-              if (existing.find((tc: any) => tc.id === tool_call_id)) return h;
-              const newToolCalls = [...existing, newTc];
-              // 构建 agentSteps：关闭上一步，新建 tool_call 步骤
-              const now = Date.now();
-              const steps: any[] = msg.agentSteps || [];
-              const lastStep = steps[steps.length - 1];
-              const closed =
-                lastStep && lastStep.status === 'running'
-                  ? [
-                      ...steps.slice(0, -1),
-                      { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
-                    ]
-                  : steps;
-              const newSteps = [
-                ...closed,
-                {
-                  id: crypto.randomUUID(),
-                  type: 'tool_call',
-                  timestamp: now,
-                  status: 'running',
-                  toolCall: newTc,
-                },
-              ];
-              return [
-                ...h.slice(0, lastIdx),
-                { ...msg, toolCalls: newToolCalls, agentSteps: newSteps },
-              ];
-            }
-            return h;
-          },
-        );
-      }),
-      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与 agentSteps 时间线
-      listen<any>('llm-tool-result', (e) => {
-        const {
-          assistant_id,
-          topic_id,
-          tool_call_id,
-          content,
-          result,
-          is_error,
-          file_changes,
-          full_content,
-        } = e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === assistant_id,
-          'topics',
-          (t: Topic) => t.id === topic_id,
-          'history',
-          (h: any[]) =>
-            h.map((m: any) => {
-              if (m.role !== 'assistant' || !m.toolCalls) return m;
-              const newToolCalls = m.toolCalls.map((tc: any) =>
-                tc.id === tool_call_id
-                  ? {
-                      ...tc,
-                      state: is_error ? 'error' : 'success',
-                      result,
-                      content,
-                      fullContent: full_content ?? content,
-                      error: is_error ? content : undefined,
-                      fileChanges: file_changes,
-                    }
-                  : tc,
-              );
-              // 同步更新 agentSteps 中对应 tool_call 步骤
-              const now = Date.now();
-              const newSteps = (m.agentSteps || []).map((s: any) => {
-                if (s.type === 'tool_call' && s.toolCall?.id === tool_call_id) {
-                  return {
-                    ...s,
-                    status: is_error ? 'error' : 'complete',
-                    fullResult: full_content ?? s.fullResult,
-                    duration: now - s.timestamp,
-                    toolCall: {
-                      ...s.toolCall,
-                      state: is_error ? 'error' : 'success',
-                      result,
-                      content,
-                      fullContent: full_content ?? content,
-                      error: is_error ? content : undefined,
-                      fileChanges: file_changes,
-                    },
-                  };
-                }
-                return s;
-              });
-              return { ...m, toolCalls: newToolCalls, agentSteps: newSteps };
-            }),
-        );
-      }),
-      // 运行内上下文压缩事件：仅主 Agent 压缩会更新会话记忆——
-      // 覆盖式更新 topic.summary 并按 token 预算裁剪历史，使后续轮次不再全量重发已压缩部分（P1-5）
-      listen<any>('llm-compression', (e) => {
-        const { assistant_id, topic_id, source, summary } = e.payload;
-        if (!assistant_id || !topic_id) return;
-        if (source === 'subagent') return; // 子智能体上下文压缩与主会话无关
-        if (!summary || typeof summary !== 'string' || summary.trim() === '') return;
-        const asst = datas.assistants.find((a: any) => a.id === assistant_id);
-        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-        if (!topic) return;
-        // 与后端 keep_recent_tokens 对齐：从尾部累计约 2 万 token，至少保留最近 4 条（一个完整回合）
-        const KEEP_TOKEN_BUDGET = 20_000;
-        const estTokens = (m: any): number => {
-          const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
-          return Math.ceil(text.length / 4) + 8;
-        };
-        let keepCount = 0;
-        let acc = 0;
-        const hist = topic.history;
-        for (let i = hist.length - 1; i >= 0; i--) {
-          acc += estTokens(hist[i]);
-          keepCount = hist.length - i;
-          if (acc >= KEEP_TOKEN_BUDGET) break;
-        }
-        keepCount = Math.max(keepCount, 4);
-        const trimmed = keepCount < hist.length ? hist.slice(hist.length - keepCount) : hist;
-        if (trimmed.length === hist.length && topic.summary === summary) return;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === assistant_id,
-          'topics',
-          (t: Topic) => t.id === topic_id,
-          { history: trimmed, summary },
-        );
-        saveSingleAssistantToBackend(assistant_id);
-      }),
-      // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
-      listen<any>('tool-approval-requested', (e) => {
-        const {
-          approval_id,
-          server_id,
-          tool_name,
-          arguments: args,
-          reason,
-          preview_diff,
-          file_path,
-        } = e.payload;
-        setPendingApprovals((prev) => [
-          ...prev,
-          {
-            approvalId: approval_id,
-            serverId: server_id,
-            toolName: tool_name,
-            arguments: args,
-            reason,
-            previewDiff: preview_diff,
-            filePath: file_path,
-          },
-        ]);
-      }),
-
-      // ===== 子智能体事件监听 =====
-
-      // 子智能体启动：在当前 assistant 消息的 agentSteps 中推入一个 subagent 步骤
-      listen<any>('subagent-start', (e) => {
-        const {
-          parent_assistant_id,
-          parent_topic_id,
-          subagent_id,
-          profile_id,
-          profile_name,
-          task_summary,
-        } = e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const newStep = {
-              id: `subagent-${subagent_id}`,
-              type: 'subagent',
-              timestamp: Date.now(),
-              status: 'running',
-              subagentId: subagent_id,
-              subagentProfile: profile_id,
-              subagentName: profile_name,
-              subagentTask: task_summary,
-              subagentSteps: [],
-              subagentResult: '',
-            };
-            return [...h.slice(0, lastIdx), { ...msg, agentSteps: [...steps, newStep] }];
-          },
-        );
-      }),
-
-      // 子智能体步骤更新：追加子 Agent 内部步骤
-      listen<any>('subagent-step', (e) => {
-        const { parent_assistant_id, parent_topic_id, subagent_id, round, step_type, summary } =
-          e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
-            if (subIdx < 0) return h;
-            const subStep = steps[subIdx];
-            const newSubStep = {
-              id: `substep-${round}-${Date.now()}`,
-              type: (step_type || '').startsWith('tool_result')
-                ? ('tool_call' as const)
-                : (step_type as any),
-              timestamp: Date.now(),
-              status: 'complete' as const,
-              summary: summary || '',
-              toolName: (step_type || '').startsWith('tool_result')
-                ? (step_type as string).replace('tool_result:', '')
-                : undefined,
-            };
-            const updatedSub = {
-              ...subStep,
-              subagentSteps: [...(subStep.subagentSteps || []), newSubStep],
-            };
-            return [
-              ...h.slice(0, lastIdx),
-              {
-                ...msg,
-                agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
-              },
-            ];
-          },
-        );
-      }),
-
-      // 子智能体完成：标记 subagent 步骤为完成，记录结果
-      listen<any>('subagent-done', (e) => {
-        const { parent_assistant_id, parent_topic_id, subagent_id, result } = e.payload;
-        const finishTime = Date.now();
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
-            if (subIdx < 0) return h;
-            const subStep = steps[subIdx];
-            const updatedSub = {
-              ...subStep,
-              status: 'complete',
-              duration: finishTime - subStep.timestamp,
-              subagentResult: result || '',
-            };
-            return [
-              ...h.slice(0, lastIdx),
-              {
-                ...msg,
-                agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
-              },
-            ];
-          },
-        );
-      }),
-
-      // 子智能体出错
-      listen<any>('subagent-error', (e) => {
-        const { parent_assistant_id, parent_topic_id, subagent_id, error } = e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
-            if (subIdx < 0) return h;
-            const subStep = steps[subIdx];
-            const updatedSub = {
-              ...subStep,
-              status: 'error',
-              duration: Date.now() - subStep.timestamp,
-              subagentResult: error || '子智能体执行出错',
-            };
-            return [
-              ...h.slice(0, lastIdx),
-              {
-                ...msg,
-                agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
-              },
-            ];
-          },
-        );
-      }),
-      // ---- 工作流事件 ----
-      listen<WorkflowState>('workflow-start', (e) => {
-        setWorkflowState({
-          workflowId: e.payload.workflowId,
-          title: e.payload.title,
-          steps: e.payload.steps.map((s) => ({ ...s, status: 'pending' as const })),
-          active: true,
-        });
-      }),
-      listen<{ stepId: string }>('workflow-step-start', (e) => {
-        setWorkflowState((prev) =>
-          prev
-            ? {
-                ...prev,
-                steps: prev.steps.map((s) =>
-                  s.stepId === e.payload.stepId
-                    ? { ...s, status: 'running' as const, startedAt: Date.now() }
-                    : s,
-                ),
-              }
-            : null,
-        );
-      }),
-      listen<{ stepId: string; status: 'completed' | 'failed'; duration?: number }>(
-        'workflow-step-complete',
-        (e) => {
-          setWorkflowState((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  steps: prev.steps.map((s) =>
-                    s.stepId === e.payload.stepId
-                      ? { ...s, status: e.payload.status, duration: e.payload.duration }
-                      : s,
-                  ),
-                }
-              : null,
-          );
-        },
-      ),
-      listen<{ workflowId: string }>('workflow-complete', () => {
-        setWorkflowState((prev) => (prev ? { ...prev, active: false } : null));
-        setTimeout(() => setWorkflowState(null), 5000);
-      }),
-    ];
+    // 注册全部事件监听器（18 个 listen 已抽取为 hooks/chatEventListeners.ts；
+    // 存储 unlisten 函数用于组件卸载时清理）。
+    const unlistens = registerChatEventListeners({
+      setDatas,
+      setIsDragging,
+      setIsThinking,
+      setPendingApprovals,
+      setTypingIndex,
+      setWorkflowState,
+      handleFileUpload,
+      datas,
+      selectedModel,
+      saveSingleAssistantToBackend,
+      checkAndRename,
+      checkAndSummarize,
+    });
 
     // 组件卸载时清理所有事件监听和命令注册
     onCleanup(() => {
       unlistens.forEach((u) => u.then((fn) => fn()));
-      unregisterCommand(cmdToggleLeft);
-      unregisterCommand(cmdToggleRight);
-      unregisterCommand(cmdNewTopic);
-      unregisterCommand(cmdNewProject);
-      unregisterCommand(cmdStopGen);
-      unregisterCommand(cmdPrevAsst);
-      unregisterCommand(cmdNextAsst);
-      unregisterCommand(cmdPrevTopic);
-      unregisterCommand(cmdNextTopic);
-      unregisterCommand(cmdGoSettings);
-      unregisterCommand(cmdGoChat);
-      unregisterCommand(cmdToggleSearch);
-      unregisterCommand(cmdCycleReasoning);
-      unregisterCommand(cmdCycleAgent);
-      unregisterCommand(cmdSlashClear);
-      unregisterCommand(cmdSlashCompact);
-      unregisterCommand(cmdSlashSearch);
-      unregisterCommand(cmdSlashSettings);
-      unregisterCommand(cmdSlashHelp);
+      // 卸载全部已注册命令（id 由 registerChatCommands 返回）
+      commandIds.forEach(unregisterCommand);
     });
   });
 
@@ -2629,18 +1594,13 @@ ${asstObj.prompt}`;
     void (async () => {
       try {
         // 自动检测语言
-        const result: any = await invoke('auto_detect_ls', {
-          projectPath: project.path,
-        });
+        const result = await autoDetectLsp(project.path);
         const languages: Array<{ languageId: string }> = result?.languages || [];
 
         // 为检测到的每种语言启动语言服务器
         for (const lang of languages) {
           try {
-            await invoke('start_lsp_server', {
-              projectPath: project.path,
-              languageId: lang.languageId,
-            });
+            await startLspServer(project.path, lang.languageId);
           } catch (e) {
             // 静默失败（语言服务器可能未安装）
             console.debug(`[LSP] 无法启动 ${lang.languageId} 服务器:`, e);

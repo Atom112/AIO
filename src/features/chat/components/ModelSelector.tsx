@@ -69,7 +69,7 @@ const ModelSelector: Component = () => {
             <Show
               when={getModelLogo(activeModel()!.model_id)}
               fallback={
-                <span class="text-[11px] font-bold" style={{ color: '#1a1e2c' }}>
+                <span class="text-[11px] font-bold" style={{ color: 'var(--color-dark-700)' }}>
                   {activeModel()!.model_id.charAt(0).toUpperCase()}
                 </span>
               }

@@ -8,7 +8,17 @@ import {
   on,
   onMount,
 } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  deleteSkill,
+  discoverNpxSkills,
+  downloadMarketSkill,
+  importNpxSkill,
+  listSkillMarket,
+  listSkillMarketCategories,
+  listSkills,
+  refreshNpxSkill,
+  saveSkill,
+} from '../../../core/api/skills';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   datas,
@@ -115,7 +125,7 @@ const SkillList: Component = () => {
     setNpxLoading(true);
     setError(null);
     try {
-      const list = await invoke<DiscoveredNpxSkill[]>('discover_npx_skills');
+      const list = await discoverNpxSkills();
       setNpxSkills(list);
       npxScanned = true;
     } catch (e) {
@@ -133,10 +143,7 @@ const SkillList: Component = () => {
     setNpxImportingId(pkgName);
     setError(null);
     try {
-      const imported = await invoke<SkillConfig>('import_npx_skill', {
-        packageName: pkgName,
-        projectId: projectId(),
-      });
+      const imported = await importNpxSkill(pkgName, projectId());
       setSkills({ ...skills(), [imported.id]: imported });
       // 更新列表中的 alreadyImported 标记
       setNpxSkills((prev) =>
@@ -157,10 +164,7 @@ const SkillList: Component = () => {
     setNpxRefreshingId(id);
     setError(null);
     try {
-      const updated = await invoke<SkillConfig>('refresh_npx_skill', {
-        id,
-        projectId: projectId(),
-      });
+      const updated = await refreshNpxSkill(id, projectId());
       setSkills({ ...skills(), [updated.id]: updated });
     } catch (e) {
       setError(t('skill.refreshFailed') + ': ' + e);
@@ -184,7 +188,7 @@ const SkillList: Component = () => {
           return;
         }
       }
-      const list = await invoke<MarketSkill[]>('list_skill_market', {
+      const list = await listSkillMarket({
         sort: nextSort,
         category: nextCategory === 'all' ? null : nextCategory,
         forceRefresh,
@@ -214,17 +218,13 @@ const SkillList: Component = () => {
       Date.now() - initialCache.updatedAt < MARKET_CACHE_TTL_MS;
     setLoading(!initialCache?.markets.all);
     try {
-      const localList = await invoke<SkillConfig[]>('list_skills', { projectId: projectId() });
+      const localList = await listSkills(projectId());
       setSkills(Object.fromEntries(localList.map((skill) => [skill.id, skill])));
       if (cacheIsFresh) return;
 
       const [categoryList, marketList] = await Promise.all([
-        invoke<SkillMarketCategory[]>('list_skill_market_categories', { forceRefresh: false }),
-        invoke<MarketSkill[]>('list_skill_market', {
-          sort: 'all',
-          category: null,
-          forceRefresh: false,
-        }),
+        listSkillMarketCategories(false),
+        listSkillMarket({ sort: 'all', category: null, forceRefresh: false }),
       ]);
       setCategories(categoryList);
       setMarketSkills(marketList);
@@ -249,7 +249,7 @@ const SkillList: Component = () => {
       projectId,
       async (pid) => {
         try {
-          const list = await invoke<SkillConfig[]>('list_skills', { projectId: pid });
+          const list = await listSkills(pid);
           setSkills(Object.fromEntries(list.map((skill) => [skill.id, skill])));
         } catch (e) {
           console.warn('切换 Skill 范围失败:', e);
@@ -301,8 +301,8 @@ const SkillList: Component = () => {
     setRefreshResult(null);
     try {
       const [categoryList, marketList] = await Promise.all([
-        invoke<SkillMarketCategory[]>('list_skill_market_categories', { forceRefresh: true }),
-        invoke<MarketSkill[]>('list_skill_market', {
+        listSkillMarketCategories(true),
+        listSkillMarket({
           sort: sort(),
           category: category() === 'all' ? null : category(),
           forceRefresh: true,
@@ -332,12 +332,7 @@ const SkillList: Component = () => {
     setDownloadingId(skill.id);
     setError(null);
     try {
-      const downloaded = await invoke<SkillConfig>('download_market_skill', {
-        owner: skill.owner,
-        repo: skill.repo,
-        slug: skill.slug,
-        projectId: projectId(),
-      });
+      const downloaded = await downloadMarketSkill(skill, projectId());
       setSkills({ ...skills(), [downloaded.id]: downloaded });
     } catch (e) {
       setError(t('skill.downloadFailed', { error: String(e) }));
@@ -359,7 +354,7 @@ const SkillList: Component = () => {
       return;
     }
     try {
-      await invoke('save_skill', { skill, projectId: projectId() });
+      await saveSkill(skill, projectId());
       setSkills({ ...skills(), [skill.id]: skill });
       setEditing(null);
     } catch (e) {
@@ -370,7 +365,7 @@ const SkillList: Component = () => {
   const remove = async (id: string) => {
     if (!confirm(t('skill.removeConfirm'))) return;
     try {
-      await invoke('delete_skill', { id, projectId: projectId() });
+      await deleteSkill(id, projectId());
       const next = { ...skills() };
       delete next[id];
       setSkills(next);
@@ -462,7 +457,7 @@ const SkillList: Component = () => {
           <Icon
             name="search"
             size={13}
-            class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none"
+            class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[rgba(var(--text-base-rgb),0.4)] pointer-events-none"
           />
           <input
             class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
@@ -539,7 +534,7 @@ const SkillList: Component = () => {
       <Show when={error()}>
         <div
           class="px-3 py-2 rounded-md text-sm"
-          style={{ background: 'rgba(255,77,77,0.1)', color: '#ff8a8a' }}
+          style={{ background: 'rgba(255,77,77,0.1)', color: 'var(--color-danger)' }}
         >
           {error()}
           <button class="ml-3 underline" onClick={() => setError(null)}>
@@ -567,7 +562,7 @@ const SkillList: Component = () => {
                   class="col-span-full py-12 text-center text-sm"
                   style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 >
-                  没有匹配的 Skill。
+                  {t('skill.noMatch')}
                 </div>
               }
             >
@@ -719,7 +714,7 @@ const SkillList: Component = () => {
                   class="py-12 text-center text-sm"
                   style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 >
-                  正在扫描系统上的 npx skill...
+                  {t('skill.scanningNpx')}
                 </div>
               }
             >

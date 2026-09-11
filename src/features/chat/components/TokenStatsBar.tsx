@@ -32,9 +32,9 @@ function fmtPrice(n: number): string {
 }
 
 function usageColor(pct: number): string {
-  if (pct > 0.95) return '#ef4444';
-  if (pct > 0.85) return '#f59e0b';
-  if (pct > 0.7) return '#eab308';
+  if (pct > 0.95) return 'var(--color-danger)';
+  if (pct > 0.85) return 'var(--color-warn)';
+  if (pct > 0.7) return 'var(--color-warn)';
   return 'rgba(var(--text-base-rgb),0.45)';
 }
 
@@ -178,7 +178,7 @@ const TokenStatsBar: Component = () => {
           <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
           <span
             class="font-mono whitespace-nowrap"
-            style={{ color: '#22c55e' }}
+            style={{ color: 'var(--color-success)' }}
             title={t('chat.statsCacheHit', { pct: cachePct() })}
           >
             {cachePct()}%

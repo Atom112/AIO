@@ -21,9 +21,12 @@ use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
-/// 初始化 tracing（生产默认 warn，调试可通过 RUST_LOG=info 开启）
+/// 初始化 tracing（生产默认 warn，调试可通过 RUST_LOG=info 开启）。
+///
+/// 注意：不要写成 "warn,info"——EnvFilter 中后者会覆盖同粒度的全局指令，
+/// 实际生效级别是 INFO（热路径上的 per-message 日志会随之进入生产日志）。
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
@@ -37,7 +40,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             // 主窗口改为代码创建：仅 Windows/macOS 开启透明（圆角面板四角透出桌面）；
-            // Linux/WebKitGTK 下透明窗口需整窗 ARGB 合成、性能开销大（与 PERF-04 同源），保持不透明直角窗口。
+            // Linux/WebKitGTK 下透明窗口需整窗 ARGB 合成、性能开销大（Linux 性能考虑），保持不透明直角窗口。
             #[cfg(not(target_os = "linux"))]
             let transparent = true;
             #[cfg(target_os = "linux")]
@@ -61,6 +64,23 @@ pub fn run() {
             let _ = window.set_background_color(Some(tauri::webview::Color(10, 14, 26, 255)));
             let conn = core::db::init_db(app.handle())?;
             app.manage(DbState(parking_lot::Mutex::new(conn)));
+            // 本地模型下载/加载需要应用数据目录（进程级注入，供无 AppHandle 的静态加载路径使用）
+            if let Ok(dir) = app.path().app_data_dir() {
+                crate::plugins::rerank::local_onnx::init_app_data_dir(dir);
+            }
+            // 每日后台合并整理（sleep-time consolidation）：启动 2 分钟后首跑，此后每 24h；
+            // 逐项目执行，全程后台异步，绝不阻塞主交互
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                    loop {
+                        crate::services::memory::consolidate::run_daily_consolidation(&handle)
+                            .await;
+                        tokio::time::sleep(std::time::Duration::from_secs(24 * 3600)).await;
+                    }
+                });
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -217,8 +237,19 @@ pub fn run() {
             commands::memory::memory_reindex,
             commands::memory::memory_update_embedding,
             commands::memory::memory_stats,
+            commands::memory::memory_update_rerank,
+            commands::memory::memory_consolidate,
+            commands::memory::memory_graph_extract,
             commands::embedding::embedding_test,
-            commands::embedding::embedding_save_api_key,
+            commands::rerank::rerank_test,
+            commands::rerank::rerank_save_api_key,
+            commands::model_download::embedding_model_list,
+            commands::model_download::embedding_model_status,
+            commands::model_download::embedding_model_download,
+            commands::model_download::embedding_model_delete,
+            commands::model_download::embedding_model_set_enabled,
+            commands::model_download::embedding_models_get_dir,
+            commands::model_download::embedding_models_set_dir,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

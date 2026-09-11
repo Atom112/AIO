@@ -88,3 +88,17 @@ After an extension enters the UI, the same change should check:
 - Whether `CHANGELOG.md` needs a release change entry.
 
 When only the backend plugin is registered without a frontend entry point, mark it as an internal capability in the development documentation rather than writing it as a workflow an ordinary user can complete.
+
+## RAG / Project Memory Change Checklist (regression guardrail)
+
+For changes touching `services/memory/`, `plugins/embed|cache|rerank/`, memory tools or the retrieval chain, beyond `npm run verify`:
+
+- [ ] Retrieval changes must ship evidence: run `cargo test --lib eval_rag -- --ignored --nocapture` on the in-repo `tests/rag_eval/dataset.json` (40 facts + 12 queries) and paste the "vector-only / FTS / hybrid" NDCG@10, MRR, P@5 comparison into the PR description; hybrid must not meaningfully regress vs either leg (guard assertion < 0.15 NDCG drop);
+- [ ] Never delete the historical regression cases: dedup threshold compares cosine (not RRF score), category filtering works, <=2-char Chinese queries hit, superseded/archived facts stay out of retrieval and injection;
+- [ ] New config fields must land in both `AppConfig` and `AppConfigDisk` (config.rs: save / v2 load / legacy default) and be mirrored in `reference/configuration.md` plus both i18n locales;
+- [ ] Capabilities that can per-project diverge must keep the global + per-project dual track (`resolve_project_*`) with dimension/availability guards; no silent degradation;
+- [ ] New Tauri commands registered in `lib.rs`; events kebab-case; async background tasks (extract/consolidate/graph) need budget caps or debounce and fail silently but observably.
+
+### Sparse retrieval (SPLADE) evaluation conclusion (P3-2)
+
+The current sparse leg is FTS5 (trigram + BM25 + LIKE fallback for short queries), paired with the dense leg (vec0 / brute-force cosine) as the hybrid baseline. As long as the seed eval set shows hybrid NDCG not worse than either leg, the baseline is acceptable — **SPLADE / Qwen3-sparse is not introduced**: adopt it only when extended eval data shows measurable gains with a local ONNX deployment path. Do not replace the FTS5 sparse leg without such evidence.

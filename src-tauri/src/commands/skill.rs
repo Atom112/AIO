@@ -206,19 +206,9 @@ fn resolve_project_path(app: &AppHandle, project_id: &str) -> Result<String, Str
         .ok_or_else(|| format!("项目 {} 不存在", project_id))
 }
 
-/// 加载项目索引文件。
+/// 加载项目索引文件（实现统一在 utils::project_index）。
 fn load_projects_index(app: &AppHandle) -> ProjectsFile {
-    let Ok(path) = app
-        .path()
-        .app_data_dir()
-        .map(|dir| dir.join("projects.json"))
-    else {
-        return ProjectsFile::default();
-    };
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
+    crate::utils::project_index::load_projects_file(app)
 }
 
 /// 合并全局和项目 Skill：项目同 ID 覆盖全局。

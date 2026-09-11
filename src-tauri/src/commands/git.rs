@@ -1,3 +1,6 @@
+//! Git 集成命令（分支查询/切换/文件还原）。
+//! 实际 Git 操作在 utils/git_tools.rs；本文件只做 IPC 参数转发与错误映射。
+
 use crate::utils::git_tools;
 
 /// 获取当前项目的 Git 分支名称。

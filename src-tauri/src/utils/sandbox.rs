@@ -218,7 +218,7 @@ pub fn assign_to_job(child: &std::process::Child) -> Result<(), String> {
     }
 }
 
-// ====== Linux / macOS 命令沙箱（AGT-05） ======
+// ====== Linux / macOS 命令沙箱 ======
 //
 // 在 Unix 上 Agent 命令默认无进程隔离。这里做 best-effort 包装：
 // - Linux：若 `bwrap`(bubblewrap) 可用，以“系统只读 + 仅项目目录可写 + 私有 /tmp +

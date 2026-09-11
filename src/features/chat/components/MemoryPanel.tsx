@@ -1,16 +1,22 @@
 import { Component, createEffect, createSignal, For, Show } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
 import { t } from '../../../core/i18n';
+import Icon from '../../../shared/components/Icon';
+import MemoryRerankSection from './MemoryRerankSection';
+import { formatSize } from '../../../core/utils/format';
+import { EVENTS } from '../../../core/api/events';
 import {
-  embeddingSaveApiKey,
+  embeddingModelList,
   embeddingTest,
   memoryArchive,
   memoryClear,
   memoryCodeIndex,
   memoryCodeSearch,
   memoryCodeStatus,
+  memoryConsolidate,
   memoryExport,
   memoryGetStatus,
+  memoryGraphExtract,
   memoryImport,
   memoryDelete,
   memoryGetVersions,
@@ -22,23 +28,28 @@ import {
   memoryStats,
   memoryUpdate,
   memoryUpdateEmbedding,
+  DEFAULT_EMBED_MODEL_ID,
 } from '../../../core/utils/memory';
 import type {
   CodeChunkHit,
   CodeIndexStatus,
+  ConsolidationReport,
+  EmbedderStatus,
+  EmbeddingModelInfo,
   EmbeddingTestResult,
   FactVersion,
+  GraphExtractReport,
   MemoryEmbeddingConfig,
   MemoryFact,
   MemoryStats,
 } from '../../../core/types/memory';
 import {
   btnBadge,
+  btnClose,
   btnGhost,
   btnPrimarySm,
   btnSecondarySm,
-  btnDanger,
-  btnTabMd,
+  btnDangerBadge,
   btnTabXs,
   tabActive,
   tabInactive,
@@ -68,19 +79,25 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   const [indexing, setIndexing] = createSignal(false);
   // 项目级嵌入模型（由 memory_get_status 提供，切换保存在项目记忆库 meta）
   const [embedding, setEmbedding] = createSignal<MemoryEmbeddingConfig | null>(null);
+  // 项目级嵌入器实际状态（实际解析到的 provider/model/维度，与配置可能不一致）
+  const [embedderStatus, setEmbedderStatus] = createSignal<EmbedderStatus | null>(null);
   const [editingEmbedding, setEditingEmbedding] = createSignal(false);
-  const [ebProvider, setEbProvider] = createSignal<'local' | 'online'>('local');
   const [ebModel, setEbModel] = createSignal('');
-  const [ebApiUrl, setEbApiUrl] = createSignal('');
-  const [ebApiKey, setEbApiKey] = createSignal('');
   const [ebTesting, setEbTesting] = createSignal(false);
   const [ebTestResult, setEbTestResult] = createSignal<EmbeddingTestResult | null>(null);
   const [ebSaving, setEbSaving] = createSignal(false);
+  // Matryoshka 目标维度（0 = 模型默认全维；仅 text-embedding-3/bge-m3 等支持裁剪）
+  const [ebDims, setEbDims] = createSignal(0);
   const [reindexProgress, setReindexProgress] = createSignal<{
     done: number;
     total: number;
   } | null>(null);
-
+  const [rrModels, setRrModels] = createSignal<EmbeddingModelInfo[]>([]);
+  // 本地可用的嵌入模型（kind=embed 且已下载且全局启用；来自「Embedding 模型管理」）
+  const embedModels = () => {
+    const list = rrModels().filter((m) => m.kind === 'embed' && m.downloaded && m.enabled);
+    return list.length > 0 ? list : rrModels().filter((m) => m.kind === 'embed' && m.downloaded);
+  };
   const loadStats = async () => {
     try {
       setStats(await memoryStats(props.projectId));
@@ -107,6 +124,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       void loadList();
       void loadCodeStatus();
       void loadEmbedding();
+      void loadRerankModels();
     }
   });
 
@@ -114,9 +132,90 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     try {
       const st = await memoryGetStatus(props.projectId);
       setEmbedding(st.embedding);
+      setEmbedderStatus(st.embedder);
+      // 重排配置由 MemoryRerankSection 子组件自行加载
     } catch {
       // 记忆库未创建时忽略
     }
+  };
+
+  const loadRerankModels = async () => {
+    try {
+      setRrModels(await embeddingModelList());
+    } catch {
+      setRrModels([]);
+    }
+  };
+
+  // ---- Phase 2：sleep-time 合并整理（手动触发）+ 近 7 天质量探针 ----
+  const [consolidating, setConsolidating] = createSignal(false);
+
+  const consolidate = async () => {
+    setConsolidating(true);
+    try {
+      const r: ConsolidationReport = await memoryConsolidate(props.projectId);
+      setNotice(
+        t('project.memoryPanel.consolidateDone', {
+          clusters: String(r.clusters),
+          arbitrated: String(r.arbitrated),
+          merged: String(r.merged),
+          updated: String(r.updated),
+          superseded: String(r.superseded),
+        }),
+      );
+      void loadList();
+      void loadStats();
+    } catch {
+      // 忽略
+    } finally {
+      setConsolidating(false);
+    }
+  };
+
+  // ---- Phase 3：轻量知识图谱抽取（P3-3）----
+  const [graphExtracting, setGraphExtracting] = createSignal(false);
+
+  const extractGraph = async () => {
+    setGraphExtracting(true);
+    try {
+      const r: GraphExtractReport = await memoryGraphExtract(props.projectId);
+      setNotice(
+        t('project.memoryPanel.graphExtractDone', {
+          processed: String(r.factsProcessed),
+          relations: String(r.relations),
+          failed: String(r.failed),
+        }),
+      );
+    } catch {
+      // 忽略
+    } finally {
+      setGraphExtracting(false);
+    }
+  };
+
+  const judgeDistLabel = () => {
+    const d = stats()?.judgeDistribution7d;
+    if (!d) return '';
+    const parts: string[] = [];
+    if ((d.merge ?? 0) > 0) parts.push(`${t('project.memoryPanel.reason.merge')} ${d.merge}`);
+    if ((d.update ?? 0) > 0) parts.push(`${t('project.memoryPanel.reason.update')} ${d.update}`);
+    if ((d.supersede ?? 0) > 0)
+      parts.push(`${t('project.memoryPanel.reason.supersede')} ${d.supersede}`);
+    if ((d.keep_separate ?? 0) > 0)
+      parts.push(`${t('project.memoryPanel.qKeep')} ${d.keep_separate}`);
+    return parts.join(' · ');
+  };
+
+  const sourceRefLabel = (s: string) => {
+    try {
+      const parsed = JSON.parse(s) as { messageIds?: number[] };
+      if (Array.isArray(parsed.messageIds) && parsed.messageIds.length > 0) {
+        return t('project.memoryPanel.sourceMsgs', { ids: parsed.messageIds.join(',') });
+      }
+    } catch {
+      // 非 JSON（旧格式）忽略
+    }
+    return '';
   };
 
   const loadCodeStatus = async () => {
@@ -264,8 +363,6 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     return t('project.memoryPanel.reason.create');
   };
 
-  const formatSize = (n: number) => (n / (1024 * 1024)).toFixed(1);
-
   const reindex = async () => {
     try {
       const [done, failed] = await memoryReindex(props.projectId);
@@ -278,32 +375,35 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     }
   };
 
-  // 当前嵌入模型的展示文案（provider · model · dims）
+  // 当前嵌入模型的展示文案（provider · model · dims）：以实际解析到的嵌入器为准。
+  // 自 v0.8 起仅支持本地嵌入模型；内置模型固定为 all-MiniLM-L6-v2 · 384 维。
   const embeddingLabel = () => {
-    const e = embedding();
-    if (!e) return t('app.memory.providerLocal');
-    const kind =
-      e.provider === 'online' ? t('app.memory.providerOnline') : t('app.memory.providerLocal');
-    const model = e.model || (e.provider === 'online' ? '-' : t('app.memory.localModel'));
-    return t('project.memoryPanel.embeddingCurrent', {
-      kind,
-      model,
-      dims: String(e.dimensions),
-    });
+    const st = embedderStatus();
+    const kind = t('app.memory.providerLocal');
+    if (st && st.available) {
+      return t('project.memoryPanel.embeddingCurrent', {
+        kind,
+        model: st.model || '-',
+        dims: String(st.dimensions),
+      });
+    }
+    const cfg = embedding();
+    const model = cfg?.model || DEFAULT_EMBED_MODEL_ID;
+    return t('project.memoryPanel.embeddingCurrent', { kind, model, dims: '-' });
   };
 
   const openEmbeddingEditor = () => {
     const cur: MemoryEmbeddingConfig = embedding() ?? {
       provider: 'local',
-      model: 'all-MiniLM-L6-v2',
+      model: DEFAULT_EMBED_MODEL_ID,
       apiUrl: '',
       dimensions: 384,
       enabled: true,
     };
-    setEbProvider(cur.provider === 'online' ? 'online' : 'local');
-    setEbModel(cur.model);
-    setEbApiUrl(cur.apiUrl);
-    setEbApiKey('');
+    setEbModel(
+      embedModels().find((m) => m.id === cur.model) ? cur.model : (embedModels()[0]?.id ?? ''),
+    );
+    setEbDims(cur.dimensions && cur.dimensions !== 384 ? cur.dimensions : 0);
     setEbTestResult(null);
     setEditingEmbedding(true);
   };
@@ -313,12 +413,11 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     try {
       setEbTestResult(
         await embeddingTest({
-          provider: ebProvider(),
+          provider: 'local',
           model: ebModel(),
-          apiUrl: ebApiUrl(),
-          dimensions: 384,
+          apiUrl: '',
+          dimensions: ebDims(),
           enabled: true,
-          apiKey: ebApiKey() || undefined,
         }),
       );
     } catch {
@@ -329,8 +428,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const saveEmbedding = async () => {
-    if (ebProvider() === 'online' && (!ebApiUrl().trim() || !ebModel().trim())) {
-      setNotice(t('project.memoryPanel.embeddingNeedOnline'));
+    if (!ebModel().trim()) {
+      setNotice(t('project.memoryPanel.embeddingNeedModel'));
       return;
     }
     // 切换会清空本项目全部向量并重新嵌入（事实文本保留），再次确认
@@ -338,18 +437,15 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     setEbSaving(true);
     let unlisten: (() => void) | undefined;
     try {
-      if (ebProvider() === 'online') {
-        await embeddingSaveApiKey(ebApiKey());
-      }
-      unlisten = await listen('reindex-progress', (ev) => {
+      unlisten = await listen(EVENTS.reindexProgress, (ev) => {
         const p = ev.payload as { done?: number; total?: number };
         setReindexProgress({ done: p.done ?? 0, total: p.total ?? 0 });
       });
       const st = await memoryUpdateEmbedding(props.projectId, {
-        provider: ebProvider(),
+        provider: 'local',
         model: ebModel(),
-        apiUrl: ebApiUrl(),
-        dimensions: 384,
+        apiUrl: '',
+        dimensions: ebDims(),
         enabled: true,
       });
       setEmbedding(st.embedding);
@@ -398,27 +494,29 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   return (
     <Show when={props.show}>
       <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+        class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-[12px] rounded-lg transition-all duration-200 ease-out"
         onClick={() => props.onClose()}
       >
         <div
-          class="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border border-dark-100 bg-[#14161f] shadow-2xl overflow-hidden"
+          class="rounded-lg bg-dark-500 text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
+          style={{
+            background: 'var(--panel-bg)',
+            'backdrop-filter': 'blur(var(--acrylic-blur))',
+            border: '1px solid var(--acrylic-border)',
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* 头部 */}
-          <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
-            <span class="text-sm font-semibold text-[#eee]">{t('project.memoryPanel.title')}</span>
-            <button class={btnBadge} onClick={() => props.onClose()}>
-              ✕
+          <div class="flex justify-between items-center border-b border-[rgba(var(--text-base-rgb),0.27)] pb-3">
+            <h2 class="m-0 text-xl">{t('project.memoryPanel.title')}</h2>
+            <button class={btnClose} onClick={() => props.onClose()} aria-label={t('common.close')}>
+              <Icon name="x" size={18} class="stroke-[2.5]" />
             </button>
           </div>
 
           {/* 统计 */}
           <Show when={stats()}>
-            <div
-              class="px-4 py-2 text-[11px] border-b border-white/5"
-              style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
-            >
+            <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}>
               {t('project.memoryPanel.stats', {
                 total: String(stats()!.totalFacts),
                 active: String(stats()!.activeFacts),
@@ -430,263 +528,315 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </div>
           </Show>
 
+          {/* 自进化质量探针（近 7 天）+ 合并整理（sleep-time consolidation 手动触发；每日自动执行） */}
+          <Show when={stats()}>
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center justify-between gap-3">
+                <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
+                  {t('project.memoryPanel.qTitle')}
+                </label>
+                <button
+                  class={btnBadge}
+                  disabled={graphExtracting()}
+                  onClick={() => void extractGraph()}
+                >
+                  {graphExtracting() ? '...' : t('project.memoryPanel.graphExtract')}
+                </button>
+                <button
+                  class={btnBadge}
+                  disabled={consolidating()}
+                  onClick={() => void consolidate()}
+                >
+                  {consolidating() ? '...' : t('project.memoryPanel.consolidate')}
+                </button>
+              </div>
+              <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
+                {t('project.memoryPanel.qSummary', {
+                  queries: String(stats()!.retrievalQueries7d),
+                  hits: String(stats()!.retrievalHits7d),
+                  dedup: String(stats()!.dedupTriggers7d),
+                  extracted: String(stats()!.extracted7d),
+                })}
+                <Show when={judgeDistLabel()}>
+                  <span class="ml-2">
+                    {t('project.memoryPanel.qJudge', { dist: judgeDistLabel() })}
+                  </span>
+                </Show>
+              </div>
+            </div>
+          </Show>
+
           {/* 嵌入模型（项目级；切换会清空本项目全部向量并重新嵌入） */}
-          <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-white/5">
-            <div class="min-w-0 text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
-              <span class="mr-1">{t('project.memoryPanel.embeddingTitle')}:</span>
-              <span>{embeddingLabel()}</span>
-              <Show when={reindexProgress()}>
-                <span class="ml-2 text-pri">
-                  {t('project.memoryPanel.reindexing', {
-                    done: String(reindexProgress()!.done),
-                    total: String(reindexProgress()!.total),
-                  })}
-                </span>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
+              {t('project.memoryPanel.embeddingTitle')}
+            </label>
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0 text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
+                {embeddingLabel()}
+                <Show when={reindexProgress()}>
+                  <span class="ml-2 text-pri">
+                    {t('project.memoryPanel.reindexing', {
+                      done: String(reindexProgress()!.done),
+                      total: String(reindexProgress()!.total),
+                    })}
+                  </span>
+                </Show>
+              </div>
+              <Show
+                when={!editingEmbedding()}
+                fallback={
+                  <button class={btnGhost} onClick={() => setEditingEmbedding(false)}>
+                    {t('common.cancel')}
+                  </button>
+                }
+              >
+                <button class={btnBadge} onClick={openEmbeddingEditor}>
+                  {t('project.memoryPanel.embeddingSwitch')}
+                </button>
               </Show>
             </div>
-            <Show
-              when={!editingEmbedding()}
-              fallback={
-                <button class={btnGhost} onClick={() => setEditingEmbedding(false)}>
-                  {t('common.cancel')}
-                </button>
-              }
-            >
-              <button class={btnBadge} onClick={openEmbeddingEditor}>
-                {t('project.memoryPanel.embeddingSwitch')}
-              </button>
+            <Show when={editingEmbedding()}>
+              <div class="flex flex-col gap-2 rounded-lg border border-dark-100 p-2.5">
+                <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
+                  {t('project.memoryPanel.embeddingPickLocal')}
+                </div>
+                <select
+                  class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-sm focus:outline-none focus:border-pri-50"
+                  value={ebModel()}
+                  onChange={(e) => setEbModel(e.currentTarget.value)}
+                >
+                  <Show when={embedModels().length === 0}>
+                    <option value="">{t('project.memoryPanel.embeddingNoModels')}</option>
+                  </Show>
+                  <For each={embedModels()}>
+                    {(m) => (
+                      <option value={m.id} selected={m.id === ebModel()}>
+                        {m.id} · {m.dims} dims
+                      </option>
+                    )}
+                  </For>
+                </select>
+                <input
+                  class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-sm placeholder:text-white/25 focus:outline-none focus:border-pri-50"
+                  type="number"
+                  min={0}
+                  placeholder={t('project.memoryPanel.embeddingDims')}
+                  value={ebDims() > 0 ? String(ebDims()) : ''}
+                  onInput={(e) => setEbDims(Number(e.currentTarget.value) || 0)}
+                />
+                <Show when={ebTestResult()}>
+                  <div
+                    class="text-[11px]"
+                    style={{
+                      color: ebTestResult()!.ok ? 'var(--color-success)' : 'var(--color-danger)',
+                    }}
+                  >
+                    {ebTestResult()!.ok
+                      ? t('app.memory.testOk', {
+                          dims: String(ebTestResult()!.dimensions),
+                          ms: String(ebTestResult()!.latencyMs),
+                        })
+                      : t('app.memory.testFail', { error: ebTestResult()!.error ?? '' })}
+                  </div>
+                </Show>
+                <div class="flex items-center justify-end gap-2">
+                  <button
+                    class={btnSecondarySm}
+                    disabled={ebTesting()}
+                    onClick={() => void testEmbedding()}
+                  >
+                    {ebTesting() ? t('app.memory.testing') : t('app.memory.test')}
+                  </button>
+                  <button
+                    class={btnPrimarySm}
+                    disabled={ebSaving()}
+                    onClick={() => void saveEmbedding()}
+                  >
+                    {ebSaving() ? t('project.memoryPanel.embeddingSaving') : t('app.memory.save')}
+                  </button>
+                </div>
+              </div>
             </Show>
           </div>
 
-          <Show when={editingEmbedding()}>
-            <div class="flex flex-col gap-2 px-4 py-2 border-b border-white/5">
-              <div class="flex gap-2">
-                <button
-                  class={`${btnTabMd} ${ebProvider() === 'local' ? tabActive : tabInactive}`}
-                  onClick={() => setEbProvider('local')}
-                >
-                  {t('app.memory.providerLocal')}
-                </button>
-                <button
-                  class={`${btnTabMd} ${ebProvider() === 'online' ? tabActive : tabInactive}`}
-                  onClick={() => setEbProvider('online')}
-                >
-                  {t('app.memory.providerOnline')}
-                </button>
-              </div>
-              <Show when={ebProvider() === 'local'}>
-                <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
-                  {t('app.memory.localModelDesc')}
-                </div>
-              </Show>
-              <Show when={ebProvider() === 'online'}>
-                <input
-                  class="w-full p-2 bg-dark-300 border border-dark-100 rounded-lg text-sm text-[#e0e0e0] placeholder:text-white/25 focus:outline-none focus:border-pri-30"
-                  placeholder={t('app.memory.model')}
-                  value={ebModel()}
-                  onInput={(e) => setEbModel(e.currentTarget.value)}
-                />
-                <input
-                  class="w-full p-2 bg-dark-300 border border-dark-100 rounded-lg text-sm text-[#e0e0e0] placeholder:text-white/25 focus:outline-none focus:border-pri-30"
-                  placeholder={t('app.memory.apiUrl')}
-                  value={ebApiUrl()}
-                  onInput={(e) => setEbApiUrl(e.currentTarget.value)}
-                />
-                <input
-                  class="w-full p-2 bg-dark-300 border border-dark-100 rounded-lg text-sm text-[#e0e0e0] placeholder:text-white/25 focus:outline-none focus:border-pri-30"
-                  type="password"
-                  placeholder={t('app.memory.apiKey')}
-                  value={ebApiKey()}
-                  onInput={(e) => setEbApiKey(e.currentTarget.value)}
-                />
-              </Show>
-              <Show when={ebTestResult()}>
-                <div
-                  class="text-[11px]"
-                  style={{ color: ebTestResult()!.ok ? '#7cd9a0' : '#ff8a8a' }}
-                >
-                  {ebTestResult()!.ok
-                    ? t('app.memory.testOk', {
-                        dims: String(ebTestResult()!.dimensions),
-                        ms: String(ebTestResult()!.latencyMs),
-                      })
-                    : t('app.memory.testFail', { error: ebTestResult()!.error ?? '' })}
-                </div>
-              </Show>
-              <div class="flex items-center justify-end gap-2">
-                <button
-                  class={btnSecondarySm}
-                  disabled={ebTesting()}
-                  onClick={() => void testEmbedding()}
-                >
-                  {ebTesting() ? t('app.memory.testing') : t('app.memory.test')}
-                </button>
-                <button
-                  class={btnPrimarySm}
-                  disabled={ebSaving()}
-                  onClick={() => void saveEmbedding()}
-                >
-                  {ebSaving() ? t('project.memoryPanel.embeddingSaving') : t('app.memory.save')}
-                </button>
-              </div>
-            </div>
-          </Show>
+          {/* 重排（项目级；RRF 后二阶段精排）—— 已抽为 MemoryRerankSection 子组件 */}
+          <MemoryRerankSection
+            projectId={props.projectId}
+            embedModels={embedModels}
+            rrModels={rrModels}
+            onNotice={setNotice}
+            onModelsChanged={loadRerankModels}
+          />
 
-          {/* 搜索 + 标签 */}
-          <div class="flex items-center gap-2 px-4 py-2 border-b border-white/5">
-            <input
-              class="flex-1 p-2 bg-dark-300 border border-dark-100 rounded-lg text-sm text-[#e0e0e0] focus:outline-none focus:border-white/20"
-              value={query()}
-              onInput={(e) => setQuery(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void doSearch();
-              }}
-              placeholder={t('project.memoryPanel.searchPlaceholder')}
-            />
-            <button class={btnPrimarySm} onClick={() => void doSearch()}>
+          {/* 检索 */}
+          <div class="flex flex-col gap-1.5">
+            <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('project.memoryPanel.search')}
-            </button>
-          </div>
-
-          <div class="flex items-center gap-1 px-4 py-1.5 border-b border-white/5">
-            <For each={tabs}>
-              {(tb) => (
-                <button
-                  class={`${btnTabXs} ${tab() === tb.key ? tabActive : tabInactive}`}
-                  onClick={() => {
-                    setTab(tb.key);
-                    setQuery('');
-                  }}
-                >
-                  {tb.label}
-                </button>
-              )}
-            </For>
-          </div>
-
-          {/* 代码索引与检索 */}
-          <div class="flex items-center gap-2 px-4 py-2 border-b border-white/5">
-            <button class={btnPrimarySm} disabled={indexing()} onClick={() => void doCodeIndex()}>
-              {indexing() ? '...' : t('project.memoryPanel.codeIndex')}
-            </button>
-            <input
-              class="flex-1 p-2 bg-dark-300 border border-dark-100 rounded-lg text-xs text-[#e0e0e0] focus:outline-none focus:border-white/20"
-              value={codeQuery()}
-              onInput={(e) => setCodeQuery(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void doCodeSearch();
-              }}
-              placeholder={t('project.memoryPanel.codeSearch')}
-            />
-            <button class={btnSecondarySm} onClick={() => void doCodeSearch()}>
-              {t('project.memoryPanel.codeSearch')}
-            </button>
-          </div>
-          <Show when={codeStatus()}>
-            <div
-              class="px-4 py-1 text-[10px] border-b border-white/5"
-              style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
-            >
-              {t('project.memoryPanel.codeStatus', {
-                chunks: String(codeStatus()!.chunks),
-                files: String(codeStatus()!.files),
-              })}
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                class="flex-1 px-3 py-1.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-xs placeholder:text-white/25 focus:outline-none focus:border-pri-50"
+                value={query()}
+                onInput={(e) => setQuery(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void doSearch();
+                }}
+                placeholder={t('project.memoryPanel.searchPlaceholder')}
+              />
+              <button class={btnPrimarySm} onClick={() => void doSearch()}>
+                {t('project.memoryPanel.search')}
+              </button>
             </div>
-          </Show>
-          <Show when={codeHits().length > 0}>
-            <div class="px-4 py-1.5 border-b border-white/5 flex flex-col gap-1">
-              <For each={codeHits()}>
-                {(h) => (
-                  <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
-                    <span class="text-pri/80">
-                      {h.filePath}:{h.startLine}-{h.endLine}
-                    </span>
-                    <div class="text-white/60 line-clamp-2 whitespace-pre-wrap">{h.content}</div>
-                  </div>
+          </div>
+
+          {/* 记忆条目 */}
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-center gap-1">
+              <For each={tabs}>
+                {(tb) => (
+                  <button
+                    class={`${btnTabXs} ${tab() === tb.key ? tabActive : tabInactive}`}
+                    onClick={() => {
+                      setTab(tb.key);
+                      setQuery('');
+                    }}
+                  >
+                    {tb.label}
+                  </button>
                 )}
               </For>
             </div>
-          </Show>
-
-          {/* 列表 */}
-          <div class="flex-1 overflow-y-auto px-4 py-2 scrollbar-thin">
-            <For each={facts()}>
-              {(f) => (
-                <div class="py-2 border-b border-white/5 last:border-0">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="flex-1 min-w-0">
-                      <div class="text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap break-words">
-                        {f.content}
-                      </div>
-                      <div
-                        class="flex items-center gap-2 mt-1 text-[10px]"
-                        style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
-                      >
-                        <span class="px-1 py-0.5 rounded bg-pri-20 text-pri">{f.category}</span>
-                        <Show when={f.pinned}>
-                          <span class="text-yellow-400/80">{t('project.memoryPanel.pinned')}</span>
-                        </Show>
-                        <Show when={f.updatedAt}>
-                          <span>{f.updatedAt}</span>
-                        </Show>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-1 shrink-0">
-                      <button class={btnBadge} onClick={() => void editFact(f)}>
-                        {t('project.memoryPanel.edit')}
-                      </button>
-                      <button class={btnBadge} onClick={() => void togglePin(f)}>
-                        {f.pinned ? t('project.memoryPanel.unpin') : t('project.memoryPanel.pin')}
-                      </button>
-                      <Show when={f.status === 'active'}>
-                        <button class={btnBadge} onClick={() => void archiveFact(f)}>
-                          {t('project.memoryPanel.archive')}
-                        </button>
-                      </Show>
-                      <button class={btnBadge} onClick={() => void deleteFact(f)}>
-                        {t('project.memoryPanel.delete')}
-                      </button>
-                      <button class={btnBadge} onClick={() => void toggleVersions(f.id)}>
-                        {t('project.memoryPanel.versions')}
-                      </button>
-                    </div>
-                  </div>
-                  <Show when={expanded()[f.id]}>
-                    <div class="mt-2 ml-1 flex flex-col gap-1 rounded-lg bg-dark-300/60 p-2 text-[11px]">
-                      <For each={expanded()[f.id]}>
-                        {(v) => (
-                          <div style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}>
-                            <span class="text-pri/80">
-                              v{v.version} {reasonLabel(v.reason)}
+            <div class="flex flex-col rounded-lg border border-dark-100 p-2.5">
+              <For each={facts()}>
+                {(f) => (
+                  <div class="rounded-md px-2.5 py-2 transition-colors hover:bg-white/5">
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="flex-1 min-w-0">
+                        <div class="text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap break-words">
+                          {f.content}
+                        </div>
+                        <div
+                          class="flex items-center gap-2 mt-1 text-[10px]"
+                          style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                        >
+                          <span class="px-1 py-0.5 rounded bg-pri-20 text-pri">{f.category}</span>
+                          <Show when={f.sourceRefs && sourceRefLabel(f.sourceRefs)}>
+                            <span class="opacity-70">{sourceRefLabel(f.sourceRefs!)}</span>
+                          </Show>
+                          <Show when={f.pinned}>
+                            <span class="text-yellow-400/80">
+                              {t('project.memoryPanel.pinned')}
                             </span>
-                            <span class="ml-2">{v.createdAt}</span>
-                            <Show when={v.contentBefore && v.contentAfter}>
-                              <div class="mt-0.5 line-clamp-3">
-                                {v.contentBefore} → {v.contentAfter}
-                              </div>
-                            </Show>
-                          </div>
-                        )}
-                      </For>
+                          </Show>
+                          <Show when={f.updatedAt}>
+                            <span>{f.updatedAt}</span>
+                          </Show>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button class={btnBadge} onClick={() => void editFact(f)}>
+                          {t('project.memoryPanel.edit')}
+                        </button>
+                        <button class={btnBadge} onClick={() => void togglePin(f)}>
+                          {f.pinned ? t('project.memoryPanel.unpin') : t('project.memoryPanel.pin')}
+                        </button>
+                        <Show when={f.status === 'active'}>
+                          <button class={btnBadge} onClick={() => void archiveFact(f)}>
+                            {t('project.memoryPanel.archive')}
+                          </button>
+                        </Show>
+                        <button class={btnBadge} onClick={() => void deleteFact(f)}>
+                          {t('project.memoryPanel.delete')}
+                        </button>
+                        <button class={btnBadge} onClick={() => void toggleVersions(f.id)}>
+                          {t('project.memoryPanel.versions')}
+                        </button>
+                      </div>
                     </div>
-                  </Show>
+                    <Show when={expanded()[f.id]}>
+                      <div class="mt-2 ml-1 flex flex-col gap-1 rounded-lg bg-dark-300/60 p-2 text-[11px]">
+                        <For each={expanded()[f.id]}>
+                          {(v) => (
+                            <div style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}>
+                              <span class="text-pri/80">
+                                v{v.version} {reasonLabel(v.reason)}
+                              </span>
+                              <span class="ml-2">{v.createdAt}</span>
+                              <Show when={v.contentBefore && v.contentAfter}>
+                                <div class="mt-0.5 line-clamp-3">
+                                  {v.contentBefore} → {v.contentAfter}
+                                </div>
+                              </Show>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                )}
+              </For>
+              <Show when={facts().length === 0}>
+                <div
+                  class="py-8 text-center text-xs"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
+                >
+                  {query().trim()
+                    ? t('project.memoryPanel.noResult')
+                    : t('project.memoryPanel.empty')}
                 </div>
-              )}
-            </For>
-            <Show when={facts().length === 0}>
-              <div
-                class="py-8 text-center text-xs"
-                style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
-              >
-                {query().trim()
-                  ? t('project.memoryPanel.noResult')
-                  : t('project.memoryPanel.empty')}
+              </Show>
+            </div>
+          </div>
+
+          {/* 代码索引与检索 */}
+          <div class="flex flex-col gap-1.5">
+            <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
+              {t('project.memoryPanel.codeIndex')}
+            </label>
+            <div class="flex items-center gap-2">
+              <button class={btnPrimarySm} disabled={indexing()} onClick={() => void doCodeIndex()}>
+                {indexing() ? '...' : t('project.memoryPanel.codeIndex')}
+              </button>
+              <input
+                class="flex-1 px-3 py-1.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-xs placeholder:text-white/25 focus:outline-none focus:border-pri-50"
+                value={codeQuery()}
+                onInput={(e) => setCodeQuery(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void doCodeSearch();
+                }}
+                placeholder={t('project.memoryPanel.codeSearch')}
+              />
+              <button class={btnSecondarySm} onClick={() => void doCodeSearch()}>
+                {t('project.memoryPanel.codeSearch')}
+              </button>
+            </div>
+            <Show when={codeStatus()}>
+              <div class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}>
+                {t('project.memoryPanel.codeStatus', {
+                  chunks: String(codeStatus()!.chunks),
+                  files: String(codeStatus()!.files),
+                })}
+              </div>
+            </Show>
+            <Show when={codeHits().length > 0}>
+              <div class="flex flex-col gap-1">
+                <For each={codeHits()}>
+                  {(h) => (
+                    <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
+                      <span class="text-pri/80">
+                        {h.filePath}:{h.startLine}-{h.endLine}
+                      </span>
+                      <div class="text-white/60 line-clamp-2 whitespace-pre-wrap">{h.content}</div>
+                    </div>
+                  )}
+                </For>
               </div>
             </Show>
           </div>
 
-          {/* 底部 */}
-          <div class="flex items-center gap-2 px-4 py-2.5 border-t border-white/5">
+          {/* 底部操作 */}
+          <div class="flex items-center gap-2">
             <Show when={notice()}>
               <span class="flex-1 text-[11px] text-pri/80">{notice()}</span>
             </Show>
@@ -702,7 +852,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             <button class={btnBadge} onClick={() => void doImport()}>
               {t('project.memoryPanel.import')}
             </button>
-            <button class={btnDanger} onClick={() => void clearAll()}>
+            <button class={btnDangerBadge} onClick={() => void clearAll()}>
               {t('project.memoryPanel.clear')}
             </button>
           </div>

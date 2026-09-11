@@ -8,8 +8,7 @@
 //!
 //! 参考 LobeHub `packages/model-runtime/src/providers/google/index.ts:351-365`
 
-use reqwest::{Client, RequestBuilder};
-use std::time::Duration;
+use reqwest::RequestBuilder;
 
 use super::ProviderPlugin;
 use crate::core::models::LiveModel;
@@ -21,28 +20,9 @@ impl ProviderPlugin for GoogleProvider {
         "google"
     }
 
-    fn name(&self) -> &'static str {
-        "Google Gemini"
-    }
-
     fn matches(&self, api_url: &str) -> bool {
         let u = api_url.to_lowercase();
         u.contains("generativelanguage.googleapis.com")
-    }
-
-    fn build_client(&self, proxy_url: Option<&str>, timeout_secs: u64) -> Result<Client, String> {
-        let mut b = Client::builder()
-            .user_agent("AIO-Desktop/0.4 (google-provider)")
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(timeout_secs));
-        if let Some(p) = proxy_url {
-            if !p.trim().is_empty() {
-                let proxy = reqwest::Proxy::all(p).map_err(|e| format!("代理 URL 非法: {}", e))?;
-                b = b.proxy(proxy);
-            }
-        }
-        b.build()
-            .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
     }
 
     fn models_url(&self, api_url: &str) -> String {

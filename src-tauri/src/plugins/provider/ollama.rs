@@ -9,8 +9,7 @@
 //!
 //! 参考 LobeHub `packages/model-runtime/src/providers/ollama/index.ts:80-95`
 
-use reqwest::{Client, RequestBuilder};
-use std::time::Duration;
+use reqwest::RequestBuilder;
 
 use super::ProviderPlugin;
 use crate::core::models::LiveModel;
@@ -22,31 +21,13 @@ impl ProviderPlugin for OllamaProvider {
         "ollama"
     }
 
-    fn name(&self) -> &'static str {
-        "Ollama"
-    }
-
     fn matches(&self, api_url: &str) -> bool {
+        // 仅认领明确的 Ollama 特征：默认端口 11434 或 host/id 中出现 "ollama"。
+        // 不再吞掉任意 localhost/127.0.0.1 —— 那会把 LM Studio、llama.cpp server、
+        // text-generation-webui 等本地 OpenAI 兼容端点误判为 Ollama，
+        // 导致 /api/tags 请求打错端点（本地引擎另有 engine_type 直通路径）。
         let u = api_url.to_lowercase();
-        u.contains("11434")
-            || u.contains("localhost")
-            || u.contains("127.0.0.1")
-            || u.contains("ollama")
-    }
-
-    fn build_client(&self, proxy_url: Option<&str>, timeout_secs: u64) -> Result<Client, String> {
-        let mut b = Client::builder()
-            .user_agent("AIO-Desktop/0.4 (ollama-provider)")
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(timeout_secs));
-        if let Some(p) = proxy_url {
-            if !p.trim().is_empty() {
-                let proxy = reqwest::Proxy::all(p).map_err(|e| format!("代理 URL 非法: {}", e))?;
-                b = b.proxy(proxy);
-            }
-        }
-        b.build()
-            .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
+        u.contains("11434") || u.contains("ollama")
     }
 
     fn models_url(&self, api_url: &str) -> String {

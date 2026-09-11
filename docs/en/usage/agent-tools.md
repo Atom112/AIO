@@ -405,31 +405,33 @@ Generate a project structure overview.
 
 ---
 
-## Knowledge Tools
+## Memory Tools (Project-level RAG)
 
-Source: `src-tauri/src/utils/knowledge.rs`
+Source: `src-tauri/src/services/memory/tools.rs`
 
-Knowledge data is persisted to `{project_root}/.aio/knowledge.json` and automatically injected into the system prompt when the Agent starts.
+When project memory is enabled (`memoryEnabled` + per-project toggle), the Agent gets six memory tools: `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` / `search_code`. Facts are stored in `{project_root}/.aio/memory/memory.sqlite` (semantic vectors + FTS5 keyword hybrid retrieval, optionally refined by two-stage reranking); a legacy `{project_root}/.aio/knowledge.json` is auto-migrated into facts on first open (idempotent). Retrieved facts are injected into the stable system-prompt prefix (index=1) under a token budget.
 
 ### `remember`
 
-Save project-level knowledge.
+Save a project-level fact (vector dedup before write; near-duplicates are arbitrated by the LLM into merge / update / supersede).
 
-| Item            | Value                                                                                                                                                                                                                         |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Remember a piece of project-level knowledge (architecture decisions, code conventions, common patterns), persisted across sessions.                                                                                           |
-| **Parameters**  | `key` (string, required) -- short identifier (used for deduplication and retrieval); `content` (string, required) -- knowledge content; `category` (enum, required) -- `"decision"` / `"pattern"` / `"convention"` / `"note"` |
-| **Return**      | Save confirmation                                                                                                                                                                                                             |
-| **Limits**      | Maximum 50 entries; when exceeded, the oldest entry is removed                                                                                                                                                                |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                                                                              |
+| Item            | Value                                                                                                                                                                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Remember a project-level fact (architecture decisions, code conventions, common patterns, key findings), persisted across sessions with semantic retrieval.                                                                                           |
+| **Parameters**  | `key` (string, optional) -- short identifier (used for deduplication); `content` (string, required) -- fact content; `category` (enum, required) -- `"decision"` / `"pattern"` / `"convention"` / `"note"` / `"entity"` / `"architecture"` / `"task"` |
+| **Return**      | Save confirmation                                                                                                                                                                                                                                     |
+| **Limits**      | Default cap of 2000 active facts per project; excess facts are archived by importance x access decay, lowest first (pinned facts are kept)                                                                                                            |
+| **Permission**  | Normal/Allow, Auto/Allow, Plan/Deny                                                                                                                                                                                                                   |
 
 ### `recall`
 
-Retrieve project-level knowledge.
+Hybrid semantic + keyword retrieval over project memory.
 
-| Item            | Value                                                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Description** | Fuzzy match `key` and `content` by keywords, optionally filter by category.                                                                                              |
-| **Parameters**  | `query` (string, required) -- search keywords (case-insensitive); `category` (enum, optional) -- category filter: `"decision"` / `"pattern"` / `"convention"` / `"note"` |
-| **Return**      | List of matching knowledge entries                                                                                                                                       |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                         |
+| Item            | Value                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| **Description** | Retrieve project-level memory (vector + FTS5 keyword hybrid; returns facts with relevance scores). |
+| **Parameters**  | `query` (string, required) -- retrieval intent; `category` (string, optional) -- category filter   |
+| **Return**      | List of facts with relevance scores                                                                |
+| **Permission**  | Normal/Allow, Auto/Allow, Plan/Allow                                                               |
+
+Other memory tools: `search_memory` (fine-grained search with `k` and a minimum relevance `min_score`), `update_memory` (edit a fact by id), `forget_memory` (archive / soft-delete), `search_code` (codebase semantic search; index the codebase first from the memory panel). Sub-agents get the read-only `recall` / `search_code` tools. Everything is managed from project settings -> Memory panel, which also supports exporting/importing memory JSON.

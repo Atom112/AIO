@@ -42,15 +42,16 @@ Rust commands
 - `commands/project.rs`：项目 CRUD 与 `.aio/` 初始化；
 - `commands/lsp.rs`、`commands/git.rs`：项目语言服务和 Git 操作。
 - `commands/memory.rs`、`commands/embedding.rs`：项目记忆（RAG）事实 CRUD/检索与嵌入供给；
+- `commands/model_download.rs`：按需模型下载器（embed 模型清单 + 安装目录/启停管理，设置页「Embedding 模型管理」）；
 - `services/memory/`：每项目记忆库（facts + FTS5 + 向量打分）、混合检索与记忆工具；
-- `plugins/embed/`：嵌入（向量化）插件（本地内置 / 在线 OpenAI 兼容）。
+- `plugins/embed/`：嵌入（向量化）插件（仅本地 ONNX：内置 + 下载模型）。
 
 ## 插件边界
 
 - Provider：Google、Anthropic、Ollama 和 OpenAI-compatible。
 - Local Engine：llama.cpp、Ollama 与 vLLM（通过引擎扫描自动发现，参见 [providers-and-models.md → 引擎扫描](../usage/providers-and-models.md#引擎扫描与自动发现)）。
 - MCP Transport：stdio、HTTP 与 Streamable HTTP。
-- Embed：本地内置与在线 OpenAI 兼容的文本嵌入（向量化），为项目记忆提供语义检索。
+- Embed：本地 ONNX 文本嵌入（向量化），为项目记忆提供语义检索——内置 all-MiniLM-L6-v2 开箱即用，另可在「设置 → Embedding 模型管理」下载主流开源模型；在线嵌入已不再支持。
 - LSP：管理不同语言服务器的启动、请求、诊断和关闭。
 
 Manager 在启动时注册插件，command 根据标识符查找实现。新增实现应复用现有 trait，不新增平行调度层。
@@ -117,7 +118,7 @@ Agent 中止或流式事件失败时，已经产生的步骤、工具输出和�
 
 ### 项目记忆（RAG）
 
-启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入模型按项目配置（存于项目记忆库 meta，记忆面板中切换；默认本地内置 all-MiniLM-L6-v2 开箱即用、离线可用，也可切在线 OpenAI 兼容 API；切换会清空该项目全部向量并自动重新嵌入），未配置嵌入时自动降级为关键词检索。本地模型随应用打包，无需下载与配置。
+启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入模型按项目配置（存于项目记忆库 meta，记忆面板中切换；默认本地内置 all-MiniLM-L6-v2 开箱即用、离线可用，也可选择在「设置 → Embedding 模型管理」中下载并启用的其他本地模型；切换会清空该项目全部向量并自动重新嵌入），未配置嵌入或所选模型被全局停用时自动降级为关键词检索。内置模型随应用打包，无需下载与配置；其余本地模型在「Embedding 模型管理」中按需下载（安装目录可自定义）。
 
 P2 起实现自进化：Agent 轮次结束后后台异步提取事实（sleep-time compute，去抖 + 每项目开关），写入时对向量近邻高分事实由 LLM 仲裁（merge / update / supersede / keep_separate，失败 fail-safe），`fact_versions` 表记录完整版本审计链；每项目活跃事实超过上限时按 importance 乘访问衰减归档最低分非 pinned 事实。前端提供记忆面板（搜索 / 列表 / 编辑 / 钉住 / 归档 / 删除 / 版本历史 / 重建索引 / 清理超额 / 清空）。
 

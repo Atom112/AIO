@@ -115,7 +115,11 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
       >
         <Show
           when={current() || props.trigger}
-          fallback={<span class="text-[#666]">{props.placeholder ?? t('common.placeholder')}</span>}
+          fallback={
+            <span class="text-[rgba(var(--text-base-rgb),0.4)]">
+              {props.placeholder ?? t('common.placeholder')}
+            </span>
+          }
         >
           <Show when={!props.trigger} fallback={props.trigger!(current())}>
             <span class="truncate">{current()!.label}</span>

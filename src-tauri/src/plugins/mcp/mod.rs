@@ -6,6 +6,7 @@
 //! - 持久化在 `$APPDATA/com.loch.aio/mcp-servers.json`（独立于 provider-configs.json）
 
 pub mod connection;
+pub mod convert;
 pub mod error;
 pub mod http;
 pub mod stdio;
@@ -98,7 +99,7 @@ impl McpServerManager {
             plugins: HashMap::new(),
         };
         mgr.register(Arc::new(stdio::StdioPlugin));
-        mgr.register(Arc::new(http::HttpPlugin));
+        mgr.register(Arc::new(http::HttpPlugin::new()));
         mgr
     }
 
@@ -271,21 +272,10 @@ pub fn list_configs_merged(
     Ok(merged.into_values().collect())
 }
 
-/// 通过 project_id 解析项目路径（复用 skill.rs 中的逻辑）。
+/// 通过 project_id 解析项目路径（实现统一在 utils::project_index：
+/// 类型化解析 + Windows 扩展前缀归一化）。
 pub(crate) fn resolve_project_path(app: &AppHandle, project_id: &str) -> McpResult<String> {
-    let idx_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| McpError::Server(format!("获取 AppData 目录失败: {}", e)))?
-        .join("projects.json");
-    let content = std::fs::read_to_string(&idx_path)
-        .map_err(|e| McpError::Server(format!("读取项目索引失败: {}", e)))?;
-    let file: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| McpError::Server(format!("解析项目索引失败: {}", e)))?;
-    file["projects"][project_id]["path"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| McpError::Server(format!("项目 {} 不存在", project_id)))
+    crate::utils::project_index::project_path(app, project_id).map_err(McpError::Server)
 }
 
 pub fn upsert_config(app: &AppHandle, config: McpServerConfig) -> McpResult<()> {
@@ -338,14 +328,10 @@ pub fn get_config_merged(
     global.servers.get(id).cloned()
 }
 
-/// 轻量级时间戳（秒级 Unix time，不引入 chrono 依赖）
+/// 轻量级时间戳（秒级 Unix time，不引入 chrono 依赖）。
+/// 实现统一在 utils::time。
 fn now_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{}", secs)
+    crate::utils::time::now_unix_secs_string()
 }
 
 // ====== 工具函数：解析 env 占位符 ======

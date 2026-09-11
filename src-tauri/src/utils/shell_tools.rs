@@ -7,13 +7,13 @@
 //! - 路径沙箱：工作目录限定在项目根目录
 //! - 输出截断：stdout/stderr 各 50KB
 //! - 超时控制：默认 60s，最大 300s
-//! - 危险命令检测：词法级 token 分析，拒绝高危模式
-//!   (系统破坏 / 提权 / 网络外泄 / 代码执行 / 环境注入 / fork bomb 等)
+//! - 危险命令检测：词法级 token 分析；Critical 级（系统破坏/提权/fork bomb）
+//!   在所有模式下直接拒绝执行，High/Medium 级记录 warn 并在审批弹窗中提示
 //! - 命令过滤：长度限制 4096 字符、禁止反引号/$() 命令替换
 //! - Windows Job Object 沙箱：限制子进程权限
 //! - 权限系统：复用现有 Allow/Ask/Deny 规则引擎
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
@@ -27,38 +27,11 @@ const MAX_COMMAND_LEN: usize = 4096;
 
 // ====== 辅助函数 ======
 
-fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
+// tool_ok / tool_err 统一由 utils::tool_result 提供（消除全仓副本）
+pub use crate::utils::tool_result::{tool_err, tool_ok};
 
-pub(crate) fn tool_err(msg: &str) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": format!("[Error] {msg}")}),
-        }],
-        is_error: true,
-    }
-}
-
-/// 截断输出到指定字节数，超限时追加 "(truncated)" 标记。
-fn truncate_output(output: &[u8], limit: usize) -> String {
-    if output.len() <= limit {
-        String::from_utf8_lossy(output).into_owned()
-    } else {
-        format!(
-            "{}\n...(truncated, {} bytes total)",
-            String::from_utf8_lossy(&output[..limit]),
-            output.len()
-        )
-    }
-}
+// 截断实现统一由 utils::truncate 提供（命名即语义）
+use crate::utils::truncate::truncate_bytes_lossy as truncate_output;
 
 // ====== 危险命令检测 ======
 
@@ -536,12 +509,6 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     None
 }
 
-// 保留旧接口兼容性（仅返回风险描述字符串），供调用方逐步迁移使用。
-#[allow(dead_code)]
-pub fn check_dangerous_command_str(command: &str) -> Option<&'static str> {
-    check_dangerous_command(command).map(|d| d.risk)
-}
-
 // ====== 工具定义 ======
 
 /// 返回 execute_command 的 ToolSpec。
@@ -631,6 +598,17 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         return tool_err(&format!("安全拦截: {reason}"));
     }
 
+    // 危险命令检测：Critical 级（系统破坏/提权/fork bomb）在**所有 Agent 模式下
+    // 一律拒绝执行**——Auto/Workflow 模式下 execute_command 权限为 Allow，
+    // 不经审批弹窗，若不在这里拦截则完全无防护。High/Medium 级仅记录告警
+    // （Ask 模式下由审批弹窗向用户展示风险描述）。
+    if let Some(danger) = check_dangerous_command(command) {
+        if danger.category == DangerCategory::Critical {
+            return tool_err(&format!("已拒绝执行高危命令: {}", danger.risk));
+        }
+        tracing::warn!("检测到潜在风险命令（{}）: {}", danger.risk, command);
+    }
+
     let timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
 
     // 平台选择 shell
@@ -655,7 +633,7 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
     cmd.current_dir(project_root)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    // 非 Windows：让命令自成进程组，便于超时/清理时把整个子树一并杀掉（AGT-05）
+    // 非 Windows：让命令自成进程组，便于超时/清理时把整个子树一并杀掉
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -769,5 +747,49 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         tool_err(&result)
     } else {
         tool_ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_of(r: &ToolResult) -> String {
+        r.content
+            .first()
+            .and_then(|c| c.data.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// Critical 级危险命令必须在 execute_command 内被直接拒绝，不依赖审批弹窗。
+    /// 覆盖 Auto/Workflow 模式的防护缺口（execute_command 权限为 Allow，无 Ask 弹窗）。
+    /// 注：所选模式均为词法级匹配，命中即返回，不会真正执行。
+    #[test]
+    fn critical_dangerous_commands_are_blocked() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        for cmd in [
+            "sudo echo aio_test",
+            // 指向不存在的设备名：即使防护失效也无法造成破坏
+            "dd if=/dev/zero of=/dev/aio_test_nonexistent_device",
+        ] {
+            let r = execute_command(cmd, &root, Some(5_000));
+            assert!(r.is_error, "命令应被拒绝: {cmd}");
+            assert!(
+                text_of(&r).contains("高危命令"),
+                "拒绝原因缺失: {}",
+                text_of(&r)
+            );
+        }
+    }
+
+    /// 普通命令不受影响（防假阳性回归）。
+    #[test]
+    fn benign_command_still_runs() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command("echo aio_benign_check", &root, Some(10_000));
+        assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
+        assert!(text_of(&r).contains("aio_benign_check"));
     }
 }

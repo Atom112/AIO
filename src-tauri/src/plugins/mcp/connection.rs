@@ -7,14 +7,11 @@
 //! - request/notify 共用 `send_raw`；request 会返回 Future<Output=Response>
 
 use super::error::{McpError, McpResult};
-use dashmap::DashMap;
+use crate::utils::jsonrpc::{PendingMap, WaitError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::oneshot;
-use tokio::time::timeout;
 
 /// JSON-RPC 2.0 Request
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -82,13 +79,13 @@ pub struct McpConnection {
     pub(crate) inner: Arc<McpConnectionInner>,
 }
 
-// 显式 Send + Sync 标记：所有内部字段都是 Send + Sync
-unsafe impl Send for McpConnection {}
-unsafe impl Sync for McpConnection {}
+// 说明：McpConnection 的字段（String + Arc<McpConnectionInner>）本身都是 Send + Sync，
+// 自动推导即可。此前的手写 unsafe impl 会遮蔽编译器校验——若将来加入非 Send 字段将静默越界，
+// 故移除，交由类型系统保证。
 
 pub(crate) struct McpConnectionInner {
-    pub pending: DashMap<u64, oneshot::Sender<JsonRpcResponse>>,
-    pub next_id: AtomicU64,
+    /// JSON-RPC 待响应请求表（与 LSP 客户端共用的 utils::jsonrpc::PendingMap）
+    pub pending: PendingMap<JsonRpcResponse>,
     /// 传输层抽象
     pub transport: Box<dyn McpTransport>,
 }
@@ -104,8 +101,7 @@ impl McpConnection {
             server_id: server_id.into(),
             transport_kind: transport_kind.into(),
             inner: Arc::new(McpConnectionInner {
-                pending: DashMap::new(),
-                next_id: AtomicU64::new(1),
+                pending: PendingMap::new(),
                 transport,
             }),
         }
@@ -118,29 +114,23 @@ impl McpConnection {
         params: Option<Value>,
         dur: Duration,
     ) -> McpResult<Value> {
-        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        let (id, rx) = self.inner.pending.register();
         let req = JsonRpcRequest::new(id, method, params);
-        let (tx, rx) = oneshot::channel();
-        self.inner.pending.insert(id, tx);
         // 序列化失败也不留 pending
         let payload = serde_json::to_string(&req)?;
         let send_res = self.inner.transport.send(&payload).await;
         if let Err(e) = send_res {
-            self.inner.pending.remove(&id);
+            self.inner.pending.cancel(id);
             return Err(e);
         }
-        let resp = match timeout(dur, rx).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_canceled)) => {
-                self.inner.pending.remove(&id);
+        let resp = match self.inner.pending.wait(id, rx, dur).await {
+            Ok(r) => r,
+            Err(WaitError::Canceled) => {
                 return Err(McpError::JsonRpc(
                     "oneshot canceled (sender dropped)".into(),
-                ));
+                ))
             }
-            Err(_) => {
-                self.inner.pending.remove(&id);
-                return Err(McpError::Timeout(dur));
-            }
+            Err(WaitError::Timeout(d)) => return Err(McpError::Timeout(d)),
         };
         if let Some(err) = resp.error {
             // JSON-RPC -32601 = Method not found；-32000 ~ -32099 = server error
@@ -175,7 +165,7 @@ impl McpConnection {
         };
         if v.get("id").is_some() && v.get("method").is_none() {
             if let Ok(resp) = serde_json::from_value::<JsonRpcResponse>(v) {
-                if let Some((_, tx)) = self.inner.pending.remove(&resp.id) {
+                if let Some(tx) = self.inner.pending.take(resp.id) {
                     let _ = tx.send(resp);
                 }
             }

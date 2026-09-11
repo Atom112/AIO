@@ -115,18 +115,6 @@ export function clearAllDiagnostics() {
 }
 
 /**
- * 清除指定文件的诊断
- */
-export function clearFileDiagnostics(uri: string) {
-  setDiagnosticsState(
-    produce((s) => {
-      delete s.diagnostics[uri];
-    }),
-  );
-  recalculateStats();
-}
-
-/**
  * 获取所有文件诊断（应用过滤器）
  */
 export function getFilteredDiagnostics(): FileDiagnostics[] {
@@ -143,20 +131,6 @@ export function getFilteredDiagnostics(): FileDiagnostics[] {
       diagnostics: f.diagnostics.filter((d) => d.severity === filter),
     }))
     .filter((f) => f.diagnostics.length > 0);
-}
-
-/**
- * 获取指定文件的最严重级别（用于文件树标记）
- */
-export function getFileMaxSeverity(uri: string): DiagnosticSeverity | null {
-  const file = diagnosticsState.diagnostics[uri];
-  if (!file || file.diagnostics.length === 0) return null;
-
-  const severities = file.diagnostics.map((d) => d.severity);
-  if (severities.includes('error')) return 'error';
-  if (severities.includes('warning')) return 'warning';
-  if (severities.includes('info')) return 'info';
-  return 'hint';
 }
 
 /**

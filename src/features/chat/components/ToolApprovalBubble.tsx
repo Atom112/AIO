@@ -5,7 +5,7 @@
  * 在 chat 中内联显示此气泡，提供批准/拒绝操作。
  */
 import { Component, Show } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { respondToolApproval } from '../../../core/api/mcp';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
 import { btnDanger, btnSuccess } from '../../../shared/components/buttonStyles';
@@ -30,10 +30,7 @@ interface ToolApprovalBubbleProps {
 const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
   const handleApprove = async () => {
     try {
-      await invoke('respond_tool_approval', {
-        approvalId: props.approval.approvalId,
-        approved: true,
-      });
+      await respondToolApproval(props.approval.approvalId, true);
     } catch (e) {
       console.error('发送批准结果失败:', e);
     } finally {
@@ -43,10 +40,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
 
   const handleReject = async () => {
     try {
-      await invoke('respond_tool_approval', {
-        approvalId: props.approval.approvalId,
-        approved: false,
-      });
+      await respondToolApproval(props.approval.approvalId, false);
     } catch (e) {
       console.error('发送拒绝结果失败:', e);
     } finally {
@@ -99,12 +93,12 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
       style={{ animation: 'tool-approval-in 0.2s ease-out' }}
     >
       <div class="flex items-center gap-1.5 mb-1.5">
-        <Icon name={toolIcon() as any} size={15} class="text-[#7c9abf]/60 shrink-0" />
+        <Icon name={toolIcon() as any} size={15} class="text-[var(--color-pri)]/60 shrink-0" />
         <span class="text-[13px] font-semibold text-white/85 font-mono">
           {props.approval.toolName}
         </span>
         <Show when={isDangerous()}>
-          <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[#ff4d4d]/15 text-[#ff4d4d]/80 uppercase tracking-[0.3px]">
+          <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[var(--color-danger)]/15 text-[var(--color-danger)]/80 uppercase tracking-[0.3px]">
             {t('agent.approval.dangerous')}
           </span>
         </Show>

@@ -6,7 +6,7 @@
 //!
 //! 安全措施：SSRF 防护（HTTPS-only + 内网 IP 屏蔽）、响应体大小限制、速率限制。
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -28,25 +28,8 @@ static LAST_SEARCH: Lazy<DashMap<(), Instant>> = Lazy::new(DashMap::new);
 
 // ====== 辅助 ======
 
-fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
-
-fn tool_err(msg: &str) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": format!("[Error] {msg}")}),
-        }],
-        is_error: true,
-    }
-}
+// tool_ok / tool_err 统一由 utils::tool_result 提供（消除全仓副本）
+use crate::utils::tool_result::{tool_err, tool_ok};
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -58,7 +41,7 @@ fn http_client() -> reqwest::Client {
         .expect("构建 HTTP client 失败")
 }
 
-/// web_fetch 专用：关闭自动重定向，改为逐跳手动校验（AGT-06 SSRF 修复）。
+/// web_fetch 专用：关闭自动重定向，改为逐跳手动校验（SSRF 逐跳校验）。
 fn http_client_no_redirect() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT))
@@ -109,24 +92,12 @@ fn strip_html(html: &str) -> String {
     result.trim().to_string()
 }
 
-/// 截断文本到 max_bytes（字符级别），附加截断提示。
+// 截断实现统一由 utils::truncate 提供（命名即语义）
+use crate::utils::truncate::truncate_bytes_head;
+
+#[allow(dead_code)] // 保留别名：web_fetch 内部仍按 max_bytes(u64) 调用
 fn truncate(text: &str, max_bytes: u64) -> String {
-    if text.len() as u64 <= max_bytes {
-        return text.to_string();
-    }
-    let end = text.floor_char_boundary(max_bytes as usize);
-    // 尽量在换行处截断
-    let cut = if let Some(pos) = text[..end].rfind('\n') {
-        pos
-    } else {
-        end
-    };
-    format!(
-        "{}\n\n⚠ 内容过长已截断 ({}B / {}B)",
-        &text[..cut],
-        cut,
-        max_bytes
-    )
+    truncate_bytes_head(text, max_bytes as usize)
 }
 
 // ====== 工具定义 ======
@@ -181,7 +152,7 @@ fn resolve_redirect(base: &str, location: &str) -> Option<String> {
 }
 
 /// 执行 web_fetch：GET 请求指定 URL，返回纯文本。
-/// 重定向：逐跳手动跟随并在每一跳重新执行 SSRF 校验（AGT-06）。
+/// 重定向：逐跳手动跟随并在每一跳重新执行 SSRF 校验。
 pub async fn execute_web_fetch(url_str: &str, max_bytes: Option<u64>) -> ToolResult {
     let limit = max_bytes.unwrap_or(MAX_BYTES).min(5_000_000); // 硬上限 5MB
 

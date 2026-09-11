@@ -22,7 +22,8 @@ use crate::plugins::provider::{
     classify_reqwest_error, ProviderManager, DEFAULT_TIMEOUT_SECS, TEST_TIMEOUT_SECS,
 };
 
-const APPDATA_DIRNAME: &str = "com.loch.aio";
+/// 兼容常量：应用配置目录名（统一定义在 core::paths::BUNDLE_ID）。
+const APPDATA_DIRNAME: &str = crate::core::paths::BUNDLE_ID;
 const PROVIDER_FILE: &str = "provider-configs.json";
 const CURRENT_VERSION: u32 = 2;
 
@@ -98,14 +99,10 @@ fn provider_path() -> Option<PathBuf> {
     Some(config_dir()?.join(PROVIDER_FILE))
 }
 
-fn now_iso() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // 简化：仅输出秒级时间戳
-    format!("{}", secs)
+/// 当前 UNIX 秒时间戳的字符串形式（历史格式：provider 配置的 updated_at 存的是秒级时间戳）。
+/// 注意命名：这里不是 ISO 字符串，实现统一在 utils::time。
+fn now_unix_secs_str() -> String {
+    crate::utils::time::now_unix_secs_string()
 }
 
 /// 拉取 provider 的实际 api_key（从 keyring）
@@ -155,9 +152,12 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
                             }
                             _ => {
                                 if !cfg.api_key.is_empty() {
-                                    // 旧配置含明文 → 迁出到 keyring 后清空
-                                    let _ = secure_store::set(&app, &key_name, &cfg.api_key);
-                                    cfg.has_stored_key = true;
+                                    // 旧配置含明文 → 迁出到安全存储；成功才标记 has_stored_key
+                                    // （落盘明文的清除由 save_provider_configs_internal 的条件剥离保证；
+                                    //  失败时保留明文，下次加载会重试迁移）
+                                    if secure_store::set_reported(&app, &key_name, &cfg.api_key) {
+                                        cfg.has_stored_key = true;
+                                    }
                                 }
                             }
                         }
@@ -179,7 +179,7 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
     // 首次：返回空 map，立即写回 v2 文件
     let file = ProviderConfigFile {
         version: CURRENT_VERSION,
-        updated_at: now_iso(),
+        updated_at: now_unix_secs_str(),
         providers: BTreeMap::new(),
     };
     let _ = save_provider_configs_internal(&app, &file);
@@ -191,15 +191,17 @@ fn save_provider_configs_internal(
     file: &ProviderConfigFile,
 ) -> Result<(), String> {
     let p = provider_path().ok_or_else(|| "无法获取 config 目录".to_string())?;
-    // 在落盘前剥离 api_key（明文 key 一律只存 keyring）
+    // 在落盘前剥离 api_key（明文 key 一律只存 keyring/降级加密文件）。
+    // 仅当安全存储写入成功时才清空明文；失败则保留明文 + 记录 error（绝不静默丢失密钥）。
     let mut sanitized = file.clone();
     for (id, cfg) in sanitized.providers.iter_mut() {
         if !cfg.api_key.is_empty() {
-            // 同步到 keyring
+            // 同步到安全存储
             let key_name = secure_store::accounts::provider_key(id);
-            let _ = secure_store::set(_app, &key_name, &cfg.api_key);
-            cfg.api_key.clear();
-            cfg.has_stored_key = true;
+            if secure_store::set_reported(_app, &key_name, &cfg.api_key) {
+                cfg.api_key.clear();
+                cfg.has_stored_key = true;
+            }
         }
     }
     let json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
@@ -234,7 +236,7 @@ pub fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result
             }
         }
     }
-    f.updated_at = now_iso();
+    f.updated_at = now_unix_secs_str();
     save_provider_configs_internal(&app, &f)
 }
 
@@ -252,19 +254,11 @@ pub async fn test_provider_connection(
     let use_openai_compat =
         engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
 
+    // 插件选择单点化：由 ProviderManager::boxed_for_url 负责（新增插件不再改命令层）
     let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
         Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
     } else {
-        let mgr = ProviderManager::new();
-        // for_url returns &dyn ProviderPlugin; we need an owned Box
-        // to avoid lifetime issues. Reconstruct via identifier.
-        let matched = mgr.for_url(&api_url);
-        match matched.identifier() {
-            "google" => Box::new(crate::plugins::provider::google::GoogleProvider),
-            "anthropic" => Box::new(crate::plugins::provider::anthropic::AnthropicProvider),
-            "ollama" => Box::new(crate::plugins::provider::ollama::OllamaProvider),
-            _ => Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider),
-        }
+        ProviderManager::new().boxed_for_url(&api_url)
     };
 
     let client = plugin.build_client(proxy_url.as_deref(), TEST_TIMEOUT_SECS)?;
@@ -354,17 +348,11 @@ pub async fn fetch_provider_models(
     let use_openai_compat =
         engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
 
+    // 插件选择单点化：由 ProviderManager::boxed_for_url 负责（新增插件不再改命令层）
     let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
         Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
     } else {
-        let mgr = ProviderManager::new();
-        let matched = mgr.for_url(&api_url);
-        match matched.identifier() {
-            "google" => Box::new(crate::plugins::provider::google::GoogleProvider),
-            "anthropic" => Box::new(crate::plugins::provider::anthropic::AnthropicProvider),
-            "ollama" => Box::new(crate::plugins::provider::ollama::OllamaProvider),
-            _ => Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider),
-        }
+        ProviderManager::new().boxed_for_url(&api_url)
     };
 
     let client = plugin.build_client(proxy_url.as_deref(), DEFAULT_TIMEOUT_SECS)?;
@@ -458,7 +446,7 @@ pub async fn probe_engine_health(
     };
 
     let client = reqwest::Client::builder()
-        .user_agent("AIO-Desktop/0.4")
+        .user_agent(format!("AIO-Desktop/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(std::time::Duration::from_secs(3))
         .timeout(std::time::Duration::from_secs(5))
         .build()

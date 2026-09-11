@@ -50,6 +50,12 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         icon: <Icon name="sparkles" class="w-5 h-5" />,
       },
       {
+        id: 'embedding-models',
+        path: '/settings/embedding-models',
+        label: t('settings.embeddingModels'),
+        icon: <Icon name="layers" class="w-5 h-5" />,
+      },
+      {
         id: 'app',
         path: '/settings/app',
         label: t('settings.app'),
@@ -78,7 +84,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
             border: '1px solid var(--border-dim)',
           }}
         >
-          <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
+          <div class="px-5 py-6 text-lg text-[rgba(var(--text-base-rgb),0.6)] uppercase tracking-[2px] font-bold">
             {t('settings.title')}
           </div>
 
@@ -91,7 +97,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
                                     ${
                                       isActive(item.path)
                                         ? 'bg-pri-10 text-white [text-shadow:0_0_8px_var(--primary-5)] border-pri-20 shadow-[inset_0_0_10px_var(--primary-10)]'
-                                        : 'text-[#aaa] hover:bg-pri-10 hover:text-white hover:pl-6'
+                                        : 'text-[rgba(var(--text-base-rgb),0.65)] hover:bg-pri-10 hover:text-white hover:pl-6'
                                     }`}
                 >
                   <span
@@ -99,7 +105,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
                                         ${isActive(item.path) ? 'scale-y-100' : 'scale-y-0 group-hover:scale-y-50'}`}
                   />
                   <span
-                    class={`flex items-center justify-center w-5 h-5 transition-colors duration-300 ${isActive(item.path) ? 'text-pri' : 'text-[#666] group-hover:text-white'}`}
+                    class={`flex items-center justify-center w-5 h-5 transition-colors duration-300 ${isActive(item.path) ? 'text-pri' : 'text-[rgba(var(--text-base-rgb),0.4)] group-hover:text-white'}`}
                   >
                     {item.icon}
                   </span>

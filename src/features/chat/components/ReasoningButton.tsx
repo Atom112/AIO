@@ -82,7 +82,7 @@ const ReasoningButton: Component = () => {
     <div ref={containerRef} class="relative inline-block">
       <button
         type="button"
-        class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/55 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
+        class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/55 text-xs font-medium hover:bg-white/[0.06] hover:text-[var(--color-pri)]/60"
         style={{ color: LEVEL_COLORS[reasoningLevel()] }}
         classList={{ 'is-active': isActive() }}
         title={t('chat.reasoning')}

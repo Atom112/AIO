@@ -387,7 +387,7 @@ const Markdown: Component<MarkdownProps> = (props) => {
           if (span) {
             const oldText = span.innerText || '';
             span.innerText = t('chat.markdown.copied');
-            (btn as HTMLElement).style.color = '#3fb950';
+            (btn as HTMLElement).style.color = 'var(--color-success)';
             (btn as HTMLElement).style.borderColor = 'rgba(63,185,80,0.3)';
             (btn as HTMLElement).style.backgroundColor = 'rgba(46,160,67,0.15)';
             (btn as HTMLElement).style.opacity = '1';

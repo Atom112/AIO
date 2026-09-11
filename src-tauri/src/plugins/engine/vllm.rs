@@ -13,6 +13,7 @@ use tokio::task;
 use tokio::time::{sleep, Duration};
 use tracing::debug;
 
+use crate::core::events as ev;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -203,10 +204,6 @@ impl LocalEnginePlugin for VllmPlugin {
         "vllm"
     }
 
-    fn supported_extensions(&self) -> &[&'static str] {
-        &["gguf", "safetensors"]
-    }
-
     fn is_platform_supported(&self) -> bool {
         cfg!(not(target_os = "windows"))
     }
@@ -247,7 +244,7 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn progress_event_name(&self) -> &'static str {
-        "engine-progress"
+        ev::ENGINE_PROGRESS
     }
 
     fn build_command(
@@ -258,20 +255,6 @@ impl LocalEnginePlugin for VllmPlugin {
         _gpu_layers: i32,
     ) -> std::process::Command {
         std::process::Command::new("python")
-    }
-
-    fn parse_progress_from_log(&self, line: &str) -> Option<f64> {
-        if line.contains("Loading model weights") {
-            Some(0.3)
-        } else if line.contains("Model loaded") || line.contains("model loaded") {
-            Some(0.6)
-        } else if line.contains("Uvicorn running on") {
-            Some(0.8)
-        } else if line.contains("Application startup complete") {
-            Some(1.0)
-        } else {
-            None
-        }
     }
 
     fn start<'a>(

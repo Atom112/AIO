@@ -1,5 +1,5 @@
 import { Component, createSignal, For, Show, onMount, untrack } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { listMcpTransports, saveMcpServerSecret } from '../../../core/api/mcp';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
 import { t } from '../../../core/i18n';
 import {
@@ -33,7 +33,7 @@ const McpServerDetail: Component<Props> = (props) => {
   // 加载已注册 transports
   const [transports, setTransports] = createSignal<string[]>([]);
   onMount(() => {
-    void invoke<string[]>('list_mcp_transports')
+    void listMcpTransports()
       .then(setTransports)
       .catch(() => {
         // Keep the built-in transport choices when discovery is unavailable.
@@ -84,12 +84,7 @@ const McpServerDetail: Component<Props> = (props) => {
 
   const storeEnvSecret = async (key: string, value: string) => {
     if (!value || value.includes('${KEYRING:')) return;
-    const placeholder = await invoke<string>('save_mcp_server_secret', {
-      serverId: config().id,
-      target: 'env',
-      key,
-      value,
-    });
+    const placeholder = await saveMcpServerSecret(config().id, 'env', key, value);
     const t = config().transport;
     if (t.transport !== 'stdio') return;
     updateTransport({ ...t, env: { ...t.env, [key]: placeholder } });
@@ -359,7 +354,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     trans().url !== ''
                   }
                 >
-                  <span class="text-xs" style={{ color: '#ff8a8a' }}>
+                  <span class="text-xs" style={{ color: 'var(--color-danger)' }}>
                     {t('mcp.detail.urlValidate')}
                   </span>
                 </Show>
@@ -378,8 +373,8 @@ const McpServerDetail: Component<Props> = (props) => {
               class="text-xs px-2 py-1 rounded"
               style={
                 testResult()!.ok
-                  ? 'background: rgba(124,217,160,0.1); color: #7cd9a0;'
-                  : 'background: rgba(255,77,77,0.1); color: #ff8a8a;'
+                  ? 'background: rgba(124,217,160,0.1); color: var(--color-success);'
+                  : 'background: rgba(255,77,77,0.1); color: var(--color-danger);'
               }
             >
               {testResult()!.ok

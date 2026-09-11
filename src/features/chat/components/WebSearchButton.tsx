@@ -21,7 +21,7 @@ const WebSearchButton: Component = () => {
   return (
     <button
       type="button"
-      class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
+      class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-xs font-medium hover:bg-white/[0.06] hover:text-[var(--color-pri)]/60"
       title={isActive() ? t('chat.webSearchOff') : t('chat.webSearchOn')}
       onClick={toggle}
       style={{ color: color() }}

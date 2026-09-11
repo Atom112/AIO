@@ -584,7 +584,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                 <div class="mb-2">
                   <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
                     <Icon name="brain" size={11} class="mr-1.5 opacity-60" />
-                    思考过程
+                    {t('agent.step.thinking')}
                   </div>
                   <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
                     {props.reasoning}
@@ -596,7 +596,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                 <div class="mb-2">
                   <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
                     <Icon name="document" size={11} class="mr-1.5 opacity-60" />
-                    工作过程
+                    {t('agent.step.interim')}
                   </div>
                   <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
                     <Markdown content={props.interimContent!} />

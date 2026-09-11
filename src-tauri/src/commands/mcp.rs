@@ -1,7 +1,9 @@
 //! MCP Tauri Commands
 //!
-//! 提供前端调用的 9 个命令；MCP 运行时状态由 [`McpServerState`] 持有。
+//! 提供前端调用的 MCP 命令（配置 CRUD、连接生命周期、工具/资源/提示拉取、
+//! 工具调用与审批）；MCP 运行时状态由 [`McpServerState`] 持有。
 
+use crate::core::events as ev;
 use crate::core::models::*;
 use crate::core::permission::{self, PermissionAction};
 use crate::core::secure_store;
@@ -38,7 +40,7 @@ fn emit_status_full(
     prompt_count: usize,
 ) {
     let _ = app.emit(
-        "mcp-server-status",
+        ev::MCP_SERVER_STATUS,
         McpServerStatusInfo {
             id: id.to_string(),
             status,
@@ -50,6 +52,14 @@ fn emit_status_full(
     );
 }
 
+/// 列出 MCP server 配置（全局与项目级合并视图）。
+///
+/// # 参数
+/// - `project_id` — 传入时叠加该项目的 `.aio/mcp-servers.json`（项目级同名 server
+///   覆盖全局）；缺省仅返回全局配置
+///
+/// # 返回
+/// 合并后的配置列表；env 中的密钥以 `${KEYRING:...}` 占位符形式返回，不含明文。
 #[tauri::command]
 pub async fn list_mcp_servers(
     app: AppHandle,
@@ -58,6 +68,11 @@ pub async fn list_mcp_servers(
     mcp::list_configs_merged(&app, project_id.as_deref()).map_err(|e| e.to_string())
 }
 
+/// 新增或更新（按 id upsert）一个 MCP server 配置。
+///
+/// # 参数
+/// - `config` — server 配置；env 中的密钥先写入 keyring，落盘仅保存占位符
+/// - `project_id` — 传入时写入项目级配置，否则写入全局配置
 #[tauri::command]
 pub async fn add_mcp_server(
     app: AppHandle,
@@ -103,6 +118,11 @@ pub async fn save_mcp_server_secret(
     Ok(format!("${{KEYRING:{}}}", account))
 }
 
+/// 删除 MCP server：先优雅停止运行中的实例（abort 在途调用 + 插件 stop 清理
+/// HTTP 状态），再从配置中移除，并清理其 keyring 中的环境变量密钥。
+///
+/// # 参数
+/// - `id` — server ID；`project_id` — 传入时删除项目级配置，否则删全局
 #[tauri::command]
 pub async fn remove_mcp_server(
     app: AppHandle,
@@ -160,6 +180,14 @@ pub async fn remove_mcp_server(
     Ok(())
 }
 
+/// 启动并连接一个 MCP server：握手初始化后拉取其工具列表。
+///
+/// # 参数
+/// - `id` — server ID（在合并配置中查找）；`project_id` — 叠加项目级配置
+///
+/// # 返回
+/// 该 server 的工具规格（OpenAI 函数调用格式）；过程通过 `mcp-server-status`
+/// 事件向前端广播 Connecting/Connected/Error。
 #[tauri::command]
 pub async fn start_mcp_server(
     app: AppHandle,
@@ -271,6 +299,11 @@ pub async fn start_mcp_server(
     Ok(filtered)
 }
 
+/// 停止一个运行中的 MCP server：abort 其在途工具调用、调用传输插件 stop
+/// （stdio 结束子进程 / HTTP 清理状态表），并从运行状态表中移除。
+///
+/// # 参数
+/// - `id` — server ID；未在运行时静默成功（幂等）
 #[tauri::command]
 pub async fn stop_mcp_server(
     app: AppHandle,
@@ -303,6 +336,11 @@ pub async fn stop_mcp_server(
     Ok(())
 }
 
+/// 返回运行状态表中所有 server 的状态摘要。
+///
+/// # 返回
+/// id → 状态信息（仅含已连接条目；工具/资源计数在此为占位 0，准确计数由
+/// `mcp-server-status` 事件推送）。
 #[tauri::command]
 pub async fn list_mcp_server_status(
     state: State<'_, McpServerState>,
@@ -325,6 +363,14 @@ pub async fn list_mcp_server_status(
     Ok(out)
 }
 
+/// 列出所有已连接 MCP server 的工具（并发向各 server 发起 tools/list）。
+///
+/// # 参数
+/// - `project_id` — 仅用于配置视图；已连接集合由运行状态表决定
+///
+/// # 返回
+/// 合并后的工具规格列表（工具名带 server 命名空间）；单个 server 拉取失败不阻塞
+/// 其余 server，其工具被跳过。
 #[tauri::command]
 pub async fn list_mcp_tools(
     app: AppHandle,
@@ -615,6 +661,14 @@ pub(crate) async fn execute_tool_call(
     }
 }
 
+/// 用给定（尚未保存）的配置做一次"试连接"：启动、握手、拉取工具列表后立即
+/// 断开，供设置页的"测试连接"使用。
+///
+/// # 参数
+/// - `config` — 待测配置；不会写入配置文件，也不会注册到运行状态表
+///
+/// # 返回
+/// 连接成功时的工具规格列表；失败返回错误串。
 #[tauri::command]
 pub async fn test_mcp_server_connection(
     app: AppHandle,
@@ -756,7 +810,7 @@ pub(crate) async fn request_tool_approval(
 
     // 发送事件到前端
     let _ = app.emit(
-        "tool-approval-requested",
+        ev::TOOL_APPROVAL_REQUESTED,
         ApprovalRequestPayload {
             approval_id: approval_id.clone(),
             server_id: server_id.to_string(),

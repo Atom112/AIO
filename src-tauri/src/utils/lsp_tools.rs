@@ -2,7 +2,7 @@
 //!
 //! 提供 `read_lints` 工具，让 Agent 可以查询项目中的 LSP 诊断信息。
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::plugins::lsp::LspManager;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -35,15 +35,8 @@ pub fn tool_spec() -> ToolSpec {
     }
 }
 
-fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
+// tool_ok 统一由 utils::tool_result 提供（消除全仓副本）
+use crate::utils::tool_result::tool_ok;
 
 /// 执行 `read_lints` 工具调用
 pub async fn execute(

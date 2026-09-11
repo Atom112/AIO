@@ -1,8 +1,15 @@
 import { createSignal, onMount, Component, Show } from 'solid-js';
 import { Window } from '@tauri-apps/api/window';
 import { A } from '@solidjs/router';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  loadActivatedModels,
+  loadAppConfig,
+  readAvatarSource,
+  uploadAvatar,
+} from '../../core/api/config';
+import { isLocalServerRunning, startLocalServer } from '../../core/api/engine';
 import { listen } from '@tauri-apps/api/event';
+import { EVENTS } from '../../core/api/events';
 import { open } from '@tauri-apps/plugin-dialog';
 import AvatarCropModal from './AvatarCropModel';
 import UserDropdown from './UserDropdown';
@@ -47,7 +54,7 @@ const NavBar: Component = () => {
       });
 
       if (selected && typeof selected === 'string') {
-        const dataUrl = await invoke<string>('read_avatar_source', { path: selected });
+        const dataUrl = await readAvatarSource(selected);
         setTempImage(dataUrl);
       }
     } catch (err) {
@@ -61,9 +68,7 @@ const NavBar: Component = () => {
    */
   const onCropSave = async (croppedDataUrl: string) => {
     try {
-      const savedPath = await invoke<string>('upload_avatar', {
-        dataUrl: croppedDataUrl,
-      });
+      const savedPath = await uploadAvatar(croppedDataUrl);
       setGlobalUserAvatar(croppedDataUrl);
       localStorage.setItem('user-avatar-path', savedPath);
       setTempImage(null);
@@ -79,11 +84,11 @@ const NavBar: Component = () => {
     if (!model.local_path) return;
     const asstId = currentAssistantId() || datas.assistants[0]?.id;
     if (!asstId) {
-      const isRunning = await invoke<boolean>('is_local_server_running');
+      const isRunning = await isLocalServerRunning(model.engine_type || 'llama_cpp');
       if (!isRunning) {
         try {
-          await invoke('start_local_server', {
-            modelPath: model.local_path,
+          await startLocalServer({
+            modelPath: model.local_path!,
             port: 8080,
             gpuLayers: 99,
             engineType: model.engine_type || 'llama_cpp',
@@ -109,10 +114,10 @@ const NavBar: Component = () => {
    * 组件挂载时初始化：头像加载、模型加载、窗口监听
    */
   onMount(async () => {
-    const unlistenProgress = await listen('llama-progress', (event) => {
+    const unlistenProgress = await listen(EVENTS.llamaProgress, (event) => {
       setLocalModelStartProgress((event.payload as number) * 100);
     });
-    const unlistenEngineProgress = await listen('engine-progress', (event) => {
+    const unlistenEngineProgress = await listen(EVENTS.engineProgress, (event) => {
       setLocalModelStartProgress((event.payload as number) * 100);
     });
 
@@ -125,10 +130,7 @@ const NavBar: Component = () => {
 
     // 加载模型和配置
     try {
-      const [models, config] = await Promise.all([
-        invoke<ActivatedModel[]>('load_activated_models'),
-        invoke<any>('load_app_config'),
-      ]);
+      const [models, config] = await Promise.all([loadActivatedModels(), loadAppConfig()]);
       setDatas('activatedModels', models);
 
       if (models.length > 0) {

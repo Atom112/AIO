@@ -10,7 +10,12 @@ import {
   untrack,
 } from 'solid-js';
 import { open } from '@tauri-apps/plugin-shell';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  loadAppConfig,
+  saveAppConfig,
+  setAutoStart as apiSetAutoStart,
+} from '../../../core/api/config';
+import { checkAppUpdate, type CheckUpdateResult } from '../../../core/api/update';
 import {
   setThemeColor,
   themeColor,
@@ -52,15 +57,6 @@ import { locale, setLocale, t, type Locale } from '../../../core/i18n';
  * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）
  * 用 `kind` 字段做 tag，前端按类别显示不同提示
  */
-type CheckUpdateResult =
-  | { kind: 'up_to_date'; current_version: string }
-  | {
-      kind: 'update_available';
-      info: { version: string; current_version: string; notes?: string; pub_date?: string };
-    }
-  | { kind: 'service_not_ready'; current_version: string; endpoint: string; reason: string }
-  | { kind: 'network'; current_version: string; endpoint: string; reason: string }
-  | { kind: 'failed'; current_version: string; endpoint: string; reason: string };
 
 /**
  * 应用设置页面组件
@@ -115,7 +111,7 @@ const AppSettings: Component = () => {
 
     // 加载系统自启配置
     try {
-      const cfg: Record<string, unknown> = await invoke('load_app_config');
+      const cfg = await loadAppConfig();
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
       }
@@ -181,16 +177,16 @@ const AppSettings: Component = () => {
     setCheckUpdating(true);
     setCheckResult(null);
     try {
-      const result = await invoke<CheckUpdateResult>('check_app_update');
+      const result: CheckUpdateResult = await checkAppUpdate();
       setCheckResult(result);
 
       switch (result.kind) {
         case 'update_available':
           setAppUpdateInfo({
             version: result.info.version,
-            currentVersion: result.info.current_version,
+            currentVersion: result.info.currentVersion,
             notes: result.info.notes,
-            pubDate: result.info.pub_date,
+            pubDate: result.info.pubDate,
           });
           setAppUpdateDismissed(false);
           setAppUpdateAvailable(true);
@@ -208,7 +204,8 @@ const AppSettings: Component = () => {
         kind: 'failed',
         current_version: version(),
         endpoint: '',
-        reason: typeof e === 'string' ? e : e instanceof Error ? e.message : '未知错误',
+        reason:
+          typeof e === 'string' ? e : e instanceof Error ? e.message : t('common.unknownError'),
       });
     } finally {
       setCheckUpdating(false);
@@ -454,11 +451,11 @@ const AppSettings: Component = () => {
   });
 
   const presetThemes = [
-    { name: t('app.theme.softBlue'), color: '#7c9abf' },
-    { name: t('app.theme.ashPink'), color: '#b8929e' },
-    { name: t('app.theme.warmGray'), color: '#a8a098' },
-    { name: t('app.theme.sageGreen'), color: '#9aab9a' },
-    { name: t('app.theme.lavender'), color: '#a89cc8' },
+    { name: t('app.theme.softBlue'), color: 'var(--color-pri)' },
+    { name: t('app.theme.ashPink'), color: '#b8929e' }, // gate-allow: color #b8929e
+    { name: t('app.theme.warmGray'), color: '#a8a098' }, // gate-allow: color #a8a098
+    { name: t('app.theme.sageGreen'), color: '#9aab9a' }, // gate-allow: color #9aab9a
+    { name: t('app.theme.lavender'), color: '#a89cc8' }, // gate-allow: color #a89cc8
   ];
 
   const langOptions = createMemo(() => [
@@ -495,7 +492,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div class="pr-6">
-            <span class="block text-[#eee] text-[14px]">{t('app.language.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.language.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">
               {t('app.language.description')} {t('app.language.system')}
             </p>
@@ -558,7 +557,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div class="pr-6">
-            <span class="block text-[#eee] text-[14px]">{t('app.darkMode.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.darkMode.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.darkMode.description')}</p>
           </div>
           <div class="flex rounded-md border border-white/10 overflow-hidden">
@@ -583,7 +584,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.autoStart.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.autoStart.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.autoStart.description')}</p>
           </div>
 
@@ -596,7 +599,7 @@ const AppSettings: Component = () => {
                 const val = e.currentTarget.checked;
                 setAutoStart(val);
                 try {
-                  await invoke('set_auto_start', { enabled: val });
+                  await apiSetAutoStart(val);
                 } catch (err) {
                   console.warn('设置自启失败:', err);
                   setAutoStart(!val); // 回滚
@@ -609,7 +612,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.maxToolRounds.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.maxToolRounds.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.maxToolRounds.description')}</p>
           </div>
 
@@ -627,9 +632,9 @@ const AppSettings: Component = () => {
                 : 25;
               setMaxToolRounds(clamped);
               try {
-                const cfg: any = await invoke('load_app_config').catch(() => null);
+                const cfg = await loadAppConfig().catch(() => null);
                 if (cfg) {
-                  await invoke('save_app_config', { config: { ...cfg, maxToolRounds: clamped } });
+                  await saveAppConfig({ ...cfg, maxToolRounds: clamped });
                 }
               } catch (err) {
                 console.warn('保存最大工具轮数配置失败:', err);
@@ -640,7 +645,7 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
               {t('app.maxConcurrentSubagents.title')}
             </span>
             <p class="text-xs text-white/35 mt-1">{t('app.maxConcurrentSubagents.description')}</p>
@@ -658,11 +663,9 @@ const AppSettings: Component = () => {
               const clamped = Number.isFinite(raw) ? Math.min(32, Math.max(1, Math.round(raw))) : 5;
               setMaxConcurrentSubagents(clamped);
               try {
-                const cfg: any = await invoke('load_app_config').catch(() => null);
+                const cfg = await loadAppConfig().catch(() => null);
                 if (cfg) {
-                  await invoke('save_app_config', {
-                    config: { ...cfg, maxConcurrentSubagents: clamped },
-                  });
+                  await saveAppConfig({ ...cfg, maxConcurrentSubagents: clamped });
                 }
               } catch (err) {
                 console.warn('保存并发子智能体上限配置失败:', err);
@@ -673,7 +676,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.openSource.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.openSource.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.openSource.description')}</p>
           </div>
 
@@ -681,7 +686,7 @@ const AppSettings: Component = () => {
             class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
             style={{
               background: 'rgba(var(--primary-rgb), 0.18)',
-              color: '#fff',
+              color: '#fff', // gate-allow: color 开关旋钮（白色基底）
               border: '1px solid rgba(var(--primary-rgb), 0.25)',
             }}
             onClick={() => open('https://github.com/Atom112/AIO')}
@@ -694,7 +699,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3">
           <div class="flex-1 min-w-0 pr-4">
-            <span class="block text-[#eee] text-[14px]">{t('app.update.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.update.title')}
+            </span>
             <p
               class="text-xs mt-1"
               style={{
@@ -703,8 +710,8 @@ const AppSettings: Component = () => {
                   if (!r) return 'rgba(var(--text-base-rgb),0.35)';
                   if (r.kind === 'update_available') return 'var(--primary-color)';
                   if (r.kind === 'service_not_ready' || r.kind === 'failed' || r.kind === 'network')
-                    return '#d99';
-                  return '#7c9abf';
+                    return '#d99'; // gate-allow: color return #d99
+                  return 'var(--color-pri)';
                 })(),
               }}
             >
@@ -798,6 +805,7 @@ const AppSettings: Component = () => {
                 </span>
               </div>
 
+              {/* gate-allow: color 色相旋钮光晕（色相选择器 UI 原语，白色基底） */}
               <div
                 class="absolute top-1/2 left-1/2 w-[18px] h-[18px] border-[3px] border-white rounded-full shadow-[0_0_5px_#fff,inset_0_0_10px_#fff] pointer-events-none z-[3]"
                 style={pointerStyle()}
@@ -814,7 +822,7 @@ const AppSettings: Component = () => {
                       background: theme.color,
                       border:
                         themeColor().toLowerCase() === theme.color.toLowerCase()
-                          ? '2px solid #fff'
+                          ? '2px solid #fff' // gate-allow: color 2px solid #fff
                           : '2px solid transparent',
                     }}
                   />
@@ -852,7 +860,7 @@ const AppSettings: Component = () => {
                 value={l()}
                 class="custom-slider light-slider"
                 style={{
-                  background: `linear-gradient(to right, #000, hsl(${h()}, ${s()}%, 50%), #fff)`,
+                  background: `linear-gradient(to right, #000, hsl(${h()}, ${s()}%, 50%), #fff)`, // gate-allow: color 色相条黑白锚点
                 }}
                 onInput={(e) => handleSliderUpdate('l', parseInt(e.currentTarget.value))}
               />
@@ -1003,6 +1011,7 @@ const AppSettings: Component = () => {
                           <Show
                             when={!isRecording()}
                             fallback={
+                              // gate-allow: color 色相预览白字（截屏预览 UI 原语）
                               <span class="text-[11px] font-medium" style={{ color: '#fff' }}>
                                 {t('app.shortcuts.recording')}
                               </span>

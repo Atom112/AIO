@@ -217,10 +217,6 @@ export async function updateModelsCatalog(url?: string): Promise<UpdateResult> {
   return result;
 }
 
-export async function getCatalogUrl(): Promise<string> {
-  return await invoke<string>('get_catalog_url');
-}
-
 export function findModel(catalog: Catalog, provider: string, id: string): ModelMeta | null {
   const prov = (provider || '').toLowerCase();
   const target = (id || '').toLowerCase();
@@ -239,45 +235,12 @@ export function findModel(catalog: Catalog, provider: string, id: string): Model
   );
 }
 
-export function listProvidersForApiUrl(catalog: Catalog, apiUrl: string): ProviderMeta[] {
-  if (!apiUrl) return catalog.providers.slice(0, 50);
-  const u = apiUrl.toLowerCase();
-  const knownHosts: Record<string, string> = {
-    'api.openai.com': 'openai',
-    'api.anthropic.com': 'anthropic',
-    'generativelanguage.googleapis.com': 'google',
-    'api.deepseek.com': 'deepseek',
-    'api.groq.com': 'groq',
-    'api.mistral.ai': 'mistral',
-    'api.x.ai': 'xai',
-    'openrouter.ai': 'openrouter',
-    'api.cohere.ai': 'cohere',
-  };
-  for (const [host, prov] of Object.entries(knownHosts)) {
-    if (u.includes(host)) {
-      return catalog.providers.filter((p: ProviderMeta) => p.id === prov);
-    }
-  }
-  return catalog.providers.filter((p: ProviderMeta) => !p.isAggregator).slice(0, 50);
-}
-
-export function listCatalogModels(catalog: Catalog, providerId?: string): ModelMeta[] {
-  if (!providerId || providerId === 'all') return catalog.models;
-  return catalog.models.filter((m: ModelMeta) => m.provider === providerId);
-}
-
 /** 格式化上下文窗口（1234567 → "1.2M"） */
 export function formatContextWindow(tokens: number): string {
   if (tokens >= 1_000_000)
     return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
   if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(0)}K`;
   return String(tokens);
-}
-
-/** 格式化单条价格（per 1M tokens） */
-export function formatPricing(input: number, output: number): string {
-  if (input === 0 && output === 0) return t('common.free');
-  return `$${input}/${output}/1M`;
 }
 
 /** 把 ISO 时间格式化为「X 天前」之类的相对描述 */

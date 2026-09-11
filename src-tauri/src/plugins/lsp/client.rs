@@ -7,16 +7,15 @@
 
 use super::error::LspResult;
 use super::transport::{encode_message, read_frame};
+use crate::utils::jsonrpc::{PendingMap, WaitError};
 use dashmap::DashMap;
 use lsp_types::PublishDiagnosticsParams;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
 #[allow(unused_imports)]
@@ -36,10 +35,8 @@ pub struct LspClient {
 }
 
 pub(crate) struct LspClientInner {
-    /// JSON-RPC 请求 id 生成器
-    pub next_id: AtomicU64,
-    /// 等待响应的 pending 请求映射 (id → oneshot sender)
-    pub pending: DashMap<u64, oneshot::Sender<Value>>,
+    /// JSON-RPC 待响应请求表（与 MCP 客户端共用的 utils::jsonrpc::PendingMap）
+    pub pending: PendingMap<Value>,
     /// 子进程句柄
     pub child: Mutex<Option<Child>>,
     /// stdin 写入端
@@ -99,8 +96,7 @@ impl LspClient {
             language_id: language_id.clone(),
             project_root: project_root.clone(),
             inner: std::sync::Arc::new(LspClientInner {
-                next_id: AtomicU64::new(1),
-                pending: DashMap::new(),
+                pending: PendingMap::new(),
                 child: Mutex::new(Some(child)),
                 stdin: Mutex::new(Some(stdin)),
                 diagnostics: DashMap::new(),
@@ -228,16 +224,13 @@ impl LspClient {
         params: Option<Value>,
         timeout_dur: Duration,
     ) -> LspResult<Value> {
-        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        let (id, rx) = self.inner.pending.register();
         let req = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
             "params": params,
         });
-
-        let (tx, rx) = oneshot::channel();
-        self.inner.pending.insert(id, tx);
 
         let payload = serde_json::to_string(&req)?;
         let frame = encode_message(&payload);
@@ -253,23 +246,21 @@ impl LspClient {
                     super::error::LspError::Transport(format!("flush stdin 失败: {}", e))
                 })?;
             } else {
-                self.inner.pending.remove(&id);
+                self.inner.pending.cancel(id);
                 return Err(super::error::LspError::Transport("stdin 已关闭".into()));
             }
         }
 
         // 等待响应
-        let resp = match tokio::time::timeout(timeout_dur, rx).await {
-            Ok(Ok(v)) => v,
-            Ok(Err(_)) => {
-                self.inner.pending.remove(&id);
+        let resp = match self.inner.pending.wait(id, rx, timeout_dur).await {
+            Ok(v) => v,
+            Err(WaitError::Canceled) => {
                 return Err(super::error::LspError::Protocol(
                     "oneshot canceled (sender dropped)".into(),
-                ));
+                ))
             }
-            Err(_) => {
-                self.inner.pending.remove(&id);
-                return Err(super::error::LspError::Timeout(timeout_dur));
+            Err(WaitError::Timeout(d)) => {
+                return Err(super::error::LspError::Timeout(d));
             }
         };
 
@@ -324,7 +315,7 @@ impl LspClient {
         // 如果有 id 且没有 method → 是 response
         if v.get("id").is_some() && v.get("method").is_none() {
             if let Some(id) = v.get("id").and_then(|i| i.as_u64()) {
-                if let Some((_, tx)) = self.inner.pending.remove(&id) {
+                if let Some(tx) = self.inner.pending.take(id) {
                     let _ = tx.send(v);
                 }
             }

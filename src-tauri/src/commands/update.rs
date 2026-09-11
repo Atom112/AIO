@@ -11,8 +11,9 @@
 //! 1. **前端 -> 本地后端**: 前端通过 Tauri `invoke` 调用此模块的异步函数。
 //! 2. **本地后端 -> GitHub**: 由 `tauri-plugin-updater` 内部完成，使用 `tauri.conf.json`
 //!    `plugins.updater.endpoints` 配置的清单地址。
-//! 3. **进度回传**: 下载阶段通过 `app.emit("app-update-progress", pct)` 广播，前端可监听。
+//! 3. **进度回传**: 下载阶段通过 `app.emit(ev::APP_UPDATE_PROGRESS, pct)` 广播，前端可监听。
 
+use crate::core::events as ev;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_updater::Error as UpdaterError;
@@ -233,18 +234,18 @@ pub async fn install_app_update<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
                 if let Some(total) = total {
                     if total > 0 {
                         let pct = chunk_len as f64 / total as f64;
-                        let _ = app_clone.emit("app-update-progress", pct);
+                        let _ = app_clone.emit(ev::APP_UPDATE_PROGRESS, pct);
                     }
                 }
             },
             || {
-                let _ = app_clone.emit("app-update-progress", 0.0_f64);
+                let _ = app_clone.emit(ev::APP_UPDATE_PROGRESS, 0.0_f64);
             },
         )
         .await
         .map_err(|e| e.to_string())?;
 
-    let _ = app.emit("app-update-progress", 1.0_f64);
+    let _ = app.emit(ev::APP_UPDATE_PROGRESS, 1.0_f64);
     Ok(())
 }
 

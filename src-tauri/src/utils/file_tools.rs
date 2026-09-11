@@ -6,11 +6,10 @@
 //!
 //! 供 `run_agent_turn` 在工具分发时直接调用，跳过 MCP 通道。
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use tauri::Manager;
 
 // ====== 常量 ======
 
@@ -28,7 +27,16 @@ fn sha256_hex(content: &[u8]) -> String {
 }
 
 /// 路径沙箱：解析请求的路径，确保在 `allowed_dir` 以内。
-fn safe_path(allowed_dir: &str, requested: &str, must_exist: bool) -> Result<PathBuf, String> {
+///
+/// 安全不变式：无论目标是否存在、能否 canonicalize，最终都必须经过末尾的
+/// 越界检查后才能放行 —— 任何分支都不得提前 return（历史上上溯到根时曾提前返回，
+/// 导致不存在的盘符/UNC 根路径绕过校验）。该函数同时被进程内文件工具与
+/// `mcp_fs_server`（stdio 文件服务器）复用。
+pub(crate) fn safe_path(
+    allowed_dir: &str,
+    requested: &str,
+    must_exist: bool,
+) -> Result<PathBuf, String> {
     let base = std::fs::canonicalize(allowed_dir).map_err(|e| format!("项目目录不可访问: {e}"))?;
     let p = PathBuf::from(requested);
     let resolved = if p.is_absolute() { p } else { base.join(&p) };
@@ -41,33 +49,41 @@ fn safe_path(allowed_dir: &str, requested: &str, must_exist: bool) -> Result<Pat
                 // 文件尚不存在：逐级上溯找到存在的父目录再拼接
                 let mut exist = resolved.clone();
                 let mut trail: Vec<std::ffi::OsString> = Vec::new();
+                let mut walked_past_root = false;
                 while !exist.exists() {
                     if let Some(n) = exist.file_name().map(|n| n.to_os_string()) {
                         trail.push(n);
                     }
                     if !exist.pop() {
-                        let mut r = PathBuf::new();
-                        for c in resolved.components() {
-                            match c {
-                                std::path::Component::ParentDir => {
-                                    r.pop();
-                                }
-                                std::path::Component::CurDir => {}
-                                o => {
-                                    r.push(o);
-                                }
-                            }
-                        }
-                        return Ok(r);
+                        walked_past_root = true;
+                        break;
                     }
                 }
-                let canon =
-                    std::fs::canonicalize(&exist).map_err(|e| format!("路径不可访问: {e}"))?;
-                let mut r = canon;
-                for n in trail.into_iter().rev() {
-                    r.push(n);
+                if walked_past_root {
+                    // 全路径无一存在（如不存在的盘符/UNC 根）：无法 canonicalize 锚点，
+                    // 退化为纯词法重建（展开 ../..），随后仍须经过末尾的越界检查。
+                    let mut r = PathBuf::new();
+                    for c in resolved.components() {
+                        match c {
+                            std::path::Component::ParentDir => {
+                                r.pop();
+                            }
+                            std::path::Component::CurDir => {}
+                            o => {
+                                r.push(o);
+                            }
+                        }
+                    }
+                    r
+                } else {
+                    let canon =
+                        std::fs::canonicalize(&exist).map_err(|e| format!("路径不可访问: {e}"))?;
+                    let mut r = canon;
+                    for n in trail.into_iter().rev() {
+                        r.push(n);
+                    }
+                    r
                 }
-                r
             }
         }
     };
@@ -77,7 +93,7 @@ fn safe_path(allowed_dir: &str, requested: &str, must_exist: bool) -> Result<Pat
     Ok(target)
 }
 
-fn is_binary(p: &std::path::Path) -> bool {
+pub(crate) fn is_binary(p: &std::path::Path) -> bool {
     [
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "pdf", "docx", "pptx", "xlsx",
         "zip", "tar", "gz", "rar", "exe", "dll", "so", "dylib", "wasm", "bin", "mp3", "mp4", "avi",
@@ -86,7 +102,7 @@ fn is_binary(p: &std::path::Path) -> bool {
     .contains(&p.extension().and_then(|e| e.to_str()).unwrap_or(""))
 }
 
-fn sz(b: u64) -> String {
+pub(crate) fn sz(b: u64) -> String {
     if b >= 1_000_000 {
         format!("{:.1}MB", b as f64 / 1_000_000.0)
     } else if b >= 1_000 {
@@ -96,25 +112,8 @@ fn sz(b: u64) -> String {
     }
 }
 
-pub fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
-
-pub fn tool_err(msg: &str) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": format!("[Error] {msg}")}),
-        }],
-        is_error: true,
-    }
-}
+// tool_ok / tool_err 统一由 utils::tool_result 提供（消除全仓 8+5 份副本）
+pub use crate::utils::tool_result::{tool_err, tool_ok};
 
 // ====== 工具定义 ======
 
@@ -619,19 +618,8 @@ pub fn resolve_project_root(
     project_id: Option<&str>,
 ) -> Result<String, String> {
     let pid = project_id.ok_or_else(|| "未指定项目".to_string())?;
-    let idx_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("获取 AppData 目录失败: {e}"))?
-        .join("projects.json");
-    let content =
-        std::fs::read_to_string(&idx_path).map_err(|e| format!("读取项目索引失败: {e}"))?;
-    let file: Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析项目索引失败: {e}"))?;
-    file["projects"][pid]["path"]
-        .as_str()
-        .map(strip_windows_extended_prefix)
-        .ok_or_else(|| format!("项目 {} 不存在", pid))
+    // 路径解析统一在 utils::project_index（含 Windows 扩展前缀归一化）
+    crate::utils::project_index::project_path(app, pid)
 }
 
 /// 去掉 Windows 扩展长度路径前缀 `\\?\`（由 `std::fs::canonicalize` 产生）。
@@ -644,5 +632,71 @@ pub fn strip_windows_extended_prefix(path: &str) -> String {
     #[cfg(not(target_os = "windows"))]
     {
         path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod safe_path_tests {
+    use super::safe_path;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn fresh_base(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("aio_safepath_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 绝对路径指向不存在的盘符/UNC 根（walk-up 走到根仍无锚点）——
+    /// 修复前此分支提前 return、绕过末尾的越界检查。
+    #[test]
+    fn rejects_absolute_path_on_nonexistent_root() {
+        let base = fresh_base("noroot");
+        let base_s = base.to_string_lossy().to_string();
+        #[cfg(target_os = "windows")]
+        let outside = "Q:\\__aio_never_exists_drive__\\x\\evil.txt";
+        #[cfg(not(target_os = "windows"))]
+        let outside = "/__aio_never_exists_dir__/x/evil.txt";
+        let r = safe_path(&base_s, outside, false);
+        assert!(r.is_err(), "越界路径必须被拒绝，实际得到 {r:?}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 通过 .. 上溯逃逸项目目录。
+    #[test]
+    fn rejects_parent_traversal_escape() {
+        let base = fresh_base("dotdot");
+        let base_s = base.to_string_lossy().to_string();
+        let r = safe_path(&base_s, "../../../../outside_evil.txt", false);
+        assert!(r.is_err(), ".. 逃逸必须被拒绝，实际得到 {r:?}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 项目目录内不存在的新文件（含不存在的中级目录）应允许写入。
+    #[test]
+    fn allows_new_file_inside_project() {
+        let base = fresh_base("inside");
+        let base_s = base.to_string_lossy().to_string();
+        let r = safe_path(&base_s, "new_dir/new_file.txt", false).unwrap();
+        let canon_base = fs::canonicalize(&base).unwrap();
+        assert!(
+            r.starts_with(&canon_base),
+            "结果 {r:?} 应位于 {canon_base:?} 内"
+        );
+        assert!(r.ends_with("new_file.txt"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// must_exist=true 时目标必须真实存在。
+    #[test]
+    fn must_exist_rejects_missing_path() {
+        let base = fresh_base("mustexist");
+        let base_s = base.to_string_lossy().to_string();
+        assert!(safe_path(&base_s, "definitely_missing.txt", true).is_err());
+        fs::write(base.join("real.txt"), b"x").unwrap();
+        let r = safe_path(&base_s, "real.txt", true).unwrap();
+        assert!(r.starts_with(fs::canonicalize(&base).unwrap()));
+        let _ = fs::remove_dir_all(&base);
     }
 }

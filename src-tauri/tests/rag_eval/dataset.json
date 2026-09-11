@@ -1,0 +1,227 @@
+{
+  "meta": {
+    "name": "AIO 项目记忆 RAG 评测种子集",
+    "description": "围绕 AIO 自身技术栈（rusqlite/sqlite-vec/fastembed/重排/自进化记忆等）构造的事实与标注查询，用于对比 纯向量 / FTS / 混合 三路检索质量（NDCG@10 / MRR / P@5）。zh 查询权重 ≥ 60%。可扩展：追加 facts/queries 即可。"
+  },
+  "facts": [
+    {
+      "label": "storage_rusqlite",
+      "category": "decision",
+      "content": "项目使用 rusqlite（SQLite 绑定）作为持久化存储，表结构在 core/db.rs 定义"
+    },
+    {
+      "label": "embed_vec0",
+      "category": "architecture",
+      "content": "记忆库向量检索由 sqlite-vec 的 vec0 虚拟表提供，余弦距离，维度在建表时固定"
+    },
+    {
+      "label": "embed_bundled",
+      "category": "note",
+      "content": "开箱即用的嵌入模型是内置的 all-MiniLM-L6-v2（ONNX，384 维，离线可用）"
+    },
+    {
+      "label": "embed_online",
+      "category": "pattern",
+      "content": "在线嵌入支持 OpenAI 兼容 /v1/embeddings 端点（如 text-embedding-3-small）"
+    },
+    {
+      "label": "embed_matryoshka",
+      "category": "pattern",
+      "content": "text-embedding-3/bge-m3 等 Matryoshka 模型支持目标维度裁剪以节省存储"
+    },
+    {
+      "label": "rerank_local",
+      "category": "architecture",
+      "content": "本地重排模型 bge-reranker-base 通过 fastembed 的 TextRerank 加载，中英双语"
+    },
+    {
+      "label": "rerank_online",
+      "category": "pattern",
+      "content": "在线重排走 OpenAI 兼容 /rerank 端点（Cohere 形状），Key 存系统钥匙串"
+    },
+    {
+      "label": "retrieval_hybrid",
+      "category": "architecture",
+      "content": "事实检索采用向量 kNN 与 FTS5 关键词混合，RRF 融合后按时新度加成"
+    },
+    {
+      "label": "retrieval_rrf",
+      "category": "convention",
+      "content": "RRF 融合公式为累加 1/(60+rank+1)，两路召回的条目融合分更高"
+    },
+    {
+      "label": "retrieval_fts",
+      "category": "architecture",
+      "content": "FTS5 索引使用 trigram 分词器，支持中文子串匹配"
+    },
+    {
+      "label": "retrieval_short",
+      "category": "note",
+      "content": "两字符以内的中文查询（如“重构”）trigram 无法命中，回退 LIKE 模糊匹配"
+    },
+    {
+      "label": "inject_block",
+      "category": "pattern",
+      "content": "检索结果按 token 预算裁剪后注入系统提示词稳定前缀（index=1），利于 prompt cache"
+    },
+    {
+      "label": "extract_background",
+      "category": "convention",
+      "content": "Agent 每轮结束后后台异步提取事实（sleep-time compute），60 秒去抖"
+    },
+    {
+      "label": "extract_evidence",
+      "category": "convention",
+      "content": "自动提取的事实带证据：来源消息序号写入 source_refs"
+    },
+    {
+      "label": "arbitration",
+      "category": "decision",
+      "content": "新事实与既有事实余弦相似度不低于阈值（默认 0.92）时由 LLM 仲裁合并/订正/取代"
+    },
+    {
+      "label": "versions",
+      "category": "decision",
+      "content": "事实更新保留版本审计链 fact_versions，旧内容可追溯"
+    },
+    {
+      "label": "forget_decay",
+      "category": "decision",
+      "content": "有效事实超过上限（默认 2000 条）时按重要性乘访问次数衰减归档最低分项"
+    },
+    { "label": "pin_protect", "category": "decision", "content": "用户钉住的事实永不自动归档" },
+    {
+      "label": "consolidate_daily",
+      "category": "pattern",
+      "content": "每日后台对高相似事实聚类并批量仲裁合并（预算 20 次/项目/日）"
+    },
+    {
+      "label": "probes_stats",
+      "category": "convention",
+      "content": "记忆面板展示近 7 天质量探针：检索命中、判重触发、仲裁动作分布"
+    },
+    {
+      "label": "cache_embed",
+      "category": "pattern",
+      "content": "嵌入结果按模型加维度加文本哈希缓存（上限 2048 条），避免重复调用"
+    },
+    {
+      "label": "graph_relations",
+      "category": "architecture",
+      "content": "轻量知识图谱抽取“实体-关系-实体”三元组，检索时实体命中加分"
+    },
+    {
+      "label": "code_index",
+      "category": "architecture",
+      "content": "代码库索引将文件按 60 行窗口分块（10 行重叠），支持增量重建"
+    },
+    {
+      "label": "code_symbol",
+      "category": "architecture",
+      "content": "LSP 可用时按函数/类符号边界分块，符号名随块保存可过滤"
+    },
+    {
+      "label": "code_search",
+      "category": "tool",
+      "content": "search_code 工具做代码语义检索，返回文件路径与行号并可高亮符号"
+    },
+    {
+      "label": "subagent_readonly",
+      "category": "tool",
+      "content": "子智能体获得只读的 recall 与 search_code 记忆工具"
+    },
+    {
+      "label": "permission_normal",
+      "category": "decision",
+      "content": "记忆工具在 Normal 模式下默认 Allow（写类），Plan 模式下写被拒绝"
+    },
+    {
+      "label": "migration",
+      "category": "note",
+      "content": "旧版 .aio/knowledge.json 首次打开项目记忆时自动迁移为事实（幂等）"
+    },
+    {
+      "label": "quarantine",
+      "category": "decision",
+      "content": "memory.sqlite 存放在项目目录 .aio/memory/ 下，随项目隔离与迁移"
+    },
+    {
+      "label": "cap_prune",
+      "category": "decision",
+      "content": "prune_to_capacity 按重要性乘访问加权归档超额事实（pinned 除外）"
+    },
+    {
+      "label": "dedup_remember",
+      "category": "pattern",
+      "content": "remember 工具写前做向量查重，避免同主题跨会话堆积"
+    },
+    {
+      "label": "rewrite_query",
+      "category": "pattern",
+      "content": "可选查询改写用 LLM 生成 1-2 个查询变体做多查询 RRF 融合"
+    },
+    {
+      "label": "iterative",
+      "category": "pattern",
+      "content": "迭代检索（expand）用首轮结果摘要作第二查询融合，提升模糊查询召回"
+    },
+    {
+      "label": "model_download",
+      "category": "pattern",
+      "content": "本地重排模型按需下载到应用数据目录 models/rerank/，进度事件推送"
+    },
+    {
+      "label": "conn_wal",
+      "category": "convention",
+      "content": "SQLite WAL 模式加 busy_timeout(5000)，每项目独立连接"
+    },
+    {
+      "label": "thread_safe",
+      "category": "convention",
+      "content": "记忆库连接用互斥锁串行化，嵌入计算在锁外执行避免阻塞"
+    },
+    {
+      "label": "fts_like",
+      "category": "note",
+      "content": "FTS 表达式失败或超短查询时回退 LIKE 百分号模糊匹配"
+    },
+    {
+      "label": "category_filter",
+      "category": "tool",
+      "content": "检索支持按类别过滤（decision/pattern/convention/note/entity/architecture/task）"
+    },
+    {
+      "label": "verify_gate",
+      "category": "convention",
+      "content": "npm run verify 会检查 i18n 键成对、文档链接、eslint/tsc 与 Rust 测试"
+    },
+    {
+      "label": "prompt_stable",
+      "category": "convention",
+      "content": "注入块内容只在素材变化时更新，保持前缀稳定以利缓存"
+    }
+  ],
+  "queries": [
+    { "query": "项目用什么数据库存储聊天记录？", "relevant": ["storage_rusqlite"] },
+    { "query": "向量检索是怎么实现的？", "relevant": ["embed_vec0", "retrieval_hybrid"] },
+    { "query": "内置嵌入模型是什么？", "relevant": ["embed_bundled"] },
+    { "query": "重排怎么用？", "relevant": ["rerank_local", "rerank_online"] },
+    { "query": "事实怎么去重？", "relevant": ["dedup_remember", "arbitration"] },
+    { "query": "记忆太多会清理吗？", "relevant": ["forget_decay", "pin_protect", "cap_prune"] },
+    { "query": "重构", "relevant": ["retrieval_short", "fts_like"] },
+    { "query": "自动提取的背景知识整理", "relevant": ["extract_background", "extract_evidence"] },
+    {
+      "query": "How are embeddings cached to avoid repeated API calls?",
+      "relevant": ["cache_embed"]
+    },
+    {
+      "query": "Does code search support filtering by function name?",
+      "relevant": ["code_symbol", "code_search"]
+    },
+    { "query": "What retrieval quality metrics are tracked?", "relevant": ["probes_stats"] },
+    {
+      "query": "How does hybrid retrieval combine keyword and semantic results?",
+      "relevant": ["retrieval_hybrid", "retrieval_rrf"]
+    }
+  ]
+}

@@ -1,18 +1,7 @@
 // MCP 工具函数
 
-import type { McpServerConfig, McpTransport, McpStatus } from '../types/mcp';
+import type { McpTransport, McpStatus } from '../types/mcp';
 import { t } from '../i18n';
-
-/** keyring 占位符正则：${KEYRING:account_id} */
-const KEYRING_PLACEHOLDER = /\$\{KEYRING:([^}]+)\}/g;
-
-/** 解析 env 值中的 keyring 占位符（前端用，仅显示） */
-export function parseEnvValue(value: string): string {
-  if (!value.includes('${KEYRING:')) return value;
-  return value.replace(KEYRING_PLACEHOLDER, (_m, account) => {
-    return `[keyring:${account}]`;
-  });
-}
 
 /** 构造 keyring 占位符 */
 export function buildKeyringPlaceholder(serverId: string, envKey: string): string {
@@ -49,11 +38,11 @@ function shortUrl(url: string): string {
 export function statusColor(s: McpStatus): string {
   switch (s) {
     case 'connected':
-      return '#7cd9a0';
+      return 'var(--color-success)';
     case 'connecting':
-      return '#e0c060';
+      return 'var(--color-warn)';
     case 'error':
-      return '#ff6b6b';
+      return 'var(--color-danger)';
     default:
       return 'rgba(var(--text-base-rgb),0.4)';
   }
@@ -70,21 +59,4 @@ export function statusLabel(s: McpStatus): string {
     default:
       return t('mcp.disconnected');
   }
-}
-
-/** 构造一个空配置（新增用） */
-export function emptyMcpServerConfig(): McpServerConfig {
-  return {
-    id: `mcp-${Date.now().toString(36)}`,
-    displayName: '',
-    transport: {
-      transport: 'stdio',
-      command: 'npx',
-      args: [],
-      env: {},
-    },
-    enabledTools: [],
-    autoStart: true,
-    hasStoredSecret: false,
-  };
 }

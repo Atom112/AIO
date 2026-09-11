@@ -68,9 +68,6 @@ impl HttpUrlOptions {
 /// Cloud metadata 端点（拒绝访问）
 const CLOUD_METADATA_HOSTS: &[&str] = &["169.254.169.254", "metadata.google.internal"];
 
-/// 已知内网 hostname（localhost 变体除外，由 `allow_localhost` 控制）
-const BLOCKED_HOSTNAMES: &[&str] = &[]; // 保留扩展空间
-
 /// 校验 HTTP URL 的安全性。
 ///
 /// # 参数
@@ -131,11 +128,6 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
     // 6. Cloud metadata 端点拦截
     if CLOUD_METADATA_HOSTS.contains(&host_lower.as_str()) {
         return Err("不允许访问云 metadata 服务地址".into());
-    }
-
-    // 7. 自定义黑名单 hostname
-    if BLOCKED_HOSTNAMES.contains(&host_lower.as_str()) {
-        return Err("不允许访问该地址".into());
     }
 
     Ok(parsed.to_string())

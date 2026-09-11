@@ -6,6 +6,7 @@
 use rusqlite::Connection;
 
 use super::vector::f32_to_bytes;
+use crate::services::memory::CollectRowsWarn;
 
 static VEC0_ONCE: std::sync::Once = std::sync::Once::new();
 static VEC0_OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -55,7 +56,7 @@ pub fn vec0_search(
             Ok((r.get::<_, String>(0)?, r.get::<_, f32>(1)?))
         })
         .map_err(|e| e.to_string())?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+    Ok(rows.collect_rows("vec0"))
 }
 
 /// vec0 写入（按 fact_id 先删后插）。
@@ -122,7 +123,7 @@ pub fn vec0_search_code(
             Ok((r.get::<_, String>(0)?, r.get::<_, f32>(1)?))
         })
         .map_err(|e| e.to_string())?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+    Ok(rows.collect_rows("vec0"))
 }
 
 #[cfg(test)]

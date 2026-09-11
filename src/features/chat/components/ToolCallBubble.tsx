@@ -53,12 +53,14 @@ const ToolCallBubble: Component<Props> = (props) => {
             fallback={
               <Show
                 when={props.state === 'error'}
-                fallback={<span style={{ color: '#7cd9a0', 'font-size': '10px' }}>✓</span>}
+                fallback={
+                  <span style={{ color: 'var(--color-success)', 'font-size': '10px' }}>✓</span>
+                }
               >
                 <Icon
                   src="/icons/app-logo/close-x.svg"
                   class="w-2.5 h-2.5"
-                  style={{ color: '#ff8a8a' }}
+                  style={{ color: 'var(--color-danger)' }}
                 />
               </Show>
             }
@@ -66,7 +68,7 @@ const ToolCallBubble: Component<Props> = (props) => {
             <Icon
               src="/icons/app-logo/loading.svg"
               class="w-2.5 h-2.5 animate-spin"
-              style={{ color: '#e0c060' }}
+              style={{ color: 'var(--color-warn)' }}
             />
           </Show>
         </span>

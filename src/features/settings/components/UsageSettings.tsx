@@ -4,9 +4,9 @@
  * 组合：时间范围选择器 + 统计卡片 + 热力图(固定365天) + 模型分布
  */
 import { Component, createSignal, createEffect, createMemo, Show, For } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
 import UsageSummaryCards from './UsageSummaryCards';
-import type { UsageSummary, UsageSummaryByModel } from './UsageSummaryCards';
+import type { UsageSummary, UsageSummaryByModel } from '../../../core/types/usage';
+import { getUsageSummary, getUsageSummaryByModel } from '../../../core/api/usage';
 import UsageHeatmap from './UsageHeatmap';
 import ModelBreakdown from './ModelBreakdown';
 import Icon from '../../../shared/components/Icon';
@@ -37,10 +37,7 @@ const UsageSettings: Component = () => {
     setLoading(true);
     setError(null);
     try {
-      const [s, m] = await Promise.all([
-        invoke<UsageSummary[]>('get_usage_summary', { days }),
-        invoke<UsageSummaryByModel[]>('get_usage_summary_by_model', { days }),
-      ]);
+      const [s, m] = await Promise.all([getUsageSummary(days), getUsageSummaryByModel(days)]);
       setSummary(s);
       setByModel(m);
     } catch (e) {
@@ -54,10 +51,7 @@ const UsageSettings: Component = () => {
   // 按日期获取模型分布（热力图点击后调用）
   const fetchModelByDate = async (date: string) => {
     try {
-      const m = await invoke<UsageSummaryByModel[]>('get_usage_summary_by_model', {
-        days: range().days,
-        date,
-      });
+      const m = await getUsageSummaryByModel(range().days, date);
       setByModel(m);
     } catch (e) {
       console.error('获取单日模型分布失败:', e);
@@ -73,9 +67,7 @@ const UsageSettings: Component = () => {
   // 初始化：同时加载热力图数据（固定365天）和时间范围数据
   createEffect(() => {
     // 加载热力图数据（只执行一次，因为不依赖 range）
-    invoke<UsageSummary[]>('get_usage_summary', { days: 365 })
-      .then(setHeatmapSummary)
-      .catch(console.error);
+    getUsageSummary(365).then(setHeatmapSummary).catch(console.error);
   });
 
   // 统一 Effect：日期选择模式 vs 时间范围模式

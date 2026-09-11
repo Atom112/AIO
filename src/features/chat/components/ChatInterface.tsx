@@ -35,7 +35,10 @@ import {
   type GeneratedImageInfo,
 } from '../../../core/store/store';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { deleteTopicMessage } from '../../../core/api/chat';
+import { copyStoredImage, discardChatAttachment } from '../../../core/api/attachment';
+import { revertFileChangesBatch } from '../../../core/api/project';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
 import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
@@ -56,6 +59,7 @@ import AgentModeSelector from './AgentModeSelector';
 import WelcomeScreen from './WelcomeScreen';
 import DiffView from '../../../shared/components/DiffView';
 import BtwResponseBox from './BtwResponseBox';
+import { formatSize } from '../../../core/utils/format';
 import {
   btnBadge,
   btnGhost,
@@ -174,7 +178,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const fsStatus = createMemo<'connected' | 'connecting' | 'error'>(() =>
     currentProject() ? 'connected' : 'connecting',
   );
-  const fsColor = createMemo(() => (fsStatus() === 'connected' ? '#4ade80' : '#facc15'));
+  const fsColor = createMemo(() =>
+    fsStatus() === 'connected' ? 'var(--color-success)' : 'var(--color-warn)',
+  );
   const fsTooltip = createMemo(() =>
     fsStatus() === 'connected' ? t('chat.filesystemConnected') : t('chat.filesystemConnecting'),
   );
@@ -282,18 +288,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     try {
       const dest = await save({ defaultPath: img.name });
       if (!dest) return;
-      await invoke('copy_stored_image', { src: img.storagePath, dest });
+      await copyStoredImage(img.storagePath, dest);
     } catch (e) {
       console.error('保存图片失败:', e);
       alert(t('error.save'));
     }
   };
-
-  /** 人类可读的文件大小 */
-  const formatSize = (n: number) =>
-    n >= 1024 * 1024
-      ? `${(n / 1024 / 1024).toFixed(1)} MB`
-      : `${Math.max(1, Math.round(n / 1024))} KB`;
 
   /** 检测是否已滚动到底部（阈值 50px） */
   const isAtBottom = () => {
@@ -622,7 +622,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         <div
                           class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
                           style={{
-                            background: '#ffffff',
+                            background: 'rgb(var(--text-base-rgb))',
                             border: '1px solid var(--border-dim)',
                             'box-shadow': '0 2px 6px rgba(0,0,0,0.25)',
                           }}
@@ -632,7 +632,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             fallback={
                               <span
                                 class="text-[14px] font-bold select-none"
-                                style={{ color: '#1a1e2c' }}
+                                style={{ color: 'var(--color-dark-700)' }}
                               >
                                 {(msg.modelId || selectedModel()?.model_id || 'AI')
                                   .charAt(0)
@@ -854,10 +854,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         >
                           {/* 复制按钮（每条消息都有） */}
                           <button
-                            class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
+                            class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
                             style={{
-                              border: '1px solid rgba(var(--primary-rgb),0.5)',
-                              color: 'rgba(var(--primary-rgb),0.9)',
+                              border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                              color: 'rgba(var(--text-base-rgb),0.6)',
                             }}
                             onClick={(e) => {
                               const currentBtn = e.currentTarget;
@@ -872,8 +872,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 ) as HTMLElement | null;
                                 if (label) {
                                   const originalText = label.innerText;
-                                  currentBtn.style.color = '#4af908';
-                                  currentBtn.style.borderColor = '#4af908';
+                                  currentBtn.style.color = 'var(--color-success)';
+                                  currentBtn.style.borderColor = 'var(--color-success)';
                                   label.style.maxWidth = '60px';
                                   label.style.opacity = '1';
                                   label.innerText = t('common.copied');
@@ -900,10 +900,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           {/* 分支按钮（仅 assistant 消息） */}
                           <Show when={msg.role === 'assistant' && !!msg.id}>
                             <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
                               style={{
-                                border: '1px solid rgba(var(--primary-rgb),0.5)',
-                                color: 'rgba(var(--primary-rgb),0.9)',
+                                border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                                color: 'rgba(var(--text-base-rgb),0.6)',
                               }}
                               onClick={() => {
                                 if (msg.id) props.onBranchFromMessage(msg.id);
@@ -930,10 +930,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                             }
                           >
                             <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
                               style={{
-                                border: '1px solid rgba(var(--primary-rgb),0.5)',
-                                color: 'rgba(var(--primary-rgb),0.9)',
+                                border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                                color: 'rgba(var(--text-base-rgb),0.6)',
                               }}
                               onClick={async () => {
                                 const text =
@@ -952,10 +952,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   setTimeout(() => setSkipMessageAnimation(false), 100);
                                   if (reply?.id) {
                                     try {
-                                      await invoke('delete_topic_message', {
-                                        topicId: tId,
-                                        messageId: reply.id,
-                                      });
+                                      await deleteTopicMessage(tId, reply.id!);
                                     } catch (e) {
                                       console.error('删除助手回复失败:', e);
                                     }
@@ -970,10 +967,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   }
                                   if (msg.id) {
                                     try {
-                                      await invoke('delete_topic_message', {
-                                        topicId: tId,
-                                        messageId: msg.id,
-                                      });
+                                      await deleteTopicMessage(tId, msg.id!);
                                     } catch (e) {
                                       console.error('删除消息失败:', e);
                                     }
@@ -1010,10 +1004,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               </span>
                             </button>
                             <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--primary-rgb),0.12)] hover:!p-[4px_8px]"
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
                               style={{
-                                border: '1px solid rgba(var(--primary-rgb),0.5)',
-                                color: 'rgba(var(--primary-rgb),0.9)',
+                                border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                                color: 'rgba(var(--text-base-rgb),0.6)',
                               }}
                               onClick={async () => {
                                 const text =
@@ -1032,10 +1026,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   setTimeout(() => setSkipMessageAnimation(false), 100);
                                   if (reply?.id) {
                                     try {
-                                      await invoke('delete_topic_message', {
-                                        topicId: tId,
-                                        messageId: reply.id,
-                                      });
+                                      await deleteTopicMessage(tId, reply.id!);
                                     } catch (e) {
                                       console.error('删除助手回复失败:', e);
                                     }
@@ -1050,10 +1041,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                   }
                                   if (msg.id) {
                                     try {
-                                      await invoke('delete_topic_message', {
-                                        topicId: tId,
-                                        messageId: msg.id,
-                                      });
+                                      await deleteTopicMessage(tId, msg.id!);
                                     } catch (e) {
                                       console.error('删除消息失败:', e);
                                     }
@@ -1113,10 +1101,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               if (el) el.classList.add('animate-message-out');
                               await new Promise((r) => setTimeout(r, 260));
                               try {
-                                await invoke('delete_topic_message', {
-                                  topicId: tId,
-                                  messageId: msg.id,
-                                });
+                                await deleteTopicMessage(tId, msg.id!);
                               } catch (e) {
                                 console.error('删除消息失败:', e);
                               }
@@ -1167,10 +1152,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           const projectPath = currentProject()?.path;
                           if (!projectPath) return;
                           try {
-                            await invoke('revert_file_changes_batch', {
+                            await revertFileChangesBatch(
                               projectPath,
-                              filePaths: fileChanges.map((fc) => fc.filePath),
-                            });
+                              fileChanges.map((fc) => fc.filePath),
+                            );
                             setRevertedMessages((prev) => {
                               const next = new Set(prev);
                               next.add(msg.id ?? String(index()));
@@ -1230,7 +1215,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                               <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
                                 <span class="font-mono">
                                   {diffStats().added > 0 && (
-                                    <span style={{ color: '#50dc64' }}>+{diffStats().added}</span>
+                                    <span style={{ color: 'var(--color-success)' }}>
+                                      +{diffStats().added}
+                                    </span>
                                   )}
                                   {diffStats().added > 0 && diffStats().deleted > 0 && (
                                     <span style={{ color: 'rgba(var(--text-base-rgb),0.18)' }}>
@@ -1238,7 +1225,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     </span>
                                   )}
                                   {diffStats().deleted > 0 && (
-                                    <span style={{ color: '#ff5050' }}>-{diffStats().deleted}</span>
+                                    <span style={{ color: 'var(--color-danger)' }}>
+                                      -{diffStats().deleted}
+                                    </span>
                                   )}
                                 </span>
                               </Show>
@@ -1391,16 +1380,14 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               </Show>
               {file.name}
               <button
-                class="flex items-center bg-none border-none text-[rgba(var(--text-base-rgb),0.5)] cursor-pointer text-lg leading-none ml-2 transition-colors duration-200 hover:text-[#ff4d4d]"
+                class="flex items-center bg-none border-none text-[rgba(var(--text-base-rgb),0.5)] cursor-pointer text-lg leading-none ml-2 transition-colors duration-200 hover:text-[var(--color-danger)]"
                 onClick={() => {
                   const currentIndex = i();
                   const duplicatePending = props.pendingFiles.some(
                     (pending, index) => index !== currentIndex && pending.id === file.id,
                   );
                   if (!duplicatePending) {
-                    void invoke('discard_chat_attachment', { attachmentId: file.id }).catch(
-                      console.error,
-                    );
+                    void discardChatAttachment(file.id).catch(console.error);
                   }
                   props.setPendingFiles((p) => p.filter((_, idx) => idx !== currentIndex));
                 }}
@@ -1566,7 +1553,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                       when={isStartingLocalModel()}
                       fallback={
                         <Show when={localEngineConnected()}>
-                          <span style={{ color: '#4ade80' }}>
+                          <span style={{ color: 'var(--color-success)' }}>
                             {t('chat.localEngineConnected', { engine: localEngineName() })}
                           </span>
                         </Show>
@@ -1716,7 +1703,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             <div class="flex items-center gap-2">
               <TokenStatsBar />
               <button
-                class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95 ${props.isThinking ? 'bg-[#ff4d4d] text-white' : 'text-white'}`}
+                class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95 ${props.isThinking ? 'bg-[var(--color-danger)] text-white' : 'text-white'}`}
                 style={!props.isThinking ? { background: 'rgba(var(--primary-rgb),0.3)' } : {}}
                 onClick={() =>
                   props.isThinking ? props.handleStopGeneration() : props.handleSendMessage()
@@ -1815,7 +1802,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           <div
             class="fixed bottom-5 left-5 z-[9999] max-w-[25vw] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] select-none cursor-pointer"
             style={{
-              color: '#fca5a5',
+              color: 'var(--color-danger)',
               background: 'rgba(var(--surface-bg), 0.92)',
               border: '1px solid rgba(248,113,113,0.2)',
               'backdrop-filter': 'blur(30px) saturate(180%)',

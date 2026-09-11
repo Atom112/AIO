@@ -1,5 +1,11 @@
+pub mod config;
 pub mod db;
+pub mod events;
+pub mod ids;
+pub mod migrate;
+pub mod model_registry;
 pub mod models;
+pub mod paths;
 pub mod permission;
 pub mod secure_store;
 pub mod state;

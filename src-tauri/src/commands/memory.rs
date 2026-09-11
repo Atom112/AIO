@@ -2,7 +2,8 @@
 //!
 //! 提供事实 CRUD、混合检索、状态与统计，供前端项目设置与记忆面板调用。
 
-use crate::core::models::{AppConfig, MemoryEmbeddingConfig};
+use crate::core::events as ev;
+use crate::core::models::{AppConfig, MemoryEmbeddingConfig, MemoryRerankConfig};
 use crate::services::memory::manager::MemoryStoreManager;
 use crate::services::memory::store::{
     FactVersion, MemoryFact, MemoryStats, NewFact, ScoredFact, SearchOptions,
@@ -30,6 +31,8 @@ pub struct MemoryStatus {
     pub stats: MemoryStats,
     pub embedder: EmbedderStatus,
     pub embedding: MemoryEmbeddingConfig,
+    /// 项目级重排配置（apiKey 恒为空；在线 Key 存 secure_store）
+    pub rerank: MemoryRerankConfig,
 }
 
 /// 记忆列表分页结果。
@@ -42,21 +45,12 @@ pub struct MemoryListPage {
 
 /// 加载应用配置（失败时使用默认值）。
 fn load_cfg(app: &AppHandle) -> AppConfig {
-    crate::commands::config::load_app_config(app.clone()).unwrap_or_default()
+    crate::core::config::load_app_config(app).unwrap_or_default()
 }
 
 /// 由 project_id 解析项目根路径。
 fn resolve_root(app: &AppHandle, project_id: &str) -> Result<String, String> {
     file_tools::resolve_project_root(app, Some(project_id))
-}
-
-/// 为 openai_compat 从 secure_store 注入 API Key。
-fn inject_key(app: &AppHandle, cfg: &mut MemoryEmbeddingConfig) {
-    if (cfg.provider == "online" || cfg.provider == "openai_compat") && cfg.api_key.is_empty() {
-        if let Ok(Some(key)) = crate::core::secure_store::get(app, "embedding_api_key") {
-            cfg.api_key = key;
-        }
-    }
 }
 
 /// 嵌入单条文本；失败返回 None（检索/写入降级为关键词模式）。
@@ -65,9 +59,7 @@ async fn embed_one(
     cfg: &MemoryEmbeddingConfig,
     text: &str,
 ) -> Option<(String, usize, Vec<f32>)> {
-    let mut cfg = cfg.clone();
-    inject_key(app, &mut cfg);
-    let embedder = crate::plugins::embed::resolve(&cfg).ok()?;
+    let embedder = crate::plugins::embed::resolve(app, cfg).ok()?;
     let v = embedder
         .embed(&[text.to_string()])
         .await
@@ -77,27 +69,29 @@ async fn embed_one(
     Some((embedder.model_key(), v.len(), v))
 }
 
-/// 嵌入查询文本；失败返回 None。
-async fn embed_query(app: &AppHandle, cfg: &MemoryEmbeddingConfig, text: &str) -> Option<Vec<f32>> {
-    let mut cfg = cfg.clone();
-    inject_key(app, &mut cfg);
-    let embedder = crate::plugins::embed::resolve(&cfg).ok()?;
-    embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()
-}
-
-fn embedder_status(cfg: &MemoryEmbeddingConfig) -> EmbedderStatus {
-    let (configured, available, dims) = match crate::plugins::embed::resolve(cfg) {
-        Ok(e) => (true, e.is_available(), e.dimensions()),
-        Err(_) => (cfg.enabled, false, cfg.dimensions),
-    };
+/// 计算嵌入器就绪状态（优先回显实际解析到的嵌入器，而非原始配置：
+/// 配置里的 provider/model/dimensions 可能来自旧版全局配置快照，与实际使用的不一致）。
+fn embedder_status(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> EmbedderStatus {
+    let (provider, model, dims, configured, available) =
+        match crate::plugins::embed::resolve(app, cfg) {
+            Ok(e) => (
+                e.id().to_string(),
+                e.model_key(),
+                e.dimensions(),
+                true,
+                e.is_available(),
+            ),
+            Err(_) => (
+                cfg.provider.clone(),
+                cfg.model.clone(),
+                cfg.dimensions,
+                cfg.enabled,
+                false,
+            ),
+        };
     EmbedderStatus {
-        provider: cfg.provider.clone(),
-        model: cfg.model.clone(),
+        provider,
+        model,
         configured,
         available,
         dimensions: dims,
@@ -114,14 +108,21 @@ pub fn memory_get_status(app: AppHandle, project_id: String) -> Result<MemorySta
     // 惰性迁移：旧 knowledge.json 首次打开时并入事实库（幂等）
     let _ = store.migrate_from_knowledge_json();
     let project_override = store.project_enabled()?;
-    // 项目级嵌入配置（首次使用从旧全局配置一次性快照，幂等）
+    // 显式迁移步骤（命名、可审计）：嵌入/重排配置的项目级快照与在线归一化。
+    // 随后的 resolve_* 均为纯读取。
+    crate::services::memory::migrate_project_embedding(&app, &store);
+    crate::services::memory::retrieve::migrate_project_rerank(&app, &store);
     let embedding = crate::services::memory::resolve_project_embedding(&app, &store);
+    // apiKey 不随响应下发（在线 Key 存 secure_store）
+    let mut rerank = crate::services::memory::retrieve::resolve_project_rerank(&app, &store);
+    rerank.api_key.clear();
     Ok(MemoryStatus {
         enabled: project_override.unwrap_or(cfg.memory_enabled),
         store_path: format!("{root}/.aio/memory/memory.sqlite"),
         stats,
-        embedder: embedder_status(&embedding),
+        embedder: embedder_status(&app, &embedding),
         embedding,
+        rerank,
     })
 }
 
@@ -133,11 +134,10 @@ pub async fn memory_search(
     query: String,
     category: Option<String>,
     k: Option<usize>,
+    expand: Option<bool>,
 ) -> Result<Vec<ScoredFact>, String> {
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
-    let embedding = crate::services::memory::resolve_project_embedding(&app, &store);
-    let query_vec = embed_query(&app, &embedding, &query).await;
     let mut opts = SearchOptions {
         category,
         k: k.unwrap_or(10),
@@ -146,9 +146,25 @@ pub async fn memory_search(
     if opts.category.as_deref() == Some("") {
         opts.category = None;
     }
-    let results = store.search_hybrid(&query, query_vec.as_deref(), &opts)?;
+    // 查询改写（可选）+ 多查询 RRF 融合 + 项目级重排 + 图谱加分；expand=true 走迭代检索（P3-1）
+    let rewrite_enabled = load_cfg(&app).memory_query_rewrite;
+    let mut queries = vec![query.clone()];
+    if rewrite_enabled {
+        queries.extend(crate::services::memory::retrieve::rewrite_query(&app, &query).await);
+    }
+    let results = if expand.unwrap_or(false) {
+        crate::services::memory::retrieve::iterative_search(&app, &store, &query, &opts).await?
+    } else {
+        crate::services::memory::retrieve::merged_search(&app, &store, &queries, &opts).await?
+    };
     let ids: Vec<String> = results.iter().map(|f| f.id.clone()).collect();
     store.bump_access(&ids);
+    // 质量探针：检索次数与命中条数（近 7 天滚动）
+    store.rolling_bump(crate::services::memory::store::STAT_QUERIES, 1);
+    store.rolling_bump(
+        crate::services::memory::store::STAT_HITS,
+        results.len() as i64,
+    );
     Ok(results)
 }
 
@@ -206,22 +222,20 @@ pub async fn memory_update(
         let embedding = embed_one(&app, &embedding_cfg, &new_content).await;
         store.upsert_fact(&fact, embedding)?
     } else {
-        let updated = store.update_content(&id, &new_content, "update")?;
-        if let Some(embedding) = embed_one(&app, &embedding_cfg, &new_content).await {
-            let _ = store.upsert_fact(
-                &NewFact {
-                    key: None,
-                    content: new_content.clone(),
-                    category: updated.category.clone(),
-                    importance: updated.importance,
-                    source_type: updated.source_type.clone(),
-                    source_refs: updated.source_refs.clone(),
-                    pinned: updated.pinned,
-                },
-                Some(embedding),
-            );
+        // 无 key 事实：内容就地订正；向量原地重写（set_embedding）。
+        // 禁止用 upsert_fact(key: None) 重写向量 —— key 为 None 时 upsert 会跳过
+        // 查重直接 INSERT，导致每次编辑都插入一条重复事实。
+        let mut updated = store.update_content(&id, &new_content, "update")?;
+        if let Some(cat) = &category {
+            // keyless 分支此前会静默丢弃 category 参数；现经由 set_category 生效
+            updated = store.set_category(&id, cat)?;
         }
-        store.get_fact(&id)?
+        if let Some(embedding) = embed_one(&app, &embedding_cfg, &new_content).await {
+            if let Err(e) = store.set_embedding(&id, Some(embedding)) {
+                tracing::warn!("记忆 {id} 向量重写失败（保留旧向量）: {e}");
+            }
+        }
+        updated
     };
     Ok(saved)
 }
@@ -362,7 +376,7 @@ pub async fn memory_code_index(
         force.unwrap_or(false),
         move |done, total| {
             let _ = window.emit(
-                "code-index-progress",
+                ev::CODE_INDEX_PROGRESS,
                 serde_json::json!({ "done": done, "total": total }),
             );
         },
@@ -370,16 +384,26 @@ pub async fn memory_code_index(
     .await
 }
 
-/// 代码语义检索（search_code 工具的后端）。
+/// 代码语义检索（search_code 工具的后端；path/symbol 过滤可选）。
 #[tauri::command]
-pub fn memory_code_search(
+pub async fn memory_code_search(
     app: AppHandle,
     project_id: String,
     query: String,
     k: Option<usize>,
+    path: Option<String>,
+    symbol: Option<String>,
 ) -> Result<Vec<crate::services::memory::code::CodeChunkHit>, String> {
     let root = resolve_root(&app, &project_id)?;
-    crate::services::memory::code::search_code(&app, &root, &query, k.unwrap_or(10))
+    crate::services::memory::code::search_code(
+        &app,
+        &root,
+        &query,
+        k.unwrap_or(10),
+        path.as_deref(),
+        symbol.as_deref(),
+    )
+    .await
 }
 
 /// 代码索引状态。
@@ -436,9 +460,8 @@ pub async fn memory_reindex(
 ) -> Result<(usize, usize), String> {
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
-    let mut cfg = crate::services::memory::resolve_project_embedding(&app, &store);
-    inject_key(&app, &mut cfg);
-    let embedder = crate::plugins::embed::resolve(&cfg)?;
+    let cfg = crate::services::memory::resolve_project_embedding(&app, &store);
+    let embedder = crate::plugins::embed::resolve(&app, &cfg)?;
     store
         .reindex(
             |content| {
@@ -455,7 +478,7 @@ pub async fn memory_reindex(
             },
             |done, total| {
                 let _ = window.emit(
-                    "reindex-progress",
+                    ev::REINDEX_PROGRESS,
                     serde_json::json!({ "done": done, "total": total }),
                 );
             },
@@ -472,30 +495,32 @@ pub async fn memory_update_embedding(
     project_id: String,
     config: MemoryEmbeddingConfig,
 ) -> Result<MemoryStatus, String> {
-    if config.provider != "local" && config.provider != "online" {
-        return Err("未知的嵌入 provider".into());
+    // 仅支持本地嵌入模型；旧配置中的 online/openai_compat 归一化为 local
+    let mut config = config;
+    config.provider = "local".into();
+    config.api_url.clear();
+    if config.model.trim().is_empty() {
+        return Err("请选择嵌入模型".into());
     }
-    if config.provider == "online"
-        && (config.model.trim().is_empty() || config.api_url.trim().is_empty())
-    {
-        return Err("在线嵌入需要填写模型与服务地址".into());
+    if crate::commands::model_download::find_entry(config.model.trim()).is_none() {
+        return Err(format!("未知嵌入模型: {}", config.model));
     }
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
+    // 显式迁移（幂等）：先补齐项目级 meta，再做"是否变化"的判定，避免误判为首次切换
+    crate::services::memory::migrate_project_embedding(&app, &store);
     let (current, _) = store.embedding_cfg();
     if current.provider == config.provider
         && current.model == config.model
-        && current.api_url == config.api_url
+        && current.dimensions == config.dimensions
     {
         // 配置未变化：直接返回当前状态，不做任何破坏性操作
         return memory_get_status(app, project_id);
     }
     // 1) 用所选模型探测实际维度与模型标识（比配置里手填的 dimensions/model 更可靠）
-    let mut probe_cfg = config.clone();
-    inject_key(&app, &mut probe_cfg);
-    let (model_key, dims, _) = embed_one(&app, &probe_cfg, "embedding probe")
+    let (model_key, dims, _) = embed_one(&app, &config, "embedding probe")
         .await
-        .ok_or_else(|| "无法使用所选嵌入模型（请检查配置或网络）".to_string())?;
+        .ok_or_else(|| "无法使用所选嵌入模型（请先下载并启用该模型）".to_string())?;
     // 2) 固化到项目 meta（model/维度按实测值；apiKey 不落盘）
     let mut resolved = config.clone();
     resolved.model = model_key;
@@ -505,9 +530,7 @@ pub async fn memory_update_embedding(
     // 3) 清空全部向量（事实与代码块文本保留，仅弃用向量）
     store.reset_vectors()?;
     // 4) 自动重建事实索引（按新模型重新嵌入）
-    let mut embedder_cfg = resolved.clone();
-    inject_key(&app, &mut embedder_cfg);
-    let embedder = crate::plugins::embed::resolve(&embedder_cfg)?;
+    let embedder = crate::plugins::embed::resolve(&app, &resolved)?;
     let (done, failed) = store
         .reindex(
             |content| {
@@ -524,7 +547,7 @@ pub async fn memory_update_embedding(
             },
             |done, total| {
                 let _ = window.emit(
-                    "reindex-progress",
+                    ev::REINDEX_PROGRESS,
                     serde_json::json!({ "done": done, "total": total }),
                 );
             },
@@ -532,4 +555,52 @@ pub async fn memory_update_embedding(
         .await?;
     let _ = (done, failed);
     memory_get_status(app, project_id)
+}
+
+/// 抽取事实间关系（P3-3 轻量知识图谱）：对按加权分排序的前 limit 条 active 事实，
+/// 逐条调用 LLM 抽取实体-关系三元组并写 facts_relations（先删后插，幂等）。
+#[tauri::command]
+pub async fn memory_graph_extract(
+    app: AppHandle,
+    project_id: String,
+    limit: Option<u32>,
+) -> Result<crate::services::memory::graph::GraphExtractReport, String> {
+    let root = resolve_root(&app, &project_id)?;
+    let store = app.state::<MemoryStoreManager>().open(&root)?;
+    crate::services::memory::graph::extract_relations(&app, &store, limit.unwrap_or(50)).await
+}
+
+/// 设置项目级重排配置（rerank 不涉及向量，不触发重建；在线 Key 走 secure_store）。
+#[tauri::command]
+pub fn memory_update_rerank(
+    app: AppHandle,
+    project_id: String,
+    config: MemoryRerankConfig,
+) -> Result<MemoryStatus, String> {
+    if config.provider != "local" && config.provider != "online" {
+        return Err("未知的重排 provider".into());
+    }
+    if config.provider == "online" && config.api_url.trim().is_empty() {
+        return Err("在线重排需要服务地址".into());
+    }
+    let root = resolve_root(&app, &project_id)?;
+    let store = app.state::<MemoryStoreManager>().open(&root)?;
+    store.set_rerank_cfg(&config)?;
+    memory_get_status(app, project_id)
+}
+
+/// 手动触发一次合并整理（sleep-time consolidation；预算默认取全局配置，可显式覆盖）。
+/// 与每日后台调度共用 per-project 锁与预算口径。
+#[tauri::command]
+pub async fn memory_consolidate(
+    app: AppHandle,
+    project_id: String,
+    budget: Option<u32>,
+) -> Result<crate::services::memory::consolidate::ConsolidationReport, String> {
+    let root = resolve_root(&app, &project_id)?;
+    let store = app.state::<MemoryStoreManager>().open(&root)?;
+    let budget = budget
+        .map(|b| b.max(1) as usize)
+        .unwrap_or_else(|| load_cfg(&app).memory_consolidate_budget.max(1) as usize);
+    crate::services::memory::consolidate::consolidate(&app, &store, budget).await
 }

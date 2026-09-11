@@ -5,9 +5,10 @@
 
 use super::connection::{McpConnection, McpTransport};
 use super::error::{McpError, McpResult};
+use crate::core::events as ev;
 use crate::core::models::{
     GetPromptResult, McpPrompt, McpResource, McpServerConfig, McpServerInfo, McpStatus,
-    ReadResourceResult, ToolResult, ToolResultContent, ToolSpec,
+    ReadResourceResult, ToolResult, ToolSpec,
 };
 use crate::core::secure_store;
 use async_trait::async_trait;
@@ -147,7 +148,7 @@ impl super::McpServerPlugin for StdioPlugin {
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = app2.emit("mcp-server-stderr", json!({ "id": sid, "line": line }));
+                    let _ = app2.emit(ev::MCP_SERVER_STDERR, json!({ "id": sid, "line": line }));
                 }
             });
         }
@@ -202,26 +203,8 @@ impl super::McpServerPlugin for StdioPlugin {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        // MCP 协议返回 { name, description, inputSchema }，需转换为 OpenAI
-        // function calling 格式 { type: "function", function: { name, description, parameters } }
-        let specs: Vec<ToolSpec> = tools
-            .into_iter()
-            .filter_map(|t| {
-                let name = t.get("name")?.as_str()?.to_string();
-                let description = t.get("description")?.as_str()?.to_string();
-                let parameters = t.get("inputSchema").cloned().unwrap_or(json!({}));
-                Some(ToolSpec {
-                    kind: "function".to_string(),
-                    function: crate::core::models::ToolFunctionSpec {
-                        name,
-                        description,
-                        parameters,
-                    },
-                })
-            })
-            .take(super::MAX_TOOLS_PER_SERVER)
-            .collect();
-        Ok(specs)
+        // 协议转换收敛在 convert 模块（stdio/http 单实现）
+        Ok(super::convert::tools_to_specs(tools))
     }
 
     async fn call_tool(
@@ -233,20 +216,8 @@ impl super::McpServerPlugin for StdioPlugin {
     ) -> McpResult<ToolResult> {
         let params = json!({ "name": name, "arguments": arguments });
         let result = conn.request("tools/call", Some(params), timeout).await?;
-        // MCP 返回 { content: [...], isError: bool }
-        let content_val = result.get("content").cloned().unwrap_or(json!([]));
-        let content: Vec<ToolResultContent> = match content_val {
-            Value::Array(arr) => arr
-                .into_iter()
-                .filter_map(|v| serde_json::from_value(v).ok())
-                .collect(),
-            _ => vec![],
-        };
-        let is_error = result
-            .get("isError")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        Ok(ToolResult { content, is_error })
+        // MCP 返回 { content: [...], isError: bool }；解析收敛在 convert 模块
+        Ok(super::convert::parse_call_tool_result(&result))
     }
 
     async fn list_resources(&self, conn: &McpConnection) -> McpResult<Vec<McpResource>> {
@@ -258,11 +229,7 @@ impl super::McpServerPlugin for StdioPlugin {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let specs: Vec<McpResource> = resources
-            .into_iter()
-            .filter_map(|r| serde_json::from_value(r).ok())
-            .collect();
-        Ok(specs)
+        Ok(super::convert::parse_resources(resources))
     }
 
     async fn read_resource(
@@ -286,11 +253,7 @@ impl super::McpServerPlugin for StdioPlugin {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let specs: Vec<McpPrompt> = prompts
-            .into_iter()
-            .filter_map(|p| serde_json::from_value(p).ok())
-            .collect();
-        Ok(specs)
+        Ok(super::convert::parse_prompts(prompts))
     }
 
     async fn get_prompt(
@@ -365,7 +328,7 @@ fn spawn_stdout_reader(
                 Ok(None) => {
                     // EOF
                     let _ = app.emit(
-                        "mcp-server-status",
+                        ev::MCP_SERVER_STATUS,
                         json!({ "id": server_id, "status": McpStatus::Disconnected }),
                     );
                     break;
@@ -374,7 +337,7 @@ fn spawn_stdout_reader(
                     err_count += 1;
                     if err_count > 10 {
                         let _ = app.emit(
-                            "mcp-server-stderr",
+                            ev::MCP_SERVER_STDERR,
                             json!({ "id": server_id, "line": format!("stdout read error: {}", e) }),
                         );
                         break;

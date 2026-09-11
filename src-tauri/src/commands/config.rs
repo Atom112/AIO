@@ -1,3 +1,6 @@
+//! 应用配置与助手管理命令（assistant/config/avatar/profile 覆盖等）。
+//! 配置的磁盘读写与迁移下沉在 core/config.rs（AppConfigDisk）；本文件只留薄 IPC 包装。
+
 use crate::commands::attachment::{
     cleanup_attachment_ids, load_message_attachments_batch, sync_message_attachments,
 };
@@ -9,236 +12,19 @@ use rusqlite::params;
 use std::fs; // 导入标准库文件系统模块
 use tauri::{AppHandle, Manager};
 
-/// 应用配置文件持久化结构：api_key 不入库，统一存到系统钥匙串
-#[derive(serde::Serialize, serde::Deserialize)]
-struct AppConfigDisk {
-    api_url: String,
-    default_model: String,
-    local_model_path: String,
-    #[serde(default, rename = "autoStartEnabled")]
-    auto_start_enabled: bool,
-    #[serde(default = "default_max_tool_rounds", rename = "maxToolRounds")]
-    max_tool_rounds: u32,
-    #[serde(
-        default = "default_max_concurrent_subagents",
-        rename = "maxConcurrentSubagents"
-    )]
-    max_concurrent_subagents: u32,
-    #[serde(default, rename = "memoryEnabled")]
-    memory_enabled: bool,
-    #[serde(
-        default = "crate::core::models::default_true",
-        rename = "memoryAutoInject"
-    )]
-    memory_auto_inject: bool,
-    #[serde(
-        default = "crate::core::models::default_true",
-        rename = "memoryAutoExtract"
-    )]
-    memory_auto_extract: bool,
-    #[serde(
-        default = "crate::core::models::default_max_facts",
-        rename = "memoryMaxFacts"
-    )]
-    memory_max_facts: u32,
-    #[serde(
-        default = "crate::core::models::default_inject_budget",
-        rename = "memoryInjectionBudgetTokens"
-    )]
-    memory_injection_budget_tokens: u32,
-    #[serde(
-        default = "crate::core::models::default_extract_debounce",
-        rename = "memoryExtractDebounceSecs"
-    )]
-    memory_extract_debounce_secs: u64,
-    #[serde(default, rename = "memoryEmbedding")]
-    memory_embedding: MemoryEmbeddingConfig,
-}
-
-impl Default for AppConfigDisk {
-    fn default() -> Self {
-        Self {
-            api_url: String::new(),
-            default_model: String::new(),
-            local_model_path: String::new(),
-            auto_start_enabled: false,
-            max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
-            max_concurrent_subagents: 5,
-            memory_enabled: false,
-            memory_auto_inject: crate::core::models::default_true(),
-            memory_auto_extract: crate::core::models::default_true(),
-            memory_max_facts: crate::core::models::default_max_facts(),
-            memory_injection_budget_tokens: crate::core::models::default_inject_budget(),
-            memory_extract_debounce_secs: crate::core::models::default_extract_debounce(),
-            memory_embedding: MemoryEmbeddingConfig::default(),
-        }
-    }
-}
-
-fn default_max_tool_rounds() -> u32 {
-    crate::core::models::DEFAULT_MAX_TOOL_ROUNDS
-}
-
-fn default_max_concurrent_subagents() -> u32 {
-    5
-}
-
-/// 保存应用程序通用配置
-/// #[tauri::command] 标记允许此函数从前端通过 invoke 调用
+/// 保存应用程序通用配置（业务实现见 core::config）。
 #[tauri::command]
 pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
-    // api_key 走系统钥匙串（keyring），落盘仅写其他字段
-    if !config.api_key.is_empty() {
-        secure_store::set(&app, secure_store::accounts::APP_API_KEY, &config.api_key)
-            .map_err(|e| e.to_string())?;
-    } else {
-        let _ = secure_store::delete(&app, secure_store::accounts::APP_API_KEY);
-    }
-
-    // 1. 获取操作系统的用户配置目录 (如 Windows 的 AppData/Roaming 或 Linux 的 ~/.config)
-    let mut path = dirs::config_dir().ok_or_else(|| "无法获取系统配置目录".to_string())?;
-
-    // 2. 在配置目录下创建 "AIO" 文件夹
-    path.push("com.loch.aio");
-    if !path.exists() {
-        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    }
-
-    // 3. 指定配置文件名为 config.json
-    path.push("config.json");
-
-    let disk = AppConfigDisk {
-        api_url: config.api_url,
-        default_model: config.default_model,
-        local_model_path: config.local_model_path,
-        auto_start_enabled: config.auto_start_enabled,
-        max_tool_rounds: config
-            .max_tool_rounds
-            .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS),
-        max_concurrent_subagents: config.max_concurrent_subagents.unwrap_or(5),
-        memory_enabled: config.memory_enabled,
-        memory_auto_inject: config.memory_auto_inject,
-        memory_auto_extract: config.memory_auto_extract,
-        memory_max_facts: config.memory_max_facts,
-        memory_injection_budget_tokens: config.memory_injection_budget_tokens,
-        memory_extract_debounce_secs: config.memory_extract_debounce_secs,
-        memory_embedding: {
-            let mut e = config.memory_embedding;
-            e.api_key.clear();
-            e
-        },
-    };
-    let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
-    // 原子写入
-    let tmp_path = path.with_extension("tmp");
-    use std::io::Write;
-    let mut f = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
-    f.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
-    Ok(())
+    crate::core::config::save_app_config(&app, &config)
 }
 
-/// 读取应用程序通用配置
+/// 读取应用程序通用配置（业务实现见 core::config）。
 #[tauri::command]
 pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
-    let mut path = dirs::config_dir().ok_or("无法获取配置目录")?;
-    path.push("com.loch.aio/config.json");
-
-    // 优先尝试 v2 schema（不含 api_key 字段）
-    if path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(disk) = serde_json::from_str::<AppConfigDisk>(&content) {
-                let api_key = secure_store::get(&app, secure_store::accounts::APP_API_KEY)
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_default();
-                return Ok(AppConfig {
-                    api_url: disk.api_url,
-                    api_key,
-                    default_model: disk.default_model,
-                    local_model_path: disk.local_model_path,
-                    auto_retry_enabled: true,
-                    auto_retry_count: 2,
-                    auto_retry_delay_ms: 500,
-                    auto_start_enabled: disk.auto_start_enabled,
-                    max_concurrent_subagents: Some(disk.max_concurrent_subagents),
-                    max_tool_rounds: Some(disk.max_tool_rounds),
-                    memory_enabled: disk.memory_enabled,
-                    memory_auto_inject: disk.memory_auto_inject,
-                    memory_auto_extract: disk.memory_auto_extract,
-                    memory_max_facts: disk.memory_max_facts,
-                    memory_injection_budget_tokens: disk.memory_injection_budget_tokens,
-                    memory_extract_debounce_secs: disk.memory_extract_debounce_secs,
-                    memory_embedding: disk.memory_embedding,
-                });
-            }
-            // 兼容旧 schema（含明文 api_key）：读出后迁出到 keyring
-            if let Ok(legacy) = serde_json::from_str::<AppConfig>(&content) {
-                if !legacy.api_key.is_empty() {
-                    let _ = secure_store::set(
-                        &app,
-                        secure_store::accounts::APP_API_KEY,
-                        &legacy.api_key,
-                    );
-                }
-                let mut disk = AppConfigDisk {
-                    api_url: legacy.api_url.clone(),
-                    default_model: legacy.default_model.clone(),
-                    local_model_path: legacy.local_model_path.clone(),
-                    ..AppConfigDisk::default()
-                };
-                disk.api_url = legacy.api_url;
-                disk.default_model = legacy.default_model;
-                disk.local_model_path = legacy.local_model_path;
-                let _ = fs::write(
-                    &path,
-                    serde_json::to_string_pretty(&disk).unwrap_or_default(),
-                );
-                return Ok(AppConfig {
-                    api_url: disk.api_url,
-                    api_key: legacy.api_key,
-                    default_model: disk.default_model,
-                    local_model_path: disk.local_model_path,
-                    auto_retry_enabled: true,
-                    auto_retry_count: 2,
-                    auto_retry_delay_ms: 500,
-                    auto_start_enabled: false,
-                    max_concurrent_subagents: Some(disk.max_concurrent_subagents),
-                    max_tool_rounds: Some(disk.max_tool_rounds),
-                    memory_enabled: false,
-                    memory_auto_inject: true,
-                    memory_auto_extract: true,
-                    memory_max_facts: 2000,
-                    memory_injection_budget_tokens: 3000,
-                    memory_extract_debounce_secs: 60,
-                    memory_embedding: MemoryEmbeddingConfig::default(),
-                });
-            }
-        }
-    }
-
-    Ok(AppConfig {
-        api_url: "".into(),
-        api_key: "".into(),
-        default_model: "".into(),
-        local_model_path: "".into(),
-        auto_retry_enabled: true,
-        auto_retry_count: 2,
-        auto_retry_delay_ms: 500,
-        auto_start_enabled: false,
-        max_concurrent_subagents: None,
-        max_tool_rounds: None,
-        memory_enabled: false,
-        memory_auto_inject: true,
-        memory_auto_extract: true,
-        memory_max_facts: 2000,
-        memory_injection_budget_tokens: 3000,
-        memory_extract_debounce_secs: 60,
-        memory_embedding: MemoryEmbeddingConfig::default(),
-    })
+    crate::core::config::load_app_config(&app)
 }
 
-/// 异步加载所有已保存的 AI 助手配置
+/// 加载全部助手（含其话题与消息树）。
 #[tauri::command]
 pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Assistant>, String> {
     let conn = state.0.lock();
@@ -389,9 +175,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
     Ok(assistants)
 }
 
-/// 同步执行助手持久化（在 spawn_blocking 中调用，避免阻塞异步运行时 —— PERF-05）。
+/// 同步执行助手持久化（在 spawn_blocking 中调用，避免阻塞异步运行时 ——避免阻塞异步运行时）。
 ///
-/// 外层包一个 SQLite 事务（PERF-03）：避免逐条自动提交的大量 fsync，随历史增长显著降本。
+/// 外层包一个 SQLite 事务（事务批量写入）：避免逐条自动提交的大量 fsync，随历史增长显著降本。
 fn persist_assistant(conn: &rusqlite::Connection, assistant: &Assistant) -> Result<(), String> {
     conn.execute_batch("BEGIN IMMEDIATE")
         .map_err(|e| e.to_string())?;
@@ -519,6 +305,13 @@ fn persist_assistant_inner(
     Ok(())
 }
 
+/// 持久化单个助手（含其全部话题与消息）。
+///
+/// # 参数
+/// - `assistant` — 完整助手对象（新建与更新共用此命令，按 id upsert）
+///
+/// # 行为
+/// 在阻塞线程中持 DB 锁执行事务写入（事务批量提交，避免逐条 fsync）。
 #[tauri::command]
 pub async fn save_assistant(app: tauri::AppHandle, assistant: Assistant) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
@@ -530,6 +323,14 @@ pub async fn save_assistant(app: tauri::AppHandle, assistant: Assistant) -> Resu
     .map_err(|e| format!("保存助手线程失败: {e}"))?
 }
 
+/// 删除助手及其关联数据。
+///
+/// # 参数
+/// - `id` — 助手 ID
+///
+/// # 行为
+/// 依赖外键 ON DELETE CASCADE 级联删除其话题与消息；同时清理该助手关联的
+/// 附件文件。助手不存在时静默成功（幂等）。
 #[tauri::command]
 pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
     let conn = state.0.lock();
@@ -600,24 +401,24 @@ fn attachment_ids_for_assistant(
 /// 保存"已激活模型"列表（api_key 剥离到系统 keyring，落盘不含明文密钥）
 #[tauri::command]
 pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
-    let mut path = dirs::config_dir().unwrap();
-    path.push("com.loch.aio");
-    if !path.exists() {
-        std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    }
-    path.push("activated_models.json");
+    let path = crate::core::paths::app_config_file("activated_models.json")?;
 
-    // 剥离 api_key 到 secure_store，落盘模型不含明文密钥
+    // 剥离 api_key 到 secure_store，落盘模型不含明文密钥。
+    // 仅当安全存储写入成功时才剥离：失败则保留明文 + 记录 error（绝不静默丢失密钥）。
     let mut sanitized: Vec<serde_json::Value> = Vec::new();
     for m in &models {
-        if !m.api_key.is_empty() && m.api_key != "local-no-key" {
+        let key_stored = if !m.api_key.is_empty() && m.api_key != "local-no-key" {
             let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
-            let _ = secure_store::set(&app, &account, &m.api_key);
-        }
-        // 序列化为 JSON Value，移除 api_key 字段
+            secure_store::set_reported(&app, &account, &m.api_key)
+        } else {
+            true // 无密钥需要存储（或占位符），可安全剥离
+        };
+        // 序列化为 JSON Value，按存储结果决定是否移除 api_key 字段
         let mut v = serde_json::to_value(m).map_err(|e| e.to_string())?;
-        if let Some(obj) = v.as_object_mut() {
-            obj.remove("api_key");
+        if key_stored {
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("api_key");
+            }
         }
         sanitized.push(v);
     }
@@ -630,9 +431,7 @@ pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Res
 /// 加载"已激活模型"列表（从 keyring 恢复 api_key）
 #[tauri::command]
 pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
-    let mut path = dirs::config_dir().unwrap();
-    path.push("com.loch.aio");
-    path.push("activated_models.json");
+    let path = crate::core::paths::app_config_dir()?.join("activated_models.json");
 
     if !path.exists() {
         return Ok(vec![]);
@@ -643,11 +442,15 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
 
     // 从 secure_store 恢复 api_key，并自动迁移旧数据（含明文 api_key 的旧文件）
     let mut needs_migration = false;
+    let mut migrated_ok: std::collections::HashSet<String> = std::collections::HashSet::new();
     for m in &mut models {
         // 检查是否为旧格式（JSON 中直接含有 api_key）
         if !m.api_key.is_empty() && m.api_key != "local-no-key" {
             let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
-            let _ = secure_store::set(&app, &account, &m.api_key);
+            // 迁移到安全存储；仅成功条目允许在写回时剔除明文（绝不静默丢失密钥）
+            if secure_store::set_reported(&app, &account, &m.api_key) {
+                migrated_ok.insert(account);
+            }
             needs_migration = true;
         }
 
@@ -658,18 +461,26 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
         }
     }
 
-    // 迁移：立即写回清理后的 JSON（剔除旧格式的明文 api_key）
+    // 迁移：立即写回清理后的 JSON（仅剔除迁移成功条目的明文 api_key）
     if needs_migration {
         let mut sanitized: Vec<serde_json::Value> = Vec::new();
         for m in &models {
             let mut v = serde_json::to_value(m).map_err(|e| e.to_string())?;
-            if let Some(obj) = v.as_object_mut() {
-                obj.remove("api_key");
+            let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
+            let may_strip = migrated_ok.contains(&account)
+                || m.api_key.is_empty()
+                || m.api_key == "local-no-key";
+            if may_strip {
+                if let Some(obj) = v.as_object_mut() {
+                    obj.remove("api_key");
+                }
             }
             sanitized.push(v);
         }
         if let Ok(json) = serde_json::to_string_pretty(&sanitized) {
-            let _ = std::fs::write(&path, json);
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::error!("迁移写回 activated_models.json 失败: {e}");
+            }
         }
     }
 
@@ -679,12 +490,7 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
 /// 保存从云端或 API 获取的模型原始信息列表
 #[tauri::command]
 pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
-    let mut path = dirs::config_dir().unwrap();
-    path.push("com.loch.aio");
-    if !path.exists() {
-        std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    }
-    path.push("fetched_models.json");
+    let path = crate::core::paths::app_config_file("fetched_models.json")?;
     let json = serde_json::to_string_pretty(&models).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;
     Ok(())
@@ -693,9 +499,7 @@ pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
 /// 加载之前获取过的模型信息列表
 #[tauri::command]
 pub fn load_fetched_models() -> Result<Vec<ModelInfo>, String> {
-    let mut path = dirs::config_dir().unwrap();
-    path.push("com.loch.aio");
-    path.push("fetched_models.json");
+    let path = crate::core::paths::app_config_dir()?.join("fetched_models.json");
 
     if !path.exists() {
         return Ok(vec![]);
@@ -705,6 +509,13 @@ pub fn load_fetched_models() -> Result<Vec<ModelInfo>, String> {
     Ok(models)
 }
 
+/// 保存用户/助手头像到应用数据目录。
+///
+/// # 参数
+/// - `data_url` — 图片的 data URL（已在前端裁剪/压缩；上限 10MB 字符串）
+///
+/// # 返回
+/// 落盘后的文件路径（前端通过 `read_avatar_source` 读取展示）。
 #[tauri::command]
 pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<String, String> {
     // M4 防护：data URL 字符串本身有上限 (Base64 编码后体积膨胀 ~33%)
@@ -762,6 +573,10 @@ pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<St
     Ok(dest_path.to_string_lossy().to_string())
 }
 
+/// 清空本地头像缓存目录（应用数据目录下的 avatars/）。
+///
+/// # 行为
+/// 删除缓存目录内容；下次读取头像时按源路径重新落盘。目录不存在时静默成功。
 #[tauri::command]
 pub async fn clear_local_avatar_cache(app: tauri::AppHandle) -> Result<(), String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -820,9 +635,7 @@ pub async fn read_avatar_source(path: String) -> Result<String, String> {
 /// 文件不存在或损坏时返回空 vec（不视为错误，所有 profile 回退到父模型）。
 #[tauri::command]
 pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, String> {
-    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
-    path.push("com.loch.aio");
-    path.push("profile-model-overrides.json");
+    let path = crate::core::paths::app_config_dir()?.join("profile-model-overrides.json");
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -837,71 +650,15 @@ pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, Strin
 /// 将子智能体 profile 的模型覆盖配置持久化到磁盘。
 #[tauri::command]
 pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Result<(), String> {
-    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
-    path.push("com.loch.aio");
-    if !path.exists() {
-        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    }
-    path.push("profile-model-overrides.json");
+    let path = crate::core::paths::app_config_file("profile-model-overrides.json")?;
     let file = ProfileModelOverridesFile {
         version: 1,
-        updated_at: {
-            use std::time::SystemTime;
-            let dur = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default();
-            let secs = dur.as_secs();
-            let tm = secs_to_date_parts(secs);
-            format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-                tm.0, tm.1, tm.2, tm.3, tm.4, tm.5
-            )
-        },
+        updated_at: crate::utils::time::now_iso_z(),
         overrides,
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())?;
     Ok(())
-}
-
-/// Basic epoch-to-(year,month,day,hour,min,sec) conversion.
-/// Approximate — good enough for file metadata.
-fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
-    const SECS_PER_DAY: u64 = 86400;
-    let days = secs / SECS_PER_DAY;
-    let time_secs = secs % SECS_PER_DAY;
-    let hours = time_secs / 3600;
-    let mins = (time_secs % 3600) / 60;
-    let s = time_secs % 60;
-    // Simple Gregorian: days since 1970-01-01
-    let mut y = 1970u64;
-    let mut remaining = days;
-    loop {
-        let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if remaining < days_in_year {
-            break;
-        }
-        remaining -= days_in_year;
-        y += 1;
-    }
-    let month_days = if is_leap(y) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut m = 1u64;
-    for &md in &month_days {
-        if remaining < md {
-            break;
-        }
-        remaining -= md;
-        m += 1;
-    }
-    (y, m, remaining + 1, hours, mins, s)
-}
-
-fn is_leap(y: u64) -> bool {
-    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
 }
 
 // ====== Custom Subagent Profiles (CRUD) ======
@@ -910,10 +667,7 @@ use crate::core::models::CustomSubagentProfile;
 use crate::core::models::CustomSubagentProfilesFile;
 
 fn custom_profiles_path() -> Result<std::path::PathBuf, String> {
-    let mut path = dirs::config_dir().ok_or("无法获取系统配置目录")?;
-    path.push("com.loch.aio");
-    path.push("custom-subagent-profiles.json");
-    Ok(path)
+    Ok(crate::core::paths::app_config_dir()?.join("custom-subagent-profiles.json"))
 }
 
 ///
@@ -961,18 +715,7 @@ pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<()
     }
     let file = CustomSubagentProfilesFile {
         version: 1,
-        updated_at: {
-            use std::time::SystemTime;
-            let dur = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default();
-            let secs = dur.as_secs();
-            let tm = secs_to_date_parts(secs);
-            format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-                tm.0, tm.1, tm.2, tm.3, tm.4, tm.5
-            )
-        },
+        updated_at: crate::utils::time::now_iso_z(),
         profiles,
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
@@ -1000,18 +743,7 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
     // Write back
     let updated = CustomSubagentProfilesFile {
         version: 1,
-        updated_at: {
-            use std::time::SystemTime;
-            let dur = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default();
-            let secs = dur.as_secs();
-            let tm = secs_to_date_parts(secs);
-            format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-                tm.0, tm.1, tm.2, tm.3, tm.4, tm.5
-            )
-        },
+        updated_at: crate::utils::time::now_iso_z(),
         profiles,
     };
     let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
@@ -1083,7 +815,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
             .ok_or_else(|| "无法获取用户主目录".to_string())?
             .join("Library/LaunchAgents");
         fs::create_dir_all(&plist_dir).map_err(|e| e.to_string())?;
-        let plist_path = plist_dir.join("com.loch.aio.plist");
+        let plist_path = plist_dir.join(format!("{}.plist", crate::core::paths::BUNDLE_ID));
         if enabled {
             let plist = format!(
                 r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -1091,7 +823,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.loch.aio</string>
+    <string>{}</string>
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
@@ -1100,6 +832,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     <true/>
 </dict>
 </plist>"#,
+                crate::core::paths::BUNDLE_ID,
                 exe_str
             );
             fs::write(&plist_path, plist).map_err(|e| format!("写入 LaunchAgent 失败: {}", e))?;

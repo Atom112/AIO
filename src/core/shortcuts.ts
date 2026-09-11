@@ -206,11 +206,6 @@ export function getSlashCommands(): CommandAction[] {
   return Array.from(commandMap.values()).filter((c) => c.isSlashCommand === true);
 }
 
-/** 根据 ID 查找命令 */
-export function getCommandById(id: string): CommandAction | undefined {
-  return commandMap.get(id);
-}
-
 /** 斜杠命令解析结果 */
 export interface ResolvedSlashCommand {
   /** 匹配到的命令 */
@@ -442,136 +437,136 @@ export function isInputPassthrough(keys: string): boolean {
 
 registerCommand({
   id: 'command-palette',
-  label: '命令面板',
-  description: '打开命令面板，搜索并执行所有可用命令',
+  label: t('cmd.command-palette.label'),
+  description: t('cmd.command-palette.description'),
   category: 'navigation',
   defaultKeys: 'Ctrl+K',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'toggle-left-sidebar',
-  label: '切换左侧边栏',
-  description: '显示或隐藏助手列表侧边栏',
+  label: t('cmd.toggle-left-sidebar.label'),
+  description: t('cmd.toggle-left-sidebar.description'),
   category: 'navigation',
   defaultKeys: 'Ctrl+B',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'toggle-right-sidebar',
-  label: '切换右侧边栏',
-  description: '显示或隐藏话题列表侧边栏',
+  label: t('cmd.toggle-right-sidebar.label'),
+  description: t('cmd.toggle-right-sidebar.description'),
   category: 'navigation',
   defaultKeys: 'Ctrl+Alt+B',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'go-to-settings',
-  label: '打开设置',
-  description: '导航到应用设置页面',
+  label: t('cmd.go-to-settings.label'),
+  description: t('cmd.go-to-settings.description'),
   category: 'navigation',
   defaultKeys: 'Ctrl+,',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'go-to-chat',
-  label: '回到聊天',
-  description: '导航到聊天页面',
+  label: t('cmd.go-to-chat.label'),
+  description: t('cmd.go-to-chat.description'),
   category: 'navigation',
   defaultKeys: 'Ctrl+1',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'new-topic',
-  label: '新建话题',
-  description: '在当前助手中创建新的话题',
+  label: t('cmd.new-topic.label'),
+  description: t('cmd.new-topic.description'),
   category: 'chat',
   defaultKeys: 'Ctrl+N',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'new-assistant',
-  label: '新建助手',
-  description: '创建新的 AI 助手',
+  label: t('cmd.new-assistant.label'),
+  description: t('cmd.new-assistant.description'),
   category: 'chat',
   defaultKeys: 'Ctrl+Shift+N',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'toggle-web-search',
-  label: '切换联网搜索',
-  description: '开启或关闭联网搜索功能',
+  label: t('cmd.toggle-web-search.label'),
+  description: t('cmd.toggle-web-search.description'),
   category: 'chat',
   defaultKeys: 'Ctrl+Shift+S',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'cycle-reasoning',
-  label: '切换推理强度',
-  description: '循环切换推理深度：关闭 → 低 → 中 → 高',
+  label: t('cmd.cycle-reasoning.label'),
+  description: t('cmd.cycle-reasoning.description'),
   category: 'chat',
   defaultKeys: 'Ctrl+Shift+R',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'cycle-agent-mode',
-  label: '切换 Agent 模式',
-  description: '循环切换 Agent 执行模式：对话 → 普通 → 自动 → 计划',
+  label: t('cmd.cycle-agent-mode.label'),
+  description: t('cmd.cycle-agent-mode.description'),
   category: 'chat',
   defaultKeys: 'Ctrl+Shift+M',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'stop-generation',
-  label: '停止生成',
-  description: '停止当前 AI 回复的生成',
+  label: t('cmd.stop-generation.label'),
+  description: t('cmd.stop-generation.description'),
   category: 'chat',
   defaultKeys: 'Escape',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'focus-input',
-  label: '聚焦输入框',
-  description: '将光标聚焦到消息输入框',
+  label: t('cmd.focus-input.label'),
+  description: t('cmd.focus-input.description'),
   category: 'chat',
   defaultKeys: 'Ctrl+I',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'upload-file',
-  label: '上传文件',
-  description: '打开文件选择对话框上传文件',
+  label: t('cmd.upload-file.label'),
+  description: t('cmd.upload-file.description'),
   category: 'chat',
   defaultKeys: 'Ctrl+U',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'prev-assistant',
-  label: '上一个助手',
-  description: '切换到上一个助手',
+  label: t('cmd.prev-assistant.label'),
+  description: t('cmd.prev-assistant.description'),
   category: 'sidebar',
   defaultKeys: 'Ctrl+[',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'next-assistant',
-  label: '下一个助手',
-  description: '切换到下一个助手',
+  label: t('cmd.next-assistant.label'),
+  description: t('cmd.next-assistant.description'),
   category: 'sidebar',
   defaultKeys: 'Ctrl+]',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'prev-topic',
-  label: '上一个话题',
-  description: '切换到上一个话题',
+  label: t('cmd.prev-topic.label'),
+  description: t('cmd.prev-topic.description'),
   category: 'sidebar',
   defaultKeys: 'Ctrl+Shift+[',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'next-topic',
-  label: '下一个话题',
-  description: '切换到下一个话题',
+  label: t('cmd.next-topic.label'),
+  description: t('cmd.next-topic.description'),
   category: 'sidebar',
   defaultKeys: 'Ctrl+Shift+]',
   handler: NOOP_HANDLER,
@@ -581,8 +576,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-clear',
-  label: '/clear',
-  description: '清空当前对话历史，开始新会话',
+  label: t('cmd.slash-clear.label'),
+  description: t('cmd.slash-clear.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -593,8 +588,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-compact',
-  label: '/compact',
-  description: '压缩上下文，总结对话后继续',
+  label: t('cmd.slash-compact.label'),
+  description: t('cmd.slash-compact.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -605,8 +600,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-review',
-  label: '/review',
-  description: '审查代码变更，找出潜在问题和改进建议',
+  label: t('cmd.slash-review.label'),
+  description: t('cmd.slash-review.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -617,8 +612,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-explain',
-  label: '/explain',
-  description: '解释代码的功能和逻辑',
+  label: t('cmd.slash-explain.label'),
+  description: t('cmd.slash-explain.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -629,8 +624,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-fix',
-  label: '/fix',
-  description: '修复代码问题或错误',
+  label: t('cmd.slash-fix.label'),
+  description: t('cmd.slash-fix.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -641,8 +636,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-optimize',
-  label: '/optimize',
-  description: '优化代码性能或可读性',
+  label: t('cmd.slash-optimize.label'),
+  description: t('cmd.slash-optimize.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -653,8 +648,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-translate',
-  label: '/translate',
-  description: '将内容翻译成中文',
+  label: t('cmd.slash-translate.label'),
+  description: t('cmd.slash-translate.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -665,8 +660,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-summarize',
-  label: '/summarize',
-  description: '总结内容的关键要点',
+  label: t('cmd.slash-summarize.label'),
+  description: t('cmd.slash-summarize.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -677,8 +672,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-search',
-  label: '/search',
-  description: '切换联网搜索状态',
+  label: t('cmd.slash-search.label'),
+  description: t('cmd.slash-search.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -689,8 +684,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-settings',
-  label: '/settings',
-  description: '打开应用设置页面',
+  label: t('cmd.slash-settings.label'),
+  description: t('cmd.slash-settings.description'),
   category: 'navigation',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -701,8 +696,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-help',
-  label: '/help',
-  description: '列出所有可用的斜杠命令',
+  label: t('cmd.slash-help.label'),
+  description: t('cmd.slash-help.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -713,8 +708,8 @@ registerCommand({
 
 registerCommand({
   id: 'slash-btw',
-  label: '/btw',
-  description: '侧问：基于当前对话上下文回答，不中断主任务，不写入历史',
+  label: t('cmd.slash-btw.label'),
+  description: t('cmd.slash-btw.description'),
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,

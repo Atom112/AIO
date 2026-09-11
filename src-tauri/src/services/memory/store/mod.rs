@@ -3,7 +3,7 @@
 //! 每个项目一个独立 SQLite 文件：<项目根>/.aio/memory/memory.sqlite。
 //! 向量以 float32 BLOB 存在 facts.embedding，检索先用 Rust 暴力余弦（P3 换 sqlite-vec）。
 
-use crate::core::models::MemoryEmbeddingConfig;
+use crate::core::models::{MemoryEmbeddingConfig, MemoryRerankConfig};
 use crate::utils::knowledge;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::vector::{brute_force_topk, bytes_to_f32, f32_to_bytes};
+use crate::services::memory::CollectRowsWarn;
 
 pub const STATUS_ACTIVE: &str = "active";
 pub const STATUS_SUPERSEDED: &str = "superseded";
@@ -68,6 +69,9 @@ fn default_importance() -> f32 {
     0.5
 }
 
+/// 合并整理用的事实 + 向量元组（id, content, importance, access_count, vector）。
+pub type FactWithVector = (String, String, f32, i64, Vec<f32>);
+
 /// 记忆库统计。
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +84,17 @@ pub struct MemoryStats {
     pub db_size_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reindex_at: Option<String>,
+    // ---- 近 7 天自进化质量探针（7 天滚动窗口自动重置）----
+    /// 检索查询次数
+    pub retrieval_queries_7d: i64,
+    /// 检索返回命中条数
+    pub retrieval_hits_7d: i64,
+    /// 判重触发次数（remember/extract/consolidate）
+    pub dedup_triggers_7d: i64,
+    /// 自动提取沉淀事实数
+    pub extracted_7d: i64,
+    /// LLM 仲裁动作分布（merge/update/supersede/keep_separate）
+    pub judge_distribution_7d: std::collections::HashMap<String, i64>,
 }
 
 /// 检索命中的事实（带融合分数）。
@@ -149,6 +164,18 @@ pub struct MemoryStore {
 const META_EMBED_PROVIDER: &str = "project_embedding_provider";
 const META_EMBED_MODEL: &str = "project_embedding_model";
 const META_EMBED_API_URL: &str = "project_embedding_api_url";
+/// 项目级重排配置（单键 JSON blob，不含 api_key）。
+const META_RERANK: &str = "project_rerank_config";
+
+// ===== 近 7 天质量探针计数键（rolling_*，窗口自动重置）=====
+pub(crate) const STAT_QUERIES: &str = "stat_retrieval_queries";
+pub(crate) const STAT_HITS: &str = "stat_retrieval_hits";
+pub(crate) const STAT_DEDUP: &str = "stat_dedup_triggers";
+pub(crate) const STAT_EXTRACTED: &str = "stat_extracted_facts";
+pub(crate) const STAT_JUDGE_MERGE: &str = "stat_judge_merge";
+pub(crate) const STAT_JUDGE_UPDATE: &str = "stat_judge_update";
+pub(crate) const STAT_JUDGE_SUPERSEDE: &str = "stat_judge_supersede";
+pub(crate) const STAT_JUDGE_KEEP: &str = "stat_judge_keep";
 
 /// 建表语句（幂等；参数化写入，DDL 不含字符串字面量）。
 const SCHEMA: &str = concat!(
@@ -206,12 +233,15 @@ const SCHEMA: &str = concat!(
     "start_line INTEGER NOT NULL,",
     "end_line INTEGER NOT NULL,",
     "content TEXT NOT NULL,",
+    "symbol TEXT,",
     "embedding BLOB,",
     "embedding_model TEXT,",
     "embedding_dim INTEGER,",
     "created_at TEXT NOT NULL",
     ");",
     "CREATE INDEX IF NOT EXISTS idx_code_path ON code_chunks(file_path);",
+    // 注意：idx_code_symbol 不在 SCHEMA 里建——对旧库（无 symbol 列）会先于 ALTER 失败，
+    // 见 open_connection 的 ensure_code_symbol_column 迁移（新旧库统一在那里建索引）。
     "CREATE TABLE IF NOT EXISTS code_file_state (",
     "file_path TEXT PRIMARY KEY,",
     "mtime_nanos INTEGER NOT NULL,",
@@ -223,8 +253,25 @@ const SCHEMA: &str = concat!(
     "file_path,",
     "tokenize=trigram",
     ");",
+    // P3 轻量知识图谱：事实间实体-关系（Graphiti-lite，仅一层关系，不做多跳查询）
+    "CREATE TABLE IF NOT EXISTS facts_relations (",
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,",
+    "fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,",
+    "entity1 TEXT NOT NULL,",
+    "relation TEXT NOT NULL,",
+    "entity2 TEXT NOT NULL,",
+    "valid_from TEXT,",
+    "valid_until TEXT,",
+    "created_at TEXT NOT NULL",
+    ");",
+    "CREATE INDEX IF NOT EXISTS idx_relations_fact ON facts_relations(fact_id);",
+    "CREATE INDEX IF NOT EXISTS idx_relations_entity ON facts_relations(entity1, entity2);",
 );
 
+mod config;
+mod graph;
+mod search;
+mod stats;
 impl MemoryStore {
     /// 打开（或创建）项目记忆库：<项目根>/.aio/memory/memory.sqlite。
     /// 若 sqlite-vec 可用则启用 vec0 虚拟表（P3），不可用时回退暴力余弦。
@@ -249,6 +296,10 @@ impl MemoryStore {
         conn.pragma_update(None, "busy_timeout", 5000)
             .map_err(|e| e.to_string())?;
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+        // 版本化迁移（user_version 记录进度）：替代此前手写的 ensure_code_symbol_column。
+        // 必须在 SCHEMA（CREATE TABLE IF NOT EXISTS）之后执行——旧库的 code_chunks
+        // 表没有 symbol 列，SCHEMA 内对联的 CREATE INDEX 会先失败。
+        crate::core::migrate::run_migrations(&conn, MEMORY_DB_MIGRATIONS)?;
         if crate::services::memory::vec0::vec0_available() {
             let dim = conn
                 .query_row(
@@ -265,6 +316,8 @@ impl MemoryStore {
         }
         Ok(conn)
     }
+
+    // （原 ensure_code_symbol_column 已并入 MEMORY_DB_MIGRATIONS v1）
 
     /// 写入/更新一条事实：key 存在则原地更新（P2 起叠加向量近邻仲裁）；
     /// embedding 为 Some((模型, 维度, 向量)) 时同步更新向量，None 则保留/不写向量。
@@ -417,8 +470,7 @@ impl MemoryStore {
                 })
             })
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect_rows("store");
         drop(stmt);
         let total: i64 = conn
             .query_row(
@@ -459,55 +511,16 @@ impl MemoryStore {
             params![status, valid_until, now, id],
         )
         .map_err(|e| e.to_string())?;
-        if status != STATUS_ACTIVE && crate::services::memory::vec0::vec0_available() {
-            crate::services::memory::vec0::vec0_delete(&conn, id).map_err(|e| e.to_string())?;
+        if status != STATUS_ACTIVE {
+            // 同步移除向量与 FTS 条目，确保非 active 事实不再参与检索/注入
+            if crate::services::memory::vec0::vec0_available() {
+                crate::services::memory::vec0::vec0_delete(&conn, id).map_err(|e| e.to_string())?;
+            }
+            conn.execute("DELETE FROM fts_facts WHERE fact_id = ?1", [id])
+                .map_err(|e| e.to_string())?;
         }
         drop(conn);
         self.get_fact(id)
-    }
-
-    /// 读取本项目记忆开关（meta 覆盖；None = 跟随全局默认）。
-    pub fn project_enabled(&self) -> Result<Option<bool>, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let v: Option<String> = conn
-            .query_row(
-                "SELECT v FROM meta WHERE k = ?1",
-                [META_PROJECT_ENABLED],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        Ok(v.and_then(|s| match s.as_str() {
-            "1" => Some(true),
-            "0" => Some(false),
-            _ => None,
-        }))
-    }
-
-    /// 设置本项目记忆开关（None = 清除覆盖，跟随全局默认）。
-    pub fn set_project_enabled(&self, enabled: Option<bool>) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        match enabled {
-            Some(true) => {
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
-                    params![META_PROJECT_ENABLED, "1"],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            Some(false) => {
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
-                    params![META_PROJECT_ENABLED, "0"],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            None => {
-                conn.execute("DELETE FROM meta WHERE k = ?1", [META_PROJECT_ENABLED])
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
     }
 
     /// 钉住 / 取消钉住。
@@ -547,38 +560,6 @@ impl MemoryStore {
             crate::services::memory::vec0::vec0_upsert(conn, id, vec).map_err(|e| e.to_string())?;
         }
         Ok(())
-    }
-
-    /// 向量检索：vec0 优先，失败回退暴力余弦（表缺失/维度变化等）。
-    fn vector_search(
-        &self,
-        conn: &Connection,
-        query: &[f32],
-        k: usize,
-    ) -> Result<Vec<(String, f32)>, String> {
-        if crate::services::memory::vec0::vec0_available() {
-            if let Ok(rows) = crate::services::memory::vec0::vec0_search(conn, query, k) {
-                if !rows.is_empty() || k == 0 {
-                    return Ok(rows);
-                }
-            }
-        }
-        let mut stmt = conn
-            .prepare("SELECT id, embedding FROM facts WHERE status = ?1 AND embedding IS NOT NULL")
-            .map_err(|e| e.to_string())?;
-        let rows: Vec<(String, Vec<u8>)> = stmt
-            .query_map(params![STATUS_ACTIVE], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
-            })
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-        drop(stmt);
-        let decoded: Vec<(String, Vec<f32>)> = rows
-            .iter()
-            .map(|(id, b)| (id.clone(), bytes_to_f32(b)))
-            .collect();
-        Ok(brute_force_topk(&decoded, query, k))
     }
 
     /// 单独更新事实向量（仲裁订正内容后调用；None 表示清除向量）。
@@ -623,7 +604,7 @@ impl MemoryStore {
                 }))
             })
             .map_err(|e| e.to_string())?;
-        let facts: Vec<serde_json::Value> = rows.filter_map(|r| r.ok()).collect();
+        let facts: Vec<serde_json::Value> = rows.collect_rows("store");
         serde_json::to_string_pretty(&serde_json::json!({
             "version": 1,
             "exportedAt": now_iso(),
@@ -684,81 +665,6 @@ impl MemoryStore {
         Ok(count)
     }
 
-    /// 读取 meta 键值。
-    /// 读取项目级嵌入配置（未设置时返回 (本地默认, false)）。
-    pub fn embedding_cfg(&self) -> (MemoryEmbeddingConfig, bool) {
-        let provider = self.meta_get(META_EMBED_PROVIDER).ok().flatten();
-        let model = self.meta_get(META_EMBED_MODEL).ok().flatten();
-        let api_url = self.meta_get(META_EMBED_API_URL).ok().flatten();
-        let dims = self
-            .meta_get(META_EMBEDDING_DIM)
-            .ok()
-            .flatten()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(384);
-        match provider {
-            Some(p) => (
-                MemoryEmbeddingConfig {
-                    provider: if p == "online" {
-                        "online".into()
-                    } else {
-                        "local".into()
-                    },
-                    model: model.unwrap_or_default(),
-                    api_url: api_url.unwrap_or_default(),
-                    dimensions: dims,
-                    enabled: true,
-                    api_key: String::new(),
-                },
-                true,
-            ),
-            None => (MemoryEmbeddingConfig::default(), false),
-        }
-    }
-
-    /// 写入项目级嵌入配置（provider/model/apiUrl/维度；apiKey 不落盘，仍在 secure_store）。
-    pub fn set_embedding_cfg(&self, cfg: &MemoryEmbeddingConfig) -> Result<(), String> {
-        self.meta_put(META_EMBED_PROVIDER, cfg.provider.as_str())?;
-        self.meta_put(META_EMBED_MODEL, cfg.model.as_str())?;
-        self.meta_put(META_EMBED_API_URL, cfg.api_url.as_str())?;
-        self.meta_put(
-            META_EMBEDDING_DIM,
-            &cfg.dimensions.clamp(1, 8192).to_string(),
-        )
-    }
-
-    /// 清空全部向量（切换嵌入模型后调用）：事实与代码块保留文本，仅弃用向量；
-    /// vec0/vec_code 表删除，由后续写入按新维度重建。
-    pub fn reset_vectors(&self) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute_batch(
-            "UPDATE facts SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE embedding IS NOT NULL;              UPDATE code_chunks SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE embedding IS NOT NULL;              DROP TABLE IF EXISTS vec_facts; DROP TABLE IF EXISTS vec_code;",
-        )
-        .map_err(|e| format!("清空向量失败: {e}"))
-    }
-
-    pub fn meta_get(&self, key: &str) -> Result<Option<String>, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.query_row("SELECT v FROM meta WHERE k = ?1", [key], |r| r.get(0))
-            .optional()
-            .map_err(|e| e.to_string())
-    }
-
-    /// 写入 meta 键值。
-    pub fn meta_put(&self, key: &str, value: &str) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        self.meta_put_inner(&conn, key, value)
-    }
-
-    fn meta_put_inner(&self, conn: &Connection, key: &str, value: &str) -> Result<(), String> {
-        conn.execute(
-            "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
-            params![key, value],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
     /// 直接订正事实内容（不换 key），并写入版本审计（reason=update/merge）。
     pub fn update_content(
         &self,
@@ -787,6 +693,25 @@ impl MemoryStore {
         )
         .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        self.get_fact(id)
+    }
+
+    /// 订正事实类别（不换 key），并同步 FTS 行（与 update_content 同一策略）。
+    /// 供 memory_update 的 keyless 分支使用——该分支此前会静默丢弃 category 参数。
+    pub fn set_category(&self, id: &str, category: &str) -> Result<MemoryFact, String> {
+        let now = now_iso();
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE facts SET category = ?1, updated_at = ?2 WHERE id = ?3",
+            params![category, now, id],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE fts_facts SET category = ?1 WHERE fact_id = ?2",
+            params![category, id],
+        )
+        .map_err(|e| e.to_string())?;
         drop(conn);
         self.get_fact(id)
     }
@@ -829,6 +754,8 @@ impl MemoryStore {
             params![STATUS_SUPERSEDED, now, now, source_id],
         )
         .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM fts_facts WHERE fact_id = ?1", [source_id])
+            .map_err(|e| e.to_string())?;
         if crate::services::memory::vec0::vec0_available() {
             crate::services::memory::vec0::vec0_delete(&tx, source_id)
                 .map_err(|e| e.to_string())?;
@@ -860,6 +787,8 @@ impl MemoryStore {
             params![STATUS_SUPERSEDED, now, now, id],
         )
         .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM fts_facts WHERE fact_id = ?1", [id])
+            .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         drop(conn);
         self.get_fact(id)
@@ -885,7 +814,7 @@ impl MemoryStore {
                 })
             })
             .map_err(|e| e.to_string())?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+        Ok(rows.collect_rows("store"))
     }
 
     /// 容量治理：活跃事实超过上限时，按 score = importance 乘访问衰减归档最低分的非 pinned 事实。
@@ -911,8 +840,7 @@ impl MemoryStore {
                 r.get::<_, String>(0)
             })
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect_rows("store");
         drop(stmt);
         let now = now_iso();
         let mut archived = 0usize;
@@ -940,222 +868,6 @@ impl MemoryStore {
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
-    }
-
-    /// 检索计数累加（供使用统计）。
-    pub fn bump_access(&self, ids: &[String]) {
-        if ids.is_empty() {
-            return;
-        }
-        let now = now_iso();
-        if let Ok(conn) = self.conn.lock() {
-            for id in ids {
-                let _ = conn.execute(
-                    "UPDATE facts SET access_count = access_count + 1, last_access_at = ?1 WHERE id = ?2",
-                    params![now, id],
-                );
-            }
-        }
-    }
-
-    /// 混合检索：向量 top-k（query_vec 提供时）+ FTS5 BM25 → RRF 融合 + 时新度加成。
-    pub fn search_hybrid(
-        &self,
-        query_text: &str,
-        query_vec: Option<&[f32]>,
-        opts: &SearchOptions,
-    ) -> Result<Vec<ScoredFact>, String> {
-        let k = opts.k.clamp(1, 50);
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-
-        // 1) 向量召回（vec0 加速，不可用时暴力余弦）
-        let mut vector_ranks: Vec<(String, usize)> = Vec::new();
-        if let Some(qv) = query_vec {
-            let top = self.vector_search(&conn, qv, k * 2)?;
-            for (i, (id, _)) in top.iter().enumerate() {
-                vector_ranks.push((id.clone(), i));
-            }
-        }
-
-        // 2) FTS5 召回（trigram，支持中文子串；非法表达式降级为 LIKE）
-        let mut fts_ranks: Vec<(String, usize)> = Vec::new();
-        let sanitized = sanitize_fts_query(query_text);
-        if !sanitized.trim().is_empty() {
-            let sql = "SELECT fact_id FROM fts_facts WHERE fts_facts MATCH ?1 ORDER BY bm25(fts_facts) LIMIT ?2";
-            let matched: Result<Vec<String>, String> = (|| {
-                let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
-                let rows = stmt
-                    .query_map(params![sanitized, (k * 2) as i64], |r| {
-                        r.get::<_, String>(0)
-                    })
-                    .map_err(|e| e.to_string())?;
-                rows.filter_map(|r| r.ok())
-                    .collect::<Vec<String>>()
-                    .pipe(Ok)
-            })();
-            match matched {
-                Ok(ids) => {
-                    for (i, id) in ids.iter().enumerate() {
-                        fts_ranks.push((id.clone(), i));
-                    }
-                }
-                Err(_) => {
-                    // FTS 表达式解析失败时回退 LIKE 模糊匹配
-                    let pattern = format!("%{}%", query_text.trim());
-                    let mut stmt = conn
-                        .prepare("SELECT id FROM facts WHERE status = ?1 AND (content LIKE ?2 OR category LIKE ?2)")
-                        .map_err(|e| e.to_string())?;
-                    let rows = stmt
-                        .query_map(params![STATUS_ACTIVE, pattern], |r| r.get::<_, String>(0))
-                        .map_err(|e| e.to_string())?;
-                    for (i, id) in rows.filter_map(|r| r.ok()).take(k * 2).enumerate() {
-                        fts_ranks.push((id, i));
-                    }
-                }
-            }
-        }
-
-        // 3) RRF 融合
-        let mut rrf: HashMap<String, f32> = HashMap::new();
-        for (id, rank) in vector_ranks.iter().chain(fts_ranks.iter()) {
-            let entry = rrf.entry(id.clone()).or_insert(0.0);
-            *entry += 1.0 / (60.0 + *rank as f32 + 1.0);
-        }
-        if rrf.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // 4) 取详情 + 时新度加成 + 排序
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let mut scored: Vec<ScoredFact> = Vec::new();
-        for (id, score) in rrf.iter() {
-            if let Ok(fact) = self.fetch_scored(id, *score, now_secs, &conn) {
-                if let Some(min) = opts.min_score {
-                    if fact.score < min {
-                        continue;
-                    }
-                }
-                scored.push(fact);
-            }
-        }
-        scored.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        scored.truncate(k);
-        Ok(scored)
-    }
-
-    /// 生成注入系统提示词的记忆块（Markdown），按 token 预算裁剪；空结果返回 None。
-    pub fn build_inject_block(
-        &self,
-        query_text: &str,
-        query_vec: Option<&[f32]>,
-        budget_tokens: usize,
-    ) -> Result<Option<String>, String> {
-        if budget_tokens == 0 {
-            return Ok(None);
-        }
-        let results = self.search_hybrid(
-            query_text,
-            query_vec,
-            &SearchOptions {
-                category: None,
-                k: 20,
-                min_score: None,
-            },
-        )?;
-        if results.is_empty() {
-            return Ok(None);
-        }
-        let mut block = String::from("项目记忆（跨会话沉淀，仅作快速参考，以实际代码为准）：\n");
-        let mut used = count_approx(&block);
-        let mut count = 0usize;
-        for f in results {
-            let line = format!(
-                "- [{}] {}（更新时间 {}）\n",
-                f.category,
-                f.content,
-                f.updated_at.clone().unwrap_or_default(),
-            );
-            let t = count_approx(&line);
-            if used + t > budget_tokens && count > 0 {
-                break;
-            }
-            block.push_str(&line);
-            used += t;
-            count += 1;
-        }
-        if count == 0 {
-            return Ok(None);
-        }
-        Ok(Some(block))
-    }
-
-    /// 记忆库统计。
-    pub fn stats(&self) -> Result<MemoryStats, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM facts", [], |r| r.get(0))
-            .map_err(|e| e.to_string())?;
-        let active: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_ACTIVE],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let archived: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_ARCHIVED],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let superseded: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_SUPERSEDED],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let embedded: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let last_reindex: Option<String> = conn
-            .query_row(
-                "SELECT v FROM meta WHERE k = ?1",
-                [META_LAST_REINDEX],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        drop(conn);
-        let db_size = std::fs::metadata(
-            Path::new(&self.project_root)
-                .join(".aio")
-                .join("memory")
-                .join("memory.sqlite"),
-        )
-        .map(|m| m.len())
-        .unwrap_or(0);
-        Ok(MemoryStats {
-            total_facts: total,
-            active_facts: active,
-            archived_facts: archived,
-            superseded_facts: superseded,
-            embedded_facts: embedded,
-            db_size_bytes: db_size,
-            last_reindex_at: last_reindex,
-        })
     }
 
     /// 重建/补建向量：为所有无 embedding 的 active 事实生成向量。
@@ -1200,7 +912,7 @@ impl MemoryStore {
             let rows = stmt
                 .query_map(params![STATUS_ACTIVE], |r| r.get::<_, String>(0))
                 .map_err(|e| e.to_string())?;
-            rows.filter_map(|r| r.ok()).collect()
+            rows.collect_rows("store")
         };
         let mut embedded = 0usize;
         let mut failed = 0usize;
@@ -1228,79 +940,6 @@ impl MemoryStore {
         .map_err(|e| e.to_string())?;
         Ok((embedded, failed))
     }
-
-    /// 从旧版 .aio/knowledge.json 迁移事实（幂等，已迁移则跳过）。
-    pub fn migrate_from_knowledge_json(&self) -> Result<usize, String> {
-        let migrated: Option<String> = {
-            let conn = self.conn.lock().map_err(|e| e.to_string())?;
-            conn.query_row(
-                "SELECT v FROM meta WHERE k = ?1",
-                [META_MIGRATED_KNOWLEDGE],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?
-        };
-        if migrated.as_deref() == Some("1") {
-            return Ok(0);
-        }
-        let knowledge = knowledge::load_knowledge(&self.project_root);
-        let mut count = 0usize;
-        for entry in knowledge.entries {
-            let fact = NewFact {
-                key: Some(entry.key.clone()),
-                content: entry.content.clone(),
-                category: entry.category.clone(),
-                importance: 0.5,
-                source_type: Some("user".into()),
-                source_refs: Some(format!("knowledge.json:{}", entry.key)),
-                pinned: false,
-            };
-            if self.upsert_fact(&fact, None).is_ok() {
-                count += 1;
-            }
-        }
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
-            params![META_MIGRATED_KNOWLEDGE, "1"],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(count)
-    }
-
-    fn fetch_scored(
-        &self,
-        id: &str,
-        score: f32,
-        now_secs: u64,
-        conn: &Connection,
-    ) -> Result<ScoredFact, String> {
-        let row: (String, String, Option<String>, Option<String>) = conn
-            .query_row(
-                "SELECT content, category, source_type, updated_at FROM facts WHERE id = ?1",
-                [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .map_err(|e| e.to_string())?;
-        let mut final_score = score;
-        if let Some(upd) = &row.3 {
-            if let Some(secs) = iso_to_secs(upd) {
-                let age_days = now_secs.saturating_sub(secs) / 86400;
-                if age_days <= 90 {
-                    final_score *= 1.1;
-                }
-            }
-        }
-        Ok(ScoredFact {
-            id: id.to_string(),
-            content: row.0,
-            category: row.1,
-            score: final_score,
-            source_type: row.2,
-            updated_at: row.3,
-        })
-    }
 }
 
 const META_LAST_REINDEX: &str = "last_reindex_at";
@@ -1326,35 +965,15 @@ fn sanitize_fts_query(q: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// YYYY-MM-DDTHH:MM:SS → Unix 秒。
-/// 公开包装：ISO 时间转 Unix 秒（供提取管线去抖）。
+/// YYYY-MM-DDTHH:MM:SS → Unix 秒（供提取管线去抖）。
+/// 实现统一由 utils::time 提供。
 pub fn iso_to_secs_pub(iso: &str) -> Option<u64> {
-    iso_to_secs(iso)
+    crate::utils::time::iso_to_secs(iso)
 }
 
+/// YYYY-MM-DDTHH:MM:SS → Unix 秒（本模块内部使用）。
 fn iso_to_secs(iso: &str) -> Option<u64> {
-    let s = iso.trim();
-    if s.len() < 19 {
-        return None;
-    }
-    let y: u64 = s[0..4].parse().ok()?;
-    let mo: u64 = s[5..7].parse().ok()?;
-    let d: u64 = s[8..10].parse().ok()?;
-    let h: u64 = s[11..13].parse().ok()?;
-    let mi: u64 = s[14..16].parse().ok()?;
-    let se: u64 = s[17..19].parse().ok()?;
-    Some(days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se)
-}
-
-/// 儒略日换算（Howard Hinnant civil_from_days 逆运算的简化版）。
-fn days_from_civil(y: u64, m: u64, d: u64) -> u64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y / 400;
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
+    crate::utils::time::iso_to_secs(iso)
 }
 
 /// 在事务内写入版本审计（自动计算下一版本号）。
@@ -1382,9 +1001,9 @@ fn log_version_tx(
     Ok(())
 }
 
-/// 当前时间 ISO（复用 knowledge 模块实现）。
+/// 当前时间 ISO（统一由 utils::time 提供）。
 fn now_iso() -> String {
-    knowledge::now_iso()
+    crate::utils::time::now_iso()
 }
 
 /// 小型管道辅助（配合闭包链）。
@@ -1394,6 +1013,38 @@ trait Pipe: Sized {
     }
 }
 impl<T> Pipe for T {}
+
+// ====== 版本化迁移（memory.sqlite，user_version 记录进度）======
+
+/// v1：旧库 code_chunks 补 symbol 列并建符号索引（幂等）。
+fn m_code_chunks_symbol(conn: &rusqlite::Connection) -> Result<(), String> {
+    let has_symbol: bool = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(code_chunks)")
+            .map_err(|e| e.to_string())?;
+        let cols: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .collect_rows("store");
+        cols.iter().any(|c| c == "symbol")
+    };
+    if !has_symbol {
+        // SQLite ALTER ADD COLUMN 不支持 IF NOT EXISTS，须单独执行
+        conn.execute_batch("ALTER TABLE code_chunks ADD COLUMN symbol TEXT")
+            .map_err(|e| e.to_string())?;
+    }
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_code_symbol ON code_chunks(symbol)")
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 记忆库的迁移表（严格递增；新增迁移只允许追加，不得修改已发布条目）。
+const MEMORY_DB_MIGRATIONS: &[crate::core::migrate::Migration] =
+    &[crate::core::migrate::Migration {
+        version: 1,
+        name: "code_chunks.symbol 列与符号索引",
+        run: m_code_chunks_symbol,
+    }];
 
 #[cfg(test)]
 mod tests {
@@ -1594,6 +1245,332 @@ mod tests {
         assert_eq!(store.project_enabled().unwrap(), Some(false));
         store.set_project_enabled(None).unwrap();
         assert_eq!(store.project_enabled().unwrap(), None);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Phase 0 回归：B1 判重阈值语义（余弦而非 RRF 融合分）=====
+    #[test]
+    fn test_search_similar_returns_cosine_not_rrf() {
+        let root = temp_project("similar");
+        let store = MemoryStore::open(&root).unwrap();
+        let v1 = vec![1.0f32, 0.0, 0.0, 0.0];
+        let v2 = vec![0.0f32, 1.0, 0.0, 0.0];
+        let saved = store
+            .upsert_fact(
+                &fact("数据库使用 rusqlite", None),
+                Some(("test".into(), 4, v1.clone())),
+            )
+            .unwrap();
+        store
+            .upsert_fact(
+                &fact("前端使用 SolidJS", None),
+                Some(("test".into(), 4, v2)),
+            )
+            .unwrap();
+        let dups = store.search_similar(&v1, 3).unwrap();
+        assert_eq!(dups.len(), 2);
+        assert_eq!(dups[0].0, saved.id);
+        let (id, cosine) = &dups[0];
+        assert!(
+            (*cosine - 1.0).abs() < 1e-5,
+            "相同向量余弦应为 ~1.0，实际 {cosine}（若为 RRF 融合分则 <0.05，仲裁永不触发）"
+        );
+        assert!(!id.is_empty());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Phase 0 回归：B2 category 过滤生效 =====
+    #[test]
+    fn test_category_filter_applies() {
+        let root = temp_project("category");
+        let store = MemoryStore::open(&root).unwrap();
+        let mut d = fact("使用 rusqlite 存储", None);
+        d.category = "decision".into();
+        store.upsert_fact(&d, None).unwrap();
+        let mut n = fact("今天天气不错", None);
+        n.category = "note".into();
+        store.upsert_fact(&n, None).unwrap();
+        let res = store
+            .search_hybrid(
+                "存储",
+                None,
+                &SearchOptions {
+                    category: Some("decision".into()),
+                    k: 10,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert!(!res.is_empty());
+        assert!(
+            res.iter().all(|f| f.category == "decision"),
+            "category 过滤应生效: {:?}",
+            res.iter().map(|f| f.category.clone()).collect::<Vec<_>>()
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Phase 0 回归：B6 短查询（≤2 字符，trigram 无法命中）走 LIKE =====
+    #[test]
+    fn test_short_query_uses_like() {
+        let root = temp_project("shortq");
+        let store = MemoryStore::open(&root).unwrap();
+        store
+            .upsert_fact(&fact("重构了缓存层，加入 LRU", None), None)
+            .unwrap();
+        let res = store
+            .search_hybrid(
+                "重构",
+                None,
+                &SearchOptions {
+                    category: None,
+                    k: 10,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            res.iter().any(|f| f.content.contains("重构")),
+            "2 字中文查询应经 LIKE 命中: {:?}",
+            res.iter().map(|f| f.content.clone()).collect::<Vec<_>>()
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Phase 0 回归：B5 superseded/archived 不再参与检索（FTS 与向量两路）=====
+    #[test]
+    fn test_superseded_excluded_from_search() {
+        let root = temp_project("status");
+        let store = MemoryStore::open(&root).unwrap();
+        let v = vec![1.0f32, 0.0, 0.0, 0.0];
+        let saved = store
+            .upsert_fact(
+                &fact("数据库使用 rusqlite 存储聊天记录", None),
+                Some(("test".into(), 4, v.clone())),
+            )
+            .unwrap();
+        // 先验证可检索，再归档后验证不可检索
+        assert!(!store
+            .search_hybrid(
+                "rusqlite",
+                None,
+                &SearchOptions {
+                    category: None,
+                    k: 10,
+                    min_score: None
+                }
+            )
+            .unwrap()
+            .is_empty());
+        store.set_status(&saved.id, STATUS_ARCHIVED, None).unwrap();
+        let after_archive = store
+            .search_hybrid(
+                "rusqlite",
+                None,
+                &SearchOptions {
+                    category: None,
+                    k: 10,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            after_archive.iter().all(|f| f.id != saved.id),
+            "archived 事实不应再被检索: {:?}",
+            after_archive
+                .iter()
+                .map(|f| f.content.clone())
+                .collect::<Vec<_>>()
+        );
+        // 向量路同样排除
+        let vec_res = store.search_similar(&v, 10).unwrap();
+        assert!(vec_res.iter().all(|(id, _)| *id != saved.id));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Phase 2 回归：7 天滚动质量探针 =====
+    #[test]
+    fn test_rolling_stats_and_stats_exposure() {
+        let root = temp_project("rolling");
+        let store = MemoryStore::open(&root).unwrap();
+        assert_eq!(store.rolling_get(STAT_QUERIES), 0);
+        store.rolling_bump(STAT_QUERIES, 1);
+        store.rolling_bump(STAT_QUERIES, 2);
+        assert_eq!(store.rolling_get(STAT_QUERIES), 3);
+        store.rolling_bump(STAT_JUDGE_MERGE, 1);
+        let stats = store.stats().unwrap();
+        assert_eq!(stats.retrieval_queries_7d, 3);
+        assert_eq!(stats.judge_distribution_7d.get("merge"), Some(&1));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Phase 2 回归：带向量 active 事实读取（合并整理输入）=====
+    #[test]
+    fn test_list_active_facts_with_vectors() {
+        let root = temp_project("vecs");
+        let store = MemoryStore::open(&root).unwrap();
+        let v = vec![1.0f32, 0.0, 0.0, 0.0];
+        let s1 = store
+            .upsert_fact(&fact("A", None), Some(("test".into(), 4, v.clone())))
+            .unwrap();
+        let s2 = store.upsert_fact(&fact("无向量", None), None).unwrap();
+        let rows = store.list_active_facts_with_vectors().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, s1.id);
+        // 无向量事实不入列
+        assert_ne!(rows[0].0, s2.id);
+        // 归档后不出现在列表
+        store.set_status(&s1.id, STATUS_ARCHIVED, None).unwrap();
+        assert!(store.list_active_facts_with_vectors().unwrap().is_empty());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Phase 0 相关：注入块预算裁剪稳定 =====
+    #[test]
+    fn test_build_block_from_budget() {
+        let root = temp_project("block");
+        let store = MemoryStore::open(&root).unwrap();
+        store
+            .upsert_fact(&fact("决策：使用 rusqlite 作为存储", None), None)
+            .unwrap();
+        store
+            .upsert_fact(&fact("决策：P2 引入 sqlite-vec", None), None)
+            .unwrap();
+        let res = store
+            .search_hybrid(
+                "决策",
+                None,
+                &SearchOptions {
+                    category: None,
+                    k: 10,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        let block = store.build_block_from(res.clone(), 500).unwrap().unwrap();
+        assert!(block.starts_with("项目记忆"));
+        assert!(block.contains("rusqlite"));
+        // 极低预算应仍至少放得下第一条
+        let tiny = store.build_block_from(res.clone(), 4).unwrap();
+        assert!(tiny.is_some());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== 回归：旧库（code_chunks 无 symbol 列）升级打开不报错（P3-4 迁移顺序）=====
+    #[test]
+    fn test_open_migrates_legacy_db_without_symbol_column() {
+        let root = temp_project("legacy");
+        let dir = Path::new(&root).join(".aio").join("memory");
+        std::fs::create_dir_all(&dir).unwrap();
+        // 构造旧版库：code_chunks 无 symbol 列（此前版本的真实 schema 子集）
+        let conn = rusqlite::Connection::open(dir.join("memory.sqlite")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE code_chunks (id TEXT PRIMARY KEY, file_path TEXT NOT NULL, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL, content TEXT NOT NULL, embedding BLOB, embedding_model TEXT, embedding_dim INTEGER, created_at TEXT NOT NULL);",
+        )
+        .unwrap();
+        drop(conn);
+
+        // 升级路径：open 必须成功（曾因 SCHEMA 内 CREATE INDEX 引用不存在的列而炸）
+        let store = MemoryStore::open(&root).unwrap();
+        let conn2 = MemoryStore::open_connection(&root).unwrap();
+        let cols: Vec<String> = {
+            let mut stmt = conn2.prepare("PRAGMA table_info(code_chunks)").unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect_rows("store")
+        };
+        assert!(
+            cols.iter().any(|c| c == "symbol"),
+            "旧库应补齐 symbol 列: {cols:?}"
+        );
+        let index_count: i64 = conn2
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_code_symbol'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 1, "idx_code_symbol 索引应存在");
+        // 新表（facts_relations）在升级路径中一并创建
+        let rel_count: i64 = conn2
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='facts_relations'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rel_count, 1);
+        drop(conn2);
+        let _ = store;
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== 新库路径：symbol 列初始即有，索引仍在（幂等）=====
+    #[test]
+    fn test_fresh_db_has_symbol_column_and_index() {
+        let root = temp_project("fresh");
+        let store = MemoryStore::open(&root).unwrap();
+        let conn = MemoryStore::open_connection(&root).unwrap();
+        let cols: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(code_chunks)").unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect_rows("store")
+        };
+        assert!(cols.iter().any(|c| c == "symbol"));
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_code_symbol'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 1);
+        let _ = store;
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// 回归：keyless 事实的"更新内容 + 重写向量"路径不得产生重复行
+    /// （历史 bug：commands/memory.rs 曾用 upsert_fact(key: None) 重写向量，
+    /// 导致每次编辑都 INSERT 一条新事实）。
+    #[test]
+    fn test_update_then_set_embedding_does_not_duplicate() {
+        let root = temp_project("no_dup");
+        let store = MemoryStore::open(&root).unwrap();
+        let saved = store.upsert_fact(&fact("原始内容", None), None).unwrap();
+        let (_, n0) = store.list_facts(Some(STATUS_ACTIVE), None, 100, 0).unwrap();
+
+        store
+            .update_content(&saved.id, "更新后的内容", "update")
+            .unwrap();
+        store
+            .set_embedding(
+                &saved.id,
+                Some(("test-model".to_string(), 3, vec![0.1, 0.2, 0.3])),
+            )
+            .unwrap();
+
+        let (_, n1) = store.list_facts(Some(STATUS_ACTIVE), None, 100, 0).unwrap();
+        assert_eq!(n0, n1, "更新不得产生重复行");
+        let got = store.get_fact(&saved.id).unwrap();
+        assert_eq!(got.content, "更新后的内容");
+        assert_eq!(got.embedding_model.as_deref(), Some("test-model"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// set_category 直接订正类别并同步 FTS 行。
+    #[test]
+    fn test_set_category() {
+        let root = temp_project("set_cat");
+        let store = MemoryStore::open(&root).unwrap();
+        let saved = store
+            .upsert_fact(&fact("带类别的事实", None), None)
+            .unwrap();
+        assert_eq!(saved.category, "note");
+        let updated = store.set_category(&saved.id, "decision").unwrap();
+        assert_eq!(updated.category, "decision");
+        let got = store.get_fact(&saved.id).unwrap();
+        assert_eq!(got.category, "decision");
         fs::remove_dir_all(&root).ok();
     }
 }

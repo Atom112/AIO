@@ -3,7 +3,7 @@
 //! 为 AI Agent 提供 LSP 驱动的代码智能工具：
 //! 跳转到定义、查找引用、悬浮类型信息、文档符号列表。
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::plugins::lsp::{LspClient, LspManager};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -129,15 +129,8 @@ pub fn get_all_lsp_tool_specs() -> Vec<ToolSpec> {
 
 // ====== Helpers ======
 
-fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
+// tool_ok 统一由 utils::tool_result 提供（消除全仓副本）
+use crate::utils::tool_result::tool_ok;
 
 /// 根据文件扩展名映射到语言服务器 ID。
 fn extension_to_language_id(ext: &str) -> Option<&str> {
@@ -441,6 +434,69 @@ pub async fn execute_lsp_symbols(
         "文件 {file_path} 中的符号:\n\n{}",
         lines.join("\n")
     )))
+}
+
+/// 获取文件符号范围列表（符号感知代码分块用）：(符号名, start_line, end_line)（LSP 行号从 0 起）。
+/// LSP 未运行/请求失败时返回 Err，调用方回退行窗口分块。
+pub async fn fetch_document_symbol_ranges(
+    app: &tauri::AppHandle,
+    project_root: &str,
+    file_path: &str,
+) -> Result<Vec<(String, i64, i64)>, String> {
+    let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
+    let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
+    let params = json!({ "textDocument": { "uri": uri } });
+    let response = client
+        .request(
+            "textDocument/documentSymbol",
+            Some(params),
+            Duration::from_secs(10),
+        )
+        .await
+        .map_err(|e| format!("LSP documentSymbol 请求失败: {e}"))?;
+    if response.is_null() {
+        return Ok(Vec::new());
+    }
+    let arr = response
+        .as_array()
+        .ok_or_else(|| format!("LSP documentSymbol 返回了意外的响应格式: {response}"))?;
+    let mut out: Vec<(String, i64, i64)> = Vec::new();
+    fn collect_symbol(symbol: &Value, out: &mut Vec<(String, i64, i64)>) {
+        let name = symbol
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("?")
+            .to_string();
+        // DocumentSymbol 用 range{start,end}；SymbolInformation 用 location.range
+        let range = symbol
+            .get("range")
+            .or_else(|| symbol.get("location").and_then(|l| l.get("range")));
+        let (sl, el) = match range {
+            Some(r) => (
+                r.get("start")
+                    .and_then(|s| s.get("line"))
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0),
+                r.get("end")
+                    .and_then(|e| e.get("line"))
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0),
+            ),
+            None => (0, 0),
+        };
+        if el > sl {
+            out.push((name, sl, el));
+        }
+        if let Some(children) = symbol.get("children").and_then(|c| c.as_array()) {
+            for child in children {
+                collect_symbol(child, out);
+            }
+        }
+    }
+    for symbol in arr {
+        collect_symbol(symbol, &mut out);
+    }
+    Ok(out)
 }
 
 // ====== Formatting helpers ======

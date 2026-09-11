@@ -6,7 +6,9 @@
 //! - **Linux**: Secret Service / `libsecret` (`secret-service-rs`)
 //!
 //! 在 GUI 不可用的环境（无桌面会话 / 无 dbus）下，调用可能失败。
-//! 失败时降级到 AppData 中的 AES-256-GCM 加密文件（使用机器绑定密钥）。
+//! 失败时降级到 AppData 中的 AES-256-GCM 加密文件（密钥优先存 keyring，
+//! 否则存 0600 权限的本地随机密钥文件——注意该文件密钥并非机器绑定，
+//! 仅提供静态混淆，任何能同时读到两个文件的进程都可解密）。
 //!
 //! Service 标识：`com.loch.aio`
 //! Account 命名空间：
@@ -31,7 +33,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-const SERVICE: &str = "com.loch.aio";
+const SERVICE: &str = crate::core::paths::BUNDLE_ID;
 const FALLBACK_FILE: &str = "secure-store.json";
 const FALLBACK_KEY_ACCOUNT: &str = "fallback-key";
 const AES_KEY_LEN: usize = 32;
@@ -84,7 +86,8 @@ fn fallback_key_path(app: &AppHandle) -> Option<PathBuf> {
 
 /// 获取或创建 fallback 文件的 AES-256 加密密钥。
 ///
-/// 优先级：keyring → 机器绑定派生 → 随机密钥文件（最弱后备）
+/// 优先级：keyring → 本地随机密钥文件（0600 权限，最弱后备）。
+/// 说明：不存在"机器绑定派生"层——文件密钥仅提供静态混淆。
 fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
     // 1. 尝试从 keyring 读取持久化的加密密钥
     if let Ok(hex_key) = keyring_get_str(FALLBACK_KEY_ACCOUNT) {
@@ -327,6 +330,20 @@ pub fn set(app: &AppHandle, account: &str, value: &str) -> Result<()> {
     }
 }
 
+/// 存储凭据并保证失败可见：出错时记录 error 日志并返回 false。
+///
+/// 调用方据此决定是否保留数据中的明文字段 —— 历史代码用 `let _ = set(...)`
+/// 吞掉错误后再剥离明文，导致 keyring+降级文件双双失败时密钥静默丢失。
+pub fn set_reported(app: &AppHandle, account: &str, value: &str) -> bool {
+    match set(app, account, value) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!("安全存储写入失败 (account={account}): {e}");
+            false
+        }
+    }
+}
+
 /// 删除凭据。
 pub fn delete(app: &AppHandle, account: &str) -> Result<()> {
     let _ = keyring_delete_str(account);
@@ -336,28 +353,6 @@ pub fn delete(app: &AppHandle, account: &str) -> Result<()> {
             save_fallback(app, &store, &key)?;
         }
     }
-    Ok(())
-}
-
-/// 删除所有匹配前缀的凭据（用于清理 MCP server 等）。
-#[allow(dead_code)]
-pub fn delete_matching(app: &AppHandle, prefix: &str) -> Result<()> {
-    if let Ok(key) = get_fallback_key(app) {
-        let mut store = load_fallback(app, &key);
-        let to_remove: Vec<String> = store
-            .entries
-            .keys()
-            .filter(|k| k.starts_with(prefix))
-            .cloned()
-            .collect();
-        if !to_remove.is_empty() {
-            for k in &to_remove {
-                store.entries.remove(k);
-            }
-            save_fallback(app, &store, &key)?;
-        }
-    }
-    // keyring 不支持按前缀删除，调用方需显式传 key 名
     Ok(())
 }
 
@@ -375,12 +370,6 @@ pub mod accounts {
     /// MCP server 环境变量密钥：${KEYRING:mcp-server-{server_id}-env-{env_key}}
     pub fn mcp_server_env(server_id: &str, env_key: &str) -> String {
         format!("mcp-server-{}-env-{}", server_id, env_key)
-    }
-
-    /// 删除某 MCP server 的所有密钥（删除 server 时调用）
-    #[allow(dead_code)]
-    pub fn mcp_server_prefix(server_id: &str) -> String {
-        format!("mcp-server-{}-", server_id)
     }
 
     /// 已激活模型的 API Key（用 api_url + model_id 的 SHA-256 hash 作标识符，

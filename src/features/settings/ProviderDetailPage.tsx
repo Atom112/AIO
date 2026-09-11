@@ -9,7 +9,12 @@
  */
 import { Component, createSignal, createMemo, Show, For, onMount, onCleanup } from 'solid-js';
 import { useNavigate, useParams } from '@solidjs/router';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  saveProviderConfigs,
+  testProviderConnection,
+  fetchProviderModels,
+} from '../../core/api/providers';
+import { probeEngineHealth, startLocalServer, stopLocalServer } from '../../core/api/engine';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   providerConfigs,
@@ -24,7 +29,6 @@ import {
   type FetchedModel,
   type ModelMeta,
   type ProviderMeta,
-  type TestConnectionResult,
   listProviderModels,
 } from '../../core/utils/models';
 import { getLocalEngineProvider } from '../../core/utils/models';
@@ -156,7 +160,7 @@ const ProviderDetail: Component = () => {
     }
     const file = { version: 2, updatedAt: String(Date.now()), providers: map };
     try {
-      await invoke('save_provider_configs', { file });
+      await saveProviderConfigs(file);
       setProviderConfigs(map);
     } catch (e) {
       setToast({ msg: reportError('error.save', e), ok: false });
@@ -235,7 +239,7 @@ const ProviderDetail: Component = () => {
         return;
       }
       const port = def.engineType === 'vllm' ? 8000 : def.engineType === 'ollama' ? 11434 : 8080;
-      await invoke('start_local_server', {
+      await startLocalServer({
         modelPath,
         port,
         gpuLayers: 99,
@@ -261,7 +265,7 @@ const ProviderDetail: Component = () => {
     if (!def) return;
     setEngineActionLoading(true);
     try {
-      await invoke('stop_local_server', { engineType: def.engineType });
+      await stopLocalServer(def.engineType);
       setIsServerAlive('dead');
       setToast({ msg: t('provider.localStopped'), ok: true });
       setTimeout(() => setToast(null), 3000);
@@ -317,7 +321,7 @@ const ProviderDetail: Component = () => {
     const u = userCfg();
     setTestState({ status: 'testing' });
     try {
-      const r = await invoke<TestConnectionResult>('test_provider_connection', {
+      const r = await testProviderConnection({
         apiUrl: u?.apiUrl ?? defaultApiUrl(providerId()),
         apiKey: u?.apiKey ?? '',
         proxyUrl: u?.proxyUrl ?? null,
@@ -356,30 +360,14 @@ const ProviderDetail: Component = () => {
       try {
         const engineType = localEngineDef()?.engineType;
         if (engineType === 'llama_cpp' || engineType === 'vllm') {
-          const alive = await invoke<boolean>('probe_engine_health', {
-            apiUrl: u.apiUrl,
-            engineType: null,
-          });
+          const alive = await probeEngineHealth(u.apiUrl, null);
           setIsServerAlive(alive ? 'alive' : 'dead');
         } else if (engineType === 'ollama') {
-          const alive = await invoke<boolean>('probe_engine_health', {
-            apiUrl: u.apiUrl,
-            engineType: 'ollama',
-          });
+          const alive = await probeEngineHealth(u.apiUrl, 'ollama');
           setIsServerAlive(alive ? 'alive' : 'dead');
           if (alive) {
             try {
-              const r = await invoke<{
-                success: boolean;
-                models: Array<{
-                  id: string;
-                  owned_by: string;
-                  display_name?: string;
-                  released_at?: string;
-                }>;
-                error: string | null;
-                elapsedMs: number;
-              }>('fetch_provider_models', {
+              const r = await fetchProviderModels({
                 apiUrl: u.apiUrl,
                 apiKey: '',
                 proxyUrl: null,
@@ -406,7 +394,7 @@ const ProviderDetail: Component = () => {
             persist({ fetchedModels: [] });
           }
         } else {
-          const r = await invoke<TestConnectionResult>('test_provider_connection', {
+          const r = await testProviderConnection({
             apiUrl: u.apiUrl,
             apiKey: '',
             proxyUrl: null,
@@ -429,17 +417,7 @@ const ProviderDetail: Component = () => {
     const u = userCfg();
     setFetchState({ status: 'fetching' });
     try {
-      const r = await invoke<{
-        success: boolean;
-        models: Array<{
-          id: string;
-          owned_by: string;
-          display_name?: string;
-          released_at?: string;
-        }>;
-        error: string | null;
-        elapsedMs: number;
-      }>('fetch_provider_models', {
+      const r = await fetchProviderModels({
         apiUrl: u?.apiUrl ?? '',
         apiKey: u?.apiKey ?? '',
         proxyUrl: u?.proxyUrl ?? null,
@@ -478,7 +456,7 @@ const ProviderDetail: Component = () => {
             <Icon name="arrow-left" size={14} class="text-pri" /> {t('provider.back')}
           </button>
           <Show when={!catalogReady()}>
-            <span class="text-xs text-[#888] flex items-center gap-1.5">
+            <span class="text-xs text-[rgba(var(--text-base-rgb),0.55)] flex items-center gap-1.5">
               <span class="w-1.5 h-1.5 rounded-full bg-pri animate-pulse" />
               {t('provider.loadingCatalog')}
             </span>
@@ -490,7 +468,7 @@ const ProviderDetail: Component = () => {
           class="glass-card mb-4 flex items-center gap-4 animate-row-in"
           style={{ 'animation-delay': '30ms' }}
         >
-          <div class="flex items-center justify-center w-12 h-12 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 text-[#1a1e2c]">
+          <div class="flex items-center justify-center w-12 h-12 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 text-[var(--color-dark-700)]">
             {getProviderLogo(providerId()) ? (
               <img
                 src={getProviderLogo(providerId())!}
@@ -507,7 +485,7 @@ const ProviderDetail: Component = () => {
             <h1 class="text-xl font-bold text-white truncate tracking-tight">
               {userCfg()?.displayName ?? providerMeta()?.name ?? providerId()}
             </h1>
-            <div class="text-xs text-[#888] font-mono mt-1 flex items-center gap-2 flex-wrap">
+            <div class="text-xs text-[rgba(var(--text-base-rgb),0.55)] font-mono mt-1 flex items-center gap-2 flex-wrap">
               <Show when={isCustom()}>
                 <span
                   class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6]"
@@ -527,7 +505,7 @@ const ProviderDetail: Component = () => {
                   })}
                 </span>
                 <Show when={modelGroups().enabled.length > 0}>
-                  <span class="text-[#666]">·</span>
+                  <span class="text-[rgba(var(--text-base-rgb),0.4)]">·</span>
                   <span class="inline-flex items-center px-[7px] py-px rounded-full text-[9px] font-semibold tracking-[0.5px] uppercase leading-[1.6] bg-green-400/15 text-green-300 border border-green-400/20">
                     {t('common.enabled')}
                   </span>
@@ -569,7 +547,7 @@ const ProviderDetail: Component = () => {
                 href={(providerMeta() as any).doc}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-pri transition-all duration-200"
+                class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-white/10 text-[rgba(var(--text-base-rgb),0.65)] hover:border-pri-30 hover:text-pri transition-all duration-200"
               >
                 <Icon name="book" size={12} /> {t('provider.docs')}
               </a>
@@ -580,7 +558,7 @@ const ProviderDetail: Component = () => {
         {/* 本地引擎安装引导 */}
         <Show when={isLocalEngine() && !userCfg()}>
           <div
-            class="glass-card mb-4 p-4 text-xs text-[#aaa] leading-relaxed animate-row-in"
+            class="glass-card mb-4 p-4 text-xs text-[rgba(var(--text-base-rgb),0.65)] leading-relaxed animate-row-in"
             style={{ 'animation-delay': '45ms' }}
           >
             <p class="mb-2">{t('provider.localEngineGuide', { name: localEngineDef()!.name })}</p>
@@ -641,7 +619,7 @@ const ProviderDetail: Component = () => {
               <div>
                 <label class="block section-label mb-1.5" style={{ 'font-size': '9px' }}>
                   {t('provider.proxyUrl')}{' '}
-                  <span class="text-[#666] normal-case tracking-normal font-normal ml-1">
+                  <span class="text-[rgba(var(--text-base-rgb),0.4)] normal-case tracking-normal font-normal ml-1">
                     ({t('provider.proxyOptional')})
                   </span>
                 </label>
@@ -846,7 +824,7 @@ const ProviderDetail: Component = () => {
             </Show>
             <span class="flex-1">{testState().msg}</span>
             <Show when={testState().sampleModels && testState().sampleModels!.length > 0}>
-              <span class="text-[#888] font-mono">
+              <span class="text-[rgba(var(--text-base-rgb),0.55)] font-mono">
                 ({testState().sampleModels!.slice(0, 3).join(', ')}...)
               </span>
             </Show>
@@ -910,7 +888,9 @@ const ProviderDetail: Component = () => {
         <Show when={isLocalEngine() && localEngineDef()!.allowModelFileSelection}>
           <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '75ms' }}>
             <div class="section-label mb-3">{t('provider.localModels')}</div>
-            <div class="text-xs text-[#888] mb-3">{t('provider.localModelsHint')}</div>
+            <div class="text-xs text-[rgba(var(--text-base-rgb),0.55)] mb-3">
+              {t('provider.localModelsHint')}
+            </div>
             <Show
               when={
                 (userCfg()?.localModelPaths &&
@@ -926,7 +906,10 @@ const ProviderDetail: Component = () => {
                       <span class="flex-1 text-xs text-white font-mono truncate">{path}</span>
                       <button
                         type="button"
-                        class={'w-5 h-5 text-[#888] hover:text-red-400 ' + btnIcon}
+                        class={
+                          'w-5 h-5 text-[rgba(var(--text-base-rgb),0.55)] hover:text-red-400 ' +
+                          btnIcon
+                        }
                         onClick={() => removeLocalModelFile(modelId)}
                       >
                         ×
@@ -956,7 +939,9 @@ const ProviderDetail: Component = () => {
                 })}
               </div>
             </div>
-            <div class="text-xs text-[#888] italic mb-3 px-1">{t('provider.customModelsHint')}</div>
+            <div class="text-xs text-[rgba(var(--text-base-rgb),0.55)] italic mb-3 px-1">
+              {t('provider.customModelsHint')}
+            </div>
             <Show when={(userCfg()?.fetchedModels?.length ?? 0) > 0}>
               <div class="space-y-1.5">
                 <For each={userCfg()?.fetchedModels ?? []}>
@@ -1012,7 +997,7 @@ const ProviderDetail: Component = () => {
                   <Icon
                     name="search"
                     size={12}
-                    class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none"
+                    class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[rgba(var(--text-base-rgb),0.4)] pointer-events-none"
                   />
                   <input
                     type="text"
@@ -1055,7 +1040,7 @@ const ProviderDetail: Component = () => {
             {/* 未启用 */}
             <Show when={visibleAvailable().length > 0}>
               <div class="section-label mt-4 mb-2 flex items-center gap-2">
-                <span class="w-1.5 h-1.5 rounded-full bg-[#666]" />
+                <span class="w-1.5 h-1.5 rounded-full bg-[rgba(var(--text-base-rgb),0.4)]" />
                 {t('provider.notEnabledCount', { count: formatNumber(visibleAvailable().length) })}
               </div>
               <div class="space-y-1.5">
@@ -1105,7 +1090,7 @@ const ProviderDetail: Component = () => {
                 !search()
               }
             >
-              <div class="text-xs text-[#666] italic py-6 text-center">
+              <div class="text-xs text-[rgba(var(--text-base-rgb),0.4)] italic py-6 text-center">
                 {t('provider.noCatalogModels')}
               </div>
             </Show>
@@ -1117,7 +1102,7 @@ const ProviderDetail: Component = () => {
                 visibleOrphans().length === 0
               }
             >
-              <div class="text-xs text-[#666] italic py-6 text-center">
+              <div class="text-xs text-[rgba(var(--text-base-rgb),0.4)] italic py-6 text-center">
                 {t('provider.noModelMatch', { query: search() })}
               </div>
             </Show>

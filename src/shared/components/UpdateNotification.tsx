@@ -1,6 +1,7 @@
 import { Component, createSignal, onCleanup, onMount, Show } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { installAppUpdate, restartApp } from '../../core/api/update';
 import { listen } from '@tauri-apps/api/event';
+import { EVENTS } from '../../core/api/events';
 import { Transition } from 'solid-transition-group';
 import Icon from './Icon';
 import {
@@ -49,7 +50,7 @@ const UpdateNotification: Component = () => {
     setAppUpdateReady(false);
 
     try {
-      await invoke('install_app_update');
+      await installAppUpdate();
       setAppUpdateProgress(1);
       setAppUpdateReady(true);
     } catch (e) {
@@ -76,7 +77,7 @@ const UpdateNotification: Component = () => {
    */
   const handleRestart = async () => {
     try {
-      await invoke('restart_app');
+      await restartApp();
     } catch (e) {
       console.error('重启失败:', e);
       setError(t('update.restartFailed'));
@@ -86,7 +87,7 @@ const UpdateNotification: Component = () => {
   onMount(async () => {
     // 监听后端推送的下载进度事件 (0.0 ~ 1.0)
     try {
-      unlistenProgress = await listen<number>('app-update-progress', (event) => {
+      unlistenProgress = await listen<number>(EVENTS.appUpdateProgress, (event) => {
         const pct = typeof event.payload === 'number' ? event.payload : 0;
         setAppUpdateProgress(Math.max(0, Math.min(1, pct)));
       });
@@ -127,7 +128,7 @@ const UpdateNotification: Component = () => {
                 <div class="text-sm font-semibold text-white leading-tight">
                   {t('update.foundVersion', { version: appUpdateInfo()!.version })}
                 </div>
-                <div class="text-[11px] text-[#888] mt-0.5">
+                <div class="text-[11px] text-[rgba(var(--text-base-rgb),0.55)] mt-0.5">
                   {t('update.currentVersion', { version: appUpdateInfo()!.currentVersion || '?' })}
                 </div>
               </div>
@@ -136,7 +137,7 @@ const UpdateNotification: Component = () => {
             {/* Release notes 摘要（仅当有内容时显示） */}
             <Show when={appUpdateInfo()!.notes}>
               <div
-                class="text-[12px] text-[#bbb] leading-relaxed rounded-lg p-2.5 max-h-[88px] overflow-y-auto"
+                class="text-[12px] text-[rgba(var(--text-base-rgb),0.73)] leading-relaxed rounded-lg p-2.5 max-h-[88px] overflow-y-auto"
                 style={{
                   background: 'rgba(var(--text-base-rgb), 0.04)',
                   border: '1px solid var(--border-dim)',
@@ -156,7 +157,7 @@ const UpdateNotification: Component = () => {
                 class="text-[12px] rounded-lg px-3 py-2"
                 style={{
                   background: 'rgba(255, 80, 80, 0.1)',
-                  color: '#ff8080',
+                  color: 'var(--color-danger)',
                   border: '1px solid rgba(255, 80, 80, 0.2)',
                 }}
               >
@@ -167,7 +168,7 @@ const UpdateNotification: Component = () => {
             {/* 进度条：仅在下载中或等待重启时显示 */}
             <Show when={appUpdateDownloading() || appUpdateReady()}>
               <div class="flex flex-col gap-1.5">
-                <div class="flex justify-between text-[11px] text-[#888]">
+                <div class="flex justify-between text-[11px] text-[rgba(var(--text-base-rgb),0.55)]">
                   <span>{appUpdateReady() ? t('update.ready') : t('update.downloading')}</span>
                   <span class="font-mono">
                     {formatNumber(Math.round(appUpdateProgress() * 100))}%

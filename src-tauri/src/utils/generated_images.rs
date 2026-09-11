@@ -21,7 +21,7 @@ pub const IMAGE_TOKEN_SCHEME: &str = "aio-image://";
 /// 单张图片最大字节数（20MB），超出则跳过。
 const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
-/// 仅允许栅格图片类型落盘；拒绝 SVG 及其它非安全类型（AGT-07）。
+/// 仅允许栅格图片类型落盘；拒绝 SVG 及其它非安全类型。
 fn is_safe_raster_mime(mime: &str) -> bool {
     matches!(
         mime,
@@ -159,7 +159,7 @@ async fn save_images_to_dir(
     for url in urls {
         match fetch_image(&url).await {
             Ok(Some((mime, bytes))) => {
-                // AGT-07：拒绝 SVG 等非栅格类型，避免未消毒矢量内容落盘
+                //：拒绝 SVG 等非栅格类型，避免未消毒矢量内容落盘
                 if !is_safe_raster_mime(&mime) {
                     tracing::warn!("跳过非栅格生成图片 mime ({:?}): {}", mime, url);
                     continue;
@@ -231,7 +231,7 @@ fn resolve_redirect(base: &str, location: &str) -> Option<String> {
 /// 获取单张图片字节。
 ///
 /// - data URI → 直接解码（mime 由调用方按安全白名单校验）
-/// - http(s) → 逐跳 SSRF 校验后下载（30s 超时，无鉴权头；重定向每跳重新校验，AGT-06/07）
+/// - http(s) → 逐跳 SSRF 校验后下载（30s 超时，无鉴权头；重定向每跳重新校验）
 /// - 其它 → `Ok(None)`
 async fn fetch_image(url: &str) -> Result<Option<(String, Vec<u8>)>, String> {
     if url.starts_with("data:image/") {

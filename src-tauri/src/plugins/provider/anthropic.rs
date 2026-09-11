@@ -12,13 +12,13 @@
 //! - handle_anthropic_stream_event：Anthropic SSE 事件 → 统一的 delta 累积（内容/思考/工具调用/用量）
 //! - anthropic_text_content / anthropic_usage：非流式响应解析
 
-use reqwest::{Client, RequestBuilder};
+use reqwest::RequestBuilder;
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::time::Duration;
 use tauri::Emitter;
 
 use super::ProviderPlugin;
+use crate::core::events as ev;
 use crate::core::models::LiveModel;
 
 pub struct AnthropicProvider;
@@ -28,27 +28,8 @@ impl ProviderPlugin for AnthropicProvider {
         "anthropic"
     }
 
-    fn name(&self) -> &'static str {
-        "Anthropic"
-    }
-
     fn matches(&self, api_url: &str) -> bool {
         is_anthropic_url(api_url)
-    }
-
-    fn build_client(&self, proxy_url: Option<&str>, timeout_secs: u64) -> Result<Client, String> {
-        let mut b = Client::builder()
-            .user_agent("AIO-Desktop/0.4 (anthropic-provider)")
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(timeout_secs));
-        if let Some(p) = proxy_url {
-            if !p.trim().is_empty() {
-                let proxy = reqwest::Proxy::all(p).map_err(|e| format!("代理 URL 非法: {}", e))?;
-                b = b.proxy(proxy);
-            }
-        }
-        b.build()
-            .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
     }
 
     fn models_url(&self, api_url: &str) -> String {
@@ -438,6 +419,36 @@ pub fn anthropic_usage(body: &serde_json::Value) -> (u32, u32, u32) {
     (input, output, cached)
 }
 
+/// Anthropic SSE：提取 content_block_delta 的文本增量（非 text_delta 返回 None）。
+/// 供主循环的 handle_anthropic_stream_event 与 btw 旁路共用（btw 历史上手撸解码）。
+pub fn anthropic_sse_text_delta(val: &serde_json::Value) -> Option<&str> {
+    if val.get("type").and_then(|v| v.as_str()) != Some("content_block_delta") {
+        return None;
+    }
+    let delta = val.get("delta")?;
+    if delta.get("type").and_then(|v| v.as_str()) != Some("text_delta") {
+        return None;
+    }
+    delta.get("text").and_then(|v| v.as_str())
+}
+
+/// Anthropic SSE：是否为 message_stop（流结束）。
+pub fn anthropic_sse_is_message_stop(val: &serde_json::Value) -> bool {
+    val.get("type").and_then(|v| v.as_str()) == Some("message_stop")
+}
+
+/// Anthropic SSE：从 message_start 中提取 (input_tokens, cache_read_input_tokens)。
+/// 第二元为 None 表示该事件未携带缓存命中数（调用方应保留原值，不清零）。
+pub fn anthropic_sse_message_usage(val: &serde_json::Value) -> Option<(u32, Option<u32>)> {
+    let usage = val.get("message")?.get("usage")?;
+    let input = usage.get("input_tokens")?.as_u64()? as u32;
+    let cached = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+    Some((input, cached))
+}
+
 /// 处理一条 Anthropic 流式事件，累积内容/思考/工具调用/用量并向前端发射增量事件。
 #[allow(clippy::too_many_arguments)]
 pub fn handle_anthropic_stream_event(
@@ -456,15 +467,11 @@ pub fn handle_anthropic_stream_event(
     let etype = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match etype {
         "message_start" => {
-            if let Some(usage) = val.get("message").and_then(|m| m.get("usage")) {
-                if let Some(v) = usage.get("input_tokens").and_then(|x| x.as_u64()) {
-                    *input_tokens = v as u32;
-                }
-                if let Some(v) = usage
-                    .get("cache_read_input_tokens")
-                    .and_then(|x| x.as_u64())
-                {
-                    *cached_input_tokens = v as u32;
+            if let Some((inp, cached)) = anthropic_sse_message_usage(val) {
+                *input_tokens = inp;
+                // 事件未携带缓存命中数时保留原值（不覆盖为 0）
+                if let Some(c) = cached {
+                    *cached_input_tokens = c;
                 }
             }
         }
@@ -489,8 +496,8 @@ pub fn handle_anthropic_stream_event(
                 tc_accum.insert(index, (id.clone(), name.clone(), String::new()));
                 if !id.is_empty() && !name.is_empty() {
                     let _ = window.emit(
-                        "llm-tool-call",
-                        crate::commands::llm::ToolCallPayload {
+                        ev::LLM_TOOL_CALL,
+                        crate::core::models::ToolCallPayload {
                             assistant_id: assistant_id.to_string(),
                             topic_id: topic_id.to_string(),
                             tool_call_id: id,
@@ -510,10 +517,10 @@ pub fn handle_anthropic_stream_event(
                 .unwrap_or("");
             match dtype {
                 "text_delta" => {
-                    if let Some(s) = delta.and_then(|d| d.get("text")).and_then(|v| v.as_str()) {
+                    if let Some(s) = anthropic_sse_text_delta(val) {
                         content_buf.push_str(s);
                         let _ = window.emit(
-                            "llm-chunk",
+                            ev::LLM_CHUNK,
                             crate::core::models::StreamPayload {
                                 assistant_id: assistant_id.to_string(),
                                 topic_id: topic_id.to_string(),
@@ -536,7 +543,7 @@ pub fn handle_anthropic_stream_event(
                     {
                         reasoning_buf.push_str(s);
                         let _ = window.emit(
-                            "llm-reasoning",
+                            ev::LLM_REASONING,
                             crate::core::models::StreamPayload {
                                 assistant_id: assistant_id.to_string(),
                                 topic_id: topic_id.to_string(),

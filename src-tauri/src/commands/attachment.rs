@@ -1,3 +1,6 @@
+//! 聊天附件命令（attachment_*）：附件存储/关联/内容抽取/清理。
+//! 附件文件本体在 utils/file_parser.rs 解析；本文件只管持久化与 IPC。
+
 use crate::core::models::{FileMeta, StoredAttachment};
 use crate::core::state::DbState;
 use crate::utils::file_parser::{

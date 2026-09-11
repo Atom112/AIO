@@ -644,7 +644,7 @@ const SubagentModelSettings: Component = () => {
                             <div
                               class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] cursor-pointer transition-[background,color] duration-[120ms] select-none"
                               classList={{
-                                'text-[#ff8a8a] bg-[rgba(255,107,107,0.12)]': sel(),
+                                'text-[var(--color-danger)] bg-[rgba(255,107,107,0.12)]': sel(),
                                 'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
                               }}
                               onClick={() => toggleTool(toolName, false)}
@@ -652,7 +652,7 @@ const SubagentModelSettings: Component = () => {
                               <Icon
                                 name={sel() ? 'x-circle' : 'plus'}
                                 size={11}
-                                class={sel() ? 'text-[#ff8a8a]' : 'text-white/25'}
+                                class={sel() ? 'text-[var(--color-danger)]' : 'text-white/25'}
                               />
                               <span class="truncate">{toolName}</span>
                             </div>
@@ -672,7 +672,9 @@ const SubagentModelSettings: Component = () => {
               <textarea
                 value={newSystemPrompt()}
                 onInput={(e) => setNewSystemPrompt(e.currentTarget.value)}
-                placeholder={t('subagent.systemPromptPlaceholder', { name: newName() || '助手' })}
+                placeholder={t('subagent.systemPromptPlaceholder', {
+                  name: newName() || t('common.assistant'),
+                })}
                 rows={3}
                 class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[var(--border-dim)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors resize-none"
               />

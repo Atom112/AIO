@@ -281,8 +281,30 @@ impl LocalEnginePlugin for OllamaPlugin {
         "ollama"
     }
 
-    fn supported_extensions(&self) -> &[&'static str] {
-        &["gguf"]
+    /// Ollama 使用根 URL（不挂 /v1），模型列表走 /api/tags
+    fn default_api_url(&self, port: u16) -> String {
+        format!("http://localhost:{port}")
+    }
+
+    fn models_url(&self, api_url: &str) -> String {
+        format!("{}/api/tags", api_url.trim_end_matches('/'))
+    }
+
+    /// Ollama 响应形态：{ "models": [ { "name": ... } ] }
+    fn parse_model_ids(&self, body: &serde_json::Value) -> Vec<String> {
+        body["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Ollama 为系统安装的外部服务，模型路径由 Ollama 自身管理，不做沙箱校验
+    fn is_external(&self) -> bool {
+        true
     }
 
     fn install_path(&self, _app: &AppHandle) -> PathBuf {
@@ -398,18 +420,6 @@ impl LocalEnginePlugin for OllamaPlugin {
             debug!("[ollama] 模型 {} 已就绪，API: {}", model_name, api_url);
             Ok(api_url)
         })
-    }
-
-    fn parse_progress_from_log(&self, line: &str) -> Option<f64> {
-        if line.contains("listening") || line.contains("Listening") {
-            Some(0.3)
-        } else if line.contains("creating") || line.contains("importing") {
-            Some(0.5)
-        } else if line.contains("success") || line.contains("ready") {
-            Some(0.9)
-        } else {
-            None
-        }
     }
 }
 

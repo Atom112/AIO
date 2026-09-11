@@ -1,19 +1,25 @@
-//! 本地内置小型嵌入模型（all-MiniLM-L6-v2，ONNX，随应用打包，开箱即用）。
+//! 本地嵌入模型（ONNX）：内置 all-MiniLM-L6-v2（随应用打包，开箱即用）与
+//! 设置页按需下载的主流开源模型（安装目录可自定义）。
 //!
-//! 模型文件通过 `include_bytes!` 直接编译进二进制，无需联网、无需安装或选择
-//! 本地模型；离线也稳定可用。更强的语义检索可切换在线 OpenAI 兼容 API。
+//! 模型文件加载约定：内置模型走 `include_bytes!`；下载模型读取
+//! `<embed_dir>/<id>/`（onnx + tokenizer 文件，与 commands/model_download.rs manifest 一致），
+//! 通过 fastembed `UserDefinedEmbeddingModel` 加载，进程内按模型 id 惰性缓存一次。
+//! 池化方式（mean/cls）取自 manifest（BGE/GTE/MXBAI 为 CLS，MiniLM/E5/paraphrase 为 Mean）。
 
 use super::Embedder;
 use crate::core::models::MemoryEmbeddingConfig;
 use fastembed::{
     InitOptionsUserDefined, Pooling, TextEmbedding, TokenizerFiles, UserDefinedEmbeddingModel,
 };
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::AppHandle;
 
 pub const LOCAL_MODEL_NAME: &str = "all-MiniLM-L6-v2";
 pub const LOCAL_DIMENSIONS: usize = 384;
 
-/// 打包进二进制的模型文件（随安装分发，构成"开箱即用"）。
+/// 打包进二进制的内置模型文件（随安装分发，构成"开箱即用"）。
 struct BundledModel;
 
 impl BundledModel {
@@ -29,38 +35,115 @@ impl BundledModel {
         include_bytes!("../../../resources/models/all-MiniLM-L6-v2/tokenizer_config.json");
 }
 
-/// 惰性初始化全局模型实例（进程内仅加载一次，供所有调用共享）。
-fn model() -> Result<&'static TextEmbedding, String> {
-    static INSTANCE: OnceLock<Result<TextEmbedding, String>> = OnceLock::new();
-    INSTANCE
-        .get_or_init(|| {
-            // 说明：UserDefinedEmbeddingModel 为 #[non_exhaustive]，须用构造器。
-            let user_model = UserDefinedEmbeddingModel::new(
-                BundledModel::ONNX.to_vec(),
-                TokenizerFiles {
-                    tokenizer_file: BundledModel::TOKENIZER.to_vec(),
-                    config_file: BundledModel::CONFIG.to_vec(),
-                    special_tokens_map_file: BundledModel::SPECIAL.to_vec(),
-                    tokenizer_config_file: BundledModel::TOKENIZER_CONFIG.to_vec(),
-                },
-            )
-            .with_pooling(Pooling::Mean);
-            TextEmbedding::try_new_from_user_defined(
-                user_model,
-                InitOptionsUserDefined::default().with_max_length(256),
-            )
-            .map_err(|e| format!("本地嵌入模型加载失败: {e}"))
-        })
-        .as_ref()
-        .map_err(Clone::clone)
+type ModelCache = HashMap<String, Result<Arc<TextEmbedding>, String>>;
+
+/// 进程内模型实例缓存（按模型 id；加载结果缓存，失败不重复尝试直至重启）。
+static INSTANCES: OnceLock<Mutex<ModelCache>> = OnceLock::new();
+
+fn instances() -> &'static Mutex<ModelCache> {
+    INSTANCES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 本地内置嵌入器。
-pub struct LocalEmbedder;
+fn pooling_of(id: &str) -> Pooling {
+    match crate::core::model_registry::find_entry(id) {
+        Some(e) => match e.pooling {
+            "mean" => Pooling::Mean,
+            _ => Pooling::Cls,
+        },
+        None => Pooling::Mean,
+    }
+}
+
+/// 加载（或取缓存）模型实例。内置模型走 include_bytes；下载模型读安装目录。
+fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> {
+    {
+        let map = instances().lock().map_err(|e| e.to_string())?;
+        if let Some(hit) = map.get(id) {
+            return hit.clone();
+        }
+    }
+    let entry = crate::core::model_registry::find_entry(id).ok_or_else(|| {
+        format!("未知嵌入模型: {id}，请在「Embedding 模型管理」中选择已支持的模型")
+    })?;
+    let (onnx, tokenizer) = if entry.bundled {
+        (
+            BundledModel::ONNX.to_vec(),
+            TokenizerFiles {
+                tokenizer_file: BundledModel::TOKENIZER.to_vec(),
+                config_file: BundledModel::CONFIG.to_vec(),
+                special_tokens_map_file: BundledModel::SPECIAL.to_vec(),
+                tokenizer_config_file: BundledModel::TOKENIZER_CONFIG.to_vec(),
+            },
+        )
+    } else {
+        let dir = embed_dir.join(id);
+        let onnx_path = dir.join(entry.files.first().map(|f| f.name).unwrap_or("model.onnx"));
+        if !onnx_path.exists() {
+            return Err(format!(
+                "嵌入模型未下载（{}），请在「Embedding 模型管理」中下载",
+                dir.display()
+            ));
+        }
+        let read = |name: &str| -> Result<Vec<u8>, String> {
+            std::fs::read(dir.join(name))
+                .map_err(|e| format!("读取 {} 失败: {e}", dir.join(name).display()))
+        };
+        let onnx = std::fs::read(&onnx_path)
+            .map_err(|e| format!("读取 ONNX 权重失败（{}）: {e}", onnx_path.display()))?;
+        (
+            onnx,
+            TokenizerFiles {
+                tokenizer_file: read("tokenizer.json")?,
+                config_file: read("config.json")?,
+                special_tokens_map_file: read("special_tokens_map.json").unwrap_or_default(),
+                tokenizer_config_file: read("tokenizer_config.json").unwrap_or_default(),
+            },
+        )
+    };
+    let user_model = UserDefinedEmbeddingModel::new(onnx, tokenizer).with_pooling(pooling_of(id));
+    let result = TextEmbedding::try_new_from_user_defined(
+        user_model,
+        InitOptionsUserDefined::default().with_max_length(256),
+    )
+    .map(Arc::new)
+    .map_err(|e| format!("本地嵌入模型加载失败（{id}）: {e}"));
+    let mut map = instances().lock().map_err(|e| e.to_string())?;
+    map.insert(id.to_string(), result.clone());
+    result
+}
+
+/// 本地嵌入器。
+pub struct LocalEmbedder {
+    /// 嵌入模型安装根目录（<embed_dir>/<id>/ 存放模型文件）。
+    embed_dir: PathBuf,
+    cfg: MemoryEmbeddingConfig,
+    id: String,
+    dims: usize,
+}
 
 impl LocalEmbedder {
-    pub fn new(_cfg: &MemoryEmbeddingConfig) -> Self {
-        Self
+    pub fn new(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> Self {
+        let dir = crate::core::model_registry::embed_models_dir(app);
+        Self::with_dir(dir, cfg)
+    }
+
+    /// 指定安装目录构造（测试与自定义目录共用）。
+    pub fn with_dir(embed_dir: PathBuf, cfg: &MemoryEmbeddingConfig) -> Self {
+        let id = if cfg.model.trim().is_empty() {
+            LOCAL_MODEL_NAME.to_string()
+        } else {
+            cfg.model.clone()
+        };
+        let dims = crate::core::model_registry::find_entry(&id)
+            .map(|e| e.dims)
+            .filter(|d| *d > 0)
+            .unwrap_or(LOCAL_DIMENSIONS);
+        Self {
+            embed_dir,
+            cfg: cfg.clone(),
+            id,
+            dims,
+        }
     }
 }
 
@@ -71,25 +154,51 @@ impl Embedder for LocalEmbedder {
     }
 
     fn model_key(&self) -> String {
-        LOCAL_MODEL_NAME.into()
+        self.id.clone()
     }
 
     fn dimensions(&self) -> usize {
-        LOCAL_DIMENSIONS
+        self.dims
     }
 
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-        let m = model()?;
-        let texts = texts.to_vec();
-        let out = tokio::task::spawn_blocking(move || m.embed(texts, None))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        Ok(out)
+        let mut result: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        let mut pending: Vec<(usize, String)> = Vec::new();
+        for (i, t) in texts.iter().enumerate() {
+            match super::cache::get(&self.id, self.cfg.dimensions, t) {
+                Some(v) => result.push(v),
+                None => {
+                    pending.push((i, t.clone()));
+                    result.push(Vec::new());
+                }
+            }
+        }
+        if !pending.is_empty() {
+            let m = load_model(&self.embed_dir, &self.id)?;
+            let cfg = self.cfg.clone();
+            let pending_texts: Vec<String> = pending.iter().map(|(_, t)| t.clone()).collect();
+            let out = tokio::task::spawn_blocking(move || m.embed(pending_texts, None))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            for (slot, (i, t)) in pending.iter().enumerate() {
+                let v = super::trim_to_dim(&cfg, out.get(slot).cloned().unwrap_or_default());
+                super::cache::put(&self.id, cfg.dimensions, t, v.clone());
+                result[*i] = v;
+            }
+        }
+        Ok(result)
     }
 
     fn is_available(&self) -> bool {
-        true
+        if let Some(entry) = crate::core::model_registry::find_entry(&self.id) {
+            if entry.bundled {
+                return true;
+            }
+            let dir = self.embed_dir.join(&self.id);
+            return entry.files.iter().all(|f| dir.join(f.name).exists());
+        }
+        false
     }
 }
 
@@ -97,11 +206,12 @@ impl Embedder for LocalEmbedder {
 mod tests {
     use super::*;
 
-    /// 内置模型开箱即用：应能独立产出 384 维向量（无需联网/Ollama）。
+    /// 内置模型开箱即用：应能独立产出 384 维向量（无需联网/下载）。
     #[tokio::test]
-    async fn local_embedder_produces_384_dim() {
+    async fn bundled_embedder_produces_384_dim() {
         let cfg = MemoryEmbeddingConfig::default();
-        let e = LocalEmbedder::new(&cfg);
+        // bundled 路径不访问安装目录，测试传入空目录即可
+        let e = LocalEmbedder::with_dir(PathBuf::new(), &cfg);
         assert_eq!(e.dimensions(), 384);
         let v = e
             .embed(&[

@@ -9,25 +9,10 @@ use crate::utils::file_tools::strip_windows_extended_prefix;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-const PROJECTS_FILE: &str = "projects.json";
 const AIO_DIR: &str = ".aio";
 
-fn projects_file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|dir| dir.join(PROJECTS_FILE))
-        .map_err(|e| e.to_string())
-}
-
-fn load_projects_file(app: &AppHandle) -> ProjectsFile {
-    let Ok(path) = projects_file_path(app) else {
-        return ProjectsFile::default();
-    };
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
-}
+// projects.json 路径与读取统一由 utils::project_index 提供（全仓唯一来源）
+use crate::utils::project_index::{load_projects_file, projects_file_path};
 
 fn save_projects_file(app: &AppHandle, file: &ProjectsFile) -> Result<(), String> {
     let path = projects_file_path(app)?;
@@ -78,24 +63,29 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "aio".to_string());
 
+        // 内置 server id 取常量（历史别名见 core::ids，勿改字符串值）
+        let fs_id = crate::core::ids::BUILTIN_FS_SERVER_ID;
+        let mut servers = serde_json::Map::new();
+        servers.insert(
+            fs_id.to_string(),
+            serde_json::json!({
+                "id": fs_id,
+                "displayName": "项目文件系统 (AIO 内置)",
+                "transport": {
+                    "transport": "stdio",
+                    "command": exe_path,
+                    "args": ["--fs-server", project_path],
+                    "env": {}
+                },
+                "enabledTools": [],
+                "autoStart": true,
+                "hasStoredSecret": false
+            }),
+        );
         let mcp_config = serde_json::json!({
             "version": 1,
             "updatedAt": "",
-            "servers": {
-                "__aio-filesystem__": {
-                    "id": "__aio-filesystem__",
-                    "displayName": "项目文件系统 (AIO 内置)",
-                    "transport": {
-                        "transport": "stdio",
-                        "command": exe_path,
-                        "args": ["--fs-server", project_path],
-                        "env": {}
-                    },
-                    "enabledTools": [],
-                    "autoStart": true,
-                    "hasStoredSecret": false
-                }
-            }
+            "servers": servers,
         });
         std::fs::write(
             &mcp_path,
@@ -153,9 +143,12 @@ pub fn create_project(
             .unwrap_or_else(|_| "\"normal\"".to_string())
             .trim_matches('"')
             .to_string();
+        // mcp_server_ids 预置内置文件系统 server（id 取常量，避免魔法字符串）
+        let default_mcp_ids = serde_json::to_string(&vec![crate::core::ids::BUILTIN_FS_SERVER_ID])
+            .unwrap_or_else(|_| "[]".to_string());
         conn.execute(
-            "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, '', NULL, '[\"__aio-filesystem__\"]', '[]', ?3, ?4, 'project')",
-            rusqlite::params![assistant_id, project.name, project.id, agent_mode_str],
+            "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, '', NULL, ?5, '[]', ?3, ?4, 'project')",
+            rusqlite::params![assistant_id, project.name, project.id, agent_mode_str, default_mcp_ids],
         ).map_err(|e| format!("创建项目助理失败: {}", e))?;
     }
 

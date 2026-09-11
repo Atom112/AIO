@@ -1,5 +1,5 @@
 import { createSignal, For, Show } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { revertFileChange } from '../../core/api/project';
 import { currentProject } from '../../core/store/store';
 import { t } from '../../core/i18n';
 import type { FileChangeInfo } from '../../core/store/store';
@@ -45,9 +45,9 @@ function parseHunkHeader(text: string): { text: string; color?: string }[] {
   const m = text.match(/^(@@\s*)(-\d+(?:,\d+)?)(\s+)(\+\d+(?:,\d+)?)(\s*@@)/);
   if (m) {
     segs.push({ text: m[1] });
-    segs.push({ text: m[2], color: '#ff5050' }); // red for removed line range
+    segs.push({ text: m[2], color: 'var(--color-danger)' }); // red for removed line range
     segs.push({ text: m[3] });
-    segs.push({ text: m[4], color: '#50dc64' }); // green for added line range
+    segs.push({ text: m[4], color: 'var(--color-success)' }); // green for added line range
     segs.push({ text: m[5] });
   } else {
     segs.push({ text });
@@ -62,9 +62,9 @@ function parseSummary(summary: string): { text: string; color?: string }[] {
   const parts = summary.split(/(\s+)/g);
   for (const p of parts) {
     if (p.startsWith('+')) {
-      segs.push({ text: p, color: '#50dc64' });
+      segs.push({ text: p, color: 'var(--color-success)' });
     } else if (p.startsWith('-')) {
-      segs.push({ text: p, color: '#ff5050' });
+      segs.push({ text: p, color: 'var(--color-danger)' });
     } else {
       segs.push({ text: p });
     }
@@ -83,10 +83,7 @@ const DiffView = (props: DiffViewProps) => {
           try {
             const projectPath = currentProject()?.path;
             if (!projectPath) return;
-            await invoke('revert_file_change', {
-              projectPath,
-              filePath: change.filePath,
-            });
+            await revertFileChange(projectPath, change.filePath);
           } catch (err) {
             console.error('Revert failed:', err);
           }

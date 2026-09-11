@@ -57,6 +57,9 @@ const SubagentModelSettings = lazy(
   () => import('./features/settings/components/SubagentModelSettings'),
 );
 const UsageSettings = lazy(() => import('./features/settings/components/UsageSettings'));
+const EmbeddingModelSettings = lazy(
+  () => import('./features/settings/components/EmbeddingModelSettings'),
+);
 
 render(
   () => (
@@ -78,6 +81,7 @@ render(
           <Route path="/usage" component={UsageSettings} />
           <Route path="/app" component={AppSettings} />
           <Route path="/subagent-models" component={SubagentModelSettings} />
+          <Route path="/embedding-models" component={EmbeddingModelSettings} />
         </Route>
       </Router>
     </Suspense>

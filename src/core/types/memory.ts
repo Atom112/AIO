@@ -32,6 +32,8 @@ export interface CodeChunkHit {
   filePath: string;
   startLine: number;
   endLine: number;
+  /** 所在符号名（符号感知分块；行窗口分块为空） */
+  symbol?: string;
   content: string;
   score: number;
 }
@@ -72,6 +74,36 @@ export interface MemoryStats {
   embeddedFacts: number;
   dbSizeBytes: number;
   lastReindexAt?: string;
+  /** 近 7 天：检索查询次数 */
+  retrievalQueries7d: number;
+  /** 近 7 天：检索命中条数 */
+  retrievalHits7d: number;
+  /** 近 7 天：判重触发次数 */
+  dedupTriggers7d: number;
+  /** 近 7 天：自动提取沉淀事实数 */
+  extracted7d: number;
+  /** 近 7 天：LLM 仲裁动作分布（merge/update/supersede/keep_separate） */
+  judgeDistribution7d: Record<string, number>;
+}
+
+/** 合并整理结果（sleep-time consolidation） */
+export interface ConsolidationReport {
+  clusters: number;
+  arbitrated: number;
+  merged: number;
+  updated: number;
+  superseded: number;
+  kept: number;
+  budgetUsed: number;
+  error?: string;
+}
+
+/** 图谱抽取结果（P3-3 轻量知识图谱） */
+export interface GraphExtractReport {
+  factsProcessed: number;
+  relations: number;
+  failed: number;
+  error?: string;
 }
 
 /** 嵌入器就绪状态 */
@@ -91,6 +123,8 @@ export interface MemoryStatus {
   embedder: EmbedderStatus;
   /** 本项目当前嵌入配置（项目级，存于记忆库 meta） */
   embedding: MemoryEmbeddingConfig;
+  /** 本项目当前重排配置（项目级；apiKey 恒为空，在线 Key 存 secure_store） */
+  rerank: MemoryRerankConfig;
 }
 
 /** 记忆列表分页 */
@@ -99,11 +133,15 @@ export interface MemoryListPage {
   total: number;
 }
 
-/** 嵌入配置（与后端 MemoryEmbeddingConfig 对应） */
+/** 嵌入配置（与后端 MemoryEmbeddingConfig 对应；v0.8 起仅支持本地模型，provider 恒为 local） */
 export interface MemoryEmbeddingConfig {
+  /** 本地嵌入模型（唯一受支持的 provider；旧配置中的 online 会在后端自动归一化） */
   provider: 'local' | 'online';
+  /** 本地嵌入模型 id（manifest 条目 id，如 bge-small-en-v1.5 / all-MiniLM-L6-v2） */
   model: string;
+  /** 已废弃（在线服务地址），恒为空，保留仅为旧配置兼容 */
   apiUrl: string;
+  /** 目标维度（0=模型默认全维；对 bge-m3 等 Matryoshka 模型可裁剪） */
   dimensions: number;
   enabled: boolean;
   apiKey?: string;
@@ -117,4 +155,42 @@ export interface EmbeddingTestResult {
   dimensions: number;
   latencyMs: number;
   error?: string;
+}
+
+/** 重排配置（与后端 MemoryRerankConfig 对应） */
+export interface MemoryRerankConfig {
+  enabled: boolean;
+  provider: 'local' | 'online';
+  model: string;
+  apiUrl: string;
+  apiKey?: string;
+}
+
+/** 重排连接测试结果 */
+export interface RerankTestResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  latencyMs: number;
+  error?: string;
+}
+
+/** 可下载/已安装模型信息（本地重排/嵌入模型） */
+export interface EmbeddingModelInfo {
+  id: string;
+  /** embed | rerank */
+  kind: string;
+  label: string;
+  /** 向量维度（rerank 为 0） */
+  dims: number;
+  /** mean | cls | none */
+  pooled: string;
+  /** 内置模型（随应用打包，无需下载，不可删除） */
+  bundled: boolean;
+  /** 全局启用状态（仅 embed kind 有意义） */
+  enabled: boolean;
+  files: { name: string; downloaded: boolean }[];
+  downloaded: boolean;
+  /** 已下载文件占用空间（字节） */
+  sizeBytes: number;
 }

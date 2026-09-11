@@ -51,6 +51,17 @@ pub async fn judge(cfg: &LlmConfig, existing: &str, incoming: &str) -> (JudgeAct
     }
 }
 
+/// 仲裁动作入 7 天滚动统计（自进化质量探针：动作分布可量化）。
+pub fn bump_judge_stat(store: &crate::services::memory::store::MemoryStore, action: &JudgeAction) {
+    let key = match action {
+        JudgeAction::Merge => crate::services::memory::store::STAT_JUDGE_MERGE,
+        JudgeAction::Update => crate::services::memory::store::STAT_JUDGE_UPDATE,
+        JudgeAction::Supersede => crate::services::memory::store::STAT_JUDGE_SUPERSEDE,
+        JudgeAction::KeepSeparate => crate::services::memory::store::STAT_JUDGE_KEEP,
+    };
+    store.rolling_bump(key, 1);
+}
+
 /// 解析仲裁响应（容错：任何异常都回退 keep_separate）。
 pub fn parse_response(v: &serde_json::Value) -> (JudgeAction, String) {
     let fallback = JudgeResponse {

@@ -14,7 +14,7 @@ import {
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { toCanvas, toPng } from 'html-to-image';
-import { invoke } from '@tauri-apps/api/core';
+import { saveBinaryFile } from '../../../core/api/attachment';
 import { save } from '@tauri-apps/plugin-dialog';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -59,7 +59,7 @@ async function downloadBlob(content: string | Blob, filename: string, mime: stri
     const buf = new Uint8Array(await blob.arrayBuffer());
     const filePath = await save({ defaultPath: filename });
     if (filePath) {
-      await invoke('save_binary_file', { path: filePath, bytes: Array.from(buf) });
+      await saveBinaryFile(filePath, Array.from(buf));
       return;
     }
     // 用户取消了保存对话框 → 静默结束
@@ -152,7 +152,7 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
           'text-transform': 'uppercase',
           'letter-spacing': '0.3px',
           'margin-bottom': '4px',
-          color: isUser() ? '#7c9abf' : '#4a9',
+          color: isUser() ? 'var(--color-pri)' : '#4a9', // gate-allow: color #4a9
           'padding-left': isUser() ? '0' : '4px',
           'padding-right': isUser() ? '4px' : '0',
         }}
@@ -166,10 +166,10 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
       <Show when={p.includeReasoning && p.msg.reasoning && !isUser()}>
         <div
           style={{
-            'border-left': '3px solid #555',
+            'border-left': '3px solid #555', // gate-allow: color 3px solid #555
             padding: '6px 12px',
             margin: '4px 0 8px',
-            color: '#999',
+            color: 'rgba(var(--text-base-rgb),0.6)',
             'font-style': 'italic',
             'font-size': '13px',
             'line-height': '1.5',
@@ -196,7 +196,7 @@ const ScreenshotBubble: Component<{ msg: Message; wide: boolean; includeReasonin
           border: isUser()
             ? '1px solid rgba(var(--primary-rgb),0.25)'
             : '1px solid rgba(var(--text-base-rgb),0.08)',
-          color: '#e0e0e0',
+          color: 'rgba(var(--text-base-rgb),0.88)',
         }}
         // eslint-disable-next-line solid/no-innerhtml -- renderMessageHtml sanitizes content
         innerHTML={html()}
@@ -310,7 +310,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
     try {
       const dataUrl = await toPng(captureRef, {
         pixelRatio: 2,
-        backgroundColor: '#111827',
+        backgroundColor: 'var(--color-dark-800)',
         quality: 0.95,
       });
       if (action === 'download') {
@@ -349,7 +349,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
       const body = iframeEl.contentDocument.body;
 
       const canvas = await toCanvas(body, {
-        backgroundColor: '#ffffff',
+        backgroundColor: '#ffffff', // gate-allow: color #ffffff
         pixelRatio: 2,
         width: body.scrollWidth,
         height: body.scrollHeight,
@@ -396,10 +396,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
       });
 
       if (filePath) {
-        await invoke('save_binary_file', {
-          path: filePath,
-          bytes: Array.from(new Uint8Array(pdfBytes)),
-        });
+        await saveBinaryFile(filePath, Array.from(new Uint8Array(pdfBytes)));
       }
     } catch (e) {
       console.error('PDF export failed:', e);
@@ -486,8 +483,8 @@ const ShareModal: Component<ShareModalProps> = (props) => {
             {/* 标题行 */}
             <div class="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] shrink-0">
               <h2 class="m-0 text-lg font-semibold text-white/90">{t('export.shareTitle')}</h2>
-              <button onClick={handleClose} class={btnClose}>
-                &times;
+              <button onClick={handleClose} class={btnClose} aria-label={t('common.close')}>
+                <Icon name="x" size={18} class="stroke-[2.5]" />
               </button>
             </div>
 
@@ -551,7 +548,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         ref={captureRef}
                         style={{
                           padding: '24px 20px',
-                          background: '#111827',
+                          background: 'var(--color-dark-800)',
                           'min-width': shotWidth() === 'wide' ? '720px' : '480px',
                           display: 'flex',
                           'flex-direction': 'column',
@@ -597,14 +594,18 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                           style={{
                             'font-size': '18px',
                             'font-weight': '700',
-                            color: '#fff',
+                            color: '#fff', // gate-allow: color #fff
                             'margin-bottom': '4px',
                           }}
                         >
                           {topic()?.name ?? ''}
                         </div>
                         <div
-                          style={{ 'font-size': '12px', color: '#888', 'margin-bottom': '16px' }}
+                          style={{
+                            'font-size': '12px',
+                            color: 'rgba(var(--text-base-rgb),0.55)',
+                            'margin-bottom': '16px',
+                          }}
                         >
                           {new Date().toLocaleString(locale())}
                         </div>
@@ -740,7 +741,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                         ref={pdfIframeRef}
                         srcdoc={htmlContent()}
                         class="w-full h-full rounded-lg border-0"
-                        style={{ background: '#fff' }}
+                        style={{ background: '#fff' }} // gate-allow: color #fff
                         title="PDF preview"
                       />
                     </div>

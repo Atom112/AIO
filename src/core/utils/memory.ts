@@ -1,16 +1,28 @@
-// 记忆相关 Tauri 命令封装（与 commands/memory.rs、commands/embedding.rs 对应）
+// 记忆相关 Tauri 命令封装（与 commands/memory.rs、commands/embedding.rs、commands/rerank.rs、commands/model_download.rs 对应）
 import { invoke } from '@tauri-apps/api/core';
+
+/** 内置默认本地嵌入模型 id（随应用打包；与后端 core::model_registry::BUNDLED_EMBED_ID 保持一致） */
+export const DEFAULT_EMBED_MODEL_ID = 'all-MiniLM-L6-v2';
+/** 默认本地重排模型 id（与后端 manifest 中的 bge-reranker-base 条目一致） */
+export const DEFAULT_RERANK_MODEL_ID = 'bge-reranker-base';
+/** 在线重排的默认模型 id（Jina API 托管） */
+export const DEFAULT_ONLINE_RERANK_MODEL_ID = 'rerank-multilingual-v3';
 import type {
   CodeChunkHit,
   CodeIndexResult,
   CodeIndexStatus,
+  ConsolidationReport,
+  EmbeddingModelInfo,
   EmbeddingTestResult,
   FactVersion,
+  GraphExtractReport,
   MemoryEmbeddingConfig,
   MemoryFact,
   MemoryListPage,
+  MemoryRerankConfig,
   MemoryStats,
   MemoryStatus,
+  RerankTestResult,
   ScoredFact,
 } from '../types/memory';
 
@@ -27,11 +39,6 @@ export const memoryList = (
 
 export const memoryGet = (projectId: string, id: string) =>
   invoke<MemoryFact>('memory_get', { projectId, id });
-
-export const memoryAdd = (
-  projectId: string,
-  args: { key?: string; content: string; category?: string; importance?: number },
-) => invoke<MemoryFact>('memory_add', { projectId, ...args });
 
 export const memoryUpdate = (
   projectId: string,
@@ -59,13 +66,6 @@ export const memoryReindex = (projectId: string) =>
 export const memoryGetVersions = (projectId: string, id: string) =>
   invoke<FactVersion[]>('memory_get_versions', { projectId, id });
 
-export const memoryMergeFacts = (
-  projectId: string,
-  targetId: string,
-  sourceId: string,
-  mergedContent: string,
-) => invoke<MemoryFact>('memory_merge_facts', { projectId, targetId, sourceId, mergedContent });
-
 export const memoryArchive = (projectId: string, id: string) =>
   invoke<MemoryFact>('memory_archive', { projectId, id });
 
@@ -91,10 +91,48 @@ export const memoryCodeStatus = (projectId: string) =>
 export const embeddingTest = (config: MemoryEmbeddingConfig) =>
   invoke<EmbeddingTestResult>('embedding_test', { config });
 
-export const embeddingSaveApiKey = (key: string) => invoke<void>('embedding_save_api_key', { key });
-
 /** 切换项目嵌入模型：后端会清空本项目全部向量并自动重建索引（带 reindex-progress 事件） */
 export const memoryUpdateEmbedding = (projectId: string, config: MemoryEmbeddingConfig) =>
   invoke<MemoryStatus>('memory_update_embedding', { projectId, config });
 
-export type { MemoryEmbeddingConfig };
+/** 设置项目级重排配置（不涉及向量，不触发重建） */
+export const memoryUpdateRerank = (projectId: string, config: MemoryRerankConfig) =>
+  invoke<MemoryStatus>('memory_update_rerank', { projectId, config });
+
+/** 手动触发一次合并整理（sleep-time consolidation；预算默认取全局配置） */
+export const memoryConsolidate = (projectId: string) =>
+  invoke<ConsolidationReport>('memory_consolidate', { projectId });
+
+/** 抽取事实关系（P3-3 轻量知识图谱；幂等，已有关系的事实跳过） */
+export const memoryGraphExtract = (projectId: string) =>
+  invoke<GraphExtractReport>('memory_graph_extract', { projectId });
+
+/** 重排连接测试（本地需模型已下载；在线发真实请求） */
+export const rerankTest = (config: MemoryRerankConfig) =>
+  invoke<RerankTestResult>('rerank_test', { config });
+
+/** 保存在线重排 API Key（secure_store，不落盘；空值删除） */
+export const rerankSaveApiKey = (key: string) => invoke<void>('rerank_save_api_key', { key });
+
+/** 可下载模型清单（本地重排/嵌入模型） */
+export const embeddingModelList = () => invoke<EmbeddingModelInfo[]>('embedding_model_list');
+
+/** 下载模型（带 model-download-progress 事件） */
+export const embeddingModelDownload = (id: string) =>
+  invoke<EmbeddingModelInfo>('embedding_model_download', { id });
+
+/** 删除已下载模型（内置模型为 no-op） */
+export const embeddingModelDelete = (id: string) => invoke<void>('embedding_model_delete', { id });
+
+/** 全局启用/停用某个嵌入模型（与供应商设置类似） */
+export const embeddingModelSetEnabled = (id: string, enabled: boolean) =>
+  invoke<EmbeddingModelInfo>('embedding_model_set_enabled', { id, enabled });
+
+/** 当前 embed 模型安装目录 */
+export const embeddingModelsGetDir = () => invoke<string>('embedding_models_get_dir');
+
+/** 设置 embed 模型安装目录（空串恢复默认目录） */
+export const embeddingModelsSetDir = (dir: string) =>
+  invoke<string>('embedding_models_set_dir', { dir });
+
+export type { MemoryEmbeddingConfig, MemoryRerankConfig };

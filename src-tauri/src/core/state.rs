@@ -6,11 +6,18 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// 管理活跃的 LLM 流式任务
-/// 键格式为 "{assistant_id}-{topic_id}"
+/// 管理活跃的 LLM 流式任务。
+/// 键为 (assistant_id, topic_id) 元组——历史上用 "-" 拼接字符串，但 UUID 含
+/// "-"，存在 "a-b"+"c" == "a"+"b-c" 的歧义风险，故改为结构化键。
 /// 每个任务携带一个 CancellationToken：停止时调用 cancel()（而非 abort()），
 /// 保证任务能在 select! 分支优雅退出并执行 epilogue（emit done + 移除自身）。
-pub struct StreamManager(pub Arc<DashMap<String, (JoinHandle<()>, CancellationToken)>>);
+/// 任务键：(assistant_id, topic_id)。
+pub type StreamTaskKey = (String, String);
+/// 一个活跃的 LLM 流式任务句柄（JoinHandle + 取消令牌）。
+pub type StreamTaskEntry = (JoinHandle<()>, CancellationToken);
+
+/// 管理活跃的 LLM 流式任务的并发表。
+pub struct StreamManager(pub Arc<DashMap<StreamTaskKey, StreamTaskEntry>>);
 
 /// 包装 SQLite 数据库连接
 pub struct DbState(pub parking_lot::Mutex<rusqlite::Connection>);

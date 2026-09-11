@@ -4,7 +4,8 @@
 //! 供 Plan 模式和编排 Agent 了解项目布局。
 //! 不修改任何文件，无副作用。
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::utils::tool_result::{tool_err, tool_ok};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -34,13 +35,7 @@ pub fn tool_spec() -> ToolSpec {
 pub fn execute(project_root: &str) -> ToolResult {
     let root = Path::new(project_root);
     if !root.is_dir() {
-        return ToolResult {
-            content: vec![ToolResultContent {
-                kind: "text".into(),
-                data: json!({ "text": format!("[Error] 项目根目录不存在: {}", project_root) }),
-            }],
-            is_error: true,
-        };
+        return tool_err(&format!("项目根目录不存在: {project_root}"));
     }
 
     let mut output = String::new();
@@ -51,13 +46,7 @@ pub fn execute(project_root: &str) -> ToolResult {
         output.push_str("(空目录)");
     }
 
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({ "text": output }),
-        }],
-        is_error: false,
-    }
+    tool_ok(output)
 }
 
 /// 递归构建目录树字符串。

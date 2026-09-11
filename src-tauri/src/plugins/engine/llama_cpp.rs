@@ -13,6 +13,7 @@ use tokio::task;
 use tokio::time::{sleep, Duration};
 use tracing::debug;
 
+use crate::core::events as ev;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -246,10 +247,6 @@ impl LocalEnginePlugin for LlamaCppPlugin {
         "llama_cpp"
     }
 
-    fn supported_extensions(&self) -> &[&'static str] {
-        &["gguf"]
-    }
-
     fn is_platform_supported(&self) -> bool {
         true // llama.cpp 全平台支持
     }
@@ -277,7 +274,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
     }
 
     fn progress_event_name(&self) -> &'static str {
-        "llama-progress"
+        ev::LLAMA_PROGRESS
     }
 
     fn build_command(
@@ -308,20 +305,6 @@ impl LocalEnginePlugin for LlamaCppPlugin {
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000);
         cmd
-    }
-
-    fn parse_progress_from_log(&self, line: &str) -> Option<f64> {
-        if line.contains("build info") || line.contains("system info") {
-            Some(0.1)
-        } else if line.contains("loading model") {
-            Some(0.2)
-        } else if line.contains("model loaded") || line.contains("done") {
-            Some(0.5)
-        } else if line.contains("HTTP server listening") || line.contains("listening on") {
-            Some(0.8)
-        } else {
-            None
-        }
     }
 
     fn start<'a>(

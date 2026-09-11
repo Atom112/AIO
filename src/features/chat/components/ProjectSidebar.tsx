@@ -16,7 +16,11 @@ import {
   showProjectCreateModal,
   setShowProjectCreateModal,
 } from '../../../core/store/store';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  deleteProject as deleteProjectApi,
+  listProjects,
+  updateProject,
+} from '../../../core/api/project';
 import Icon from '../../../shared/components/Icon';
 import ProjectCreateModal from './ProjectCreateModal';
 import { t } from '../../../core/i18n';
@@ -137,7 +141,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   const renameProject = async (projectId: string, newName: string) => {
     if (!newName.trim()) return;
     try {
-      await invoke('update_project', { id: projectId, name: newName.trim() });
+      await updateProject(projectId, newName.trim());
       // 也更新助理名称
       const asst = datas.assistants.find((a) => a.projectId === projectId);
       if (asst) {
@@ -162,7 +166,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         }
         setDatas('assistants', (prev) => prev.filter((a) => a.id !== asst.id));
       }
-      await invoke('delete_project', { id: projectId });
+      await deleteProjectApi(projectId);
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (e) {
       alert(t('project.deleteFailed') + '\n' + e);
@@ -175,26 +179,8 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     setShowProjectCreateModal(false);
     // 重新加载项目列表
     try {
-      const list = await invoke<
-        Array<{
-          id: string;
-          name: string;
-          path: string;
-          createdAt: string;
-          updatedAt: string;
-          assistantId: string;
-        }>
-      >('list_projects');
-      setProjects(
-        list.map((p: Record<string, string>) => ({
-          id: p.id,
-          name: p.name,
-          path: p.path,
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-          assistantId: p.assistantId,
-        })),
-      );
+      const list = await listProjects();
+      setProjects(list);
     } catch {
       /* ignore */
     }
@@ -339,7 +325,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                 (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')
               }
             >
-              新建项目
+              {t('project.sidebar.newProject')}
             </button>
           </div>
         </div>

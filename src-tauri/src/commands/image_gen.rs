@@ -4,6 +4,7 @@
 //! 返回的 `b64_json`/`url` 统一经 [`crate::utils::generated_images`] 落盘并重写为
 //! `aio-image://` 标记，随后以 `llm-chunk` done 载荷回传，前端渲染逻辑与流式一致。
 
+use crate::core::events as ev;
 use crate::core::models::StreamPayload;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Window};
@@ -57,7 +58,7 @@ pub async fn generate_image(
                      error: Option<String>,
                      images: Option<Vec<crate::core::models::GeneratedImage>>| {
         let _ = window.emit(
-            "llm-chunk",
+            ev::LLM_CHUNK,
             StreamPayload {
                 assistant_id: assistant_id.clone(),
                 topic_id: topic_id.clone(),

@@ -42,15 +42,16 @@ Routing centers on the chat page and nested settings pages. Provider details wit
 - `commands/project.rs`: Project CRUD and `.aio/` initialization;
 - `commands/lsp.rs`, `commands/git.rs`: Project language service and Git operations.
 - `commands/memory.rs`, `commands/embedding.rs`: project memory (RAG) fact CRUD / retrieval and embedding provisioning;
+- `commands/model_download.rs`: on-demand model downloader (embed manifest + install-dir/enable management, settings page "Embedding models");
 - `services/memory/`: per-project memory store (facts + FTS5 + vector scoring), hybrid retrieval and memory tools;
-- `plugins/embed/`: embedding (vectorization) plugins (bundled local / online OpenAI-compatible).
+- `plugins/embed/`: embedding (vectorization) plugin (local ONNX only: bundled model + downloaded models).
 
 ## Plugin Boundary
 
 - Provider: Google, Anthropic, Ollama and OpenAI-compatible.
 - Local Engine: llama.cpp, Ollama and vLLM (auto-discovered via engine scanning, see [providers-and-models.md -> Engine Scanning](../usage/providers-and-models.md#engine-scanning-and-auto-discovery)).
 - MCP Transport: stdio, HTTP and Streamable HTTP.
-- Embed: bundled-local and online OpenAI-compatible text embeddings (vectorization) powering semantic project memory.
+- Embed: local ONNX text embeddings (vectorization) powering semantic project memory — bundled all-MiniLM-L6-v2 out of the box, plus mainstream open-source models downloaded via Settings → Embedding models; online embedding is no longer supported.
 - LSP: Manages startup, requests, diagnostics and shutdown for different language servers.
 
 The Manager registers plugins at startup; commands look up implementations by identifier. New implementations should reuse existing traits rather than adding parallel dispatch layers.
@@ -117,7 +118,7 @@ When an Agent is aborted or a streaming event fails, already-produced steps, too
 
 ### Project Memory (RAG)
 
-With project memory enabled (`memoryEnabled`, overridable per project in project settings), the Agent gets five tools (`remember` / `recall` / `search_memory` / `update_memory` / `forget_memory`); facts are written to a per-project `.aio/memory/memory.sqlite` (semantic vectors + FTS5 keyword hybrid retrieval) and auto-injected into the stable system-prompt prefix (index=1) under a token budget. The embedding model is configured per project (stored in the project memory store meta, switched from the Memory panel; defaults to the bundled all-MiniLM-L6-v2 that works out of the box and offline, or an online OpenAI-compatible API; switching clears that project's vectors and re-embeds automatically); keyword retrieval is the automatic fallback when embeddings are not configured.
+With project memory enabled (`memoryEnabled`, overridable per project in project settings), the Agent gets five tools (`remember` / `recall` / `search_memory` / `update_memory` / `forget_memory`); facts are written to a per-project `.aio/memory/memory.sqlite` (semantic vectors + FTS5 keyword hybrid retrieval) and auto-injected into the stable system-prompt prefix (index=1) under a token budget. The embedding model is configured per project (stored in the project memory store meta, switched from the Memory panel; defaults to the bundled all-MiniLM-L6-v2 that works out of the box and offline, or any other local model downloaded and enabled in Settings → Embedding models; switching clears that project's vectors and re-embeds automatically); keyword retrieval is the automatic fallback when embeddings are not configured or the selected model is disabled.
 
 Self-evolution landed in P2: after each agent turn, facts are extracted asynchronously in the background (sleep-time compute, debounced, per-project opt-in); near-duplicate high-similarity facts are arbitrated by the LLM (merge / update / supersede / keep_separate, fail-safe on errors), with a full audit trail in `fact_versions`; when active facts exceed the per-project cap, lowest-scoring non-pinned facts are archived by importance x access decay. A memory panel (search / list / edit / pin / archive / delete / version history / reindex / prune / clear) is available in project settings.
 

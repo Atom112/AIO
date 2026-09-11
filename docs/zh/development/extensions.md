@@ -57,12 +57,12 @@
 4. 在 `src-tauri/src/lib.rs` 的 `generate_handler!` 注册。
 5. 前端使用类型化参数调用，避免新增 `any`。
 
-## 新增嵌入 Provider（Embedder）
+## 新增本地嵌入模型（Embedder）
 
-1. 在 `src-tauri/src/plugins/embed/` 添加实现，实现 `Embedder` trait（`id`、`model_key`、`dimensions`、`embed`、`is_available`），trait 使用 `async_trait` 以保证 dyn-compatible。
-2. 在 `EmbedderManager` 或 `resolve()` 的匹配分支登记（`local` / `openai_compat` 之外的新 id）。
-3. 嵌入 provider/模型为全局配置（`AppConfig.memoryEmbedding`，`local` 为随应用打包的内置模型，`online` 为 OpenAI 兼容在线端点），API Key 走 `secure_store`（account `embedding_api_key`），不落盘。
-4. 新增 provider 时同步扩展 `embedding_test` 的配置注入与前端 provider 选择。
+1. 在 `src-tauri/src/commands/model_download.rs` 的 `MANIFEST` 追加 `kind: "embed"` 条目（`id` / `label` / `dims` / `pooling`（mean/cls）/ `files`，URL 指向公开可下载的 ONNX 导出仓库，如 Xenova / Qdrant / Alibaba-NLP），安装目录默认为 `<app_data_dir>/models/embed/<id>/`，可在设置页「Embedding 模型管理」自定义。
+2. `src-tauri/src/plugins/embed/local_onnx.rs` 的 `load_model` 按 manifest 加载本地 ONNX（`UserDefinedEmbeddingModel` + 对应 `Pooling`），进程内按模型 id 惰性缓存；内置模型 `all-MiniLM-L6-v2` 走 `include_bytes!`（开箱即用，不可删除）。
+3. 嵌入模型为本地模型（provider 恒为 `local`）；在线嵌入（OpenAI 兼容端点）自 v0.8 起不再支持，相关 `openai_compat` 实现与 `embedding_save_api_key` 命令已移除。
+4. 全局启停注册表存于 `AppConfig.embeddingModels`（缺省视为启用），由 `embedding_model_set_enabled` 维护；`embedding_test` 仅做本地连通性验证。
 
 ## 验证
 
@@ -95,3 +95,17 @@ cargo check
 - `CHANGELOG.md` 是否需要记录发布变化。
 
 只注册后端插件但没有前端入口时，应在开发文档标记为内部能力，不写成普通用户可完成的流程。
+
+## RAG / 项目记忆改动检查清单（回归护栏）
+
+改动涉及 `services/memory/`、`plugins/embed|cache|rerank/`、记忆工具或检索链路时，除 `npm run verify` 外还应满足：
+
+- [ ] 检索链路改动必须附评估：仓库内 `tests/rag_eval/dataset.json`（40 事实 + 12 查询）上跑 `cargo test --lib eval_rag -- --ignored --nocapture`，在 PR 描述贴出「纯向量 / FTS / 混合」NDCG@10、MRR、P@5 对比表；允许混合不劣于单腿（护栏断言 < 0.15 NDCG 降幅）；
+- [ ] 历史缺陷回归用例不得删除：判重阈值走余弦（非 RRF 分）、category 过滤生效、≤2 字中文查询可命中、superseded/archived 不进检索与注入；
+- [ ] 新增配置字段必须同时写入 `AppConfig` 与 `AppConfigDisk`（config.rs 完整三处：save / load v2 / legacy 默认），并同步 `reference/configuration.md` 与双语 i18n key；
+- [ ] 多维能力一律全局 + 项目级双轨（`resolve_project_*`）并带维度/可用性守卫，禁止静默降级；
+- [ ] 新增 Tauri 命令在 `lib.rs` 注册；新增事件 kebab-case；异步后台任务（提取/整理/抽取）必须有预算封顶或去抖，失败静默且可观测。
+
+### 稀疏检索（SPLADE）评估结论（P3-2）
+
+当前稀疏腿 = FTS5（trigram + BM25 + 短查询 LIKE 回退），与稠密腿（vec0/暴力余弦）构成混合基线。**种子评测集上混合路 NDCG 不劣于单腿即视为达标，暂不引入 SPLADE/Qwen3-sparse**；引入时机：评测集扩展后其增益能被 NDCG 数据支撑，且具备本地 ONNX 部署路径（未证实收益前不得替换 FTS5 稀疏腿）。

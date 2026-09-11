@@ -14,7 +14,7 @@ pub(crate) struct LlmConfig {
 
 /// 从应用配置构建 LLM 调用配置（无有效模型时返回 Err）。
 pub(crate) fn llm_config(app: &AppHandle) -> Result<LlmConfig, String> {
-    let cfg = crate::commands::config::load_app_config(app.clone()).unwrap_or_default();
+    let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     if cfg.api_url.trim().is_empty() || cfg.default_model.trim().is_empty() {
         return Err("未配置模型（apiUrl/model 为空），无法执行记忆提取/仲裁".into());
     }
@@ -36,7 +36,7 @@ pub(crate) async fn chat_json(
         &cfg.api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
-    let client = crate::commands::llm::non_streaming_http_client();
+    let client = crate::plugins::llm::non_streaming_http_client();
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": [
@@ -48,7 +48,7 @@ pub(crate) async fn chat_json(
     });
     let (res, is_anthropic) = tokio::time::timeout(
         Duration::from_secs(45),
-        crate::commands::llm::post_chat_completion(&client, &cfg.api_url, &cfg.api_key, &body),
+        crate::plugins::llm::post_chat_completion(&client, &cfg.api_url, &cfg.api_key, &body),
     )
     .await
     .map_err(|_| "LLM 调用超时（45s）".to_string())??;
@@ -56,10 +56,10 @@ pub(crate) async fn chat_json(
         .json()
         .await
         .map_err(|e| format!("解析 LLM 响应失败: {e}"))?;
-    if let Some(err) = crate::commands::llm::chat_error_message(&val) {
+    if let Some(err) = crate::plugins::llm::chat_error_message(&val) {
         return Err(err);
     }
-    let text = crate::commands::llm::chat_text_content(&val, is_anthropic);
+    let text = crate::plugins::llm::chat_text_content(&val, is_anthropic);
     parse_json_text(&text)
 }
 
@@ -104,5 +104,36 @@ fn strip_fence(text: &str) -> Option<&str> {
         Some(rest[..end].trim())
     } else {
         None
+    }
+}
+
+/// 查询改写（可选，检索前调用）：让模型产出 1-2 个更利于语义检索的查询变体。
+/// 返回不含原查询的新变体；失败/无输出返回空 Vec（调用方回退原查询）。
+pub(crate) async fn rewrite_query(cfg: &LlmConfig, query: &str) -> Result<Vec<String>, String> {
+    let system = concat!(
+        "你是检索查询改写器。给定用户的检索意图，输出 1-2 个更利于语义/关键词检索的查询变体：\n",
+        "- 补充同义词、领域术语、中英双语表达；\n",
+        "- 保持原意不变，不添油加醋；\n",
+        "- 只输出 JSON 字符串数组，如 [\\\"...\\\", \\\"...\\\"]。",
+    );
+    let user = format!("检索意图：{query}");
+    match chat_json(cfg, system, &user, 150).await {
+        Ok(v) => {
+            let arr = match v {
+                Value::Array(a) => a,
+                _ => return Ok(Vec::new()),
+            };
+            let mut out = Vec::new();
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    let s = s.trim().to_string();
+                    if !s.is_empty() && s != query {
+                        out.push(s);
+                    }
+                }
+            }
+            Ok(out.into_iter().take(2).collect())
+        }
+        Err(_) => Ok(Vec::new()),
     }
 }

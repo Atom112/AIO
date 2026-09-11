@@ -1,6 +1,6 @@
 /// 工具函数组：处理文件内容提取和转换。
 ///
-/// 安全加固（修复 H8：任意路径读取）：
+/// 安全加固（任意路径读取加固）：
 /// - `process_file_content` 接受路径仅当满足：扩展名白名单 + 父目录在用户 home 或 AppData 内
 /// - `start_local_server` 接受的 `model_path` 仅允许用户 home 或 AppData/engines 内的文件
 /// - 限制文件大小（图片 10MB / 文档 30MB）防止 OOM DoS
@@ -237,7 +237,7 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
     Ok(full_text)
 }
 
-/// 处理各种格式的文件内容（H8 路径沙箱加固）
+/// 处理各种格式的文件内容（路径沙箱加固）
 ///
 /// 图像 (png/jpg/webp): 返回 Base64 DataURI。
 /// PDF: 返回提取内容文本。

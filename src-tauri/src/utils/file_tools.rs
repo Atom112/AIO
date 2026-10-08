@@ -124,7 +124,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "read_file".into(),
-                description: "读取项目目录内的文件内容。默认最多读取 300 行 / 32KB，超出时返回头部+尾部并提示省略行数；如需完整内容请显式传入更大的 max_lines 或 max_bytes。with_hash=true 时返回文件 SHA-256 摘要（hashline 协议：编辑时用 anchor_hash 锚定防漂移，写/替换工具会返回新 hash 供链式使用）".into(),
+                description: "读取项目目录内的文件内容，输出带 1-based 行号（格式 \"    1| 内容\"，可直接用于 replace_in_file 的 start_line/end_line）。默认最多读取 300 行 / 32KB，超出时返回头部+尾部并标注省略的行号区间；如需完整内容请显式传入更大的 max_lines 或 max_bytes。with_hash=true 时返回文件 SHA-256 摘要（hashline 协议：编辑时用 anchor_hash 锚定防漂移，写/替换工具会返回新 hash 供链式使用）".into(),
                 parameters: json!({
                     "type":"object",
                     "properties":{
@@ -243,33 +243,43 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             };
             let hash_len = bytes.len().min(MAX_R as usize);
             let file_hash = sha256_hex(&bytes[..hash_len]);
-            let raw = if meta.len() > MAX_R {
-                format!(
-                    "⚠ 文件过大 ({}KB/{}KB截断)\n\n{}",
-                    meta.len() / 1024,
-                    MAX_R / 1024,
-                    String::from_utf8_lossy(&bytes[..hash_len])
-                )
-            } else {
-                String::from_utf8_lossy(&bytes).into_owned()
-            };
+            let raw = String::from_utf8_lossy(&bytes[..hash_len]).into_owned();
+            let over_size = meta.len() > MAX_R;
             let total_lines = raw.lines().count();
-            // 行数限制（头部+尾部，保留关键首尾信息）
+            // 行号输出（1-based，cat -n 风格）：模型可精确引用行号（replace_in_file
+            // 的行范围模式、错误报告等）。行号在行数截断之前编号，保持文件真实位置。
+            let numbered: Vec<String> = raw
+                .lines()
+                .enumerate()
+                .map(|(i, l)| format!("{:>5}| {}", i + 1, l))
+                .collect();
+            // 行数限制（头部+尾部，保留关键首尾信息；省略标记标注被省略的行号区间）
             let limited = if total_lines > max_lines {
                 let head_lines = (max_lines * 6) / 10;
                 let tail_lines = max_lines - head_lines;
-                let lines: Vec<&str> = raw.lines().collect();
-                let head_str = lines[..head_lines.min(lines.len())].join("\n");
-                let tail_str = lines[lines.len().saturating_sub(tail_lines)..].join("\n");
+                let head_str = numbered[..head_lines.min(numbered.len())].join("\n");
+                let tail_str = numbered[numbered.len().saturating_sub(tail_lines)..].join("\n");
                 format!(
-                    "{}\n\n… [已省略 {} 行，共 {} 行；如需更多内容请增大 max_lines] …\n\n{}",
+                    "{}\n\n… [已省略第 {}–{} 行，共 {} 行；如需更多内容请增大 max_lines] …\n\n{}",
                     head_str,
-                    total_lines - head_lines - tail_lines,
+                    head_lines + 1,
+                    total_lines - tail_lines,
                     total_lines,
                     tail_str
                 )
             } else {
-                raw
+                numbered.join("\n")
+            };
+            // 文件过大警告置于编号内容之前（不占用行号）
+            let limited = if over_size {
+                format!(
+                    "⚠ 文件过大 ({}KB/{}KB截断)\n\n{}",
+                    meta.len() / 1024,
+                    MAX_R / 1024,
+                    limited
+                )
+            } else {
+                limited
             };
             // 字节限制（UTF-8 安全边界，头部+尾部）
             let c = if limited.len() > max_bytes {
@@ -637,7 +647,7 @@ pub fn strip_windows_extended_prefix(path: &str) -> String {
 
 #[cfg(test)]
 mod safe_path_tests {
-    use super::safe_path;
+    use super::{execute_file_tool, safe_path};
     use std::fs;
     use std::path::PathBuf;
 
@@ -697,6 +707,54 @@ mod safe_path_tests {
         fs::write(base.join("real.txt"), b"x").unwrap();
         let r = safe_path(&base_s, "real.txt", true).unwrap();
         assert!(r.starts_with(fs::canonicalize(&base).unwrap()));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    fn text_of(r: &super::ToolResult) -> String {
+        r.content
+            .first()
+            .and_then(|c| c.data.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// read_file 输出带 1-based 行号；行数截断后行号保持文件真实位置，
+    /// 省略标记标注被省略的行号区间（供 replace_in_file 行范围模式引用）。
+    #[test]
+    fn read_file_outputs_real_line_numbers() {
+        let base = fresh_base("lineno");
+        let base_s = base.to_string_lossy().to_string();
+        // 10 行文件，max_lines=5 → 头 3 行 + 尾 2 行，省略第 4–8 行
+        let body: String = (1..=10).map(|i| format!("line{i}\n")).collect();
+        fs::write(base.join("ten.txt"), body).unwrap();
+
+        let args = serde_json::json!({"path": "ten.txt", "max_lines": 5, "max_bytes": -1});
+        let r = execute_file_tool("read_file", &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("    1| line1"), "首行应带行号: {text}");
+        assert!(text.contains("    3| line3"), "头部末行: {text}");
+        assert!(
+            text.contains("    9| line9"),
+            "尾部行号应为真实位置: {text}"
+        );
+        assert!(text.contains("   10| line10"), "末行: {text}");
+        assert!(text.contains("已省略第 4–8 行"), "省略区间: {text}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 行号输出与 hashline 协议兼容（with_hash 摘要仍在末尾）。
+    #[test]
+    fn read_file_line_numbers_with_hash() {
+        let base = fresh_base("lineno-hash");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("h.txt"), "hello\nworld\n").unwrap();
+        let args = serde_json::json!({"path": "h.txt", "with_hash": true});
+        let r = execute_file_tool("read_file", &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("    1| hello"));
+        assert!(text.contains("    2| world"));
+        assert!(text.contains("[HASH sha256:"), "hashline 应保留: {text}");
         let _ = fs::remove_dir_all(&base);
     }
 }

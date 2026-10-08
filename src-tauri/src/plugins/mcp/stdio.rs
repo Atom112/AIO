@@ -157,9 +157,9 @@ impl super::McpServerPlugin for StdioPlugin {
     }
 
     async fn initialize(&self, conn: &McpConnection) -> McpResult<McpServerInfo> {
-        // MCP initialize 协议
+        // MCP initialize 协议（P4.1：升级到 2025-06-18；以服务端返回版本为准继续工作）
         let params = json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {
                 "name": "aio",
@@ -323,7 +323,9 @@ fn spawn_stdout_reader(
                     if line.trim().is_empty() {
                         continue;
                     }
-                    conn.dispatch_line(&line);
+                    if let Some((method, params)) = conn.dispatch_line(&line) {
+                        handle_server_notification(&app, &server_id, &method, &params);
+                    }
                 }
                 Ok(None) => {
                     // EOF
@@ -346,6 +348,40 @@ fn spawn_stdout_reader(
             }
         }
     });
+}
+
+/// 消费 server 主动发来的通知（P4.1）。
+/// - notifications/tools/list_changed：工具列表已变 → 发事件让前端刷新缓存
+/// - notifications/message（logging）：转发到 stderr 调试通道展示
+pub(crate) fn handle_server_notification(
+    app: &tauri::AppHandle,
+    server_id: &str,
+    method: &str,
+    params: &serde_json::Value,
+) {
+    match method {
+        "notifications/tools/list_changed" => {
+            let _ = app.emit(ev::MCP_TOOLS_CHANGED, json!({ "id": server_id }));
+        }
+        "notifications/message" => {
+            // MCP logging 通知：level + data
+            let level = params
+                .get("level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("info");
+            let data = params
+                .get("data")
+                .map(|d| d.to_string())
+                .unwrap_or_default();
+            let _ = app.emit(
+                ev::MCP_SERVER_STDERR,
+                json!({ "id": server_id, "line": format!("[{level}] {data}") }),
+            );
+        }
+        _ => {
+            tracing::debug!("[mcp:{server_id}] 未消费的通知: {method}");
+        }
+    }
 }
 
 /// Windows: 把命令名解析为完整可执行路径。

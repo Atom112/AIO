@@ -194,6 +194,11 @@ pub struct Message {
     /// 本轮输出 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
+    /// 本轮缓存命中的输入 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）。
+    /// 来源：OpenAI `usage.prompt_tokens_details.cached_tokens`；DeepSeek `usage.prompt_cache_hit_tokens`；
+    /// Anthropic `message_start.usage.cache_read_input_tokens`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u32>,
     /// Agent 工作过程步骤（JSON 序列化的 AgentStep[]），跨重启持久化
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_steps: Option<serde_json::Value>,

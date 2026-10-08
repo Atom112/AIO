@@ -156,12 +156,13 @@ impl McpConnection {
         self.inner.transport.send(&payload).await
     }
 
-    /// 主动处理一行来自 server 的 JSON（由传输层在收到数据时调用）
-    /// 若是 Response → 投递给 pending；若是 Notification → 忽略（MCP v1 暂不处理）
-    pub(crate) fn dispatch_line(&self, line: &str) {
+    /// 主动处理一行来自 server 的 JSON（由传输层在收到数据时调用）。
+    /// 若是 Response → 投递给 pending；若是 Notification → 返回 (method, params)
+    /// 交给调用方消费（P4.1：tools/list_changed 等此前被静默丢弃）。
+    pub(crate) fn dispatch_line(&self, line: &str) -> Option<(String, Value)> {
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => return,
+            Err(_) => return None,
         };
         if v.get("id").is_some() && v.get("method").is_none() {
             if let Ok(resp) = serde_json::from_value::<JsonRpcResponse>(v) {
@@ -169,8 +170,14 @@ impl McpConnection {
                     let _ = tx.send(resp);
                 }
             }
+            return None;
         }
-        // Notifications 暂不消费
+        // Notification：有 method 无 id
+        if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
+            let params = v.get("params").cloned().unwrap_or(Value::Null);
+            return Some((method.to_string(), params));
+        }
+        None
     }
 
     /// 关闭连接

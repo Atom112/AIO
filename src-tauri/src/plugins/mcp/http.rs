@@ -30,12 +30,24 @@ use tauri::AppHandle;
 /// 生命周期由插件实例（归 McpServerManager 所有）管理，错误路径不再残留条目。
 pub struct HttpPlugin {
     states: Arc<parking_lot::Mutex<std::collections::HashMap<String, HttpTransportState>>>,
+    /// true = Streamable HTTP 传输（identifier "streamable_http"，接受
+    /// StreamableHttp 配置，管理 Mcp-Session-Id 会话头）；false = 旧 "http"。
+    streamable: bool,
 }
 
 impl HttpPlugin {
     pub fn new() -> Self {
         Self {
             states: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+            streamable: false,
+        }
+    }
+
+    /// Streamable HTTP 传输插件（P4.2：补齐此前缺失的注册，消除死枚举）。
+    pub fn streamable() -> Self {
+        Self {
+            states: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+            streamable: true,
         }
     }
 }
@@ -55,7 +67,7 @@ fn http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// HTTP transport 内部状态：url + headers + id 计数器
+/// HTTP transport 内部状态：url + headers + id 计数器 + 会话 id（Streamable）
 #[derive(Clone)]
 pub struct HttpTransportState {
     pub base_url: String,
@@ -63,6 +75,9 @@ pub struct HttpTransportState {
     pub client: Client,
     pub next_id: Arc<AtomicU64>,
     pub closed: Arc<AtomicBool>,
+    /// Streamable HTTP 会话：initialize 响应的 Mcp-Session-Id，
+    /// 后续请求原样回传（会话过期由服务端报错，客户端透传错误即可）
+    pub session_id: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 impl HttpTransportState {
@@ -83,7 +98,11 @@ impl HttpTransportState {
 #[async_trait]
 impl super::McpServerPlugin for HttpPlugin {
     fn identifier(&self) -> &'static str {
-        "http"
+        if self.streamable {
+            "streamable_http"
+        } else {
+            "http"
+        }
     }
 
     async fn start(
@@ -92,12 +111,17 @@ impl super::McpServerPlugin for HttpPlugin {
         config: &McpServerConfig,
     ) -> McpResult<super::connection::McpConnection> {
         let (url, headers) = match &config.transport {
-            crate::core::models::McpTransport::Http { url, headers } => {
+            crate::core::models::McpTransport::Http { url, headers } if !self.streamable => {
+                (url.clone(), headers.clone())
+            }
+            crate::core::models::McpTransport::StreamableHttp { url, headers }
+                if self.streamable =>
+            {
                 (url.clone(), headers.clone())
             }
             _ => {
                 return Err(McpError::Server(
-                    "HttpPlugin 收到非 http transport 配置".into(),
+                    "HttpPlugin 收到不匹配的 transport 配置".into(),
                 ))
             }
         };
@@ -119,11 +143,13 @@ impl super::McpServerPlugin for HttpPlugin {
             client: http_client(),
             next_id: Arc::new(AtomicU64::new(1)),
             closed: Arc::new(AtomicBool::new(false)),
+            session_id: Arc::new(parking_lot::Mutex::new(None)),
         };
         let dummy_transport = Box::new(DummyHttpTransport {
             closed: state.closed.clone(),
         });
-        let conn = super::connection::McpConnection::new(&config.id, "http", dummy_transport);
+        let conn =
+            super::connection::McpConnection::new(&config.id, self.identifier(), dummy_transport);
         // 把真实状态挂到 conn.server_id 之外的某个可达地方
         // 这里用 thread_local 简化：把 state 存到全局 HashMap
         self.states.lock().insert(config.id.clone(), state);
@@ -146,7 +172,7 @@ impl super::McpServerPlugin for HttpPlugin {
             "id": id,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-06-18",
                 "capabilities": {},
                 "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
             }
@@ -347,6 +373,10 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     for (k, v) in state.headers.iter() {
         req = req.header(k, v);
     }
+    // Streamable HTTP 会话：后续请求回传 initialize 拿到的 Mcp-Session-Id
+    if let Some(sid) = state.session_id.lock().clone() {
+        req = req.header("Mcp-Session-Id", sid);
+    }
     let resp = req
         .send()
         .await
@@ -358,6 +388,15 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    // 捕获服务端下发/更新的会话 id（initialize 与会话续期响应都会带）
+    if let Some(sid) = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+    {
+        *state.session_id.lock() = Some(sid);
+    }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let truncated = if body.len() > 512 {
@@ -371,24 +410,36 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         )));
     }
     if content_type.starts_with("text/event-stream") {
-        // 简化：从 SSE 块中提取首个 "data:" 行的 JSON
+        // SSE 解析（P4.2 补全）：按空行分块；块内多行 data 按 SSE 规范以 \n 连接；
+        // event:/id:/注释行忽略；\r\n 容忍。取首个含 data 的块（请求-响应模式
+        // 下服务端把 JSON-RPC 响应作为首个事件返回）。
         use futures_util::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| McpError::Server(format!("SSE read: {}", e)))?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
-            if let Some(pos) = buffer.find("\n\n") {
-                let block = &buffer[..pos];
+            // 以空行（\n\n 或 \r\n\r\n）为块边界
+            let block_end = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"));
+            if let Some(pos) = block_end {
+                let block: String = buffer[..pos].to_string();
+                let mut data_lines: Vec<String> = Vec::new();
                 for line in block.lines() {
+                    let line = line.trim_end_matches('\r');
                     if let Some(rest) = line.strip_prefix("data:") {
-                        let data = rest.trim();
-                        if !data.is_empty() {
-                            return serde_json::from_str::<Value>(data)
-                                .map_err(|e| McpError::Server(format!("SSE JSON: {}", e)));
-                        }
+                        data_lines.push(rest.trim_start().to_string());
+                    }
+                    // event: / id: / :注释 行按规范忽略
+                }
+                if !data_lines.is_empty() {
+                    let data = data_lines.join("\n");
+                    if !data.is_empty() {
+                        return serde_json::from_str::<Value>(&data)
+                            .map_err(|e| McpError::Server(format!("SSE JSON: {}", e)));
                     }
                 }
+                // 无 data 的块（纯通知/心跳）继续读下一块
+                buffer.drain(..pos);
             }
         }
         Err(McpError::Server("SSE 流意外关闭".into()))

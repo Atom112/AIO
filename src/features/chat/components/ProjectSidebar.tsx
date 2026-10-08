@@ -193,27 +193,45 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     return allProjects;
   });
 
+  /** 展开程度 0–1：用于插值内边距与按宽度渐显内容 */
+  const expandRatio = () => Math.min(Math.max(props.width / 15, 0), 1);
+  /** 展开态内容不透明度：窄于 11% 时不足以承载文字，随宽度淡出 */
+  const expandedOpacity = () => Math.min(Math.max((props.width - 11) / 4, 0), 1);
+  /** 实际生效的内边距（px）：收起态为轨道值；展开态随宽度从轨道值插值到 15px */
+  const padY = () => (props.isCollapsed ? 6 : 6 + 9 * expandRatio());
+  const padX = () => (props.isCollapsed ? 4 : 4 + 11 * expandRatio());
+
   return (
     <div
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10 h-full"
       style={{
+        // CSS 级最窄限制：无论上层计算出什么宽度，面板物理上不可能窄于收起轨道
+        'min-width': '48px',
         width: props.isCollapsed ? '48px' : `${props.width}%`,
-        padding: props.isCollapsed ? '6px 4px' : '15px',
-        background: 'rgba(var(--surface-bg), 0.15)',
-        'backdrop-filter': 'blur(16px)',
-        border: '1px solid var(--border-dim)',
+        padding: `${padY()}px ${padX()}px`,
+        background: props.isCollapsed
+          ? 'transparent'
+          : `rgba(var(--surface-bg), ${0.15 * expandedOpacity()})`,
+        'backdrop-filter': props.isCollapsed ? 'none' : 'blur(16px)',
+        border: '1px solid',
+        'border-color': props.isCollapsed ? 'transparent' : 'var(--border-dim)',
         'border-radius': '12px',
-        'box-shadow':
-          'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
+        'box-shadow': props.isCollapsed
+          ? 'none'
+          : `inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, ${0.2 * expandedOpacity()})`,
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <div class="relative flex-1 min-h-0">
-        {/* 展开状态 — 折叠时淡出 */}
+        {/* 展开状态 — 折叠时淡出；跟手期间按宽度渐显 */}
         <div
-          class="absolute inset-0 transition-opacity duration-300 ease-out"
-          classList={{ 'opacity-0 pointer-events-none': props.isCollapsed }}
+          class="absolute inset-0 transition-opacity ease-out"
+          style={{
+            opacity: props.isCollapsed ? 0 : expandedOpacity(),
+            'pointer-events': props.isCollapsed || expandedOpacity() < 0.5 ? 'none' : 'auto',
+            transition: props.isResizing ? 'none' : 'opacity 0.3s ease-out',
+          }}
         >
           <div class="h-full w-full overflow-hidden hover:overflow-y-auto">
             {/* 聊天入口 */}
@@ -329,49 +347,53 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             </button>
           </div>
         </div>
+      </div>
 
-        {/* 收起状态 — 展开时淡出 */}
-        <div
-          class="absolute inset-0 transition-opacity duration-300 ease-out"
-          classList={{ 'opacity-0 pointer-events-none': !props.isCollapsed }}
-        >
-          <div class="flex flex-col items-center gap-3 py-2 h-full">
+      {/* 收起状态（图标轨道）— 挂在面板根上：absolute inset-0 相对 padding box 定位，不依赖内边距插值，任意宽度下 36px 图标都居中于面板本体，不会被挤扁或裁剪 */}
+      <div
+        class="absolute inset-0 ease-out"
+        style={{
+          opacity: props.isCollapsed ? 1 : Math.min(Math.max((5 - props.width) / 3, 0), 1),
+          'pointer-events': props.isCollapsed ? 'auto' : 'none',
+          transition: props.isResizing ? 'none' : 'opacity 0.3s ease-out',
+        }}
+      >
+        <div class="flex flex-col items-center gap-3 py-2 h-full">
+          <button
+            class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
+            style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
+            onClick={switchToChat}
+            title={t('project.sidebar.dialog') as string}
+          >
+            <Icon name="chat" size={16} />
+          </button>
+          <div class="w-5 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
+          <div class="flex flex-col items-center gap-1 flex-1 w-full overflow-y-auto">
+            <For each={projectList()}>
+              {(project) => {
+                const isActive = () => activeProjectId() === project.id;
+                return (
+                  <div
+                    class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
+                    style={isActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
+                    onClick={() => switchToProject(project.id)}
+                    onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
+                    title={project.name}
+                  >
+                    <span class="text-xs font-semibold">
+                      {(project.name || '?').charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                );
+              }}
+            </For>
             <button
-              class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
-              style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
-              onClick={switchToChat}
-              title={t('project.sidebar.dialog') as string}
+              class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white"
+              onClick={() => setShowProjectCreateModal(true)}
+              title={t('project.sidebar.newProject')}
             >
-              <Icon name="chat" size={16} />
+              <Icon name="plus" size={16} />
             </button>
-            <div class="w-5 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
-            <div class="flex flex-col items-center gap-1 flex-1 w-full overflow-y-auto">
-              <For each={projectList()}>
-                {(project) => {
-                  const isActive = () => activeProjectId() === project.id;
-                  return (
-                    <div
-                      class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
-                      style={isActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
-                      onClick={() => switchToProject(project.id)}
-                      onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
-                      title={project.name}
-                    >
-                      <span class="text-xs font-semibold">
-                        {(project.name || '?').charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                  );
-                }}
-              </For>
-              <button
-                class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white"
-                onClick={() => setShowProjectCreateModal(true)}
-                title={t('project.sidebar.newProject')}
-              >
-                <Icon name="plus" size={16} />
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -437,13 +459,18 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </Portal>
       </Show>
 
-      {/* 调整大小把手 */}
+      {/* 调整大小把手：收起态仍保留可抓取区域，向右拖出即展开 */}
       <div
-        class="absolute top-0 bottom-0 right-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group"
+        class="absolute top-0 bottom-0 right-[-4px] flex items-center justify-center cursor-ew-resize z-[1000] group"
+        classList={{ 'w-1': !props.isCollapsed, 'w-2': props.isCollapsed }}
         onMouseDown={(e) => props.onResize(e as MouseEvent)}
       >
         <div
-          class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
+          class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 hover:scale-110"
+          classList={{
+            'opacity-0 group-hover:opacity-100': !props.isCollapsed,
+            'opacity-60 group-hover:opacity-100': props.isCollapsed,
+          }}
           style={{
             background: 'rgba(var(--text-base-rgb),0.08)',
             color: 'rgba(var(--text-base-rgb),0.6)',

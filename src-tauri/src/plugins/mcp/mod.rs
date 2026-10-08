@@ -100,6 +100,8 @@ impl McpServerManager {
         };
         mgr.register(Arc::new(stdio::StdioPlugin));
         mgr.register(Arc::new(http::HttpPlugin::new()));
+        // P4.2：补齐 Streamable HTTP 传输注册（此前枚举存在但无插件，配置即启动失败）
+        mgr.register(Arc::new(http::HttpPlugin::streamable()));
         mgr
     }
 
@@ -161,9 +163,18 @@ impl McpRequestManager {
     }
 }
 
-/// 待处理的工具调用审批：approval_id → oneshot::Sender<bool>
-/// 前端调用 `respond_tool_approval(approval_id, approved)` 时触发对应 channel。
-pub struct PendingApprovals(pub Arc<DashMap<String, oneshot::Sender<bool>>>);
+/// 审批上下文（P4.5："本次会话总是允许"派生会话规则的依据）
+#[derive(Clone, Debug)]
+pub struct ApprovalContext {
+    pub server_id: String,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// 待处理的工具调用审批：approval_id → (oneshot::Sender<bool>, 审批上下文)
+/// 前端调用 `respond_tool_approval(approval_id, approved, always?)` 时触发对应 channel；
+/// always=Some("session") 时按上下文派生会话级放行规则。
+pub struct PendingApprovals(pub Arc<DashMap<String, (oneshot::Sender<bool>, ApprovalContext)>>);
 
 impl PendingApprovals {
     pub fn new() -> Self {
@@ -171,14 +182,14 @@ impl PendingApprovals {
     }
 
     /// 插入一个待审批项，返回 approval_id
-    pub fn insert(&self, tx: oneshot::Sender<bool>) -> String {
+    pub fn insert(&self, tx: oneshot::Sender<bool>, ctx: ApprovalContext) -> String {
         let id = uuid::Uuid::new_v4().to_string();
-        self.0.insert(id.clone(), tx);
+        self.0.insert(id.clone(), (tx, ctx));
         id
     }
 
-    /// 移除并返回对应 channel（消费一次）
-    pub fn remove(&self, id: &str) -> Option<oneshot::Sender<bool>> {
+    /// 移除并返回对应 channel 与审批上下文（消费一次）
+    pub fn remove(&self, id: &str) -> Option<(oneshot::Sender<bool>, ApprovalContext)> {
         self.0.remove(id).map(|(_, v)| v)
     }
 }

@@ -30,6 +30,8 @@ pub const LLM_TOOL_RESULT: &str = "llm-tool-result";
 pub const LLM_COMPRESSION: &str = "llm-compression";
 /// 上下文压缩失败
 pub const LLM_COMPRESSION_FAILED: &str = "llm-compression-failed";
+/// 未完成任务已生成交接文档（payload: assistant_id/topic_id/path/reason）
+pub const LLM_HANDOFF: &str = "llm-handoff";
 
 /// 子智能体启动
 pub const SUBAGENT_START: &str = "subagent-start";
@@ -40,15 +42,18 @@ pub const SUBAGENT_DONE: &str = "subagent-done";
 /// 子智能体错误
 pub const SUBAGENT_ERROR: &str = "subagent-error";
 
-/// 工作流开始 / 步骤开始 / 完成
+/// 工作流开始 / 步骤开始 / 步骤完成 / 完成
 pub const WORKFLOW_START: &str = "workflow-start";
 pub const WORKFLOW_STEP_START: &str = "workflow-step-start";
+pub const WORKFLOW_STEP_COMPLETE: &str = "workflow-step-complete";
 pub const WORKFLOW_COMPLETE: &str = "workflow-complete";
 
 /// MCP server 状态变化
 pub const MCP_SERVER_STATUS: &str = "mcp-server-status";
 /// MCP server stderr 输出
 pub const MCP_SERVER_STDERR: &str = "mcp-server-stderr";
+/// MCP server 工具列表变化（notifications/tools/list_changed，P4.1）
+pub const MCP_TOOLS_CHANGED: &str = "mcp-tools-changed";
 
 /// 工具审批请求（等待用户确认）
 pub const TOOL_APPROVAL_REQUESTED: &str = "tool-approval-requested";
@@ -77,15 +82,18 @@ mod tests {
             LLM_TOOL_RESULT,
             LLM_COMPRESSION,
             LLM_COMPRESSION_FAILED,
+            LLM_HANDOFF,
             SUBAGENT_START,
             SUBAGENT_STEP,
             SUBAGENT_DONE,
             SUBAGENT_ERROR,
             WORKFLOW_START,
             WORKFLOW_STEP_START,
+            WORKFLOW_STEP_COMPLETE,
             WORKFLOW_COMPLETE,
             MCP_SERVER_STATUS,
             MCP_SERVER_STDERR,
+            MCP_TOOLS_CHANGED,
             TOOL_APPROVAL_REQUESTED,
             BTW_CHUNK,
         ] {

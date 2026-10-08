@@ -28,6 +28,8 @@ export const EVENTS = {
   llmCompression: 'llm-compression',
   /** 上下文压缩失败 */
   llmCompressionFailed: 'llm-compression-failed',
+  /** 未完成任务已生成交接文档 */
+  llmHandoff: 'llm-handoff',
 
   /** 子智能体启动 / 单步 / 完成 / 错误 */
   subagentStart: 'subagent-start',
@@ -35,14 +37,16 @@ export const EVENTS = {
   subagentDone: 'subagent-done',
   subagentError: 'subagent-error',
 
-  /** 工作流开始 / 步骤开始 / 完成 */
+  /** 工作流开始 / 步骤开始 / 步骤完成 / 完成 */
   workflowStart: 'workflow-start',
   workflowStepStart: 'workflow-step-start',
+  workflowStepComplete: 'workflow-step-complete',
   workflowComplete: 'workflow-complete',
 
-  /** MCP server 状态变化 / stderr */
+  /** MCP server 状态变化 / stderr / 工具列表变化 */
   mcpServerStatus: 'mcp-server-status',
   mcpServerStderr: 'mcp-server-stderr',
+  mcpToolsChanged: 'mcp-tools-changed',
 
   /** 工具审批请求 */
   toolApprovalRequested: 'tool-approval-requested',

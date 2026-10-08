@@ -87,6 +87,8 @@ export interface RunAgentTurnArgs extends LlmCredentials {
   locale: string;
   contextWindow: number;
   skills?: SkillConfig[];
+  /** P4.4：恢复指定回合的检查点（崩溃后续跑）；缺省 = 正常新回合 */
+  resumeTurnId?: string;
 }
 
 /** 启动 Agent 一轮自驱循环（进度经 llm-* 系列事件回报）。 */
@@ -96,3 +98,19 @@ export const runAgentTurn = (args: RunAgentTurnArgs) =>
 /** 停止某话题的 LLM 流式任务。 */
 export const stopLlmStream = (assistantId: string, topicId: string) =>
   invoke<void>('stop_llm_stream', { assistantId, topicId });
+
+/** 停止后台子智能体（fire-and-forget）。返回是否找到并发出取消信号（false = 已完成/不存在，幂等）。 */
+export const stopSubagent = (subagentId: string) =>
+  invoke<boolean>('stop_subagent', { subagentId });
+
+/** 活跃检查点信息（崩溃残留的回合，可恢复续跑）。 */
+export interface ActiveCheckpoint {
+  turnId: string;
+  topicId: string;
+  round: number;
+  createdAt: number;
+}
+
+/** 查询话题的活跃检查点（P4.4：崩溃后"继续未完成的回合"入口）。 */
+export const getActiveCheckpoint = (topicId: string) =>
+  invoke<ActiveCheckpoint | null>('get_active_checkpoint', { topicId });

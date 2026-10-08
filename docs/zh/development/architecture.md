@@ -102,6 +102,14 @@ Manager 在启动时注册插件，command 根据标识符查找实现。新增�
 
 Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任务。子智能体使用受角色约束的工具集，不能再次委派。
 
+### 工具执行语义
+
+- **并行分发**：同一响应块内的只读内置工具并发执行（`FuturesUnordered`），变更类工具与 MCP 工具按原始顺序串行；`role:tool` 回填保持索引序。开关：`parallelToolExecution`。
+- **主 Agent 工具集**（`mainAgentToolAccess`）：默认 `hybrid`——只读工具直达 + 变更走子代理；`orchestrator` 为严格编排（旧行为）；`full` 为主 Agent 持有全部内置工具。
+- **MCP 工具回接**：助手勾选的 server 工具注入主 Agent 与 general 子代理（`allow_mcp_tools`）；重名自动改写为 `mcp__<server>__<tool>`；未信任 server 在 Auto/Workflow 下强制逐次审批（`trusted` 字段）。
+- **模型调用重试**：POST + 状态检查阶段对传输错误与 429/5xx 按 1s/2s/4s 退避重试（`modelCallRetries`，默认 3）；流中段错误不重试。
+- **后台子智能体**：`delegate_task(wait=false)` 的句柄与独立取消令牌登记于 `SubagentHandles`，可经 `stop_subagent` 命令单独停止（父取消级联）。
+
 ### 权限与重试
 
 权限模块先加载模式默认规则，再叠加 `.aio/permissions.json`。匹配会考虑工具名、Server、模式和路径；拒绝规则优先，之后按优先级选择。需要询问时，后端创建待审批请求并通过事件交给前端，收到允许或拒绝后恢复挂起调用。

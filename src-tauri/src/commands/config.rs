@@ -89,8 +89,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计）
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens，支持跨重启续接工具调用会话及 token 统计）
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -111,18 +111,19 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         .and_then(|s| serde_json::from_str::<Vec<ToolCall>>(&s).ok());
 
                     Ok(Message {
-                        id: row.get(0)?,             // index 0: id
-                        role: row.get(1)?,           // index 1: role
-                        content: content_value,      // index 2: content (JSON)
-                        model_id: row.get(3)?,       // index 3: model_id
-                        display_files,               // 已经解析好的 files
-                        display_text: row.get(5)?,   // index 5: display_text
-                        tool_call_id: row.get(7)?,   // index 7: tool_call_id
-                        name: row.get(8)?,           // index 8: name
-                        tool_calls,                  // index 9: tool_calls_json（已解析）
-                        reasoning: row.get(6)?,      // index 6: reasoning
-                        input_tokens: row.get(10)?,  // index 10: input_tokens
-                        output_tokens: row.get(11)?, // index 11: output_tokens
+                        id: row.get(0)?,                   // index 0: id
+                        role: row.get(1)?,                 // index 1: role
+                        content: content_value,            // index 2: content (JSON)
+                        model_id: row.get(3)?,             // index 3: model_id
+                        display_files,                     // 已经解析好的 files
+                        display_text: row.get(5)?,         // index 5: display_text
+                        tool_call_id: row.get(7)?,         // index 7: tool_call_id
+                        name: row.get(8)?,                 // index 8: name
+                        tool_calls,                        // index 9: tool_calls_json（已解析）
+                        reasoning: row.get(6)?,            // index 6: reasoning
+                        input_tokens: row.get(10)?,        // index 10: input_tokens
+                        output_tokens: row.get(11)?,       // index 11: output_tokens
+                        cached_input_tokens: row.get(18)?, // index 18: cached_input_tokens
                         agent_steps: row
                             .get::<_, Option<String>>(12)?
                             .and_then(|s| serde_json::from_str(&s).ok()), // index 12: agent_steps_json
@@ -225,6 +226,8 @@ fn persist_assistant_inner(
     for db_id in db_topic_ids {
         if !current_topic_ids.contains(&db_id) {
             let attachment_ids = attachment_ids_for_topic(conn, &db_id)?;
+            // P4.4：话题删除时同步清理检查点（该表无外键，需显式）
+            crate::commands::llm::checkpoints::delete_topic_checkpoints(conn, &db_id);
             conn.execute("DELETE FROM topics WHERE id = ?", params![db_id])
                 .map_err(|e| e.to_string())?;
             cleanup_attachment_ids(conn, &attachment_ids)?;
@@ -275,11 +278,11 @@ fn persist_assistant_inner(
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
             let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
-            // 写入 tool_call_id / name / tool_calls_json / input_tokens / output_tokens，支持跨重启续接工具调用会话及 token 统计。
+            // 写入 tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens，支持跨重启续接工具调用会话及 token 统计。
             // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    reasoning = excluded.reasoning,
@@ -290,13 +293,14 @@ fn persist_assistant_inner(
                    display_text = excluded.display_text,
                    input_tokens = excluded.input_tokens,
                    output_tokens = excluded.output_tokens,
+                   cached_input_tokens = excluded.cached_input_tokens,
                    agent_steps_json = excluded.agent_steps_json,
                    interim_content = excluded.interim_content,
                    agent_start_time = excluded.agent_start_time,
                    parent_message_id = excluded.parent_message_id,
                    branch_index = excluded.branch_index,
                    images_json = excluded.images_json",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok()],
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok(), msg.cached_input_tokens],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(conn, &msg_id, msg.display_files.as_ref())?;
         }
@@ -913,7 +917,7 @@ pub async fn branch_topic(
             "SELECT id, role, content, model_id, display_files, display_text, reasoning,
              tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
              agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index,
-             images_json
+             images_json, cached_input_tokens
              FROM messages WHERE topic_id = ?1 ORDER BY timestamp ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -937,6 +941,7 @@ pub async fn branch_topic(
                 tool_calls: tool_calls_json.and_then(|s| serde_json::from_str(&s).ok()),
                 input_tokens: row.get(10)?,
                 output_tokens: row.get(11)?,
+                cached_input_tokens: row.get(18)?,
                 agent_steps: row
                     .get::<_, Option<String>>(12)?
                     .and_then(|s| serde_json::from_str(&s).ok()),
@@ -1025,8 +1030,8 @@ pub async fn branch_topic(
         conn.execute(
             "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
              tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
-             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, cached_input_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 msg_id,
                 new_topic_id,
@@ -1046,6 +1051,7 @@ pub async fn branch_topic(
                 msg.agent_start_time,
                 msg.parent_message_id,
                 msg.branch_index,
+                msg.cached_input_tokens,
             ],
         )
         .map_err(|e| format!("插入分支消息失败: {}", e))?;

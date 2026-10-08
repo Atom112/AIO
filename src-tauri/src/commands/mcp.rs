@@ -588,6 +588,17 @@ pub(crate) async fn execute_tool_call(
             &custom_rules,
         );
 
+        // 未信任 server 的工具在 Auto/Workflow 下强制审批：防止自主模式对陌生
+        // 外部工具全放行（server 在设置中标记 trusted 后才随模式自动放行）。
+        let untrusted_auto = matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+            && action == PermissionAction::Allow
+            && !cfg.trusted;
+        let action = if untrusted_auto {
+            PermissionAction::Ask
+        } else {
+            action
+        };
+
         match action {
             PermissionAction::Deny => {
                 return Err(format!(
@@ -597,7 +608,14 @@ pub(crate) async fn execute_tool_call(
             }
             PermissionAction::Ask => {
                 // 需要用户确认；用 select! 让取消可打断挂起审批
-                let reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
+                let reason = if untrusted_auto {
+                    format!(
+                        "工具 '{}' 来自未受信任的 MCP server「{}」，请在确认安全后执行（可在 MCP 设置中标记为受信任以跳过确认）",
+                        tool_name, cfg.display_name
+                    )
+                } else {
+                    format!("工具 '{}' 需要您的确认才能执行", tool_name)
+                };
                 let approval_fut = request_tool_approval(
                     app,
                     pending.inner(),
@@ -806,7 +824,14 @@ pub(crate) async fn request_tool_approval(
     file_path: Option<String>,
 ) -> Result<(), String> {
     let (tx, rx) = oneshot::channel::<bool>();
-    let approval_id = pending.insert(tx);
+    let approval_id = pending.insert(
+        tx,
+        crate::plugins::mcp::ApprovalContext {
+            server_id: server_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: arguments.clone(),
+        },
+    );
 
     // 发送事件到前端
     let _ = app.emit(
@@ -843,16 +868,81 @@ pub(crate) async fn request_tool_approval(
 }
 
 /// 前端调用此命令来响应工具调用审批。
+///
+/// # 参数
+/// - `approval_id`：审批请求 id
+/// - `approved`：是否批准
+/// - `always`：可选，"session" = 本次会话总是允许（P4.5，按审批上下文自动派生
+///   放行规则：execute_command → 命令首 token 前缀；文件写工具 → 同目录 glob；
+///   MCP 工具 → 同 server 同工具；其余 → 同工具名）
 #[tauri::command]
 pub async fn respond_tool_approval(
     pending: State<'_, PendingApprovals>,
     approval_id: String,
     approved: bool,
+    always: Option<String>,
 ) -> Result<(), String> {
-    let tx = pending
+    let (tx, ctx) = pending
         .remove(&approval_id)
         .ok_or_else(|| format!("审批请求 {} 不存在或已过期", approval_id))?;
+    if approved && always.as_deref() == Some("session") {
+        register_session_allow_rule(&ctx);
+    }
     tx.send(approved).map_err(|_| "发送审批结果失败".into())
+}
+
+/// 按审批上下文派生会话级放行规则（P4.5）。
+/// 规则优先级 50（高于内置默认）；Deny 规则（任意来源）仍然总是优先。
+fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
+    use crate::core::permission::{PermissionAction, PermissionRule};
+    let mut rule = PermissionRule {
+        id: format!("session-{}", uuid::Uuid::new_v4()),
+        tool_pattern: ctx.tool_name.clone(),
+        server_id: None,
+        modes: Vec::new(),
+        action: PermissionAction::Allow,
+        path_pattern: None,
+        command_prefix: None,
+        priority: 50,
+    };
+    match ctx.tool_name.as_str() {
+        "execute_command" => {
+            // 命令首 token 前缀（如 cargo / npm / git）；token 级匹配防注入
+            let cmd = ctx
+                .arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if let Some(first) = cmd.split_whitespace().next() {
+                rule.command_prefix = Some(first.to_string());
+            }
+        }
+        "write_file" | "replace_in_file" | "delete_file" | "make_directory" => {
+            // 同目录放行（父目录 + 递归 glob）
+            if let Some(path) = ctx.arguments.get("path").and_then(|v| v.as_str()) {
+                let parent = std::path::Path::new(path)
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| ".".into());
+                rule.path_pattern = Some(format!("{}/**", parent.trim_end_matches('/')));
+            }
+        }
+        _ => {
+            // MCP 工具：限定同 server（非内置 server 时）
+            if ctx.server_id != crate::core::ids::BUILTIN_SERVER_ID
+                && ctx.server_id != crate::core::ids::BUILTIN_FS_SERVER_ID
+            {
+                rule.server_id = Some(ctx.server_id.clone());
+            }
+        }
+    }
+    tracing::info!(
+        "[permission] 会话级放行规则: tool={} prefix={:?} path={:?}",
+        rule.tool_pattern,
+        rule.command_prefix,
+        rule.path_pattern
+    );
+    crate::core::permission::add_session_rule(rule);
 }
 
 /// 列出指定 MCP server 的资源列表。

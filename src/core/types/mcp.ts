@@ -78,6 +78,8 @@ export interface McpServerConfig {
   enabledTools: string[];
   /** 应用启动时是否自动连接（是否被某助手使用由 Assistant.mcpServerIds 决定） */
   autoStart: boolean;
+  /** 是否受信任：未信任 server 的工具在 Auto/Workflow 模式下也逐次审批 */
+  trusted?: boolean;
   hasStoredSecret: boolean;
   fromCatalog?: CatalogRef;
 }

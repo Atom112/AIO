@@ -52,11 +52,12 @@ impl LocalEngineState {
     }
 }
 
-/// 后台运行的子智能体句柄：subagent_id → JoinHandle
-/// 用于 fire-and-forget 子智能体的生命周期管理。
-pub struct SubagentHandles(
-    pub DashMap<String, tokio::task::JoinHandle<Result<crate::core::models::ToolResult, String>>>,
-);
+/// 后台子智能体句柄条目：任务句柄 + 独立取消令牌（父令牌的 child，可单独取消）。
+pub type SubagentEntry = (tokio::task::JoinHandle<()>, CancellationToken);
+
+/// 后台运行的子智能体句柄：subagent_id → (JoinHandle, CancellationToken)。
+/// 用于 fire-and-forget 子智能体的生命周期管理与单独停止（stop_subagent 命令）。
+pub struct SubagentHandles(pub DashMap<String, SubagentEntry>);
 
 impl SubagentHandles {
     pub fn new() -> Self {

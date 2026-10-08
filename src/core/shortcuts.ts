@@ -483,6 +483,18 @@ registerCommand({
   defaultKeys: 'Ctrl+N',
   handler: NOOP_HANDLER,
 });
+// new-project：ChatPage 经 registerCommand({id, handler}) 只覆盖处理器，
+// 此前缺这条内置元数据注册 → 命令表存入无 category 的对象 →
+// CommandPalette 分组时 t(undefined) 崩溃整个渲染树（项目设置弹窗打不开、
+// 导航高亮失效）。元数据必须在此预注册（同其他命令）。
+registerCommand({
+  id: 'new-project',
+  label: t('command.newProject.label'),
+  description: t('command.newProject.description'),
+  category: 'sidebar',
+  defaultKeys: 'Ctrl+Shift+N',
+  handler: NOOP_HANDLER,
+});
 registerCommand({
   id: 'new-assistant',
   label: t('cmd.new-assistant.label'),

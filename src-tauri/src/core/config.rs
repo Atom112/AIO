@@ -24,6 +24,45 @@ struct AppConfigDisk {
         rename = "maxConcurrentSubagents"
     )]
     max_concurrent_subagents: u32,
+    /// 工作流步骤权限模式（"inherit" 默认 / "auto" 旧行为）
+    #[serde(
+        default = "crate::core::models::default_workflow_step_mode",
+        rename = "workflowStepMode"
+    )]
+    workflow_step_mode: String,
+    /// 同一响应块内的只读工具是否并发执行
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "parallelToolExecution"
+    )]
+    parallel_tool_execution: bool,
+    /// 主 Agent 内置工具集（hybrid 默认 / orchestrator / full）
+    #[serde(
+        default = "crate::core::models::default_main_agent_tool_access",
+        rename = "mainAgentToolAccess"
+    )]
+    main_agent_tool_access: String,
+    /// 主模型调用前置阶段重试次数
+    #[serde(
+        default = "crate::core::models::default_model_call_retries",
+        rename = "modelCallRetries"
+    )]
+    model_call_retries: u32,
+    /// 沙箱不可用时是否拒绝自主模式执行命令（fail-closed）
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "sandboxRequired"
+    )]
+    sandbox_required: bool,
+    /// Windows 命令沙箱模式（appcontainer 默认 / off）
+    #[serde(
+        default = "crate::core::models::default_sandbox_windows",
+        rename = "sandboxWindows"
+    )]
+    sandbox_windows: String,
+    /// Windows AppContainer 工具链 R+X 目录
+    #[serde(default, rename = "sandboxWindowsToolchainDirs")]
+    sandbox_windows_toolchain_dirs: Vec<String>,
     #[serde(default, rename = "memoryEnabled")]
     memory_enabled: bool,
     #[serde(
@@ -103,6 +142,13 @@ impl AppConfigDisk {
                 .max_tool_rounds
                 .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS),
             max_concurrent_subagents: cfg.max_concurrent_subagents.unwrap_or(5),
+            workflow_step_mode: cfg.workflow_step_mode.clone(),
+            parallel_tool_execution: cfg.parallel_tool_execution,
+            main_agent_tool_access: cfg.main_agent_tool_access.clone(),
+            model_call_retries: cfg.model_call_retries,
+            sandbox_required: cfg.sandbox_required,
+            sandbox_windows: cfg.sandbox_windows.clone(),
+            sandbox_windows_toolchain_dirs: cfg.sandbox_windows_toolchain_dirs.clone(),
             memory_enabled: cfg.memory_enabled,
             memory_auto_inject: cfg.memory_auto_inject,
             memory_auto_extract: cfg.memory_auto_extract,
@@ -143,6 +189,13 @@ impl AppConfigDisk {
             auto_start_enabled: self.auto_start_enabled,
             max_concurrent_subagents: Some(self.max_concurrent_subagents),
             max_tool_rounds: Some(self.max_tool_rounds),
+            workflow_step_mode: self.workflow_step_mode,
+            parallel_tool_execution: self.parallel_tool_execution,
+            main_agent_tool_access: self.main_agent_tool_access,
+            model_call_retries: self.model_call_retries,
+            sandbox_required: self.sandbox_required,
+            sandbox_windows: self.sandbox_windows.clone(),
+            sandbox_windows_toolchain_dirs: self.sandbox_windows_toolchain_dirs.clone(),
             memory_enabled: self.memory_enabled,
             memory_auto_inject: self.memory_auto_inject,
             memory_auto_extract: self.memory_auto_extract,
@@ -169,6 +222,13 @@ impl Default for AppConfigDisk {
             auto_start_enabled: false,
             max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
             max_concurrent_subagents: 5,
+            workflow_step_mode: crate::core::models::default_workflow_step_mode(),
+            parallel_tool_execution: crate::core::models::default_true(),
+            main_agent_tool_access: crate::core::models::default_main_agent_tool_access(),
+            model_call_retries: crate::core::models::default_model_call_retries(),
+            sandbox_required: crate::core::models::default_true(),
+            sandbox_windows: crate::core::models::default_sandbox_windows(),
+            sandbox_windows_toolchain_dirs: Vec::new(),
             memory_enabled: false,
             memory_auto_inject: crate::core::models::default_true(),
             memory_auto_extract: crate::core::models::default_true(),

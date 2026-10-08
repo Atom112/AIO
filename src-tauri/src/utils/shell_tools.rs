@@ -155,6 +155,12 @@ fn extract_url_from_tokens(tokens: &[String], expected_cmd: &[&str]) -> Option<S
 
 /// 检测命令是否包含高危操作（词法级别）。
 ///
+/// **定位（P3.4 明确）**：安全强制层是 OS 沙箱（Linux bwrap / macOS sandbox-exec /
+/// Windows AppContainer，见 utils::sandbox）；本检查是 defense-in-depth 的
+/// 预警层——Critical 级无条件硬阻断（兜底 Auto 模式无审批的缺口），
+/// High/Medium 级用于审批弹窗的风险标注。词法检查天然可被绕过，
+/// 不得作为唯一防线。
+///
 /// 使用 token 分析而非子串匹配，避免路径前缀绕过
 /// （如 `/usr/bin/sudo` 绕过 `sudo` 起始匹配）。
 ///
@@ -506,6 +512,105 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
+    // --- 11. P3.4 补丁：历史绕过向量 ---
+    {
+        // 11a. 解释器 -c 引号载荷：token 化后载荷成为单 token，上方词法检查被
+        //      绕过（如 bash -c "rm -rf ~"）。剥引号后递归检查载荷本体。
+        let shells = ["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell"];
+        for i in 0..lower_tokens.len() {
+            if shells.contains(&lower_tokens[i].as_str())
+                && lower_tokens
+                    .get(i + 1)
+                    .is_some_and(|a| a == "-c" || a == "--command")
+            {
+                if let Some(payload) = tokens.get(i + 2) {
+                    let stripped = payload.trim_matches(|c| c == '"' || c == '\'');
+                    if let Some(inner) = check_dangerous_command(stripped) {
+                        return Some(inner);
+                    }
+                }
+            }
+        }
+
+        // 11b. 任意生产者管道到 shell：此前仅 curl/wget 作生产者时检测，
+        //      echo/ cat/ base64 等生产者均可绕过。
+        let is_shell_token = |t: &str| {
+            let base = t.rsplit('/').next().unwrap_or(t);
+            matches!(base, "sh" | "bash" | "zsh" | "dash" | "ksh")
+        };
+        for i in 0..tokens.len() {
+            let t = tokens[i].as_str();
+            // 形态 1：| 独立 token，下一个是 shell
+            if t == "|" && tokens.get(i + 1).is_some_and(|n| is_shell_token(n)) {
+                return Some(DangerInfo {
+                    risk: "危险：命令管道到 shell 执行（任意代码执行）",
+                    category: DangerCategory::Critical,
+                });
+            }
+            // 形态 2：|sh 连写 token
+            if let Some(rest) = t.strip_prefix('|') {
+                if is_shell_token(rest) {
+                    return Some(DangerInfo {
+                        risk: "危险：命令管道到 shell 执行（任意代码执行）",
+                        category: DangerCategory::Critical,
+                    });
+                }
+            }
+        }
+
+        // 11c. find -delete / find -exec rm：递归删除的常见绕过形态
+        if lower_tokens.iter().any(|t| t == "find" || t == "find.exe") {
+            if lower_tokens.iter().any(|t| t == "-delete") {
+                return Some(DangerInfo {
+                    risk: "危险：find -delete 递归删除",
+                    category: DangerCategory::Critical,
+                });
+            }
+            if let Some(exec_idx) = lower_tokens.iter().position(|t| t == "-exec") {
+                if lower_tokens
+                    .get(exec_idx + 1)
+                    .is_some_and(|n| is_rm_command(n))
+                {
+                    return Some(DangerInfo {
+                        risk: "危险：find -exec rm 递归删除",
+                        category: DangerCategory::Critical,
+                    });
+                }
+            }
+        }
+
+        // 11d. xargs rm：批量删除
+        if let Some(xidx) = lower_tokens
+            .iter()
+            .position(|t| t == "xargs" || t == "xargs.exe")
+        {
+            if lower_tokens.get(xidx + 1).is_some_and(|n| is_rm_command(n)) {
+                return Some(DangerInfo {
+                    risk: "危险：xargs rm 批量删除",
+                    category: DangerCategory::Critical,
+                });
+            }
+        }
+
+        // 11e. git clean -f*：清理全部未跟踪文件（-x 含被忽略文件）
+        if let Some(idx) = lower_tokens
+            .iter()
+            .position(|t| t == "git" || t == "git.exe")
+        {
+            if lower_tokens.get(idx + 1).is_some_and(|s| s == "clean") {
+                let has_f = lower_tokens
+                    .get(idx + 2)
+                    .is_some_and(|a| a.starts_with('-') && a.contains('f'));
+                if has_f {
+                    return Some(DangerInfo {
+                        risk: "危险：git clean -f 删除未跟踪文件",
+                        category: DangerCategory::Critical,
+                    });
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -517,7 +622,7 @@ pub fn get_command_tool_spec() -> ToolSpec {
         kind: "function".into(),
         function: ToolFunctionSpec {
             name: "execute_command".into(),
-            description: "在项目目录中执行系统命令，返回 stdout/stderr/stdout 和退出码。用于运行构建、测试、git 命令等。".into(),
+            description: "在项目目录中执行系统命令，返回 stdout/stderr 和退出码。沙箱内默认**无网络**（Linux/macOS OS 级隔离）：命令需要联网（下载依赖、API 调用、访问 localhost 服务）时必须显式设 network=true（审批时向用户标注）。用于运行构建、测试、git 命令等。".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -532,6 +637,10 @@ pub fn get_command_tool_spec() -> ToolSpec {
                     "timeout": {
                         "type": "integer",
                         "description": "超时毫秒，默认 60s，最大 300s（5分钟）。长时间编译适量增大。"
+                    },
+                    "network": {
+                        "type": "boolean",
+                        "description": "此命令是否需要网络访问。默认 false（沙箱内无网络，OS 级阻断外部出口）。npm install / cargo build 首次拉取依赖、curl API 等必须设为 true。"
                     }
                 },
                 "required": ["command"]
@@ -570,16 +679,50 @@ fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
     None
 }
 
+/// 读取管道到有界缓冲：保留前 cap 字节，**继续排水**（丢弃剩余）并统计
+/// 总读取字节数。持续排水保证生产者写管道永不阻塞（配合读取器线程在 wait()
+/// 之前启动，修复输出超过 OS 管道缓冲 ~64KB 时的死锁）。
+///
+/// 返回 (保留的字节, 总字节数)，总数用于结果中的截断说明。
+fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usize) {
+    let mut kept = Vec::new();
+    let mut total = 0usize;
+    let mut buf = [0u8; 16384];
+    loop {
+        match pipe.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                total += n;
+                if kept.len() < cap {
+                    let take = (cap - kept.len()).min(n);
+                    kept.extend_from_slice(&buf[..take]);
+                }
+            }
+        }
+    }
+    (kept, total)
+}
+
 /// 在项目根目录中执行系统命令。
 ///
 /// # 参数
 /// - `command` — 要执行的命令字符串
 /// - `project_root` — 项目根目录绝对路径（工作目录）
 /// - `timeout_ms` — 可选超时毫秒，默认 60s
+/// - `allow_network` — 是否允许网络出口（P3.1：false = Linux --unshare-net /
+///   macOS SBPL deny network*；由模型在工具参数 network 中显式声明，默认 false）
+/// - `ac_dirs` — Windows AppContainer 配置（Some = 启用 + 工具链 R+X 目录；
+///   由调用方从应用配置解析；非 Windows 恒为 None）
 ///
 /// # 返回
 /// ToolResult，包含 stdout、stderr、exit_code、timed_out 信息。
-pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64>) -> ToolResult {
+pub fn execute_command(
+    command: &str,
+    project_root: &str,
+    timeout_ms: Option<u64>,
+    allow_network: bool,
+    ac_dirs: Option<Vec<String>>,
+) -> ToolResult {
     if command.trim().is_empty() {
         return tool_err("命令为空");
     }
@@ -611,6 +754,19 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
 
     let timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
 
+    // P3.3 Windows AppContainer OS 级沙箱：配置开启（sandboxWindows=appcontainer）
+    // 时走独立路径——文件写管控 + 默认断网；任何失败 fail-closed 报错。
+    #[cfg(windows)]
+    if let Some(dirs) = ac_dirs {
+        return execute_command_in_appcontainer(
+            command,
+            project_root,
+            timeout,
+            allow_network,
+            &dirs,
+        );
+    }
+
     // 平台选择 shell
     let (shell, shell_arg) = if cfg!(windows) {
         ("cmd", "/C")
@@ -619,8 +775,13 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
     };
 
     // 沙箱包装（Linux/macOS best-effort）：可用则替换启动 argv；否则保持原生执行
-    let sandbox_argv =
-        crate::utils::sandbox::sandbox_command_prefix(shell, shell_arg, command, project_root);
+    let sandbox_argv = crate::utils::sandbox::sandbox_command_prefix(
+        shell,
+        shell_arg,
+        command,
+        project_root,
+        allow_network,
+    );
     let mut cmd = if let Some(argv) = sandbox_argv {
         let mut c = Command::new(&argv[0]);
         c.args(&argv[1..]);
@@ -639,19 +800,38 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-    let child = match cmd.spawn() {
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return tool_err(&format!("启动命令失败: {e}")),
     };
 
-    // Windows: 将子进程分配到限制 Job Object
-    #[cfg(windows)]
-    {
-        if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
-            // 沙箱分配失败不应阻塞执行，但记录错误到输出中
-            // 注意：我们这里不 kill 进程，因为这属于非致命错误
+    // Windows: 分配到每次执行独立的 Job Object 沙箱（守卫 Drop 时清理整棵进程树，
+    // 修复超时只杀直接子进程、孙进程存活到应用退出的问题）。非 Windows 为 no-op。
+    let mut job_guard = match crate::utils::sandbox::assign_to_job(&child) {
+        Ok(g) => Some(g),
+        Err(e) => {
+            // 沙箱分配失败不应阻塞执行，但记录错误
             tracing::warn!("[shell] 无法分配 Job Object 沙箱: {e}");
+            None
         }
+    };
+
+    // 读取器线程必须在 wait() 之前启动：仅在 wait 后读取会在输出超过 OS 管道
+    // 缓冲（~64KB）时死锁——子进程阻塞在写管道、永不退出，最终被超时误杀
+    //（即使命令本身 2 秒即可完成）。读取器保留前 MAX_OUTPUT_BYTES 字节并持续
+    // 排水丢弃剩余部分，保证子进程写管道永不阻塞。
+    use std::sync::mpsc;
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    if let Some(pipe) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let _ = stdout_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
+    }
+    if let Some(pipe) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let _ = stderr_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
     }
 
     // 等待执行（带超时），使用 channel 避免依赖 wait_timeout（未稳定）
@@ -670,7 +850,10 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         Ok(Ok(status)) => (status.code(), false),
         Ok(Err(_)) => return tool_err("等待命令进程失败"),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            // 超时 → 杀掉进程（非 Windows 连进程组一并清理）
+            // 超时 → 立即清理整棵进程树：
+            // - Windows：Drop Job 守卫触发 KILL_ON_JOB_CLOSE（含全部孙进程）
+            // - 非 Windows：杀进程组（process_group(0) 使子树自成一组）
+            drop(job_guard.take());
             if let Ok(mut c) = child_arc.lock() {
                 #[cfg(unix)]
                 {
@@ -691,34 +874,122 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         }
     };
 
-    // 读取输出
-    let stdout = {
-        let mut c = child_arc.lock().unwrap();
-        use std::io::Read;
-        c.stdout
-            .take()
-            .and_then(|mut o| {
-                let mut buf = Vec::new();
-                std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
-                Some(buf)
-            })
-            .unwrap_or_default()
+    // 收集读取器结果：进程已退出/被清理，管道关闭后读取器随即结束；
+    // 极端情况下（残留进程仍持有管道写端）10s 后放弃，避免无界等待。
+    let (stdout, stdout_total) = stdout_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+    let (stderr, stderr_total) = stderr_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+
+    build_command_result(
+        command,
+        exit_code,
+        timed_out,
+        timeout,
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+    )
+}
+
+/// Windows AppContainer 路径的完整命令生命周期（P3.3）。
+///
+/// 与原生路径的差异：进程经 SECURITY_CAPABILITY 属性创建（低权限令牌，默认
+/// 断网），文件写仅限项目根/专用临时目录/工具链 R+X 目录；stdout/stderr 管道
+/// 由 AC 模块创建（File 读取端）；超时经 Job 守卫 Drop + TerminateProcess 清理
+/// 整棵进程树。其余语义（排水防死锁、截断、结果构建）与原生路径一致。
+#[cfg(windows)]
+fn execute_command_in_appcontainer(
+    command: &str,
+    project_root: &str,
+    timeout: u64,
+    allow_network: bool,
+    toolchain_dirs: &[String],
+) -> ToolResult {
+    // 命令行形态与原生路径一致：cmd /C <command>（cwd 由 AC 模块设为项目根）。
+    // AppContainer 属性存在时，可执行文件解析在低权限令牌下进行——必须用
+    // 完整路径（ComSpec），裸名 "cmd" 会 ERROR_FILE_NOT_FOUND。
+    let cmd_path = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+    let cmdline = format!("{cmd_path} /C {command}");
+    let (mut child, job) = match crate::utils::sandbox::spawn_in_appcontainer(
+        &cmdline,
+        project_root,
+        allow_network,
+        toolchain_dirs,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            return tool_err(&format!(
+                "AppContainer 沙箱启动失败（fail-closed，不回退无沙箱执行）: {e}"
+            ))
+        }
+    };
+    let mut job = Some(job);
+    tracing::debug!("[appcontainer] 命令已启动 (pid={}): {command}", child.pid);
+
+    // 读取器线程（与原生路径同样的排水语义，防 >64KB 输出死锁）
+    use std::sync::mpsc;
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    if let Some(pipe) = child.stdout_read.take() {
+        std::thread::spawn(move || {
+            let _ = stdout_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
+    }
+    if let Some(pipe) = child.stderr_read.take() {
+        std::thread::spawn(move || {
+            let _ = stderr_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
+    }
+
+    // 等待（阻塞；本函数运行于 spawn_blocking 线程）。超时 → Job 清整树 + 终止兜底
+    let (exit_code, timed_out) = {
+        let (code, to) = crate::utils::sandbox::wait_with_timeout(&child, timeout as u32);
+        if to {
+            drop(job.take());
+            crate::utils::sandbox::terminate(&child);
+            (None, true)
+        } else {
+            (code, false)
+        }
     };
 
-    let stderr = {
-        let mut c = child_arc.lock().unwrap();
-        use std::io::Read;
-        c.stderr
-            .take()
-            .and_then(|mut o| {
-                let mut buf = Vec::new();
-                std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
-                Some(buf)
-            })
-            .unwrap_or_default()
-    };
+    let (stdout, stdout_total) = stdout_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+    let (stderr, stderr_total) = stderr_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+    // 正常路径同样清理可能残留的孙进程（守护进程等）
+    drop(job.take());
 
-    // 构建结果
+    build_command_result(
+        command,
+        exit_code,
+        timed_out,
+        timeout,
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+    )
+}
+
+/// 命令结果统一构建（原生路径与 AppContainer 路径共用）。
+#[allow(clippy::too_many_arguments)]
+fn build_command_result(
+    command: &str,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    timeout: u64,
+    stdout: Vec<u8>,
+    stdout_total: usize,
+    stderr: Vec<u8>,
+    stderr_total: usize,
+) -> ToolResult {
     let mut result = String::new();
     result.push_str(&format!("$ {command}\n"));
 
@@ -730,17 +1001,31 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         result.push_str(&format!("\nexit code: {code}\n"));
     }
 
-    if !stdout.is_empty() {
+    if !stdout.is_empty() || stdout_total > 0 {
         result.push_str(&format!(
             "\n[stdout]:\n{}\n",
             truncate_output(&stdout, MAX_OUTPUT_BYTES)
         ));
+        if stdout_total > stdout.len() {
+            result.push_str(&format!(
+                "[!] stdout 输出超长，仅保留前 {}B / 共 {}B\n",
+                stdout.len(),
+                stdout_total
+            ));
+        }
     }
-    if !stderr.is_empty() {
+    if !stderr.is_empty() || stderr_total > 0 {
         result.push_str(&format!(
             "\n[stderr]:\n{}\n",
             truncate_output(&stderr, MAX_OUTPUT_BYTES)
         ));
+        if stderr_total > stderr.len() {
+            result.push_str(&format!(
+                "[!] stderr 输出超长，仅保留前 {}B / 共 {}B\n",
+                stderr.len(),
+                stderr_total
+            ));
+        }
     }
 
     if (exit_code != Some(0)) || timed_out {
@@ -774,7 +1059,7 @@ mod tests {
             // 指向不存在的设备名：即使防护失效也无法造成破坏
             "dd if=/dev/zero of=/dev/aio_test_nonexistent_device",
         ] {
-            let r = execute_command(cmd, &root, Some(5_000));
+            let r = execute_command(cmd, &root, Some(5_000), false, None);
             assert!(r.is_error, "命令应被拒绝: {cmd}");
             assert!(
                 text_of(&r).contains("高危命令"),
@@ -784,12 +1069,78 @@ mod tests {
         }
     }
 
+    /// P3.4：评估报告中列出的已知绕过向量必须全部命中 Critical。
+    #[test]
+    fn known_bypass_vectors_are_blocked() {
+        for cmd in [
+            // 解释器引号载荷（载荷为单 token，词法检查曾被绕过）
+            "bash -c \"rm -rf ~\"",
+            "sh -c 'sudo reboot'",
+            // 任意生产者管道到 shell（此前仅 curl/wget 生产者时检测）
+            "echo payload | sh",
+            "cat evil.sh | bash",
+            "base64 -d payload | sh",
+            "xxd -r x | bash",
+            "|bash echo x",
+            // find / xargs 递归删除
+            "find / -delete",
+            "find . -exec rm {} ;",
+            "xargs rm -rf .",
+            // git clean
+            "git clean -fdx",
+        ] {
+            let info = check_dangerous_command(cmd);
+            assert!(info.is_some(), "绕过向量未命中: {cmd}");
+            assert_eq!(
+                info.unwrap().category,
+                DangerCategory::Critical,
+                "应为 Critical: {cmd}"
+            );
+        }
+    }
+
+    /// P3.4：新增检查不得引入假阳性（正常管道/find/git 用法不受影响）。
+    #[test]
+    fn benign_pipe_and_find_still_run() {
+        for cmd in [
+            "ls | grep foo",
+            "cargo build | tee log.txt",
+            "find . -name '*.rs'",
+            "find . -type f -exec grep x {} ;",
+            "echo rm | xargs echo",
+            "git clean -n",
+            "bash -c 'cargo test'",
+            "powershell -Command Get-Date",
+        ] {
+            assert!(check_dangerous_command(cmd).is_none(), "假阳性: {cmd}");
+        }
+    }
+
     /// 普通命令不受影响（防假阳性回归）。
     #[test]
     fn benign_command_still_runs() {
         let root = std::env::temp_dir().to_string_lossy().to_string();
-        let r = execute_command("echo aio_benign_check", &root, Some(10_000));
+        let r = execute_command("echo aio_benign_check", &root, Some(10_000), false, None);
         assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
         assert!(text_of(&r).contains("aio_benign_check"));
+    }
+
+    /// 大输出命令不得死锁：修复前 stdout/stderr 在 wait() 之后才读取，输出超过
+    /// OS 管道缓冲（~64KB）时子进程阻塞在写管道、永不退出，最终被超时误杀
+    ///（即使命令本身 2 秒即可完成）。现在读取器在 wait 前启动并持续排水。
+    #[test]
+    fn large_output_does_not_deadlock() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        // ~340KB 输出（Windows: 20000 行 × 17B；Unix: head -n 20000）
+        let cmd = if cfg!(windows) {
+            "for /L %i in (1,1,20000) do @echo 0123456789ABCDEF"
+        } else {
+            "yes 0123456789ABCDEF | head -n 20000"
+        };
+        let r = execute_command(cmd, &root, Some(30_000), false, None);
+        let text = text_of(&r);
+        assert!(!r.is_error, "大输出命令应正常完成: {text}");
+        assert!(!text.contains("超时"), "不应被超时误杀: {text}");
+        assert!(text.contains("0123456789ABCDEF"), "输出内容缺失");
     }
 }

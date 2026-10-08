@@ -14,6 +14,7 @@ import { Component, createSignal, Show, For, onCleanup, createEffect, untrack } 
 import type { AgentStep, SubagentStep } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
+import { stopSubagent } from '../../../core/api/chat';
 
 interface SubagentBlockProps {
   step: AgentStep;
@@ -196,6 +197,19 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
   const taskSummary = () => props.step.subagentTask || '';
   const resultText = () => props.step.subagentResult || '';
 
+  // 单独停止后台子智能体（仅 fire-and-forget 启动的在注册表中可查；
+  // 等待型子代理随整轮停止，此处点击为幂等 no-op）
+  const [stopping, setStopping] = createSignal(false);
+  const handleStop = async () => {
+    if (!props.step.subagentId || stopping()) return;
+    setStopping(true);
+    try {
+      await stopSubagent(props.step.subagentId);
+    } finally {
+      setStopping(false);
+    }
+  };
+
   return (
     <div
       class="subagent-block rounded-lg overflow-hidden border"
@@ -213,63 +227,79 @@ const SubagentBlock: Component<SubagentBlockProps> = (props) => {
         'opacity-90': props.step.status === 'complete',
       }}
     >
-      {/* Header */}
-      <button
-        type="button"
-        class="flex items-center w-full gap-2 px-3 py-2 cursor-pointer select-none bg-transparent border-none transition-colors duration-200 hover:bg-white/[0.03]"
-        style={{ color: 'var(--sa-color)', 'font-size': '12px' }}
-        onClick={() => props.onToggle()}
-      >
-        <span
-          class="flex items-center justify-center w-5 h-5 rounded shrink-0"
-          style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
+      {/* Header（flex 容器：折叠按钮 + 可选的停止后台子智能体按钮） */}
+      <div class="flex items-center w-full">
+        <button
+          type="button"
+          class="flex items-center flex-1 min-w-0 gap-2 px-3 py-2 cursor-pointer select-none bg-transparent border-none transition-colors duration-200 hover:bg-white/[0.03]"
+          style={{ color: 'var(--sa-color)', 'font-size': '12px' }}
+          onClick={() => props.onToggle()}
         >
-          <Icon
-            name={profileStyle().icon as any}
-            size={12}
-            classList={{ 'animate-spin': props.step.status === 'running' }}
-          />
-        </span>
-        <span class="font-semibold shrink-0">{displayName()}</span>
-        <span
-          class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-          style={{
-            color: profileStyle().color,
-            background: 'rgba(var(--text-base-rgb),0.05)',
-            border: `1px solid ${profileStyle().borderColor}`,
-          }}
-        >
-          {profileLabel(props.step.subagentProfile)}
-        </span>
-        {taskSummary() && (
           <span
-            class="truncate min-w-0 flex-1"
-            style={{ color: "'rgba(var(--text-base-rgb),0.35)'", 'font-weight': '400' }}
+            class="flex items-center justify-center w-5 h-5 rounded shrink-0"
+            style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
           >
-            {taskSummary().length > 60 ? taskSummary().slice(0, 58) + '…' : taskSummary()}
+            <Icon
+              name={profileStyle().icon as any}
+              size={12}
+              classList={{ 'animate-spin': props.step.status === 'running' }}
+            />
           </span>
-        )}
-        <span class="font-mono text-white/25 text-[10px] ml-auto shrink-0">
-          {props.step.timestamp ? formatDuration(elapsedMs()) : ''}
-        </span>
-        <Show when={props.step.status === 'running'}>
+          <span class="font-semibold shrink-0">{displayName()}</span>
           <span
-            class="w-1.5 h-1.5 rounded-full animate-pulse shrink-0"
-            style={{ background: 'var(--sa-color)' }}
-          />
+            class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+            style={{
+              color: profileStyle().color,
+              background: 'rgba(var(--text-base-rgb),0.05)',
+              border: `1px solid ${profileStyle().borderColor}`,
+            }}
+          >
+            {profileLabel(props.step.subagentProfile)}
+          </span>
+          {taskSummary() && (
+            <span
+              class="truncate min-w-0 flex-1"
+              style={{ color: "'rgba(var(--text-base-rgb),0.35)'", 'font-weight': '400' }}
+            >
+              {taskSummary().length > 60 ? taskSummary().slice(0, 58) + '…' : taskSummary()}
+            </span>
+          )}
+          <span class="font-mono text-white/25 text-[10px] ml-auto shrink-0">
+            {props.step.timestamp ? formatDuration(elapsedMs()) : ''}
+          </span>
+          <Show when={props.step.status === 'running'}>
+            <span
+              class="w-1.5 h-1.5 rounded-full animate-pulse shrink-0"
+              style={{ background: 'var(--sa-color)' }}
+            />
+          </Show>
+          <Show when={props.step.status === 'error'}>
+            <Icon name="x" size={10} class="text-red-400/70 shrink-0" />
+          </Show>
+          <span class="flex items-center justify-center shrink-0 text-white/20">
+            <Icon
+              name="arrow-left"
+              size={10}
+              classList={{ '-rotate-90': !props.expanded, 'rotate-90': props.expanded }}
+              style={{ transition: 'transform 0.2s' }}
+            />
+          </span>
+        </button>
+        <Show when={props.step.status === 'running' && props.step.subagentId}>
+          <button
+            type="button"
+            class="flex items-center justify-center w-6 h-6 mr-2 rounded shrink-0 bg-transparent border-none cursor-pointer text-white/40 hover:text-red-400/80 transition-colors"
+            title={t('agent.subagent.stop')}
+            aria-label={t('agent.subagent.stop')}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleStop();
+            }}
+          >
+            <Icon name="stop" size={10} classList={{ 'animate-pulse': stopping() }} />
+          </button>
         </Show>
-        <Show when={props.step.status === 'error'}>
-          <Icon name="x" size={10} class="text-red-400/70 shrink-0" />
-        </Show>
-        <span class="flex items-center justify-center shrink-0 text-white/20">
-          <Icon
-            name="arrow-left"
-            size={10}
-            classList={{ '-rotate-90': !props.expanded, 'rotate-90': props.expanded }}
-            style={{ transition: 'transform 0.2s' }}
-          />
-        </span>
-      </button>
+      </div>
 
       {/* Body */}
       <Show when={props.expanded}>

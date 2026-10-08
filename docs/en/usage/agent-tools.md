@@ -4,6 +4,12 @@
 
 Agent mode provides 20+ built-in tools across 6 categories. The following table lists all tools and their basic permission characteristics:
 
+> **Execution semantics**: read-only tools within the same response block (reads/search/web queries/git read/LSP/memory recall) run concurrently; mutating tools (file writes, command execution, git write) and MCP tools run serially in original order. Can be disabled via `parallelToolExecution` in app config.
+>
+> **Main agent tool set**: hybrid by default — read-only built-in tools are called directly, mutating work is delegated to subagents (`mainAgentToolAccess`: hybrid / orchestrator / full).
+>
+> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in Auto/Workflow mode (the "Trusted" toggle in MCP settings).
+
 | Tool Name         | Category      | Normal Default | Auto Default | Plan Default |
 | ----------------- | ------------- | -------------- | ------------ | ------------ |
 | `read_file`       | File          | Allow          | Allow        | Allow        |
@@ -53,9 +59,9 @@ Read file content.
 
 | Item            | Value                                                                                                                                                                                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Read the content of a specified file within the project directory. Binary files are rejected.                                                                                                                                                                           |
+| **Description** | Read the content of a specified file within the project directory, with 1-based line numbers (format ` 1                                                                                                                                                                | content`, directly usable for `replace_in_file` `start_line`/`end_line`). Binary files are rejected. Default max 300 lines / 32KB; when exceeded, returns head+tail with the omitted line range annotated. |
 | **Parameters**  | `path` (string, required) -- file path; `max_lines` (integer, optional) -- max lines, default 300, pass -1 for unlimited; `max_bytes` (integer, optional) -- max bytes, default 32KB; `with_hash` (boolean, optional) -- return file SHA-256 digest (hashline protocol) |
-| **Return**      | Text content of the file; when limited, returns head+tail with omitted counts                                                                                                                                                                                           |
+| **Return**      | Line-numbered text content of the file; when limited, returns head+tail with the omitted line range annotated                                                                                                                                                           |
 | **Limits**      | Default max 300 lines / 32KB; hard cap 1MB                                                                                                                                                                                                                              |
 | **Permission**  | Read operation: Normal/Allow, Auto/Allow, Plan/Allow                                                                                                                                                                                                                    |
 

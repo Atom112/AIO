@@ -167,6 +167,51 @@ pub struct AppConfig {
     /// 单次 Agent 运行最大工具调用轮数（None = 使用默认值）。命中时优雅收尾而非硬中断，防无界 API 成本。
     #[serde(default, rename = "maxToolRounds")]
     pub max_tool_rounds: Option<u32>,
+    /// 工作流步骤的权限模式："inherit" 继承父回合模式（默认；Normal 下写操作逐次审批），
+    /// "auto" 强制 Auto 模式（旧行为，步骤内工具自动放行）。
+    #[serde(default = "default_workflow_step_mode", rename = "workflowStepMode")]
+    pub workflow_step_mode: String,
+    /// 同一响应块内的只读工具是否并发执行（默认 true）。关闭后回退全串行。
+    #[serde(default = "default_true", rename = "parallelToolExecution")]
+    pub parallel_tool_execution: bool,
+    /// 主 Agent 内置工具集："hybrid"（默认，只读工具直达 + 变更走子代理）、
+    /// "orchestrator"（严格编排者，旧行为）、"full"（全部内置工具，Claude Code 形态）。
+    #[serde(
+        default = "default_main_agent_tool_access",
+        rename = "mainAgentToolAccess"
+    )]
+    pub main_agent_tool_access: String,
+    /// 主模型调用前置阶段（POST + 状态检查）的重试次数（默认 3，退避 1s/2s/4s）。
+    /// 仅覆盖未发射任何内容前的失败；流中段错误不重试。
+    #[serde(default = "default_model_call_retries", rename = "modelCallRetries")]
+    pub model_call_retries: u32,
+    /// 沙箱不可用时（无 bwrap/sandbox-exec）是否拒绝自主模式执行命令（fail-closed，
+    /// 默认 true）。false = 回退无沙箱执行（旧行为，不推荐）。
+    #[serde(default = "default_true", rename = "sandboxRequired")]
+    pub sandbox_required: bool,
+    /// Windows 命令沙箱模式："appcontainer"（默认，OS 级文件写管控 + 默认断网）
+    /// 或 "off"（仅 Job Object 生命周期限制，旧行为）。
+    #[serde(default = "default_sandbox_windows", rename = "sandboxWindows")]
+    pub sandbox_windows: String,
+    /// Windows AppContainer 下额外授予 R+X 的工具链目录（如 cargo/scoop 安装目录；
+    /// 系统目录依赖内置 ALL APPLICATION PACKAGES ACE 无需配置）。
+    #[serde(default, rename = "sandboxWindowsToolchainDirs")]
+    pub sandbox_windows_toolchain_dirs: Vec<String>,
+}
+
+/// Windows 命令沙箱模式默认值。
+pub(crate) fn default_sandbox_windows() -> String {
+    "appcontainer".into()
+}
+
+/// 主模型调用重试次数默认值。
+pub(crate) fn default_model_call_retries() -> u32 {
+    3
+}
+
+/// 主 Agent 内置工具集默认值。
+pub(crate) fn default_main_agent_tool_access() -> String {
+    "hybrid".into()
 }
 
 impl Default for AppConfig {
@@ -182,6 +227,13 @@ impl Default for AppConfig {
             auto_start_enabled: false,
             max_concurrent_subagents: None,
             max_tool_rounds: None,
+            workflow_step_mode: default_workflow_step_mode(),
+            parallel_tool_execution: default_true(),
+            main_agent_tool_access: default_main_agent_tool_access(),
+            model_call_retries: default_model_call_retries(),
+            sandbox_required: default_true(),
+            sandbox_windows: default_sandbox_windows(),
+            sandbox_windows_toolchain_dirs: Vec::new(),
             memory_enabled: false,
             memory_auto_inject: default_true(),
             memory_auto_extract: default_true(),
@@ -200,7 +252,12 @@ impl Default for AppConfig {
 }
 
 /// 单次 Agent 运行默认最大工具调用轮数。
-pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 25;
+pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 50;
+
+/// 工作流步骤权限模式默认值：继承父回合模式。
+pub(crate) fn default_workflow_step_mode() -> String {
+    "inherit".into()
+}
 
 pub(crate) fn default_auto_retry_enabled() -> bool {
     true

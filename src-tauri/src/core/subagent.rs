@@ -35,9 +35,21 @@ pub struct SubagentProfile {
     pub system_prompt_extension: String,
     /// 可选的模型覆盖（使用更便宜的模型执行子任务），None = 跟随主 Agent 模型
     pub model_override: Option<String>,
+    /// 是否注入 MCP 工具（主 Agent 勾选的 server）。仅 general（全能力）默认开启；
+    /// 其余内置角色保持最小权限。自定义 profile 由用户配置。
+    #[serde(default)]
+    pub allow_mcp_tools: bool,
 }
 
 impl SubagentProfile {
+    /// 检查指定工具是否被 denied_tools 显式排除（不涉及 allowed 列表）。
+    /// 用于 MCP 工具：其门控是 allow_mcp_tools 标志，但显式排除仍然生效。
+    pub fn is_tool_denied(&self, tool_name: &str) -> bool {
+        self.denied_tools
+            .iter()
+            .any(|pattern| simple_glob_match(pattern, tool_name))
+    }
+
     /// 检查指定工具是否被该配置文件允许
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
         // denied 优先
@@ -74,6 +86,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
     vec![
         SubagentProfile {
             id: "explorer".into(),
+            allow_mcp_tools: false,
             name: "代码探索者".into(),
             description: "只读搜索和分析，用于大规模代码探索、多文件检索、架构分析。不能修改任何文件。".into(),
             allowed_tools: vec![
@@ -107,6 +120,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "coder".into(),
+            allow_mcp_tools: false,
             name: "代码实现者".into(),
             description: "代码编写和修改，用于实现具体功能模块。禁止执行 shell 命令。".into(),
             allowed_tools: vec![], // 空 = 全部允许
@@ -122,6 +136,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "general".into(),
+            allow_mcp_tools: true,
             name: "通用子智能体".into(),
             description: "全能力子智能体，拥有和主 Agent 完全相同的工具集。".into(),
             allowed_tools: vec![],
@@ -136,6 +151,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "architect".into(),
+            allow_mcp_tools: false,
             name: "架构设计师".into(),
             description: "只读架构分析、依赖映射、设计决策评估与技术选型建议。不能修改任何文件。".into(),
             allowed_tools: vec![
@@ -169,6 +185,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "debugger".into(),
+            allow_mcp_tools: false,
             name: "问题诊断师".into(),
             description: "错误调查与根因分析，可运行命令复现问题但不能修改任何文件。".into(),
             allowed_tools: vec![
@@ -200,6 +217,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "reviewer".into(),
+            allow_mcp_tools: false,
             name: "代码审查员".into(),
             description: "只读代码质量评估、安全审计与最佳实践检查。不能修改任何文件。".into(),
             allowed_tools: vec![
@@ -233,6 +251,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "writer".into(),
+            allow_mcp_tools: false,
             name: "文档撰写员".into(),
             description: "编写文档、注释、README、变更日志与技术规范。可读写文件。".into(),
             allowed_tools: vec![], // 空 = 全部允许
@@ -254,6 +273,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "tester".into(),
+            allow_mcp_tools: false,
             name: "测试工程师".into(),
             description: "测试用例生成、覆盖率分析与测试执行。可运行测试并编写测试文件。".into(),
             allowed_tools: vec![], // 空 = 全部允许
@@ -274,6 +294,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
         },
         SubagentProfile {
             id: "requirements".into(),
+            allow_mcp_tools: false,
             name: "需求分析员".into(),
             description: "用户需求分析，将用户输入拆解为结构化工作流方案。不能修改文件。".into(),
             allowed_tools: vec![
@@ -332,6 +353,7 @@ pub fn find_profile(
                 denied_tools: cp.denied_tools.clone(),
                 system_prompt_extension: cp.system_prompt_extension.clone(),
                 model_override: None,
+                allow_mcp_tools: cp.allow_mcp_tools,
             });
         }
     }

@@ -195,6 +195,7 @@ mod tests {
             reasoning: None,
             input_tokens: None,
             output_tokens: None,
+            cached_input_tokens: None,
             agent_steps: None,
             interim_content: None,
             agent_start_time: None,

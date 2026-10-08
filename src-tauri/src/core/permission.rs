@@ -46,6 +46,10 @@ pub struct PermissionRule {
     /// 可选的路径 glob 匹配（针对 filesystem 类工具的 `path` 参数值）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_pattern: Option<String>,
+    /// 可选的命令前缀匹配（仅 execute_command）：命令首个空白分词须等于该前缀
+    /// （token 级匹配，防 "cargo; rm -rf /" 这类注入绕过——配合黑名单硬阻断分层）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_prefix: Option<String>,
     /// 优先级，越大越优先。Deny 类型的规则即使优先级低也优先于 Allow
     #[serde(default)]
     pub priority: i32,
@@ -119,6 +123,7 @@ fn rf(
         modes: modes.to_vec(),
         action,
         path_pattern: path_pattern.map(Into::into),
+        command_prefix: None,
         priority,
     }
 }
@@ -577,6 +582,16 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 None,
                 20,
             ),
+            // 命令执行有副作用，与 Plan 模式的只研究目标冲突 → 显式拒绝
+            rf(
+                "builtin-plan-deny-execute-command",
+                "execute_command",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
             // 其他 MCP 工具需要确认
             rf(
                 "builtin-plan-ask-other-tools",
@@ -665,6 +680,29 @@ fn path_matches(rule: &PermissionRule, arguments: &Value) -> bool {
     }
 }
 
+// ====== 会话级 always-allow 规则（P4.5）======
+
+/// 应用运行期间有效的会话规则（审批弹窗"本次会话总是允许"产生）。
+/// 优先级 50（高于内置默认 10/20，低于用户可自定义的更高优先级）；
+/// Deny 规则（任意来源）仍然总是优先——会话放行不能越过 Deny 防线。
+static SESSION_RULES: std::sync::OnceLock<parking_lot::RwLock<Vec<PermissionRule>>> =
+    std::sync::OnceLock::new();
+
+fn session_rules() -> &'static parking_lot::RwLock<Vec<PermissionRule>> {
+    SESSION_RULES.get_or_init(|| parking_lot::RwLock::new(Vec::new()))
+}
+
+/// 登记一条会话级放行规则（进程生命周期内有效）。
+pub fn add_session_rule(rule: PermissionRule) {
+    session_rules().write().push(rule);
+}
+
+/// 清空会话规则（测试用）。
+#[cfg(test)]
+pub fn clear_session_rules() {
+    session_rules().write().clear();
+}
+
 // ====== 规则评估 ======
 
 /// 检查一条规则是否匹配当前工具调用。
@@ -693,6 +731,20 @@ fn rule_matches(
     if !path_matches(rule, arguments) {
         return false;
     }
+    // 5. 命令前缀（P4.5）：仅 execute_command 适用——首个空白分词精确匹配
+    if let Some(prefix) = &rule.command_prefix {
+        let cmd = arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let first_token = cmd.split_whitespace().next().unwrap_or("");
+        if tool_name != "execute_command"
+            || first_token.is_empty()
+            || !first_token.eq_ignore_ascii_case(prefix)
+        {
+            return false;
+        }
+    }
     true
 }
 
@@ -716,8 +768,9 @@ pub fn check_permission(
     agent_mode: &AgentMode,
     custom_rules: &[PermissionRule],
 ) -> PermissionAction {
-    // 1. 收集所有匹配规则（内置 + 自定义），并标记是否自定义
+    // 1. 收集所有匹配规则（内置 + 自定义 + 会话 always-allow），并标记是否自定义
     let builtin_rules = default_rules_for_mode(agent_mode);
+    let session = session_rules().read().clone();
     let mut all_candidates: Vec<(&PermissionRule, bool)> = Vec::new();
 
     for rule in &builtin_rules {
@@ -726,6 +779,12 @@ pub fn check_permission(
         }
     }
     for rule in custom_rules {
+        if rule_matches(rule, tool_name, server_id, arguments, agent_mode) {
+            all_candidates.push((rule, true));
+        }
+    }
+    // P4.5 会话规则：以高优先级参与评估；Deny（任意来源）仍在步骤 3 全局优先
+    for rule in &session {
         if rule_matches(rule, tool_name, server_id, arguments, agent_mode) {
             all_candidates.push((rule, true));
         }
@@ -891,6 +950,87 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_mode_execute_command_denied() {
+        let args = serde_json::json!({"command": "cargo test"});
+        let result = check_permission_defaults(
+            "execute_command",
+            crate::core::ids::BUILTIN_SERVER_ID,
+            &args,
+            &AgentMode::Plan,
+        );
+        assert_eq!(result, PermissionAction::Deny);
+    }
+
+    /// P4.5：会话级 always-allow——登记后同形态调用不再 Ask；
+    /// 命令前缀为 token 级匹配（防注入绕过）；Deny 仍然优先。
+    #[test]
+    fn session_allow_rules_override_ask_but_not_deny() {
+        clear_session_rules();
+        let cmd_args = serde_json::json!({"command": "cargo build"});
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &cmd_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Ask
+        );
+        add_session_rule(PermissionRule {
+            id: "test-session-cargo".into(),
+            tool_pattern: "execute_command".into(),
+            server_id: None,
+            modes: Vec::new(),
+            action: PermissionAction::Allow,
+            path_pattern: None,
+            command_prefix: Some("cargo".into()),
+            priority: 50,
+        });
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &cmd_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Allow
+        );
+        // 不同前缀 → 不匹配（回落内置 Ask）
+        let npm_args = serde_json::json!({"command": "npm test"});
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &npm_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Ask
+        );
+        // 前缀注入绕过：首 token 非 cargo → 不匹配
+        let inject_args = serde_json::json!({"command": "cargox; rm -rf /"});
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &inject_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Ask
+        );
+        // 会话放行不能越过 Deny（Plan 模式 execute_command 内置 Deny）
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &cmd_args,
+                &AgentMode::Plan
+            ),
+            PermissionAction::Deny
+        );
+        clear_session_rules();
+    }
+
+    #[test]
     fn test_auto_mode_write_allowed() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
         let result = check_permission_defaults(
@@ -935,6 +1075,7 @@ mod tests {
             modes: vec![AgentMode::Normal],
             action: PermissionAction::Allow,
             path_pattern: None,
+            command_prefix: None,
             priority: 100, // 高于内置（默认 10）
         }];
         let args = serde_json::json!({"path": "src/old.rs"});
@@ -957,6 +1098,7 @@ mod tests {
             modes: vec![AgentMode::Auto],
             action: PermissionAction::Deny,
             path_pattern: Some(".env*".into()),
+            command_prefix: None,
             priority: 5, // 低于内置 allow（10），但 Deny 总是优先
         }];
         let args = serde_json::json!({"path": ".env"});
@@ -1038,6 +1180,7 @@ mod tests {
             modes: vec![],
             action: PermissionAction::Ask,
             path_pattern: None,
+            command_prefix: None,
             priority: 10,
         }];
         let args = serde_json::json!({"path": "src/main.rs"});
@@ -1061,6 +1204,7 @@ mod tests {
             modes: vec![AgentMode::Auto],
             action: PermissionAction::Deny,
             path_pattern: Some("src/**".into()),
+            command_prefix: None,
             priority: 1,
         }];
         let args = serde_json::json!({"path": "src/main.rs", "content": "x"});
@@ -1084,6 +1228,7 @@ mod tests {
             modes: vec![],
             action: PermissionAction::Deny,
             path_pattern: Some(".env*".into()),
+            command_prefix: None,
             priority: 100,
         }];
         // search_files 用 basePath
@@ -1124,6 +1269,7 @@ mod tests {
             modes: vec![AgentMode::Normal],
             action: PermissionAction::Allow,
             path_pattern: Some("src/**".into()),
+            command_prefix: None,
             priority: 100,
         }];
         // 全部在 src/** 内 → 匹配该 Allow

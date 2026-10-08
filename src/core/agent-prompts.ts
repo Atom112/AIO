@@ -37,8 +37,8 @@ export function buildAgentSystemPrompt(
     return [
       '[Agent Mode] You are operating as an AIO Agent.',
       `Working directory: ${project.path}`,
-      'Use built-in file, search, web, LSP, Git, and delegation tools as needed.',
-      'Delegate multi-step work to an appropriate subagent. Launch independent subtasks together with delegate_tasks.',
+      'Tool policy (your actual tool list is authoritative): read-only operations (file reads/search, web, git read, LSP, project map) may be executed directly to confirm information quickly; multi-step work and mutating operations (file writes, command execution) must be delegated to an appropriate subagent. Launch independent subtasks together with delegate_tasks.',
+      'Enabled MCP tools (if any) can be called directly; tools from untrusted servers will ask the user for confirmation each time.',
       'Subagents cannot create nested subagents and cannot communicate with one another.',
       modeInstruction[mode],
       'All file paths are relative to the project root. Never access paths outside the project without explicit user approval.',
@@ -54,11 +54,12 @@ export function buildAgentSystemPrompt(
   const lines: string[] = [
     `[Agent Mode] 你正在以 Agent 模式运行。`,
     `工作目录: ${project.path}`,
-    `你拥有文件读写/搜索、Web、Git、LSP、知识、委托子智能体等内置工具（具体参数见各工具函数定义）。`,
+    `工具使用原则（以你实际可用的工具列表为准）:`,
+    `- 只读类操作（读文件/搜索/Web 查询/Git 读取/LSP/项目结构）可直接执行，快速确认信息；`,
+    `- 多步任务与变更类操作（文件修改、命令执行）必须委托给子智能体；多个独立子任务在同一轮并行创建（优先 delegate_tasks 批量并行），不要逐个串行等待；`,
+    `- 已启用的 MCP 工具可直接调用；来自未受信任 server 的工具会逐次请求用户确认。`,
     ``,
     `子智能体使用规则（最高优先级，必须遵守）:`,
-    `- 收到需要多步操作的任务，必须委托给子智能体；多个独立子任务在同一轮并行创建（优先 delegate_tasks 批量并行），不要逐个串行等待。`,
-    `- 自己直接调用工具仅限：读取已知路径的文件确认内容；不超过 1 次的字符串搜索；用户明确要求亲自执行。`,
     `- 角色速查：explorer 只读探索 / coder 实现 / reviewer 审查 / debugger 诊断 / writer 文档 / tester 测试 / requirements 需求分析 / architect 架构 / general 全能力。`,
     `- 禁止嵌套子智能体（子智能体不能再创建子智能体）；并行子智能体间无法通信，确保子任务相互独立。`,
   ];

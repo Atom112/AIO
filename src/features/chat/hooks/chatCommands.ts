@@ -22,9 +22,8 @@ import {
 export interface ChatCommandDeps {
   // 面板折叠/宽度
   isLeftCollapsed: () => boolean;
-  setIsLeftCollapsed: (v: boolean) => void;
-  leftPanelWidth: () => number;
-  setLeftPanelWidth: (v: number) => void;
+  /** 左侧面板收起状态统一入口（含持久化与宽度兜底恢复） */
+  setLeftCollapsed: (collapsed: boolean) => void;
   isRightCollapsed: () => boolean;
   setIsRightCollapsed: (v: boolean) => void;
   rightPanelWidth: () => number;
@@ -60,9 +59,7 @@ export interface ChatCommandDeps {
 export function registerChatCommands(deps: ChatCommandDeps): string[] {
   const {
     isLeftCollapsed,
-    setIsLeftCollapsed,
-    leftPanelWidth,
-    setLeftPanelWidth,
+    setLeftCollapsed,
     isRightCollapsed,
     setIsRightCollapsed,
     rightPanelWidth,
@@ -94,10 +91,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
   const cmdToggleLeft = registerCommand({
     id: 'toggle-left-sidebar',
     handler: () => {
-      const newState = !isLeftCollapsed();
-      setIsLeftCollapsed(newState);
-      localStorage.setItem('left-collapsed', String(newState));
-      if (!newState && leftPanelWidth() < 5) setLeftPanelWidth(18);
+      setLeftCollapsed(!isLeftCollapsed());
     },
   });
 

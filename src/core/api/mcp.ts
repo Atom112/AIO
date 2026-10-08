@@ -60,9 +60,9 @@ export const saveMcpServerSecret = (
   value: string,
 ) => invoke<string>('save_mcp_server_secret', { serverId, target, key, value });
 
-/** 响应工具审批（approved = 本次允许，false = 拒绝）。 */
-export const respondToolApproval = (approvalId: string, approved: boolean) =>
-  invoke<void>('respond_tool_approval', { approvalId, approved });
+/** 响应工具审批（approved = 本次允许，false = 拒绝；always='session' = 会话级放行）。 */
+export const respondToolApproval = (approvalId: string, approved: boolean, always?: 'session') =>
+  invoke<void>('respond_tool_approval', { approvalId, approved, always });
 
 /** 列出可用的 MCP 传输类型。 */
 export const listMcpTransports = () => invoke<string[]>('list_mcp_transports');

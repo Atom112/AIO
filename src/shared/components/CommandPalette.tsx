@@ -124,16 +124,25 @@ const CommandPalette: Component = () => {
     const cmds = filteredCommands();
 
     for (const cmd of cmds) {
-      if (!seen.has(cmd.category)) {
-        seen.add(cmd.category);
+      // 防御：注册表可能存在无 category 元数据的命令（registerCommand 对未知 id
+      // 不补全元数据）。兜底到 global 并告警，避免 t(undefined) 崩溃整个渲染树。
+      if (!CATEGORY_LABELS[cmd.category]) {
+        console.warn(
+          `[commands] 命令 ${cmd.id} 缺少元数据注册（shortcuts.ts 内置表），已兜底到 global 分组`,
+        );
+      }
+      const category: CommandCategory =
+        cmd.category && CATEGORY_LABELS[cmd.category] ? cmd.category : 'global';
+      if (!seen.has(category)) {
+        seen.add(category);
         groups.push({
-          category: cmd.category,
-          label: t(CATEGORY_LABELS[cmd.category]),
-          color: CATEGORY_COLORS[cmd.category] || 'rgba(var(--text-base-rgb),0.4)',
+          category,
+          label: t(CATEGORY_LABELS[category]),
+          color: CATEGORY_COLORS[category] || 'rgba(var(--text-base-rgb),0.4)',
           items: [],
         });
       }
-      const group = groups.find((g) => g.category === cmd.category)!;
+      const group = groups.find((g) => g.category === category)!;
       group.items.push(cmd);
     }
 

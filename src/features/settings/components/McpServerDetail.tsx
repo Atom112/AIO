@@ -175,6 +175,19 @@ const McpServerDetail: Component<Props> = (props) => {
             {t('mcp.detail.autoStartHint')}
           </span>
         </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config().trusted ?? false}
+              onChange={(e) => updateField('trusted', e.currentTarget.checked)}
+            />
+            {t('mcp.detail.trusted')}
+          </label>
+          <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+            {t('mcp.detail.trustedHint')}
+          </span>
+        </div>
 
         {/* 传输类型 */}
         <div class="flex flex-col gap-1">

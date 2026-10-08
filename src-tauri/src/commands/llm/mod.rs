@@ -22,7 +22,6 @@ use futures_util::StreamExt; // 用于处理流式数据
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
@@ -30,20 +29,24 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) mod budget;
+pub(crate) mod checkpoints;
 pub(crate) mod client;
 pub(crate) mod handoff;
 pub(crate) mod messages;
 pub(crate) mod subagents;
 pub(crate) mod titles;
+pub(crate) mod tool_dispatch;
 pub(crate) mod tool_specs;
 pub(crate) mod usage;
 
 pub(crate) use budget::*;
+pub(crate) use checkpoints::*;
 pub(crate) use client::*;
 pub(crate) use handoff::*;
 pub(crate) use messages::*;
 pub(crate) use subagents::*;
 pub(crate) use titles::*;
+pub(crate) use tool_dispatch::*;
 pub(crate) use tool_specs::*;
 pub(crate) use usage::*;
 /// Agent 循环的轮数与上下文预算（主循环按模型窗口推导；子 Agent 用保守常量，
@@ -194,6 +197,7 @@ pub(crate) async fn stream_one_round(
     app: Option<&AppHandle>,
     process_images: bool,
     max_output_tokens: Option<u32>,
+    max_retries: u32,
 ) -> Result<RoundResult, String> {
     let mut body_map = serde_json::Map::new();
     body_map.insert("model".into(), json!(model));
@@ -212,20 +216,16 @@ pub(crate) async fn stream_one_round(
     }
     let body = serde_json::Value::Object(body_map);
 
-    // 统一请求入口：Anthropic 原生协议（/v1/messages + x-api-key + body 转换）自动适配
-    let (response, is_anthropic_request) =
-        post_chat_completion(client, &api_url, api_key, &body).await?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let body_text = response.text().await.unwrap_or_default();
-        let truncated = if body_text.len() > 512 {
-            &body_text[..body_text.floor_char_boundary(512)]
-        } else {
-            &body_text
-        };
-        return Err(format!("LLM API {}: {}", status, truncated));
-    }
+    // 统一请求入口（P2.4 带前置阶段重试）：Anthropic 原生协议自动适配；
+    // 传输错误与 429/5xx 在未发射任何内容前按退避重试，流中段错误不重试
+    let (response, is_anthropic_request) = crate::plugins::llm::post_chat_completion_with_retry(
+        client,
+        &api_url,
+        api_key,
+        &body,
+        max_retries,
+    )
+    .await?;
 
     let mut stream = response.bytes_stream();
     let mut line_buffer = String::new();
@@ -622,6 +622,7 @@ pub async fn call_llm_stream(
             Some(&app_handle),
             true,
             None,
+            crate::core::models::default_model_call_retries(),
         )
         .await;
 
@@ -764,6 +765,19 @@ pub(crate) async fn execute_builtin_tool(
 ) -> Result<ToolResult, String> {
     let project_root = file_tools::resolve_project_root(app, project_id)?;
 
+    // P3.2 fail-closed：沙箱不可用（无 bwrap/sandbox-exec）时，自主模式按配置
+    // 直接拒绝执行命令——此前为 fail-open 裸跑。Normal/Plan 模式继续走权限审批
+    //（Ask），审批原因中会附带沙箱不可用警示（见下方 Ask 分支）。
+    if tool_name == "execute_command"
+        && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+        && !crate::utils::sandbox::sandbox_available()
+        && crate::core::config::load_app_config(app)
+            .unwrap_or_default()
+            .sandbox_required
+    {
+        return Err("沙箱不可用，已拒绝执行命令（fail-closed）。请安装 bubblewrap（Linux）或确认 sandbox-exec 存在（macOS）后重试；或在应用配置中将 sandboxRequired 设为 false 以回退无沙箱执行（不推荐）。".into());
+    }
+
     // 权限检查（与 execute_tool_call 保持一致，server_id 沿用 crate::core::ids::BUILTIN_FS_SERVER_ID 以兼容已有规则）
     if *agent_mode != AgentMode::Off {
         let custom_rules = permission::load_permissions(Some(&project_root)).rules;
@@ -805,6 +819,15 @@ pub(crate) async fn execute_builtin_tool(
                         }
                     }
                 }
+                // 网络声明与沙箱可用性标注（P3.1/P3.2）：审批信息完整呈现风险面
+                if tool_name == "execute_command" {
+                    if arguments["network"].as_bool().unwrap_or(false) {
+                        reason.push_str("\n\n⚠ 此命令声明需要网络访问");
+                    }
+                    if !crate::utils::sandbox::sandbox_available() {
+                        reason.push_str("\n\n⚠ 沙箱不可用：此命令将在无 OS 级沙箱的环境执行");
+                    }
+                }
                 // 文件修改工具：预计算 diff 预览
                 let (preview_diff, file_path) =
                     compute_diff_preview(tool_name, arguments, &project_root);
@@ -831,9 +854,23 @@ pub(crate) async fn execute_builtin_tool(
     if tool_name == "execute_command" {
         let command = arguments["command"].as_str().unwrap_or("").to_string();
         let timeout = arguments["timeout"].as_u64();
+        // 网络出口管控（P3.1）：模型显式声明，默认 false = 沙箱内无网络
+        let allow_network = arguments["network"].as_bool().unwrap_or(false);
+        // P3.3 Windows AppContainer：配置开启时传入工具链 R+X 目录走 OS 级沙箱
+        #[cfg(windows)]
+        let ac_dirs: Option<Vec<String>> = {
+            let ac_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
+            if ac_cfg.sandbox_windows == "appcontainer" {
+                Some(ac_cfg.sandbox_windows_toolchain_dirs.clone())
+            } else {
+                None
+            }
+        };
+        #[cfg(not(windows))]
+        let ac_dirs: Option<Vec<String>> = None;
         let root = project_root.clone();
         Ok(tokio::task::spawn_blocking(move || {
-            shell_tools::execute_command(&command, &root, timeout)
+            shell_tools::execute_command(&command, &root, timeout, allow_network, ac_dirs)
         })
         .await
         .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic")))
@@ -965,182 +1002,6 @@ where
     Err(last_error.unwrap_or_else(|| "auto-retry exhausted".into()))
 }
 
-/// 主循环工具集装配结果。
-struct MainToolSet {
-    tools: Vec<ToolSpec>,
-    /// 工具名 → server 标识（MCP 前缀 / `__builtin__` 占位）
-    tool_server_map: HashMap<String, String>,
-    /// 项目记忆是否对本次运行生效（供后续系统提示词注入判定复用）
-    memory_effective: bool,
-}
-
-/// 按 Agent 模式组装主循环工具集：
-/// - Plan：仅研究工具（think + project_map + web）
-/// - Normal/Auto/Workflow：仅编排工具（delegate_task(s) + create_workflow + think + web + project_map）
-/// - 对话 + 联网：仅 web 工具
-/// - 纯对话：无工具
-///
-/// 并按需附加注入：记忆工具（全局默认 × 项目级覆盖）、read_skill（有已启用 Skills 时）、
-/// read_artifact（压缩归档恢复通道）。
-fn build_main_tool_set(
-    app: &AppHandle,
-    agent_mode: &AgentMode,
-    web_search_enabled: bool,
-    project_id: Option<&str>,
-    skills: &[SkillConfig],
-    memory_enabled_global: bool,
-) -> MainToolSet {
-    let is_agent_mode = *agent_mode != AgentMode::Off;
-    let (mut tools, mut tool_server_map) = if *agent_mode == AgentMode::Plan {
-        // Plan 模式：仅研究工具（think + project_map + web）
-        let mut plan_tools: Vec<ToolSpec> = Vec::new();
-        let mut plan_map: HashMap<String, String> = HashMap::new();
-
-        // think
-        let think_spec = crate::utils::think::tool_spec();
-        plan_map.insert(
-            think_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        plan_tools.push(think_spec);
-
-        // project_map
-        let pm_spec = crate::utils::project_map::tool_spec();
-        plan_map.insert(
-            pm_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        plan_tools.push(pm_spec);
-
-        // web tools
-        for spec in web_tools::get_web_tool_specs() {
-            plan_map.insert(
-                spec.function.name.clone(),
-                crate::core::ids::BUILTIN_SERVER_ID.into(),
-            );
-            plan_tools.push(spec);
-        }
-
-        (plan_tools, plan_map)
-    } else if is_agent_mode {
-        // Normal/Auto/Workflow: 仅编排工具
-        let mut orch_tools: Vec<ToolSpec> = Vec::new();
-        let mut orch_map: HashMap<String, String> = HashMap::new();
-
-        // delegate_task
-        let delegate_spec = subagent::delegate_task_tool_spec();
-        orch_map.insert(
-            delegate_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        orch_tools.push(delegate_spec);
-
-        // delegate_tasks（批量并行）
-        let delegate_batch_spec = subagent::delegate_tasks_tool_spec();
-        orch_map.insert(
-            delegate_batch_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        orch_tools.push(delegate_batch_spec);
-
-        // create_workflow
-        let workflow_spec = subagent::create_workflow_tool_spec();
-        orch_map.insert(
-            workflow_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        orch_tools.push(workflow_spec);
-
-        // think
-        let think_spec = crate::utils::think::tool_spec();
-        orch_map.insert(
-            think_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        orch_tools.push(think_spec);
-
-        // web tools
-        for spec in web_tools::get_web_tool_specs() {
-            orch_map.insert(
-                spec.function.name.clone(),
-                crate::core::ids::BUILTIN_SERVER_ID.into(),
-            );
-            orch_tools.push(spec);
-        }
-
-        // project_map
-        let pm_spec = crate::utils::project_map::tool_spec();
-        orch_map.insert(
-            pm_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        orch_tools.push(pm_spec);
-
-        (orch_tools, orch_map)
-    } else if web_search_enabled {
-        // 仅注入 Web 工具（对话模式下联网搜索）
-        let web_specs = web_tools::get_web_tool_specs();
-        let mut mcp_map = std::collections::HashMap::new();
-        for spec in &web_specs {
-            mcp_map.insert(
-                spec.function.name.clone(),
-                crate::core::ids::BUILTIN_SERVER_ID.into(),
-            );
-        }
-        (web_specs, mcp_map)
-    } else {
-        (Vec::new(), std::collections::HashMap::new())
-    };
-    // 记忆工具：全局默认 + 每项目覆盖决定是否启用；启用时注入记忆工具，否则回退旧知识工具
-    let mut memory_effective = false;
-    if is_agent_mode {
-        if let Some(pid) = project_id {
-            let root = file_tools::resolve_project_root(app, Some(pid)).ok();
-            let override_enabled = root
-                .and_then(|r| {
-                    app.state::<crate::services::memory::MemoryStoreManager>()
-                        .open(&r)
-                        .ok()
-                })
-                .and_then(|s| s.project_enabled().ok())
-                .flatten();
-            memory_effective = override_enabled.unwrap_or(memory_enabled_global);
-            if memory_effective {
-                for spec in crate::services::memory::tools::get_memory_tool_specs() {
-                    tool_server_map.insert(
-                        spec.function.name.clone(),
-                        crate::core::ids::BUILTIN_SERVER_ID.into(),
-                    );
-                    tools.push(spec);
-                }
-            }
-        }
-    }
-    // Skills 按需注入 — 仅注入 read_skill 工具，由模型按需读取完整内容
-    if is_agent_mode && !skills.is_empty() {
-        let spec = skill_read_tool_spec();
-        tool_server_map.insert(
-            spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        tools.push(spec);
-    }
-    // 历史归档读取工具（压缩回退归档的恢复通道）
-    if is_agent_mode {
-        let spec = artifact_read_tool_spec();
-        tool_server_map.insert(
-            spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        tools.push(spec);
-    }
-    MainToolSet {
-        tools,
-        tool_server_map,
-        memory_effective,
-    }
-}
-
 /// 主 Agent 一轮自驱循环的运行上下文（收敛原 15 个扁平业务参数）。
 ///
 /// IPC 兼容面：Tauri 命令仍保留扁平参数（旧前端调用不动），命令体仅为薄包装，
@@ -1160,6 +1021,10 @@ pub(crate) struct TurnContext {
     pub locale: Option<String>,
     pub context_window: Option<u32>,
     pub skills: Option<Vec<SkillConfig>>,
+    /// 助手勾选的 MCP server id 列表（opt-in，空 = 无 MCP 工具）
+    pub mcp_server_ids: Vec<String>,
+    /// P4.4：恢复指定回合的检查点（崩溃后续跑）；None = 正常新回合
+    pub resume_turn_id: Option<String>,
 }
 
 /// Agent 自驱循环命令（前端新流程主入口）。
@@ -1175,7 +1040,9 @@ pub(crate) struct TurnContext {
 ///
 /// # 参数
 /// - `messages`：初始消息列表（含本轮 user 消息），由前端构造好 system/历史/user
-/// - `mcp_server_ids`：保留参数（主 Agent 门控后不再注入 MCP 工具，子 Agent 自建工具集）
+/// - `mcp_server_ids`：助手勾选的 MCP server id（opt-in）。Agent 模式下注入已连接
+///   server 的工具；工具名冲突时重命名为 mcp__<server>__<tool>；未信任 server 的
+///   工具在 Auto/Workflow 模式下仍逐次审批（见 mcp::execute_tool_call）
 /// - `agent_mode`：Agent 执行模式，影响权限规则与工具注入（Plan: 研究工具 / Normal/Auto/Workflow: 编排工具 / Off: 无工具）
 /// - `project_id`：项目 id（用于解析项目级权限规则）
 /// - `locale`：可选界面语言；旧调用缺失时兼容回退到 `zh-CN`
@@ -1195,7 +1062,7 @@ pub async fn run_agent_turn(
     assistant_id: String,
     topic_id: String,
     messages: Vec<Message>,
-    _mcp_server_ids: Vec<String>, // 保留参数：主 Agent 门控后不再注入 MCP 工具
+    mcp_server_ids: Vec<String>,
     agent_mode: AgentMode,
     project_id: Option<String>,
     web_search_enabled: bool,
@@ -1204,6 +1071,7 @@ pub async fn run_agent_turn(
     locale: Option<String>,
     context_window: Option<u32>,
     skills: Option<Vec<SkillConfig>>,
+    resume_turn_id: Option<String>,
 ) -> Result<(), String> {
     let ctx = TurnContext {
         api_url,
@@ -1220,8 +1088,32 @@ pub async fn run_agent_turn(
         locale,
         context_window,
         skills,
+        mcp_server_ids,
+        resume_turn_id,
     };
     run_agent_turn_inner(app, window, db_state, stream_mgr, ctx).await
+}
+
+/// 停止指定的后台子智能体（delegate_task wait=false 启动的 fire-and-forget 子智能体）。
+///
+/// # 参数
+/// - `subagent_id`：后台子智能体 ID（启动确认结果中返回）
+///
+/// # 返回
+/// true = 已发出取消信号；false = 未找到（已完成或不存在，幂等成功）。
+#[tauri::command]
+pub fn stop_subagent(app: AppHandle, subagent_id: String) -> Result<bool, String> {
+    let handles = app.state::<crate::core::state::SubagentHandles>();
+    // Ref 守卫必须在本语句内释放（match 作为尾表达式会把临时值活到块尾，触发 E0597）
+    let found = match handles.0.get(&subagent_id) {
+        Some(entry) => {
+            entry.1.cancel();
+            tracing::info!("[subagent:{subagent_id}] 用户请求停止后台子智能体");
+            true
+        }
+        None => false,
+    };
+    Ok(found)
 }
 
 /// 主 Agent 一轮自驱循环的实现（参数已收敛为 TurnContext）。
@@ -1247,6 +1139,8 @@ pub(crate) async fn run_agent_turn_inner(
         locale,
         context_window,
         skills,
+        mcp_server_ids,
+        resume_turn_id,
     } = ctx;
     // 诊断日志（仅 debug）：打印 messages 每个元素的 role 和关键字段是否存在。
     // 注意保持 debug 级别——生产默认 warn，此处对话内容相关日志不应进入生产日志。
@@ -1283,6 +1177,26 @@ pub(crate) async fn run_agent_turn_inner(
             .map(|m| message_for_api(&conn, m))
             .collect::<Result<Vec<_>, _>>()?
     };
+    // P4.4 检查点恢复：替换为崩溃前最后一轮的完整上下文快照（继续跑而不是从头跑）。
+    // turn_id 贯穿本回合：恢复时沿用原 turn_id（快照续写），新回合生成新 id。
+    let turn_id = resume_turn_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    if let Some(resume_id) = &resume_turn_id {
+        let conn = db_state.0.lock();
+        match load_checkpoint_messages(&conn, &topic_id, resume_id) {
+            Some(checkpoint_msgs) if !checkpoint_msgs.is_empty() => {
+                tracing::info!(
+                    "[checkpoint] 从检查点恢复回合 {resume_id}（{} 条消息）",
+                    checkpoint_msgs.len()
+                );
+                messages_for_api = checkpoint_msgs;
+            }
+            _ => {
+                tracing::warn!("[checkpoint] 未找到回合 {resume_id} 的活跃检查点，按新回合执行");
+            }
+        }
+    }
     // 防御性校验（仅调试构建）：发布构建不付出全量消息扫描的日志开销
     #[cfg(debug_assertions)]
     verify_tool_messages(&messages_for_api);
@@ -1333,6 +1247,7 @@ pub(crate) async fn run_agent_turn_inner(
     let project_id_c = project_id.clone();
     let profile_overrides_c = profile_model_overrides.clone();
     let custom_profiles_c = custom_subagent_profiles.clone();
+    let mcp_server_ids_c = mcp_server_ids.clone();
 
     let handle = tokio::spawn(async move {
         // 解包 Skills（前端仅在 Agent 模式下传递；聊天模式为空）
@@ -1352,7 +1267,27 @@ pub(crate) async fn run_agent_turn_inner(
         // - Normal/Auto/Workflow: 仅编排工具（delegate_task + create_workflow + think + web + project_map）
         // - 对话 + 联网: 仅 web 工具
         // - 纯对话: 无工具
-        // 工具集装配（模式矩阵 + 记忆/Skill/归档注入）——已抽取为 build_main_tool_set
+        // MCP 工具回接（P2.2）：Agent 模式下注入助手勾选 server 的已连接工具。
+        // 仅拉取已连接 server（未连接的跳过并沿用既有警告语义）；工具名冲突
+        // （内置工具或其他 server 占用）在合并时重命名，见 build_main_tool_set。
+        let mcp_tools: Option<crate::core::models::AssistantTools> =
+            if agent_mode != AgentMode::Off && !mcp_server_ids_c.is_empty() {
+                let mgr = app_c.state::<crate::plugins::mcp::McpServerManager>();
+                let mcp_state = app_c.state::<crate::plugins::mcp::McpServerState>();
+                crate::commands::mcp::list_mcp_tools_for_assistant_inner(
+                    &app_c,
+                    mgr.inner(),
+                    mcp_state.inner(),
+                    mcp_server_ids_c.clone(),
+                    project_id_c.clone(),
+                )
+                .await
+                .ok()
+            } else {
+                None
+            };
+
+        // 工具集装配（模式矩阵 + MCP/记忆/Skill/归档注入）——已抽取为 build_main_tool_set
         let tool_set = build_main_tool_set(
             &app_c,
             &agent_mode,
@@ -1360,6 +1295,8 @@ pub(crate) async fn run_agent_turn_inner(
             project_id_c.as_deref(),
             &skills,
             app_config.memory_enabled,
+            mcp_tools.as_ref(),
+            &app_config.main_agent_tool_access,
         );
         let tools = tool_set.tools;
         let tool_server_map = tool_set.tool_server_map;
@@ -1441,6 +1378,25 @@ pub(crate) async fn run_agent_turn_inner(
                 }
             }
         }
+        // 上回合交接回注（P1.6）：若上一回合未完成（轮数上限/错误/截断），
+        // 消费其 handoff 文档注入系统消息——新回合直接拿到已完成内容与涉及
+        // 文件，而非只靠用户转述。consume-once：读取后删除，不重复注入。
+        if let Some(handoff) = consume_handoff_doc(&app_c, &assistant_id_c, &topic_id_c) {
+            // 插入点不得超过最后一条消息（user 消息必须保持在末尾）
+            let insert_at = 2.min(messages_for_api.len().saturating_sub(1));
+            messages_for_api.insert(
+                insert_at,
+                serde_json::json!({
+                    "role": "system",
+                    "content": format!("[上回合交接] 上一回合任务未完成，以下是交接文档（含已完成内容与涉及文件），请据此继续：
+{}", handoff),
+                }),
+            );
+            tracing::info!(
+                "[handoff] 已回注上回合交接文档 ({} 字符)",
+                handoff.chars().count()
+            );
+        }
         // 上下文预算追踪：token 级、模型感知（阈值/保留预算在任务启动前按窗口推导）
         // 可配置的单次最大工具调用轮数（默认 25，最低 1）
         let max_rounds = app_config
@@ -1516,6 +1472,7 @@ pub(crate) async fn run_agent_turn_inner(
                 Some(&app_c),
                 true,
                 max_output_tokens,
+                app_config.model_call_retries,
             )
             .await;
 
@@ -1675,9 +1632,12 @@ pub(crate) async fn run_agent_turn_inner(
                 break 'outer;
             }
 
-            // 执行工具调用：两阶段
-            // 阶段 1 — 收集 delegate_task futures + 顺序执行非 delegate 工具
-            // 阶段 2 — 并发等待所有子 Agent，然后按原顺序发射结果
+            // 执行工具调用：三阶段
+            // 阶段 1 — 收集并发 future（delegate_task(s) 委派 + 只读内置工具），
+            //          变更类工具（文件写/命令/Git 写/MCP——副作用未知）按原始顺序串行执行
+            // 阶段 2 — FuturesUnordered 并发等待全部 future，完成即发射结果
+            // 阶段 3 — 按原始 index 顺序发射串行结果 + 回填全部 role:tool 消息
+            //（对齐 Claude Code / Codex CLI 的并行工具调用语义；回填顺序保持索引序，API 语义不变）
 
             // 用于记录每个工具的结果（按原始 index 排序）
             #[derive(Default, Clone)]
@@ -1689,8 +1649,8 @@ pub(crate) async fn run_agent_turn_inner(
             let mut exec_results: Vec<Option<ToolExecResult>> =
                 vec![None; round_result.tool_calls.len()];
 
-            // 收集 delegate_task 的 future 和对应的 index
-            let mut delegate_futures: Vec<(
+            // 收集可并发执行的 future（子 Agent 委派 + 只读内置工具）及对应 index
+            let mut parallel_futures: Vec<(
                 usize,
                 futures_util::future::BoxFuture<'static, Result<ToolResult, String>>,
             )> = Vec::new();
@@ -1727,13 +1687,16 @@ pub(crate) async fn run_agent_turn_inner(
                         let agent_mode_clone = agent_mode.clone();
                         let profile_overrides_clone = profile_overrides_c.clone();
                         let custom_profiles_clone = custom_profiles_c.clone();
-                        let token_clone = token_inner.clone();
+                        // 子令牌：父取消级联取消；stop_subagent 可按 ID 单独取消此后台子智能体
+                        let token_clone = token_inner.child_token();
+                        let token_for_registry = token_clone.clone();
                         let locale_clone = locale_c.clone();
+                        let mcp_ids_clone = mcp_server_ids_c.clone();
                         let sem_clone = subagent_semaphore.clone();
                         let subagent_id = uuid::Uuid::new_v4().to_string();
                         let sid = subagent_id.clone();
                         let app_c2 = app_c.clone();
-                        tokio::spawn(async move {
+                        let jh = tokio::spawn(async move {
                             let result = handle_delegate_task(
                                 &window_clone,
                                 &app_clone,
@@ -1750,6 +1713,7 @@ pub(crate) async fn run_agent_turn_inner(
                                 &token_clone,
                                 &profile_overrides_clone,
                                 &custom_profiles_clone,
+                                &mcp_ids_clone,
                                 &locale_clone,
                             )
                             .await;
@@ -1765,6 +1729,15 @@ pub(crate) async fn run_agent_turn_inner(
                                 tracing::error!("[subagent:{sid}] 后台子智能体失败: {e}");
                             }
                         });
+                        // 登记句柄与令牌：stop_subagent 可按 ID 单独取消。
+                        // （此前为死注册表：句柄从不插入，完成时只删除不存在的键）
+                        if let Some(handles) =
+                            app_c.try_state::<crate::core::state::SubagentHandles>()
+                        {
+                            handles
+                                .0
+                                .insert(subagent_id.clone(), (jh, token_for_registry));
+                        }
                         // Immediate result: acknowledge the fire-and-forget
                         let content_text = format!("子智能体已在后台启动 (ID: {})", subagent_id);
                         exec_results[i] = Some(ToolExecResult {
@@ -1789,6 +1762,7 @@ pub(crate) async fn run_agent_turn_inner(
                         let custom_profiles_clone = custom_profiles_c.clone();
                         let token_clone = token_inner.clone();
                         let locale_clone = locale_c.clone();
+                        let mcp_ids_clone = mcp_server_ids_c.clone();
                         let sem_clone = subagent_semaphore.clone();
 
                         let fut = Box::pin(async move {
@@ -1808,16 +1782,17 @@ pub(crate) async fn run_agent_turn_inner(
                                 &token_clone,
                                 &profile_overrides_clone,
                                 &custom_profiles_clone,
+                                &mcp_ids_clone,
                                 &locale_clone,
                             )
                             .await
                         });
-                        delegate_futures.push((i, fut));
+                        parallel_futures.push((i, fut));
                     }
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == "delegate_tasks"
                 {
-                    // 批量并行：收集一个 future，放入 delegate_futures
+                    // 批量并行：收集一个 future，放入 parallel_futures
                     let window_clone = window.clone();
                     let app_clone = app_c.clone();
                     let client_clone = client.clone();
@@ -1834,6 +1809,7 @@ pub(crate) async fn run_agent_turn_inner(
                     let semaphore_clone = subagent_semaphore.clone();
                     let token_clone = token_inner.clone();
                     let locale_clone = locale_c.clone();
+                    let mcp_ids_clone = mcp_server_ids_c.clone();
 
                     let fut = Box::pin(async move {
                         handle_delegate_tasks(
@@ -1851,12 +1827,13 @@ pub(crate) async fn run_agent_turn_inner(
                             &token_clone,
                             &profile_overrides_clone,
                             &custom_profiles_clone,
+                            &mcp_ids_clone,
                             semaphore_clone,
                             &locale_clone,
                         )
                         .await
                     });
-                    delegate_futures.push((i, fut));
+                    parallel_futures.push((i, fut));
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == "create_workflow"
                 {
@@ -1915,8 +1892,10 @@ pub(crate) async fn run_agent_turn_inner(
                                     subagent_semaphore.clone(),
                                     &custom_profiles_c,
                                     &profile_overrides_c,
+                                    &mcp_server_ids_c,
                                     &token_inner,
                                     &locale_c,
+                                    &agent_mode,
                                 )
                                 .await
                             }
@@ -1972,6 +1951,33 @@ pub(crate) async fn run_agent_turn_inner(
                         && tc.name == "read_skill"
                     {
                         execute_skill_read(&skills, args_val["name"].as_str().unwrap_or(""))
+                    } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
+                        && app_config.parallel_tool_execution
+                        && is_parallel_safe(&tc.name)
+                    {
+                        // 只读内置工具：并发执行（对齐 Claude Code / Codex 的并行工具
+                        // 调用语义）。收集为 future 与子 Agent 委派共用阶段 2 的
+                        // FuturesUnordered，完成即发射；变更类工具不受影响（仍按原始
+                        // 顺序串行），role:tool 回填保持索引序，API 语义不变。
+                        let app_c2 = app_c.clone();
+                        let tn = tc.name.clone();
+                        let args_val_c = args_val.clone();
+                        let pid = project_id_c.clone();
+                        let mode = agent_mode.clone();
+                        let tok = token_inner.clone();
+                        let fut = Box::pin(async move {
+                            execute_builtin_tool(
+                                &app_c2,
+                                &tn,
+                                &args_val_c,
+                                pid.as_deref(),
+                                &mode,
+                                &tok,
+                            )
+                            .await
+                        });
+                        parallel_futures.push((i, fut));
+                        continue;
                     } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID) {
                         execute_builtin_tool(
                             &app_c,
@@ -2069,10 +2075,10 @@ pub(crate) async fn run_agent_turn_inner(
                 }
             }
 
-            // 阶段 2 — 并发执行所有子 Agent
-            if !delegate_futures.is_empty() {
+            // 阶段 2 — 并发执行子 Agent 委派与只读内置工具（FuturesUnordered）
+            if !parallel_futures.is_empty() {
                 let mut unordered = FuturesUnordered::new();
-                for (i, fut) in delegate_futures {
+                for (i, fut) in parallel_futures {
                     unordered.push(async move {
                         let result = fut.await;
                         (i, result)
@@ -2207,6 +2213,20 @@ pub(crate) async fn run_agent_turn_inner(
             }
         }
 
+        // P4.4 检查点：本轮上下文已定（工具回填 + 压缩判定后），持久化快照。
+        // 崩溃后 run_agent_turn(resume_turn_id) 从最新 active 快照续跑；
+        // epilogue 把本 turn 标记终态——active 残留即"可恢复"信号。
+        {
+            let conn = app_c.state::<crate::core::state::DbState>();
+            save_checkpoint(
+                &conn.0.lock(),
+                &topic_id_c,
+                &turn_id,
+                round,
+                &messages_for_api,
+            );
+        }
+
         // ===== 未完成任务 → 工作交接文档（handoff）=====
         // 触发条件：强制停止（轮数上限/工作流未调用）、错误、或最后一次响应被截断（length）
         let ended_incomplete = !was_cancelled
@@ -2231,7 +2251,7 @@ pub(crate) async fn run_agent_turn_inner(
                         "incomplete"
                     };
                     let _ = window.emit(
-                        "llm-handoff",
+                        ev::LLM_HANDOFF,
                         json!({
                             "assistant_id": assistant_id_c,
                             "topic_id": topic_id_c,
@@ -2285,6 +2305,17 @@ pub(crate) async fn run_agent_turn_inner(
         }
 
         // ===== Epilogue（必达）：无论正常/取消/出错都 emit terminal done =====
+        // P4.4：回合到达 epilogue = 非崩溃终止 → 检查点标记终态；
+        // 崩溃残留（status 仍为 active）才是"可恢复"信号。
+        {
+            let status = if was_cancelled {
+                "cancelled"
+            } else {
+                "completed"
+            };
+            let conn = app_c.state::<crate::core::state::DbState>();
+            finalize_checkpoints(&conn.0.lock(), &topic_id_c, &turn_id, status);
+        }
         let error_payload = if was_cancelled {
             None
         } else {

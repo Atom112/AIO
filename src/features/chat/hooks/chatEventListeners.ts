@@ -12,7 +12,9 @@ import { reasoningLevel } from '../../../core/store/store';
 import {
   setDatas as storeSetDatas,
   type ActivatedModel,
+  type AgentStep,
   type DatasState,
+  type Message,
   type Topic,
   type WorkflowState,
 } from '../../../core/store/store';
@@ -574,6 +576,36 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       );
       saveSingleAssistantToBackend(assistant_id);
     }),
+    // 未完成任务已生成交接文档：在最后一条 assistant 消息的时间线中记录可追溯的交接步骤
+    // （后端同时会在消息文本末尾追加说明；此监听提供结构化记录与文档路径）
+    listen<{ assistant_id: string; topic_id: string; path: string; reason: string }>(
+      EVENTS.llmHandoff,
+      (e) => {
+        const { assistant_id, topic_id, path } = e.payload;
+        if (!assistant_id || !topic_id || !path) return;
+        setDatas(
+          'assistants',
+          (a: DatasState['assistants'][number]) => a.id === assistant_id,
+          'topics',
+          (t: Topic) => t.id === topic_id,
+          'history',
+          (h: Message[]) => {
+            const lastIdx = h.length - 1;
+            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+            const msg = h[lastIdx];
+            const steps: AgentStep[] = msg.agentSteps ?? [];
+            const newStep: AgentStep = {
+              id: 'handoff-' + Date.now(),
+              type: 'content',
+              timestamp: Date.now(),
+              status: 'complete',
+              contentText: t('agent.handoff.note', { path }),
+            };
+            return [...h.slice(0, lastIdx), { ...msg, agentSteps: [...steps, newStep] }];
+          },
+        );
+      },
+    ),
     // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
     listen<any>(EVENTS.toolApprovalRequested, (e) => {
       const {

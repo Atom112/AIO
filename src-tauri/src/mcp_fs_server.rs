@@ -5,13 +5,13 @@
 //! 项目的 `mcp-servers.json`，因此本文件属于线上代码路径，维护与 Agent 进程内
 //! 文件工具同等对待。后续如要退役，需同时处理存量项目配置的迁移。
 //!
-//! 沙箱与工具辅助（safe_path / is_binary / sz）直接复用 `utils/file_tools.rs`
-//! 的进程内实现，保证两处安全策略永远一致。
+//! P4.3 去分叉：工具实现整体委托 `utils/file_tools.rs` 的
+//! `execute_file_tool`（单一实现），本文件仅做 MCP JSON-RPC 协议适配——
+//! 此前的分叉副本缺 max_lines/max_bytes/行号/hashline/replace_in_file。
 //!
 //! MCP 协议本身很简单（JSON-RPC 2.0 over stdin/stdout），
 //! 手写实现比引入 rmcp 更轻量，且避免了 rmcp 版本 API 兼容问题。
 
-use crate::utils::file_tools::{is_binary, safe_path, sz};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -68,14 +68,8 @@ fn respond_error(id: Option<Value>, code: i32, message: &str) -> String {
 }
 
 // ====== 沙箱 ======
-// safe_path / is_binary / sz 复用 utils::file_tools（见文件头注释）
-
-const MAX_R: u64 = 1_000_000;
-const MAX_W: u64 = 5_000_000;
-const MAX_S: usize = 10_000;
-
-// MCP 协议形态的工具结果由 utils::tool_result 提供
-use crate::utils::tool_result::{tool_err_mcp as tool_err, tool_ok_mcp as tool_ok};
+// P4.3 去分叉后，工具实现与安全边界（safe_path 等）全部来自
+// utils::file_tools 的进程内单一实现——本文件仅做 MCP JSON-RPC 协议适配。
 
 // ====== 工具实现 ======
 
@@ -85,246 +79,22 @@ struct FileServer {
 
 impl FileServer {
     fn handle(&self, name: &str, arguments: &Value) -> Value {
-        let args = arguments;
-        match name {
-            "read_file" => {
-                let path = args["path"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return tool_err("缺少 path");
-                }
-                let t = match safe_path(&self.dir, path, true) {
-                    Ok(t) => t,
-                    Err(e) => return tool_err(&e),
-                };
-                if !t.is_file() {
-                    return tool_err(&format!("不是文件: {path}"));
-                }
-                if is_binary(&t) {
-                    return tool_err(&format!("二进制文件: {path}"));
-                }
-                let meta = match std::fs::metadata(&t) {
-                    Ok(m) => m,
-                    Err(e) => return tool_err(&e.to_string()),
-                };
-                let c = if meta.len() > MAX_R {
-                    let b = match std::fs::read(&t) {
-                        Ok(b) => b,
-                        Err(e) => return tool_err(&e.to_string()),
-                    };
-                    format!(
-                        "⚠ 文件过大 ({}KB/{}KB截断)\n\n{}",
-                        meta.len() / 1024,
-                        MAX_R / 1024,
-                        String::from_utf8_lossy(&b[..MAX_R as usize])
-                    )
-                } else {
-                    String::from_utf8_lossy(&match std::fs::read(&t) {
-                        Ok(b) => b,
-                        Err(e) => return tool_err(&e.to_string()),
-                    })
-                    .into()
-                };
-                tool_ok(c)
-            }
-            "write_file" => {
-                let path = args["path"].as_str().unwrap_or("");
-                let content = args["content"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return tool_err("缺少 path");
-                }
-                if content.len() as u64 > MAX_W {
-                    return tool_err(&format!("内容过大 (>{MAX_W}B)"));
-                }
-                let t = match safe_path(&self.dir, path, false) {
-                    Ok(t) => t,
-                    Err(e) => return tool_err(&e),
-                };
-                if t.exists() && t.is_dir() {
-                    return tool_err(&format!("目标是目录: {path}"));
-                }
-                if let Some(p) = t.parent() {
-                    let _ = std::fs::create_dir_all(p);
-                }
-                match std::fs::write(&t, content) {
-                    Ok(_) => tool_ok(format!("✓ 写入 {path} ({}B)", content.len())),
-                    Err(e) => tool_err(&format!("写入失败: {e}")),
-                }
-            }
-            "list_directory" => {
-                let p = args["path"].as_str().unwrap_or(".");
-                let t = match safe_path(&self.dir, p, true) {
-                    Ok(t) => t,
-                    Err(e) => return tool_err(&e),
-                };
-                if !t.is_dir() {
-                    return tool_err(&format!("不是目录: {p}"));
-                }
-                let mut v = Vec::new();
-                let mut n = 0;
-                if let Ok(d) = std::fs::read_dir(&t) {
-                    for e in d.flatten() {
-                        if n >= MAX_S {
-                            v.push(format!("... 更多 (>{MAX_S})"));
-                            break;
-                        }
-                        v.push(format!(
-                            "{} {}  {}",
-                            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                                "📁"
-                            } else {
-                                "📄"
-                            },
-                            e.file_name().to_string_lossy(),
-                            e.metadata().map(|m| sz(m.len())).unwrap_or_default()
-                        ));
-                        n += 1;
-                    }
-                }
-                tool_ok(format!(
-                    "📂 {} ({}项):\n{}",
-                    if p == "." { "项目根目录" } else { p },
-                    n,
-                    v.join("\n")
-                ))
-            }
-            "search_files" => {
-                let pattern = args["pattern"].as_str().unwrap_or("**/*");
-                let bp = args["basePath"].as_str().unwrap_or(".");
-                let t = match safe_path(&self.dir, bp, true) {
-                    Ok(t) => t,
-                    Err(e) => return tool_err(&e),
-                };
-                let mut v = Vec::new();
-                let mut n = 0;
-                if let Ok(paths) = glob::glob(&t.join(pattern).to_string_lossy()) {
-                    for p in paths.flatten().filter(|p| p.is_file()) {
-                        if n >= MAX_S {
-                            v.push(format!("... (>{MAX_S})"));
-                            break;
-                        }
-                        if let Ok(rel) = p.strip_prefix(&t) {
-                            v.push(format!(
-                                "📄 {}  {}",
-                                rel.display(),
-                                std::fs::metadata(&p)
-                                    .map(|m| sz(m.len()))
-                                    .unwrap_or_default()
-                            ));
-                            n += 1;
-                        }
-                    }
-                }
-                let d = v.join("\n");
-                tool_ok(format!(
-                    "🔍 '{}' ({}项):\n{}",
-                    pattern,
-                    n,
-                    if d.is_empty() { "(无匹配)" } else { &d }
-                ))
-            }
-            "search_content" => {
-                let pattern = args["pattern"].as_str().unwrap_or("");
-                if pattern.is_empty() {
-                    return tool_err("缺少 pattern");
-                }
-                let p = args["path"].as_str().unwrap_or(".");
-                let t = match safe_path(&self.dir, p, true) {
-                    Ok(t) => t,
-                    Err(e) => return tool_err(&e),
-                };
-                let re = match regex::Regex::new(pattern) {
-                    Ok(r) => r,
-                    Err(e) => return tool_err(&format!("无效正则: {e}")),
-                };
-                let mut v = Vec::new();
-                let (mut scanned, mut matched) = (0, 0);
-                let g = if t.is_dir() {
-                    t.join("**/*")
-                } else {
-                    t.clone()
-                };
-                if let Ok(paths) = glob::glob(&g.to_string_lossy()) {
-                    for p in paths.flatten() {
-                        if scanned >= MAX_S {
-                            break;
-                        }
-                        if !p.is_file() || is_binary(&p) {
-                            continue;
-                        }
-                        scanned += 1;
-                        let c = match std::fs::read_to_string(&p) {
-                            Ok(c) => c,
-                            Err(_) => continue,
-                        };
-                        let mut fc = 0;
-                        for (i, line) in c.lines().enumerate() {
-                            if re.is_match(line) {
-                                if fc == 0 {
-                                    if let Ok(rel) = p.strip_prefix(&t) {
-                                        v.push(format!("\n📄 {}:", rel.display()));
-                                        matched += 1;
-                                    }
-                                }
-                                if fc < 10 {
-                                    v.push(format!(
-                                        "  {}: {}",
-                                        i + 1,
-                                        line.trim().chars().take(200).collect::<String>()
-                                    ));
-                                }
-                                fc += 1;
-                            }
-                        }
-                        if fc > 10 {
-                            v.push(format!("  ... (共{fc}处)"));
-                        }
-                    }
-                }
-                let d = v.join("\n");
-                tool_ok(format!(
-                    "🔍 '{pattern}' — {matched}文件有匹配, 扫描{scanned}个:\n{}",
-                    if d.is_empty() { "(无匹配)" } else { &d }
-                ))
-            }
-            "delete_file" => {
-                let path = args["path"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return tool_err("缺少 path");
-                }
-                let t = match safe_path(&self.dir, path, true) {
-                    Ok(t) => t,
-                    Err(e) => return tool_err(&e),
-                };
-                if !t.exists() {
-                    return tool_err(&format!("不存在: {path}"));
-                }
-                if t.is_dir() {
-                    return tool_err(&format!("是目录: {path}"));
-                }
-                match std::fs::remove_file(&t) {
-                    Ok(_) => tool_ok(format!("✓ 删除 {path}")),
-                    Err(e) => tool_err(&format!("{e}")),
-                }
-            }
-            "make_directory" => {
-                let path = args["path"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return tool_err("缺少 path");
-                }
-                let t = match safe_path(&self.dir, path, false) {
-                    Ok(t) => t,
-                    Err(e) => return tool_err(&e),
-                };
-                if t.exists() {
-                    return tool_err(&format!("已存在: {path}"));
-                }
-                match std::fs::create_dir_all(&t) {
-                    Ok(_) => tool_ok(format!("✓ 创建 {path}")),
-                    Err(e) => tool_err(&format!("{e}")),
-                }
-            }
-            _ => tool_err(&format!("未知工具: {name}")),
-        }
+        // P4.3 去分叉：全部文件工具委托 file_tools::execute_file_tool 单一实现。
+        // 此前的分叉副本缺 max_lines/max_bytes/行号输出/hashline 协议/replace_in_file，
+        // 与进程内工具行为漂移（仅 safe_path 安全边界共享）。
+        let r = crate::utils::file_tools::execute_file_tool(name, arguments, &self.dir);
+        // ToolResult（进程内形态）→ MCP JSON-RPC 结果形态
+        let text = r
+            .content
+            .iter()
+            .find(|c| c.kind == "text")
+            .and_then(|c| c.data.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        json!({
+            "content": [{"type": "text", "text": text}],
+            "isError": r.is_error
+        })
     }
 }
 
@@ -349,6 +119,7 @@ fn tools_list() -> Value {
         "tools": [
             {"name":"read_file","description":"读取项目目录内的文件内容","inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"文件路径"}},"required":["path"]}},
             {"name":"write_file","description":"创建或覆盖文件","inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"content":{"type":"string","description":"文件内容"}},"required":["path","content"]}},
+            {"name":"replace_in_file","description":"在文件中执行替换（old_string 必须唯一）或行范围锚定替换","inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"old_string":{"type":"string","description":"要替换的文本（须唯一）"},"new_string":{"type":"string","description":"替换文本"},"start_line":{"type":"integer","description":"起始行（行范围模式）"},"end_line":{"type":"integer","description":"结束行（行范围模式）"},"anchor_hash":{"type":"string","description":"文件 SHA-256 锚定（防过期写入）"}},"required":["path"]}},
             {"name":"list_directory","description":"列出目录内容","inputSchema":{"type":"object","properties":{"path":{"type":"string","description":"目录路径, 默认项目根目录"}}}},
             {"name":"search_files","description":"按glob模式搜索文件","inputSchema":{"type":"object","properties":{"pattern":{"type":"string","description":"glob模式,如 'src/**/*.ts'"},"basePath":{"type":"string","description":"起始目录"}},"required":["pattern"]}},
             {"name":"search_content","description":"搜索文件内容(正则)","inputSchema":{"type":"object","properties":{"pattern":{"type":"string","description":"正则表达式"},"path":{"type":"string","description":"目标路径"}},"required":["pattern"]}},

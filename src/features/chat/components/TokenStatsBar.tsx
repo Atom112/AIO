@@ -92,8 +92,14 @@ const TokenStatsBar: Component = () => {
   });
 
   // 缓存命中率 = 命中输入 / 总输入（本话题累计）
-  const cachePct = () =>
-    stats().input > 0 ? Math.round((stats().cached / stats().input) * 100) : 0;
+  // input 已包含命中部分：OpenAI/DeepSeek 的 cached_tokens 是 prompt_tokens 的子集，
+  // Anthropic 的 input_tokens 已排除 cache_read_input_tokens，故统一按 (cached + input) 归一。
+  const cacheDenom = () => stats().input + stats().cached;
+  const cachePct = () => (cacheDenom() > 0 ? Math.round((stats().cached / cacheDenom()) * 100) : 0);
+  /** 是否拿到过缓存命中数据：后端未上报缓存用量的模型恒为 false */
+  const hasCacheStats = () => stats().cached > 0;
+  /** 有输入用量即可展示命中率；无缓存命中数据显示 —（区分"没有缓存"与"未上报"） */
+  const showCacheRate = () => cacheDenom() > 0;
 
   const total = () => stats().contextInput;
   const pct = () => Math.min(total() / stats().maxContext, 1);
@@ -110,7 +116,7 @@ const TokenStatsBar: Component = () => {
           toolCalls: stats().tools,
           maxContext: fmt(stats().maxContext),
           pct: (pct() * 100).toFixed(0),
-          cacheHit: stats().input > 0 ? `${cachePct()}%` : '-',
+          cacheHit: hasCacheStats() ? `${cachePct()}%` : '—',
         })}
       >
         {/* 微型进度条 */}
@@ -173,15 +179,26 @@ const TokenStatsBar: Component = () => {
           </span>
         </Show>
 
-        {/* 缓存命中率（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens） */}
-        <Show when={stats().cached > 0 && stats().input > 0}>
+        {/* 缓存命中率（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens / Anthropic cache_read_input_tokens） */}
+        <Show when={showCacheRate()}>
           <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
           <span
-            class="font-mono whitespace-nowrap"
-            style={{ color: 'var(--color-success)' }}
-            title={t('chat.statsCacheHit', { pct: cachePct() })}
+            class="inline-flex items-center gap-1 whitespace-nowrap"
+            style={{
+              color: hasCacheStats() ? 'var(--color-success)' : 'rgba(var(--text-base-rgb),0.22)',
+            }}
+            title={
+              hasCacheStats()
+                ? t('chat.statsCacheHit', {
+                    pct: cachePct(),
+                    cached: fmt(stats().cached),
+                    total: fmt(cacheDenom()),
+                  })
+                : t('chat.statsCacheHitUnavailable')
+            }
           >
-            {cachePct()}%
+            <Icon name="bolt" size={12} />
+            <span class="font-mono">{hasCacheStats() ? `${cachePct()}%` : '—'}</span>
           </span>
         </Show>
       </div>

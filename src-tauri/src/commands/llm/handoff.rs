@@ -189,17 +189,12 @@ pub(crate) fn write_handoff_doc(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let safe_a: String = assistant_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .take(12)
-        .collect();
-    let safe_t: String = topic_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .take(12)
-        .collect();
-    let path = dir.join(format!("{}-{}-{}.md", safe_a, safe_t, ts));
+    let path = dir.join(format!(
+        "{}-{}-{}.md",
+        sanitize_id(assistant_id),
+        sanitize_id(topic_id),
+        ts
+    ));
 
     let files_section = if files.is_empty() {
         "（无）".to_string()
@@ -243,6 +238,61 @@ pub(crate) fn write_handoff_doc(
     std::fs::write(&path, body).map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
 }
+
+/// ID 安全化（文件名前缀用）：仅保留字母数字与连字符，截断 12 字符。
+fn sanitize_id(id: &str) -> String {
+    id.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(12)
+        .collect()
+}
+
+/// 从指定目录消费交接文档（核心逻辑，可单测）：
+/// - 查找 {assistant}-{topic}-*.md，按文件名字典序（unix 秒后缀 → 时间序）取最新；
+/// - 读取内容（头尾截断 4000 字符，与写入侧一致）；
+/// - 删除该前缀全部文件（consume-once：每次未完成回合只回注一次；
+///   更早的同话题文档已被最新者取代，一并清理）。
+pub(crate) fn consume_handoff_doc_from_dir(
+    dir: &std::path::Path,
+    assistant_id: &str,
+    topic_id: &str,
+) -> Option<String> {
+    let prefix = format!("{}-{}-", sanitize_id(assistant_id), sanitize_id(topic_id));
+    let mut candidates: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with(&prefix) && n.ends_with(".md"))
+                .unwrap_or(false)
+        })
+        .collect();
+    candidates.sort();
+    let newest = candidates.pop()?;
+    // 清理被取代的旧文档（同前缀）
+    for old in &candidates {
+        let _ = std::fs::remove_file(old);
+    }
+    let content = std::fs::read_to_string(&newest).ok()?;
+    let _ = std::fs::remove_file(&newest);
+    if content.trim().is_empty() {
+        return None;
+    }
+    Some(truncate_chars_head_tail(&content, 4000))
+}
+
+/// 消费上回合交接文档（app_data/handoffs），供新回合回注。
+/// 无文档/目录不存在时返回 None。
+pub(crate) fn consume_handoff_doc(
+    app: &AppHandle,
+    assistant_id: &str,
+    topic_id: &str,
+) -> Option<String> {
+    let dir = app.path().app_data_dir().ok()?.join("handoffs");
+    consume_handoff_doc_from_dir(&dir, assistant_id, topic_id)
+}
 // compute_diff_preview / simple_diff 已下沉到 utils::diff（通用工具函数）
 
 /// 为自动事实提取构造对话转写：取最近 12 条非 system 消息，截断到 ~10k 字符。
@@ -265,4 +315,89 @@ pub(crate) fn build_extract_transcript(messages: &[serde_json::Value]) -> String
     }
     let joined = parts.join("\n");
     joined.chars().take(10_000).collect()
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("aio-handoff-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 消费语义：取最新、consume-once、清理同前缀旧文件、不影响其他话题。
+    #[test]
+    fn consume_returns_newest_and_cleans_up() {
+        let dir = temp_dir("consume");
+        std::fs::write(
+            dir.join("a1-t1-100.md"),
+            "# 旧交接
+内容A",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("a1-t1-200.md"),
+            "# 新交接
+内容B",
+        )
+        .unwrap();
+        std::fs::write(dir.join("a1-t2-300.md"), "# 其他话题").unwrap();
+
+        let got = consume_handoff_doc_from_dir(&dir, "a1", "t1").expect("应找到最新交接");
+        assert!(got.contains("新交接"), "应取最新: {got}");
+        assert!(
+            consume_handoff_doc_from_dir(&dir, "a1", "t1").is_none(),
+            "consume-once：第二次应为空"
+        );
+        assert!(
+            consume_handoff_doc_from_dir(&dir, "a1", "t2").is_some(),
+            "其他话题不受影响"
+        );
+        // t1 的两个文档在第一次消费时清理；t2 的文档在上一行断言时被消费
+        let remaining: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
+        assert!(
+            remaining.is_empty(),
+            "所有文档应已被消费清理: {remaining:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 长文档头尾截断到 4000 字符（与写入侧一致）。
+    #[test]
+    fn consume_truncates_long_content() {
+        let dir = temp_dir("truncate");
+        let long = "x".repeat(10_000);
+        std::fs::write(
+            dir.join(format!("{}-{}-1.md", "a".repeat(12), "b".repeat(12))),
+            &long,
+        )
+        .unwrap();
+        // 长 ID 会被 sanitize 到 12 字符：与写入侧命名一致
+        let got =
+            consume_handoff_doc_from_dir(&dir, &"a".repeat(20), &"b".repeat(20)).expect("应找到");
+        assert!(got.len() < 5_000, "应头尾截断: {}", got.len());
+        assert!(got.contains("已省略"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 空文档视为无交接。
+    #[test]
+    fn consume_empty_doc_returns_none() {
+        let dir = temp_dir("empty");
+        std::fs::write(
+            dir.join("a-t-1.md"),
+            "   
+",
+        )
+        .unwrap();
+        assert!(consume_handoff_doc_from_dir(&dir, "a", "t").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

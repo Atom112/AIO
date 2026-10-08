@@ -240,6 +240,29 @@ fn m_topics_branch(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "topics", "parent_topic_id", "TEXT")
 }
 
+/// v14：Agent 回合检查点表（P4.4：崩溃后无损续跑）。
+fn m_agent_checkpoints(c: &Connection) -> Result<(), String> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_turn_checkpoints (
+            topic_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            round INTEGER NOT NULL,
+            messages_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (topic_id, turn_id, round)
+        );
+        CREATE INDEX IF NOT EXISTS idx_checkpoints_topic_status
+            ON agent_turn_checkpoints(topic_id, status);",
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// v15：messages.cached_input_tokens（跨重启保留缓存命中统计）。
+fn m_messages_cached_tokens(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "cached_input_tokens", "INTEGER")
+}
+
 /// chat_history.db 的迁移表（严格递增；新增迁移只允许追加，不得修改已发布条目）。
 const CHAT_DB_MIGRATIONS: &[Migration] = &[
     Migration {
@@ -306,5 +329,15 @@ const CHAT_DB_MIGRATIONS: &[Migration] = &[
         version: 13,
         name: "topics: 分支列",
         run: m_topics_branch,
+    },
+    Migration {
+        version: 14,
+        name: "agent_turn_checkpoints 表（P4.4 检查点）",
+        run: m_agent_checkpoints,
+    },
+    Migration {
+        version: 15,
+        name: "messages.cached_input_tokens",
+        run: m_messages_cached_tokens,
     },
 ];

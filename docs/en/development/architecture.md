@@ -102,6 +102,14 @@ On window destruction, stream tasks are cancelled, local engines are terminated,
 
 Plan mode only researches and outputs a plan; workflow mode splits and auto-executes tasks. Sub-agents use a role-constrained toolset and cannot delegate further.
 
+### Tool Execution Semantics
+
+- **Parallel dispatch**: read-only built-in tools within the same response block execute concurrently (`FuturesUnordered`); mutating tools and MCP tools run serially in original order; `role:tool` backfill preserves index order. Toggle: `parallelToolExecution`.
+- **Main agent tool set** (`mainAgentToolAccess`): `hybrid` by default — read-only tools called directly, mutating work delegated; `orchestrator` is the legacy strict mode; `full` gives the main agent all built-in tools.
+- **MCP tool injection**: tools from servers enabled for the assistant are injected into the main agent and the `general` subagent (`allow_mcp_tools`); name collisions are rewritten to `mcp__<server>__<tool>`; untrusted servers force per-call approval in Auto/Workflow mode (`trusted` field).
+- **Model call retry**: the POST + status-check phase retries transport errors and 429/5xx with 1s/2s/4s backoff (`modelCallRetries`, default 3); mid-stream errors are not retried.
+- **Background subagents**: `delegate_task(wait=false)` handles and cancellation tokens are registered in `SubagentHandles` and can be stopped individually via the `stop_subagent` command (parent cancel cascades).
+
 ### Permissions and Retries
 
 The permission module first loads mode default rules, then overlays `.aio/permissions.json`. Matching considers tool name, Server, mode and path; deny rules take precedence, then priority selection. When a decision requires asking, the backend creates a pending approval request and dispatches it to the frontend via events; pending calls resume once allow or deny is received.

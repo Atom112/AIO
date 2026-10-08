@@ -85,6 +85,9 @@ pub struct CustomSubagentProfile {
     pub denied_tools: Vec<String>,
     /// 附加的系统提示词（追加到子 Agent 基础系统提示词之后）
     pub system_prompt_extension: String,
+    /// 是否注入 MCP 工具（主 Agent 勾选的 server）。默认关闭。
+    #[serde(default)]
+    pub allow_mcp_tools: bool,
 }
 
 /// custom-subagent-profiles.json 的磁盘格式

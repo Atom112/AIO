@@ -75,6 +75,20 @@ const installMcpListeners = async () => {
       console.debug(`[mcp:${id}] ${line}`);
     }
   });
+  // 工具列表变化（notifications/tools/list_changed）：刷新状态与工具缓存
+  await listen<{ id: string }>(EVENTS.mcpToolsChanged, async (event) => {
+    const { id } = event.payload;
+    try {
+      const statusMap = await listMcpServerStatuses();
+      setMcpServerStatus((prev) => ({ ...prev, ...statusMap }));
+      await refreshMcpToolsCache();
+      if (import.meta.env.DEV) {
+        console.debug(`[mcp:${id}] tools/list_changed → 已刷新工具缓存`);
+      }
+    } catch {
+      // 刷新失败不致命：下次打开设置页会重新拉取
+    }
+  });
 };
 
 /**

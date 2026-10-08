@@ -7,11 +7,13 @@ import {
   callLlmStream,
   generateImage,
   generateTopicTitle,
+  getActiveCheckpoint,
   llmCreds,
   loadAssistants,
   runAgentTurn,
   stopLlmStream,
   summarizeHistory,
+  type ActiveCheckpoint,
 } from '../../core/api/chat';
 import { storeChatAttachment } from '../../core/api/attachment';
 import { registerChatEventListeners } from './hooks/chatEventListeners';
@@ -61,6 +63,7 @@ import { EVENTS } from '../../core/api/events';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
+import Icon from '../../shared/components/Icon';
 import { isImageGenModel } from '../../core/utils/models';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
@@ -188,7 +191,17 @@ const ChatPage: Component = () => {
   const [rightPanelWidth, setRightPanelWidth] = createSignal(
     Number(localStorage.getItem('chat-right-panel-width')) || 18,
   ); // 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30%
+  /**
+   * 左侧面板：宽度与光标 1:1 跟手（展开/收起两个方向都是），松手时才吸附。
+   * 最窄跟手宽度即收起轨道宽度，保证把手始终可抓取、内容不外溢。
+   */
+  const LEFT_RAIL_WIDTH_PX = 48; // 收起轨道宽度，与 ProjectSidebar 保持一致
+  const LEFT_MAX_WIDTH_PCT = 30;
+  /** 松手判定死区（px）：向外拖出不足该距离视为未真正拉开，松手仍收起 */
+  const LEFT_RELEASE_DEADZONE_PX = 12;
   const [isResizing, setIsResizing] = createSignal(false);
+  /** 拖拽中的实时宽度预览（%）：跟手期间用它渲染，松手后清空并落到 leftPanelWidth 记忆值 */
+  const [leftDragWidth, setLeftDragWidth] = createSignal<number | null>(null);
   const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(
     localStorage.getItem('left-collapsed') === 'true',
   ); // 左右两侧面板宽度调整逻辑
@@ -219,9 +232,20 @@ const ChatPage: Component = () => {
   let chatPageRef: HTMLDivElement | undefined;
   /**
    * 计算左侧面板显示宽度
-   * @returns {number} 左侧面板宽度（存储值，折叠模式下由子组件自行处理）
+   * @returns {number} 拖拽中返回实时跟手宽度，否则返回记忆宽度（收起态由子组件处理为轨道宽）
    */
-  const displayLeftWidth = () => leftPanelWidth();
+  const displayLeftWidth = () => leftDragWidth() ?? leftPanelWidth();
+  /**
+   * 左侧面板当前是否按"收起轨道"渲染。
+   * 跟手过程中（leftDragWidth 非空）始终按展开态渲染，这样从轨道往外拖时
+   * 宽度才能真正由光标驱动，而不是等松手后靠 CSS 过渡"弹"开。
+   */
+  const leftPanelCollapsed = () => isLeftCollapsed() && leftDragWidth() === null;
+
+  // 历史遗留：旧版拖拽可能把 <15% 的中间宽度写进记忆值（localStorage），展开态下兜底恢复默认
+  createEffect(() => {
+    if (!isLeftCollapsed() && leftPanelWidth() < 15) setLeftPanelWidth(18);
+  });
   /**
    * 计算右侧面板显示宽度
    * @returns {number} 右侧面板宽度，如果折叠则返回0
@@ -229,17 +253,24 @@ const ChatPage: Component = () => {
   const displayRightWidth = () => (isRightCollapsed() ? 0 : rightPanelWidth());
 
   /**
+   * 设置左侧面板收起状态并持久化（折叠/展开统一入口，含宽度兜底恢复）。
+   * @param collapsed - 目标收起状态
+   */
+  const setLeftCollapsed = (collapsed: boolean) => {
+    setIsLeftCollapsed(collapsed);
+    localStorage.setItem('left-collapsed', String(collapsed));
+    if (!collapsed && leftPanelWidth() < 5) {
+      setLeftPanelWidth(18);
+    }
+  };
+
+  /**
    * 切换左侧面板的折叠状态
    * @param {MouseEvent} e - 鼠标事件
    */
   const toggleLeft = (e: MouseEvent) => {
     e.stopPropagation(); // 防止触发拖拽
-    const newState = !isLeftCollapsed();
-    setIsLeftCollapsed(newState);
-    localStorage.setItem('left-collapsed', String(newState));
-    if (!newState && leftPanelWidth() < 5) {
-      setLeftPanelWidth(18);
-    }
+    setLeftCollapsed(!isLeftCollapsed());
   };
 
   /**
@@ -1009,6 +1040,56 @@ ${asstObj.prompt}`;
     }
   };
 
+  // ===== P4.4 检查点恢复：崩溃残留回合的"继续未完成的回合"入口 =====
+  const [activeCheckpoint, setActiveCheckpoint] = createSignal<ActiveCheckpoint | null>(null);
+  createEffect(() => {
+    const tid = currentTopicId();
+    setActiveCheckpoint(null);
+    if (!tid) return;
+    void (async () => {
+      try {
+        const cp = await getActiveCheckpoint(tid);
+        // 竞态防护：仅当话题未再切换时应用
+        if (currentTopicId() === tid) setActiveCheckpoint(cp);
+      } catch {
+        /* 查询失败静默：入口不展示 */
+      }
+    })();
+  });
+
+  const handleResumeTurn = async () => {
+    const cp = activeCheckpoint();
+    const tid = currentTopicId();
+    const asstId = currentAssistantId();
+    const currentMdl = selectedModel();
+    if (!cp || !tid || !asstId || !currentMdl || isThinking()) return;
+    const currentAsst = datas.assistants.find((a: Assistant) => a.id === asstId);
+    const resumeAgentMode = currentAsst?.agentMode || 'off';
+    setActiveCheckpoint(null);
+    setIsThinking(true);
+    try {
+      await runAgentTurn({
+        ...llmCreds(currentMdl),
+        assistantId: asstId,
+        topicId: tid,
+        messages: [], // 恢复时后端用检查点快照替换，前端消息不参与
+        mcpServerIds: currentAsst?.mcpServerIds ?? [],
+        agentMode: resumeAgentMode,
+        projectId: currentProjectId() ?? null,
+        webSearchEnabled: webSearchEnabled(),
+        profileModelOverrides: [],
+        customSubagentProfiles: [],
+        locale: locale(),
+        contextWindow: await getModelContextWindow(),
+        skills: resumeAgentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
+        resumeTurnId: cp.turnId,
+      });
+    } catch (err) {
+      alert(err);
+      setIsThinking(false);
+    }
+  };
+
   /**
    * 斜杠命令 — 纯操作类型（/compact、/clear、/search、/settings、/help）
    * 聊天显示命令 + 执行 handler + 简短反馈
@@ -1405,28 +1486,20 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 拖拽调整面板宽度
+   * 通用拖拽调整宽度：绑定 mousemove/mouseup，按百分比回调更新宽度。
    * @param e - MouseEvent 鼠标事件
-   * @param type - 'left' 调整左面板，'right' 调整右面板
+   * @param onDragMove - 每次鼠标移动时回调，入参为光标相对整页宽度换算的百分比
    */
-  const startResize = (e: MouseEvent, type: 'left' | 'right') => {
+  const attachResizeDrag = (e: MouseEvent, onDragMove: (pct: number) => void) => {
     e.preventDefault();
-    // 2. 开始拖拽时，设为 true
     setIsResizing(true);
 
+    const totalW = chatPageRef?.offsetWidth ?? window.innerWidth;
     const handleMove = (moveEvent: MouseEvent) => {
-      const totalW = chatPageRef!.offsetWidth;
-      if (type === 'left') {
-        setLeftPanelWidth(Math.min(Math.max((moveEvent.clientX / totalW) * 100, 15), 30));
-      } else {
-        setRightPanelWidth(
-          Math.min(Math.max(((totalW - moveEvent.clientX) / totalW) * 100, 15), 30),
-        );
-      }
+      onDragMove((moveEvent.clientX / totalW) * 100);
     };
 
     const stopResize = () => {
-      // 3. 停止拖拽时，设为 false
       setIsResizing(false);
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', stopResize);
@@ -1436,15 +1509,78 @@ ${asstObj.prompt}`;
     document.addEventListener('mouseup', stopResize);
   };
 
+  /**
+   * 拖拽调整左侧面板宽度：展开/收起两个方向都严格 1:1 跟手，松手时才吸附。
+   *
+   * - 跟手原点：把面板"当前占用的像素宽"折算到光标坐标轴上——收起态用轨道宽，
+   *   展开态用 DOM 实测的渲染宽（把手就在面板右缘，实测能保证首帧零位移、无跳变）。
+   *   宽度增量 = 光标位移，严格 1:1；
+   * - 百分比换算基用 `clientWidth`（内容宽），与 CSS `width:%` 的解析基准一致；
+   * - 最窄限制：跟手宽度不低于收起轨道宽，把手拖不到最左，内容不外溢；
+   * - 松手吸附：顶到最窄或拖出距离仍在死区内 → 收起；否则落到 ≥15% 并记住宽度。
+   *
+   * @param e - MouseEvent 鼠标事件
+   */
+  const startLeftResize = (e: MouseEvent) => {
+    const cssBase = chatPageRef?.clientWidth ?? window.innerWidth;
+    const wasCollapsed = isLeftCollapsed();
+    const doCollapse = LEFT_RAIL_WIDTH_PX / cssBase; // 跟手最窄宽度（%）
+    // 面板当前占用的像素宽：收起态 = 轨道宽；展开态实测（量不到时退回记忆宽度换算）
+    const handleEl = e.currentTarget instanceof Element ? e.currentTarget : null;
+    const measuredPx = handleEl?.parentElement?.getBoundingClientRect().width ?? 0;
+    const basePx = wasCollapsed
+      ? LEFT_RAIL_WIDTH_PX
+      : measuredPx > 0
+        ? measuredPx
+        : (leftPanelWidth() / 100) * cssBase;
+    // 光标坐标轴零点：光标横坐标减去它即为面板应占宽度
+    const anchorX = e.clientX - basePx;
+    setIsResizing(true);
+    e.preventDefault();
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      const pct = ((moveEvent.clientX - anchorX) / cssBase) * 100;
+      setLeftDragWidth(Math.min(Math.max(pct, doCollapse), LEFT_MAX_WIDTH_PCT));
+    };
+
+    const stopResize = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', stopResize);
+      const dragged = leftDragWidth();
+      setLeftDragWidth(null);
+      if (dragged === null) return; // 按下未拖动：保持原状
+      const draggedPx = (dragged / 100) * cssBase;
+      if (draggedPx <= LEFT_RAIL_WIDTH_PX + LEFT_RELEASE_DEADZONE_PX) {
+        setLeftCollapsed(true); // 顶到最窄/没真正拉开：吸附回收起轨道
+      } else {
+        setLeftPanelWidth(Math.max(dragged, 15));
+        setLeftCollapsed(false);
+      }
+    };
+
+    document.addEventListener('mousemove', handleMove);
+    // 立即监听 mouseup：仅在把手上按下后直接松开（无 mousemove）时也能完成吸附
+    document.addEventListener('mouseup', stopResize);
+  };
+
+  /**
+   * 拖拽调整右侧面板宽度（原行为不变：仅展开态可用）。
+   * @param e - MouseEvent 鼠标事件
+   */
+  const startResizeRight = (e: MouseEvent) => {
+    attachResizeDrag(e, (pct) => {
+      setRightPanelWidth(Math.min(Math.max(100 - pct, 15), 30));
+    });
+  };
+
   onMount(() => {
     const navigate = useNavigate();
 
     // 注册全部键盘/斜杠命令（19 个 registerCommand 已抽取为 hooks/chatCommands.ts）。
     const commandIds = registerChatCommands({
       isLeftCollapsed,
-      setIsLeftCollapsed,
-      leftPanelWidth,
-      setLeftPanelWidth,
+      setLeftCollapsed,
       isRightCollapsed,
       setIsRightCollapsed,
       rightPanelWidth,
@@ -1649,9 +1785,9 @@ ${asstObj.prompt}`;
     >
       <ProjectSidebar
         width={displayLeftWidth()}
-        isCollapsed={isLeftCollapsed()}
+        isCollapsed={leftPanelCollapsed()}
         onToggle={toggleLeft}
-        onResize={(e) => !isLeftCollapsed() && startResize(e, 'left')}
+        onResize={(e) => startLeftResize(e as MouseEvent)}
         isResizing={isResizing()}
         onOpenSettings={(id) => setSettingsAsstId(id)}
       />
@@ -1659,6 +1795,19 @@ ${asstObj.prompt}`;
       <div class="flex-1 flex flex-col min-w-0 min-h-0">
         <Show when={workflowState()}>
           <WorkflowVisualization />
+        </Show>
+
+        {/* P4.4 检查点恢复入口：崩溃残留的回合提示 */}
+        <Show when={activeCheckpoint() && !isThinking()}>
+          <button
+            type="button"
+            class="flex items-center gap-2 px-4 py-1.5 text-xs border-b cursor-pointer bg-transparent hover:bg-white/[0.03] transition-colors"
+            style={{ color: 'rgb(var(--primary-rgb))', 'border-color': 'var(--border-dim)' }}
+            onClick={() => void handleResumeTurn()}
+          >
+            <Icon name="refresh" size={12} />
+            <span>{t('agent.checkpoint.resume')}</span>
+          </button>
         </Show>
 
         <ChatInterface
@@ -1696,7 +1845,7 @@ ${asstObj.prompt}`;
         width={displayRightWidth()}
         isCollapsed={isRightCollapsed()}
         onToggle={toggleRight}
-        onResize={(e) => !isRightCollapsed() && startResize(e, 'right')}
+        onResize={(e) => !isRightCollapsed() && startResizeRight(e)}
         currentAssistant={currentAssistant()}
         editingTopicId={editingTopicId()}
         setEditingTopicId={setEditingTopicId}

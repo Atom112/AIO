@@ -74,6 +74,17 @@ pub(crate) fn build_subagent_messages(
     msgs
 }
 
+/// 提取 ToolResult 的首个文本内容（无文本时序列化整个 content）。
+fn tool_result_text(tr: &ToolResult) -> String {
+    tr.content
+        .iter()
+        .find(|c| c.kind == "text")
+        .and_then(|c| c.data.get("text"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default())
+}
+
 /// 构建子 Agent 的受限工具列表（根据 profile 过滤）。
 ///
 /// 仅返回工具规格；子智能体的内置工具统一走 `__builtin__` 通道，
@@ -81,48 +92,94 @@ pub(crate) fn build_subagent_messages(
 pub(crate) fn build_subagent_tools(
     profile: &subagent::SubagentProfile,
     project_root: &str,
-) -> Vec<ToolSpec> {
+    mcp: Option<&crate::core::models::AssistantTools>,
+) -> (Vec<ToolSpec>, std::collections::HashMap<String, String>) {
     // 注入和主 Agent 相同的内置工具，但在执行时按 profile 过滤
     let mut tools: Vec<ToolSpec> = Vec::new();
+    let mut server_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     // 始终注入的文件工具（但 profile 会限制哪些可执行）
     for spec in file_tools::get_file_tool_specs() {
         if profile.is_tool_allowed(&spec.function.name) {
+            server_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
             tools.push(spec);
         }
     }
     // 命令执行工具
     if profile.is_tool_allowed("execute_command") {
         let spec = shell_tools::get_command_tool_spec();
-
+        server_map.insert(
+            spec.function.name.clone(),
+            crate::core::ids::BUILTIN_SERVER_ID.into(),
+        );
         tools.push(spec);
     }
     // Web 工具
     for spec in web_tools::get_web_tool_specs() {
         if profile.is_tool_allowed(&spec.function.name) {
+            server_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
             tools.push(spec);
         }
     }
     // Git 工具
     for spec in git_tools::get_git_tool_specs() {
         if profile.is_tool_allowed(&spec.function.name) && is_git_repo(project_root) {
+            server_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
             tools.push(spec);
         }
     }
     // LSP 工具（所有 5 个）
     for spec in lsp_agent_tools::get_all_lsp_tool_specs() {
         if profile.is_tool_allowed(&spec.function.name) {
+            server_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
             tools.push(spec);
         }
     }
     // 记忆只读工具（子智能体可检索项目记忆与代码；执行时按记忆开关判定）
     for spec in crate::services::memory::tools::get_readonly_memory_specs() {
         if profile.is_tool_allowed(&spec.function.name) {
+            server_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
             tools.push(spec);
         }
     }
 
-    tools
+    // MCP 工具注入（P2.2）：仅 allow_mcp_tools 的 profile（默认仅 general 与用户自定义
+    // 开启项）。工具名冲突（内置工具或其他 server 占用）时重命名 mcp__<server>__<tool>，
+    // 与主循环同规则；MCP 工具不受 allowed_tools 列表约束（门控即 allow_mcp_tools
+    // 标志本身），denied_tools 仍可显式排除。
+    if let Some(mcp) = mcp {
+        if profile.allow_mcp_tools {
+            // denied_tools 显式排除（按原名过滤；重命名后的排除为尽力而为）
+            let filtered = crate::core::models::AssistantTools {
+                tools: mcp
+                    .tools
+                    .iter()
+                    .filter(|s| !profile.is_tool_denied(&s.function.name))
+                    .cloned()
+                    .collect(),
+                tool_server_map: mcp.tool_server_map.clone(),
+            };
+            merge_mcp_tools(&mut tools, &mut server_map, &filtered);
+        }
+    }
+
+    (tools, server_map)
 }
 
 /// 处理 delegate_task 工具调用（从主 Agent 循环中调用）。
@@ -148,6 +205,7 @@ pub(crate) async fn handle_delegate_task(
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
+    mcp_server_ids: &[String],
     locale: &str,
 ) -> Result<ToolResult, String> {
     // AGT-11：单发/后台 delegate_task 也受全局并发上限约束（与批量 delegate_tasks 共享同一信号量）。
@@ -236,6 +294,7 @@ pub(crate) async fn handle_delegate_task(
         token,
         profile_model_overrides,
         custom_profiles,
+        mcp_server_ids,
         locale,
     )
     .await
@@ -267,6 +326,7 @@ pub(crate) async fn execute_single_delegate(
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
+    mcp_server_ids: &[String],
     locale: &str,
 ) -> Result<ToolResult, String> {
     let profile = subagent::find_profile(profile_id, custom_profiles)
@@ -306,6 +366,7 @@ pub(crate) async fn execute_single_delegate(
         project_id,
         agent_mode,
         token,
+        mcp_server_ids,
         locale,
     )
     .await
@@ -335,6 +396,7 @@ pub(crate) async fn handle_delegate_tasks(
     token: &CancellationToken,
     profile_model_overrides: &[ProfileModelOverride],
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
+    mcp_server_ids: &[String],
     semaphore: Arc<Semaphore>,
     locale: &str,
 ) -> Result<ToolResult, String> {
@@ -456,6 +518,7 @@ pub(crate) async fn handle_delegate_tasks(
         let token_clone = token.clone();
         let overrides_clone = profile_model_overrides.to_vec();
         let customs_clone = custom_profiles.to_vec();
+        let mcp_ids_clone = mcp_server_ids.to_vec();
         let sem_clone = semaphore.clone();
         let locale_clone = locale.to_string();
         let mode_clone = agent_mode.clone();
@@ -484,6 +547,7 @@ pub(crate) async fn handle_delegate_tasks(
                 &token_clone,
                 &overrides_clone,
                 &customs_clone,
+                &mcp_ids_clone,
                 &locale_clone,
             )
             .await
@@ -537,6 +601,16 @@ pub(crate) async fn handle_delegate_tasks(
         is_error: false,
     })
 }
+/// 解析工作流步骤的权限模式：配置 "auto" → Auto（旧行为）；其余（含 "inherit" 与
+/// 未知值）→ 继承父回合模式（fail-safe，Normal 下写操作仍逐次审批）。
+fn resolve_workflow_step_mode(cfg_val: &str, parent: &AgentMode) -> AgentMode {
+    if cfg_val.eq_ignore_ascii_case("auto") {
+        AgentMode::Auto
+    } else {
+        parent.clone()
+    }
+}
+
 /// 执行一个工作流（按顺序依次运行每个步骤的子智能体）。
 ///
 /// 每个步骤独立调用 `handle_delegate_task`，前一步的输出作为上下文追加到下一步的任务描述中。
@@ -559,10 +633,21 @@ pub(crate) async fn execute_workflow(
     semaphore: Arc<Semaphore>,
     custom_profiles: &[CustomSubagentProfile],
     profile_model_overrides: &[ProfileModelOverride],
+    mcp_server_ids: &[String],
     token: &CancellationToken,
     locale: &str,
+    parent_mode: &AgentMode,
 ) -> Result<ToolResult, String> {
     let total_steps = workflow.steps.len();
+
+    // 工作流步骤权限模式：默认继承父回合（修复此前静默强制 Auto 的权限旁路——
+    // 从 Normal 模式启动的工作流曾自动放行全部写操作）；配置 "auto" 保持旧行为。
+    let step_mode = resolve_workflow_step_mode(
+        &crate::core::config::load_app_config(app)
+            .map(|c| c.workflow_step_mode)
+            .unwrap_or_default(),
+        parent_mode,
+    );
 
     // 发射 workflow-start 事件
     let _ = window.emit(
@@ -624,11 +709,12 @@ pub(crate) async fn execute_workflow(
             parent_topic_id,
             &arguments,
             project_id,
-            &AgentMode::Auto, // 工作流步骤以 Auto 模式执行（无需用户逐个确认）
+            &step_mode, // 步骤权限模式：默认继承父回合（见 resolve_workflow_step_mode）
             semaphore.clone(),
             token,
             profile_model_overrides,
             custom_profiles,
+            mcp_server_ids,
             locale,
         )
         .await;
@@ -663,7 +749,7 @@ pub(crate) async fn execute_workflow(
 
                 // 发射 workflow-step-complete 事件
                 let _ = window.emit(
-                    "workflow-step-complete",
+                    ev::WORKFLOW_STEP_COMPLETE,
                     serde_json::json!({
                         "stepId": step.step_id,
                         "status": "completed",
@@ -682,7 +768,7 @@ pub(crate) async fn execute_workflow(
 
                 // 发射 workflow-step-complete 事件（失败）
                 let _ = window.emit(
-                    "workflow-step-complete",
+                    ev::WORKFLOW_STEP_COMPLETE,
                     serde_json::json!({
                         "stepId": step.step_id,
                         "status": "failed",
@@ -744,6 +830,7 @@ pub(crate) async fn execute_subagent(
     project_id: Option<&str>,
     agent_mode: &AgentMode,
     token: &CancellationToken,
+    mcp_server_ids: &[String],
     locale: &str,
 ) -> Result<ToolResult, String> {
     let subagent_id = uuid::Uuid::new_v4().to_string();
@@ -770,7 +857,25 @@ pub(crate) async fn execute_subagent(
         extra_context,
         locale,
     );
-    let sub_tools = build_subagent_tools(profile, project_root);
+    // MCP 工具回接（P2.2）：allow_mcp_tools 的 profile 注入主 Agent 勾选 server 的工具
+    let mcp_tools: Option<crate::core::models::AssistantTools> =
+        if profile.allow_mcp_tools && !mcp_server_ids.is_empty() {
+            let mgr = app.state::<crate::plugins::mcp::McpServerManager>();
+            let mcp_state = app.state::<crate::plugins::mcp::McpServerState>();
+            crate::commands::mcp::list_mcp_tools_for_assistant_inner(
+                app,
+                mgr.inner(),
+                mcp_state.inner(),
+                mcp_server_ids.to_vec(),
+                project_id.map(|s| s.to_string()),
+            )
+            .await
+            .ok()
+        } else {
+            None
+        };
+    let (sub_tools, sub_tool_server_map) =
+        build_subagent_tools(profile, project_root, mcp_tools.as_ref());
     let tools_slice: Option<&[ToolSpec]> = if sub_tools.is_empty() {
         None
     } else {
@@ -785,9 +890,10 @@ pub(crate) async fn execute_subagent(
     let mut sub_overflow_retries: u32 = 0;
     // 子 Agent 预算（AgentLimits：失控保护 100 轮；用户显式设置 max_tool_rounds 时以其为准）。
     // 历史 bug：此前硬编码且完全忽略用户配置。
-    let limits = crate::commands::llm::AgentLimits::for_subagent(
-        &crate::core::config::load_app_config(app).unwrap_or_default(),
-    );
+    let app_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
+    let limits = crate::commands::llm::AgentLimits::for_subagent(&app_cfg);
+    // 只读工具并发开关（与主循环共用同一配置项）
+    let parallel_enabled = app_cfg.parallel_tool_execution;
 
     loop {
         round += 1;
@@ -829,6 +935,7 @@ pub(crate) async fn execute_subagent(
             None, // 子 Agent 图像输出 v1 不支持：不入盘、不重写，仅保留文本
             false,
             None, // 子 Agent 输出上限由 round cap 兜底，不额外注入 max_tokens
+            app_cfg.model_call_retries,
         )
         .await;
 
@@ -895,56 +1002,109 @@ pub(crate) async fn execute_subagent(
                     break;
                 }
 
-                // 执行工具调用（内联，不通过 execute_builtin_tool，因为子 Agent 的工具受限）
-                for tc in &rr.tool_calls {
+                // 执行工具调用：与主循环同语义 —— 只读工具并发（FuturesUnordered），
+                // 变更类工具按原始顺序串行；结果按 tool_calls 索引序回填（API 语义不变）。
+                // 阶段 1：串行执行变更类工具 + 收集只读工具 future
+                let mut tool_results: Vec<Option<(String,)>> = vec![None; rr.tool_calls.len()];
+                let mut read_futures: Vec<(
+                    usize,
+                    futures_util::future::BoxFuture<'static, Result<ToolResult, String>>,
+                )> = Vec::new();
+
+                for (i, tc) in rr.tool_calls.iter().enumerate() {
                     if token.is_cancelled() {
                         break;
                     }
                     let args_val: serde_json::Value =
                         serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
 
-                    // 再次确认工具被允许（双重保险）
-                    if !profile.is_tool_allowed(&tc.name) {
-                        let err_text = format!(
+                    // 再次确认工具被允许（双重保险）。MCP 工具的门控是注入时的
+                    // allow_mcp_tools 标志（allowed_tools 列表不约束 MCP 名），
+                    // 但 denied_tools 显式排除仍然生效。
+                    let is_mcp_tool = sub_tool_server_map
+                        .get(&tc.name)
+                        .map(|s| s.as_str() != crate::core::ids::BUILTIN_SERVER_ID)
+                        .unwrap_or(false);
+                    let allowed = if is_mcp_tool {
+                        !profile.is_tool_denied(&tc.name)
+                    } else {
+                        profile.is_tool_allowed(&tc.name)
+                    };
+                    if !allowed {
+                        tool_results[i] = Some((format!(
                             "[已阻止] 子 Agent ({}) 不允许使用工具: {}",
                             profile.id, tc.name
-                        );
-                        sub_msgs.push(json!({
-                            "role": "tool",
-                            "content": err_text,
-                            "tool_call_id": tc.id,
-                            "name": tc.name,
-                        }));
+                        ),));
                         continue;
                     }
 
-                    let tool_result = execute_builtin_tool(
-                        app, &tc.name, &args_val, project_id,
-                        agent_mode, // 子 Agent 继承父 agent_mode，写/删/执行按父模式走审批
-                        token,
-                    )
-                    .await;
+                    if parallel_enabled && is_parallel_safe(&tc.name) {
+                        // 只读工具：收集为并发 future（阶段 2 统一等待）
+                        let app_c = app.clone();
+                        let tn = tc.name.clone();
+                        let args_c = args_val.clone();
+                        let pid = project_id.map(|p| p.to_string());
+                        let mode = agent_mode.clone();
+                        let tok = token.clone();
+                        let fut = Box::pin(async move {
+                            execute_builtin_tool(&app_c, &tn, &args_c, pid.as_deref(), &mode, &tok)
+                                .await
+                        });
+                        read_futures.push((i, fut));
+                        continue;
+                    }
 
-                    let (content_text, _result_value, _is_error) = match tool_result {
-                        Ok(tr) => {
-                            let text = tr
-                                .content
-                                .iter()
-                                .find(|c| c.kind == "text")
-                                .and_then(|c| c.data.get("text"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| {
-                                    serde_json::to_string(&tr.content).unwrap_or_default()
-                                });
-                            let result_value =
-                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
-                            (text, result_value, tr.is_error)
-                        }
-                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                    // 串行执行：MCP 工具走重试包装 + execute_tool_call；内置工具直连
+                    let tool_result = if is_mcp_tool {
+                        let app_c2 = app.clone();
+                        let tn = tc.name.clone();
+                        let args_c = args_val.clone();
+                        let sid = sub_tool_server_map
+                            .get(&tc.name)
+                            .cloned()
+                            .unwrap_or_default();
+                        let pid = project_id.map(|p| p.to_string());
+                        let mode = agent_mode.clone();
+                        let tok = token.clone();
+                        execute_tool_with_retry(
+                            || {
+                                let app3 = app_c2.clone();
+                                let tn3 = tn.clone();
+                                let args3 = args_c.clone();
+                                let sid3 = sid.clone();
+                                let pid3 = pid.clone();
+                                let mode3 = mode.clone();
+                                let tok3 = tok.clone();
+                                async move {
+                                    crate::commands::mcp::execute_tool_call(
+                                        &app3,
+                                        &sid3,
+                                        &tn3,
+                                        args3,
+                                        pid3.as_deref(),
+                                        &mode3,
+                                        &tok3,
+                                    )
+                                    .await
+                                }
+                            },
+                            &app_cfg,
+                            token,
+                        )
+                        .await
+                    } else {
+                        execute_builtin_tool(
+                            app, &tc.name, &args_val, project_id,
+                            agent_mode, // 子 Agent 继承父 agent_mode，写/删/执行按父模式走审批
+                            token,
+                        )
+                        .await
                     };
 
-                    // 发射工具执行结果事件
+                    let content_text = match tool_result {
+                        Ok(tr) => tool_result_text(&tr),
+                        Err(e) => format!("[Error] {}", e),
+                    };
                     let _ = window.emit(
                         ev::SUBAGENT_STEP,
                         SubagentStepPayload {
@@ -956,19 +1116,54 @@ pub(crate) async fn execute_subagent(
                             summary: truncate_chars_head(&content_text, 200),
                         },
                     );
+                    tool_results[i] = Some((content_text,));
+                }
 
-                    // 回填 tool 消息：空结果占位 + 截断防上下文膨胀（与主循环一致）
-                    let truncated_content = if content_text.trim().is_empty() {
-                        "[无结果]".to_string()
-                    } else {
-                        truncate_tool_result(&content_text)
-                    };
-                    sub_msgs.push(json!({
-                        "role": "tool",
-                        "content": truncated_content,
-                        "tool_call_id": tc.id,
-                        "name": tc.name,
-                    }));
+                // 阶段 2：并发等待只读工具，完成即发射
+                if !read_futures.is_empty() {
+                    let mut unordered = FuturesUnordered::new();
+                    for (i, fut) in read_futures {
+                        unordered.push(async move {
+                            let result = fut.await;
+                            (i, result)
+                        });
+                    }
+                    while let Some((i, result)) = unordered.next().await {
+                        let content_text = match result {
+                            Ok(tr) => tool_result_text(&tr),
+                            Err(e) => format!("[Error] {}", e),
+                        };
+                        let tc = &rr.tool_calls[i];
+                        let _ = window.emit(
+                            ev::SUBAGENT_STEP,
+                            SubagentStepPayload {
+                                parent_assistant_id: parent_assistant_id.to_string(),
+                                parent_topic_id: parent_topic_id.to_string(),
+                                subagent_id: subagent_id.clone(),
+                                round: round as u32,
+                                step_type: format!("tool_result:{}", tc.name),
+                                summary: truncate_chars_head(&content_text, 200),
+                            },
+                        );
+                        tool_results[i] = Some((content_text,));
+                    }
+                }
+
+                // 阶段 3：按索引序回填 tool 消息（空结果占位 + 截断，与主循环一致）
+                for (i, tc) in rr.tool_calls.iter().enumerate() {
+                    if let Some((content_text,)) = &tool_results[i] {
+                        let truncated_content = if content_text.trim().is_empty() {
+                            "[无结果]".to_string()
+                        } else {
+                            truncate_tool_result(content_text)
+                        };
+                        sub_msgs.push(json!({
+                            "role": "tool",
+                            "content": truncated_content,
+                            "tool_call_id": tc.id,
+                            "name": tc.name,
+                        }));
+                    }
                 }
 
                 // 子 Agent 上下文安全阀：估算 token 超保守预算时压缩（无需模型窗口信息，
@@ -1061,6 +1256,41 @@ pub(crate) async fn execute_subagent(
         }],
         is_error: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_step_mode_inherits_by_default() {
+        // 默认（"inherit"）、空串与未知值都回落到父回合模式 —— fail-safe
+        assert_eq!(
+            resolve_workflow_step_mode("inherit", &AgentMode::Normal),
+            AgentMode::Normal
+        );
+        assert_eq!(
+            resolve_workflow_step_mode("", &AgentMode::Normal),
+            AgentMode::Normal
+        );
+        assert_eq!(
+            resolve_workflow_step_mode("whatever", &AgentMode::Plan),
+            AgentMode::Plan
+        );
+    }
+
+    #[test]
+    fn workflow_step_mode_auto_opt_in() {
+        // 显式配置 "auto"（大小写不敏感）才保持旧行为
+        assert_eq!(
+            resolve_workflow_step_mode("auto", &AgentMode::Normal),
+            AgentMode::Auto
+        );
+        assert_eq!(
+            resolve_workflow_step_mode("Auto", &AgentMode::Workflow),
+            AgentMode::Auto
+        );
+    }
 }
 
 // ===== 子 Agent 事件载荷定义 =====

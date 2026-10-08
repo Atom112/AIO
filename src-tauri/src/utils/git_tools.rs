@@ -46,7 +46,7 @@ fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
 }
 
 /// 检查目录是否为 git 仓库
-fn is_git_repo(project_root: &str) -> bool {
+pub(crate) fn is_git_repo(project_root: &str) -> bool {
     Command::new("git")
         .args(["rev-parse", "--git-dir"])
         .current_dir(project_root)

@@ -45,6 +45,10 @@ pub struct McpServerConfig {
     /// 提示 UI 是否存在密钥存于 keyring
     #[serde(default)]
     pub has_stored_secret: bool,
+    /// 是否受信任：未信任 server 的工具在 Auto/Workflow 模式下也强制逐次审批
+    /// （防止自主模式对陌生外部工具全放行）。默认 false，用户在 server 设置中勾选。
+    #[serde(default)]
+    pub trusted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_catalog: Option<CatalogRef>,
 }

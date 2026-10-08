@@ -38,6 +38,18 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     }
   };
 
+  // P4.5：本次会话总是允许——按审批上下文自动派生规则
+  //（execute_command → 命令首 token；文件写 → 同目录；MCP → 同 server 同工具）
+  const handleAlwaysAllow = async () => {
+    try {
+      await respondToolApproval(props.approval.approvalId, true, 'session');
+    } catch (e) {
+      console.error('发送会话放行结果失败:', e);
+    } finally {
+      props.onResolved(props.approval.approvalId);
+    }
+  };
+
   const handleReject = async () => {
     try {
       await respondToolApproval(props.approval.approvalId, false);
@@ -133,6 +145,10 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
         <button type="button" class={btnDanger} onClick={handleReject}>
           <Icon name="x" size={13} />
           <span>{t('agent.approval.deny')}</span>
+        </button>
+        <button type="button" class={btnSuccess} onClick={handleAlwaysAllow}>
+          <Icon name="check" size={13} />
+          <span>{t('agent.approval.allowAlways')}</span>
         </button>
         <button type="button" class={btnSuccess} onClick={handleApprove}>
           <Icon name="check" size={13} />

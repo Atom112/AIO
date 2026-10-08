@@ -115,6 +115,8 @@ pub fn run() {
             commands::image_gen::generate_image,
             commands::llm::stop_llm_stream,
             commands::llm::run_agent_turn,
+            commands::llm::stop_subagent,
+            commands::llm::checkpoints::get_active_checkpoint,
             commands::llm::fetch_models,
             commands::engine::start_local_server,
             commands::engine::stop_local_server,

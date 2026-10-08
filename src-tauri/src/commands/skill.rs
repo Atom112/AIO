@@ -850,10 +850,14 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             Err(e) => return Err(format!("启动 {} 失败: {}", npx_cmd, e)),
         };
 
-        // Windows: 分配到限制性 Job Object
-        if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
-            tracing::warn!("[skills] discover npx sandbox 分配失败: {e}");
-        }
+        // Windows: 分配到每次执行独立的 Job Object（守卫 Drop 时清理整棵进程树）
+        let _job_guard = match crate::utils::sandbox::assign_to_job(&child) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                tracing::warn!("[skills] discover npx sandbox 分配失败: {e}");
+                None
+            }
+        };
 
         let output = child
             .wait_with_output()
@@ -1082,10 +1086,16 @@ fn run_npx_sandboxed(
         .spawn()
         .map_err(|e| format!("启动 {} 失败: {}", npx_cmd, e))?;
 
-    // Windows: 分配到限制性 Job Object
-    if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
-        tracing::warn!("[skills] npx sandbox 分配失败: {e}");
-    }
+    // Windows: 分配到每次执行独立的 Job Object。守卫 Drop（含超时提前返回 ? 的
+    // 路径）会触发 KILL_ON_JOB_CLOSE 清理整棵 npx 进程树——修复此前超时后
+    // npx 子进程继续运行、存活到应用退出的问题。
+    let _job_guard = match crate::utils::sandbox::assign_to_job(&child) {
+        Ok(g) => Some(g),
+        Err(e) => {
+            tracing::warn!("[skills] npx sandbox 分配失败: {e}");
+            None
+        }
+    };
 
     // 带超时的等待
     let (tx, rx) = std::sync::mpsc::channel();

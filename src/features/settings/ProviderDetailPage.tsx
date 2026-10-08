@@ -39,7 +39,6 @@ import Dropdown from '../../shared/components/Dropdown';
 import {
   btnDanger,
   btnIcon,
-  btnPrimarySm,
   btnSecondarySm,
   btnSuccess,
 } from '../../shared/components/buttonStyles';
@@ -453,7 +452,7 @@ const ProviderDetail: Component = () => {
         {/* 顶部返回 + 标题 */}
         <div class="flex items-center gap-3 mb-5 animate-row-in">
           <button type="button" class={btnSecondarySm} onClick={() => navigate('/settings')}>
-            <Icon name="arrow-left" size={14} class="text-pri" /> {t('provider.back')}
+            <Icon name="arrow-left" size={14} /> {t('provider.back')}
           </button>
           <Show when={!catalogReady()}>
             <span class="text-xs text-[rgba(var(--text-base-rgb),0.55)] flex items-center gap-1.5">
@@ -670,7 +669,7 @@ const ProviderDetail: Component = () => {
             </button>
             <button
               type="button"
-              class={btnPrimarySm}
+              class={btnSecondarySm}
               disabled={testState().status === 'testing'}
               onClick={handleTestConnection}
             >
@@ -687,7 +686,7 @@ const ProviderDetail: Component = () => {
             <Show when={!isLocalEngine()}>
               <button
                 type="button"
-                class={btnPrimarySm}
+                class={btnSecondarySm}
                 disabled={fetchState().status === 'fetching'}
                 onClick={handleFetchModels}
               >
@@ -1023,7 +1022,7 @@ const ProviderDetail: Component = () => {
             {/* 已启用 */}
             <Show when={visibleEnabled().length > 0}>
               <div class="section-label mt-2 mb-2 flex items-center gap-2">
-                <span class="w-1.5 h-1.5 rounded-full bg-pri" />
+                <span class="w-1.5 h-1.5 rounded-full bg-green-400" />
                 {t('provider.enabledCount', { count: formatNumber(visibleEnabled().length) })}
               </div>
               <div class="space-y-1.5">

@@ -28,8 +28,7 @@ const ModelRow: Component<{
           </Show>
           <Show when={m().contextWindow > 0}>
             <span class="inline-flex items-center gap-0.5">
-              <Icon name="bolt" size={10} class="text-pri" />{' '}
-              {formatContextWindow(m().contextWindow)}
+              <Icon name="bolt" size={10} /> {formatContextWindow(m().contextWindow)}
             </span>
           </Show>
           <Show when={caps().vision}>

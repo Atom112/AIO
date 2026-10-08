@@ -43,7 +43,7 @@ src/
 │   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, ...)
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, UsageSettings + usage chart components)
 └── shared/
-    └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, UserDropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification, AvatarCropModel
+    └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
 ```
 
 ### Backend (`src-tauri/src/`)
@@ -68,7 +68,7 @@ src-tauri/src/
 │   └── subagent.rs      # Subagent profile definitions (9 built-in) + tool specs
 ├── commands/
 │   ├── mod.rs
-│   ├── config.rs        # Assistants, app config, avatars, profile model overrides, custom subagent profiles, auto-start, topic branching
+│   ├── config.rs        # Assistants, app config, profile model overrides, custom subagent profiles, auto-start, topic branching
 │   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/titles/tool_specs/usage；btw.rs: "By The Way" 侧问
 │   ├── engine.rs        # Local engine lifecycle: start/stop/status, engine scan, model listing
 │   ├── attachment.rs    # Chat attachments + file content extraction command

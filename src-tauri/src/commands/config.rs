@@ -1,4 +1,4 @@
-//! 应用配置与助手管理命令（assistant/config/avatar/profile 覆盖等）。
+//! 应用配置与助手管理命令（assistant/config/profile 覆盖等）。
 //! 配置的磁盘读写与迁移下沉在 core/config.rs（AppConfigDisk）；本文件只留薄 IPC 包装。
 
 use crate::commands::attachment::{
@@ -7,7 +7,6 @@ use crate::commands::attachment::{
 use crate::core::models::*;
 use crate::core::secure_store;
 use crate::core::state::DbState;
-use base64::{engine::general_purpose, Engine as _};
 use rusqlite::params;
 use std::fs; // 导入标准库文件系统模块
 use tauri::{AppHandle, Manager};
@@ -511,125 +510,6 @@ pub fn load_fetched_models() -> Result<Vec<ModelInfo>, String> {
     let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let models: Vec<ModelInfo> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
     Ok(models)
-}
-
-/// 保存用户/助手头像到应用数据目录。
-///
-/// # 参数
-/// - `data_url` — 图片的 data URL（已在前端裁剪/压缩；上限 10MB 字符串）
-///
-/// # 返回
-/// 落盘后的文件路径（前端通过 `read_avatar_source` 读取展示）。
-#[tauri::command]
-pub async fn upload_avatar(app: tauri::AppHandle, data_url: String) -> Result<String, String> {
-    // M4 防护：data URL 字符串本身有上限 (Base64 编码后体积膨胀 ~33%)
-    // 256x256 JPEG 0.8 质量通常 < 50KB，10MB 字符串已远超实际需要
-    const MAX_DATA_URL_LEN: usize = 10 * 1024 * 1024;
-    if data_url.len() > MAX_DATA_URL_LEN {
-        return Err(format!(
-            "头像数据过大 ({} 字节，上限 {} 字节)",
-            data_url.len(),
-            MAX_DATA_URL_LEN
-        ));
-    }
-
-    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let avatars_dir = app_dir.join("avatars");
-
-    // 1. 确保目录存在
-    if !avatars_dir.exists() {
-        std::fs::create_dir_all(&avatars_dir).map_err(|e| e.to_string())?;
-    } else {
-        // --- 核心修复：删除所有旧的 user_avatar 缓存 ---
-        // 我们只删除以此前缀开头的文件，避免误删目录下可能存在的其它资源
-        if let Ok(entries) = std::fs::read_dir(&avatars_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                        if file_name.starts_with("user_avatar_") {
-                            let _ = std::fs::remove_file(path);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. 解析 Base64 数据
-    let base64_str = data_url.split(',').nth(1).ok_or("无效的图像数据")?;
-    let bytes = general_purpose::STANDARD
-        .decode(base64_str)
-        .map_err(|e| e.to_string())?;
-
-    // 校验解码后大小（5MB 图像上限）
-    if bytes.len() > 5 * 1024 * 1024 {
-        return Err(format!("解码后图像过大 ({} 字节)", bytes.len()));
-    }
-
-    // 3. 生成新文件名 (保留 UUID 依然是必要的，可以让前端识别到路径变化从而刷新图片)
-    let file_name = format!("user_avatar_{}.png", uuid::Uuid::new_v4());
-    let dest_path = avatars_dir.join(&file_name);
-
-    std::fs::write(&dest_path, bytes).map_err(|e| e.to_string())?;
-
-    // 返回新路径供前端更新 localStorage
-    Ok(dest_path.to_string_lossy().to_string())
-}
-
-/// 清空本地头像缓存目录（应用数据目录下的 avatars/）。
-///
-/// # 行为
-/// 删除缓存目录内容；下次读取头像时按源路径重新落盘。目录不存在时静默成功。
-#[tauri::command]
-pub async fn clear_local_avatar_cache(app: tauri::AppHandle) -> Result<(), String> {
-    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let avatars_dir = app_dir.join("avatars");
-
-    if avatars_dir.exists() {
-        // 直接删除整个文件夹并重建，或者遍历删除
-        let _ = std::fs::remove_dir_all(&avatars_dir);
-        std::fs::create_dir_all(&avatars_dir).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-/// 读取用户通过文件选择器选中的头像原始字节（10MB 上限，绕过 fs:allow-read-file ** 需求）
-#[tauri::command]
-pub async fn read_avatar_source(path: String) -> Result<String, String> {
-    use std::io::Read;
-    const MAX_BYTES: u64 = 10 * 1024 * 1024;
-    let p = std::path::Path::new(&path);
-    if !p.exists() {
-        return Err("文件不存在".into());
-    }
-    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
-    if meta.len() > MAX_BYTES {
-        return Err(format!("文件过大 (上限 {}MB)", MAX_BYTES / 1024 / 1024));
-    }
-    // 校验扩展名
-    let ext = p
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if !["png", "jpg", "jpeg", "webp", "bmp", "gif"].contains(&ext.as_str()) {
-        return Err("仅支持 png/jpg/jpeg/webp/bmp/gif 图像".into());
-    }
-    let mut file = std::fs::File::open(p).map_err(|e| e.to_string())?;
-    let mut buf = Vec::with_capacity(meta.len() as usize);
-    file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-    let mime = match ext.as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "gif" => "image/gif",
-        _ => "application/octet-stream",
-    };
-    use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
-    Ok(format!("data:{};base64,{}", mime, b64))
 }
 
 // ====== Per-Profile Model Override Persistence ======

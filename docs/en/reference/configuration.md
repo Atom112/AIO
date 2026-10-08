@@ -89,7 +89,6 @@ The following UI preferences are stored in WebView `localStorage` and are not pa
 | Left/right sidebar state and width | Chat layout                       |
 | `aio_ignored_update_version`       | Ignored update version            |
 | `aio-local-auto-start-confirmed`   | Local engine startup confirmation |
-| `user-avatar-path`                 | User avatar file path             |
 
 Clearing WebView data will reset these UI preferences but will not delete SQLite chat history, Provider configurations, or project `.aio/` directories.
 

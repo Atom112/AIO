@@ -89,7 +89,6 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 | 左右侧栏状态与宽度               | 聊天布局              |
 | `aio_ignored_update_version`     | 忽略的更新版本        |
 | `aio-local-auto-start-confirmed` | 本地引擎启动确认      |
-| `user-avatar-path`               | 用户头像文件路径      |
 
 清理 WebView 数据会恢复这些界面偏好，但不会删除 SQLite 聊天记录、Provider 配置或项目 `.aio/`。
 

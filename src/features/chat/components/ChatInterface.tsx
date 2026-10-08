@@ -17,7 +17,6 @@ import ModelSelector from './ModelSelector';
 import {
   Topic,
   PendingAttachment,
-  globalUserAvatar,
   selectedModel,
   isStartingLocalModel,
   localEngineConnected,
@@ -136,35 +135,6 @@ interface ChatInterfaceProps {
   /** 关闭指定 /btw 悬浮框 */
   onDismissBtw: (id: string) => void;
 }
-
-const UserMessageAvatar: Component = () => {
-  const avatarSrc = () => globalUserAvatar();
-
-  return (
-    <div
-      class="relative flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
-      style={{
-        background: 'rgba(var(--text-base-rgb),0.06)',
-        border: '1px solid var(--border-dim)',
-        'box-shadow': '0 2px 6px rgba(0,0,0,0.15)',
-      }}
-    >
-      <img
-        src={avatarSrc()}
-        alt={t('common.user')}
-        loading="lazy"
-        class="w-full h-full object-cover"
-        onError={(e) => {
-          e.currentTarget.src = '/icons/app-logo/user.svg';
-        }}
-      />
-      <div
-        class="absolute inset-0 w-full h-full flex items-center justify-center pointer-events-none"
-        style={{ background: 'rgba(var(--text-base-rgb),0.02)' }}
-      />
-    </div>
-  );
-};
 
 const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   let textareaRef: HTMLTextAreaElement | undefined;
@@ -616,7 +586,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     }}
                   >
                     <div
-                      class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start'}`}
+                      class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start pr-[10px]'}`}
                     >
                       <Show when={msg.role === 'assistant'}>
                         <div
@@ -850,7 +820,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
                         {/* 消息操作按钮组：始终可见 */}
                         <div
-                          class={`flex mt-1.5 px-[4px] z-[5] gap-1.5 flex-wrap ${msg.role === 'assistant' ? 'justify-start' : 'justify-end'}`}
+                          class={`flex mt-1.5 px-[4px] z-[5] gap-1.5 flex-wrap ${msg.role === 'assistant' ? 'justify-start' : 'justify-end pr-[10px]'}`}
                         >
                           {/* 复制按钮（每条消息都有） */}
                           <button
@@ -1135,10 +1105,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           </button>
                         </div>
                       </div>
-
-                      <Show when={msg.role === 'user'}>
-                        <UserMessageAvatar />
-                      </Show>
                     </div>
 
                     {/* File Changes box（仅 assistant 消息，有文件变更时显示）*/}

@@ -1,18 +1,10 @@
-import { createSignal, onMount, Component, Show } from 'solid-js';
+import { createSignal, onMount, Component } from 'solid-js';
 import { Window } from '@tauri-apps/api/window';
 import { A } from '@solidjs/router';
-import {
-  loadActivatedModels,
-  loadAppConfig,
-  readAvatarSource,
-  uploadAvatar,
-} from '../../core/api/config';
+import { loadActivatedModels, loadAppConfig } from '../../core/api/config';
 import { isLocalServerRunning, startLocalServer } from '../../core/api/engine';
 import { listen } from '@tauri-apps/api/event';
 import { EVENTS } from '../../core/api/events';
-import { open } from '@tauri-apps/plugin-dialog';
-import AvatarCropModal from './AvatarCropModel';
-import UserDropdown from './UserDropdown';
 import Icon from './Icon';
 import { btnIcon } from '../components/buttonStyles';
 import {
@@ -20,15 +12,12 @@ import {
   setDatas,
   setSelectedModel,
   ActivatedModel,
-  globalUserAvatar,
-  setGlobalUserAvatar,
-  loadAvatarFromPath,
   setLocalModelStartProgress,
   isLocalModel,
   startLocalEngineForAssistant,
   currentAssistantId,
 } from '../../core/store/store';
-import { reportError, t } from '../../core/i18n';
+import { t } from '../../core/i18n';
 
 /**
  * 初始化窗口实例
@@ -41,41 +30,6 @@ const appWindow = new Window('main');
  */
 const NavBar: Component = () => {
   const [isMaximized, setIsMaximized] = createSignal<boolean>(false);
-  const [tempImage, setTempImage] = createSignal<string | null>(null);
-
-  /**
-   * 处理编辑头像：打开文件选择器并触发裁剪流程
-   */
-  const handleEditAvatar = async () => {
-    try {
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }],
-      });
-
-      if (selected && typeof selected === 'string') {
-        const dataUrl = await readAvatarSource(selected);
-        setTempImage(dataUrl);
-      }
-    } catch (err) {
-      console.error('选择头像失败:', err);
-      alert(reportError('error.load', err));
-    }
-  };
-
-  /**
-   * 头像裁剪完成回调 — 本地保存
-   */
-  const onCropSave = async (croppedDataUrl: string) => {
-    try {
-      const savedPath = await uploadAvatar(croppedDataUrl);
-      setGlobalUserAvatar(croppedDataUrl);
-      localStorage.setItem('user-avatar-path', savedPath);
-      setTempImage(null);
-    } catch (err) {
-      alert(reportError('error.save', err));
-    }
-  };
 
   /**
    * 启动时拉起本地推理引擎（若默认/当前模型为本地模型）。
@@ -111,7 +65,7 @@ const NavBar: Component = () => {
   const handleClose = async () => await appWindow.close();
 
   /**
-   * 组件挂载时初始化：头像加载、模型加载、窗口监听
+   * 组件挂载时初始化：模型加载、窗口监听
    */
   onMount(async () => {
     const unlistenProgress = await listen(EVENTS.llamaProgress, (event) => {
@@ -120,13 +74,6 @@ const NavBar: Component = () => {
     const unlistenEngineProgress = await listen(EVENTS.engineProgress, (event) => {
       setLocalModelStartProgress((event.payload as number) * 100);
     });
-
-    // 本地头像兜底
-    const localSavedPath = localStorage.getItem('user-avatar-path');
-    if (localSavedPath && globalUserAvatar() === '/icons/app-logo/user.svg') {
-      const url = await loadAvatarFromPath(localSavedPath);
-      setGlobalUserAvatar(url);
-    }
 
     // 加载模型和配置
     try {
@@ -185,7 +132,12 @@ const NavBar: Component = () => {
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
 
-        <UserDropdown avatar={globalUserAvatar()} onEditAvatar={handleEditAvatar} />
+        {/* 图标间浅竖线分隔 */}
+        <span
+          aria-hidden="true"
+          class="w-px h-[16px] shrink-0 pointer-events-none"
+          style={{ background: 'rgba(var(--text-base-rgb),0.18)' }}
+        />
 
         <A
           href="/settings"
@@ -235,14 +187,6 @@ const NavBar: Component = () => {
           </button>
         </div>
       </nav>
-
-      <Show when={tempImage()}>
-        <AvatarCropModal
-          imageSrc={tempImage()!}
-          onCancel={() => setTempImage(null)}
-          onSave={onCropSave}
-        />
-      </Show>
     </>
   );
 };

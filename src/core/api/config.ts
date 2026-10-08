@@ -12,12 +12,6 @@ export const saveAppConfig = (config: AppConfig) =>
 /** 设置系统自启动（true = 随系统启动）。 */
 export const setAutoStart = (enabled: boolean) => invoke<void>('set_auto_start', { enabled });
 
-/** 读取头像数据源（返回 data URL）。 */
-export const readAvatarSource = (path: string) => invoke<string>('read_avatar_source', { path });
-
-/** 上传（保存）用户头像，返回落盘路径。 */
-export const uploadAvatar = (dataUrl: string) => invoke<string>('upload_avatar', { dataUrl });
-
 /** 加载激活模型列表（含本地引擎注入的条目）。 */
 export const loadActivatedModels = () => invoke<ActivatedModel[]>('load_activated_models');
 

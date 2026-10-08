@@ -32,6 +32,8 @@ interface ProjectSidebarProps {
   onResize: (e: MouseEvent) => void;
   isResizing: boolean;
   onOpenSettings: (assistantId: string) => void;
+  /** 展开内容的窗帘布局宽度（px）：收窄时内容保持该宽度布局，被面板左缘裁剪揭示 */
+  revealMinPx?: number;
 }
 
 const DIALOG_ASST_ID = 'default-assistant-id';
@@ -195,8 +197,30 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
 
   /** 展开程度 0–1：用于插值内边距与按宽度渐显内容 */
   const expandRatio = () => Math.min(Math.max(props.width / 15, 0), 1);
-  /** 展开态内容不透明度：窄于 11% 时不足以承载文字，随宽度淡出 */
-  const expandedOpacity = () => Math.min(Math.max((props.width - 11) / 4, 0), 1);
+  /**
+   * 展开态内容不透明度：与轨道图标的淡出曲线首尾相接（4%–5% 交叉），
+   * 保证任意宽度下两套内容至少一套可见，不再出现空过渡帧；
+   * 内容本体走"窗帘式揭示"（固定布局 + 裁剪），不依赖淡出来遮丑。
+   */
+  const expandedOpacity = () => Math.min(Math.max((props.width - 4) / 1, 0), 1);
+  /**
+   * 窗帘软过渡遮罩：按"精确溢出量"计算右缘渐隐区（完整覆盖被裁剪区域并留 20px 余量），
+   * 杜绝裁剪线裸露——图标始终清晰、标签渐隐，不会被拦腰截断；
+   * 宽度回到 15%（无溢出）时渐隐区收敛为 0，切换无缝。
+   * 容器宽度由 revealMin 反推：revealMin = base×0.15 − 34（ChatPage 同口径，留 2px 安全余量）。
+   */
+  const revealMask = () => {
+    const w = props.width;
+    if (props.isCollapsed || w >= 15) return 'none';
+    const revealMin = props.revealMinPx ?? 0;
+    if (revealMin <= 0) return 'none';
+    const base = (revealMin + 34) / 0.15;
+    const contentPx = (w / 100) * base - 2 * padX() - 2;
+    const overflowPx = revealMin - contentPx;
+    if (overflowPx <= 0.5) return 'none';
+    const fadePx = Math.min(overflowPx + 20, contentPx * 0.6);
+    return `linear-gradient(to right, black calc(100% - ${fadePx}px), transparent 100%)`;
+  };
   /** 实际生效的内边距（px）：收起态为轨道值；展开态随宽度从轨道值插值到 15px */
   const padY = () => (props.isCollapsed ? 6 : 6 + 9 * expandRatio());
   const padX = () => (props.isCollapsed ? 4 : 4 + 11 * expandRatio());
@@ -207,6 +231,8 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       style={{
         // CSS 级最窄限制：无论上层计算出什么宽度，面板物理上不可能窄于收起轨道
         'min-width': '48px',
+        // 窗帘揭示的布局宽度（子内容以该宽度排版，收窄时被裁剪而不是重排）
+        '--reveal-min': `${props.revealMinPx ?? 0}px`,
         width: props.isCollapsed ? '48px' : `${props.width}%`,
         padding: `${padY()}px ${padX()}px`,
         background: props.isCollapsed
@@ -224,16 +250,20 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       onContextMenu={(e) => e.preventDefault()}
     >
       <div class="relative flex-1 min-h-0">
-        {/* 展开状态 — 折叠时淡出；跟手期间按宽度渐显 */}
+        {/* 展开状态 — 窗帘式软揭示：内容保持完整布局不重排，超出面板的部分被裁剪，右缘用 mask 渐隐替代硬裁剪 */}
         <div
-          class="absolute inset-0 transition-opacity ease-out"
+          class="absolute inset-0 overflow-hidden transition-opacity ease-out"
           style={{
             opacity: props.isCollapsed ? 0 : expandedOpacity(),
             'pointer-events': props.isCollapsed || expandedOpacity() < 0.5 ? 'none' : 'auto',
+            'mask-image': revealMask(),
             transition: props.isResizing ? 'none' : 'opacity 0.3s ease-out',
           }}
         >
-          <div class="h-full w-full overflow-hidden hover:overflow-y-auto">
+          <div
+            class="h-full w-full overflow-hidden hover:overflow-y-auto"
+            style={{ 'min-width': 'var(--reveal-min, 0px)' }}
+          >
             {/* 聊天入口 */}
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
@@ -353,7 +383,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       <div
         class="absolute inset-0 ease-out"
         style={{
-          opacity: props.isCollapsed ? 1 : Math.min(Math.max((5 - props.width) / 3, 0), 1),
+          opacity: props.isCollapsed ? 1 : Math.min(Math.max((4 - props.width) / 1, 0), 1),
           'pointer-events': props.isCollapsed ? 'auto' : 'none',
           transition: props.isResizing ? 'none' : 'opacity 0.3s ease-out',
         }}

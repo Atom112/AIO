@@ -202,6 +202,14 @@ const ChatPage: Component = () => {
   const [isResizing, setIsResizing] = createSignal(false);
   /** 拖拽中的实时宽度预览（%）：跟手期间用它渲染，松手后清空并落到 leftPanelWidth 记忆值 */
   const [leftDragWidth, setLeftDragWidth] = createSignal<number | null>(null);
+  /**
+   * 展开内容的"窗帘"布局宽度（px，= 15% 最小面板的内容盒宽）。
+   * 跟手收窄时内容不重排、不淡出，只被面板左缘逐步裁掉（窗帘式揭示），
+   * 避免出现两套内容都不可见的空过渡帧；随窗口尺寸变化重算。
+   */
+  const [leftRevealMinPx, setLeftRevealMinPx] = createSignal(0);
+  /** 松手吸附动画的 rAF id：新一轮拖拽开始时取消，避免与用户手势打架 */
+  let leftSnapRaf: number | undefined;
   const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(
     localStorage.getItem('left-collapsed') === 'true',
   ); // 左右两侧面板宽度调整逻辑
@@ -245,6 +253,21 @@ const ChatPage: Component = () => {
   // 历史遗留：旧版拖拽可能把 <15% 的中间宽度写进记忆值（localStorage），展开态下兜底恢复默认
   createEffect(() => {
     if (!isLeftCollapsed() && leftPanelWidth() < 15) setLeftPanelWidth(18);
+  });
+
+  // 窗帘揭示的目标宽度：15% 最小面板的内容盒宽（扣除内边距与边框，另留 2px 安全余量，
+  // 保证停稳在 15% 时内容绝不溢出），随窗口缩放重算；ProjectSidebar 按 −34 口径反推容器宽
+  onMount(() => {
+    const updateRevealMin = () => {
+      const base = chatPageRef?.clientWidth ?? window.innerWidth;
+      setLeftRevealMinPx(Math.max(base * 0.15 - 34, 120));
+    };
+    updateRevealMin();
+    window.addEventListener('resize', updateRevealMin);
+    onCleanup(() => window.removeEventListener('resize', updateRevealMin));
+    onCleanup(() => {
+      if (leftSnapRaf !== undefined) cancelAnimationFrame(leftSnapRaf);
+    });
   });
   /**
    * 计算右侧面板显示宽度
@@ -1522,6 +1545,11 @@ ${asstObj.prompt}`;
    * @param e - MouseEvent 鼠标事件
    */
   const startLeftResize = (e: MouseEvent) => {
+    // 用户重新抓起把手：取消进行中的吸附动画，手势接管
+    if (leftSnapRaf !== undefined) {
+      cancelAnimationFrame(leftSnapRaf);
+      leftSnapRaf = undefined;
+    }
     const cssBase = chatPageRef?.clientWidth ?? window.innerWidth;
     const wasCollapsed = isLeftCollapsed();
     const doCollapse = LEFT_RAIL_WIDTH_PX / cssBase; // 跟手最窄宽度（%）
@@ -1544,19 +1572,42 @@ ${asstObj.prompt}`;
     };
 
     const stopResize = () => {
-      setIsResizing(false);
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', stopResize);
       const dragged = leftDragWidth();
-      setLeftDragWidth(null);
-      if (dragged === null) return; // 按下未拖动：保持原状
+      if (dragged === null) {
+        setIsResizing(false);
+        return; // 按下未拖动：保持原状
+      }
       const draggedPx = (dragged / 100) * cssBase;
       if (draggedPx <= LEFT_RAIL_WIDTH_PX + LEFT_RELEASE_DEADZONE_PX) {
-        setLeftCollapsed(true); // 顶到最窄/没真正拉开：吸附回收起轨道
-      } else {
-        setLeftPanelWidth(Math.max(dragged, 15));
-        setLeftCollapsed(false);
+        // 顶到最窄/没真正拉开：吸附回收起轨道（走 CSS 过渡收拢动画）
+        setLeftDragWidth(null);
+        setIsResizing(false);
+        setLeftCollapsed(true);
+        return;
       }
+      // 拉开：用 rAF 把预览宽度缓动到吸附目标（≥15%）。
+      // 遮罩/内边距/透明度随每帧宽度同步变化，收尾无硬裁剪、无跳变；
+      // 期间保持 isResizing=true（禁用 CSS 过渡），避免双重平滑。
+      const target = Math.max(dragged, 15);
+      const durationMs = 250;
+      const start = performance.now();
+      const step = (now: number) => {
+        const t = Math.min((now - start) / durationMs, 1);
+        const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+        setLeftDragWidth(dragged + (target - dragged) * eased);
+        if (t < 1) {
+          leftSnapRaf = requestAnimationFrame(step);
+          return;
+        }
+        leftSnapRaf = undefined;
+        setLeftPanelWidth(target);
+        setLeftCollapsed(false);
+        setLeftDragWidth(null);
+        setIsResizing(false);
+      };
+      leftSnapRaf = requestAnimationFrame(step);
     };
 
     document.addEventListener('mousemove', handleMove);
@@ -1786,6 +1837,7 @@ ${asstObj.prompt}`;
       <ProjectSidebar
         width={displayLeftWidth()}
         isCollapsed={leftPanelCollapsed()}
+        revealMinPx={leftRevealMinPx()}
         onToggle={toggleLeft}
         onResize={(e) => startLeftResize(e as MouseEvent)}
         isResizing={isResizing()}

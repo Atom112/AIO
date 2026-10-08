@@ -1,8 +1,6 @@
 //! Skill 配置管理命令。
 
-use crate::core::models::{
-    MarketSkill, ProjectsFile, SkillConfig, SkillMarketCategory, SkillsFile,
-};
+use crate::core::models::{MarketSkill, ProjectsFile, SkillConfig, SkillsFile};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -429,64 +427,6 @@ fn parse_market_skills(html: &str) -> Vec<MarketSkill> {
                 installs: parse_compact_number(&installs_label),
                 installs_label,
                 weekly_installs,
-                category: None,
-            })
-        })
-        .collect()
-}
-
-fn parse_topic_skill_descriptions(html: &str) -> HashMap<String, String> {
-    let anchor =
-        Regex::new(r#"(?s)<a class="group grid[^"]*" href="/([^/"]+/[^/"]+/[^/"]+)">(.*?)</a>"#)
-            .expect("valid topic skill regex");
-    let description = Regex::new(r#"(?s)<p class="lg:col-span-9[^"]*">(.*?)</p>"#)
-        .expect("valid topic description regex");
-    anchor
-        .captures_iter(html)
-        .filter_map(|capture| {
-            let path = capture.get(1)?.as_str().to_string();
-            let body = capture.get(2)?.as_str();
-            let text = description
-                .captures(body)
-                .and_then(|inner| inner.get(1))
-                .map(|value| strip_html(value.as_str()))
-                .unwrap_or_default();
-            Some((path, text))
-        })
-        .collect()
-}
-
-fn parse_categories(html: &str) -> Vec<SkillMarketCategory> {
-    let category = Regex::new(r#"(?s)<a[^>]*href="/topic/([^"]+)"[^>]*>(.*?)</a>"#)
-        .expect("valid category regex");
-    let name_re = Regex::new(r#"(?s)<h2[^>]*>(.*?)</h2>"#).expect("valid category name regex");
-    let paragraphs =
-        Regex::new(r#"(?s)<p[^>]*>(.*?)</p>"#).expect("valid category paragraph regex");
-    let count_re = Regex::new(r"([0-9]+)").expect("valid category count regex");
-    category
-        .captures_iter(html)
-        .filter_map(|capture| {
-            let body = capture.get(2)?.as_str();
-            let name = name_re
-                .captures(body)
-                .and_then(|inner| inner.get(1))
-                .map(|value| strip_html(value.as_str()))?;
-            let paragraph_values: Vec<String> = paragraphs
-                .captures_iter(body)
-                .filter_map(|inner| inner.get(1).map(|value| strip_html(value.as_str())))
-                .collect();
-            let description = paragraph_values.first().cloned().unwrap_or_default();
-            let skill_count = paragraph_values
-                .get(1)
-                .and_then(|value| count_re.captures(value))
-                .and_then(|inner| inner.get(1))
-                .and_then(|value| value.as_str().parse().ok())
-                .unwrap_or(0);
-            Some(SkillMarketCategory {
-                id: capture.get(1)?.as_str().to_string(),
-                name: name.replace(" skills", ""),
-                description,
-                skill_count,
             })
         })
         .collect()
@@ -554,22 +494,11 @@ pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> R
     }
 }
 
-/// 返回 skills.sh 官方分类。
-#[tauri::command]
-pub async fn list_skill_market_categories(
-    app: AppHandle,
-    force_refresh: bool,
-) -> Result<Vec<SkillMarketCategory>, String> {
-    let html = fetch_market_page_cached(&app, "/topic", force_refresh).await?;
-    Ok(parse_categories(&html))
-}
-
-/// 浏览 skills.sh 市场。sort 支持 all、trending、hot；category 可选。
+/// 浏览 skills.sh 市场。sort 支持 all、trending、hot。
 #[tauri::command]
 pub async fn list_skill_market(
     app: AppHandle,
     sort: String,
-    category: Option<String>,
     force_refresh: bool,
 ) -> Result<Vec<MarketSkill>, String> {
     let path = match sort.as_str() {
@@ -577,26 +506,7 @@ pub async fn list_skill_market(
         "hot" => "/hot",
         _ => "/",
     };
-    let mut skills =
-        parse_market_skills(&fetch_market_page_cached(&app, path, force_refresh).await?);
-    if let Some(category_id) = category.filter(|value| !value.is_empty() && value != "all") {
-        let topic_html =
-            fetch_market_page_cached(&app, &format!("/topic/{}", category_id), force_refresh)
-                .await?;
-        let topic_skills = parse_topic_skill_descriptions(&topic_html);
-        skills.retain_mut(|skill| {
-            let path = format!("{}/{}/{}", skill.owner, skill.repo, skill.slug);
-            if let Some(description) = topic_skills.get(&path) {
-                skill.category = Some(category_id.clone());
-                if skill.description.is_empty() {
-                    skill.description = description.clone();
-                }
-                true
-            } else {
-                false
-            }
-        });
-    }
+    let skills = parse_market_skills(&fetch_market_page_cached(&app, path, force_refresh).await?);
     Ok(skills)
 }
 
@@ -1437,20 +1347,6 @@ mod tests {
         assert_eq!(skills[0].owner, "vercel-labs");
         assert_eq!(skills[0].installs, 2_100_000);
         assert_eq!(skills[0].weekly_installs, vec![102_724, 112_234]);
-    }
-
-    #[test]
-    fn parses_topic_categories() {
-        let html = r#"
-        <a href="/topic/react"><h2>Frontend &amp; React skills</h2>
-          <p>React production guidance.</p><p>8<!-- --> skills</p>
-        </a>
-        "#;
-        let categories = parse_categories(html);
-        assert_eq!(categories.len(), 1);
-        assert_eq!(categories[0].id, "react");
-        assert_eq!(categories[0].name, "Frontend & React");
-        assert_eq!(categories[0].skill_count, 8);
     }
 
     #[test]

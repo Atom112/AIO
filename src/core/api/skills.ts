@@ -1,16 +1,10 @@
 // Skills 域 Tauri 命令封装（与 commands/skill.rs 对应）。
 // 约定：组件不得直接 invoke 这些命令名，一律走本模块；签名与后端保持 camelCase。
 import { invoke } from '@tauri-apps/api/core';
-import type {
-  DiscoveredNpxSkill,
-  MarketSkill,
-  SkillConfig,
-  SkillMarketCategory,
-} from '../types/skill';
+import type { DiscoveredNpxSkill, MarketSkill, SkillConfig } from '../types/skill';
 
 export interface SkillMarketQuery {
   sort?: string | null;
-  category?: string | null;
   forceRefresh?: boolean;
 }
 
@@ -40,10 +34,6 @@ export const refreshNpxSkill = (id: string, projectId?: string | null) =>
 /** 浏览 Skill 市场。 */
 export const listSkillMarket = (query: SkillMarketQuery) =>
   invoke<MarketSkill[]>('list_skill_market', query as unknown as Record<string, unknown>);
-
-/** Skill 市场分类列表。 */
-export const listSkillMarketCategories = (forceRefresh = false) =>
-  invoke<SkillMarketCategory[]>('list_skill_market_categories', { forceRefresh });
 
 /** 从市场下载一个 Skill 到项目（或全局）。 */
 export const downloadMarketSkill = (skill: MarketSkill, projectId?: string | null) =>

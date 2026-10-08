@@ -33,14 +33,6 @@ export interface MarketSkill {
   installs: number;
   installsLabel: string;
   weeklyInstalls: number[];
-  category?: string;
-}
-
-export interface SkillMarketCategory {
-  id: string;
-  name: string;
-  description: string;
-  skillCount: number;
 }
 
 /** npx skill 发现结果：系统上检测到的可导入 Skill 包。 */

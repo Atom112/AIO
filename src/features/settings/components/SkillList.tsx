@@ -14,7 +14,6 @@ import {
   downloadMarketSkill,
   importNpxSkill,
   listSkillMarket,
-  listSkillMarketCategories,
   listSkills,
   refreshNpxSkill,
   saveSkill,
@@ -29,7 +28,6 @@ import {
   currentProjectId,
   currentProject,
 } from '../../../core/store/store';
-import Dropdown from '../../../shared/components/Dropdown';
 import Icon from '../../../shared/components/Icon';
 import {
   btnBadge,
@@ -42,12 +40,7 @@ import {
   tabActive,
 } from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
-import type {
-  MarketSkill,
-  SkillConfig,
-  SkillMarketCategory,
-  DiscoveredNpxSkill,
-} from '../../../core/types/skill';
+import type { MarketSkill, SkillConfig, DiscoveredNpxSkill } from '../../../core/types/skill';
 
 type MarketSort = 'all' | 'trending' | 'hot';
 type ViewMode = 'market' | 'downloaded' | 'npx';
@@ -58,7 +51,6 @@ const MARKET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 interface SkillMarketCache {
   updatedAt: number;
-  categories: SkillMarketCategory[];
   markets: Partial<Record<MarketSort, MarketSkill[]>>;
   marketUpdatedAt: Partial<Record<MarketSort, number>>;
 }
@@ -68,7 +60,7 @@ const readMarketCache = (): SkillMarketCache | null => {
     const raw = localStorage.getItem(MARKET_CACHE_KEY);
     if (!raw) return null;
     const cache = JSON.parse(raw) as SkillMarketCache;
-    if (!cache.updatedAt || !Array.isArray(cache.categories) || !cache.markets) return null;
+    if (!cache.updatedAt || !cache.markets) return null;
     cache.marketUpdatedAt ??= { all: cache.updatedAt };
     return cache;
   } catch {
@@ -102,11 +94,7 @@ const SkillList: Component = () => {
   const [marketSkills, setMarketSkills] = createSignal<MarketSkill[]>(
     initialCache?.markets.all ?? [],
   );
-  const [categories, setCategories] = createSignal<SkillMarketCategory[]>(
-    initialCache?.categories ?? [],
-  );
   const [sort, setSort] = createSignal<MarketSort>('all');
-  const [category, setCategory] = createSignal('all');
   const [query, setQuery] = createSignal('');
   const [loading, setLoading] = createSignal(!initialCache?.markets.all);
   const [refreshing, setRefreshing] = createSignal(false);
@@ -180,12 +168,12 @@ const SkillList: Component = () => {
     }
   };
 
-  const loadMarket = async (nextSort = sort(), nextCategory = category(), forceRefresh = false) => {
+  const loadMarket = async (nextSort = sort(), forceRefresh = false) => {
     setLoading(true);
     setError(null);
     try {
       const cache = readMarketCache();
-      if (!forceRefresh && nextCategory === 'all') {
+      if (!forceRefresh) {
         const cachedList = cache?.markets[nextSort];
         const cachedAt = cache?.marketUpdatedAt[nextSort] ?? 0;
         const cacheIsFresh = Date.now() - cachedAt < MARKET_CACHE_TTL_MS;
@@ -197,20 +185,16 @@ const SkillList: Component = () => {
       }
       const list = await listSkillMarket({
         sort: nextSort,
-        category: nextCategory === 'all' ? null : nextCategory,
         forceRefresh,
       });
       setMarketSkills(list);
-      if (nextCategory === 'all') {
-        const updatedAt = Date.now();
-        writeMarketCache({
-          updatedAt,
-          categories: categories(),
-          markets: { ...(cache?.markets ?? {}), [nextSort]: list },
-          marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [nextSort]: updatedAt },
-        });
-        setLastRefreshedAt(new Date(updatedAt));
-      }
+      const updatedAt = Date.now();
+      writeMarketCache({
+        updatedAt,
+        markets: { ...(cache?.markets ?? {}), [nextSort]: list },
+        marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [nextSort]: updatedAt },
+      });
+      setLastRefreshedAt(new Date(updatedAt));
     } catch (e) {
       setError(t('skill.loadShFailed', { error: String(e) }));
     } finally {
@@ -229,16 +213,11 @@ const SkillList: Component = () => {
       setSkills(Object.fromEntries(localList.map((skill) => [skill.id, skill])));
       if (cacheIsFresh) return;
 
-      const [categoryList, marketList] = await Promise.all([
-        listSkillMarketCategories(false),
-        listSkillMarket({ sort: 'all', category: null, forceRefresh: false }),
-      ]);
-      setCategories(categoryList);
+      const marketList = await listSkillMarket({ sort: 'all', forceRefresh: false });
       setMarketSkills(marketList);
       const updatedAt = Date.now();
       writeMarketCache({
         updatedAt,
-        categories: categoryList,
         markets: { ...(initialCache?.markets ?? {}), all: marketList },
         marketUpdatedAt: { ...(initialCache?.marketUpdatedAt ?? {}), all: updatedAt },
       });
@@ -287,19 +266,9 @@ const SkillList: Component = () => {
     );
   });
 
-  const categoryOptions = createMemo(() => [
-    { value: 'all', label: t('skill.allCategories') },
-    ...categories().map((item) => ({ value: item.id, label: `${item.name} (${item.skillCount})` })),
-  ]);
-
   const selectSort = (value: MarketSort) => {
     setSort(value);
-    void loadMarket(value, category());
-  };
-
-  const selectCategory = (value: string) => {
-    setCategory(value);
-    void loadMarket(sort(), value);
+    void loadMarket(value);
   };
 
   const refreshMarket = async () => {
@@ -307,21 +276,15 @@ const SkillList: Component = () => {
     setError(null);
     setRefreshResult(null);
     try {
-      const [categoryList, marketList] = await Promise.all([
-        listSkillMarketCategories(true),
-        listSkillMarket({
-          sort: sort(),
-          category: category() === 'all' ? null : category(),
-          forceRefresh: true,
-        }),
-      ]);
-      setCategories(categoryList);
+      const marketList = await listSkillMarket({
+        sort: sort(),
+        forceRefresh: true,
+      });
       setMarketSkills(marketList);
       const updatedAt = Date.now();
       const cache = readMarketCache();
       writeMarketCache({
         updatedAt,
-        categories: categoryList,
         markets: { ...(cache?.markets ?? {}), [sort()]: marketList },
         marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [sort()]: updatedAt },
       });
@@ -504,13 +467,6 @@ const SkillList: Component = () => {
               )}
             </For>
           </div>
-          <Dropdown
-            value={category()}
-            onChange={(v) => selectCategory(v)}
-            options={categoryOptions()}
-            class="text-xs"
-            triggerClass="h-8"
-          />
           <button
             type="button"
             class={btnBadgeBar + ' ml-auto'}

@@ -163,7 +163,6 @@ pub fn run() {
             commands::skill::list_skills,
             commands::skill::save_skill,
             commands::skill::delete_skill,
-            commands::skill::list_skill_market_categories,
             commands::skill::list_skill_market,
             commands::skill::download_market_skill,
             commands::skill::discover_npx_skills,

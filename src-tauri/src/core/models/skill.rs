@@ -87,20 +87,6 @@ pub struct MarketSkill {
     pub installs_label: String,
     #[serde(default)]
     pub weekly_installs: Vec<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub category: Option<String>,
-}
-
-/// skills.sh 官方主题分类。
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillMarketCategory {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub skill_count: usize,
 }
 
 // ====== Agent 模式配置 ======

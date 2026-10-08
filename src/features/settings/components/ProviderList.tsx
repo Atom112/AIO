@@ -20,8 +20,8 @@ import {
   btnBadge,
   btnDanger,
   btnPrimary,
-  btnPrimarySm,
   btnSecondary,
+  btnSecondarySm,
 } from '../../../shared/components/buttonStyles';
 import {
   providerConfigs,
@@ -274,8 +274,8 @@ const ProviderList: Component = () => {
             onInput={(e) => setSearch(e.currentTarget.value)}
           />
         </div>
-        <button type="button" class={btnPrimarySm} onClick={() => setShowAddCustom(true)}>
-          + {t('provider.addCustom')}
+        <button type="button" class={btnSecondarySm} onClick={() => setShowAddCustom(true)}>
+          {t('provider.addCustom')}
         </button>
       </div>
 

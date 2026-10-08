@@ -748,6 +748,26 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 /* ══════════════════════════════════════════════
+   Number 输入（原生上下箭头适配暗色亚克力主题）
+   ══════════════════════════════════════════════ */
+
+/* 双主题均为深色底 → 声明 dark 配色方案，原生箭头渲染为浅色而非默认黑 */
+input[type='number'] {
+  color-scheme: dark;
+}
+
+/* 箭头默认淡化（避免抢视觉），悬停/聚焦时提亮 */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+input[type='number']:hover::-webkit-inner-spin-button,
+input[type='number']:focus::-webkit-inner-spin-button {
+  opacity: 1;
+}
+
+/* ══════════════════════════════════════════════
    Markdown 样式
    ══════════════════════════════════════════════ */
 

@@ -33,7 +33,6 @@ import {
   btnBadge,
   btnBadgeBar,
   btnDanger,
-  btnPrimarySm,
   btnSecondary,
   btnSecondarySm,
   btnSuccess,
@@ -417,7 +416,7 @@ const McpServerList: Component = () => {
                         Official MCP Registry
                       </button>
                       <button
-                        class={installed() ? btnSuccess : btnPrimarySm}
+                        class={installed() ? btnSuccess : btnSecondarySm}
                         disabled={installed() || installingId() === server.id}
                         onClick={() => openInstall(server)}
                       >
@@ -616,7 +615,7 @@ const McpServerList: Component = () => {
                 {t('common.cancel')}
               </button>
               <button
-                class={btnPrimarySm}
+                class={btnSecondarySm}
                 disabled={installingId() !== null || !runtimeAvailable()}
                 onClick={() => void install()}
               >

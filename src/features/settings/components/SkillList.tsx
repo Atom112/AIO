@@ -623,7 +623,7 @@ const SkillList: Component = () => {
                           : t('skill.communityContent')}
                       </span>
                       <button
-                        class={downloaded() ? btnSuccess : btnPrimarySm}
+                        class={downloaded() ? btnSuccess : btnSecondarySm}
                         disabled={downloaded() || downloadingId() === skill.id}
                         onClick={() => void download(skill)}
                       >
@@ -765,7 +765,7 @@ const SkillList: Component = () => {
                           when={item.alreadyImported}
                           fallback={
                             <button
-                              class={btnPrimarySm}
+                              class={btnSecondarySm}
                               onClick={() => importNpx(item.packageName)}
                               disabled={npxImportingId() === item.packageName}
                             >

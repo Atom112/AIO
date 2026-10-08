@@ -41,6 +41,7 @@ import {
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
+import NumberInput from '../../../shared/components/NumberInput';
 import {
   btnIcon,
   btnPrimary,
@@ -617,27 +618,23 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.maxToolRounds.description')}</p>
           </div>
 
-          <input
-            type="number"
+          <NumberInput
+            value={maxToolRounds()}
             min={1}
             max={200}
-            step={1}
-            value={maxToolRounds()}
-            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
-            onInput={async (e) => {
-              const raw = Number(e.currentTarget.value);
-              const clamped = Number.isFinite(raw)
-                ? Math.min(200, Math.max(1, Math.round(raw)))
-                : 25;
+            fallback={25}
+            onInput={(clamped) => {
               setMaxToolRounds(clamped);
-              try {
-                const cfg = await loadAppConfig().catch(() => null);
-                if (cfg) {
-                  await saveAppConfig({ ...cfg, maxToolRounds: clamped });
+              void (async () => {
+                try {
+                  const cfg = await loadAppConfig().catch(() => null);
+                  if (cfg) {
+                    await saveAppConfig({ ...cfg, maxToolRounds: clamped });
+                  }
+                } catch (err) {
+                  console.warn('保存最大工具轮数配置失败:', err);
                 }
-              } catch (err) {
-                console.warn('保存最大工具轮数配置失败:', err);
-              }
+              })();
             }}
           />
         </div>
@@ -650,25 +647,23 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.maxConcurrentSubagents.description')}</p>
           </div>
 
-          <input
-            type="number"
+          <NumberInput
+            value={maxConcurrentSubagents()}
             min={1}
             max={32}
-            step={1}
-            value={maxConcurrentSubagents()}
-            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
-            onInput={async (e) => {
-              const raw = Number(e.currentTarget.value);
-              const clamped = Number.isFinite(raw) ? Math.min(32, Math.max(1, Math.round(raw))) : 5;
+            fallback={5}
+            onInput={(clamped) => {
               setMaxConcurrentSubagents(clamped);
-              try {
-                const cfg = await loadAppConfig().catch(() => null);
-                if (cfg) {
-                  await saveAppConfig({ ...cfg, maxConcurrentSubagents: clamped });
+              void (async () => {
+                try {
+                  const cfg = await loadAppConfig().catch(() => null);
+                  if (cfg) {
+                    await saveAppConfig({ ...cfg, maxConcurrentSubagents: clamped });
+                  }
+                } catch (err) {
+                  console.warn('保存并发子智能体上限配置失败:', err);
                 }
-              } catch (err) {
-                console.warn('保存并发子智能体上限配置失败:', err);
-              }
+              })();
             }}
           />
         </div>

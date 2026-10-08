@@ -57,7 +57,9 @@ export type IconName =
   | 'zap'
   | 'git-branch'
   | 'chevron-left'
-  | 'chevron-right';
+  | 'chevron-right'
+  | 'chevron-up'
+  | 'chevron-down';
 
 /**
  * 图标路径工厂表。
@@ -282,6 +284,8 @@ const PATHS: Record<IconName, () => JSX.Element> = {
   ),
   'chevron-left': () => <path d="M15 18l-6-6 6-6" />,
   'chevron-right': () => <path d="M9 18l6-6-6-6" />,
+  'chevron-up': () => <path d="m6 14 6-6 6 6" />,
+  'chevron-down': () => <path d="m6 10 6 6 6-6" />,
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

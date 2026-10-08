@@ -90,6 +90,10 @@ const formatInstalls = (value: number): string => {
   return String(value);
 };
 
+// ====== npx 发现缓存（模块级信号：页面卸载/切换设置分区后保留，避免每次进入重扫） ======
+// 仅会话内有效；应用重启后首次进入 npx 标签仍会扫描一次。手动点「重新扫描」可强制刷新。
+const [cachedNpxSkills, setCachedNpxSkills] = createSignal<DiscoveredNpxSkill[] | null>(null);
+
 const SkillList: Component = () => {
   const initialCache = readMarketCache();
   const [view, setView] = createSignal<ViewMode>('market');
@@ -115,11 +119,11 @@ const SkillList: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
 
   // ====== npx 发现状态 ======
-  const [npxSkills, setNpxSkills] = createSignal<DiscoveredNpxSkill[]>([]);
+  const [npxSkills, setNpxSkills] = createSignal<DiscoveredNpxSkill[]>(cachedNpxSkills() ?? []);
   const [npxLoading, setNpxLoading] = createSignal(false);
   const [npxImportingId, setNpxImportingId] = createSignal<string | null>(null);
   const [npxRefreshingId, setNpxRefreshingId] = createSignal<string | null>(null);
-  let npxScanned = false; // 首次进入 npx 标签自动扫描，之后缓存结果
+  let npxScanned = cachedNpxSkills() !== null; // 首次进入 npx 标签自动扫描，之后复用缓存结果
 
   const discoverNpx = async () => {
     setNpxLoading(true);
@@ -127,6 +131,7 @@ const SkillList: Component = () => {
     try {
       const list = await discoverNpxSkills();
       setNpxSkills(list);
+      setCachedNpxSkills(list);
       npxScanned = true;
     } catch (e) {
       setError(t('skill.scanFailed', { error: String(e) }));
@@ -145,10 +150,12 @@ const SkillList: Component = () => {
     try {
       const imported = await importNpxSkill(pkgName, projectId());
       setSkills({ ...skills(), [imported.id]: imported });
-      // 更新列表中的 alreadyImported 标记
-      setNpxSkills((prev) =>
-        prev.map((s) => (s.packageName === pkgName ? { ...s, alreadyImported: true } : s)),
+      // 更新列表中的 alreadyImported 标记（本地信号与模块级缓存同步）
+      const next = npxSkills().map((s) =>
+        s.packageName === pkgName ? { ...s, alreadyImported: true } : s,
       );
+      setNpxSkills(next);
+      setCachedNpxSkills(next);
     } catch (e) {
       setError(t('skill.importFailed', { error: String(e) }));
     } finally {

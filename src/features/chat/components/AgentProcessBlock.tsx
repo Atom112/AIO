@@ -23,10 +23,12 @@ import {
   untrack,
 } from 'solid-js';
 import type { AgentStep, ToolCallDisplay } from '../../../core/store/store';
-import Icon from '../../../shared/components/Icon';
+import { setActiveSubagentView } from '../../../core/store/store';
+import Icon, { type IconName } from '../../../shared/components/Icon';
 import ToolCallBubble from './ToolCallBubble';
 import Markdown from '../../../shared/components/Markdown';
-import SubagentBlock from './SubagentBlock';
+import { getSubagentProfileStyle, subagentProfileLabel } from './SubagentConversationView';
+import { stopSubagent } from '../../../core/api/chat';
 import { t } from '../../../core/i18n';
 
 interface AgentProcessBlockProps {
@@ -45,7 +47,7 @@ interface AgentProcessBlockProps {
 }
 
 // ---- 步骤类型配置 ----
-const STEP_CONFIG: Record<AgentStep['type'], { icon: string; borderColor: string }> = {
+const STEP_CONFIG: Record<AgentStep['type'], { icon: IconName; borderColor: string }> = {
   thinking: { icon: 'brain', borderColor: 'rgba(var(--primary-rgb),0.55)' },
   tool_call: { icon: 'wrench', borderColor: 'rgba(240,160,64,0.55)' },
   content: { icon: 'document', borderColor: 'rgba(156,163,175,0.35)' },
@@ -118,10 +120,10 @@ function stepToolLabel(step: AgentStep): string {
   return name.length > 28 ? name.slice(0, 26) + '…' : name;
 }
 
-function stepStatusIcon(step: AgentStep): string {
+function stepStatusIcon(step: AgentStep): IconName | null {
   if (step.type === 'subagent')
     return step.status === 'running' ? 'spinner' : step.status === 'error' ? 'x' : 'check';
-  if (step.type !== 'tool_call') return '';
+  if (step.type !== 'tool_call') return null;
   if (step.status === 'running') return 'spinner';
   if (step.status === 'error') return 'x';
   return 'check';
@@ -166,6 +168,20 @@ const StepCard: Component<{
     onCleanup(() => clearTimeout(timer));
   });
 
+  // 单独停止后台子智能体（仅 fire-and-forget 启动的在注册表中可查；
+  // 等待型子代理随整轮停止，此处点击为幂等 no-op）
+  const [stopping, setStopping] = createSignal(false);
+  const handleStopSubagent = async () => {
+    const id = props.step.subagentId;
+    if (!id || stopping()) return;
+    setStopping(true);
+    try {
+      await stopSubagent(id);
+    } finally {
+      setStopping(false);
+    }
+  };
+
   return (
     <div
       ref={entranceRef}
@@ -194,47 +210,101 @@ const StepCard: Component<{
           : {}),
       }}
     >
-      <button
-        type="button"
-        class="flex items-center w-full gap-1.5 px-2.5 py-1.5 cursor-pointer select-none bg-transparent border-none text-white/45 text-[11px] transition-colors duration-200 hover:text-white/70"
-        onClick={() => props.onToggle()}
-        disabled={props.step.status === 'running'}
-      >
-        <span class="flex items-center justify-center w-4 h-4 rounded bg-white/[0.05] shrink-0">
-          <Icon
-            name={cfg().icon as any}
-            size={12}
-            class="w-3 h-3"
-            classList={{ 'is-spinning': props.step.status === 'running' }}
-          />
-        </span>
-        <span class="font-medium flex-none">{stepTypeLabel(props.step.type)}</span>
-        {props.step.type === 'tool_call' && (
-          <span class="truncate text-white/55 flex-initial min-w-0">
-            · {stepToolLabel(props.step)}
-          </span>
-        )}
-        {props.step.type === 'tool_call' && stepStatusIcon(props.step) && (
-          <span class="flex items-center justify-center shrink-0">
+      <div class="flex items-center w-full">
+        <button
+          type="button"
+          class="flex items-center flex-1 min-w-0 gap-1.5 px-2.5 py-1.5 cursor-pointer select-none bg-transparent border-none text-white/45 text-[11px] transition-colors duration-200 hover:text-white/70"
+          onClick={() => {
+            if (props.step.type === 'subagent') {
+              // 子智能体：卡片整体为入口，点击切换到其独立对话视图（不再展开内部步骤）
+              if (props.step.subagentId) setActiveSubagentView(props.step.subagentId);
+            } else {
+              props.onToggle();
+            }
+          }}
+          disabled={props.step.status === 'running' && props.step.type !== 'subagent'}
+        >
+          <span class="flex items-center justify-center w-4 h-4 rounded bg-white/[0.05] shrink-0">
             <Icon
-              name={stepStatusIcon(props.step) as any}
-              size={10}
-              classList={{ 'animate-spin': props.step.status === 'running' }}
+              name={cfg().icon}
+              size={12}
+              class="w-3 h-3"
+              classList={{ 'is-spinning': props.step.status === 'running' }}
+              style={
+                props.step.type === 'subagent'
+                  ? { color: getSubagentProfileStyle(props.step.subagentProfile).color }
+                  : undefined
+              }
             />
           </span>
-        )}
-        {durationMs() !== undefined && (
-          <span class="font-mono text-white/25 text-[10px] flex-none ml-auto">
-            {formatDuration(durationMs()!)}
+          <span class="font-medium flex-none">{stepTypeLabel(props.step.type)}</span>
+          {props.step.type === 'tool_call' && (
+            <span class="truncate text-white/55 flex-initial min-w-0">
+              · {stepToolLabel(props.step)}
+            </span>
+          )}
+          {props.step.type === 'subagent' && (
+            <span class="truncate text-white/55 flex-initial min-w-0">
+              · {subagentProfileLabel(props.step.subagentProfile)}
+            </span>
+          )}
+          {props.step.type === 'subagent' && props.step.subagentTask && (
+            <span class="truncate text-white/30 flex-1 min-w-0">{props.step.subagentTask}</span>
+          )}
+          {(props.step.type === 'tool_call' || props.step.type === 'subagent') &&
+            stepStatusIcon(props.step) && (
+              <span class="flex items-center justify-center shrink-0">
+                <Icon
+                  name={stepStatusIcon(props.step)!}
+                  size={10}
+                  classList={{ 'animate-spin': props.step.status === 'running' }}
+                />
+              </span>
+            )}
+          {durationMs() !== undefined && (
+            <span class="font-mono text-white/25 text-[10px] flex-none ml-auto">
+              {formatDuration(durationMs()!)}
+            </span>
+          )}
+          <span
+            class="flex items-center justify-center shrink-0 text-white/20 transition-[transform,color] duration-200"
+            aria-hidden="true"
+          >
+            <Show
+              when={props.step.type === 'subagent'}
+              fallback={
+                <Icon
+                  name="arrow-left"
+                  size={10}
+                  class="-rotate-90 transition-transform duration-200"
+                />
+              }
+            >
+              <Icon name="chevron-right" size={10} />
+            </Show>
           </span>
-        )}
-        <span
-          class="flex items-center justify-center shrink-0 text-white/20 transition-[transform,color] duration-200"
-          aria-hidden="true"
+        </button>
+        <Show
+          when={
+            props.step.type === 'subagent' &&
+            props.step.status === 'running' &&
+            props.step.subagentId
+          }
         >
-          <Icon name="arrow-left" size={10} class="-rotate-90 transition-transform duration-200" />
-        </span>
-      </button>
+          <button
+            type="button"
+            class="flex items-center justify-center w-6 h-6 mr-2 rounded shrink-0 bg-transparent border-none cursor-pointer text-white/40 hover:text-red-400/80 transition-colors"
+            title={t('agent.subagent.stop')}
+            aria-label={t('agent.subagent.stop')}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleStopSubagent();
+            }}
+          >
+            <Icon name="stop" size={10} classList={{ 'animate-pulse': stopping() }} />
+          </button>
+        </Show>
+      </div>
 
       {/* Body */}
       <div
@@ -242,7 +312,8 @@ const StepCard: Component<{
         style={(() => {
           const expanded = effectiveExpanded();
           const running = props.step.status === 'running';
-          const open = expanded || running;
+          // 子智能体卡片无展开体（点击整卡进入独立对话视图），body 永不展开
+          const open = (expanded || running) && props.step.type !== 'subagent';
           return {
             transition:
               'max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s, padding 0.25s',
@@ -289,18 +360,6 @@ const StepCard: Component<{
         {props.step.type === 'content' && props.step.contentText && (
           <div class="text-[13px] leading-relaxed break-words text-white/65 p-1">
             <Markdown content={props.step.contentText} />
-          </div>
-        )}
-
-        {/* 子智能体步骤：嵌套 SubagentBlock */}
-        {props.step.type === 'subagent' && (
-          <div class="px-2 pb-2">
-            <SubagentBlock
-              step={props.step}
-              isActive={props.isActive}
-              expanded={props.expanded}
-              onToggle={props.onToggle}
-            />
           </div>
         )}
       </div>

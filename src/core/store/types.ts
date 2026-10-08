@@ -36,12 +36,14 @@ export interface AgentStep {
 /** 子智能体步骤（内部时间线，结构与 AgentStep 相同但不含嵌套子智能体） */
 export interface SubagentStep {
   id: string;
-  type: 'thinking' | 'tool_call' | 'content';
+  type: 'thinking' | 'tool_call' | 'content' | 'streaming';
   timestamp: number;
   status: 'running' | 'complete' | 'error';
   duration?: number;
   summary?: string;
   toolName?: string;
+  /** 所属 LLM 轮次（后端 subagent-step 载荷 round；旧持久化数据缺省） */
+  round?: number;
 }
 
 /** 消息内容分块（多模态：文本 / 图片 URL；与 OpenAI content parts 对齐） */

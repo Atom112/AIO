@@ -58,6 +58,8 @@ import {
   setShowProjectCreateModal,
   getLastAgentProjectId,
   initMcpServers,
+  activeSubagentView,
+  setActiveSubagentView,
 } from '../../core/store/store';
 import { EVENTS } from '../../core/api/events';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
@@ -68,6 +70,7 @@ import { isImageGenModel } from '../../core/utils/models';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
+import SubagentConversationView from './components/SubagentConversationView';
 import TopicSidebar from './components/TopicSidebar';
 import { Portal } from 'solid-js/web';
 import ShareModal from './components/ShareModal';
@@ -1744,6 +1747,12 @@ ${asstObj.prompt}`;
     }
   });
 
+  // 切换话题（或助手，必然伴随话题切换）时退出子智能体对话视图，回到主代理对话
+  createEffect(() => {
+    currentTopicId();
+    setActiveSubagentView(null);
+  });
+
   // 监听 currentTopicId 变化：若用户切换到与正在生成标题的话题不同的话题，
   // 取消该任务的结果处理（abort）
   let prevTitleGenTopicId: string | null = null;
@@ -1845,52 +1854,58 @@ ${asstObj.prompt}`;
       />
 
       <div class="flex-1 flex flex-col min-w-0 min-h-0">
-        <Show when={workflowState()}>
-          <WorkflowVisualization />
-        </Show>
+        {/* 子智能体独立对话视图：替换整个对话栏（含状态条/输入框），左上角返回按钮回到主对话 */}
+        <Show
+          when={!activeSubagentView()}
+          fallback={<SubagentConversationView topic={activeTopic()} />}
+        >
+          <Show when={workflowState()}>
+            <WorkflowVisualization />
+          </Show>
 
-        {/* P4.4 检查点恢复入口：崩溃残留的回合提示 */}
-        <Show when={activeCheckpoint() && !isThinking()}>
-          <button
-            type="button"
-            class="flex items-center gap-2 px-4 py-1.5 text-xs border-b cursor-pointer bg-transparent hover:bg-white/[0.03] transition-colors"
-            style={{ color: 'rgb(var(--primary-rgb))', 'border-color': 'var(--border-dim)' }}
-            onClick={() => void handleResumeTurn()}
-          >
-            <Icon name="refresh" size={12} />
-            <span>{t('agent.checkpoint.resume')}</span>
-          </button>
-        </Show>
+          {/* P4.4 检查点恢复入口：崩溃残留的回合提示 */}
+          <Show when={activeCheckpoint() && !isThinking()}>
+            <button
+              type="button"
+              class="flex items-center gap-2 px-4 py-1.5 text-xs border-b cursor-pointer bg-transparent hover:bg-white/[0.03] transition-colors"
+              style={{ color: 'rgb(var(--primary-rgb))', 'border-color': 'var(--border-dim)' }}
+              onClick={() => void handleResumeTurn()}
+            >
+              <Icon name="refresh" size={12} />
+              <span>{t('agent.checkpoint.resume')}</span>
+            </button>
+          </Show>
 
-        <ChatInterface
-          activeTopic={activeTopic()}
-          isThinking={isThinking()}
-          isProcessing={isProcessing()}
-          isDragging={isDragging()}
-          typingIndex={typingIndex()}
-          inputMessage={inputMessage()}
-          setInputMessage={setInputMessage}
-          pendingFiles={pendingFiles()}
-          setPendingFiles={setPendingFiles}
-          handleSendMessage={handleSendMessage}
-          handleStopGeneration={handleStopGeneration}
-          handleFileUpload={handleFileUpload}
-          pendingApprovals={pendingApprovals()}
-          onResolveApproval={(id) =>
-            setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== id))
-          }
-          canShare={!!activeTopic()}
-          onOpenShare={() => enterSelectionMode(null)}
-          isSelectingMessages={isSelectingMessages()}
-          selectedMessageIds={selectedMessageIds()}
-          onToggleMessage={handleToggleMessage}
-          onSelectAll={handleSelectAll}
-          onCancelSelection={handleCancelSelection}
-          onConfirmSelection={handleConfirmSelection}
-          onBranchFromMessage={branchFromMessage}
-          btwOverlays={btwOverlays()}
-          onDismissBtw={(id) => setBtwOverlays((prev) => prev.filter((o) => o.id !== id))}
-        />
+          <ChatInterface
+            activeTopic={activeTopic()}
+            isThinking={isThinking()}
+            isProcessing={isProcessing()}
+            isDragging={isDragging()}
+            typingIndex={typingIndex()}
+            inputMessage={inputMessage()}
+            setInputMessage={setInputMessage}
+            pendingFiles={pendingFiles()}
+            setPendingFiles={setPendingFiles}
+            handleSendMessage={handleSendMessage}
+            handleStopGeneration={handleStopGeneration}
+            handleFileUpload={handleFileUpload}
+            pendingApprovals={pendingApprovals()}
+            onResolveApproval={(id) =>
+              setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== id))
+            }
+            canShare={!!activeTopic()}
+            onOpenShare={() => enterSelectionMode(null)}
+            isSelectingMessages={isSelectingMessages()}
+            selectedMessageIds={selectedMessageIds()}
+            onToggleMessage={handleToggleMessage}
+            onSelectAll={handleSelectAll}
+            onCancelSelection={handleCancelSelection}
+            onConfirmSelection={handleConfirmSelection}
+            onBranchFromMessage={branchFromMessage}
+            btwOverlays={btwOverlays()}
+            onDismissBtw={(id) => setBtwOverlays((prev) => prev.filter((o) => o.id !== id))}
+          />
+        </Show>
       </div>
 
       <TopicSidebar

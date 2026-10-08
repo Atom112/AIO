@@ -30,9 +30,16 @@ import {
   gitBranch,
   gitBranches,
   switchBranch,
+  collectSubagents,
+  setActiveSubagentView,
   type FileChangeInfo,
   type GeneratedImageInfo,
 } from '../../../core/store/store';
+import {
+  getSubagentProfileStyle,
+  subagentProfileLabel,
+  formatSubagentDuration,
+} from './SubagentConversationView';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { deleteTopicMessage } from '../../../core/api/chat';
@@ -96,6 +103,14 @@ function aggregateDiffStats(changes: AggregatedFileChange[]): { added: number; d
   }
   return { added, deleted };
 }
+
+// 已播放入场动画的消息 ID 集合，避免 agentSteps 更新时重复触发动画。
+// 模块级（而非组件内）：进入子智能体对话视图时本组件会卸载、返回时重挂载，
+// 若集合随组件销毁，返回主对话会导致全部消息重播入场动画（AgentProcessBlock 同款先例）。
+// 话题真正切换时由 createEffect 清空（见 lastAnimatedTopicId）。
+const animatedMessageIds = new Set<string>();
+// 上一个已清空动画记忆的话题 ID（模块级：与上方集合配套，区分"重挂载"与"话题切换"）
+let lastAnimatedTopicId: string | null | undefined;
 
 interface ChatInterfaceProps {
   activeTopic: Topic | null;
@@ -165,13 +180,13 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   // 流式 rAF 循环的最新 ID，始终指向最后一个排期的帧，保证能正确取消
   // 用户手动上滚标志：直接可变变量，绕过 SolidJS 响应式延迟，确保 rAF 回调能同步感知
   let userScrolledUp = false;
-  // 已播放入场动画的消息 ID 集合，避免 agentSteps 更新时重复触发动画
-  let animatedMessageIds = new Set<string>();
   // 重新发送/编辑时跳过消息动画（不播退场 + 不播入场）
   const [skipMessageAnimation, setSkipMessageAnimation] = createSignal(false);
   // Git 分支下拉状态
   const [branchOpen, setBranchOpen] = createSignal(false);
   const [branchToast, setBranchToast] = createSignal<string | null>(null);
+  // 子智能体上拉菜单状态
+  const [subagentMenuOpen, setSubagentMenuOpen] = createSignal(false);
   // 消息 DOM 元素映射（id → HTMLElement），用于退场动画
   const messageEls = new Map<string, HTMLElement>();
   // PERF-02：仅保留当前话题仍在渲染的消息，避免跨话题/删除后累积累积 DOM 引用导致无界增长。
@@ -189,17 +204,23 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   // 已撤销的消息 ID 集合（本地信号，不持久化）
   const [revertedMessages, setRevertedMessages] = createSignal<Set<string>>(new Set());
 
-  // 点击外部关闭 Git 分支下拉
-  const closeBranch = (e: MouseEvent) => {
-    if (branchOpen()) {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.branch-dropdown-container')) {
-        setBranchOpen(false);
-      }
+  // 当前话题的全部子智能体步骤（含历史轮次，随消息 agentSteps 持久化）。
+  // 存在任一子代理时，状态条右侧显示上拉菜单入口。
+  const subagents = createMemo(() => collectSubagents(props.activeTopic));
+  const hasRunningSubagent = () => subagents().some((s) => s.status === 'running');
+
+  // 点击外部关闭 Git 分支下拉 / 子智能体上拉菜单
+  const closeOverlays = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (branchOpen() && !target.closest('.branch-dropdown-container')) {
+      setBranchOpen(false);
+    }
+    if (subagentMenuOpen() && !target.closest('.subagent-menu-container')) {
+      setSubagentMenuOpen(false);
     }
   };
-  onMount(() => document.addEventListener('mousedown', closeBranch));
-  onCleanup(() => document.removeEventListener('mousedown', closeBranch));
+  onMount(() => document.addEventListener('mousedown', closeOverlays));
+  onCleanup(() => document.removeEventListener('mousedown', closeOverlays));
 
   // ---- 注册快捷键命令 ----
   const cmdFocusInput = registerCommand({
@@ -353,10 +374,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   createEffect(
     on(
       () => props.activeTopic?.id,
-      () => {
+      (id) => {
         setAutoScroll(true);
         userScrolledUp = false;
-        animatedMessageIds = new Set();
+        // 仅在话题真正切换时清空动画记忆（模块级集合）：从子智能体视图返回时
+        // 本组件重挂载、该 effect 会重新执行，若无条件清空会导致全部消息重播入场动画。
+        if (id !== lastAnimatedTopicId) {
+          animatedMessageIds.clear();
+          lastAnimatedTopicId = id;
+        }
         lastHistoryLen = props.activeTopic?.history?.length ?? 0;
       },
     ),
@@ -1526,6 +1552,149 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                       </span>
                     </Show>
                   </span>
+                </Show>
+
+                {/* 子智能体上拉菜单：状态条右侧，存在任一子代理时显示 */}
+                <Show when={subagents().length > 0}>
+                  <div class="subagent-menu-container relative inline-block ml-auto">
+                    <button
+                      type="button"
+                      class={'px-1.5 py-0.5 rounded-md text-[11px] ' + btnGhost}
+                      style={{
+                        background: 'rgba(var(--surface-alt-bg),0.5)',
+                        color: 'rgba(var(--text-base-rgb),0.55)',
+                        'font-weight': '400',
+                      }}
+                      classList={{ '!bg-[rgba(var(--surface-bg),0.7)]': subagentMenuOpen() }}
+                      title={t('agent.subagent.menuTrigger', { count: subagents().length })}
+                      aria-label={t('agent.subagent.menuTrigger', { count: subagents().length })}
+                      aria-haspopup="menu"
+                      aria-expanded={subagentMenuOpen()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSubagentMenuOpen(!subagentMenuOpen());
+                      }}
+                    >
+                      <Show
+                        when={hasRunningSubagent()}
+                        fallback={<Icon name="sparkles" size={12} class="mr-1" />}
+                      >
+                        <Icon name="spinner" size={12} class="animate-spin mr-1" />
+                      </Show>
+                      {subagents().length}
+                      <Icon name="chevron-up" size={10} class="ml-0.5" />
+                    </button>
+                    <Show when={subagentMenuOpen()}>
+                      <div
+                        ref={(el) =>
+                          requestAnimationFrame(() => {
+                            el.classList.remove('opacity-0', 'scale-95');
+                            el.classList.add('opacity-100', 'scale-100');
+                          })
+                        }
+                        class="absolute bottom-full right-0 mb-2 z-[41] w-[320px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
+                        style={{
+                          background: 'rgba(var(--surface-bg),0.96)',
+                          border: '1px solid var(--border-dim)',
+                          'backdrop-filter': 'blur(12px)',
+                          'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div
+                          class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
+                          style={{
+                            color: 'rgba(var(--text-base-rgb),0.35)',
+                            background: 'rgba(var(--text-base-rgb),0.04)',
+                            'border-bottom': '1px solid var(--border-dim)',
+                          }}
+                        >
+                          {t('agent.subagent.menuTitle')}
+                        </div>
+                        <div class="py-1 max-h-[280px] overflow-y-auto">
+                          <For each={subagents()}>
+                            {(sub) => {
+                              const ps = getSubagentProfileStyle(sub.subagentProfile);
+                              return (
+                                <button
+                                  type="button"
+                                  class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer border-none bg-transparent hover:bg-[rgba(var(--text-base-rgb),0.05)]"
+                                  style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
+                                  onClick={() => {
+                                    if (sub.subagentId) setActiveSubagentView(sub.subagentId);
+                                    setSubagentMenuOpen(false);
+                                  }}
+                                >
+                                  <span class="flex items-center justify-center w-4 h-4 shrink-0">
+                                    <Show
+                                      when={sub.status === 'running'}
+                                      fallback={
+                                        <Show
+                                          when={sub.status === 'error'}
+                                          fallback={
+                                            <Icon
+                                              name="check"
+                                              size={12}
+                                              class="text-white/30 shrink-0"
+                                            />
+                                          }
+                                        >
+                                          <Icon
+                                            name="x"
+                                            size={12}
+                                            class="text-red-400/70 shrink-0"
+                                          />
+                                        </Show>
+                                      }
+                                    >
+                                      <Icon
+                                        name="spinner"
+                                        size={12}
+                                        class="animate-spin shrink-0"
+                                      />
+                                    </Show>
+                                  </span>
+                                  <span
+                                    class="flex items-center justify-center w-5 h-5 rounded shrink-0"
+                                    style={{
+                                      background: ps.bgColor,
+                                      border: `1px solid ${ps.borderColor}`,
+                                      color: ps.color,
+                                    }}
+                                  >
+                                    <Icon name={ps.icon} size={11} />
+                                  </span>
+                                  <span class="flex-1 min-w-0 text-left">
+                                    <span class="flex items-center gap-1.5">
+                                      <span class="text-[12px] font-medium truncate">
+                                        {sub.subagentName ||
+                                          subagentProfileLabel(sub.subagentProfile)}
+                                      </span>
+                                      <span class="text-[10px] text-white/35 shrink-0">
+                                        {subagentProfileLabel(sub.subagentProfile)}
+                                      </span>
+                                    </span>
+                                    <Show when={sub.subagentTask}>
+                                      <span class="block truncate text-[11px] text-white/35">
+                                        {sub.subagentTask}
+                                      </span>
+                                    </Show>
+                                  </span>
+                                  <Show
+                                    when={sub.status !== 'running' && sub.duration !== undefined}
+                                  >
+                                    <span class="font-mono text-[10px] text-white/25 shrink-0">
+                                      {formatSubagentDuration(sub.duration!)}
+                                    </span>
+                                  </Show>
+                                </button>
+                              );
+                            }}
+                          </For>
+                        </div>
+                      </div>
+                    </Show>
+                  </div>
                 </Show>
               </div>
             );

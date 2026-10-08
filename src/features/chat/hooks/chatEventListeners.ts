@@ -15,6 +15,7 @@ import {
   type AgentStep,
   type DatasState,
   type Message,
+  type SubagentStep,
   type Topic,
   type WorkflowState,
 } from '../../../core/store/store';
@@ -693,13 +694,14 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
             id: `substep-${round}-${Date.now()}`,
             type: (step_type || '').startsWith('tool_result')
               ? ('tool_call' as const)
-              : (step_type as any),
+              : (step_type as SubagentStep['type']),
             timestamp: Date.now(),
             status: 'complete' as const,
             summary: summary || '',
             toolName: (step_type || '').startsWith('tool_result')
               ? (step_type as string).replace('tool_result:', '')
               : undefined,
+            round,
           };
           const updatedSub = {
             ...subStep,

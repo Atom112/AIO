@@ -751,15 +751,20 @@ input[type='range']::-webkit-slider-thumb:active {
    Number 输入（原生上下箭头适配暗色亚克力主题）
    ══════════════════════════════════════════════ */
 
-/* 双主题均为深色底 → 声明 dark 配色方案，原生箭头渲染为浅色而非默认黑 */
-input[type='number'] {
-  color-scheme: dark;
-}
-
-/* 箭头默认淡化（避免抢视觉），悬停/聚焦时提亮 */
+/* 用细线双箭头替换 Chromium 默认的实心大三角（1.4px 描边，与应用图标风格一致）；
+   该区域的上/下半点击增减行为由 WebView 保留 */
 input[type='number']::-webkit-outer-spin-button,
 input[type='number']::-webkit-inner-spin-button {
-  opacity: 0.55;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 14px;
+  height: 100%;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2010%2012'%20fill='none'%3E%3Cpath%20d='M2%204.2%205%201.2l3%203'%20stroke='%23fff'%20stroke-opacity='0.45'%20stroke-width='1.4'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Cpath%20d='M2%207.8l3%203%203-3'%20stroke='%23fff'%20stroke-opacity='0.45'%20stroke-width='1.4'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 10px 12px;
+  cursor: pointer;
+  opacity: 0.7;
   transition: opacity 0.2s;
 }
 input[type='number']:hover::-webkit-inner-spin-button,

@@ -245,6 +245,8 @@ pub fn run() {
             commands::model_download::embedding_model_list,
             commands::model_download::embedding_model_status,
             commands::model_download::embedding_model_download,
+            commands::model_download::embedding_model_pause_download,
+            commands::model_download::embedding_model_cancel_download,
             commands::model_download::embedding_model_delete,
             commands::model_download::embedding_model_set_enabled,
             commands::model_download::embedding_models_get_dir,

@@ -12,16 +12,14 @@ import { Component, createMemo, createSignal, For, Show, onMount } from 'solid-j
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon from '../../../shared/components/Icon';
-import {
-  btnDangerBadge,
-  btnPrimarySm,
-  btnSecondarySm,
-} from '../../../shared/components/buttonStyles';
+import { btnDangerBadge, btnSecondarySm } from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 import {
+  embeddingModelCancelDownload,
   embeddingModelDelete,
   embeddingModelDownload,
   embeddingModelList,
+  embeddingModelPauseDownload,
   embeddingModelSetEnabled,
   embeddingModelsGetDir,
   embeddingModelsSetDir,
@@ -41,6 +39,8 @@ const EmbeddingModelSettings: Component = () => {
     Record<string, { file: string; downloaded: number; total: number }>
   >({});
   const [downloading, setDownloading] = createSignal<Record<string, boolean>>({});
+  // 暂停中的模型（保留 .part 断点，显示「继续下载」）
+  const [pausedIds, setPausedIds] = createSignal<Record<string, boolean>>({});
 
   const embedModels = createMemo(() => models().filter((m) => m.kind === 'embed'));
 
@@ -97,6 +97,7 @@ const EmbeddingModelSettings: Component = () => {
 
   const download = async (m: EmbeddingModelInfo) => {
     setDownloading((prev) => ({ ...prev, [m.id]: true }));
+    setPausedIds((prev) => ({ ...prev, [m.id]: false }));
     setProgress((prev) => ({ ...prev, [m.id]: { file: '', downloaded: 0, total: 0 } }));
     let unlisten: (() => void) | undefined;
     try {
@@ -124,9 +125,16 @@ const EmbeddingModelSettings: Component = () => {
           }));
         }
       });
-      await embeddingModelDownload(m.id);
+      const outcome = await embeddingModelDownload(m.id);
       await load();
-      setNotice(t('settings.embeddingModels.downloaded', { name: m.id }));
+      if (outcome.status === 'ok') {
+        setNotice(t('settings.embeddingModels.downloaded', { name: m.id }));
+      } else if (outcome.status === 'paused') {
+        setPausedIds((prev) => ({ ...prev, [m.id]: true }));
+        setNotice(t('settings.embeddingModels.downloadPaused', { name: m.id }));
+      } else {
+        setNotice(t('settings.embeddingModels.downloadCancelled', { name: m.id }));
+      }
     } catch {
       setNotice(t('settings.embeddingModels.downloadFail', { name: m.id }));
     } finally {
@@ -137,6 +145,25 @@ const EmbeddingModelSettings: Component = () => {
         delete next[m.id];
         return next;
       });
+    }
+  };
+
+  const pauseDownload = (m: EmbeddingModelInfo) => {
+    void embeddingModelPauseDownload(m.id);
+  };
+
+  const cancelDownload = async (m: EmbeddingModelInfo) => {
+    const wasActive = downloading()[m.id];
+    try {
+      await embeddingModelCancelDownload(m.id);
+    } catch {
+      /* ignore */
+    }
+    // 无进行中的下载（已暂停）：命令已直接清理断点文件，本地重置暂停态；
+    // 进行中：download() 的 promise 会以 cancelled 结局返回，由其统一收尾
+    if (!wasActive) {
+      setPausedIds((prev) => ({ ...prev, [m.id]: false }));
+      setNotice(t('settings.embeddingModels.downloadCancelled', { name: m.id }));
     }
   };
 
@@ -210,21 +237,13 @@ const EmbeddingModelSettings: Component = () => {
           </button>
           <button
             type="button"
-            class={btnPrimarySm}
+            class={btnSecondarySm}
             disabled={savingDir() || dirInput() === installDir()}
             onClick={() => void saveDir()}
           >
             {t('common.save')}
           </button>
         </div>
-        <Show when={installDir()}>
-          <div
-            class="text-[10px] mt-2 font-mono"
-            style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
-          >
-            {installDir()}
-          </div>
-        </Show>
       </div>
 
       {/* 模型列表 */}
@@ -251,6 +270,7 @@ const EmbeddingModelSettings: Component = () => {
             {(m, i) => {
               const dlProgress = () => progress()[m.id];
               const isDownloading = () => downloading()[m.id];
+              const isPaused = () => pausedIds()[m.id];
               return (
                 <div
                   class="flex items-center gap-3 px-3 py-2.5 rounded-[10px] border border-white/[0.05] bg-white/[0.02] animate-row-in"
@@ -309,17 +329,54 @@ const EmbeddingModelSettings: Component = () => {
                     <Show
                       when={m.downloaded}
                       fallback={
-                        <button
-                          type="button"
-                          class={btnPrimarySm}
-                          disabled={isDownloading()}
-                          onClick={() => void download(m)}
-                        >
-                          <Icon name="download" size={12} />
-                          {isDownloading()
-                            ? t('settings.embeddingModels.downloading')
-                            : t('settings.embeddingModels.download')}
-                        </button>
+                        <div class="flex items-center gap-1.5">
+                          <Show
+                            when={!isDownloading()}
+                            fallback={
+                              <>
+                                <button
+                                  type="button"
+                                  class={btnSecondarySm}
+                                  onClick={() => pauseDownload(m)}
+                                >
+                                  <Icon name="pause" size={12} />
+                                  {t('settings.embeddingModels.pause')}
+                                </button>
+                                <button
+                                  type="button"
+                                  class={btnSecondarySm}
+                                  onClick={() => void cancelDownload(m)}
+                                >
+                                  <Icon name="x" size={12} />
+                                  {t('common.cancel')}
+                                </button>
+                              </>
+                            }
+                          >
+                            <>
+                              <button
+                                type="button"
+                                class={btnSecondarySm}
+                                onClick={() => void download(m)}
+                              >
+                                <Icon name={isPaused() ? 'play' : 'download'} size={12} />
+                                {isPaused()
+                                  ? t('settings.embeddingModels.resume')
+                                  : t('settings.embeddingModels.download')}
+                              </button>
+                              <Show when={isPaused()}>
+                                <button
+                                  type="button"
+                                  class={btnSecondarySm}
+                                  onClick={() => void cancelDownload(m)}
+                                >
+                                  <Icon name="x" size={12} />
+                                  {t('common.cancel')}
+                                </button>
+                              </Show>
+                            </>
+                          </Show>
+                        </div>
                       }
                     >
                       <span class="text-[11px] text-green-400/70">

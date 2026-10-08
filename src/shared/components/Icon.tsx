@@ -23,6 +23,7 @@ export type IconName =
   | 'trash'
   | 'book'
   | 'arrow-left'
+  | 'pause'
   | 'clock'
   | 'stop'
   | 'play'
@@ -136,6 +137,7 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     </>
   ),
   'arrow-left': () => <path d="M19 12H5M12 19l-7-7 7-7" />,
+  pause: () => <path d="M9 5v14M15 5v14" />,
   clock: () => (
     <>
       <circle cx="12" cy="12" r="9" />

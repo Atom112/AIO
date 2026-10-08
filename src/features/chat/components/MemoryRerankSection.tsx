@@ -195,15 +195,16 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
           });
         }
       });
-      const m = await embeddingModelDownload(DEFAULT_RERANK_MODEL_ID);
+      const outcome = await embeddingModelDownload(DEFAULT_RERANK_MODEL_ID);
       await props.onModelsChanged();
+      if (outcome.status !== 'ok') return; // 已暂停/取消：不自动启用，不打完成提示
       // 一键下载即用：下载完成后若重排尚未启用，自动启用（在线 Key/URL 不在此列）
       const r = rerank();
       if (r && r.provider === 'local' && !r.enabled) {
         const st = await memoryUpdateRerank(props.projectId, { ...r, enabled: true });
         setRerank(st.rerank);
         props.onNotice(t('project.memoryPanel.rerankDownloadEnabled'));
-      } else if (m.downloaded) {
+      } else if (outcome.info.downloaded) {
         props.onNotice(t('project.memoryPanel.rerankDownloaded'));
       }
     } catch {

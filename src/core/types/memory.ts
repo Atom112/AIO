@@ -194,3 +194,9 @@ export interface EmbeddingModelInfo {
   /** 已下载文件占用空间（字节） */
   sizeBytes: number;
 }
+
+/** 模型下载结果（status: ok=完成 | paused=已暂停保留断点 | cancelled=已取消断点已删） */
+export interface ModelDownloadOutcome {
+  status: 'ok' | 'paused' | 'cancelled';
+  info: EmbeddingModelInfo;
+}

@@ -112,6 +112,13 @@ fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> 
     result
 }
 
+/// 从进程内实例缓存移除模型（删除模型文件后调用，避免旧实例继续可用）。
+pub fn evict_model(id: &str) {
+    if let Ok(mut map) = instances().lock() {
+        map.remove(id);
+    }
+}
+
 /// 本地嵌入器。
 pub struct LocalEmbedder {
     /// 嵌入模型安装根目录（<embed_dir>/<id>/ 存放模型文件）。

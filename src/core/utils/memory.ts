@@ -22,6 +22,7 @@ import type {
   MemoryRerankConfig,
   MemoryStats,
   MemoryStatus,
+  ModelDownloadOutcome,
   RerankTestResult,
   ScoredFact,
 } from '../types/memory';
@@ -117,9 +118,17 @@ export const rerankSaveApiKey = (key: string) => invoke<void>('rerank_save_api_k
 /** 可下载模型清单（本地重排/嵌入模型） */
 export const embeddingModelList = () => invoke<EmbeddingModelInfo[]>('embedding_model_list');
 
-/** 下载模型（带 model-download-progress 事件） */
+/** 下载模型（带 model-download-progress 事件；支持暂停/取消，见 pause/cancel 封装） */
 export const embeddingModelDownload = (id: string) =>
-  invoke<EmbeddingModelInfo>('embedding_model_download', { id });
+  invoke<ModelDownloadOutcome>('embedding_model_download', { id });
+
+/** 暂停进行中的模型下载（保留断点，可续传）；返回是否有进行中的下载 */
+export const embeddingModelPauseDownload = (id: string) =>
+  invoke<boolean>('embedding_model_pause_download', { id });
+
+/** 取消模型下载（删除断点；无进行中下载时直接清理该模型断点文件）；返回是否有进行中的下载 */
+export const embeddingModelCancelDownload = (id: string) =>
+  invoke<boolean>('embedding_model_cancel_download', { id });
 
 /** 删除已下载模型（内置模型为 no-op） */
 export const embeddingModelDelete = (id: string) => invoke<void>('embedding_model_delete', { id });

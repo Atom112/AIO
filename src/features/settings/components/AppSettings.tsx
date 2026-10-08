@@ -44,7 +44,6 @@ import Icon from '../../../shared/components/Icon';
 import {
   btnIcon,
   btnPrimary,
-  btnPrimarySm,
   btnSecondary,
   btnSecondarySm,
   btnTabXs,
@@ -682,19 +681,15 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.openSource.description')}</p>
           </div>
 
-          <div
-            class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
-            style={{
-              background: 'rgba(var(--primary-rgb), 0.18)',
-              color: '#fff', // gate-allow: color 开关旋钮（白色基底）
-              border: '1px solid rgba(var(--primary-rgb), 0.25)',
-            }}
+          <button
+            type="button"
+            class={btnSecondarySm}
             onClick={() => open('https://github.com/Atom112/AIO')}
             title={t('app.openSource.visit')}
           >
-            <Icon src="/icons/app-logo/github.svg" class="w-5 h-5" />
-            <span>GitHub</span>
-          </div>
+            <Icon src="/icons/app-logo/github.svg" class="w-4 h-4" />
+            <span class="text-sm font-medium">GitHub</span>
+          </button>
         </div>
 
         <div class="flex justify-between items-center py-3">
@@ -720,7 +715,7 @@ const AppSettings: Component = () => {
           </div>
 
           <button
-            class={btnPrimarySm}
+            class={btnSecondarySm}
             disabled={checkUpdating()}
             onClick={handleManualCheck}
             title={t('app.update.check')}

@@ -192,10 +192,10 @@ const ChatPage: Component = () => {
     Number(localStorage.getItem('chat-right-panel-width')) || 18,
   ); // 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30%
   /**
-   * 左侧面板：宽度与光标 1:1 跟手（展开/收起两个方向都是），松手时才吸附。
+   * 左侧面板：宽度全程与光标 1:1 跟手（展开/收起两个方向都是），松手时才吸附。
    * 最窄跟手宽度即收起轨道宽度，保证把手始终可抓取、内容不外溢。
    */
-  const LEFT_RAIL_WIDTH_PX = 48; // 收起轨道宽度，与 ProjectSidebar 保持一致
+  const LEFT_RAIL_WIDTH_PX = 54; // 收起轨道宽度，与 ProjectSidebar 保持一致
   const LEFT_MAX_WIDTH_PCT = 30;
   /** 松手判定死区（px）：向外拖出不足该距离视为未真正拉开，松手仍收起 */
   const LEFT_RELEASE_DEADZONE_PX = 12;
@@ -255,12 +255,12 @@ const ChatPage: Component = () => {
     if (!isLeftCollapsed() && leftPanelWidth() < 15) setLeftPanelWidth(18);
   });
 
-  // 窗帘揭示的目标宽度：15% 最小面板的内容盒宽（扣除内边距与边框，另留 2px 安全余量，
-  // 保证停稳在 15% 时内容绝不溢出），随窗口缩放重算；ProjectSidebar 按 −34 口径反推容器宽
+  // 窗帘揭示的目标宽度：15% 最小面板的内容盒宽（左 15 + 右 21 两侧不对称内边距，另留 2px 安全余量，
+  // 保证停稳在 15% 时内容绝不溢出），随窗口缩放重算；ProjectSidebar 按 −38 口径反推容器宽
   onMount(() => {
     const updateRevealMin = () => {
       const base = chatPageRef?.clientWidth ?? window.innerWidth;
-      setLeftRevealMinPx(Math.max(base * 0.15 - 34, 120));
+      setLeftRevealMinPx(Math.max(base * 0.15 - 38, 120));
     };
     updateRevealMin();
     window.addEventListener('resize', updateRevealMin);

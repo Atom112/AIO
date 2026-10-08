@@ -172,20 +172,22 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
       style={{
         width: props.isCollapsed ? '0%' : `${props.width}%`,
         padding: props.isCollapsed ? '0' : '15px',
-        background: props.isCollapsed ? 'none' : 'rgba(var(--surface-bg), 0.15)',
-        'backdrop-filter': props.isCollapsed ? 'none' : 'blur(16px)',
-        border: props.isCollapsed ? 'none' : '1px solid var(--border-dim)',
-        'border-radius': '12px',
-        'box-shadow': props.isCollapsed
-          ? 'none'
-          : 'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 调整大小把手（左侧） */}
+      {/* 三栏分界浅竖线：置于面板外缘（±0.5px），中心与下方调整把手的中心严格重合；收起态隐藏 */}
+      <Show when={!props.isCollapsed}>
+        <span
+          aria-hidden="true"
+          class="absolute top-0 bottom-0 w-px pointer-events-none"
+          style={{ left: '-0.5px', background: 'rgba(var(--text-base-rgb),0.12)' }}
+        />
+      </Show>
+
+      {/* 调整大小把手（左侧）：6px 抓取条居中于面板外缘（与分界竖线同心） */}
       <div
-        class="absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group"
+        class="absolute top-0 bottom-0 left-[-3px] w-[6px] flex items-center justify-center cursor-ew-resize z-[1000] group"
         onMouseDown={(e) => props.onResize(e as MouseEvent)}
       >
         <div

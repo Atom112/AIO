@@ -207,20 +207,28 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
    * 窗帘软过渡遮罩：按"精确溢出量"计算右缘渐隐区（完整覆盖被裁剪区域并留 20px 余量），
    * 杜绝裁剪线裸露——图标始终清晰、标签渐隐，不会被拦腰截断；
    * 宽度回到 15%（无溢出）时渐隐区收敛为 0，切换无缝。
-   * 容器宽度由 revealMin 反推：revealMin = base×0.15 − 34（ChatPage 同口径，留 2px 安全余量）。
+   * 容器宽度由 revealMin 反推：revealMin = base×0.15 − 38（ChatPage 同口径，留 2px 安全余量）。
    */
   const revealMask = () => {
     const w = props.width;
     if (props.isCollapsed || w >= 15) return 'none';
     const revealMin = props.revealMinPx ?? 0;
     if (revealMin <= 0) return 'none';
-    const base = (revealMin + 34) / 0.15;
-    const contentPx = (w / 100) * base - 2 * padX() - 2;
+    const base = (revealMin + 38) / 0.15;
+    const contentPx = (w / 100) * base - 2 * padX() - PAGE_SIDE_INSET_PX; // 扣两侧不对称内边距
     const overflowPx = revealMin - contentPx;
     if (overflowPx <= 0.5) return 'none';
     const fadePx = Math.min(overflowPx + 20, contentPx * 0.6);
     return `linear-gradient(to right, black calc(100% - ${fadePx}px), transparent 100%)`;
   };
+  /**
+   * 页面容器左内边距（ChatPage 根节点 px-[6px]）。右侧分隔线紧贴面板外缘，
+   * 而左侧元素与窗口边界之间隔着这 6px——把右侧内边距补上同值，
+   * 元素到左窗口边界与到右分隔线的间距才相等（展开/收起各自保持对应的间距值）。
+   */
+  const PAGE_SIDE_INSET_PX = 6;
+  /** 收起轨道宽度：54px 使图标两侧各留 12px（与窗口边界间距一致），图标在窗口↔分隔线区间居中 */
+  const RAIL_WIDTH_PX = 54;
   /** 实际生效的内边距（px）：收起态为轨道值；展开态随宽度从轨道值插值到 15px */
   const padY = () => (props.isCollapsed ? 6 : 6 + 9 * expandRatio());
   const padX = () => (props.isCollapsed ? 4 : 4 + 11 * expandRatio());
@@ -230,21 +238,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10 h-full"
       style={{
         // CSS 级最窄限制：无论上层计算出什么宽度，面板物理上不可能窄于收起轨道
-        'min-width': '48px',
+        'min-width': `${RAIL_WIDTH_PX}px`,
         // 窗帘揭示的布局宽度（子内容以该宽度排版，收窄时被裁剪而不是重排）
         '--reveal-min': `${props.revealMinPx ?? 0}px`,
-        width: props.isCollapsed ? '48px' : `${props.width}%`,
-        padding: `${padY()}px ${padX()}px`,
-        background: props.isCollapsed
-          ? 'transparent'
-          : `rgba(var(--surface-bg), ${0.15 * expandedOpacity()})`,
-        'backdrop-filter': props.isCollapsed ? 'none' : 'blur(16px)',
-        border: '1px solid',
-        'border-color': props.isCollapsed ? 'transparent' : 'var(--border-dim)',
-        'border-radius': '12px',
-        'box-shadow': props.isCollapsed
-          ? 'none'
-          : `inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, ${0.2 * expandedOpacity()})`,
+        width: props.isCollapsed ? `${RAIL_WIDTH_PX}px` : `${props.width}%`,
+        // 右内边距比左侧多 PAGE_SIDE_INSET_PX：补偿页面容器左内边距，
+        // 使元素到左窗口边界与到右分隔线的间距相等（随宽度插值，两态各自独立取值）
+        padding: `${padY()}px ${padX() + PAGE_SIDE_INSET_PX}px ${padY()}px ${padX()}px`,
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
@@ -379,10 +379,11 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </div>
       </div>
 
-      {/* 收起状态（图标轨道）— 挂在面板根上：absolute inset-0 相对 padding box 定位，不依赖内边距插值，任意宽度下 36px 图标都居中于面板本体，不会被挤扁或裁剪 */}
+      {/* 收起状态（图标轨道）— 挂在面板根上，右缩进 PAGE_SIDE_INSET_PX：图标在"窗口边界↔分隔线"区间居中，两侧间距恒等；展开态随透明度归零，右缩进无视觉影响 */}
       <div
-        class="absolute inset-0 ease-out"
+        class="absolute ease-out"
         style={{
+          inset: `0 ${PAGE_SIDE_INSET_PX}px 0 0`,
           opacity: props.isCollapsed ? 1 : Math.min(Math.max((4 - props.width) / 1, 0), 1),
           'pointer-events': props.isCollapsed ? 'auto' : 'none',
           transition: props.isResizing ? 'none' : 'opacity 0.3s ease-out',
@@ -489,10 +490,16 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </Portal>
       </Show>
 
-      {/* 调整大小把手：收起态仍保留可抓取区域，向右拖出即展开 */}
+      {/* 三栏分界浅竖线：置于面板外缘（±0.5px），中心与下方调整把手的中心严格重合 */}
+      <span
+        aria-hidden="true"
+        class="absolute top-0 bottom-0 w-px pointer-events-none"
+        style={{ right: '-0.5px', background: 'rgba(var(--text-base-rgb),0.12)' }}
+      />
+
+      {/* 调整大小把手：6px 抓取条居中于面板外缘（与分界竖线同心），收起态仍可向外拖出展开 */}
       <div
-        class="absolute top-0 bottom-0 right-[-4px] flex items-center justify-center cursor-ew-resize z-[1000] group"
-        classList={{ 'w-1': !props.isCollapsed, 'w-2': props.isCollapsed }}
+        class="absolute top-0 bottom-0 right-[-3px] w-[6px] flex items-center justify-center cursor-ew-resize z-[1000] group"
         onMouseDown={(e) => props.onResize(e as MouseEvent)}
       >
         <div

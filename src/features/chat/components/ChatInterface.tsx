@@ -450,15 +450,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   });
 
   return (
-    <div
-      class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full"
-      style={{
-        background: 'rgba(var(--surface-bg), 0.12)',
-        'backdrop-filter': 'blur(12px)',
-        border: '1px solid var(--border-dim)',
-        'box-shadow': 'inset 0 0 1px rgba(var(--text-base-rgb),0.04)',
-      }}
-    >
+    <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full">
       {/* 顶部操作栏 */}
       <Show
         when={props.isSelectingMessages}

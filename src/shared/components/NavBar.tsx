@@ -114,7 +114,7 @@ const NavBar: Component = () => {
 
       <nav
         data-tauri-drag-region
-        class="navbar relative flex justify-center items-center gap-6 px-5 h-[60px] m-0 mr-[1px] z-[100] [app-region:drag] select-none"
+        class="navbar relative flex justify-center items-center gap-2 px-5 h-[60px] m-0 mr-[1px] z-[100] [app-region:drag] select-none"
       >
         <div class="absolute left-[10px] top-1/2 -translate-y-1/2 flex items-center justify-center z-[1001] pointer-events-none">
           <img

@@ -779,7 +779,6 @@
   "settings.subagents": "子智能体模型",
   "settings.embeddingModels": "Embedding 模型管理",
   "settings.embeddingModels.title": "Embedding 模型管理",
-  "settings.embeddingModels.description": "全局管理本地嵌入模型：下载安装主流开源 ONNX 模型、自定义安装目录、自由启用或停用（停用后所有项目不可用该模型，检索自动退化为关键词）。项目级模型选择仍在各项目的「记忆面板」中进行。",
   "settings.embeddingModels.dirTitle": "安装目录",
   "settings.embeddingModels.dirDesc": "模型文件下载位置（可自定义；留空使用默认目录）。修改后需重新下载未安装的模型。",
   "settings.embeddingModels.browse": "选择目录",
@@ -837,7 +836,6 @@
   "skill.noDescription": "该 Skill 暂无简介，下载后可查看完整指令。",
   "skill.noInstalled": "尚未下载 Skill。",
   "skill.npxEmpty": "未发现可导入的 npx skill 包。请确保已用 npm 全局安装，或 Claude Code 已配置该 skill。",
-  "skill.npxHint": "扫描系统上的 Claude Code skill 包和全局 npm skill 包",
   "skill.refresh": "刷新",
   "skill.refreshFailed": "更新失败",
   "skill.refreshing": "刷新中...",
@@ -994,6 +992,5 @@
   "subagent.goToProviderSettings.prefix": "去",
   "subagent.goToProviderSettings.suffix": "启用 provider 并填写 API Key",
   "subagent.noToolsAvailable": "暂无可选工具 — 请先在 MCP 设置中连接服务器",
-  "subagent.settingsDescription": "为每个子智能体类型独立指定使用的模型和 API Provider。未设置的子智能体将跟随主 Agent 使用同一模型。你也可以创建自定义子智能体角色。",
   "subagent.systemPromptPlaceholder": "你是{{name}}，请完成任务。"
 }

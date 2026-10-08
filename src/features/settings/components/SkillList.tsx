@@ -702,9 +702,6 @@ const SkillList: Component = () => {
         <Show when={view() === 'npx'}>
           <div class="animate-row-in flex flex-col gap-3" style={{ 'animation-delay': '30ms' }}>
             <div class="flex items-center justify-between">
-              <p class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
-                {t('skill.npxHint')}
-              </p>
               <button class={btnSecondarySm} onClick={() => discoverNpx()} disabled={npxLoading()}>
                 {npxLoading() ? t('skill.scanning') : t('skill.rescan')}
               </button>

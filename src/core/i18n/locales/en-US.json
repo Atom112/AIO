@@ -779,7 +779,6 @@
   "settings.subagents": "Subagent models",
   "settings.embeddingModels": "Embedding models",
   "settings.embeddingModels.title": "Embedding model management",
-  "settings.embeddingModels.description": "Manage local embedding models globally: download mainstream open-source ONNX models, customize the install directory, and freely enable or disable each model (disabled models are unavailable to all projects and retrieval falls back to keyword search). Per-project model selection stays in each project's Memory panel.",
   "settings.embeddingModels.dirTitle": "Install directory",
   "settings.embeddingModels.dirDesc": "Where model files are downloaded (customizable; leave empty for the default directory). Changing it requires re-downloading any not-yet-installed models.",
   "settings.embeddingModels.browse": "Browse",
@@ -837,7 +836,6 @@
   "skill.noDescription": "No description available. Download to view instructions.",
   "skill.noInstalled": "No skills installed yet.",
   "skill.npxEmpty": "No importable npx skill packages found. Make sure they are installed globally via npm or configured in Claude Code.",
-  "skill.npxHint": "Scan for Claude Code skill packages and global npm skill packages",
   "skill.refresh": "Refresh",
   "skill.refreshFailed": "Refresh failed",
   "skill.refreshing": "Refreshing...",
@@ -994,6 +992,5 @@
   "subagent.goToProviderSettings.prefix": "Go to",
   "subagent.goToProviderSettings.suffix": "enable provider and fill API Key",
   "subagent.noToolsAvailable": "No tools available — connect a server in MCP settings first",
-  "subagent.settingsDescription": "Specify models and API providers for each sub-agent type independently. Unconfigured sub-agents will follow the main agent's model. You can also create custom sub-agent roles.",
   "subagent.systemPromptPlaceholder": "You are {{name}}, please complete the task."
 }

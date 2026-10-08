@@ -171,9 +171,6 @@ const EmbeddingModelSettings: Component = () => {
     <div class="space-y-1">
       <div class="pb-3 border-b border-[var(--border-dim)] animate-row-in">
         <h2 class="text-lg text-white font-semibold m-0">{t('settings.embeddingModels.title')}</h2>
-        <p class="text-xs text-white/35 mt-1.5 leading-relaxed">
-          {t('settings.embeddingModels.description')}
-        </p>
       </div>
 
       {/* 安装目录 */}

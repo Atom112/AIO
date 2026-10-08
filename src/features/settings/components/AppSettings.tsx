@@ -683,7 +683,7 @@ const AppSettings: Component = () => {
 
           <button
             type="button"
-            class={btnSecondarySm + ' min-w-[132px]'}
+            class={btnSecondarySm + ' min-w-[112px]'}
             onClick={() => open('https://github.com/Atom112/AIO')}
             title={t('app.openSource.visit')}
           >
@@ -715,7 +715,7 @@ const AppSettings: Component = () => {
           </div>
 
           <button
-            class={btnSecondarySm + ' min-w-[132px]'}
+            class={btnSecondarySm + ' min-w-[112px]'}
             disabled={checkUpdating()}
             onClick={handleManualCheck}
             title={t('app.update.check')}

@@ -120,9 +120,11 @@ const ProviderList: Component = () => {
     setCatalogReady(true);
   });
 
-  /** 用户配置中的 custom providers */
+  /** 用户配置中的 custom providers（本地引擎 id 除外——引擎条目由上方"本地推理引擎"分区渲染，避免列表尾部出现重复表项） */
   const customProviders = createMemo(() => {
-    return Object.values(providerConfigs()).filter((c) => c.isCustom);
+    return Object.values(providerConfigs()).filter(
+      (c) => c.isCustom && !isLocalEngineProvider(c.id),
+    );
   });
 
   /** 搜索后的 catalog providers (排除本地引擎 supplier，它们单独渲染) */

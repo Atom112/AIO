@@ -129,7 +129,7 @@
   "app.darkMode.on": "Dark",
   "app.darkMode.title": "Color mode",
   "app.update.available": "Version {{version}} is available",
-  "app.update.check": "Check for updates",
+  "app.update.check": "Check now",
   "app.update.checking": "Checking...",
   "app.update.description": "Check whether a new AIO release is available.",
   "app.update.found": "A new version is available. See the notification for details.",

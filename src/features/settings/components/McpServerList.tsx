@@ -31,12 +31,13 @@ import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mc
 import Icon from '../../../shared/components/Icon';
 import {
   btnBadge,
+  btnBadgeBar,
   btnDanger,
   btnPrimarySm,
   btnSecondary,
   btnSecondarySm,
   btnSuccess,
-  btnTabMd,
+  btnTabXs,
   tabActive,
 } from '../../../shared/components/buttonStyles';
 import McpServerDetail from './McpServerDetail';
@@ -276,14 +277,14 @@ const McpServerList: Component = () => {
           style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
         >
           <button
-            class={btnTabMd}
+            class={btnTabXs}
             classList={{ [tabActive]: view() === 'market' }}
             onClick={() => setView('market')}
           >
             {t('mcp.market')}
           </button>
           <button
-            class={btnTabMd}
+            class={btnTabXs}
             classList={{ [tabActive]: view() === 'downloaded' }}
             onClick={() => setView('downloaded')}
           >
@@ -313,7 +314,7 @@ const McpServerList: Component = () => {
           <Show when={view() === 'market'}>
             <button
               type="button"
-              class={btnBadge}
+              class={btnBadgeBar}
               disabled={refreshing()}
               onClick={() => void refresh()}
             >

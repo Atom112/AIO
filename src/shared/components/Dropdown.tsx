@@ -30,6 +30,8 @@ export interface DropdownProps<V extends string = string> {
   placeholder?: string;
   /** 自定义 class 应用到触发器 */
   class?: string;
+  /** 自定义 class 应用到触发器按钮（如工具栏内调整高度对齐） */
+  triggerClass?: string;
   /** 触发器对齐方式 */
   align?: 'left' | 'right';
   /** 自定义触发器渲染 (用于插入图标等) */
@@ -93,7 +95,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
         type="button"
         id={props.id}
         disabled={props.disabled}
-        class="border border-white/[0.08] rounded-lg text-white px-[14px] cursor-pointer hover:border-white/[0.14] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.55)] focus:bg-[rgba(0,0,0,0.35)] focus:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.12)] flex items-center gap-1.5 w-full text-center py-1 text-xs"
+        class={`border border-white/[0.08] rounded-lg text-white px-[14px] cursor-pointer hover:border-white/[0.14] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.55)] focus:bg-[rgba(0,0,0,0.35)] focus:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.12)] flex items-center gap-1.5 w-full text-center py-1 text-xs ${props.triggerClass ?? ''}`}
         style={{
           appearance: 'none',
           '-webkit-appearance': 'none',

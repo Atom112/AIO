@@ -33,11 +33,11 @@ import Dropdown from '../../../shared/components/Dropdown';
 import Icon from '../../../shared/components/Icon';
 import {
   btnBadge,
+  btnBadgeBar,
   btnDanger,
   btnPrimarySm,
   btnSecondarySm,
   btnSuccess,
-  btnTabMd,
   btnTabXs,
   tabActive,
 } from '../../../shared/components/buttonStyles';
@@ -406,21 +406,21 @@ const SkillList: Component = () => {
             style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
           >
             <button
-              class={btnTabMd}
+              class={btnTabXs}
               classList={{ [tabActive]: view() === 'market' }}
               onClick={() => setView('market')}
             >
               {t('skill.tabMarket')}
             </button>
             <button
-              class={btnTabMd}
+              class={btnTabXs}
               classList={{ [tabActive]: view() === 'downloaded' }}
               onClick={() => setView('downloaded')}
             >
               {t('skill.tabDownloaded', { count: Object.keys(skills()).length })}
             </button>
             <button
-              class={btnTabMd}
+              class={btnTabXs}
               classList={{ [tabActive]: view() === 'npx' }}
               onClick={() => {
                 setView('npx');
@@ -473,7 +473,10 @@ const SkillList: Component = () => {
           class="animate-row-in flex items-center gap-3 flex-wrap"
           style={{ 'animation-delay': '60ms' }}
         >
-          <div class="flex gap-1">
+          <div
+            class="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
+          >
             <For
               each={
                 [
@@ -485,9 +488,8 @@ const SkillList: Component = () => {
             >
               {([value, label]) => (
                 <button
-                  class={btnTabMd}
+                  class={btnTabXs}
                   classList={{ [tabActive]: sort() === value }}
-                  style={sort() === value ? '' : 'background: rgba(var(--text-base-rgb),0.04);'}
                   onClick={() => selectSort(value)}
                 >
                   {label}
@@ -500,10 +502,11 @@ const SkillList: Component = () => {
             onChange={(v) => selectCategory(v)}
             options={categoryOptions()}
             class="text-xs"
+            triggerClass="h-8"
           />
           <button
             type="button"
-            class={btnBadge + ' ml-auto'}
+            class={btnBadgeBar + ' ml-auto'}
             disabled={refreshing()}
             onClick={() => void refreshMarket()}
           >

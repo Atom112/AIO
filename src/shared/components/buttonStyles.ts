@@ -45,6 +45,10 @@ export const btnDangerBadge =
 export const btnSuccess =
   'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
+/** 小胶囊内联操作（与 p-1 容器 + btnTabXs 构成的分段控件栏等高，用于工具栏行内对齐） */
+export const btnBadgeBar =
+  'inline-flex items-center justify-center gap-1 px-2.5 py-[7px] rounded-md text-xs font-medium bg-white/[0.06] border border-white/10 text-white/60 hover:bg-white/[0.1] hover:text-white/85 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+
 /** 小胶囊内联操作（标签/小按钮） */
 export const btnBadge =
   'inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-white/[0.06] border border-white/10 text-white/60 hover:bg-white/[0.1] hover:text-white/85 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';

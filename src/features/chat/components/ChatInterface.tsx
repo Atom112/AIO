@@ -1480,18 +1480,16 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                       type="button"
                       class={'px-1.5 py-0.5 bg-[rgba(var(--surface-alt-bg),0.5)] ' + btnGhost}
                       style={{ color: 'rgba(var(--text-base-rgb),0.5)', 'font-weight': '400' }}
-                      classList={{ '!bg-[rgba(var(--surface-bg),0.7)]': branchOpen() }}
+                      classList={{
+                        // 全响应式：open 恒深背景（important 压过常态类）；
+                        // 非 open 才允许 hover 浅深背景。不做任何 JS 样式写入，
+                        // 杜绝 mouseleave 守卫漏恢复导致的深色残留。
+                        '!bg-[rgba(var(--surface-bg),0.7)]': branchOpen(),
+                        'hover:bg-[rgba(var(--surface-bg),0.6)]': !branchOpen(),
+                      }}
                       onClick={(e) => {
                         e.stopPropagation();
                         setBranchOpen(!branchOpen());
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!branchOpen())
-                          e.currentTarget.style.background = 'rgba(var(--surface-bg),0.6)';
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!branchOpen())
-                          e.currentTarget.style.background = 'rgba(var(--surface-alt-bg),0.5)';
                       }}
                     >
                       {t('chat.branchPrefix')}{' '}
@@ -1630,13 +1628,19 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                   <div class="subagent-menu-container relative inline-block ml-auto">
                     <button
                       type="button"
-                      class={'px-1.5 py-0.5 rounded-md text-[11px] ' + btnGhost}
+                      class={
+                        'px-1.5 py-0.5 rounded-md text-[11px] bg-[rgba(var(--surface-alt-bg),0.5)] ' +
+                        btnGhost
+                      }
                       style={{
-                        background: 'rgba(var(--surface-alt-bg),0.5)',
                         color: 'rgba(var(--text-base-rgb),0.55)',
                         'font-weight': '400',
                       }}
-                      classList={{ '!bg-[rgba(var(--surface-bg),0.7)]': subagentMenuOpen() }}
+                      classList={{
+                        // 与分支触发器同款全响应式方案（见上方注释）
+                        '!bg-[rgba(var(--surface-bg),0.7)]': subagentMenuOpen(),
+                        'hover:bg-[rgba(var(--surface-bg),0.6)]': !subagentMenuOpen(),
+                      }}
                       title={t('agent.subagent.menuTrigger', { count: subagents().length })}
                       aria-label={t('agent.subagent.menuTrigger', { count: subagents().length })}
                       aria-haspopup="menu"

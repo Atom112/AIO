@@ -1,14 +1,26 @@
 /**
  * 子智能体独立对话视图。
  *
- * 从状态条右侧上拉菜单（或主代理时间线的紧凑卡片）进入，替换整个对话栏：
- * - Header：左上角返回按钮（回到主代理对话）+ 子智能体身份与状态 + 停止按钮
- * - Body：任务卡 + 按轮次分组的步骤时间线 + 完整工作结果（Markdown）
+ * 从状态条右侧上拉菜单（或主代理时间线的紧凑卡片）进入，替换整个对话栏。
+ * 消息流完全复用主话题的界面样式：
+ * - 主代理下发的任务 → 右侧用户气泡（primary 底色，与主话题用户消息一致）
+ * - 子代理每轮叙述 + 该轮工具执行 → 左侧助手气泡（头像 + text 底色，与主话题助手消息一致）
+ * - 完成后的最终报告 → 最后一条左侧助手气泡（完整 Markdown）
+ * - Header：左上角返回按钮 + 子智能体身份与状态 + 停止按钮
  *
  * 数据来源：父话题 assistant 消息 agentSteps 中的 type='subagent' 步骤
  * （subagentSteps / subagentResult 随消息持久化，重启后仍可回看）。
  */
-import { Component, createSignal, createMemo, createEffect, Show, For, onCleanup } from 'solid-js';
+import {
+  Component,
+  createSignal,
+  createMemo,
+  createEffect,
+  Show,
+  For,
+  onCleanup,
+  type JSX,
+} from 'solid-js';
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import Markdown from '../../../shared/components/Markdown';
 import { t } from '../../../core/i18n';
@@ -95,55 +107,32 @@ export function formatSubagentDuration(ms: number): string {
   return t('agent.step.duration', { mins, secs });
 }
 
-// ---- 步骤行渲染 ----
-const StepRow: Component<{ step: SubagentStep }> = (props) => {
-  // 无 toolName 的 tool_call 行 = 子代理本轮的叙述文本；带 toolName = 工具执行结果
-  const isToolResult = () => !!props.step.toolName;
-  const icon = (): IconName => {
-    if (props.step.type === 'thinking') return 'brain';
-    if (isToolResult()) return 'wrench';
-    return 'document';
-  };
-  const label = () =>
-    props.step.type === 'thinking'
-      ? t('agent.sub.step.thinking')
-      : isToolResult()
-        ? t('agent.sub.step.toolCall')
-        : t('agent.sub.step.content');
-
-  return (
-    <div
-      class="flex items-start gap-2 px-2 py-1.5 rounded-md"
-      style={{ background: 'rgba(var(--text-base-rgb),0.03)' }}
-    >
-      <span class="flex items-center justify-center w-4 h-4 mt-0.5 shrink-0 text-white/40">
-        <Icon name={icon()} size={12} />
-      </span>
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-1.5 text-[11px] font-medium text-white/60">
-          <span class="shrink-0">{label()}</span>
-          <Show when={props.step.toolName}>
-            <span class="truncate text-white/40">· {props.step.toolName}</span>
-          </Show>
+// ---- 气泡内工具执行行（观感对齐主话题 AgentProcessBlock 的工具卡片） ----
+const ToolRow: Component<{ step: SubagentStep }> = (props) => (
+  <div
+    class="flex items-start gap-1.5 px-2 py-1 rounded-md text-[11px]"
+    style={{
+      background: 'rgba(var(--text-base-rgb),0.03)',
+      'border-left': '2px solid rgba(240,160,64,0.55)',
+    }}
+  >
+    <Icon name="wrench" size={11} class="mt-[2px] shrink-0 opacity-70" />
+    <div class="flex-1 min-w-0">
+      <span class="font-medium text-white/60 break-all">{props.step.toolName}</span>
+      <Show when={props.step.summary}>
+        <div class="font-mono text-[10px] text-white/40 leading-relaxed break-words mt-0.5">
+          {props.step.summary}
         </div>
-        <Show when={props.step.summary}>
-          <div
-            classList={{
-              'text-[12px] leading-relaxed break-words mt-0.5 text-white/55': !isToolResult(),
-              'text-[11px] leading-relaxed break-words mt-0.5 font-mono text-white/40':
-                isToolResult(),
-            }}
-          >
-            {props.step.summary}
-          </div>
-        </Show>
-      </div>
+      </Show>
     </div>
-  );
-};
+  </div>
+);
 
-// 渲染条目：轮次分隔行 / 步骤行
-type RenderItem = { kind: 'round'; round: number } | { kind: 'step'; step: SubagentStep };
+/** 一个对话气泡：子代理某轮的叙述文本 + 该轮内执行的工具 */
+interface SubagentTurn {
+  text: string;
+  tools: SubagentStep[];
+}
 
 interface SubagentConversationViewProps {
   /** 主代理当前话题（子代理步骤挂在其 assistant 消息的 agentSteps 上） */
@@ -184,24 +173,31 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     }
   });
 
-  // 步骤时间线渲染条目：
-  // - content 行与结果区重复（最终文本），跳过；
-  // - streaming 心跳行仅用于轮次分隔（旧数据无 round 时不产生分隔）；
-  // - 其余行按序渲染。
-  const renderItems = createMemo<RenderItem[]>(() => {
+  // 消息流分组：无 toolName 的 tool_call 步骤 = 子代理该轮的叙述文本（开启新气泡）；
+  // tool_result 步骤挂到当前气泡内；content 步骤与最终结果重复（由结果气泡展示），
+  // streaming 心跳与 thinking 步骤不渲染。
+  // 后端对空文本轮次发 "[工具调用]" 占位，按无文本处理（该轮气泡仅含工具行）。
+  const turns = createMemo<SubagentTurn[]>(() => {
     const steps = step()?.subagentSteps || [];
-    const items: RenderItem[] = [];
-    let lastRound: number | undefined;
-    for (const s of steps) {
-      if (s.type === 'content') continue;
-      if (s.round !== undefined && s.round !== lastRound) {
-        items.push({ kind: 'round', round: s.round });
-        lastRound = s.round;
+    const out: SubagentTurn[] = [];
+    let cur: SubagentTurn | null = null;
+    const ensure = (): SubagentTurn => {
+      if (!cur) {
+        cur = { text: '', tools: [] };
+        out.push(cur);
       }
-      if (s.type === 'streaming') continue;
-      items.push({ kind: 'step', step: s });
+      return cur;
+    };
+    for (const s of steps) {
+      if (s.type === 'content' || s.type === 'streaming' || s.type === 'thinking') continue;
+      if (!s.toolName) {
+        cur = { text: s.summary === '[工具调用]' ? '' : s.summary || '', tools: [] };
+        out.push(cur);
+      } else {
+        ensure().tools.push(s);
+      }
     }
-    return items;
+    return out;
   });
 
   // 单独停止后台子智能体（仅 fire-and-forget 启动的在注册表中可查；
@@ -218,10 +214,10 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     }
   };
 
-  // ---- 自动滚动（复用 AgentProcessBlock 模式） ----
+  // ---- 自动滚动（复用主对话模式） ----
   let bodyRef: HTMLDivElement | undefined;
   // 内容包装层：流式跟底 ResizeObserver 的观察对象（bodyRef 是 flex-1 固定高度
-  // 滚动盒，观察它时内容增长不触发 RO；包装层高度随步骤/结果真实增长）。
+  // 滚动盒，观察它时内容增长不触发 RO；包装层高度随气泡内容真实增长）。
   let contentRef: HTMLDivElement | undefined;
   const [autoScroll, setAutoScroll] = createSignal(true);
   let userScrolledUp = false;
@@ -282,6 +278,42 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
       });
     }
   });
+
+  // ---- 气泡渲染辅助（复用主话题 assistant 消息的样式） ----
+  const avatar = () => {
+    const ps = profileStyle();
+    return (
+      <div
+        class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full"
+        style={{
+          background: ps.bgColor,
+          border: `1px solid ${ps.borderColor}`,
+          'box-shadow': '0 2px 6px rgba(0,0,0,0.25)',
+        }}
+      >
+        <Icon name={ps.icon} size={15} style={{ color: ps.color }} />
+      </div>
+    );
+  };
+
+  /** 左侧助手气泡行（头像 + text 底色气泡，与主话题 assistant 消息同款） */
+  const agentRow = (children: JSX.Element) => (
+    <div class="flex items-start gap-2 mb-3">
+      {avatar()}
+      <div class="flex flex-col items-start max-w-[75%]">
+        <div
+          class="rounded-[10px] rounded-tl-[2px] leading-relaxed max-w-full px-[14px] py-[10px] break-words text-white"
+          style={{
+            background: 'rgba(var(--text-base-rgb),0.04)',
+            border: '1px solid rgba(var(--text-base-rgb),0.13)',
+            'backdrop-filter': 'blur(6px)',
+          }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full">
@@ -361,107 +393,94 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
         </Show>
       </div>
 
-      {/* Body：任务 + 步骤时间线 + 结果 */}
+      {/* 消息流：与主话题同款（右用户气泡 + 左助手气泡） */}
       <div
         ref={bodyRef}
-        class="flex-1 overflow-y-auto min-h-0 rounded-xl"
-        style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-dim)' }}
+        class="flex-1 overflow-y-auto min-h-0"
         onScroll={handleScroll}
         onWheel={handleWheel}
       >
-        <div ref={contentRef}>
+        <div ref={contentRef} class="pb-[15px]">
           <Show when={step()}>
-            {/* 任务卡 */}
+            {/* 主代理下发的任务：右侧用户气泡 */}
             <Show when={taskText()}>
-              <div
-                class="mx-4 mt-3 rounded-lg border px-3 py-2"
-                style={{
-                  background: 'rgba(var(--text-base-rgb),0.03)',
-                  'border-color': 'rgba(var(--text-base-rgb),0.08)',
-                }}
-              >
-                <div class="flex items-center gap-1.5 text-[11px] font-medium text-white/40 mb-1">
-                  <Icon name="clipboard" size={11} />
-                  {t('agent.subagent.task')}
-                </div>
-                <div class="text-[13px] leading-relaxed break-words text-white/65">
-                  {taskText()}
-                </div>
-              </div>
-            </Show>
-
-            {/* 步骤时间线（按轮次分组） */}
-            <div class="flex flex-col gap-1 px-4 mt-3">
-              <For each={renderItems()}>
-                {(item) =>
-                  item.kind === 'round' ? (
-                    <div class="flex items-center gap-2 py-1.5 select-none">
-                      <span
-                        class="flex-1 h-px"
-                        style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
-                      />
-                      <span class="font-mono text-[10px] text-white/25">
-                        {t('agent.subagent.round', { round: item.round })}
-                      </span>
-                      <span
-                        class="flex-1 h-px"
-                        style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
-                      />
+              <div class="flex items-start gap-2 mb-3 justify-end pr-[10px]">
+                <div class="flex flex-col items-end max-w-[75%]">
+                  <div
+                    class="rounded-[10px] rounded-tr-[2px] leading-relaxed max-w-full px-[14px] py-[10px] break-words text-white"
+                    style={{
+                      background: 'rgba(var(--primary-rgb),0.08)',
+                      border: '1px solid rgba(var(--primary-rgb),0.16)',
+                      'backdrop-filter': 'blur(6px)',
+                    }}
+                  >
+                    <div class="mt-1">
+                      <Markdown content={taskText()} />
                     </div>
-                  ) : (
-                    <StepRow step={item.step} />
-                  )
-                }
-              </For>
-            </div>
+                  </div>
+                </div>
+              </div>
+            </Show>
 
-            {/* 工作中指示 */}
+            {/* 子代理各轮叙述 + 工具执行：左侧助手气泡 */}
+            <For each={turns()}>
+              {(turn) =>
+                agentRow(
+                  <>
+                    <Show
+                      when={turn.text || turn.tools.length > 0}
+                      fallback={
+                        <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
+                          <Icon name="spinner" size={14} class="animate-spin opacity-50" />
+                          <span class="animate-pulse">{t('agent.sub.working')}</span>
+                        </div>
+                      }
+                    >
+                      <Show when={turn.text}>
+                        <div class="mt-1 text-[13px]">
+                          <Markdown content={turn.text} />
+                        </div>
+                      </Show>
+                      <Show when={turn.tools.length > 0}>
+                        <div class="flex flex-col gap-1" classList={{ 'mt-2': !!turn.text }}>
+                          <For each={turn.tools}>{(tool) => <ToolRow step={tool} />}</For>
+                        </div>
+                      </Show>
+                    </Show>
+                  </>,
+                )
+              }
+            </For>
+
+            {/* 工作中：尾随气泡（正在执行工具 / 等待下一轮输出） */}
             <Show when={isRunning()}>
-              <div class="flex items-center gap-2 px-6 py-3 text-[12px] text-white/35 italic">
-                <Icon name="spinner" size={12} class="animate-spin" />
-                {t('agent.sub.working')}
-              </div>
+              {agentRow(
+                <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
+                  <Icon name="spinner" size={14} class="animate-spin opacity-50" />
+                  <span class="animate-pulse">{t('agent.sub.working')}</span>
+                </div>,
+              )}
             </Show>
 
-            {/* 错误状态 */}
+            {/* 出错：红色文本助手气泡 */}
             <Show when={isError()}>
-              <div
-                class="mx-4 mt-3 mb-3 px-3 py-2 rounded-lg text-[12px] leading-relaxed break-words"
-                style={{
-                  background: 'rgba(224,85,85,0.08)',
-                  border: '1px solid rgba(224,85,85,0.2)',
-                  color: 'rgba(224,85,85,0.75)',
-                }}
-              >
-                {resultText() || t('agent.sub.error')}
-              </div>
+              {agentRow(
+                <div
+                  class="text-[13px] leading-relaxed break-words"
+                  style={{ color: 'rgba(224,85,85,0.75)' }}
+                >
+                  {resultText() || t('agent.sub.error')}
+                </div>,
+              )}
             </Show>
 
-            {/* 最终结果 */}
+            {/* 完成后的最终报告：最后一条助手气泡（完整 Markdown） */}
             <Show when={isComplete() && resultText()}>
-              <div
-                class="mx-4 mt-3 mb-4 rounded-lg px-3 py-2.5"
-                style={{
-                  background: 'rgba(var(--text-base-rgb),0.04)',
-                  border: '1px solid rgba(var(--text-base-rgb),0.13)',
-                  'backdrop-filter': 'blur(6px)',
-                }}
-              >
-                <div class="flex items-center gap-1.5 text-[11px] font-medium text-white/40 mb-1.5">
-                  <Icon name="check-circle" size={11} />
-                  {t('agent.subagent.result')}
-                </div>
-                <div class="text-[13px] leading-relaxed break-words text-white/75">
+              {agentRow(
+                <div class="mt-1 text-[13px] text-white/85">
                   <Markdown content={resultText()} />
-                </div>
-              </div>
-            </Show>
-
-            {/* 无任何步骤时的空态 */}
-            <Show when={renderItems().length === 0 && !isComplete()}>
-              <div class="flex items-center justify-center py-8 text-[12px] text-white/25 italic">
-                {isError() ? t('agent.sub.error') : t('agent.sub.working')}
-              </div>
+                </div>,
+              )}
             </Show>
           </Show>
         </div>

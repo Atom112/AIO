@@ -13,7 +13,8 @@ import type {
   MemoryRerankConfig,
   RerankTestResult,
 } from '../../../core/types/memory';
-import { btnBadge, btnGhost, btnSecondarySm } from '../../../shared/components/buttonStyles';
+import { btnBadge, btnSecondarySm } from '../../../shared/components/buttonStyles';
+import Switch from '../../../shared/components/Switch';
 
 export interface MemoryRerankSectionProps {
   projectId: string;
@@ -64,14 +65,13 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
     setEditingRerank(true);
   };
 
-  const toggleRerank = async () => {
+  const toggleRerank = async (next: boolean) => {
     const r = rerank();
     if (!r) return;
-    const next = !r.enabled;
     if (next) {
       // 启用前说明性能开销（内存/CPU 延迟），用户知情确认
       if (!window.confirm(t('project.memoryPanel.rerankEnableConfirm'))) return;
-      // 本地重排需先下载模型（下载入口在设置页）
+      // 本地重排需先下载模型（下载/全局启停入口在设置页）
       if (currentModelInfo()?.downloaded === false || rerankModels().length === 0) {
         props.onNotice(t('project.memoryPanel.rerankNeedModelFirst'));
         return;
@@ -146,11 +146,11 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
           <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
             {t('project.memoryPanel.rerankTitle')}
           </label>
-          <button class={btnBadge} onClick={() => void toggleRerank()}>
-            {rerank().enabled
-              ? t('project.memoryPanel.rerankDisable')
-              : t('project.memoryPanel.rerankEnable')}
-          </button>
+          <Switch
+            checked={rerank().enabled}
+            label={t('project.memoryPanel.rerankTitle')}
+            onChange={(enabled) => void toggleRerank(enabled)}
+          />
         </div>
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0 text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
@@ -159,7 +159,7 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
           <Show
             when={!editingRerank()}
             fallback={
-              <button class={btnGhost} onClick={() => setEditingRerank(false)}>
+              <button class={btnSecondarySm} onClick={() => setEditingRerank(false)}>
                 {t('common.cancel')}
               </button>
             }
@@ -168,9 +168,6 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
               {t('project.memoryPanel.rerankConfigure')}
             </button>
           </Show>
-        </div>
-        <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}>
-          {t('project.memoryPanel.rerankDesc')}
         </div>
         <Show when={editingRerank()}>
           <div class="flex flex-col gap-2 rounded-lg border border-dark-100 p-2.5">

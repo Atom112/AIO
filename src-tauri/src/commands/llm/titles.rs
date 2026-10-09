@@ -1,4 +1,4 @@
-//! 话题标题与历史摘要命令（generate_topic_title、summarize_history）。
+//! 话题标题与历史摘要命令（generate_topic_title、summarize_history、archive_history）。
 
 use crate::commands::llm::*;
 use serde_json::json;
@@ -84,6 +84,29 @@ pub(crate) async fn summarize_history(
     };
 
     Ok(summary)
+}
+
+/// 归档早期消息到本地（手动 /compact 的摘要失败回退，snapcompact 式零 API 成本）。
+///
+/// # 参数
+/// - `messages_json` — 待归档消息的 JSON 数组字符串（由前端序列化传入）
+/// - `model` — 用于 token 估算的模型名
+///
+/// # 行为
+/// 写入 {app_data}/archives/{uuid}.txt（与 read_artifact 工具共用目录），
+/// 返回 `[历史归档 #id]` 占位文本；Agent 模式下模型可按占位 ID 调 read_artifact 读回原文。
+#[tauri::command]
+pub(crate) fn archive_history(
+    app: tauri::AppHandle,
+    messages_json: String,
+    model: String,
+) -> Result<String, String> {
+    let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
+        .map_err(|e| format!("Invalid messages JSON: {}", e))?;
+    if messages.is_empty() {
+        return Err("归档需要至少一条消息".to_string());
+    }
+    archive_early_messages(&app, &messages, &model)
 }
 
 /// 清洗模型返回的原始字符串为合规标题。

@@ -2519,7 +2519,7 @@ pub(crate) async fn compress_context(
         Ok(s) => s,
         Err(e) if e == "cancelled" => return Err("cancelled".into()),
         Err(e) => {
-            let placeholder = archive_early_messages(window, &early, model)?;
+            let placeholder = archive_early_messages(window.app_handle(), &early, model)?;
             tracing::warn!(
                 "[compression] 摘要生成失败（{}），已本地归档 {} 条消息",
                 e,

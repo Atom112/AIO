@@ -125,6 +125,7 @@ pub fn run() {
             commands::engine::list_engine_models,
             commands::attachment::process_file_content,
             commands::llm::summarize_history,
+            commands::llm::archive_history,
             commands::llm::append_message,
             commands::llm::btw::ask_btw_question,
             commands::llm::delete_topic_message,

@@ -24,7 +24,9 @@ export interface CommandAction {
   description: string;
   category: CommandCategory;
   defaultKeys: string; // 默认快捷键，如 "Ctrl+K"
-  handler: (args?: string) => void; // Action 型斜杠命令可接收参数文本（如 `/compact 10000`）
+  // Action 型斜杠命令可接收参数文本（如 `/compact 10000`）；
+  // 返回 string 时作为该命令的用户反馈文案（由 ChatPage 的反馈消息展示）
+  handler: (args?: string) => void | string | Promise<void | string>;
   /** 斜杠命令：注入到聊天消息的提示词正文（含 $ARGUMENTS 占位符） */
   promptBody?: string;
   /** 斜杠命令：参数占位符提示文本，如 "[file path]" */

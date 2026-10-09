@@ -13,6 +13,7 @@ import {
   runAgentTurn,
   stopLlmStream,
   summarizeHistory,
+  archiveHistory,
   type ActiveCheckpoint,
 } from '../../core/api/chat';
 import { storeChatAttachment } from '../../core/api/attachment';
@@ -60,6 +61,7 @@ import {
   initMcpServers,
   activeSubagentView,
   setActiveSubagentView,
+  type CompactOutcome,
 } from '../../core/store/store';
 import { EVENTS } from '../../core/api/events';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
@@ -486,41 +488,56 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 检查并总结对话历史（Token-based）
-   * 当会话累计 token 数超过模型上下文窗口的 75% 时，触发压缩。
+   * 检查并总结对话历史（Token-based）。
+   * 自动路径（对话结束事件）：占用超过模型上下文窗口 75% 时触发压缩；
+   * 手动路径（/compact，force=true）：跳过阈值守卫，无条件立即压缩（对齐主流 Agent 行为）。
+   * 摘要失败时回退本地归档（snapcompact 式），早期上下文不丢失且可用 read_artifact 读回。
    */
-  const checkAndSummarize = async (keepBudgetOverride?: number) => {
+  const checkAndSummarize = async (
+    keepBudgetOverride?: number,
+    opts?: { force?: boolean },
+  ): Promise<CompactOutcome> => {
     const topic = activeTopic();
     const currentMdl = selectedModel();
-    if (!topic || !currentMdl) return;
+    if (!topic || !currentMdl) return { kind: 'skipped', reason: 'nothing-to-compact' };
 
     // 获取当前模型的上下文窗口大小
     const maxContext = await getModelContextWindow();
 
-    // 统计实际上下文占用（使用最后一条 assistant 消息的 contextTokens，不跨消息累加）
+    // 统计上下文占用：优先取最后一条 assistant 消息的上下文峰值
+    // （contextTokens 已含全部历史 + 系统前缀 + 输出，勿再重复累加 user 消息估算）
     let totalUsed = 0;
-    // 找到最后一条 assistant 消息，取其上下文峰值
+    let hasAssistantCtx = false;
     for (let i = topic.history.length - 1; i >= 0; i--) {
       const msg = topic.history[i];
       if (msg.role === 'assistant') {
         totalUsed = (msg.contextTokens || msg.inputTokens || 0) + (msg.outputTokens || 0);
+        hasAssistantCtx = true;
         break;
       }
     }
-    // 补充 user 消息的粗略估算（最后一条 assistant 未覆盖的部分）
-    for (const msg of topic.history) {
-      if (msg.role === 'user') {
+    // 无 assistant 回复（尚未完成过对话）时退回字符估算
+    if (!hasAssistantCtx) {
+      for (const msg of topic.history) {
         const text = typeof msg.content === 'string' ? msg.content : msg.displayText || '';
         totalUsed += Math.ceil(text.length / 4);
       }
     }
 
     const usageRatio = maxContext > 0 ? totalUsed / maxContext : 0;
-    if (usageRatio < 0.75 || topic.history.length <= 10) return;
+    // 自动路径保留阈值与最短历史守卫；手动 /compact 一律放行（由 summarizeCount 决定是否真有内容可压）
+    if (!opts?.force && (usageRatio < 0.75 || topic.history.length <= 10)) {
+      return {
+        kind: 'skipped',
+        reason: usageRatio < 0.75 ? 'below-threshold' : 'short-history',
+      };
+    }
 
-    console.log(
-      `[Context] 触发压缩: ${(usageRatio * 100).toFixed(0)}% (${totalUsed}/${maxContext} tokens, ${topic.history.length} 条消息)`,
-    );
+    if (hasAssistantCtx) {
+      console.log(
+        `[Context] 触发压缩: ${(usageRatio * 100).toFixed(0)}% (${totalUsed}/${maxContext} tokens, ${topic.history.length} 条消息)`,
+      );
+    }
 
     // Token 预算制保留：默认从尾部累计约 2 万 token（至少保留最近 4 条消息，即一个完整回合）；
     // 可通过 `/compact <n>` 指定本次保留预算
@@ -539,7 +556,7 @@ const ChatPage: Component = () => {
     }
     keepCount = Math.max(keepCount, 4);
     const summarizeCount = topic.history.length - keepCount;
-    if (summarizeCount <= 0) return;
+    if (summarizeCount <= 0) return { kind: 'skipped', reason: 'nothing-to-compact' };
     // 覆盖式摘要：把旧摘要作为输入上下文注入，新摘要整体替换旧摘要，避免拼接式膨胀
     const messagesToSummarize = topic.summary
       ? [
@@ -548,13 +565,10 @@ const ChatPage: Component = () => {
         ]
       : topic.history.slice(0, summarizeCount);
 
-    try {
-      const newSummarySnippet = await summarizeHistory(
-        llmCreds(currentMdl),
-        JSON.stringify(messagesToSummarize),
-      );
+    // 落库：裁剪历史并把 topic.summary 替换为新摘要/归档占位文本
+    const persistCompactedTopic = async (newSummary: string): Promise<CompactOutcome> => {
       const latestTopic = activeTopic();
-      if (!latestTopic) return;
+      if (!latestTopic) return { kind: 'skipped', reason: 'nothing-to-compact' };
       const updatedHistory = latestTopic.history.slice(summarizeCount);
       setDatas(
         'assistants',
@@ -563,13 +577,39 @@ const ChatPage: Component = () => {
         (t) => t.id === latestTopic.id,
         {
           history: updatedHistory,
-          summary: newSummarySnippet,
+          summary: newSummary,
         },
       );
       await saveSingleAssistantToBackend(currentAssistantId()!);
       console.log('[Context] 压缩完成');
+      return {
+        kind: 'compressed',
+        summarizedCount: summarizeCount,
+        keptCount: updatedHistory.length,
+      };
+    };
+
+    try {
+      const newSummarySnippet = await summarizeHistory(
+        llmCreds(currentMdl),
+        JSON.stringify(messagesToSummarize),
+      );
+      return await persistCompactedTopic(newSummarySnippet);
     } catch (e) {
-      console.error('生成总结失败:', e);
+      // 摘要失败 → 本地归档回退（零 API 成本；Agent 模式下可用 read_artifact 工具按占位 ID 读回原文）
+      try {
+        const placeholder = await archiveHistory(
+          JSON.stringify(messagesToSummarize),
+          currentMdl.model_id,
+        );
+        const outcome = await persistCompactedTopic(placeholder);
+        return outcome.kind === 'compressed'
+          ? { kind: 'archived', count: summarizeCount }
+          : outcome;
+      } catch (archiveErr) {
+        console.error('生成总结失败:', e, '归档亦失败:', archiveErr);
+        return { kind: 'failed', error: String(e) };
+      }
     }
   };
 
@@ -1147,13 +1187,17 @@ ${asstObj.prompt}`;
       ],
     );
 
-    // 执行 handler（Action 型命令可携带参数，如 `/compact 10000` 指定保留 token 预算）
-    await cmd.handler(resolved.args);
+    // 执行 handler（Action 型命令可携带参数，如 `/compact 10000` 指定保留 token 预算）；
+    // handler 返回 string 时作为自定义反馈（/compact 用它区分已压缩/无需压缩/失败）
+    const handlerResult = await cmd.handler(resolved.args);
 
     // 根据命令类型给出反馈消息
     let feedback = '';
     if (cmd.id === 'slash-compact') {
-      feedback = `✓ /compact — ${t('slash.feedback.compacted')}`;
+      feedback =
+        typeof handlerResult === 'string'
+          ? handlerResult
+          : `✓ /compact — ${t('slash.feedback.compactSkipped')}`;
     } else if (cmd.id === 'slash-clear') {
       // /clear handler 已清空历史，无需额外反馈
       return;

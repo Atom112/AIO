@@ -13,6 +13,7 @@ import {
   setDatas as storeSetDatas,
   type ActivatedModel,
   type AgentStep,
+  type CompactOutcome,
   type DatasState,
   type Message,
   type SubagentStep,
@@ -35,7 +36,11 @@ export interface ChatEventDeps {
   selectedModel: () => ActivatedModel | null;
   saveSingleAssistantToBackend: (id: string) => Promise<void>;
   checkAndRename: (eventAsstId: string, eventTopicId: string) => Promise<void>;
-  checkAndSummarize: (keepBudgetOverride?: number) => Promise<void>;
+  /** 自动路径（对话结束后调用，不带 force，遵守 75% 阈值守卫）；返回结果仅手动路径消费 */
+  checkAndSummarize: (
+    keepBudgetOverride?: number,
+    opts?: { force?: boolean },
+  ) => Promise<CompactOutcome>;
 }
 
 /**

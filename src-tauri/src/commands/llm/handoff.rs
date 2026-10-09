@@ -1,7 +1,7 @@
 //! 压缩归档与交接文档（snapcompact 式归档、handoff 文档、子智能体进度摘要）。
 
 use crate::commands::llm::*;
-use tauri::{AppHandle, Window};
+use tauri::AppHandle;
 
 /// 从子智能体上下文提取已完成工作的进度摘要（命中轮数上限或未产出最终文本时使用），
 /// 保证即使任务被截断也能向主 Agent 返回有效信息。
@@ -80,12 +80,12 @@ pub(crate) fn build_subagent_progress_summary(
 
 /// 本地归档早期消息（snapcompact 式零成本压缩回退）：
 /// 写入 {app_data}/archives/{uuid}.txt，返回 [历史归档 #id] 占位文本（含条数/token 估算/涉及工具）。
+/// 归档与 read_artifact 工具共用同一目录，模型可按占位 ID 读回完整内容。
 pub(crate) fn archive_early_messages(
-    window: &Window,
+    app: &AppHandle,
     early: &[serde_json::Value],
     model: &str,
 ) -> Result<String, String> {
-    let app = window.app_handle();
     let dir = app
         .path()
         .app_data_dir()

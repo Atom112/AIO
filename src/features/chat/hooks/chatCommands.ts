@@ -15,6 +15,7 @@ import {
   setDatas as storeSetDatas,
   type AgentMode,
   type Assistant,
+  type CompactOutcome,
   type DatasState,
 } from '../../../core/store/store';
 
@@ -51,7 +52,11 @@ export interface ChatCommandDeps {
   currentTopicId: () => string | null;
   setCurrentTopicId: (id: string | null) => void;
   saveSingleAssistantToBackend: (id: string) => Promise<void>;
-  checkAndSummarize: (keepBudgetOverride?: number) => Promise<void>;
+  /** force=true 跳过自动压缩阈值守卫（手动 /compact 立即执行） */
+  checkAndSummarize: (
+    keepBudgetOverride?: number,
+    opts?: { force?: boolean },
+  ) => Promise<CompactOutcome>;
   navigate: (path: string) => void;
 }
 
@@ -266,16 +271,36 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     },
   });
 
+  /** 将压缩结果转为用户反馈文案（区分已压缩/归档回退/无需压缩/失败）。 */
+  const compactOutcomeFeedback = (outcome: CompactOutcome): string => {
+    switch (outcome.kind) {
+      case 'compressed':
+        return `✓ /compact — ${t('slash.feedback.compactDone', {
+          summarized: outcome.summarizedCount,
+          kept: outcome.keptCount,
+        })}`;
+      case 'archived':
+        return `✓ /compact — ${t('slash.feedback.compactArchived', {
+          count: outcome.count,
+        })}`;
+      case 'skipped':
+        return `✓ /compact — ${t('slash.feedback.compactSkipped')}`;
+      case 'failed':
+        return `✗ /compact — ${t('slash.feedback.compactFailed', { error: outcome.error })}`;
+    }
+  };
+
   const cmdSlashCompact = registerCommand({
     id: 'slash-compact',
     handler: async (args?: string) => {
-      // 可选参数：保留的 token 预算（`/compact 10000`），默认 2 万
+      // 可选参数：保留的 token 预算（`/compact 10000`），默认 2 万；
+      // 手动执行跳过自动压缩的 75% 阈值守卫，无条件立即压缩（对齐主流 Agent 行为）
       const budgetArg = args ? Number(args.trim()) : NaN;
+      const budget = Number.isFinite(budgetArg) && budgetArg > 0 ? budgetArg : undefined;
       setIsThinking(true);
       try {
-        await checkAndSummarize(
-          Number.isFinite(budgetArg) && budgetArg > 0 ? budgetArg : undefined,
-        );
+        const outcome = await checkAndSummarize(budget, { force: true });
+        return compactOutcomeFeedback(outcome);
       } finally {
         setIsThinking(false);
       }

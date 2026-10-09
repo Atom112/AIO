@@ -158,6 +158,19 @@ export interface Topic {
 /** Agent 执行模式 */
 export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
 
+/**
+ * 上下文压缩（/compact 或自动触发）的结果，供 UI 给出准确反馈。
+ * - compressed：摘要成功落库（覆盖 topic.summary 并裁剪历史）
+ * - archived：摘要失败，已回退本地归档（read_artifact 可读回）
+ * - skipped：未执行压缩（未达自动阈值 / 保留区覆盖全部历史 / 无可压缩内容）
+ * - failed：摘要与归档均失败，历史未改动
+ */
+export type CompactOutcome =
+  | { kind: 'compressed'; summarizedCount: number; keptCount: number }
+  | { kind: 'archived'; count: number }
+  | { kind: 'skipped'; reason: 'below-threshold' | 'short-history' | 'nothing-to-compact' }
+  | { kind: 'failed'; error: string };
+
 /* 助手接口，定义 AI 助手的数据结构 */
 export interface Assistant {
   id: string; // 助手唯一标识符

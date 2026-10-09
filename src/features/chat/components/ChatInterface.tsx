@@ -1650,7 +1650,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                       <Show when={hasRunningSubagent()}>
                         <Icon name="spinner" size={11} class="animate-spin mx-0.5" />
                       </Show>
-                      {` ${subagents().length} `}
+                      {` ${t('agent.subagent.menuCount', { count: subagents().length })} `}
                       <Icon name="chevron-up" size={10} class="ml-0.5" />
                     </button>
                     <Show when={subagentMenuOpen()}>

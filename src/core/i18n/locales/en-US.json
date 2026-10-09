@@ -22,6 +22,7 @@
   "agent.subagent.back": "Back to main chat",
   "agent.subagent.menuTitle": "Subagents",
   "agent.subagent.menuTrigger": "Subagents ({{count}})",
+  "agent.subagent.menuCount": "{{count}}",
   "agent.checkpoint.resume": "Interrupted turn detected (possible crash) — click to resume from checkpoint",
   "agent.mode.auto": "Auto",
   "agent.mode.autoDescription": "Automatically approve project actions.",

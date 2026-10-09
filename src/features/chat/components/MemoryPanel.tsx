@@ -44,9 +44,7 @@ import type {
   MemoryStats,
 } from '../../../core/types/memory';
 import {
-  btnBadge,
   btnClose,
-  btnGhost,
   btnSecondarySm,
   btnTabXs,
   tabActive,
@@ -561,14 +559,14 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 </label>
                 <div class="flex items-center gap-1.5">
                   <button
-                    class={btnBadge}
+                    class={btnSecondarySm}
                     disabled={graphExtracting()}
                     onClick={() => void extractGraph()}
                   >
                     {graphExtracting() ? '...' : t('project.memoryPanel.graphExtract')}
                   </button>
                   <button
-                    class={btnBadge}
+                    class={btnSecondarySm}
                     disabled={consolidating()}
                     onClick={() => void consolidate()}
                   >
@@ -613,12 +611,12 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
               <Show
                 when={!editingEmbedding()}
                 fallback={
-                  <button class={btnGhost} onClick={() => setEditingEmbedding(false)}>
+                  <button class={btnSecondarySm} onClick={() => setEditingEmbedding(false)}>
                     {t('common.cancel')}
                   </button>
                 }
               >
-                <button class={btnBadge} onClick={openEmbeddingEditor}>
+                <button class={btnSecondarySm} onClick={openEmbeddingEditor}>
                   {t('project.memoryPanel.embeddingSwitch')}
                 </button>
               </Show>
@@ -765,21 +763,21 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                         </div>
                       </div>
                       <div class="flex items-center gap-1 shrink-0">
-                        <button class={btnBadge} onClick={() => void editFact(f)}>
+                        <button class={btnSecondarySm} onClick={() => void editFact(f)}>
                           {t('project.memoryPanel.edit')}
                         </button>
-                        <button class={btnBadge} onClick={() => void togglePin(f)}>
+                        <button class={btnSecondarySm} onClick={() => void togglePin(f)}>
                           {f.pinned ? t('project.memoryPanel.unpin') : t('project.memoryPanel.pin')}
                         </button>
                         <Show when={f.status === 'active'}>
-                          <button class={btnBadge} onClick={() => void archiveFact(f)}>
+                          <button class={btnSecondarySm} onClick={() => void archiveFact(f)}>
                             {t('project.memoryPanel.archive')}
                           </button>
                         </Show>
-                        <button class={btnBadge} onClick={() => void deleteFact(f)}>
+                        <button class={btnSecondarySm} onClick={() => void deleteFact(f)}>
                           {t('project.memoryPanel.delete')}
                         </button>
-                        <button class={btnBadge} onClick={() => void toggleVersions(f.id)}>
+                        <button class={btnSecondarySm} onClick={() => void toggleVersions(f.id)}>
                           {t('project.memoryPanel.versions')}
                         </button>
                       </div>
@@ -878,19 +876,19 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             <Show when={notice()}>
               <span class="flex-1 text-[11px] text-pri/80">{notice()}</span>
             </Show>
-            <button class={btnBadge} onClick={() => void reindex()}>
+            <button class={btnSecondarySm} onClick={() => void reindex()}>
               {t('project.memoryPanel.reindex')}
             </button>
-            <button class={btnBadge} onClick={() => void prune()}>
+            <button class={btnSecondarySm} onClick={() => void prune()}>
               {t('project.memoryPanel.prune')}
             </button>
-            <button class={btnBadge} onClick={() => void doExport()}>
+            <button class={btnSecondarySm} onClick={() => void doExport()}>
               {t('project.memoryPanel.export')}
             </button>
-            <button class={btnBadge} onClick={() => void doImport()}>
+            <button class={btnSecondarySm} onClick={() => void doImport()}>
               {t('project.memoryPanel.import')}
             </button>
-            <button class={btnBadge} onClick={() => void clearAll()}>
+            <button class={btnSecondarySm} onClick={() => void clearAll()}>
               {t('project.memoryPanel.clear')}
             </button>
           </div>

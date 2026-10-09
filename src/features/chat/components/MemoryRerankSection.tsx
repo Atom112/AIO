@@ -13,7 +13,7 @@ import type {
   MemoryRerankConfig,
   RerankTestResult,
 } from '../../../core/types/memory';
-import { btnBadge, btnSecondarySm } from '../../../shared/components/buttonStyles';
+import { btnSecondarySm } from '../../../shared/components/buttonStyles';
 import Switch from '../../../shared/components/Switch';
 
 export interface MemoryRerankSectionProps {
@@ -164,7 +164,7 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
               </button>
             }
           >
-            <button class={btnBadge} onClick={openRerankEditor}>
+            <button class={btnSecondarySm} onClick={openRerankEditor}>
               {t('project.memoryPanel.rerankConfigure')}
             </button>
           </Show>

@@ -602,7 +602,7 @@
   "project.memoryPanel.embeddingPickLocal": "Choose the local embedding model for this project (downloads and global enable/disable live in Settings → Embedding Models)",
   "project.memoryPanel.embeddingNoModels": "No embedding model available yet, please download one in Settings → Embedding Models",
   "project.memoryPanel.embeddingDims": "Target dimensions (optional trim for Matryoshka models, 0 = model default)",
-  "project.memoryPanel.rerankTitle": "Reranking (two-stage refine)",
+  "project.memoryPanel.rerankTitle": "Reranking",
   "project.memoryPanel.rerankCurrent": "{{provider}} · {{model}} · {{status}}",
   "project.memoryPanel.rerankStatusOn": "Enabled",
   "project.memoryPanel.rerankStatusOff": "Disabled",

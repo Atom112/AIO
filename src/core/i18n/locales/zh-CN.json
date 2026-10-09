@@ -602,7 +602,7 @@
   "project.memoryPanel.embeddingPickLocal": "选择本项目使用的本地嵌入模型（模型下载与全局启停请在「设置 → Embedding 模型管理」中进行）",
   "project.memoryPanel.embeddingNoModels": "暂无可用嵌入模型，请先在「设置 → Embedding 模型管理」中下载",
   "project.memoryPanel.embeddingDims": "目标维度（Matryoshka 模型可选裁剪，0=默认全维）",
-  "project.memoryPanel.rerankTitle": "重排（二阶段精排）",
+  "project.memoryPanel.rerankTitle": "重排",
   "project.memoryPanel.rerankCurrent": "{{provider}} · {{model}} · {{status}}",
   "project.memoryPanel.rerankStatusOn": "已启用",
   "project.memoryPanel.rerankStatusOff": "未启用",

@@ -45,13 +45,13 @@ export const saveAssistant = (assistant: Assistant) =>
 /** 删除一个助手。 */
 export const deleteAssistant = (id: string) => invoke<void>('delete_assistant', { id });
 
-/** 压缩/总结历史（覆盖式摘要），返回新摘要文本。 */
-export const summarizeHistory = (creds: LlmCredentials, messagesJson: string) =>
-  invoke<string>('summarize_history', { ...creds, messagesJson });
+/** 压缩/总结历史（覆盖式摘要），返回新摘要文本。locale 决定摘要提示词语言。 */
+export const summarizeHistory = (creds: LlmCredentials, messagesJson: string, locale: string) =>
+  invoke<string>('summarize_history', { ...creds, messagesJson, locale });
 
 /** 摘要失败时的本地归档回退：写入 {app_data}/archives，返回 [历史归档 #id] 占位文本。 */
-export const archiveHistory = (messagesJson: string, model: string) =>
-  invoke<string>('archive_history', { messagesJson, model });
+export const archiveHistory = (messagesJson: string, model: string, locale: string) =>
+  invoke<string>('archive_history', { messagesJson, model, locale });
 
 /** 为话题生成标题，返回标题文本。 */
 export const generateTopicTitle = (creds: LlmCredentials, messagesJson: string) =>

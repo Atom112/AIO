@@ -593,6 +593,7 @@ const ChatPage: Component = () => {
       const newSummarySnippet = await summarizeHistory(
         llmCreds(currentMdl),
         JSON.stringify(messagesToSummarize),
+        locale(),
       );
       return await persistCompactedTopic(newSummarySnippet);
     } catch (e) {
@@ -601,6 +602,7 @@ const ChatPage: Component = () => {
         const placeholder = await archiveHistory(
           JSON.stringify(messagesToSummarize),
           currentMdl.model_id,
+          locale(),
         );
         const outcome = await persistCompactedTopic(placeholder);
         return outcome.kind === 'compressed'

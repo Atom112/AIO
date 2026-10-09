@@ -1182,6 +1182,7 @@ pub(crate) async fn execute_subagent(
                         parent_topic_id,
                         token,
                         limits.keep_recent_tokens,
+                        locale,
                     )
                     .await;
                 }
@@ -1204,6 +1205,7 @@ pub(crate) async fn execute_subagent(
                         parent_topic_id,
                         token,
                         limits.keep_recent_tokens,
+                        locale,
                     )
                     .await;
                     if res.is_ok() {
@@ -1348,6 +1350,7 @@ async fn compress_sub_context(
     parent_topic_id: &str,
     token: &CancellationToken,
     keep_recent_tokens: usize,
+    locale: &str,
 ) -> Result<(), String> {
     let mut msgs = std::mem::take(sub_msgs);
     let r = compress_context(
@@ -1362,6 +1365,7 @@ async fn compress_sub_context(
         token,
         keep_recent_tokens,
         "subagent",
+        locale,
     )
     .await;
     *sub_msgs = msgs;

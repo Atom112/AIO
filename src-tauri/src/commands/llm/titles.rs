@@ -8,6 +8,7 @@ use serde_json::json;
 /// # 参数
 /// - `api_url` / `api_key` / `model` — 目标 LLM 端点与模型
 /// - `messages_json` — 待摘要消息的 JSON 数组字符串（由前端序列化传入）
+/// - `locale` — UI 语言（"en-US" 英文提示词，其余中文）
 ///
 /// # 行为
 /// 校验 URL 后发起一次非流式补全请求，返回摘要文本；失败时以中文错误串上抛。
@@ -17,6 +18,7 @@ pub(crate) async fn summarize_history(
     api_key: String,
     model: String,
     messages_json: String,
+    locale: Option<String>,
 ) -> Result<String, String> {
     let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
         .map_err(|e| format!("Invalid messages JSON: {}", e))?;
@@ -51,9 +53,15 @@ pub(crate) async fn summarize_history(
         })
         .collect();
 
+    let locale = locale.unwrap_or_default();
+    let is_en = locale == "en-US";
     messages_for_api.push(json!({
         "role": "system",
-        "content": "请简要总结以上对话的核心内容和用户需求，作为后续交流的长期记忆（500字以内）。"
+        "content": if is_en {
+            "Briefly summarize the core content and user needs of the conversation above, as long-term memory for future exchanges (within 300 words)."
+        } else {
+            "请简要总结以上对话的核心内容和用户需求，作为后续交流的长期记忆（500字以内）。"
+        }
     }));
 
     let body = json!({
@@ -91,6 +99,7 @@ pub(crate) async fn summarize_history(
 /// # 参数
 /// - `messages_json` — 待归档消息的 JSON 数组字符串（由前端序列化传入）
 /// - `model` — 用于 token 估算的模型名
+/// - `locale` — UI 语言（"en-US" 英文占位文本，其余中文）
 ///
 /// # 行为
 /// 写入 {app_data}/archives/{uuid}.txt（与 read_artifact 工具共用目录），
@@ -100,13 +109,14 @@ pub(crate) fn archive_history(
     app: tauri::AppHandle,
     messages_json: String,
     model: String,
+    locale: Option<String>,
 ) -> Result<String, String> {
     let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
         .map_err(|e| format!("Invalid messages JSON: {}", e))?;
     if messages.is_empty() {
         return Err("归档需要至少一条消息".to_string());
     }
-    archive_early_messages(&app, &messages, &model)
+    archive_early_messages(&app, &messages, &model, &locale.unwrap_or_default())
 }
 
 /// 清洗模型返回的原始字符串为合规标题。

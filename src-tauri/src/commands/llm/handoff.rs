@@ -81,10 +81,12 @@ pub(crate) fn build_subagent_progress_summary(
 /// 本地归档早期消息（snapcompact 式零成本压缩回退）：
 /// 写入 {app_data}/archives/{uuid}.txt，返回 [历史归档 #id] 占位文本（含条数/token 估算/涉及工具）。
 /// 归档与 read_artifact 工具共用同一目录，模型可按占位 ID 读回完整内容。
+/// 占位文本跟随 locale（en-US 英文，其余中文）。
 pub(crate) fn archive_early_messages(
     app: &AppHandle,
     early: &[serde_json::Value],
     model: &str,
+    locale: &str,
 ) -> Result<String, String> {
     let dir = app
         .path()
@@ -114,21 +116,30 @@ pub(crate) fn archive_early_messages(
     let path = dir.join(format!("{}.txt", artifact_id));
     std::fs::write(&path, &out).map_err(|e| e.to_string())?;
 
+    let is_en = locale == "en-US";
     let names = if tool_names.is_empty() {
         String::new()
     } else {
-        format!(
-            "涉及工具: {}。",
-            tool_names.into_iter().collect::<Vec<_>>().join(", ")
-        )
+        let joined = tool_names.into_iter().collect::<Vec<_>>().join(", ");
+        if is_en {
+            format!("Tools involved: {joined}.")
+        } else {
+            format!("涉及工具: {joined}。")
+        }
     };
-    Ok(format!(
-        "[历史归档 #{}] 早期对话已本地归档（{} 条消息，约 {} tokens）。{}需要细节时用 read_artifact 工具读取。",
-        artifact_id,
-        early.len(),
-        total_tokens,
-        names
-    ))
+    Ok(if is_en {
+        format!(
+            "[Archive #{artifact_id}] Early conversation archived locally ({} messages, ~{} tokens). {names}Use the read_artifact tool when details are needed.",
+            early.len(),
+            total_tokens
+        )
+    } else {
+        format!(
+            "[历史归档 #{artifact_id}] 早期对话已本地归档（{} 条消息，约 {} tokens）。{names}需要细节时用 read_artifact 工具读取。",
+            early.len(),
+            total_tokens
+        )
+    })
 }
 
 /// 生成工作交接文档（handoff）：写入 {app_data}/handoffs/{assistant}-{topic}-{ts}.md。

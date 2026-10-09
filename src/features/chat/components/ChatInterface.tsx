@@ -154,6 +154,11 @@ interface ChatInterfaceProps {
 const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   let textareaRef: HTMLTextAreaElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
+  // 消息内容包装层（滚动容器内所有子元素）：流式跟底 ResizeObserver 的观察对象。
+  // 滚动容器本身是 flex-grow 固定高度盒子，内容增长只改变 scrollHeight、不改变其
+  // 盒子尺寸，RO 观察容器时除 observe() 首次回调外从不触发；包装层高度随内容真实
+  // 增长，流式输出期间每次内容扩展都会产生 RO 回调。
+  let streamContentRef: HTMLDivElement | undefined;
   const [autoScroll, setAutoScroll] = createSignal(true);
   // 文件系统工具的就绪状态指示。
   // Agent 的文件操作已改为 in-process 直接调用（见 commands/llm/mod.rs 中
@@ -173,6 +178,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   // 只有计数器为 0 时滚动事件才进入真实逻辑（判断用户是否在底部），
   // 避免浏览器对一次赋值触发多次 scroll 事件导致自动跟底被误关闭。
   let pendingSnaps = 0;
+  // 最近一次程序性 scrollTop 赋值的期望值：滚动事件回显时与当前 scrollTop 比对，
+  // 一致 → 程序性回声（消费计数）；不一致 → 用户在程序性滚动间隙拖动了滚动条，
+  // 即使计数 >0 也立即按用户滚动处理——流式跟底期间贴底频率高（每 50ms 内容批次
+  // 一次），纯计数遮蔽会吃掉用户的滚动事件，出现"和自动滚动抢滚动条"。
+  let lastProgrammaticTop = -1;
   // 平滑滚动动画的 rAF ID
   let smoothScrollRAF: number | undefined;
   // 上一次记录到的历史消息数量，用于判断是否新增了消息
@@ -307,11 +317,14 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     }
   };
 
-  /** 滚动事件：区分用户滚动与程序滚动 */
+  /** 滚动事件：区分用户滚动与程序滚动（位置回显比对，见 lastProgrammaticTop 注释） */
   const handleScroll = () => {
     if (pendingSnaps > 0) {
       pendingSnaps -= 1;
-      return;
+      if (scrollContainerRef && Math.abs(scrollContainerRef.scrollTop - lastProgrammaticTop) < 2) {
+        return;
+      }
+      // 位置不匹配：程序性滚动间隙中的用户拖动，落入下方用户逻辑（计数本次已扣减）
     }
     const atBottom = isAtBottom();
     setAutoScroll(atBottom);
@@ -329,6 +342,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     if (el.scrollTop < target) {
       pendingSnaps += 1;
       el.scrollTop = target;
+      lastProgrammaticTop = target;
     }
   };
 
@@ -342,10 +356,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     // 目标不高于当前位置：绝不向上滚动（防止内容短暂塌缩时把视图弹回顶部）
     if (target <= start) {
       el.scrollTop = target;
+      lastProgrammaticTop = target;
       return;
     }
     if (Math.abs(distance) < 2) {
       el.scrollTop = target;
+      lastProgrammaticTop = target;
       return;
     }
     if (smoothScrollRAF !== undefined) cancelAnimationFrame(smoothScrollRAF);
@@ -361,6 +377,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       const eased = 1 - Math.pow(1 - progress, 3);
       pendingSnaps += 1;
       scrollContainerRef.scrollTop = start + distance * eased;
+      lastProgrammaticTop = scrollContainerRef.scrollTop;
       if (progress < 1) {
         smoothScrollRAF = requestAnimationFrame(animate);
       } else {
@@ -467,15 +484,21 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     lastHistoryLen = len;
   });
 
-  /** 流式输出期间：ResizeObserver 跟随内容增长贴底（仅在容器尺寸变化时触发） */
+  /** 流式输出期间：ResizeObserver 跟随内容增长贴底。
+   *  观察内容包装层（streamContentRef）——滚动容器是 flex-grow 固定高度盒子，
+   *  内容增长只改变 scrollHeight、不改变其盒子尺寸，观察容器本身时 RO 除
+   *  observe() 首次回调外从不触发，导致流式文本增长全程无人跟随（仅起止各
+   *  贴底一次）。包装层高度随消息内容实际增长，每次内容扩展都会回调贴底；
+   *  同时观察滚动容器，兜底窗口缩放 / 输入区高度变化等自身尺寸变化。 */
   createEffect(() => {
-    if (!props.isThinking || !scrollContainerRef) return;
+    if (!props.isThinking || !streamContentRef) return;
     const observer = new ResizeObserver(() => {
       if (!userScrolledUp && autoScroll()) {
         snapToBottom();
       }
     });
-    observer.observe(scrollContainerRef);
+    observer.observe(streamContentRef);
+    if (scrollContainerRef) observer.observe(scrollContainerRef);
     onCleanup(() => observer.disconnect());
   });
   /** 组件销毁时清理平滑滚动动画 */
@@ -568,634 +591,575 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         onWheel={handleWheel}
         class="flex-grow overflow-y-auto pb-[15px] z-[1]"
       >
-        <Show when={!props.activeTopic || (props.activeTopic?.history?.length ?? 0) === 0}>
-          <div class="min-h-full flex items-center justify-center">
-            <WelcomeScreen
-              onSuggestionClick={(text) => {
-                props.setInputMessage(text);
-                if (textareaRef) {
-                  textareaRef.focus();
-                  textareaRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-              }}
-            />
-          </div>
-        </Show>
+        <div ref={streamContentRef} class="flex flex-col min-h-full">
+          <Show when={!props.activeTopic || (props.activeTopic?.history?.length ?? 0) === 0}>
+            <div class="flex-1 flex items-center justify-center">
+              <WelcomeScreen
+                onSuggestionClick={(text) => {
+                  props.setInputMessage(text);
+                  if (textareaRef) {
+                    textareaRef.focus();
+                    textareaRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }}
+              />
+            </div>
+          </Show>
 
-        <Show when={props.activeTopic}>
-          <For each={props.activeTopic?.history}>
-            {(msg: any, index) => {
-              if (msg.role === 'tool') return null;
-              const isActiveRound = createMemo(
-                () => index() === props.typingIndex && props.isThinking,
-              );
-              const fileChanges = msg.role === 'assistant' ? aggregateFileChanges(msg) : [];
-              return (
-                <div class="flex items-start gap-2 mb-3">
-                  {/* 选择模式：复选框 */}
-                  <Show when={props.isSelectingMessages && msg.id}>
-                    <div
-                      class="flex-shrink-0 mt-1 cursor-pointer select-none"
-                      onClick={() => props.onToggleMessage(msg.id!)}
-                    >
+          <Show when={props.activeTopic}>
+            <For each={props.activeTopic?.history}>
+              {(msg: any, index) => {
+                if (msg.role === 'tool') return null;
+                const isActiveRound = createMemo(
+                  () => index() === props.typingIndex && props.isThinking,
+                );
+                const fileChanges = msg.role === 'assistant' ? aggregateFileChanges(msg) : [];
+                return (
+                  <div class="flex items-start gap-2 mb-3">
+                    {/* 选择模式：复选框 */}
+                    <Show when={props.isSelectingMessages && msg.id}>
                       <div
-                        class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-150 hover:scale-110 active:scale-95"
-                        classList={{
-                          'bg-[rgba(var(--primary-rgb),0.25)] border-[rgba(var(--primary-rgb),0.5)]':
-                            props.selectedMessageIds.has(msg.id!),
-                          'bg-transparent border-white/[0.15] hover:border-white/[0.35]':
-                            !props.selectedMessageIds.has(msg.id!),
-                        }}
+                        class="flex-shrink-0 mt-1 cursor-pointer select-none"
+                        onClick={() => props.onToggleMessage(msg.id!)}
                       >
-                        <Show when={props.selectedMessageIds.has(msg.id!)}>
-                          <Icon
-                            name="check"
-                            class="w-3 h-3"
-                            style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
-                          />
-                        </Show>
-                      </div>
-                    </div>
-                  </Show>
-                  <div
-                    ref={(el) => {
-                      if (msg.id) {
-                        animatedMessageIds.add(msg.id);
-                        messageEls.set(msg.id, el);
-                      }
-                    }}
-                    class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) && !skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
-                    style={{
-                      // content-visibility 跳过离屏渲染以省性能；contain-intrinsic-size 用
-                      // `auto <len>` 记住元素上次真实渲染高度，避免被跳过时塌缩成 100px 占位，
-                      // 导致底部跟随时总高度骤减、浏览器把 scrollTop 向上钳制（表现为每次
-                      // 新输出都跳回对话上方）。
-                      'content-visibility': 'auto',
-                      'contain-intrinsic-size': 'auto 100px',
-                    }}
-                  >
-                    <div
-                      class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start pr-[10px]'}`}
-                    >
-                      <Show when={msg.role === 'assistant'}>
                         <div
-                          class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
-                          style={{
-                            background: 'rgb(var(--text-base-rgb))',
-                            border: '1px solid var(--border-dim)',
-                            'box-shadow': '0 2px 6px rgba(0,0,0,0.25)',
+                          class="w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-150 hover:scale-110 active:scale-95"
+                          classList={{
+                            'bg-[rgba(var(--primary-rgb),0.25)] border-[rgba(var(--primary-rgb),0.5)]':
+                              props.selectedMessageIds.has(msg.id!),
+                            'bg-transparent border-white/[0.15] hover:border-white/[0.35]':
+                              !props.selectedMessageIds.has(msg.id!),
                           }}
                         >
-                          <Show
-                            when={getModelLogo(msg.modelId || selectedModel()?.model_id || '')}
-                            fallback={
-                              <span
-                                class="text-[14px] font-bold select-none"
-                                style={{ color: 'var(--color-dark-700)' }}
-                              >
-                                {(msg.modelId || selectedModel()?.model_id || 'AI')
-                                  .charAt(0)
-                                  .toUpperCase()}
-                              </span>
-                            }
-                          >
-                            <img
-                              src={getModelLogo(msg.modelId || selectedModel()?.model_id || '')!}
-                              alt={t('common.ai')}
-                              class="w-[25px] h-[25px] rounded-full"
+                          <Show when={props.selectedMessageIds.has(msg.id!)}>
+                            <Icon
+                              name="check"
+                              class="w-3 h-3"
+                              style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
                             />
                           </Show>
                         </div>
-                      </Show>
-
+                      </div>
+                    </Show>
+                    <div
+                      ref={(el) => {
+                        if (msg.id) {
+                          animatedMessageIds.add(msg.id);
+                          messageEls.set(msg.id, el);
+                        }
+                      }}
+                      class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !animatedMessageIds.has(msg.id) && !skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                      style={{
+                        // content-visibility 跳过离屏渲染以省性能；contain-intrinsic-size 用
+                        // `auto <len>` 记住元素上次真实渲染高度，避免被跳过时塌缩成 100px 占位，
+                        // 导致底部跟随时总高度骤减、浏览器把 scrollTop 向上钳制（表现为每次
+                        // 新输出都跳回对话上方）。
+                        'content-visibility': 'auto',
+                        'contain-intrinsic-size': 'auto 100px',
+                      }}
+                    >
                       <div
-                        class={`flex flex-col max-w-[75%] ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                        class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start pr-[10px]'}`}
                       >
-                        <div
-                          class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] transition-[height] duration-200 break-words group relative ${
-                            msg.role === 'assistant'
-                              ? 'rounded-tl-[2px] text-white'
-                              : 'rounded-tr-[2px] text-white'
-                          } ${isActiveRound() && msg.content ? 'message-streaming' : ''}`}
-                          style={{
-                            background:
-                              msg.role === 'assistant'
-                                ? 'rgba(var(--text-base-rgb),0.04)'
-                                : 'rgba(var(--primary-rgb),0.08)',
-                            border:
-                              msg.role === 'assistant'
-                                ? '1px solid rgba(var(--text-base-rgb),0.13)'
-                                : '1px solid rgba(var(--primary-rgb),0.16)',
-                            'backdrop-filter': 'blur(6px)',
-                          }}
-                        >
-                          <Show
-                            when={
-                              msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0
-                            }
+                        <Show when={msg.role === 'assistant'}>
+                          <div
+                            class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
+                            style={{
+                              background: 'rgb(var(--text-base-rgb))',
+                              border: '1px solid var(--border-dim)',
+                              'box-shadow': '0 2px 6px rgba(0,0,0,0.25)',
+                            }}
                           >
-                            <div class="flex flex-col gap-2 mb-2 first:mt-3">
-                              <For each={msg.displayFiles}>
-                                {(file: any) => {
-                                  const isImage = (file.mimeType || '').startsWith('image/');
-                                  const ext = (file.name.split('.').pop() || '').toLowerCase();
-                                  return (
-                                    <div
-                                      class="flex items-center cursor-default gap-3 max-w-[300px] px-[14px] py-[5px] rounded-lg transition-all duration-200"
-                                      style={{
-                                        background: 'rgba(var(--primary-rgb),0.06)',
-                                        border: '1px solid rgba(var(--primary-rgb),0.12)',
-                                      }}
-                                    >
-                                      {/* 统一的缩略图/图标框：图片与附件同尺寸 */}
-                                      <Show
-                                        when={isImage && file.storagePath}
-                                        fallback={
-                                          <div
-                                            class="flex flex-shrink-0 items-center justify-center w-7 h-7 rounded-md [&_svg]:w-4 [&_svg]:h-4"
-                                            style={{
-                                              background: 'rgba(var(--primary-rgb),0.08)',
-                                              color: 'rgba(var(--primary-rgb),0.7)',
-                                            }}
-                                          >
-                                            <span
-                                              ref={(node) => {
-                                                node.innerHTML = getLangIcon(ext);
-                                              }}
-                                            />
-                                          </div>
-                                        }
+                            <Show
+                              when={getModelLogo(msg.modelId || selectedModel()?.model_id || '')}
+                              fallback={
+                                <span
+                                  class="text-[14px] font-bold select-none"
+                                  style={{ color: 'var(--color-dark-700)' }}
+                                >
+                                  {(msg.modelId || selectedModel()?.model_id || 'AI')
+                                    .charAt(0)
+                                    .toUpperCase()}
+                                </span>
+                              }
+                            >
+                              <img
+                                src={getModelLogo(msg.modelId || selectedModel()?.model_id || '')!}
+                                alt={t('common.ai')}
+                                class="w-[25px] h-[25px] rounded-full"
+                              />
+                            </Show>
+                          </div>
+                        </Show>
+
+                        <div
+                          class={`flex flex-col max-w-[75%] ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+                        >
+                          <div
+                            class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] transition-[height] duration-200 break-words group relative ${
+                              msg.role === 'assistant'
+                                ? 'rounded-tl-[2px] text-white'
+                                : 'rounded-tr-[2px] text-white'
+                            } ${isActiveRound() && msg.content ? 'message-streaming' : ''}`}
+                            style={{
+                              background:
+                                msg.role === 'assistant'
+                                  ? 'rgba(var(--text-base-rgb),0.04)'
+                                  : 'rgba(var(--primary-rgb),0.08)',
+                              border:
+                                msg.role === 'assistant'
+                                  ? '1px solid rgba(var(--text-base-rgb),0.13)'
+                                  : '1px solid rgba(var(--primary-rgb),0.16)',
+                              'backdrop-filter': 'blur(6px)',
+                            }}
+                          >
+                            <Show
+                              when={
+                                msg.role === 'user' &&
+                                msg.displayFiles &&
+                                msg.displayFiles.length > 0
+                              }
+                            >
+                              <div class="flex flex-col gap-2 mb-2 first:mt-3">
+                                <For each={msg.displayFiles}>
+                                  {(file: any) => {
+                                    const isImage = (file.mimeType || '').startsWith('image/');
+                                    const ext = (file.name.split('.').pop() || '').toLowerCase();
+                                    return (
+                                      <div
+                                        class="flex items-center cursor-default gap-3 max-w-[300px] px-[14px] py-[5px] rounded-lg transition-all duration-200"
+                                        style={{
+                                          background: 'rgba(var(--primary-rgb),0.06)',
+                                          border: '1px solid rgba(var(--primary-rgb),0.12)',
+                                        }}
                                       >
-                                        <img
-                                          src={convertFileSrc(file.storagePath)}
-                                          loading="lazy"
-                                          class="w-7 h-7 flex-shrink-0 object-cover rounded-md border border-white/[0.08]"
-                                        />
-                                      </Show>
-                                      <div class="flex-grow overflow-hidden">
-                                        <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">
-                                          {file.name}
+                                        {/* 统一的缩略图/图标框：图片与附件同尺寸 */}
+                                        <Show
+                                          when={isImage && file.storagePath}
+                                          fallback={
+                                            <div
+                                              class="flex flex-shrink-0 items-center justify-center w-7 h-7 rounded-md [&_svg]:w-4 [&_svg]:h-4"
+                                              style={{
+                                                background: 'rgba(var(--primary-rgb),0.08)',
+                                                color: 'rgba(var(--primary-rgb),0.7)',
+                                              }}
+                                            >
+                                              <span
+                                                ref={(node) => {
+                                                  node.innerHTML = getLangIcon(ext);
+                                                }}
+                                              />
+                                            </div>
+                                          }
+                                        >
+                                          <img
+                                            src={convertFileSrc(file.storagePath)}
+                                            loading="lazy"
+                                            class="w-7 h-7 flex-shrink-0 object-cover rounded-md border border-white/[0.08]"
+                                          />
+                                        </Show>
+                                        <div class="flex-grow overflow-hidden">
+                                          <div class="text-white text-[0.9rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap">
+                                            {file.name}
+                                          </div>
                                         </div>
                                       </div>
+                                    );
+                                  }}
+                                </For>
+                              </div>
+                            </Show>
+
+                            <div class="mt-1">
+                              {/* Agent 工作过程：reasoning + toolCalls + agentSteps 统一折叠 */}
+                              <Show
+                                when={
+                                  msg.role === 'assistant' &&
+                                  (msg.reasoning ||
+                                    msg.interimContent ||
+                                    (msg as any).toolCalls?.length > 0 ||
+                                    (msg as any).agentSteps?.length > 0)
+                                }
+                              >
+                                <AgentProcessBlock
+                                  reasoning={msg.reasoning}
+                                  toolCalls={(msg as any).toolCalls}
+                                  interimContent={msg.interimContent}
+                                  isActive={isActiveRound()}
+                                  startTime={msg.agentStartTime}
+                                  agentSteps={(msg as any).agentSteps}
+                                />
+                              </Show>
+                              <Show
+                                when={
+                                  msg.role === 'assistant' &&
+                                  !msg.content &&
+                                  !(msg as any).toolCalls?.length &&
+                                  !msg.reasoning
+                                }
+                                fallback={
+                                  <Show when={msg.role !== 'tool'}>
+                                    <div
+                                      class={
+                                        isActiveRound() && msg.content
+                                          ? 'animate-stream-fade-in'
+                                          : ''
+                                      }
+                                    >
+                                      <Markdown
+                                        content={
+                                          msg.role === 'user' && msg.displayText !== undefined
+                                            ? msg.displayText
+                                            : msg.content
+                                        }
+                                      />
                                     </div>
-                                  );
-                                }}
+                                  </Show>
+                                }
+                              >
+                                <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
+                                  <Icon
+                                    src="/icons/app-logo/loading.svg"
+                                    class="w-4 h-4 animate-spin opacity-50"
+                                  />
+                                  <span class="animate-pulse">{t('chat.thinking')}</span>
+                                </div>
+                              </Show>
+                            </div>
+                          </div>
+
+                          <Show when={msg.images && msg.images.length > 0}>
+                            <div class="flex flex-wrap gap-1.5 mt-2">
+                              <For each={msg.images}>
+                                {(img) => (
+                                  <button
+                                    class={btnBadge}
+                                    onClick={() => downloadGeneratedImage(img)}
+                                    title={t('common.download')}
+                                  >
+                                    <Icon name="download" class="w-3 h-3" />
+                                    <span class="max-w-[160px] truncate">{img.name}</span>
+                                    <span class="opacity-60">{formatSize(img.size)}</span>
+                                  </button>
+                                )}
                               </For>
                             </div>
                           </Show>
 
-                          <div class="mt-1">
-                            {/* Agent 工作过程：reasoning + toolCalls + agentSteps 统一折叠 */}
-                            <Show
-                              when={
-                                msg.role === 'assistant' &&
-                                (msg.reasoning ||
-                                  msg.interimContent ||
-                                  (msg as any).toolCalls?.length > 0 ||
-                                  (msg as any).agentSteps?.length > 0)
-                              }
-                            >
-                              <AgentProcessBlock
-                                reasoning={msg.reasoning}
-                                toolCalls={(msg as any).toolCalls}
-                                interimContent={msg.interimContent}
-                                isActive={isActiveRound()}
-                                startTime={msg.agentStartTime}
-                                agentSteps={(msg as any).agentSteps}
-                              />
-                            </Show>
-                            <Show
-                              when={
-                                msg.role === 'assistant' &&
-                                !msg.content &&
-                                !(msg as any).toolCalls?.length &&
-                                !msg.reasoning
-                              }
-                              fallback={
-                                <Show when={msg.role !== 'tool'}>
-                                  <div
-                                    class={
-                                      isActiveRound() && msg.content ? 'animate-stream-fade-in' : ''
-                                    }
-                                  >
-                                    <Markdown
-                                      content={
-                                        msg.role === 'user' && msg.displayText !== undefined
-                                          ? msg.displayText
-                                          : msg.content
-                                      }
-                                    />
-                                  </div>
-                                </Show>
-                              }
-                            >
-                              <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
-                                <Icon
-                                  src="/icons/app-logo/loading.svg"
-                                  class="w-4 h-4 animate-spin opacity-50"
-                                />
-                                <span class="animate-pulse">{t('chat.thinking')}</span>
-                              </div>
-                            </Show>
-                          </div>
-                        </div>
-
-                        <Show when={msg.images && msg.images.length > 0}>
-                          <div class="flex flex-wrap gap-1.5 mt-2">
-                            <For each={msg.images}>
-                              {(img) => (
-                                <button
-                                  class={btnBadge}
-                                  onClick={() => downloadGeneratedImage(img)}
-                                  title={t('common.download')}
-                                >
-                                  <Icon name="download" class="w-3 h-3" />
-                                  <span class="max-w-[160px] truncate">{img.name}</span>
-                                  <span class="opacity-60">{formatSize(img.size)}</span>
-                                </button>
-                              )}
-                            </For>
-                          </div>
-                        </Show>
-
-                        <Show
-                          when={
-                            msg.role === 'assistant' &&
-                            (msg.modelId ||
-                              selectedModel()?.model_id ||
-                              msg.inputTokens ||
-                              msg.outputTokens)
-                          }
-                        >
-                          <div
-                            style={{
-                              color: 'rgba(var(--text-base-rgb),0.3)',
-                              'font-family': 'monospace',
-                              'font-size': '11px',
-                              'margin-left': '4px',
-                              'margin-top': '4px',
-                              opacity: '0.7',
-                              'user-select': 'none',
-                              'text-align': 'left',
-                              display: 'flex',
-                              'align-items': 'center',
-                              gap: '8px',
-                            }}
-                          >
-                            <Show when={msg.modelId || selectedModel()?.model_id}>
-                              <span>{msg.modelId || selectedModel()?.model_id}</span>
-                            </Show>
-                            <Show when={msg.inputTokens || msg.outputTokens}>
-                              <span style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}>·</span>
-                              <Show when={msg.inputTokens}>
-                                <span title={t('chat.inputTokens')}>
-                                  ↗{' '}
-                                  {msg.inputTokens! >= 1000
-                                    ? `${(msg.inputTokens! / 1000).toFixed(1)}K`
-                                    : msg.inputTokens}
-                                </span>
-                              </Show>
-                              <Show when={msg.outputTokens}>
-                                <span title={t('chat.outputTokens')}>
-                                  ↘{' '}
-                                  {msg.outputTokens! >= 1000
-                                    ? `${(msg.outputTokens! / 1000).toFixed(1)}K`
-                                    : msg.outputTokens}
-                                </span>
-                              </Show>
-                            </Show>
-                          </div>
-                        </Show>
-
-                        {/* 消息操作按钮组：始终可见 */}
-                        <div
-                          class={`flex mt-1.5 px-[4px] z-[5] gap-1.5 flex-wrap ${msg.role === 'assistant' ? 'justify-start' : 'justify-end pr-[10px]'}`}
-                        >
-                          {/* 复制按钮（每条消息都有） */}
-                          <button
-                            class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
-                            style={{
-                              border: '1px solid rgba(var(--text-base-rgb),0.25)',
-                              color: 'rgba(var(--text-base-rgb),0.6)',
-                            }}
-                            onClick={(e) => {
-                              const currentBtn = e.currentTarget;
-                              const text =
-                                msg.role === 'user' && msg.displayText !== undefined
-                                  ? msg.displayText
-                                  : msg.content;
-                              if (!text) return;
-                              navigator.clipboard.writeText(text).then(() => {
-                                const label = currentBtn.querySelector(
-                                  '.action-label',
-                                ) as HTMLElement | null;
-                                if (label) {
-                                  const originalText = label.innerText;
-                                  currentBtn.style.color = 'var(--color-success)';
-                                  currentBtn.style.borderColor = 'var(--color-success)';
-                                  label.style.maxWidth = '60px';
-                                  label.style.opacity = '1';
-                                  label.innerText = t('common.copied');
-                                  setTimeout(() => {
-                                    currentBtn.style.color = '';
-                                    currentBtn.style.borderColor = '';
-                                    label.style.maxWidth = '';
-                                    label.style.opacity = '';
-                                    label.innerText = originalText;
-                                  }, 2000);
-                                }
-                              });
-                            }}
-                          >
-                            <Icon
-                              src="/icons/app-logo/clipboard-copy.svg"
-                              class="w-[13px] h-[13px]"
-                            />
-                            <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
-                              {t('common.copy')}
-                            </span>
-                          </button>
-
-                          {/* 分支按钮（仅 assistant 消息） */}
-                          <Show when={msg.role === 'assistant' && !!msg.id}>
-                            <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
-                              style={{
-                                border: '1px solid rgba(var(--text-base-rgb),0.25)',
-                                color: 'rgba(var(--text-base-rgb),0.6)',
-                              }}
-                              onClick={() => {
-                                if (msg.id) props.onBranchFromMessage(msg.id);
-                              }}
-                              title={t('chat.branchFromHere')}
-                            >
-                              <Icon
-                                name="git-branch"
-                                size={13}
-                                style={{ display: 'inline', 'vertical-align': 'middle' }}
-                              />
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
-                                {t('chat.branch')}
-                              </span>
-                            </button>
-                          </Show>
-
-                          {/* 最后一条用户消息：重新发送 + 编辑后重发 */}
                           <Show
                             when={
-                              index() === lastUserMsgIndex() &&
-                              msg.role === 'user' &&
-                              (msg.content || msg.displayText)
+                              msg.role === 'assistant' &&
+                              (msg.modelId ||
+                                selectedModel()?.model_id ||
+                                msg.inputTokens ||
+                                msg.outputTokens)
                             }
                           >
-                            <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
+                            <div
                               style={{
-                                border: '1px solid rgba(var(--text-base-rgb),0.25)',
-                                color: 'rgba(var(--text-base-rgb),0.6)',
-                              }}
-                              onClick={async () => {
-                                const text =
-                                  msg.displayText !== undefined ? msg.displayText : msg.content;
-                                if (!text) return;
-                                if (props.isThinking) {
-                                  props.handleStopGeneration();
-                                  await new Promise((r) => setTimeout(r, 150));
-                                }
-                                const asstId = currentAssistantId();
-                                const tId = currentTopicId();
-                                if (asstId && tId) {
-                                  const reply = lastAssistantReply();
-                                  // 跳过退场动画，直接删除；同时抑制新消息的入场动画
-                                  setSkipMessageAnimation(true);
-                                  setTimeout(() => setSkipMessageAnimation(false), 100);
-                                  if (reply?.id) {
-                                    try {
-                                      await deleteTopicMessage(tId, reply.id!);
-                                    } catch (e) {
-                                      console.error('删除助手回复失败:', e);
-                                    }
-                                    setDatas(
-                                      'assistants',
-                                      (a) => a.id === asstId,
-                                      'topics',
-                                      (t) => t.id === tId,
-                                      'history',
-                                      (h) => h.filter((m: any) => m.id !== reply.id),
-                                    );
-                                  }
-                                  if (msg.id) {
-                                    try {
-                                      await deleteTopicMessage(tId, msg.id!);
-                                    } catch (e) {
-                                      console.error('删除消息失败:', e);
-                                    }
-                                    setDatas(
-                                      'assistants',
-                                      (a) => a.id === asstId,
-                                      'topics',
-                                      (t) => t.id === tId,
-                                      'history',
-                                      (h) => h.filter((m: any) => m.id !== msg.id),
-                                    );
-                                  }
-                                }
-                                props.setInputMessage(text);
-                                setTimeout(() => props.handleSendMessage(), 0);
+                                color: 'rgba(var(--text-base-rgb),0.3)',
+                                'font-family': 'monospace',
+                                'font-size': '11px',
+                                'margin-left': '4px',
+                                'margin-top': '4px',
+                                opacity: '0.7',
+                                'user-select': 'none',
+                                'text-align': 'left',
+                                display: 'flex',
+                                'align-items': 'center',
+                                gap: '8px',
                               }}
                             >
-                              <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke-width="1.5"
-                                stroke="currentColor"
-                                class="w-[13px] h-[13px]"
-                              >
-                                <path
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182"
-                                />
-                              </svg>
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
-                                {t('chat.resendMessage')}
-                              </span>
-                            </button>
-                            <button
-                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
-                              style={{
-                                border: '1px solid rgba(var(--text-base-rgb),0.25)',
-                                color: 'rgba(var(--text-base-rgb),0.6)',
-                              }}
-                              onClick={async () => {
-                                const text =
-                                  msg.displayText !== undefined ? msg.displayText : msg.content;
-                                if (!text) return;
-                                if (props.isThinking) {
-                                  props.handleStopGeneration();
-                                  await new Promise((r) => setTimeout(r, 150));
-                                }
-                                const asstId = currentAssistantId();
-                                const tId = currentTopicId();
-                                if (asstId && tId) {
-                                  const reply = lastAssistantReply();
-                                  // 跳过退场动画，直接删除；同时抑制新消息的入场动画
-                                  setSkipMessageAnimation(true);
-                                  setTimeout(() => setSkipMessageAnimation(false), 100);
-                                  if (reply?.id) {
-                                    try {
-                                      await deleteTopicMessage(tId, reply.id!);
-                                    } catch (e) {
-                                      console.error('删除助手回复失败:', e);
-                                    }
-                                    setDatas(
-                                      'assistants',
-                                      (a) => a.id === asstId,
-                                      'topics',
-                                      (t) => t.id === tId,
-                                      'history',
-                                      (h) => h.filter((m: any) => m.id !== reply.id),
-                                    );
-                                  }
-                                  if (msg.id) {
-                                    try {
-                                      await deleteTopicMessage(tId, msg.id!);
-                                    } catch (e) {
-                                      console.error('删除消息失败:', e);
-                                    }
-                                    setDatas(
-                                      'assistants',
-                                      (a) => a.id === asstId,
-                                      'topics',
-                                      (t) => t.id === tId,
-                                      'history',
-                                      (h) => h.filter((m: any) => m.id !== msg.id),
-                                    );
-                                  }
-                                }
-                                props.setInputMessage(text);
-                                if (textareaRef) {
-                                  textareaRef.focus();
-                                  textareaRef.scrollIntoView({
-                                    behavior: 'smooth',
-                                    block: 'center',
-                                  });
-                                }
-                              }}
-                            >
-                              <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke-width="1.5"
-                                stroke="currentColor"
-                                class="w-[13px] h-[13px]"
-                              >
-                                <path
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
-                                />
-                              </svg>
-                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
-                                {t('common.edit')}
-                              </span>
-                            </button>
+                              <Show when={msg.modelId || selectedModel()?.model_id}>
+                                <span>{msg.modelId || selectedModel()?.model_id}</span>
+                              </Show>
+                              <Show when={msg.inputTokens || msg.outputTokens}>
+                                <span style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}>·</span>
+                                <Show when={msg.inputTokens}>
+                                  <span title={t('chat.inputTokens')}>
+                                    ↗{' '}
+                                    {msg.inputTokens! >= 1000
+                                      ? `${(msg.inputTokens! / 1000).toFixed(1)}K`
+                                      : msg.inputTokens}
+                                  </span>
+                                </Show>
+                                <Show when={msg.outputTokens}>
+                                  <span title={t('chat.outputTokens')}>
+                                    ↘{' '}
+                                    {msg.outputTokens! >= 1000
+                                      ? `${(msg.outputTokens! / 1000).toFixed(1)}K`
+                                      : msg.outputTokens}
+                                  </span>
+                                </Show>
+                              </Show>
+                            </div>
                           </Show>
 
-                          {/* 删除按钮（每条消息都有，置于最右侧） */}
-                          <button
-                            class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(248,113,113,0.1)] hover:!p-[4px_8px]"
-                            style={{
-                              border: '1px solid rgba(248,113,113,0.35)',
-                              color: 'rgba(248,113,113,0.75)',
-                            }}
-                            onClick={async () => {
-                              const asstId = currentAssistantId();
-                              const tId = currentTopicId();
-                              if (!asstId || !tId || !msg.id) return;
-                              // 直接在 DOM 上播退场动画，不触发响应式重渲染
-                              const el = messageEls.get(msg.id);
-                              if (el) el.classList.add('animate-message-out');
-                              await new Promise((r) => setTimeout(r, 260));
-                              try {
-                                await deleteTopicMessage(tId, msg.id!);
-                              } catch (e) {
-                                console.error('删除消息失败:', e);
-                              }
-                              setDatas(
-                                'assistants',
-                                (a) => a.id === asstId,
-                                'topics',
-                                (t) => t.id === tId,
-                                'history',
-                                (h) => h.filter((m: any) => m.id !== msg.id),
-                              );
-                            }}
-                          >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke-width="1.5"
-                              stroke="currentColor"
-                              class="w-[13px] h-[13px]"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
-                              />
-                            </svg>
-                            <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[60px] group-hover:opacity-100">
-                              {t('chat.deleteMessage')}
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* File Changes box（仅 assistant 消息，有文件变更时显示）*/}
-                    <Show when={fileChanges.length > 0}>
-                      {(() => {
-                        const isReverted = () => revertedMessages().has(msg.id ?? String(index()));
-                        const diffStats = () => aggregateDiffStats(fileChanges);
-                        const showUndo = () =>
-                          !isReverted() && !!currentProject()?.path && !!gitBranch();
-                        const handleUndoAll = async () => {
-                          const projectPath = currentProject()?.path;
-                          if (!projectPath) return;
-                          try {
-                            await revertFileChangesBatch(
-                              projectPath,
-                              fileChanges.map((fc) => fc.filePath),
-                            );
-                            setRevertedMessages((prev) => {
-                              const next = new Set(prev);
-                              next.add(msg.id ?? String(index()));
-                              return next;
-                            });
-                          } catch (err) {
-                            console.error('批量撤销失败:', err);
-                            alert(t('agent.diff.revertFailed'));
-                          }
-                        };
-                        return (
+                          {/* 消息操作按钮组：始终可见 */}
                           <div
-                            class="rounded-lg overflow-hidden transition-opacity duration-300 w-[80%] self-center mt-3"
-                            classList={{ 'opacity-40': isReverted() }}
-                            style={{
-                              border: '1px solid var(--border-dim)',
-                              background: 'rgba(var(--text-base-rgb),0.015)',
-                            }}
+                            class={`flex mt-1.5 px-[4px] z-[5] gap-1.5 flex-wrap ${msg.role === 'assistant' ? 'justify-start' : 'justify-end pr-[10px]'}`}
                           >
-                            <div
-                              class="flex items-center gap-2 px-3 py-1.5"
+                            {/* 复制按钮（每条消息都有） */}
+                            <button
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
                               style={{
-                                'border-bottom': '1px solid var(--border-dim)',
-                                color: 'rgba(var(--text-base-rgb),0.4)',
-                                'font-size': '14px',
+                                border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                                color: 'rgba(var(--text-base-rgb),0.6)',
+                              }}
+                              onClick={(e) => {
+                                const currentBtn = e.currentTarget;
+                                const text =
+                                  msg.role === 'user' && msg.displayText !== undefined
+                                    ? msg.displayText
+                                    : msg.content;
+                                if (!text) return;
+                                navigator.clipboard.writeText(text).then(() => {
+                                  const label = currentBtn.querySelector(
+                                    '.action-label',
+                                  ) as HTMLElement | null;
+                                  if (label) {
+                                    const originalText = label.innerText;
+                                    currentBtn.style.color = 'var(--color-success)';
+                                    currentBtn.style.borderColor = 'var(--color-success)';
+                                    label.style.maxWidth = '60px';
+                                    label.style.opacity = '1';
+                                    label.innerText = t('common.copied');
+                                    setTimeout(() => {
+                                      currentBtn.style.color = '';
+                                      currentBtn.style.borderColor = '';
+                                      label.style.maxWidth = '';
+                                      label.style.opacity = '';
+                                      label.innerText = originalText;
+                                    }, 2000);
+                                  }
+                                });
+                              }}
+                            >
+                              <Icon
+                                src="/icons/app-logo/clipboard-copy.svg"
+                                class="w-[13px] h-[13px]"
+                              />
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                                {t('common.copy')}
+                              </span>
+                            </button>
+
+                            {/* 分支按钮（仅 assistant 消息） */}
+                            <Show when={msg.role === 'assistant' && !!msg.id}>
+                              <button
+                                class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
+                                style={{
+                                  border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                                  color: 'rgba(var(--text-base-rgb),0.6)',
+                                }}
+                                onClick={() => {
+                                  if (msg.id) props.onBranchFromMessage(msg.id);
+                                }}
+                                title={t('chat.branchFromHere')}
+                              >
+                                <Icon
+                                  name="git-branch"
+                                  size={13}
+                                  style={{ display: 'inline', 'vertical-align': 'middle' }}
+                                />
+                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                                  {t('chat.branch')}
+                                </span>
+                              </button>
+                            </Show>
+
+                            {/* 最后一条用户消息：重新发送 + 编辑后重发 */}
+                            <Show
+                              when={
+                                index() === lastUserMsgIndex() &&
+                                msg.role === 'user' &&
+                                (msg.content || msg.displayText)
+                              }
+                            >
+                              <button
+                                class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
+                                style={{
+                                  border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                                  color: 'rgba(var(--text-base-rgb),0.6)',
+                                }}
+                                onClick={async () => {
+                                  const text =
+                                    msg.displayText !== undefined ? msg.displayText : msg.content;
+                                  if (!text) return;
+                                  if (props.isThinking) {
+                                    props.handleStopGeneration();
+                                    await new Promise((r) => setTimeout(r, 150));
+                                  }
+                                  const asstId = currentAssistantId();
+                                  const tId = currentTopicId();
+                                  if (asstId && tId) {
+                                    const reply = lastAssistantReply();
+                                    // 跳过退场动画，直接删除；同时抑制新消息的入场动画
+                                    setSkipMessageAnimation(true);
+                                    setTimeout(() => setSkipMessageAnimation(false), 100);
+                                    if (reply?.id) {
+                                      try {
+                                        await deleteTopicMessage(tId, reply.id!);
+                                      } catch (e) {
+                                        console.error('删除助手回复失败:', e);
+                                      }
+                                      setDatas(
+                                        'assistants',
+                                        (a) => a.id === asstId,
+                                        'topics',
+                                        (t) => t.id === tId,
+                                        'history',
+                                        (h) => h.filter((m: any) => m.id !== reply.id),
+                                      );
+                                    }
+                                    if (msg.id) {
+                                      try {
+                                        await deleteTopicMessage(tId, msg.id!);
+                                      } catch (e) {
+                                        console.error('删除消息失败:', e);
+                                      }
+                                      setDatas(
+                                        'assistants',
+                                        (a) => a.id === asstId,
+                                        'topics',
+                                        (t) => t.id === tId,
+                                        'history',
+                                        (h) => h.filter((m: any) => m.id !== msg.id),
+                                      );
+                                    }
+                                  }
+                                  props.setInputMessage(text);
+                                  setTimeout(() => props.handleSendMessage(), 0);
+                                }}
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke-width="1.5"
+                                  stroke="currentColor"
+                                  class="w-[13px] h-[13px]"
+                                >
+                                  <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182"
+                                  />
+                                </svg>
+                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                                  {t('chat.resendMessage')}
+                                </span>
+                              </button>
+                              <button
+                                class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
+                                style={{
+                                  border: '1px solid rgba(var(--text-base-rgb),0.25)',
+                                  color: 'rgba(var(--text-base-rgb),0.6)',
+                                }}
+                                onClick={async () => {
+                                  const text =
+                                    msg.displayText !== undefined ? msg.displayText : msg.content;
+                                  if (!text) return;
+                                  if (props.isThinking) {
+                                    props.handleStopGeneration();
+                                    await new Promise((r) => setTimeout(r, 150));
+                                  }
+                                  const asstId = currentAssistantId();
+                                  const tId = currentTopicId();
+                                  if (asstId && tId) {
+                                    const reply = lastAssistantReply();
+                                    // 跳过退场动画，直接删除；同时抑制新消息的入场动画
+                                    setSkipMessageAnimation(true);
+                                    setTimeout(() => setSkipMessageAnimation(false), 100);
+                                    if (reply?.id) {
+                                      try {
+                                        await deleteTopicMessage(tId, reply.id!);
+                                      } catch (e) {
+                                        console.error('删除助手回复失败:', e);
+                                      }
+                                      setDatas(
+                                        'assistants',
+                                        (a) => a.id === asstId,
+                                        'topics',
+                                        (t) => t.id === tId,
+                                        'history',
+                                        (h) => h.filter((m: any) => m.id !== reply.id),
+                                      );
+                                    }
+                                    if (msg.id) {
+                                      try {
+                                        await deleteTopicMessage(tId, msg.id!);
+                                      } catch (e) {
+                                        console.error('删除消息失败:', e);
+                                      }
+                                      setDatas(
+                                        'assistants',
+                                        (a) => a.id === asstId,
+                                        'topics',
+                                        (t) => t.id === tId,
+                                        'history',
+                                        (h) => h.filter((m: any) => m.id !== msg.id),
+                                      );
+                                    }
+                                  }
+                                  props.setInputMessage(text);
+                                  if (textareaRef) {
+                                    textareaRef.focus();
+                                    textareaRef.scrollIntoView({
+                                      behavior: 'smooth',
+                                      block: 'center',
+                                    });
+                                  }
+                                }}
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke-width="1.5"
+                                  stroke="currentColor"
+                                  class="w-[13px] h-[13px]"
+                                >
+                                  <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
+                                  />
+                                </svg>
+                                <span class="action-label overflow-hidden whitespace-nowrap text-[11px] text-white max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[80px] group-hover:opacity-100">
+                                  {t('common.edit')}
+                                </span>
+                              </button>
+                            </Show>
+
+                            {/* 删除按钮（每条消息都有，置于最右侧） */}
+                            <button
+                              class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(248,113,113,0.1)] hover:!p-[4px_8px]"
+                              style={{
+                                border: '1px solid rgba(248,113,113,0.35)',
+                                color: 'rgba(248,113,113,0.75)',
+                              }}
+                              onClick={async () => {
+                                const asstId = currentAssistantId();
+                                const tId = currentTopicId();
+                                if (!asstId || !tId || !msg.id) return;
+                                // 直接在 DOM 上播退场动画，不触发响应式重渲染
+                                const el = messageEls.get(msg.id);
+                                if (el) el.classList.add('animate-message-out');
+                                await new Promise((r) => setTimeout(r, 260));
+                                try {
+                                  await deleteTopicMessage(tId, msg.id!);
+                                } catch (e) {
+                                  console.error('删除消息失败:', e);
+                                }
+                                setDatas(
+                                  'assistants',
+                                  (a) => a.id === asstId,
+                                  'topics',
+                                  (t) => t.id === tId,
+                                  'history',
+                                  (h) => h.filter((m: any) => m.id !== msg.id),
+                                );
                               }}
                             >
                               <svg
@@ -1204,123 +1168,193 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 viewBox="0 0 24 24"
                                 stroke-width="1.5"
                                 stroke="currentColor"
-                                class="w-4 h-4"
-                                style={{ opacity: '0.6' }}
+                                class="w-[13px] h-[13px]"
                               >
                                 <path
                                   stroke-linecap="round"
                                   stroke-linejoin="round"
-                                  d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+                                  d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
                                 />
                               </svg>
-                              <Show
-                                when={isReverted()}
-                                fallback={<span class="font-medium">{t('agent.diff.title')}</span>}
-                              >
-                                <span
-                                  class="font-medium"
-                                  style={{ 'text-decoration': 'line-through' }}
-                                >
-                                  {t('agent.diff.title')}
-                                </span>
-                              </Show>
-                              <span style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
-                                {t('agent.diff.files', { count: formatNumber(fileChanges.length) })}
+                              <span class="action-label overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[60px] group-hover:opacity-100">
+                                {t('chat.deleteMessage')}
                               </span>
-                              <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
-                                <span class="font-mono">
-                                  {diffStats().added > 0 && (
-                                    <span style={{ color: 'var(--color-success)' }}>
-                                      +{diffStats().added}
-                                    </span>
-                                  )}
-                                  {diffStats().added > 0 && diffStats().deleted > 0 && (
-                                    <span style={{ color: 'rgba(var(--text-base-rgb),0.18)' }}>
-                                      {' '}
-                                    </span>
-                                  )}
-                                  {diffStats().deleted > 0 && (
-                                    <span style={{ color: 'var(--color-danger)' }}>
-                                      -{diffStats().deleted}
-                                    </span>
-                                  )}
-                                </span>
-                              </Show>
-                              <div class="flex-1" />
-                              <Show when={isReverted()}>
-                                <span
-                                  class="px-1.5 py-px rounded text-[12px] font-medium"
-                                  style={{
-                                    color: 'rgba(80, 220, 100, 0.7)',
-                                    background: 'rgba(80, 220, 100, 0.08)',
-                                    border: '1px solid rgba(80, 220, 100, 0.15)',
-                                  }}
-                                >
-                                  {t('agent.diff.reverted')}
-                                </span>
-                              </Show>
-                              <Show when={showUndo()}>
-                                <button
-                                  type="button"
-                                  class={'px-1.5 py-0.5 text-[12px] font-medium ' + btnGhost}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleUndoAll();
-                                  }}
-                                  title={t('agent.diff.revertAllTitle')}
-                                >
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke-width="2"
-                                    stroke="currentColor"
-                                    class="w-3.5 h-3.5"
-                                    style={{ opacity: '0.6' }}
-                                  >
-                                    <path
-                                      stroke-linecap="round"
-                                      stroke-linejoin="round"
-                                      d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-                                    />
-                                  </svg>
-                                  {t('agent.diff.revertAll')}
-                                </button>
-                              </Show>
-                            </div>
-                            <div class="p-2">
-                              <DiffView changes={fileChanges} allReverted={isReverted()} />
-                            </div>
+                            </button>
                           </div>
-                        );
-                      })()}
-                    </Show>
-                  </div>
-                </div>
-              );
-            }}
-          </For>
+                        </div>
+                      </div>
 
-          {/* /btw 悬浮问答框 */}
-          <Show when={props.btwOverlays.length > 0}>
-            <div class="flex flex-col items-center mb-3 space-y-2">
-              <For each={props.btwOverlays}>
-                {(item) => <BtwResponseBox item={item} onDismiss={props.onDismissBtw} />}
+                      {/* File Changes box（仅 assistant 消息，有文件变更时显示）*/}
+                      <Show when={fileChanges.length > 0}>
+                        {(() => {
+                          const isReverted = () =>
+                            revertedMessages().has(msg.id ?? String(index()));
+                          const diffStats = () => aggregateDiffStats(fileChanges);
+                          const showUndo = () =>
+                            !isReverted() && !!currentProject()?.path && !!gitBranch();
+                          const handleUndoAll = async () => {
+                            const projectPath = currentProject()?.path;
+                            if (!projectPath) return;
+                            try {
+                              await revertFileChangesBatch(
+                                projectPath,
+                                fileChanges.map((fc) => fc.filePath),
+                              );
+                              setRevertedMessages((prev) => {
+                                const next = new Set(prev);
+                                next.add(msg.id ?? String(index()));
+                                return next;
+                              });
+                            } catch (err) {
+                              console.error('批量撤销失败:', err);
+                              alert(t('agent.diff.revertFailed'));
+                            }
+                          };
+                          return (
+                            <div
+                              class="rounded-lg overflow-hidden transition-opacity duration-300 w-[80%] self-center mt-3"
+                              classList={{ 'opacity-40': isReverted() }}
+                              style={{
+                                border: '1px solid var(--border-dim)',
+                                background: 'rgba(var(--text-base-rgb),0.015)',
+                              }}
+                            >
+                              <div
+                                class="flex items-center gap-2 px-3 py-1.5"
+                                style={{
+                                  'border-bottom': '1px solid var(--border-dim)',
+                                  color: 'rgba(var(--text-base-rgb),0.4)',
+                                  'font-size': '14px',
+                                }}
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke-width="1.5"
+                                  stroke="currentColor"
+                                  class="w-4 h-4"
+                                  style={{ opacity: '0.6' }}
+                                >
+                                  <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+                                  />
+                                </svg>
+                                <Show
+                                  when={isReverted()}
+                                  fallback={
+                                    <span class="font-medium">{t('agent.diff.title')}</span>
+                                  }
+                                >
+                                  <span
+                                    class="font-medium"
+                                    style={{ 'text-decoration': 'line-through' }}
+                                  >
+                                    {t('agent.diff.title')}
+                                  </span>
+                                </Show>
+                                <span style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
+                                  {t('agent.diff.files', {
+                                    count: formatNumber(fileChanges.length),
+                                  })}
+                                </span>
+                                <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
+                                  <span class="font-mono">
+                                    {diffStats().added > 0 && (
+                                      <span style={{ color: 'var(--color-success)' }}>
+                                        +{diffStats().added}
+                                      </span>
+                                    )}
+                                    {diffStats().added > 0 && diffStats().deleted > 0 && (
+                                      <span style={{ color: 'rgba(var(--text-base-rgb),0.18)' }}>
+                                        {' '}
+                                      </span>
+                                    )}
+                                    {diffStats().deleted > 0 && (
+                                      <span style={{ color: 'var(--color-danger)' }}>
+                                        -{diffStats().deleted}
+                                      </span>
+                                    )}
+                                  </span>
+                                </Show>
+                                <div class="flex-1" />
+                                <Show when={isReverted()}>
+                                  <span
+                                    class="px-1.5 py-px rounded text-[12px] font-medium"
+                                    style={{
+                                      color: 'rgba(80, 220, 100, 0.7)',
+                                      background: 'rgba(80, 220, 100, 0.08)',
+                                      border: '1px solid rgba(80, 220, 100, 0.15)',
+                                    }}
+                                  >
+                                    {t('agent.diff.reverted')}
+                                  </span>
+                                </Show>
+                                <Show when={showUndo()}>
+                                  <button
+                                    type="button"
+                                    class={'px-1.5 py-0.5 text-[12px] font-medium ' + btnGhost}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUndoAll();
+                                    }}
+                                    title={t('agent.diff.revertAllTitle')}
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke-width="2"
+                                      stroke="currentColor"
+                                      class="w-3.5 h-3.5"
+                                      style={{ opacity: '0.6' }}
+                                    >
+                                      <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
+                                      />
+                                    </svg>
+                                    {t('agent.diff.revertAll')}
+                                  </button>
+                                </Show>
+                              </div>
+                              <div class="p-2">
+                                <DiffView changes={fileChanges} allReverted={isReverted()} />
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </Show>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+
+            {/* /btw 悬浮问答框 */}
+            <Show when={props.btwOverlays.length > 0}>
+              <div class="flex flex-col items-center mb-3 space-y-2">
+                <For each={props.btwOverlays}>
+                  {(item) => <BtwResponseBox item={item} onDismiss={props.onDismissBtw} />}
+                </For>
+              </div>
+            </Show>
+          </Show>
+
+          {/* 工具调用审批气泡 */}
+          <Show when={props.pendingApprovals.length > 0}>
+            <div class="mb-3 space-y-2">
+              <For each={props.pendingApprovals}>
+                {(approval) => (
+                  <ToolApprovalBubble approval={approval} onResolved={props.onResolveApproval} />
+                )}
               </For>
             </div>
           </Show>
-        </Show>
-
-        {/* 工具调用审批气泡 */}
-        <Show when={props.pendingApprovals.length > 0}>
-          <div class="mb-3 space-y-2">
-            <For each={props.pendingApprovals}>
-              {(approval) => (
-                <ToolApprovalBubble approval={approval} onResolved={props.onResolveApproval} />
-              )}
-            </For>
-          </div>
-        </Show>
+        </div>
       </div>
 
       {/* 滚动到底部按钮：用户上滚浏览历史后显示，点击回到最新消息 */}

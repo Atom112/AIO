@@ -220,6 +220,9 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
 
   // ---- 自动滚动（复用 AgentProcessBlock 模式） ----
   let bodyRef: HTMLDivElement | undefined;
+  // 内容包装层：流式跟底 ResizeObserver 的观察对象（bodyRef 是 flex-1 固定高度
+  // 滚动盒，观察它时内容增长不触发 RO；包装层高度随步骤/结果真实增长）。
+  let contentRef: HTMLDivElement | undefined;
   const [autoScroll, setAutoScroll] = createSignal(true);
   let userScrolledUp = false;
   let suppressScroll = false;
@@ -232,9 +235,14 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
 
   const snapToBottom = () => {
     if (!bodyRef) return;
-    suppressScroll = true;
     const el = bodyRef;
-    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    const target = Math.max(0, el.scrollHeight - el.clientHeight);
+    // 仅在实际改变位置时压制回显事件：已在底部时（流式跟底的常见情形）
+    // 无事件产生，若仍置位 suppressScroll 会吃掉用户的下一个滚动事件
+    if (el.scrollTop < target) {
+      suppressScroll = true;
+      el.scrollTop = target;
+    }
   };
 
   const handleWheel = (e: WheelEvent) => {
@@ -256,11 +264,12 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
   };
 
   createEffect(() => {
-    if (bodyRef) {
+    if (contentRef) {
       const observer = new ResizeObserver(() => {
         if (!userScrolledUp && autoScroll()) snapToBottom();
       });
-      observer.observe(bodyRef);
+      observer.observe(contentRef);
+      if (bodyRef) observer.observe(bodyRef);
       onCleanup(() => observer.disconnect());
     }
   });
@@ -360,98 +369,102 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
         onScroll={handleScroll}
         onWheel={handleWheel}
       >
-        <Show when={step()}>
-          {/* 任务卡 */}
-          <Show when={taskText()}>
-            <div
-              class="mx-4 mt-3 rounded-lg border px-3 py-2"
-              style={{
-                background: 'rgba(var(--text-base-rgb),0.03)',
-                'border-color': 'rgba(var(--text-base-rgb),0.08)',
-              }}
-            >
-              <div class="flex items-center gap-1.5 text-[11px] font-medium text-white/40 mb-1">
-                <Icon name="clipboard" size={11} />
-                {t('agent.subagent.task')}
+        <div ref={contentRef}>
+          <Show when={step()}>
+            {/* 任务卡 */}
+            <Show when={taskText()}>
+              <div
+                class="mx-4 mt-3 rounded-lg border px-3 py-2"
+                style={{
+                  background: 'rgba(var(--text-base-rgb),0.03)',
+                  'border-color': 'rgba(var(--text-base-rgb),0.08)',
+                }}
+              >
+                <div class="flex items-center gap-1.5 text-[11px] font-medium text-white/40 mb-1">
+                  <Icon name="clipboard" size={11} />
+                  {t('agent.subagent.task')}
+                </div>
+                <div class="text-[13px] leading-relaxed break-words text-white/65">
+                  {taskText()}
+                </div>
               </div>
-              <div class="text-[13px] leading-relaxed break-words text-white/65">{taskText()}</div>
+            </Show>
+
+            {/* 步骤时间线（按轮次分组） */}
+            <div class="flex flex-col gap-1 px-4 mt-3">
+              <For each={renderItems()}>
+                {(item) =>
+                  item.kind === 'round' ? (
+                    <div class="flex items-center gap-2 py-1.5 select-none">
+                      <span
+                        class="flex-1 h-px"
+                        style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
+                      />
+                      <span class="font-mono text-[10px] text-white/25">
+                        {t('agent.subagent.round', { round: item.round })}
+                      </span>
+                      <span
+                        class="flex-1 h-px"
+                        style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
+                      />
+                    </div>
+                  ) : (
+                    <StepRow step={item.step} />
+                  )
+                }
+              </For>
             </div>
-          </Show>
 
-          {/* 步骤时间线（按轮次分组） */}
-          <div class="flex flex-col gap-1 px-4 mt-3">
-            <For each={renderItems()}>
-              {(item) =>
-                item.kind === 'round' ? (
-                  <div class="flex items-center gap-2 py-1.5 select-none">
-                    <span
-                      class="flex-1 h-px"
-                      style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
-                    />
-                    <span class="font-mono text-[10px] text-white/25">
-                      {t('agent.subagent.round', { round: item.round })}
-                    </span>
-                    <span
-                      class="flex-1 h-px"
-                      style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
-                    />
-                  </div>
-                ) : (
-                  <StepRow step={item.step} />
-                )
-              }
-            </For>
-          </div>
-
-          {/* 工作中指示 */}
-          <Show when={isRunning()}>
-            <div class="flex items-center gap-2 px-6 py-3 text-[12px] text-white/35 italic">
-              <Icon name="spinner" size={12} class="animate-spin" />
-              {t('agent.sub.working')}
-            </div>
-          </Show>
-
-          {/* 错误状态 */}
-          <Show when={isError()}>
-            <div
-              class="mx-4 mt-3 mb-3 px-3 py-2 rounded-lg text-[12px] leading-relaxed break-words"
-              style={{
-                background: 'rgba(224,85,85,0.08)',
-                border: '1px solid rgba(224,85,85,0.2)',
-                color: 'rgba(224,85,85,0.75)',
-              }}
-            >
-              {resultText() || t('agent.sub.error')}
-            </div>
-          </Show>
-
-          {/* 最终结果 */}
-          <Show when={isComplete() && resultText()}>
-            <div
-              class="mx-4 mt-3 mb-4 rounded-lg px-3 py-2.5"
-              style={{
-                background: 'rgba(var(--text-base-rgb),0.04)',
-                border: '1px solid rgba(var(--text-base-rgb),0.13)',
-                'backdrop-filter': 'blur(6px)',
-              }}
-            >
-              <div class="flex items-center gap-1.5 text-[11px] font-medium text-white/40 mb-1.5">
-                <Icon name="check-circle" size={11} />
-                {t('agent.subagent.result')}
+            {/* 工作中指示 */}
+            <Show when={isRunning()}>
+              <div class="flex items-center gap-2 px-6 py-3 text-[12px] text-white/35 italic">
+                <Icon name="spinner" size={12} class="animate-spin" />
+                {t('agent.sub.working')}
               </div>
-              <div class="text-[13px] leading-relaxed break-words text-white/75">
-                <Markdown content={resultText()} />
-              </div>
-            </div>
-          </Show>
+            </Show>
 
-          {/* 无任何步骤时的空态 */}
-          <Show when={renderItems().length === 0 && !isComplete()}>
-            <div class="flex items-center justify-center py-8 text-[12px] text-white/25 italic">
-              {isError() ? t('agent.sub.error') : t('agent.sub.working')}
-            </div>
+            {/* 错误状态 */}
+            <Show when={isError()}>
+              <div
+                class="mx-4 mt-3 mb-3 px-3 py-2 rounded-lg text-[12px] leading-relaxed break-words"
+                style={{
+                  background: 'rgba(224,85,85,0.08)',
+                  border: '1px solid rgba(224,85,85,0.2)',
+                  color: 'rgba(224,85,85,0.75)',
+                }}
+              >
+                {resultText() || t('agent.sub.error')}
+              </div>
+            </Show>
+
+            {/* 最终结果 */}
+            <Show when={isComplete() && resultText()}>
+              <div
+                class="mx-4 mt-3 mb-4 rounded-lg px-3 py-2.5"
+                style={{
+                  background: 'rgba(var(--text-base-rgb),0.04)',
+                  border: '1px solid rgba(var(--text-base-rgb),0.13)',
+                  'backdrop-filter': 'blur(6px)',
+                }}
+              >
+                <div class="flex items-center gap-1.5 text-[11px] font-medium text-white/40 mb-1.5">
+                  <Icon name="check-circle" size={11} />
+                  {t('agent.subagent.result')}
+                </div>
+                <div class="text-[13px] leading-relaxed break-words text-white/75">
+                  <Markdown content={resultText()} />
+                </div>
+              </div>
+            </Show>
+
+            {/* 无任何步骤时的空态 */}
+            <Show when={renderItems().length === 0 && !isComplete()}>
+              <div class="flex items-center justify-center py-8 text-[12px] text-white/25 italic">
+                {isError() ? t('agent.sub.error') : t('agent.sub.working')}
+              </div>
+            </Show>
           </Show>
-        </Show>
+        </div>
       </div>
     </div>
   );

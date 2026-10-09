@@ -1047,6 +1047,8 @@ ${asstObj.prompt}`;
 
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
+      // 输出风格约束（emoji 规避等，对齐主流 Agent 的系统提示词风格章节）
+      { role: 'system', content: t('chat.prompt.style') },
       ...buildSkillMessages(currentAsst, agentMode === 'off'),
       ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
@@ -1349,6 +1351,8 @@ ${asstObj.prompt}`;
       : [];
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
+      // 输出风格约束（emoji 规避等，对齐主流 Agent 的系统提示词风格章节）
+      { role: 'system', content: t('chat.prompt.style') },
       ...buildSkillMessages(currentAsst, isChatMode()),
       ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),

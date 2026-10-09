@@ -185,6 +185,7 @@
   "chat.defaultAssistant": "默认助手",
   "chat.skillCatalogNotice": "[已启用 Skills] 处理相关任务前，先用 read_skill 工具读取对应技能的完整说明：",
   "chat.historyBackground": "[历史背景]: ",
+  "chat.prompt.style": "回复风格：简洁直接，先结论后细节；仅在用户明确要求时使用 emoji，不要用 emoji 或其他装饰符号点缀回答；可用 Markdown（代码块、列表）组织内容。",
   "chat.model.noLocal": "无本地模型",
   "chat.model.switch": "切换模型",
   "chat.newAssistant": "新助手",

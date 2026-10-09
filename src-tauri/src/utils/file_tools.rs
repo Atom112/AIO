@@ -153,15 +153,15 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "write_file".into(),
-                description: "创建或覆盖文件".into(),
-                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"content":{"type":"string","description":"文件内容"}},"required":["path","content"]}),
+                description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）".into(),
+                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容"}},"required":["path","content"]}),
             },
         },
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "list_directory".into(),
-                description: "列出目录内容".into(),
+                description: "列出目录内容（名称 + 类型标记 + 大小，单目录上限 10000 条）。探索项目结构时先用本工具或 search_files 定位目标，再 read_file，避免盲读大文件浪费上下文".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"目录路径, 默认项目根目录"}}}),
             },
         },
@@ -169,7 +169,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "search_files".into(),
-                description: "按glob模式搜索文件".into(),
+                description: "按文件名 glob 模式查找文件（如 'src/**/*.ts'），上限 10000 条。按名字找文件时优先用本工具而非逐层 list_directory；找到后再用 read_file 读取".into(),
                 parameters: json!({"type":"object","properties":{"pattern":{"type":"string","description":"glob模式,如 'src/**/*.ts'"},"basePath":{"type":"string","description":"起始目录"}},"required":["pattern"]}),
             },
         },
@@ -177,7 +177,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "search_content".into(),
-                description: "搜索文件内容(正则)".into(),
+                description: "在文件内容中搜索正则表达式并返回命中行（含文件路径与行号）。找符号定义/调用点/配置项时优先用本工具定位到具体文件与行号，再 read_file 精读该区域，避免通读整个文件".into(),
                 parameters: json!({"type":"object","properties":{"pattern":{"type":"string","description":"正则表达式"},"path":{"type":"string","description":"目标路径"}},"required":["pattern"]}),
             },
         },
@@ -185,7 +185,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "delete_file".into(),
-                description: "删除文件".into(),
+                description: "删除文件（不可恢复）。删除前应确认路径正确且该文件确实不再需要；目录无法用本工具删除（仅文件）。删除属于变更类操作，在需要确认的模式下会请求用户批准".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"}},"required":["path"]}),
             },
         },
@@ -193,7 +193,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "make_directory".into(),
-                description: "创建目录".into(),
+                description: "创建目录（含缺失的父级目录，递归创建；已存在时直接成功）。新建嵌套路径的文件可直接用 write_file（父目录自动创建），本工具用于显式建目录结构".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"目录路径"}},"required":["path"]}),
             },
         },

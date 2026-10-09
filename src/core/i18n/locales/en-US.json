@@ -185,6 +185,7 @@
   "chat.defaultAssistant": "Default Assistant",
   "chat.skillCatalogNotice": "[Enabled Skills] Before working on related tasks, read the full instructions of the corresponding skill with the read_skill tool:",
   "chat.historyBackground": "[Background]: ",
+  "chat.prompt.style": "Response style: concise and direct, conclusion before details; use emojis only when the user explicitly asks for them, never as decoration; structure answers with Markdown (code blocks, lists).",
   "chat.model.noLocal": "No local models",
   "chat.model.switch": "Switch model",
   "chat.newAssistant": "New assistant",

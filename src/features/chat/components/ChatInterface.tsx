@@ -370,7 +370,34 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     smoothScrollRAF = requestAnimationFrame(animate);
   };
 
-  /** 切换话题时重置自动滚动与历史长度基线 */
+  /** 话题切换/组件重挂载后贴底展示最新对话。
+   *  消息行启用 content-visibility: auto（contain-intrinsic-size: auto 100px），
+   *  未渲染过的行先以 100px 占位高度参与布局：单次设置 scrollTop 只能到达"占位
+   *  底部"；渐进渲染每帧只展开约一个视口的消息带，需连续多帧校正直至位置稳定
+   *  （上限 40 帧 ≈ 200+ 条消息的历史；短历史在 2-3 帧内即稳定提前停止）。
+   *  用户上滚立即中止。首次 snap 放在微任务里：组件级 effect 先于消息列表重渲染
+   *  执行，微任务时 DOM 已提交、尚未绘制，避免在错误位置闪一帧。 */
+  const snapToLatestOnTopicSwitch = () => {
+    queueMicrotask(() => {
+      if (!scrollContainerRef || userScrolledUp) return;
+      snapToBottom();
+      let lastTop = -1;
+      let guard = 0;
+      const step = () => {
+        if (!scrollContainerRef || userScrolledUp || guard >= 40) return;
+        snapToBottom();
+        const cur = scrollContainerRef.scrollTop;
+        if (cur !== lastTop) {
+          lastTop = cur;
+          guard += 1;
+          requestAnimationFrame(step);
+        }
+      };
+      requestAnimationFrame(step);
+    });
+  };
+
+  /** 切换话题时重置自动滚动与历史长度基线，并贴底展示最新对话 */
   createEffect(
     on(
       () => props.activeTopic?.id,
@@ -384,6 +411,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           lastAnimatedTopicId = id;
         }
         lastHistoryLen = props.activeTopic?.history?.length ?? 0;
+        // 话题切换 / 重挂载（自子智能体视图返回）后立即展示最新对话：
+        // 长度监听 effect 只在 len > lastHistoryLen 时滚动，切换路径永远不触发，
+        // 不主动贴底会停留在内容替换后被钳制的位置（话题最早处）。
+        snapToLatestOnTopicSwitch();
       },
     ),
   );

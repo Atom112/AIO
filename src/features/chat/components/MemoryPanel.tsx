@@ -2,6 +2,7 @@ import { Component, createEffect, createSignal, For, Show } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
 import { t } from '../../../core/i18n';
 import Icon from '../../../shared/components/Icon';
+import Dropdown from '../../../shared/components/Dropdown';
 import MemoryRerankSection from './MemoryRerankSection';
 import { formatSize } from '../../../core/utils/format';
 import { EVENTS } from '../../../core/api/events';
@@ -626,22 +627,26 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
                   {t('project.memoryPanel.embeddingPickLocal')}
                 </div>
-                <select
-                  class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-sm focus:outline-none focus:border-pri-50"
+                <Dropdown
+                  class="w-full"
+                  triggerClass="h-7"
                   value={ebModel()}
-                  onChange={(e) => setEbModel(e.currentTarget.value)}
-                >
-                  <Show when={embedModels().length === 0}>
-                    <option value="">{t('project.memoryPanel.embeddingNoModels')}</option>
-                  </Show>
-                  <For each={embedModels()}>
-                    {(m) => (
-                      <option value={m.id} selected={m.id === ebModel()}>
-                        {m.id} · {m.dims} dims
-                      </option>
-                    )}
-                  </For>
-                </select>
+                  onChange={setEbModel}
+                  options={
+                    embedModels().length > 0
+                      ? embedModels().map((m) => ({
+                          value: m.id,
+                          label: `${m.id} · ${m.dims} dims`,
+                        }))
+                      : [
+                          {
+                            value: '',
+                            label: t('project.memoryPanel.embeddingNoModels'),
+                            disabled: true,
+                          },
+                        ]
+                  }
+                />
                 <input
                   class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-sm placeholder:text-white/25 focus:outline-none focus:border-pri-50"
                   type="number"

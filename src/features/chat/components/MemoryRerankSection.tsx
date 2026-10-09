@@ -5,7 +5,7 @@
 // - 本组件负责：项目级启用/停用 + 模型选择（已下载且全局启用的模型）+ 测试 + 保存
 // 与父组件的共享：rrModels（模型清单信号）+ onNotice（提示区）经 props 传入。
 
-import { createSignal, onMount, Show, For } from 'solid-js';
+import { createSignal, onMount, Show } from 'solid-js';
 import { t } from '../../../core/i18n';
 import { memoryGetStatus, memoryUpdateRerank, rerankTest } from '../../../core/utils/memory';
 import type {
@@ -14,6 +14,7 @@ import type {
   RerankTestResult,
 } from '../../../core/types/memory';
 import { btnSecondarySm } from '../../../shared/components/buttonStyles';
+import Dropdown from '../../../shared/components/Dropdown';
 import Switch from '../../../shared/components/Switch';
 
 export interface MemoryRerankSectionProps {
@@ -182,19 +183,13 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
                 </div>
               }
             >
-              <select
-                class="w-full p-2.5 bg-dark-300 border border-dark-100 rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-sm focus:outline-none focus:border-pri-50"
+              <Dropdown
+                class="w-full"
+                triggerClass="h-7"
                 value={rrModel()}
-                onChange={(e) => setRrModel(e.currentTarget.value)}
-              >
-                <For each={rerankModels()}>
-                  {(m) => (
-                    <option value={m.id} selected={m.id === rrModel()}>
-                      {m.id}
-                    </option>
-                  )}
-                </For>
-              </select>
+                onChange={setRrModel}
+                options={rerankModels().map((m) => ({ value: m.id, label: m.id }))}
+              />
               <Show when={rrTestResult()}>
                 <div
                   class="text-[11px]"

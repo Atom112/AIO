@@ -247,15 +247,22 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           }}
                           onClick={() => setCurrentTopicId(topic.id)}
                         >
-                          {/* Branch marker for child topics */}
+                          {/* Branch marker for child topics: rounded elbow connector */}
                           {isChild && (
-                            <span
-                              class="mr-1 shrink-0 leading-none"
-                              style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '9px' }}
-                              title={t('chat.branchTopic')}
+                            <svg
+                              viewBox="0 0 10 28"
+                              width="10"
+                              height="28"
+                              class="mr-1 shrink-0 self-start"
+                              fill="none"
+                              stroke="rgba(var(--primary-rgb),0.5)"
+                              stroke-width="1.5"
+                              stroke-linecap="round"
+                              aria-hidden="true"
                             >
-                              └
-                            </span>
+                              <title>{t('chat.branchTopic')}</title>
+                              <path d="M5 0 V10 Q5 14 9 14 H10" />
+                            </svg>
                           )}
                           <Show
                             when={props.editingTopicId === topic.id}

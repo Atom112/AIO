@@ -738,7 +738,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 )}
               </For>
             </div>
-            <div class="flex flex-col rounded-lg border border-dark-100 p-2.5">
+            {/* 条目列表内独立滚动：上限 240px，避免过多条目占满面板本身的滚动空间 */}
+            <div class="flex flex-col rounded-lg border border-dark-100 p-2.5 max-h-[240px] overflow-y-auto scrollbar-thin">
               <For each={facts()}>
                 {(f) => (
                   <div class="rounded-md px-2.5 py-2 transition-colors hover:bg-white/5">

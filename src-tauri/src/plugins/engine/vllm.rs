@@ -5,6 +5,7 @@
 /// 1. 扫描候选 Python 解释器，找到已安装 vllm 的那个
 /// 2. 通过 python -m vllm.entrypoints.openai.api_server 启动 OpenAI 兼容服务
 use crate::core::state::LocalEngineState;
+use crate::ierr;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -169,7 +170,10 @@ fn find_python_impl(verify: impl Fn(&str) -> bool) -> Result<String, String> {
             return Ok(python);
         }
     }
-    Err("未找到 Python 运行时。请安装 Python 3.8+ 并确保已加入 PATH。".to_string())
+    Err(ierr!(
+        "未找到 Python 运行时。请安装 Python 3.8+ 并确保已加入 PATH。",
+        "Python runtime not found. Install Python 3.8+ and make sure it is on PATH."
+    ))
 }
 
 /// 扫描所有候选 Python，返回第一个**同时满足**「能运行」且「已安装 vllm」的解释器。
@@ -274,7 +278,11 @@ impl LocalEnginePlugin for VllmPlugin {
             );
 
             if !Path::new(model_path).exists() {
-                return Err(format!("模型文件/目录不存在: {}", model_path));
+                return Err(ierr!(
+                    "模型文件/目录不存在: {}",
+                    "Model file/directory does not exist: {}",
+                    model_path
+                ));
             }
             let _ = app.emit(self.progress_event_name(), 0.02);
 
@@ -282,18 +290,23 @@ impl LocalEnginePlugin for VllmPlugin {
             // 逐个候选验证（系统 Python 可能不含 vllm，但 ~/.local/bin/python3、conda env、pyenv shims 等仍有）。
             let python = match tokio::task::spawn_blocking(find_python_with_vllm)
                 .await
-                .map_err(|_| "python 检测线程 panic".to_string())?
+                .map_err(|_| ierr!("python 检测线程 panic", "Python detection thread panicked"))?
             {
                 Ok(p) => {
                     debug!("[vLLM] 找到已安装 vllm 的 Python: {}", p);
                     p
                 }
                 Err(_) => {
-                    return Err("未找到已安装 vllm 的 Python 解释器。\n\
+                    return Err(ierr!(
+                        "未找到已安装 vllm 的 Python 解释器。\n\
                          请执行: pip install --user vllm\n\
                          或: pip install vllm\n\n\
-                         注意：vLLM 仅支持 Linux/macOS，需要 CUDA 工具链支持。"
-                        .to_string());
+                         注意：vLLM 仅支持 Linux/macOS，需要 CUDA 工具链支持。",
+                        "No Python interpreter with vllm installed.\n\
+                         Run: pip install --user vllm\n\
+                         Or: pip install vllm\n\n\
+                         Note: vLLM supports Linux/macOS only and requires the CUDA toolchain."
+                    ));
                 }
             };
 
@@ -323,8 +336,9 @@ impl LocalEnginePlugin for VllmPlugin {
             }
 
             let mut child = cmd.spawn().map_err(|e| {
-                format!(
+                ierr!(
                     "启动 vLLM 失败: {}。\n请确保 Python 和 vllm 已正确安装 (pip install --user vllm)。",
+                    "Failed to start vLLM: {}.\nMake sure Python and vllm are properly installed (pip install --user vllm).",
                     e
                 )
             })?;
@@ -333,7 +347,12 @@ impl LocalEnginePlugin for VllmPlugin {
 
             let stderr = match child.stderr.take() {
                 Some(s) => s,
-                None => return Err("无法获取 vLLM 子进程 stderr".to_string()),
+                None => {
+                    return Err(ierr!(
+                        "无法获取 vLLM 子进程 stderr",
+                        "Failed to capture vLLM child process stderr"
+                    ))
+                }
             };
             let app_clone = app.clone();
             let event_name = self.progress_event_name().to_string();
@@ -364,9 +383,19 @@ impl LocalEnginePlugin for VllmPlugin {
             match child.try_wait() {
                 Ok(None) => {}
                 Ok(Some(status)) => {
-                    return Err(format!("vLLM 进程启动后立即退出，退出码: {}。\n常见原因：CUDA 不可用、模型路径错误、显存不足。", status));
+                    return Err(ierr!(
+                        "vLLM 进程启动后立即退出，退出码: {}。\n常见原因：CUDA 不可用、模型路径错误、显存不足。",
+                        "vLLM process exited immediately after startup, exit code: {}.\nCommon causes: CUDA unavailable, wrong model path, or insufficient VRAM.",
+                        status
+                    ));
                 }
-                Err(e) => return Err(format!("无法检查进程状态: {}", e)),
+                Err(e) => {
+                    return Err(ierr!(
+                        "无法检查进程状态: {}",
+                        "Failed to check process status: {}",
+                        e
+                    ))
+                }
             }
 
             let client = reqwest::Client::builder()
@@ -382,7 +411,10 @@ impl LocalEnginePlugin for VllmPlugin {
                 }
                 Err(_) => {
                     let _ = child.kill();
-                    return Err("vLLM 服务未响应健康检查，可能启动失败。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效".to_string());
+                    return Err(ierr!(
+                        "vLLM 服务未响应健康检查，可能启动失败。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效",
+                        "vLLM service did not respond to the health check, startup may have failed.\nPlease check: 1) the CUDA toolchain is correctly installed 2) VRAM is sufficient 3) the model path is valid"
+                    ));
                 }
             }
 

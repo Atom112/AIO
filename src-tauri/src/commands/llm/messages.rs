@@ -2,6 +2,7 @@
 
 use crate::commands::llm::*;
 use crate::core::state::DbState;
+use crate::ierr;
 use base64::engine::general_purpose;
 use rusqlite::params;
 use serde_json::json;
@@ -38,11 +39,24 @@ pub(crate) fn message_for_api(
                             ))
                         },
                     )
-                    .map_err(|e| format!("读取附件 {} 失败: {}", file.name, e))?;
+                    .map_err(|e| {
+                        ierr!(
+                            "读取附件 {} 失败: {}",
+                            "Failed to read attachment {}: {}",
+                            file.name,
+                            e
+                        )
+                    })?;
 
                 if attachment.1.starts_with("image/") {
-                    let bytes = std::fs::read(&attachment.2)
-                        .map_err(|e| format!("读取图片附件 {} 失败: {}", attachment.0, e))?;
+                    let bytes = std::fs::read(&attachment.2).map_err(|e| {
+                        ierr!(
+                            "读取图片附件 {} 失败: {}",
+                            "Failed to read image attachment {}: {}",
+                            attachment.0,
+                            e
+                        )
+                    })?;
                     image_data_urls.push(format!(
                         "data:{};base64,{}",
                         attachment.1,

@@ -3,6 +3,7 @@
 //! These commands answer quick contextual questions without modifying the main conversation.
 
 use crate::core::events as ev;
+use crate::ierr;
 use futures_util::StreamExt;
 use serde_json::json;
 use tauri::{Emitter, Window};
@@ -64,11 +65,12 @@ pub async fn ask_btw_question(
             return Err(e.to_string());
         }
         Err(_) => {
+            let err = ierr!("BTW 请求超时（60s）", "BTW request timed out (60s)");
             let _ = window.emit(
                 ev::BTW_CHUNK,
-                json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": "BTW 请求超时（60s）" }),
+                json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": err.clone() }),
             );
-            return Err("BTW 请求超时（60s）".to_string());
+            return Err(err);
         }
     };
 
@@ -94,11 +96,15 @@ pub async fn ask_btw_question(
         let next = tokio::select! {
             item = stream.next() => item,
             _ = tokio::time::sleep(std::time::Duration::from_secs(120)) => {
+                let err = ierr!(
+                    "BTW 流超时：120 秒未收到数据",
+                    "BTW stream timed out: no data for 120s"
+                );
                 let _ = window.emit(
                     ev::BTW_CHUNK,
-                    json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": "BTW 流超时：120 秒未收到数据" }),
+                    json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": err.clone() }),
                 );
-                return Err("BTW 流超时：120 秒未收到数据".to_string());
+                return Err(err);
             }
         };
 

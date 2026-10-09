@@ -10,6 +10,7 @@
 //! 特殊字符；前端用 `atob` 直接解码拿到绝对路径，再经 `convertFileSrc` 转成可显示 URL。
 
 use crate::core::models::GeneratedImage;
+use crate::ierr;
 use base64::Engine;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -267,9 +268,18 @@ async fn fetch_image(url: &str) -> Result<Option<(String, Vec<u8>)>, String> {
                 .headers()
                 .get(reqwest::header::LOCATION)
                 .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| "重定向缺少 Location 头".to_string())?;
-            current =
-                resolve_redirect(&current, loc).ok_or_else(|| "无法解析重定向地址".to_string())?;
+                .ok_or_else(|| {
+                    ierr!(
+                        "重定向缺少 Location 头",
+                        "Redirect is missing the Location header"
+                    )
+                })?;
+            current = resolve_redirect(&current, loc).ok_or_else(|| {
+                ierr!(
+                    "无法解析重定向地址",
+                    "Failed to resolve the redirect address"
+                )
+            })?;
             continue;
         }
 
@@ -286,7 +296,10 @@ async fn fetch_image(url: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         return Ok(Some((mime, bytes)));
     }
 
-    Err("重定向次数超过上限 (5)".into())
+    Err(ierr!(
+        "重定向次数超过上限 (5)",
+        "Redirect limit exceeded (5)"
+    ))
 }
 
 #[cfg(test)]

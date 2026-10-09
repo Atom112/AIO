@@ -33,9 +33,19 @@ const translate = translator(activeDictionary, resolveTemplate);
 
 export const locale = localeSignal;
 
+/** 同步 locale 到后端（后端错误消息按 locale 渲染）。动态 import 避免非 Tauri 环境副作用。 */
+function syncBackendLocale(next: Locale): void {
+  void import('../api/config')
+    .then((m) => m.setBackendLocale(next))
+    .catch(() => {
+      // 非 Tauri 环境（Node 测试）或后端暂不可用时静默忽略；后端缺省中文
+    });
+}
+
 export function setLocale(next: Locale): void {
   setLocaleSignal(next);
   document.documentElement.lang = next;
+  syncBackendLocale(next);
   try {
     localStorage.setItem(STORAGE_KEY, next);
   } catch (error) {
@@ -72,3 +82,5 @@ export function reportError(key: TranslationKey, error: unknown): string {
 }
 
 document.documentElement.lang = initialLocale;
+// 启动时同步一次初始 locale（持久化的语言）到后端
+syncBackendLocale(initialLocale);

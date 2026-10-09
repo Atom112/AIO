@@ -3,6 +3,8 @@
 
 use crate::utils::git_tools;
 
+use crate::ierr;
+
 /// 获取当前项目的 Git 分支名称。
 /// 如果不是 git 仓库则返回 null。
 #[tauri::command]
@@ -32,11 +34,11 @@ pub fn revert_file_change(project_path: String, file_path: String) -> Result<Str
         .args(["checkout", "HEAD", "--", &file_path])
         .current_dir(&project_path)
         .status()
-        .map_err(|e| format!("git 执行失败: {e}"))?;
+        .map_err(|e| ierr!("git 执行失败: {}", "Failed to run git: {}", e))?;
     if status.success() {
         Ok(format!("已恢复文件: {file_path}"))
     } else {
-        Err("git checkout 失败".into())
+        Err(ierr!("git checkout 失败", "git checkout failed"))
     }
 }
 
@@ -53,11 +55,11 @@ pub fn revert_file_changes_batch(
             .args(["checkout", "HEAD", "--", file_path])
             .current_dir(&project_path)
             .status()
-            .map_err(|e| format!("git 执行失败: {e}"))?;
+            .map_err(|e| ierr!("git 执行失败: {}", "Failed to run git: {}", e))?;
         if status.success() {
             results.push(format!("已恢复: {file_path}"));
         } else {
-            results.push(format!("恢复失败: {file_path}"));
+            results.push(ierr!("恢复失败: {}", "Revert failed: {}", file_path));
         }
     }
     Ok(results)

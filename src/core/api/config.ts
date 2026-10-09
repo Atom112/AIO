@@ -9,6 +9,9 @@ export const loadAppConfig = () => invoke<AppConfig>('load_app_config');
 export const saveAppConfig = (config: AppConfig) =>
   invoke<void>('save_app_config', { config: config as unknown as Record<string, unknown> });
 
+/** 同步前端 locale 到后端（错误消息等用户可见文案的语言）。 */
+export const setBackendLocale = (locale: string) => invoke<void>('set_locale', { locale });
+
 /** 设置系统自启动（true = 随系统启动）。 */
 export const setAutoStart = (enabled: boolean) => invoke<void>('set_auto_start', { enabled });
 

@@ -7,18 +7,24 @@
 
 use tauri::Manager;
 
+use crate::ierr;
+
 /// 校验保存路径：非空、绝对路径，并确保父目录存在。
 fn validate_save_path(path: &str) -> Result<std::path::PathBuf, String> {
     if path.trim().is_empty() {
-        return Err("保存路径不能为空".into());
+        return Err(ierr!("保存路径不能为空", "Save path must not be empty"));
     }
     let p = std::path::Path::new(path);
     if !p.is_absolute() {
-        return Err("保存路径必须是绝对路径".into());
+        return Err(ierr!(
+            "保存路径必须是绝对路径",
+            "Save path must be absolute"
+        ));
     }
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("无法创建目录: {e}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ierr!("无法创建目录: {}", "Failed to create directory: {}", e))?;
         }
     }
     Ok(p.to_path_buf())
@@ -51,7 +57,10 @@ pub fn copy_stored_image(app: tauri::AppHandle, src: String, dest: String) -> Re
 
     let src_abs = std::fs::canonicalize(std::path::Path::new(&src)).map_err(|e| e.to_string())?;
     if !src_abs.starts_with(&allowed_root) {
-        return Err("源文件不在允许的附件目录内".into());
+        return Err(ierr!(
+            "源文件不在允许的附件目录内",
+            "Source file is not inside the allowed attachments directory"
+        ));
     }
 
     let dest_p = validate_save_path(&dest)?;

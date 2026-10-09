@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+use crate::ierr;
+
 const SKILLS_FILE: &str = "skills.json";
 const MARKET_CACHE_FILE: &str = "skill-market-cache.json";
 const SKILLS_SH: &str = "https://www.skills.sh";
@@ -28,7 +30,11 @@ struct MarketCacheEntry {
 
 fn skills_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| {
-        let msg = format!("app_data_dir 解析失败: {e}");
+        let msg = ierr!(
+            "app_data_dir 解析失败: {}",
+            "Failed to resolve app_data_dir: {}",
+            e
+        );
         tracing::error!("[skills] {msg}");
         msg
     })?;
@@ -104,18 +110,22 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
     let path = skills_file_path(app)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            let msg = format!("创建目录失败: {e}");
+            let msg = ierr!("创建目录失败: {}", "Failed to create directory: {}", e);
             tracing::error!("[skills] save_file: {msg} ({})", parent.display());
             msg
         })?;
     }
     let content = serde_json::to_string_pretty(file).map_err(|e| {
-        let msg = format!("序列化 skills 失败: {e}");
+        let msg = ierr!(
+            "序列化 skills 失败: {}",
+            "Failed to serialize skills: {}",
+            e
+        );
         tracing::error!("[skills] save_file: {msg}");
         msg
     })?;
     std::fs::write(&path, &content).map_err(|e| {
-        let msg = format!("写入文件失败: {e}");
+        let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_file: {msg} ({})", path.display());
         msg
     })?;
@@ -172,18 +182,22 @@ fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String
     let path = crate::commands::project::project_skills_path(project_path);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            let msg = format!("创建目录失败: {e}");
+            let msg = ierr!("创建目录失败: {}", "Failed to create directory: {}", e);
             tracing::error!("[skills] save_project_file: {msg} ({})", parent.display());
             msg
         })?;
     }
     let content = serde_json::to_string_pretty(file).map_err(|e| {
-        let msg = format!("序列化 skills 失败: {e}");
+        let msg = ierr!(
+            "序列化 skills 失败: {}",
+            "Failed to serialize skills: {}",
+            e
+        );
         tracing::error!("[skills] save_project_file: {msg}");
         msg
     })?;
     std::fs::write(&path, &content).map_err(|e| {
-        let msg = format!("写入文件失败: {e}");
+        let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_project_file: {msg} ({})", path.display());
         msg
     })?;
@@ -201,7 +215,7 @@ fn resolve_project_path(app: &AppHandle, project_id: &str) -> Result<String, Str
     file.projects
         .get(project_id)
         .map(|p| p.path.clone())
-        .ok_or_else(|| format!("项目 {} 不存在", project_id))
+        .ok_or_else(|| ierr!("项目 {} 不存在", "Project {} not found", project_id))
 }
 
 /// 加载项目索引文件（实现统一在 utils::project_index）。
@@ -251,9 +265,19 @@ async fn fetch_market_page(path: &str) -> Result<String, String> {
         .get(format!("{}{}", SKILLS_SH, path))
         .send()
         .await
-        .map_err(|e| format!("请求 skills.sh 失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "请求 skills.sh 失败: {}",
+                "Failed to request skills.sh: {}",
+                e
+            )
+        })?;
     if !response.status().is_success() {
-        return Err(format!("skills.sh 返回 HTTP {}", response.status()));
+        return Err(ierr!(
+            "skills.sh 返回 HTTP {}",
+            "skills.sh returned HTTP {}",
+            response.status()
+        ));
     }
     response.text().await.map_err(|e| e.to_string())
 }
@@ -455,7 +479,10 @@ pub fn save_skill(
 ) -> Result<(), String> {
     if skill.id.trim().is_empty() || skill.name.trim().is_empty() || skill.content.trim().is_empty()
     {
-        return Err("Skill id、名称和指令内容不能为空".to_string());
+        return Err(ierr!(
+            "Skill id、名称和指令内容不能为空",
+            "Skill id, name, and instruction content must not be empty"
+        ));
     }
     match project_id {
         Some(ref pid) => {
@@ -523,7 +550,7 @@ pub async fn download_market_skill(
         .iter()
         .any(|value| value.is_empty() || value.contains('/') || value.contains(".."))
     {
-        return Err("非法的 Skill 路径".to_string());
+        return Err(ierr!("非法的 Skill 路径", "Invalid skill path"));
     }
     let source_url = format!("{}/{}/{}/{}", SKILLS_SH, owner, repo, slug);
     let html = fetch_market_page(&format!("/{}/{}/{}", owner, repo, slug)).await?;
@@ -553,15 +580,15 @@ pub async fn download_market_skill(
     let marker = "<span>SKILL.md</span>";
     let marker_index = html
         .find(marker)
-        .ok_or_else(|| "详情页缺少 SKILL.md".to_string())?;
+        .ok_or_else(|| ierr!("详情页缺少 SKILL.md", "Detail page is missing SKILL.md"))?;
     let prose_start = html[marker_index..]
         .find("<div class=\"prose ")
         .map(|index| marker_index + index)
-        .ok_or_else(|| "无法定位 Skill 内容".to_string())?;
+        .ok_or_else(|| ierr!("无法定位 Skill 内容", "Unable to locate skill content"))?;
     let content_start = html[prose_start..]
         .find('>')
         .map(|index| prose_start + index + 1)
-        .ok_or_else(|| "无法解析 Skill 内容".to_string())?;
+        .ok_or_else(|| ierr!("无法解析 Skill 内容", "Unable to parse skill content"))?;
     let content_end = html[content_start..]
         .find("<div class=\"relative\">")
         .map(|index| content_start + index)
@@ -570,10 +597,18 @@ pub async fn download_market_skill(
                 .find("<section class=\"mt-16\">")
                 .map(|index| content_start + index)
         })
-        .ok_or_else(|| "无法确定 Skill 内容边界".to_string())?;
+        .ok_or_else(|| {
+            ierr!(
+                "无法确定 Skill 内容边界",
+                "Unable to determine skill content boundary"
+            )
+        })?;
     let content = strip_html(&html[content_start..content_end]);
     if content.trim().is_empty() {
-        return Err("下载到的 Skill 内容为空".to_string());
+        return Err(ierr!(
+            "下载到的 Skill 内容为空",
+            "Downloaded skill content is empty"
+        ));
     }
 
     let skill = SkillConfig {
@@ -621,12 +656,15 @@ pub async fn download_market_skill(
 fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
     // 拒绝空
     if package_name.trim().is_empty() {
-        return Err("包名不能为空".into());
+        return Err(ierr!("包名不能为空", "Package name must not be empty"));
     }
 
     // 拒绝路径穿越
     if package_name.contains("..") {
-        return Err("包名包含非法字符 '..'".into());
+        return Err(ierr!(
+            "包名包含非法字符 '..'",
+            "Package name contains illegal characters '..'"
+        ));
     }
 
     // 拒绝 shell 元字符
@@ -635,7 +673,11 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
             ch,
             ';' | '|' | '&' | '$' | '`' | '\\' | '\'' | '"' | '<' | '>' | '!' | '\n' | '\r' | '\t'
         ) {
-            return Err(format!("包名包含禁止字符: '{}'", ch));
+            return Err(ierr!(
+                "包名包含禁止字符: '{}'",
+                "Package name contains a forbidden character: '{}'",
+                ch
+            ));
         }
     }
 
@@ -644,18 +686,27 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
         // scoped package: @scope/name
         let parts: Vec<&str> = rest.splitn(2, '/').collect();
         if parts.len() != 2 {
-            return Err("scoped 包名格式错误: 应为 @scope/name".into());
+            return Err(ierr!(
+                "scoped 包名格式错误: 应为 @scope/name",
+                "Invalid scoped package name: expected @scope/name"
+            ));
         }
         let scope = parts[0];
         let name_part = parts[1];
         if scope.is_empty() || name_part.is_empty() {
-            return Err("scoped 包名格式错误: scope 或 name 为空".into());
+            return Err(ierr!(
+                "scoped 包名格式错误: scope 或 name 为空",
+                "Invalid scoped package name: scope or name is empty"
+            ));
         }
         // 验证 scope
         if !scope.chars().all(|c| {
             c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
         }) {
-            return Err("scoped 包名 scope 部分包含非法字符".into());
+            return Err(ierr!(
+                "scoped 包名 scope 部分包含非法字符",
+                "Scoped package name scope contains illegal characters"
+            ));
         }
         name_part
     } else {
@@ -664,13 +715,20 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
 
     // 验证 name 部分
     if name.is_empty() || name.len() > 214 {
-        return Err(format!("包名长度不合法: {} 字符（最大 214）", name.len()));
+        return Err(ierr!(
+            "包名长度不合法: {} 字符（最大 214）",
+            "Invalid package name length: {} characters (max 214)",
+            name.len()
+        ));
     }
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.')
     {
-        return Err("包名包含非法字符（仅允许小写字母、数字、-、_、.）".into());
+        return Err(ierr!(
+            "包名包含非法字符（仅允许小写字母、数字、-、_、.）",
+            "Package name contains illegal characters (only lowercase letters, digits, -, _, . are allowed)"
+        ));
     }
 
     // 拒绝伪装成 Node.js 内置模块
@@ -705,8 +763,9 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
         &lower_name
     };
     if node_builtins.contains(&base_name) {
-        return Err(format!(
+        return Err(ierr!(
             "包名 '{}' 伪装为 Node.js 内置模块，拒绝导入",
+            "Package name '{}' impersonates a Node.js built-in module; import rejected",
             package_name
         ));
     }
@@ -716,7 +775,10 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
         || package_name.starts_with("git+")
         || package_name.starts_with("ssh://")
     {
-        return Err("包名不是合法的 npm 包名".into());
+        return Err(ierr!(
+            "包名不是合法的 npm 包名",
+            "Package name is not a valid npm package name"
+        ));
     }
 
     Ok(())
@@ -757,7 +819,14 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             .spawn()
         {
             Ok(c) => c,
-            Err(e) => return Err(format!("启动 {} 失败: {}", npx_cmd, e)),
+            Err(e) => {
+                return Err(ierr!(
+                    "启动 {} 失败: {}",
+                    "Failed to start {}: {}",
+                    npx_cmd,
+                    e
+                ))
+            }
         };
 
         // Windows: 分配到每次执行独立的 Job Object（守卫 Drop 时清理整棵进程树）
@@ -769,9 +838,13 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             }
         };
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| format!("等待 npx 进程失败: {e}"))?;
+        let output = child.wait_with_output().map_err(|e| {
+            ierr!(
+                "等待 npx 进程失败: {}",
+                "Failed to wait for npx process: {}",
+                e
+            )
+        })?;
 
         // 截断输出到 1MB
         let stdout = if output.stdout.len() > 1_048_576 {
@@ -790,7 +863,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         ))
     })
     .await
-    .unwrap_or_else(|_| Err("npx 线程 panic".to_string()));
+    .unwrap_or_else(|_| Err(ierr!("npx 线程 panic", "npx thread panicked")));
 
     // 处理 npx skills list 结果
     match skills_cli_result {
@@ -994,7 +1067,7 @@ fn run_npx_sandboxed(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("启动 {} 失败: {}", npx_cmd, e))?;
+        .map_err(|e| ierr!("启动 {} 失败: {}", "Failed to start {}: {}", npx_cmd, e))?;
 
     // Windows: 分配到每次执行独立的 Job Object。守卫 Drop（含超时提前返回 ? 的
     // 路径）会触发 KILL_ON_JOB_CLOSE 清理整棵 npx 进程树——修复此前超时后
@@ -1016,8 +1089,20 @@ fn run_npx_sandboxed(
 
     let output = rx
         .recv_timeout(std::time::Duration::from_secs(timeout_secs))
-        .map_err(|_| format!("npx 命令超时（>{timeout_secs}s），已终止"))?
-        .map_err(|e| format!("等待 npx 进程失败: {e}"))?;
+        .map_err(|_| {
+            ierr!(
+                "npx 命令超时（>{}s），已终止",
+                "npx command timed out (>{}s), terminated",
+                timeout_secs
+            )
+        })?
+        .map_err(|e| {
+            ierr!(
+                "等待 npx 进程失败: {}",
+                "Failed to wait for npx process: {}",
+                e
+            )
+        })?;
 
     // 记录 stderr 用于审计
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1028,7 +1113,12 @@ fn run_npx_sandboxed(
 
     if !output.status.success() {
         let stderr_short: String = stderr.chars().take(300).collect();
-        return Err(format!("npx 退出码 {}: {}", output.status, stderr_short));
+        return Err(ierr!(
+            "npx 退出码 {}: {}",
+            "npx exited with code {}: {}",
+            output.status,
+            stderr_short
+        ));
     }
 
     // 截断输出
@@ -1072,7 +1162,10 @@ fn sanitize_skill_content(raw: &str) -> Result<String, String> {
     cleaned = cleaned.trim().to_string();
 
     if cleaned.is_empty() {
-        return Err("清洗后内容为空（可能为纯控制字符）".into());
+        return Err(ierr!(
+            "清洗后内容为空（可能为纯控制字符）",
+            "Content is empty after sanitization (may be pure control characters)"
+        ));
     }
 
     // 5. 检查前 512 字节中可打印字符比例（拒绝二进制 blob）
@@ -1086,7 +1179,10 @@ fn sanitize_skill_content(raw: &str) -> Result<String, String> {
         .filter(|c| c.is_ascii_graphic() || c.is_whitespace())
         .count();
     if !sample.is_empty() && (printable_count as f64 / sample.len() as f64) < 0.5 {
-        return Err("内容看似为二进制数据，拒绝导入".into());
+        return Err(ierr!(
+            "内容看似为二进制数据，拒绝导入",
+            "Content appears to be binary data; import rejected"
+        ));
     }
 
     Ok(cleaned)
@@ -1107,8 +1203,14 @@ pub async fn import_npx_skill(
     let raw_content =
         tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
             .await
-            .map_err(|_| "npx 线程 panic".to_string())??
-            .ok_or_else(|| format!("npx {} 未返回任何内容", package_name))?;
+            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
+            .ok_or_else(|| {
+                ierr!(
+                    "npx {} 未返回任何内容",
+                    "npx {} returned no content",
+                    package_name
+                )
+            })?;
 
     // 清洗内容（去除 ANSI 序列、null 字节、控制字符）
     let content = sanitize_skill_content(&raw_content)?;
@@ -1173,12 +1275,14 @@ pub async fn refresh_npx_skill(
         }
         None => load_file(&app).skills.get(&id).cloned(),
     }
-    .ok_or_else(|| format!("Skill {} 不存在", id))?;
+    .ok_or_else(|| ierr!("Skill {} 不存在", "Skill {} not found", id))?;
 
-    let pkg_name = existing
-        .npx_package
-        .as_ref()
-        .ok_or_else(|| "该 Skill 不是 npx 来源".to_string())?;
+    let pkg_name = existing.npx_package.as_ref().ok_or_else(|| {
+        ierr!(
+            "该 Skill 不是 npx 来源",
+            "This skill is not from an npx source"
+        )
+    })?;
 
     // 包名校验（重新验证，防止存储的包名被篡改）
     validate_npx_package_name(pkg_name)?;
@@ -1188,8 +1292,14 @@ pub async fn refresh_npx_skill(
     let raw_content =
         tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
             .await
-            .map_err(|_| "npx 线程 panic".to_string())??
-            .ok_or_else(|| format!("npx {} 未返回任何内容", pkg_name))?;
+            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
+            .ok_or_else(|| {
+                ierr!(
+                    "npx {} 未返回任何内容",
+                    "npx {} returned no content",
+                    pkg_name
+                )
+            })?;
 
     let content = sanitize_skill_content(&raw_content)?;
 

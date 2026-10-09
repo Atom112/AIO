@@ -7,6 +7,7 @@ use crate::core::permission::{self, PermissionAction};
 use crate::core::state::DbState;
 use crate::core::state::StreamManager;
 use crate::core::subagent;
+use crate::ierr;
 use crate::plugins::mcp::PendingApprovals;
 use crate::utils::diff::compute_diff_preview;
 use crate::utils::file_tools;
@@ -253,7 +254,10 @@ pub(crate) async fn stream_one_round(
             _ = token.cancelled() => return Err("cancelled".to_string()),
             item = stream.next() => item,
             _ = tokio::time::sleep(std::time::Duration::from_secs(120)) => {
-                return Err("LLM 流超时：120 秒未收到数据，连接可能已断开".to_string());
+                return Err(ierr!(
+                    "LLM 流超时：120 秒未收到数据，连接可能已断开",
+                    "LLM stream timed out: no data for 120s, the connection may have dropped"
+                ));
             }
         };
 
@@ -777,7 +781,10 @@ pub(crate) async fn execute_builtin_tool(
             .unwrap_or_default()
             .sandbox_required
     {
-        return Err("沙箱不可用，已拒绝执行命令（fail-closed）。请安装 bubblewrap（Linux）或确认 sandbox-exec 存在（macOS）后重试；或在应用配置中将 sandboxRequired 设为 false 以回退无沙箱执行（不推荐）。".into());
+        return Err(ierr!(
+            "沙箱不可用，已拒绝执行命令（fail-closed）。请安装 bubblewrap（Linux）或确认 sandbox-exec 存在（macOS）后重试；或在应用配置中将 sandboxRequired 设为 false 以回退无沙箱执行（不推荐）。",
+            "Sandbox unavailable; command execution refused (fail-closed). Install bubblewrap (Linux) or verify sandbox-exec exists (macOS), then retry; or set sandboxRequired to false in app settings to fall back to unsandboxed execution (not recommended)."
+        ));
     }
 
     // 权限检查（与 execute_tool_call 保持一致，server_id 沿用 crate::core::ids::BUILTIN_FS_SERVER_ID 以兼容已有规则）
@@ -1846,7 +1853,10 @@ pub(crate) async fn run_agent_turn_inner(
                     let steps_raw = args_val["steps"].as_array();
                     let tool_result = if let Some(steps_arr) = steps_raw {
                         if steps_arr.is_empty() {
-                            Err("create_workflow: 'steps' 数组不能为空".to_string())
+                            Err(ierr!(
+                                "create_workflow: 'steps' 数组不能为空",
+                                "create_workflow: 'steps' array must not be empty"
+                            ))
                         } else {
                             let mut workflow_steps: Vec<WorkflowStep> = Vec::new();
                             let mut parse_error: Option<String> = None;
@@ -1856,8 +1866,9 @@ pub(crate) async fn run_agent_turn_inner(
                                 let name = step["name"].as_str().unwrap_or("").to_string();
                                 let task = step["task"].as_str().unwrap_or("").to_string();
                                 if task.is_empty() {
-                                    parse_error = Some(format!(
+                                    parse_error = Some(ierr!(
                                         "create_workflow: 步骤 {} 缺少 'task' 字段",
+                                        "create_workflow: step {} is missing the 'task' field",
                                         idx + 1
                                     ));
                                     break;
@@ -1904,7 +1915,10 @@ pub(crate) async fn run_agent_turn_inner(
                             }
                         }
                     } else {
-                        Err("create_workflow: 缺少 'steps' 数组".to_string())
+                        Err(ierr!(
+                            "create_workflow: 缺少 'steps' 数组",
+                            "create_workflow: missing 'steps' array"
+                        ))
                     };
 
                     let (content_text, result_value, is_error) = match tool_result {
@@ -2017,7 +2031,11 @@ pub(crate) async fn run_agent_turn_inner(
                                                 &app, &s, &tn, args, pid_c.as_deref(), &mode_c, &tok_c,
                                             ).await
                                         }
-                                        None => Err(format!("工具 {} 的 MCP server 未连接或意外断开，请检查 MCP 服务器状态", tn)),
+                                        None => Err(ierr!(
+                                            "工具 {} 的 MCP server 未连接或意外断开，请检查 MCP 服务器状态",
+                                            "The MCP server for tool {} is not connected or dropped unexpectedly; check the MCP server status",
+                                            tn
+                                        )),
                                     }
                                 }
                             },

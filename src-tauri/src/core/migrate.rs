@@ -7,6 +7,7 @@
 //! 供 chat_history.db（core::db）与项目记忆库（services::memory::store）共用，
 //! 替代此前两处各自手写的 "add column if missing" 序列。
 
+use crate::ierr;
 use rusqlite::Connection;
 
 /// 一条迁移：`version` 必须严格递增且 > 0。
@@ -23,17 +24,47 @@ pub struct Migration {
 pub fn run_migrations(conn: &Connection, migrations: &[Migration]) -> Result<usize, String> {
     let current: u32 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
-        .map_err(|e| format!("读取 user_version 失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "读取 user_version 失败: {}",
+                "Failed to read user_version: {}",
+                e
+            )
+        })?;
 
     let mut applied = 0usize;
     for m in migrations.iter().filter(|m| m.version > current) {
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|e| format!("开启迁移事务失败: {e}"))?;
-        (m.run)(&tx).map_err(|e| format!("迁移 {} (v{}) 失败: {e}", m.name, m.version))?;
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            ierr!(
+                "开启迁移事务失败: {}",
+                "Failed to begin migration transaction: {}",
+                e
+            )
+        })?;
+        (m.run)(&tx).map_err(|e| {
+            ierr!(
+                "迁移 {} (v{}) 失败: {}",
+                "Migration {} (v{}) failed: {}",
+                m.name,
+                m.version,
+                e
+            )
+        })?;
         tx.pragma_update(None, "user_version", m.version)
-            .map_err(|e| format!("写入 user_version 失败: {e}"))?;
-        tx.commit().map_err(|e| format!("提交迁移事务失败: {e}"))?;
+            .map_err(|e| {
+                ierr!(
+                    "写入 user_version 失败: {}",
+                    "Failed to write user_version: {}",
+                    e
+                )
+            })?;
+        tx.commit().map_err(|e| {
+            ierr!(
+                "提交迁移事务失败: {}",
+                "Failed to commit migration transaction: {}",
+                e
+            )
+        })?;
         tracing::info!("[migrate] v{} {} 已应用", m.version, m.name);
         applied += 1;
     }
@@ -55,10 +86,14 @@ pub fn add_column_if_missing(
         !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_')
     }
     if !is_valid_ident(table) {
-        return Err(format!("非法的表名: '{table}'"));
+        return Err(ierr!("非法的表名: '{}'", "Invalid table name: '{}'", table));
     }
     if !is_valid_ident(column) {
-        return Err(format!("非法的列名: '{column}'"));
+        return Err(ierr!(
+            "非法的列名: '{}'",
+            "Invalid column name: '{}'",
+            column
+        ));
     }
     let exists: i32 = conn
         .query_row(

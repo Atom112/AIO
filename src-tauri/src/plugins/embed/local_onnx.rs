@@ -8,6 +8,7 @@
 
 use super::Embedder;
 use crate::core::models::MemoryEmbeddingConfig;
+use crate::ierr;
 use fastembed::{
     InitOptionsUserDefined, Pooling, TextEmbedding, TokenizerFiles, UserDefinedEmbeddingModel,
 };
@@ -63,7 +64,11 @@ fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> 
         }
     }
     let entry = crate::core::model_registry::find_entry(id).ok_or_else(|| {
-        format!("未知嵌入模型: {id}，请在「Embedding 模型管理」中选择已支持的模型")
+        ierr!(
+            "未知嵌入模型: {}，请在「Embedding 模型管理」中选择已支持的模型",
+            "Unknown embedding model: {}, select a supported model in Settings → Embedding Models",
+            id
+        )
     })?;
     let (onnx, tokenizer) = if entry.bundled {
         (
@@ -79,17 +84,30 @@ fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> 
         let dir = embed_dir.join(id);
         let onnx_path = dir.join(entry.files.first().map(|f| f.name).unwrap_or("model.onnx"));
         if !onnx_path.exists() {
-            return Err(format!(
+            return Err(ierr!(
                 "嵌入模型未下载（{}），请在「Embedding 模型管理」中下载",
+                "Embedding model not downloaded ({}), download it in Settings → Embedding Models",
                 dir.display()
             ));
         }
         let read = |name: &str| -> Result<Vec<u8>, String> {
-            std::fs::read(dir.join(name))
-                .map_err(|e| format!("读取 {} 失败: {e}", dir.join(name).display()))
+            std::fs::read(dir.join(name)).map_err(|e| {
+                ierr!(
+                    "读取 {} 失败: {}",
+                    "Failed to read {}: {}",
+                    dir.join(name).display(),
+                    e
+                )
+            })
         };
-        let onnx = std::fs::read(&onnx_path)
-            .map_err(|e| format!("读取 ONNX 权重失败（{}）: {e}", onnx_path.display()))?;
+        let onnx = std::fs::read(&onnx_path).map_err(|e| {
+            ierr!(
+                "读取 ONNX 权重失败（{}）: {}",
+                "Failed to read ONNX weights ({}): {}",
+                onnx_path.display(),
+                e
+            )
+        })?;
         (
             onnx,
             TokenizerFiles {
@@ -106,7 +124,14 @@ fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> 
         InitOptionsUserDefined::default().with_max_length(256),
     )
     .map(Arc::new)
-    .map_err(|e| format!("本地嵌入模型加载失败（{id}）: {e}"));
+    .map_err(|e| {
+        ierr!(
+            "本地嵌入模型加载失败（{}）: {}",
+            "Failed to load local embedding model ({}): {}",
+            id,
+            e
+        )
+    });
     let mut map = instances().lock().map_err(|e| e.to_string())?;
     map.insert(id.to_string(), result.clone());
     result

@@ -18,6 +18,8 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
 
+use crate::ierr;
+
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn emit_status(
@@ -108,10 +110,13 @@ pub async fn save_mcp_server_secret(
     value: String,
 ) -> Result<String, String> {
     if server_id.trim().is_empty() || key.trim().is_empty() || value.is_empty() {
-        return Err("服务器、密钥名称和值不能为空".into());
+        return Err(ierr!(
+            "服务器、密钥名称和值不能为空",
+            "Server, secret key name, and value must not be empty"
+        ));
     }
     if target != "env" && target != "header" {
-        return Err("不支持的密钥目标".into());
+        return Err(ierr!("不支持的密钥目标", "Unsupported secret target"));
     }
     let account = format!("mcp-server-{}-{}-{}", server_id, target, key);
     secure_store::set(&app, &account, &value).map_err(|error| error.to_string())?;
@@ -199,7 +204,7 @@ pub async fn start_mcp_server(
     emit_status(&app, &id, McpStatus::Connecting, None, 0);
 
     let config = mcp::get_config_merged(&app, &id, project_id.as_deref())
-        .ok_or_else(|| format!("未找到 MCP server: {}", id))?;
+        .ok_or_else(|| ierr!("未找到 MCP server: {}", "MCP server not found: {}", id))?;
 
     let transport_id = match &config.transport {
         McpTransport::Stdio { .. } => "stdio",
@@ -207,27 +212,34 @@ pub async fn start_mcp_server(
         McpTransport::StreamableHttp { .. } => "streamable_http",
     };
 
-    let plugin = mgr
-        .get(transport_id)
-        .ok_or_else(|| format!("未注册 transport 插件: {}", transport_id))?;
+    let plugin = mgr.get(transport_id).ok_or_else(|| {
+        ierr!(
+            "未注册 transport 插件: {}",
+            "No transport plugin registered for: {}",
+            transport_id
+        )
+    })?;
 
-    let conn = plugin
-        .start(app.clone(), &config)
-        .await
-        .map_err(|e| format!("启动 MCP server 失败: {}", e))?;
+    let conn = plugin.start(app.clone(), &config).await.map_err(|e| {
+        ierr!(
+            "启动 MCP server 失败: {}",
+            "Failed to start MCP server: {}",
+            e
+        )
+    })?;
     let conn = Arc::new(conn);
 
     // 协议握手
     let server_info = plugin
         .initialize(&conn)
         .await
-        .map_err(|e| format!("MCP initialize 失败: {}", e))?;
+        .map_err(|e| ierr!("MCP initialize 失败: {}", "MCP initialize failed: {}", e))?;
 
     // 拉取工具列表
     let tools = plugin
         .list_tools(&conn)
         .await
-        .map_err(|e| format!("MCP tools/list 失败: {}", e))?;
+        .map_err(|e| ierr!("MCP tools/list 失败: {}", "MCP tools/list failed: {}", e))?;
 
     // 应用 enabled_tools 白名单
     let filtered: Vec<ToolSpec> = if config.enabled_tools.is_empty() {
@@ -564,12 +576,19 @@ pub(crate) async fn execute_tool_call(
     let requests = app.state::<McpRequestManager>();
     let pending = app.state::<PendingApprovals>();
 
-    let cfg = mcp::get_config_merged(app, server_id, project_id)
-        .ok_or_else(|| format!("未找到 MCP server: {}", server_id))?;
+    let cfg = mcp::get_config_merged(app, server_id, project_id).ok_or_else(|| {
+        ierr!(
+            "未找到 MCP server: {}",
+            "MCP server not found: {}",
+            server_id
+        )
+    })?;
     if !cfg.enabled_tools.is_empty() && !cfg.enabled_tools.contains(&tool_name.to_string()) {
-        return Err(format!(
+        return Err(ierr!(
             "工具 {} 不在 server {} 的白名单中",
-            tool_name, server_id
+            "Tool {} is not in the allowlist of server {}",
+            tool_name,
+            server_id
         ));
     }
 
@@ -601,20 +620,26 @@ pub(crate) async fn execute_tool_call(
 
         match action {
             PermissionAction::Deny => {
-                return Err(format!(
+                return Err(ierr!(
                     "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
+                    "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo run it, switch to auto mode or add an allow rule in project permission settings.",
                     tool_name
                 ));
             }
             PermissionAction::Ask => {
                 // 需要用户确认；用 select! 让取消可打断挂起审批
                 let reason = if untrusted_auto {
-                    format!(
+                    ierr!(
                         "工具 '{}' 来自未受信任的 MCP server「{}」，请在确认安全后执行（可在 MCP 设置中标记为受信任以跳过确认）",
+                        "Tool '{}' comes from an untrusted MCP server \"{}\"; confirm it is safe before running (mark the server as trusted in MCP settings to skip this confirmation)",
                         tool_name, cfg.display_name
                     )
                 } else {
-                    format!("工具 '{}' 需要您的确认才能执行", tool_name)
+                    ierr!(
+                        "工具 '{}' 需要您的确认才能执行",
+                        "Tool '{}' requires your confirmation to run",
+                        tool_name
+                    )
                 };
                 let approval_fut = request_tool_approval(
                     app,
@@ -640,14 +665,22 @@ pub(crate) async fn execute_tool_call(
         McpTransport::Http { .. } => "http",
         McpTransport::StreamableHttp { .. } => "streamable_http",
     };
-    let plugin = mgr
-        .get(transport_id)
-        .ok_or_else(|| format!("未注册 transport: {}", transport_id))?;
+    let plugin = mgr.get(transport_id).ok_or_else(|| {
+        ierr!(
+            "未注册 transport: {}",
+            "No registered transport: {}",
+            transport_id
+        )
+    })?;
     let conn = {
         let map = state.lock();
-        map.get(server_id)
-            .cloned()
-            .ok_or_else(|| format!("MCP server 未连接: {}", server_id))?
+        map.get(server_id).cloned().ok_or_else(|| {
+            ierr!(
+                "MCP server 未连接: {}",
+                "MCP server not connected: {}",
+                server_id
+            )
+        })?
     };
 
     // 用 call_id 跟踪；带 uuid 保证唯一，避免并发同名调用互相覆盖 handle。
@@ -668,13 +701,13 @@ pub(crate) async fn execute_tool_call(
         std::result::Result<ToolResult, crate::plugins::mcp::error::McpError>,
     > = match entry {
         Some((_, h)) => h,
-        None => return Err("调用已被中止".into()),
+        None => return Err(ierr!("调用已被中止", "The call was aborted")),
     };
     tokio::select! {
         _ = token.cancelled() => Err("cancelled".into()),
         res = handle => match res {
             Ok(r) => r.map_err(|e: crate::plugins::mcp::error::McpError| e.to_string()),
-            Err(e) => Err(format!("工具调用任务 join 失败: {}", e)),
+            Err(e) => Err(ierr!("工具调用任务 join 失败: {}", "Failed to join tool call task: {}", e)),
         },
     }
 }
@@ -698,9 +731,13 @@ pub async fn test_mcp_server_connection(
         McpTransport::Http { .. } => "http",
         McpTransport::StreamableHttp { .. } => "streamable_http",
     };
-    let plugin = mgr
-        .get(transport_id)
-        .ok_or_else(|| format!("未注册 transport: {}", transport_id))?;
+    let plugin = mgr.get(transport_id).ok_or_else(|| {
+        ierr!(
+            "未注册 transport: {}",
+            "No registered transport: {}",
+            transport_id
+        )
+    })?;
     let conn = plugin
         .start(app.clone(), &config)
         .await
@@ -765,7 +802,11 @@ pub async fn check_tool_permission(
         PermissionAction::Deny => Ok(PermissionCheckResult {
             action: "deny".into(),
             approval_id: None,
-            reason: Some(format!("工具 '{}' 在当前模式下已被禁止执行", tool_name)),
+            reason: Some(ierr!(
+                "工具 '{}' 在当前模式下已被禁止执行",
+                "Tool '{}' is blocked in the current mode",
+                tool_name
+            )),
         }),
         PermissionAction::Allow => Ok(PermissionCheckResult {
             action: "allow".into(),
@@ -775,7 +816,11 @@ pub async fn check_tool_permission(
         PermissionAction::Ask => Ok(PermissionCheckResult {
             action: "ask".into(),
             approval_id: None,
-            reason: Some(format!("工具 '{}' 需要您的确认才能执行", tool_name)),
+            reason: Some(ierr!(
+                "工具 '{}' 需要您的确认才能执行",
+                "Tool '{}' requires your confirmation to run",
+                tool_name
+            )),
         }),
     }
 }
@@ -852,17 +897,26 @@ pub(crate) async fn request_tool_approval(
         Ok(Ok(true)) => Ok(()), // 用户批准
         Ok(Ok(false)) => {
             // 拒绝：sender 已被消费，无需移除
-            Err("用户已拒绝此操作".into())
+            Err(ierr!(
+                "用户已拒绝此操作",
+                "The user declined this operation"
+            ))
         }
         Ok(Err(_)) => {
             // channel 关闭：移除泄漏的 sender
             pending.remove(&approval_id);
-            Err("审批通道意外关闭".into())
+            Err(ierr!(
+                "审批通道意外关闭",
+                "Approval channel closed unexpectedly"
+            ))
         }
         Err(_) => {
             // 超时：移除泄漏的 sender，否则永久驻留 PendingApprovals
             pending.remove(&approval_id);
-            Err("等待用户确认超时（60s）".into())
+            Err(ierr!(
+                "等待用户确认超时（60s）",
+                "Timed out waiting for user confirmation (60s)"
+            ))
         }
     }
 }
@@ -882,13 +936,18 @@ pub async fn respond_tool_approval(
     approved: bool,
     always: Option<String>,
 ) -> Result<(), String> {
-    let (tx, ctx) = pending
-        .remove(&approval_id)
-        .ok_or_else(|| format!("审批请求 {} 不存在或已过期", approval_id))?;
+    let (tx, ctx) = pending.remove(&approval_id).ok_or_else(|| {
+        ierr!(
+            "审批请求 {} 不存在或已过期",
+            "Approval request {} does not exist or has expired",
+            approval_id
+        )
+    })?;
     if approved && always.as_deref() == Some("session") {
         register_session_allow_rule(&ctx);
     }
-    tx.send(approved).map_err(|_| "发送审批结果失败".into())
+    tx.send(approved)
+        .map_err(|_| ierr!("发送审批结果失败", "Failed to send approval result"))
 }
 
 /// 按审批上下文派生会话级放行规则（P4.5）。
@@ -956,15 +1015,19 @@ pub async fn list_mcp_resources(
         let map = state.lock();
         map.get(&id)
             .cloned()
-            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
+            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
     };
-    let plugin = mgr
-        .get(&conn.transport_kind)
-        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
+        ierr!(
+            "未注册 transport 插件: {}",
+            "No transport plugin registered for: {}",
+            conn.transport_kind
+        )
+    })?;
     plugin
         .list_resources(&conn)
         .await
-        .map_err(|e| format!("resources/list 失败: {}", e))
+        .map_err(|e| ierr!("resources/list 失败: {}", "resources/list failed: {}", e))
 }
 
 /// 读取指定 MCP server 的一个资源。
@@ -979,15 +1042,19 @@ pub async fn read_mcp_resource(
         let map = state.lock();
         map.get(&id)
             .cloned()
-            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
+            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
     };
-    let plugin = mgr
-        .get(&conn.transport_kind)
-        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
+        ierr!(
+            "未注册 transport 插件: {}",
+            "No transport plugin registered for: {}",
+            conn.transport_kind
+        )
+    })?;
     plugin
         .read_resource(&conn, &uri)
         .await
-        .map_err(|e| format!("resources/read 失败: {}", e))
+        .map_err(|e| ierr!("resources/read 失败: {}", "resources/read failed: {}", e))
 }
 
 /// 列出指定 MCP server 的提示词列表。
@@ -1001,15 +1068,19 @@ pub async fn list_mcp_prompts(
         let map = state.lock();
         map.get(&id)
             .cloned()
-            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
+            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
     };
-    let plugin = mgr
-        .get(&conn.transport_kind)
-        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
+        ierr!(
+            "未注册 transport 插件: {}",
+            "No transport plugin registered for: {}",
+            conn.transport_kind
+        )
+    })?;
     plugin
         .list_prompts(&conn)
         .await
-        .map_err(|e| format!("prompts/list 失败: {}", e))
+        .map_err(|e| ierr!("prompts/list 失败: {}", "prompts/list failed: {}", e))
 }
 
 /// 获取指定 MCP server 的一个提示词。
@@ -1025,15 +1096,19 @@ pub async fn get_mcp_prompt(
         let map = state.lock();
         map.get(&id)
             .cloned()
-            .ok_or_else(|| format!("MCP server 未连接: {}", id))?
+            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
     };
-    let plugin = mgr
-        .get(&conn.transport_kind)
-        .ok_or_else(|| format!("未注册 transport 插件: {}", conn.transport_kind))?;
+    let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
+        ierr!(
+            "未注册 transport 插件: {}",
+            "No transport plugin registered for: {}",
+            conn.transport_kind
+        )
+    })?;
     plugin
         .get_prompt(&conn, &name, arguments)
         .await
-        .map_err(|e| format!("prompts/get 失败: {}", e))
+        .map_err(|e| ierr!("prompts/get 失败: {}", "prompts/get failed: {}", e))
 }
 
 /// 测试用：列出已注册 transport 插件 identifier

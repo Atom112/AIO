@@ -6,6 +6,7 @@
 /// 进程生命周期：若 Ollama 已由用户自行启动（systemd / launchd / docker），
 /// 插件直接使用现有服务；否则自动拉起 ollama serve 子进程。
 use crate::core::state::LocalEngineState;
+use crate::ierr;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::future::Future;
 use std::io::Write;
@@ -240,9 +241,15 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
     // 写入临时 Modelfile
     let tmpdir = std::env::temp_dir();
     let modelfile_path = tmpdir.join(format!("aio-ollama-{}.Modelfile", model_name));
-    let mut f =
-        std::fs::File::create(&modelfile_path).map_err(|e| format!("无法创建 Modelfile: {}", e))?;
-    writeln!(f, "FROM {}", model_path).map_err(|e| format!("无法写入 Modelfile: {}", e))?;
+    let mut f = std::fs::File::create(&modelfile_path).map_err(|e| {
+        ierr!(
+            "无法创建 Modelfile: {}",
+            "Failed to create Modelfile: {}",
+            e
+        )
+    })?;
+    writeln!(f, "FROM {}", model_path)
+        .map_err(|e| ierr!("无法写入 Modelfile: {}", "Failed to write Modelfile: {}", e))?;
     drop(f);
 
     // 执行 ollama create（异步，避免阻塞 runtime）—— 使用解析出的真实路径，规避 PATH 缺失环境
@@ -256,14 +263,24 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
         .stderr(std::process::Stdio::piped())
         .output()
         .await
-        .map_err(|e| format!("无法执行 ollama create: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "无法执行 ollama create: {}",
+                "Failed to run ollama create: {}",
+                e
+            )
+        })?;
 
     // 清理 Modelfile
     let _ = std::fs::remove_file(&modelfile_path);
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ollama create 失败: {}", stderr.trim()));
+        return Err(ierr!(
+            "ollama create 失败: {}",
+            "ollama create failed: {}",
+            stderr.trim()
+        ));
     }
 
     debug!("[ollama] 模型 {} 导入成功", model_name);
@@ -371,7 +388,11 @@ impl LocalEnginePlugin for OllamaPlugin {
             );
 
             if !Path::new(model_path).exists() {
-                return Err(format!("模型文件不存在: {}", model_path));
+                return Err(ierr!(
+                    "模型文件不存在: {}",
+                    "Model file does not exist: {}",
+                    model_path
+                ));
             }
 
             // 1. 确保 Ollama 服务运行
@@ -381,9 +402,13 @@ impl LocalEnginePlugin for OllamaPlugin {
                 // 用解析出的真实路径（PATH 缺失环境下兜底常见安装目录）
                 let exe_path = resolve_ollama_exe().unwrap_or_else(|| PathBuf::from("ollama"));
                 let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
-                let child = cmd
-                    .spawn()
-                    .map_err(|e| format!("启动 ollama serve 失败: {}", e))?;
+                let child = cmd.spawn().map_err(|e| {
+                    ierr!(
+                        "启动 ollama serve 失败: {}",
+                        "Failed to start ollama serve: {}",
+                        e
+                    )
+                })?;
 
                 // 注册子进程到状态，供 stop 命令管理
                 {
@@ -396,7 +421,10 @@ impl LocalEnginePlugin for OllamaPlugin {
                 let deadline = std::time::Instant::now() + Duration::from_secs(30);
                 loop {
                     if std::time::Instant::now() > deadline {
-                        return Err("Ollama 服务启动超时".to_string());
+                        return Err(ierr!(
+                            "Ollama 服务启动超时",
+                            "Ollama service startup timed out"
+                        ));
                     }
                     if ollama_http_reachable_async("127.0.0.1", port).await {
                         debug!("[ollama] 服务就绪");

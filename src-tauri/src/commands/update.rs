@@ -19,6 +19,8 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_updater::Error as UpdaterError;
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::ierr;
+
 /// 标准化后的更新信息（返回给前端）
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -88,7 +90,11 @@ pub async fn check_app_update<R: Runtime>(app: AppHandle<R>) -> CheckUpdateResul
             return CheckUpdateResult::Failed {
                 current_version: current_version.clone(),
                 endpoint,
-                reason: format!("初始化更新服务失败: {e}"),
+                reason: ierr!(
+                    "初始化更新服务失败: {}",
+                    "Failed to initialize the update service: {}",
+                    e
+                ),
             };
         }
     };
@@ -124,9 +130,10 @@ fn translate_error(err: UpdaterError, current_version: &str, endpoint: &str) -> 
         | UpdaterError::TargetsNotFound(_) => CheckUpdateResult::ServiceNotReady {
             current_version: current_version.to_string(),
             endpoint: endpoint.to_string(),
-            reason:
-                "GitHub Release 尚未附 latest.json 更新清单，需要用新 CI 发布一次后才会启用自动更新"
-                    .to_string(),
+            reason: ierr!(
+                "GitHub Release 尚未附 latest.json 更新清单，需要用新 CI 发布一次后才会启用自动更新",
+                "The GitHub Release has no latest.json update manifest yet; automatic updates will be enabled once a release is published with the new CI"
+            ),
         },
 
         // 2) 网络层错误（HTTP、DNS、连接超时等）
@@ -137,27 +144,29 @@ fn translate_error(err: UpdaterError, current_version: &str, endpoint: &str) -> 
                     CheckUpdateResult::ServiceNotReady {
                         current_version: current_version.to_string(),
                         endpoint: endpoint.to_string(),
-                        reason: "更新清单不存在 (HTTP 404) — GitHub Release 尚未附 latest.json"
-                            .to_string(),
+                        reason: ierr!(
+                            "更新清单不存在 (HTTP 404) — GitHub Release 尚未附 latest.json",
+                            "Update manifest not found (HTTP 404) — the GitHub Release has no latest.json attached"
+                        ),
                     }
                 } else {
                     CheckUpdateResult::Network {
                         current_version: current_version.to_string(),
                         endpoint: endpoint.to_string(),
-                        reason: format!("更新服务器返回 HTTP {status}"),
+                        reason: ierr!("更新服务器返回 HTTP {}", "Update server returned HTTP {}", status),
                     }
                 }
             } else if req_err.is_connect() || req_err.is_timeout() || req_err.is_request() {
                 CheckUpdateResult::Network {
                     current_version: current_version.to_string(),
                     endpoint: endpoint.to_string(),
-                    reason: format!("无法连接更新服务器: {req_err}"),
+                    reason: ierr!("无法连接更新服务器: {}", "Unable to connect to the update server: {}", req_err),
                 }
             } else {
                 CheckUpdateResult::Failed {
                     current_version: current_version.to_string(),
                     endpoint: endpoint.to_string(),
-                    reason: format!("网络错误: {req_err}"),
+                    reason: ierr!("网络错误: {}", "Network error: {}", req_err),
                 }
             }
         }
@@ -173,24 +182,30 @@ fn translate_error(err: UpdaterError, current_version: &str, endpoint: &str) -> 
         UpdaterError::InsecureTransportProtocol => CheckUpdateResult::Failed {
             current_version: current_version.to_string(),
             endpoint: endpoint.to_string(),
-            reason: "更新服务地址必须使用 HTTPS 协议".to_string(),
+            reason: ierr!("更新服务地址必须使用 HTTPS 协议", "The update service endpoint must use HTTPS"),
         },
         UpdaterError::EmptyEndpoints => CheckUpdateResult::Failed {
             current_version: current_version.to_string(),
             endpoint: endpoint.to_string(),
-            reason: "尚未配置任何更新服务地址".to_string(),
+            reason: ierr!("尚未配置任何更新服务地址", "No update service endpoint is configured"),
         },
 
         // 5) 平台/架构不支持
         UpdaterError::UnsupportedOs => CheckUpdateResult::Failed {
             current_version: current_version.to_string(),
             endpoint: endpoint.to_string(),
-            reason: "当前操作系统不支持自动更新".to_string(),
+            reason: ierr!(
+                "当前操作系统不支持自动更新",
+                "Automatic updates are not supported on this operating system"
+            ),
         },
         UpdaterError::UnsupportedArch => CheckUpdateResult::Failed {
             current_version: current_version.to_string(),
             endpoint: endpoint.to_string(),
-            reason: "当前 CPU 架构不支持自动更新".to_string(),
+            reason: ierr!(
+                "当前 CPU 架构不支持自动更新",
+                "Automatic updates are not supported on this CPU architecture"
+            ),
         },
 
         // 6) 其他未明确分类的错误 —— 把原始信息透传
@@ -224,7 +239,7 @@ pub async fn install_app_update<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
 
     let update = updater.check().await.map_err(|e| e.to_string())?;
     let Some(update) = update else {
-        return Err("未发现可用更新".into());
+        return Err(ierr!("未发现可用更新", "No available update found"));
     };
 
     let app_clone = app.clone();

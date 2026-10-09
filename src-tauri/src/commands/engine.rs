@@ -14,6 +14,8 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tokio::time::{sleep, Duration};
 
+use crate::ierr;
+
 /// 旧前端调用未带 engine_type 时使用的缺省引擎标识（默认本地引擎 = llama.cpp 插件）。
 /// 常量集中一次，避免字面量散落在命令体内。
 const DEFAULT_ENGINE_ID: &str = "llama_cpp";
@@ -48,9 +50,13 @@ pub async fn start_local_server(
     let engine_id = engine_type.unwrap_or_else(|| DEFAULT_ENGINE_ID.to_string());
     let trust_remote = trust_remote_code.unwrap_or(false);
 
-    let plugin = engine_mgr
-        .get(&engine_id)
-        .ok_or_else(|| format!("不支持的本地引擎: {}", engine_id))?;
+    let plugin = engine_mgr.get(&engine_id).ok_or_else(|| {
+        ierr!(
+            "不支持的本地引擎: {}",
+            "Unsupported local engine: {}",
+            engine_id
+        )
+    })?;
 
     // 沙箱：拒绝 home/AppData 外的模型路径（外部引擎免检——其模型由引擎自身管理）
     let safe_path = if plugin.is_external() {
@@ -208,9 +214,13 @@ pub async fn list_engine_models(
     api_url: String,
     engine_type: String,
 ) -> Result<Vec<String>, String> {
-    let plugin = engine_mgr
-        .get(&engine_type)
-        .ok_or_else(|| format!("不支持的引擎类型: {}", engine_type))?;
+    let plugin = engine_mgr.get(&engine_type).ok_or_else(|| {
+        ierr!(
+            "不支持的引擎类型: {}",
+            "Unsupported engine type: {}",
+            engine_type
+        )
+    })?;
 
     // 端点形态由插件声明（Ollama=/api/tags，OpenAI 兼容=/models）
     let models_url = plugin.models_url(&api_url);
@@ -226,7 +236,7 @@ pub async fn list_engine_models(
         .get(&models_url)
         .send()
         .await
-        .map_err(|e| format!("请求失败: {}", e))?;
+        .map_err(|e| ierr!("请求失败: {}", "Request failed: {}", e))?;
 
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
@@ -235,10 +245,10 @@ pub async fn list_engine_models(
     let body = resp
         .text()
         .await
-        .map_err(|e| format!("读取响应失败: {}", e))?;
+        .map_err(|e| ierr!("读取响应失败: {}", "Failed to read response: {}", e))?;
 
-    let v: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("响应非 JSON: {}", e))?;
+    let v: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| ierr!("响应非 JSON: {}", "Response is not JSON: {}", e))?;
 
     // 响应解析由插件声明（Ollama 的 {models:[{name}]} vs OpenAI 的 {data:[{id}]}）
     Ok(plugin.parse_model_ids(&v))

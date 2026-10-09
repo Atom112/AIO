@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
+use crate::ierr;
+
 const REGISTRY_URL: &str = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const CACHE_FILE: &str = "mcp-registry-cache.json";
 const CACHE_TTL_SECS: u64 = 6 * 60 * 60;
@@ -297,11 +299,19 @@ async fn fetch_page(
                     return Ok(entry.body.clone());
                 }
             }
-            return Err(format!("请求 MCP Registry 失败: {}", error));
+            return Err(ierr!(
+                "请求 MCP Registry 失败: {}",
+                "Failed to request MCP Registry: {}",
+                error
+            ));
         }
     };
     if !result.status().is_success() {
-        return Err(format!("MCP Registry 返回 HTTP {}", result.status()));
+        return Err(ierr!(
+            "MCP Registry 返回 HTTP {}",
+            "MCP Registry returned HTTP {}",
+            result.status()
+        ));
     }
     let body = result.text().await.map_err(|error| error.to_string())?;
     cache.entries.insert(
@@ -367,7 +377,12 @@ pub async fn install_mcp_catalog_server(
         .deliveries
         .iter()
         .find(|item| item.id == request.delivery_id)
-        .ok_or_else(|| "未找到选择的安装方式".to_string())?;
+        .ok_or_else(|| {
+            ierr!(
+                "未找到选择的安装方式",
+                "Selected installation method not found"
+            )
+        })?;
     let server_id = format!(
         "registry-{}",
         request
@@ -387,7 +402,11 @@ pub async fn install_mcp_catalog_server(
             .filter(|value| !value.is_empty())
             .or_else(|| (!input.default_value.is_empty()).then_some(&input.default_value));
         if input.required && supplied.is_none() {
-            return Err(format!("缺少必填配置: {}", input.name));
+            return Err(ierr!(
+                "缺少必填配置: {}",
+                "Missing required configuration: {}",
+                input.name
+            ));
         }
     }
 
@@ -426,7 +445,13 @@ pub async fn install_mcp_catalog_server(
                 &delivery.url,
                 &crate::utils::url_validation::HttpUrlOptions::local_engine(),
             )
-            .map_err(|e| format!("Registry 返回了非法的 HTTP 地址: {e}"))?;
+            .map_err(|e| {
+                ierr!(
+                    "Registry 返回了非法的 HTTP 地址: {}",
+                    "Registry returned an invalid HTTP URL: {}",
+                    e
+                )
+            })?;
             McpTransport::Http { url, headers }
         }
         "npm" | "pypi" => McpTransport::Stdio {
@@ -439,7 +464,12 @@ pub async fn install_mcp_catalog_server(
             env,
             cwd: None,
         },
-        _ => return Err("AIO 暂不支持此安装方式".into()),
+        _ => {
+            return Err(ierr!(
+                "AIO 暂不支持此安装方式",
+                "AIO does not support this installation method yet"
+            ))
+        }
     };
     let config = McpServerConfig {
         id: server_id,

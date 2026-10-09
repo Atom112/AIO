@@ -7,6 +7,7 @@
 pub mod local_onnx;
 
 use crate::core::models::MemoryRerankConfig;
+use crate::ierr;
 use std::sync::Arc;
 use tauri::AppHandle;
 
@@ -45,21 +46,27 @@ pub struct RerankTestResult {
 /// 仅支持本地模型；旧配置中的 online / openai_compat provider 在此归一化为 local。
 pub fn resolve(app: &AppHandle, cfg: &MemoryRerankConfig) -> Result<Arc<dyn Reranker>, String> {
     if !cfg.enabled {
-        return Err("重排未启用".into());
+        return Err(ierr!("重排未启用", "Rerank is not enabled"));
     }
     let model = cfg.model.trim();
     if model.is_empty() {
-        return Err("未选择重排模型".into());
+        return Err(ierr!("未选择重排模型", "No rerank model selected"));
     }
     let entry = crate::core::model_registry::find_entry(model).ok_or_else(|| {
-        format!("未知重排模型: {model}，请在「Embedding 模型管理」中下载支持的模型")
+        ierr!(
+            "未知重排模型: {}，请在「Embedding 模型管理」中下载支持的模型",
+            "Unknown rerank model: {}, download a supported model in Settings → Embedding Models",
+            model
+        )
     })?;
     if entry.kind != "rerank" {
-        return Err(format!("非重排模型: {model}"));
+        return Err(ierr!("非重排模型: {}", "Not a rerank model: {}", model));
     }
     if !crate::core::model_registry::is_model_enabled(app, model) {
-        return Err(format!(
-            "重排模型 {model} 已全局停用，请在「Embedding 模型管理」中启用"
+        return Err(ierr!(
+            "重排模型 {} 已全局停用，请在「Embedding 模型管理」中启用",
+            "Rerank model {} is globally disabled, enable it in Settings → Embedding Models",
+            model
         ));
     }
     Ok(Arc::new(local_onnx::LocalReranker::new(app, cfg)))

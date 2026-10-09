@@ -4,6 +4,7 @@
 
 use super::Reranker;
 use crate::core::models::MemoryRerankConfig;
+use crate::ierr;
 use fastembed::{
     OnnxSource, RerankInitOptionsUserDefined, TextRerank, TokenizerFiles, UserDefinedRerankingModel,
 };
@@ -45,7 +46,12 @@ fn app_data_dir() -> Option<&'static PathBuf> {
 
 /// 本地重排模型目录：<app_data_dir>/models/rerank/<id>/
 fn model_dir(model_id: &str) -> Result<PathBuf, String> {
-    let base = app_data_dir().ok_or_else(|| "应用数据目录未初始化".to_string())?;
+    let base = app_data_dir().ok_or_else(|| {
+        ierr!(
+            "应用数据目录未初始化",
+            "App data directory is not initialized"
+        )
+    })?;
     Ok(base.join("models").join("rerank").join(model_id))
 }
 
@@ -53,16 +59,22 @@ fn model_dir(model_id: &str) -> Result<PathBuf, String> {
 /// 从 manifest 条目的文件清单中取唯一的 .onnx 条目。
 fn onnx_rel_path(model_id: &str) -> Result<&'static str, String> {
     let entry = crate::core::model_registry::find_entry(model_id)
-        .ok_or_else(|| format!("未知重排模型: {model_id}"))?;
+        .ok_or_else(|| ierr!("未知重排模型: {}", "Unknown rerank model: {}", model_id))?;
     if entry.kind != "rerank" {
-        return Err(format!("非重排模型: {model_id}"));
+        return Err(ierr!("非重排模型: {}", "Not a rerank model: {}", model_id));
     }
     entry
         .files
         .iter()
         .find(|f| f.name.ends_with(".onnx"))
         .map(|f| f.name)
-        .ok_or_else(|| format!("重排模型 {model_id} 缺少 ONNX 文件清单"))
+        .ok_or_else(|| {
+            ierr!(
+                "重排模型 {} 缺少 ONNX 文件清单",
+                "Rerank model {} has no ONNX file in its manifest",
+                model_id
+            )
+        })
 }
 
 /// 本地重排模型是否已下载（onnx + tokenizer 文件齐备）。未下载时 is_available()=false，
@@ -104,14 +116,21 @@ impl LocalReranker {
         let onnx_rel = onnx_rel_path(&self.model_id)?;
         let onnx = dir.join(onnx_rel);
         if !onnx.exists() {
-            return Err(format!(
+            return Err(ierr!(
                 "本地重排模型未下载（{}），请在「设置 → Embedding 模型管理」中下载后再启用重排",
+                "Local rerank model not downloaded ({}), download it in Settings → Embedding Models before enabling rerank",
                 dir.display()
             ));
         }
         let read = |name: &str| -> Result<Vec<u8>, String> {
-            std::fs::read(dir.join(name))
-                .map_err(|e| format!("读取 {} 失败: {e}", dir.join(name).display()))
+            std::fs::read(dir.join(name)).map_err(|e| {
+                ierr!(
+                    "读取 {} 失败: {}",
+                    "Failed to read {}: {}",
+                    dir.join(name).display(),
+                    e
+                )
+            })
         };
         let tokenizer_files = TokenizerFiles {
             tokenizer_file: read("tokenizer.json")?,
@@ -124,8 +143,13 @@ impl LocalReranker {
         let mut init = RerankInitOptionsUserDefined::default();
         init.max_length = MAX_LENGTH;
         let m = Arc::new(
-            TextRerank::try_new_from_user_defined(user_model, init)
-                .map_err(|e| format!("本地重排模型加载失败: {e}"))?,
+            TextRerank::try_new_from_user_defined(user_model, init).map_err(|e| {
+                ierr!(
+                    "本地重排模型加载失败: {}",
+                    "Failed to load local rerank model: {}",
+                    e
+                )
+            })?,
         );
         if let Ok(mut map) = model_cache().lock() {
             map.insert(self.model_id.clone(), m.clone());

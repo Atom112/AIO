@@ -7,6 +7,8 @@ use serde_json::Value;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::ierr;
+
 /// 启动语言服务器
 ///
 /// 为指定项目的指定语言启动语言服务器进程，完成 LSP 握手。
@@ -33,7 +35,7 @@ pub async fn start_lsp_server(
         .iter()
         .find(|l| l.language_id == language_id)
         .cloned()
-        .ok_or_else(|| format!("不支持的语言: {}", language_id))?;
+        .ok_or_else(|| ierr!("不支持的语言: {}", "Unsupported language: {}", language_id))?;
 
     // 启动语言服务器
     let client = LspClient::start(
@@ -44,7 +46,13 @@ pub async fn start_lsp_server(
         app.clone(),
     )
     .await
-    .map_err(|e| format!("启动语言服务器失败: {}", e))?;
+    .map_err(|e| {
+        ierr!(
+            "启动语言服务器失败: {}",
+            "Failed to start language server: {}",
+            e
+        )
+    })?;
 
     // 注册到管理器
     lsp_mgr.register_client(&project_root, &language_id, client);
@@ -78,7 +86,13 @@ pub async fn stop_lsp_server(
     lsp_mgr
         .remove_client(&project_root, &language_id)
         .await
-        .map_err(|e| format!("停止语言服务器失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "停止语言服务器失败: {}",
+                "Failed to stop language server: {}",
+                e
+            )
+        })?;
 
     let _ = app.emit(
         "lsp-server-status",

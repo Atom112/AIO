@@ -7,6 +7,7 @@
 //! 供 `run_agent_turn` 在工具分发时直接调用，跳过 MCP 通道。
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::ierr;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -37,11 +38,18 @@ pub(crate) fn safe_path(
     requested: &str,
     must_exist: bool,
 ) -> Result<PathBuf, String> {
-    let base = std::fs::canonicalize(allowed_dir).map_err(|e| format!("项目目录不可访问: {e}"))?;
+    let base = std::fs::canonicalize(allowed_dir).map_err(|e| {
+        ierr!(
+            "项目目录不可访问: {}",
+            "Project directory is inaccessible: {}",
+            e
+        )
+    })?;
     let p = PathBuf::from(requested);
     let resolved = if p.is_absolute() { p } else { base.join(&p) };
     let target = if must_exist {
-        std::fs::canonicalize(&resolved).map_err(|e| format!("路径不可访问: {e}"))?
+        std::fs::canonicalize(&resolved)
+            .map_err(|e| ierr!("路径不可访问: {}", "Path is inaccessible: {}", e))?
     } else {
         match std::fs::canonicalize(&resolved) {
             Ok(c) => c,
@@ -76,8 +84,8 @@ pub(crate) fn safe_path(
                     }
                     r
                 } else {
-                    let canon =
-                        std::fs::canonicalize(&exist).map_err(|e| format!("路径不可访问: {e}"))?;
+                    let canon = std::fs::canonicalize(&exist)
+                        .map_err(|e| ierr!("路径不可访问: {}", "Path is inaccessible: {}", e))?;
                     let mut r = canon;
                     for n in trail.into_iter().rev() {
                         r.push(n);
@@ -88,7 +96,11 @@ pub(crate) fn safe_path(
         }
     };
     if !target.starts_with(&base) {
-        return Err(format!("路径越界: '{requested}' 不在项目目录内"));
+        return Err(ierr!(
+            "路径越界: '{}' 不在项目目录内",
+            "Path out of bounds: '{}' is not inside the project directory",
+            requested
+        ));
     }
     Ok(target)
 }
@@ -206,7 +218,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
         "read_file" => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
-                return tool_err("缺少 path");
+                return tool_err(&ierr!("缺少 path", "Missing path"));
             }
             // 读取上限：默认 300 行 / 32KB（token 效率：防止大文件全文注入上下文）；
             // max_lines 传 -1 表示不限行数，max_bytes 传 -1 表示不限制字节（仍受 MAX_R 硬上限约束）。
@@ -227,10 +239,10 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Err(e) => return tool_err(&e),
             };
             if !t.is_file() {
-                return tool_err(&format!("不是文件: {path}"));
+                return tool_err(&ierr!("不是文件: {}", "Not a file: {}", path));
             }
             if is_binary(&t) {
-                return tool_err(&format!("二进制文件: {path}"));
+                return tool_err(&ierr!("二进制文件: {}", "Binary file: {}", path));
             }
             let meta = match std::fs::metadata(&t) {
                 Ok(m) => m,
@@ -314,17 +326,17 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             let path = arguments["path"].as_str().unwrap_or("");
             let content = arguments["content"].as_str().unwrap_or("");
             if path.is_empty() {
-                return tool_err("缺少 path");
+                return tool_err(&ierr!("缺少 path", "Missing path"));
             }
             if content.len() as u64 > MAX_W {
-                return tool_err(&format!("内容过大 (>{MAX_W}B)"));
+                return tool_err(&ierr!("内容过大 (>{}B)", "Content too large (>{}B)", MAX_W));
             }
             let t = match safe_path(project_root, path, false) {
                 Ok(t) => t,
                 Err(e) => return tool_err(&e),
             };
             if t.exists() && t.is_dir() {
-                return tool_err(&format!("目标是目录: {path}"));
+                return tool_err(&ierr!("目标是目录: {}", "Target is a directory: {}", path));
             }
             if let Some(p) = t.parent() {
                 let _ = std::fs::create_dir_all(p);
@@ -335,7 +347,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     content.len(),
                     sha256_hex(content.as_bytes())
                 )),
-                Err(e) => tool_err(&format!("写入失败: {e}")),
+                Err(e) => tool_err(&ierr!("写入失败: {}", "Write failed: {}", e)),
             }
         }
         "list_directory" => {
@@ -345,7 +357,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Err(e) => return tool_err(&e),
             };
             if !t.is_dir() {
-                return tool_err(&format!("不是目录: {p}"));
+                return tool_err(&ierr!("不是目录: {}", "Not a directory: {}", p));
             }
             let mut v = Vec::new();
             let mut n = 0;
@@ -413,7 +425,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
         "search_content" => {
             let pattern = arguments["pattern"].as_str().unwrap_or("");
             if pattern.is_empty() {
-                return tool_err("缺少 pattern");
+                return tool_err(&ierr!("缺少 pattern", "Missing pattern"));
             }
             let p = arguments["path"].as_str().unwrap_or(".");
             let t = match safe_path(project_root, p, true) {
@@ -422,7 +434,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             };
             let re = match regex::Regex::new(pattern) {
                 Ok(r) => r,
-                Err(e) => return tool_err(&format!("无效正则: {e}")),
+                Err(e) => return tool_err(&ierr!("无效正则: {}", "Invalid regex: {}", e)),
             };
             let mut v = Vec::new();
             let (mut scanned, mut matched) = (0, 0);
@@ -477,17 +489,17 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
         "delete_file" => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
-                return tool_err("缺少 path");
+                return tool_err(&ierr!("缺少 path", "Missing path"));
             }
             let t = match safe_path(project_root, path, true) {
                 Ok(t) => t,
                 Err(e) => return tool_err(&e),
             };
             if !t.exists() {
-                return tool_err(&format!("不存在: {path}"));
+                return tool_err(&ierr!("不存在: {}", "Does not exist: {}", path));
             }
             if t.is_dir() {
-                return tool_err(&format!("是目录: {path}"));
+                return tool_err(&ierr!("是目录: {}", "Is a directory: {}", path));
             }
             match std::fs::remove_file(&t) {
                 Ok(_) => tool_ok(format!("✓ 删除 {path}")),
@@ -497,14 +509,14 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
         "make_directory" => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
-                return tool_err("缺少 path");
+                return tool_err(&ierr!("缺少 path", "Missing path"));
             }
             let t = match safe_path(project_root, path, false) {
                 Ok(t) => t,
                 Err(e) => return tool_err(&e),
             };
             if t.exists() {
-                return tool_err(&format!("已存在: {path}"));
+                return tool_err(&ierr!("已存在: {}", "Already exists: {}", path));
             }
             match std::fs::create_dir_all(&t) {
                 Ok(_) => tool_ok(format!("✓ 创建 {path}")),
@@ -516,21 +528,21 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             let mut old_s = arguments["old_string"].as_str().unwrap_or("").to_string();
             let new_s = arguments["new_string"].as_str().unwrap_or("");
             if path.is_empty() {
-                return tool_err("缺少 path");
+                return tool_err(&ierr!("缺少 path", "Missing path"));
             }
             let t = match safe_path(project_root, path, true) {
                 Ok(t) => t,
                 Err(e) => return tool_err(&e),
             };
             if !t.is_file() {
-                return tool_err(&format!("不是文件: {path}"));
+                return tool_err(&ierr!("不是文件: {}", "Not a file: {}", path));
             }
             if is_binary(&t) {
-                return tool_err(&format!("二进制文件: {path}"));
+                return tool_err(&ierr!("二进制文件: {}", "Binary file: {}", path));
             }
             let content = match std::fs::read_to_string(&t) {
                 Ok(c) => c,
-                Err(e) => return tool_err(&format!("读取失败: {e}")),
+                Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
             };
             // hashline 协议：anchor_hash 锚定防漂移——文件当前摘要必须与模型持有的 hash 一致，
             // 否则说明文件已被修改（或模型上下文过期），要求重新 read_file(with_hash=true)。
@@ -538,8 +550,11 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if !anchor_hash.is_empty() {
                 let current_hash = sha256_hex(content.as_bytes());
                 if current_hash != anchor_hash {
-                    return tool_err(&format!(
-                        "[HASH MISMATCH] 文件摘要与 anchor_hash 不一致（期望 {anchor_hash}，当前 {current_hash}）。文件可能已被修改，请重新 read_file(with_hash=true) 获取最新 hash。"
+                    return tool_err(&ierr!(
+                        "[HASH MISMATCH] 文件摘要与 anchor_hash 不一致（期望 {}，当前 {}）。文件可能已被修改，请重新 read_file(with_hash=true) 获取最新 hash。",
+                        "[HASH MISMATCH] File digest does not match anchor_hash (expected {}, got {}). The file may have been modified; re-run read_file(with_hash=true) to get the latest hash.",
+                        anchor_hash,
+                        current_hash
                     ));
                 }
             }
@@ -548,24 +563,29 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if old_s.is_empty() {
                 match arguments["start_line"].as_i64() {
                     None => {
-                        return tool_err(
+                        return tool_err(&ierr!(
                             "old_string 与 start_line 至少提供其一：精确匹配用 old_string；行范围锚定用 start_line/end_line（old_string 留空）",
-                        )
+                            "Provide old_string or start_line: use old_string for exact matching, or start_line/end_line for line-range anchoring (leave old_string empty)"
+                        ))
                     }
                     Some(sl) => {
                         let el = arguments["end_line"].as_i64().unwrap_or(sl);
                         if sl < 1 || el < sl {
-                            return tool_err(
+                            return tool_err(&ierr!(
                                 "start_line/end_line 无效（1-based，end_line >= start_line）",
-                            );
+                                "Invalid start_line/end_line (1-based, end_line >= start_line)"
+                            ));
                         }
                         // 构造行范围文本（不含行尾换行，匹配后保留原有换行结构）
                         let lines: Vec<&str> = content.split('\n').collect();
                         let last_empty = lines.last().is_some_and(|s| s.is_empty());
                         let total = if last_empty { lines.len() - 1 } else { lines.len() };
                         if el as usize > total {
-                            return tool_err(&format!(
-                                "行号越界：文件共 {total} 行，end_line={el}。若文件已被修改，请重新 read_file 获取最新行号。"
+                            return tool_err(&ierr!(
+                                "行号越界：文件共 {} 行，end_line={}。若文件已被修改，请重新 read_file 获取最新行号。",
+                                "Line number out of range: the file has {} lines, end_line={}. If the file has changed, re-run read_file to get the latest line numbers.",
+                                total,
+                                el
                             ));
                         }
                         let sl_u = sl as usize;
@@ -575,7 +595,10 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 }
             }
             if old_s.is_empty() {
-                return tool_err("old_string 不能为空（若要前置/追加内容，请包含周围的上下文行）");
+                return tool_err(&ierr!(
+                    "old_string 不能为空（若要前置/追加内容，请包含周围的上下文行）",
+                    "old_string must not be empty (to prepend/append content, include surrounding context lines)"
+                ));
             }
             // 统计 old_string 出现次数及行号
             let mut matches: Vec<usize> = Vec::new();
@@ -588,14 +611,20 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             }
             match matches.len() {
                 0 => {
-                    tool_err(&format!(
-                        "未找到匹配的 old_string。请用 read_file 重新读取文件内容，确保 old_string 与文件中的文本完全一致（包括缩进和换行）。\n文件: {path}"
+                    tool_err(&ierr!(
+                        "未找到匹配的 old_string。请用 read_file 重新读取文件内容，确保 old_string 与文件中的文本完全一致（包括缩进和换行）。\n文件: {}",
+                        "old_string not found. Re-read the file with read_file and make sure old_string matches the file text exactly (including indentation and line breaks).\nFile: {}",
+                        path
                     ))
                 }
                 1 => {
                     let new_content = content.replacen(old_s.as_str(), new_s, 1);
                     if new_content.len() as u64 > MAX_W {
-                        return tool_err(&format!("替换后内容过大 (>{MAX_W}B)"));
+                        return tool_err(&ierr!(
+                            "替换后内容过大 (>{}B)",
+                            "Content too large after replacement (>{}B)",
+                            MAX_W
+                        ));
                     }
                     match std::fs::write(&t, &new_content) {
                         Ok(_) => tool_ok(format!(
@@ -604,7 +633,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                             1,
                             sha256_hex(new_content.as_bytes())
                         )),
-                        Err(e) => tool_err(&format!("写入失败: {e}")),
+                        Err(e) => tool_err(&ierr!("写入失败: {}", "Write failed: {}", e)),
                     }
                 }
                 n => {
@@ -612,13 +641,16 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                         .map(|l| l.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    tool_err(&format!(
-                        "old_string 在文件中出现了 {n} 次（行 {lines_str}）。请增加更多周围的上下文行使匹配唯一，然后重试。"
+                    tool_err(&ierr!(
+                        "old_string 在文件中出现了 {} 次（行 {}）。请增加更多周围的上下文行使匹配唯一，然后重试。",
+                        "old_string appears {} times in the file (lines {}). Add more surrounding context lines to make the match unique, then retry.",
+                        n,
+                        lines_str
                     ))
                 }
             }
         }
-        _ => tool_err(&format!("未知工具: {name}")),
+        _ => tool_err(&ierr!("未知工具: {}", "Unknown tool: {}", name)),
     }
 }
 
@@ -627,7 +659,7 @@ pub fn resolve_project_root(
     app: &tauri::AppHandle,
     project_id: Option<&str>,
 ) -> Result<String, String> {
-    let pid = project_id.ok_or_else(|| "未指定项目".to_string())?;
+    let pid = project_id.ok_or_else(|| ierr!("未指定项目", "No project specified"))?;
     // 路径解析统一在 utils::project_index（含 Windows 扩展前缀归一化）
     crate::utils::project_index::project_path(app, pid)
 }

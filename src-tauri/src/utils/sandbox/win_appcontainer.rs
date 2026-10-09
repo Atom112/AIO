@@ -20,6 +20,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::ierr;
 use std::ffi::c_void;
 
 type Handle = isize;
@@ -301,8 +302,11 @@ fn ensure_profile_sid(profile_name: &str) -> Result<*mut c_void, String> {
     if hr2 == 0 && !derived.is_null() {
         return Ok(derived);
     }
-    Err(format!(
-        "AppContainer profile 创建/派生失败: create=0x{hr:08X} derive=0x{hr2:08X}"
+    Err(ierr!(
+        "AppContainer profile 创建/派生失败: create=0x{:08X} derive=0x{:08X}",
+        "Failed to create/derive AppContainer profile: create=0x{:08X} derive=0x{:08X}",
+        hr,
+        hr2
     ))
 }
 
@@ -358,7 +362,7 @@ fn grant_dir_access(
 ) -> Result<(), String> {
     let canon = std::path::Path::new(path)
         .canonicalize()
-        .map_err(|e| format!("路径不存在 {path}: {e}"))?;
+        .map_err(|e| ierr!("路径不存在 {}: {}", "Path does not exist {}: {}", path, e))?;
     let canon_s = canon.to_string_lossy().into_owned();
     let cache_key = format!("{cache_key_suffix}:{}", canon_s);
     {
@@ -385,7 +389,12 @@ fn grant_dir_access(
         )
     };
     if rc != ERROR_SUCCESS {
-        return Err(format!("GetNamedSecurityInfoW({canon_s}) 失败: {rc}"));
+        return Err(ierr!(
+            "GetNamedSecurityInfoW({}) 失败: {}",
+            "GetNamedSecurityInfoW({}) failed: {}",
+            canon_s,
+            rc
+        ));
     }
 
     if !dacl_has_sid_ace(dacl, sid) {
@@ -407,7 +416,12 @@ fn grant_dir_access(
             if !sd.is_null() {
                 unsafe { LocalFree(sd) };
             }
-            return Err(format!("SetEntriesInAclW({canon_s}) 失败: {rc2}"));
+            return Err(ierr!(
+                "SetEntriesInAclW({}) 失败: {}",
+                "SetEntriesInAclW({}) failed: {}",
+                canon_s,
+                rc2
+            ));
         }
         let rc3 = unsafe {
             SetNamedSecurityInfoW(
@@ -427,7 +441,12 @@ fn grant_dir_access(
             if !sd.is_null() {
                 unsafe { LocalFree(sd) };
             }
-            return Err(format!("SetNamedSecurityInfoW({canon_s}) 失败: {rc3}"));
+            return Err(ierr!(
+                "SetNamedSecurityInfoW({}) 失败: {}",
+                "SetNamedSecurityInfoW({}) failed: {}",
+                canon_s,
+                rc3
+            ));
         }
     }
     if !sd.is_null() {
@@ -505,7 +524,14 @@ pub fn spawn_in_appcontainer(
     // lpCurrentDirectory 不接受（ERROR_FILE_NOT_FOUND）——统一剥除。
     let canon_root = std::path::Path::new(working_dir)
         .canonicalize()
-        .map_err(|e| format!("项目根不可解析 {working_dir}: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "项目根不可解析 {}: {}",
+                "Failed to resolve project root {}: {}",
+                working_dir,
+                e
+            )
+        })?;
     let canon_s =
         crate::utils::file_tools::strip_windows_extended_prefix(&canon_root.to_string_lossy());
     let hash = fnv1a_hex(canon_s.to_lowercase().as_bytes());
@@ -520,7 +546,13 @@ pub fn spawn_in_appcontainer(
         &hash,
     )?;
     let ac_temp = std::env::temp_dir().join("aio-ac").join(&hash);
-    std::fs::create_dir_all(&ac_temp).map_err(|e| format!("创建 AC 临时目录失败: {e}"))?;
+    std::fs::create_dir_all(&ac_temp).map_err(|e| {
+        ierr!(
+            "创建 AC 临时目录失败: {}",
+            "Failed to create the AC temp directory: {}",
+            e
+        )
+    })?;
     grant_dir_access(
         ac_temp.to_str().unwrap_or_default(),
         sid,
@@ -546,7 +578,10 @@ pub fn spawn_in_appcontainer(
         let sid_w = wide(INTERNET_CLIENT_SID);
         if unsafe { ConvertStringSidToSidW(sid_w.as_ptr(), &mut internet_sid) } == 0 {
             unsafe { LocalFree(sid) };
-            return Err("ConvertStringSidToSidW(internetClient) 失败".into());
+            return Err(ierr!(
+                "ConvertStringSidToSidW(internetClient) 失败",
+                "ConvertStringSidToSidW(internetClient) failed"
+            ));
         }
         caps.push(SidAndAttributes {
             sid: internet_sid,
@@ -580,7 +615,10 @@ pub fn spawn_in_appcontainer(
     }
     if attr_size == 0 {
         cleanup_spawn(sid, internet_sid, out_read, out_write, err_read, err_write);
-        return Err("InitializeProcThreadAttributeList 查询大小失败".into());
+        return Err(ierr!(
+            "InitializeProcThreadAttributeList 查询大小失败",
+            "InitializeProcThreadAttributeList size query failed"
+        ));
     }
     // 属性表缓冲必须指针对齐（Vec<u8> 的 1 字节对齐会导致
     // UpdateProcThreadAttribute 返回 ERROR_BAD_LENGTH —— 实测诊断确认）
@@ -588,7 +626,10 @@ pub fn spawn_in_appcontainer(
     let attr_list = attr_buf.as_mut_ptr() as *mut c_void;
     if unsafe { InitializeProcThreadAttributeList(attr_list, 1, 0, &mut attr_size) } == 0 {
         cleanup_spawn(sid, internet_sid, out_read, out_write, err_read, err_write);
-        return Err("InitializeProcThreadAttributeList 失败".into());
+        return Err(ierr!(
+            "InitializeProcThreadAttributeList 失败",
+            "InitializeProcThreadAttributeList failed"
+        ));
     }
     let attr_ok = unsafe {
         UpdateProcThreadAttribute(
@@ -605,8 +646,11 @@ pub fn spawn_in_appcontainer(
         let err = unsafe { GetLastError() };
         unsafe { DeleteProcThreadAttributeList(attr_list) };
         cleanup_spawn(sid, internet_sid, out_read, out_write, err_read, err_write);
-        return Err(format!(
-            "UpdateProcThreadAttribute(SECURITY_CAPABILITY) 失败: Win32 错误 {err} (attr_size={attr_size}, sid_null={}, caps={})",
+        return Err(ierr!(
+            "UpdateProcThreadAttribute(SECURITY_CAPABILITY) 失败: Win32 错误 {} (attr_size={}, sid_null={}, caps={})",
+            "UpdateProcThreadAttribute(SECURITY_CAPABILITY) failed: Win32 error {} (attr_size={}, sid_null={}, caps={})",
+            err,
+            attr_size,
             sid.is_null(),
             caps.len()
         ));
@@ -672,8 +716,12 @@ pub fn spawn_in_appcontainer(
     if created == 0 {
         let err = unsafe { GetLastError() };
         cleanup_spawn(sid, internet_sid, out_read, out_write, err_read, err_write);
-        return Err(format!(
-            "CreateProcessW(AppContainer) 失败: Win32 错误 {err} (cmdline={command_line}, cwd={canon_s})",
+        return Err(ierr!(
+            "CreateProcessW(AppContainer) 失败: Win32 错误 {} (cmdline={}, cwd={})",
+            "CreateProcessW(AppContainer) failed: Win32 error {} (cmdline={}, cwd={})",
+            err,
+            command_line,
+            canon_s
         ));
     }
 
@@ -685,7 +733,11 @@ pub fn spawn_in_appcontainer(
             CloseHandle(pi.h_process);
         }
         cleanup_spawn(sid, internet_sid, out_read, out_write, err_read, err_write);
-        format!("AppContainer 进程无法加入 Job Object: {e}")
+        ierr!(
+            "AppContainer 进程无法加入 Job Object: {}",
+            "Failed to add the AppContainer process to the Job Object: {}",
+            e
+        )
     })?;
     if unsafe { ResumeThread(pi.h_thread) } == u32::MAX {
         // 恢复失败：Job 守卫仍在，drop 时清理；此处显式终止更直接
@@ -715,7 +767,7 @@ fn create_pipe(sa: &SecurityAttributes) -> Result<(Handle, Handle), String> {
     let mut read: Handle = 0;
     let mut write: Handle = 0;
     if unsafe { CreatePipe(&mut read, &mut write, sa, 0) } == 0 {
-        return Err("CreatePipe 失败".into());
+        return Err(ierr!("CreatePipe 失败", "CreatePipe failed"));
     }
     Ok((read, write))
 }

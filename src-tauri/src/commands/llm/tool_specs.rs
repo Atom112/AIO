@@ -1,6 +1,7 @@
 //! Agent 的 skill/artifact 读取工具规格与执行（read_skill / read_artifact）。
 
 use crate::commands::llm::*;
+use crate::ierr;
 use serde_json::json;
 use tauri::AppHandle;
 
@@ -26,7 +27,10 @@ pub(crate) fn skill_read_tool_spec() -> ToolSpec {
 /// 执行 read_skill：按名称（不区分大小写）或 ID 查找技能并返回完整内容。
 pub(crate) fn execute_skill_read(skills: &[SkillConfig], name: &str) -> Result<ToolResult, String> {
     if name.is_empty() {
-        return Err("read_skill 缺少 name 参数".to_string());
+        return Err(ierr!(
+            "read_skill 缺少 name 参数",
+            "read_skill is missing the name parameter"
+        ));
     }
     if let Some(skill) = skills
         .iter()
@@ -70,17 +74,28 @@ pub(crate) fn execute_artifact_read(
     artifact_id: &str,
 ) -> Result<ToolResult, String> {
     if artifact_id.is_empty() {
-        return Err("read_artifact 缺少 artifact_id 参数".to_string());
+        return Err(ierr!(
+            "read_artifact 缺少 artifact_id 参数",
+            "read_artifact is missing the artifact_id parameter"
+        ));
     }
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("获取数据目录失败: {e}"))?
+        .map_err(|e| {
+            ierr!(
+                "获取数据目录失败: {}",
+                "Failed to resolve the app data directory: {}",
+                e
+            )
+        })?
         .join("archives");
     let path = dir.join(format!("{}.txt", artifact_id));
     if !path.exists() {
-        return Err(format!(
-            "未找到历史归档 #{artifact_id}（档案已清理或目录不存在）"
+        return Err(ierr!(
+            "未找到历史归档 #{}（档案已清理或目录不存在）",
+            "Archive #{} not found (already cleaned up or the directory is missing)",
+            artifact_id
         ));
     }
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;

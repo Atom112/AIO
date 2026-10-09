@@ -12,6 +12,7 @@
 
 #[cfg(windows)]
 mod imp {
+    use crate::ierr;
     use std::process::Child;
 
     // Win32 类型
@@ -110,7 +111,7 @@ mod imp {
             // 创建未命名的 Job Object
             let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if handle == 0 {
-                return Err("CreateJobObjectW 失败".to_string());
+                return Err(ierr!("CreateJobObjectW 失败", "CreateJobObjectW failed"));
             }
 
             // 设置扩展限制：KILL_ON_JOB_CLOSE + 活跃进程限制
@@ -153,7 +154,10 @@ mod imp {
             ) == FALSE
             {
                 CloseHandle(handle);
-                return Err("SetInformationJobObject (limits) 失败".to_string());
+                return Err(ierr!(
+                    "SetInformationJobObject (limits) 失败",
+                    "SetInformationJobObject (limits) failed"
+                ));
             }
 
             // 设置 UI 限制：禁止桌面/窗口访问
@@ -168,7 +172,10 @@ mod imp {
             ) == FALSE
             {
                 CloseHandle(handle);
-                return Err("SetInformationJobObject (UI) 失败".to_string());
+                return Err(ierr!(
+                    "SetInformationJobObject (UI) 失败",
+                    "SetInformationJobObject (UI) failed"
+                ));
             }
 
             Ok(handle)
@@ -196,7 +203,7 @@ mod imp {
             );
             if process_handle == 0 {
                 CloseHandle(job);
-                return Err(format!("OpenProcess({pid}) 失败"));
+                return Err(ierr!("OpenProcess({}) 失败", "OpenProcess({}) failed", pid));
             }
 
             // 分配到 Job Object
@@ -205,7 +212,11 @@ mod imp {
 
             if result == FALSE {
                 CloseHandle(job);
-                return Err(format!("AssignProcessToJobObject({pid}) 失败"));
+                return Err(ierr!(
+                    "AssignProcessToJobObject({}) 失败",
+                    "AssignProcessToJobObject({}) failed",
+                    pid
+                ));
             }
         }
 

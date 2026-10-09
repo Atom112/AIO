@@ -6,6 +6,7 @@
 //! 参考：Claude Code / Cursor 的 Git 工具设计。
 
 use crate::core::models::{FileChange, ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::ierr;
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -30,7 +31,13 @@ fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
         .args(args)
         .current_dir(project_root)
         .output()
-        .map_err(|e| format!("无法执行 git: {e}（请确认 git 已安装并在 PATH 中）"))?;
+        .map_err(|e| {
+            ierr!(
+                "无法执行 git: {}（请确认 git 已安装并在 PATH 中）",
+                "Failed to run git: {} (make sure git is installed and on PATH)",
+                e
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -40,7 +47,12 @@ fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
         } else {
             stderr
         };
-        return Err(format!("git {} 失败: {}", args.join(" "), detail.trim()));
+        return Err(ierr!(
+            "git {} 失败: {}",
+            "git {} failed: {}",
+            args.join(" "),
+            detail.trim()
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -71,7 +83,7 @@ pub fn get_current_branch(project_root: &str) -> Option<String> {
 /// 列出所有本地分支名称。当前分支排在首位（带 `*` 标记）。
 pub fn list_branches(project_root: &str) -> Result<Vec<String>, String> {
     if !is_git_repo(project_root) {
-        return Err("不是 git 仓库".into());
+        return Err(ierr!("不是 git 仓库", "Not a git repository"));
     }
     let out = run_git(project_root, &["branch", "--format=%(refname:short)"])?;
     Ok(out
@@ -214,7 +226,10 @@ pub fn get_git_tool_specs() -> Vec<ToolSpec> {
 pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> ToolResult {
     // 前置：检查是否为 git 仓库
     if !is_git_repo(project_root) {
-        return tool_err("当前目录不是 git 仓库（或 git 未安装）");
+        return tool_err(&ierr!(
+            "当前目录不是 git 仓库（或 git 未安装）",
+            "Current directory is not a git repository (or git is not installed)"
+        ));
     }
 
     match name {
@@ -307,7 +322,7 @@ pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> To
                             }
                         }
                         if args.len() == 1 {
-                            return tool_err("files 列表为空");
+                            return tool_err(&ierr!("files 列表为空", "The files list is empty"));
                         }
                         let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                         match run_git(project_root, &arg_refs) {
@@ -319,7 +334,10 @@ pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> To
                             Err(e) => tool_err(&e),
                         }
                     }
-                    _ => tool_err("请指定 files 列表或设置 all=true"),
+                    _ => tool_err(&ierr!(
+                        "请指定 files 列表或设置 all=true",
+                        "Specify the files list or set all=true"
+                    )),
                 }
             }
         }
@@ -331,11 +349,12 @@ pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> To
                 .trim()
                 .to_string();
             if message.is_empty() {
-                return tool_err("缺少 commit message");
+                return tool_err(&ierr!("缺少 commit message", "Missing commit message"));
             }
             if message.len() > MAX_COMMIT_MSG_BYTES {
-                return tool_err(&format!(
+                return tool_err(&ierr!(
                     "commit message 过长 ({}B > {}B)",
+                    "commit message too long ({}B > {}B)",
                     message.len(),
                     MAX_COMMIT_MSG_BYTES
                 ));
@@ -344,7 +363,10 @@ pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> To
             // 先检查是否有暂存的变更
             let staged_empty = run_git(project_root, &["diff", "--staged", "--quiet"]).is_ok();
             if staged_empty {
-                return tool_err("暂存区为空，没有可提交的变更。请先用 git_add 暂存文件后再提交。");
+                return tool_err(&ierr!(
+                    "暂存区为空，没有可提交的变更。请先用 git_add 暂存文件后再提交。",
+                    "The staging area is empty; there is nothing to commit. Stage files with git_add first, then commit."
+                ));
             }
             match run_git(project_root, &["commit", "-m", &message]) {
                 Ok(out) => tool_ok(truncate_output(
@@ -355,6 +377,6 @@ pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> To
             }
         }
 
-        _ => tool_err(&format!("未知 Git 工具: {name}")),
+        _ => tool_err(&ierr!("未知 Git 工具: {}", "Unknown git tool: {}", name)),
     }
 }

@@ -28,6 +28,8 @@
 //! validate_http_url(&api_url, &HttpUrlOptions::local_engine())?;
 //! ```
 
+use crate::ierr;
+
 /// 校验选项。
 pub struct HttpUrlOptions {
     /// 是否允许 HTTP 协议（`false` = 仅 HTTPS）。
@@ -80,22 +82,31 @@ const CLOUD_METADATA_HOSTS: &[&str] = &["169.254.169.254", "metadata.google.inte
 pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<String, String> {
     let trimmed = url_str.trim();
     if trimmed.is_empty() {
-        return Err("URL 不能为空".into());
+        return Err(ierr!("URL 不能为空", "URL must not be empty"));
     }
 
     // 1. URL parse
-    let parsed = url::Url::parse(trimmed).map_err(|e| format!("URL 解析失败: {e}"))?;
+    let parsed = url::Url::parse(trimmed)
+        .map_err(|e| ierr!("URL 解析失败: {}", "Failed to parse URL: {}", e))?;
 
     // 2. scheme 检查
     match parsed.scheme() {
         "https" => {}
         "http" if options.allow_http => {}
-        "http" => return Err("仅支持 HTTPS 协议".into()),
-        s => return Err(format!("不支持的协议: {s}（仅允许 http/https）")),
+        "http" => return Err(ierr!("仅支持 HTTPS 协议", "Only HTTPS is allowed")),
+        s => {
+            return Err(ierr!(
+                "不支持的协议: {}（仅允许 http/https）",
+                "Unsupported protocol: {} (only http/https is allowed)",
+                s
+            ))
+        }
     }
 
     // 3. host 必须存在
-    let host = parsed.host_str().ok_or("URL 必须包含 host")?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| ierr!("URL 必须包含 host", "URL must contain a host"))?;
 
     // 4. 拒绝裸 IP 地址（所有 IPv4 / IPv6）
     // 注意：url crate 2.x 中 host_str() 对 IPv6 地址返回带括号的 "[::1]" 格式
@@ -112,7 +123,10 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
         {
             return Ok(parsed.to_string());
         }
-        return Err("不允许直接访问 IP 地址".into());
+        return Err(ierr!(
+            "不允许直接访问 IP 地址",
+            "Direct access to IP addresses is not allowed"
+        ));
     }
 
     let host_lower = host.to_lowercase();
@@ -122,12 +136,18 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
         if options.allow_localhost {
             return Ok(parsed.to_string());
         }
-        return Err("不允许访问内网地址".into());
+        return Err(ierr!(
+            "不允许访问内网地址",
+            "Access to intranet addresses is not allowed"
+        ));
     }
 
     // 6. Cloud metadata 端点拦截
     if CLOUD_METADATA_HOSTS.contains(&host_lower.as_str()) {
-        return Err("不允许访问云 metadata 服务地址".into());
+        return Err(ierr!(
+            "不允许访问云 metadata 服务地址",
+            "Access to cloud metadata service addresses is not allowed"
+        ));
     }
 
     Ok(parsed.to_string())

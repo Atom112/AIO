@@ -18,6 +18,7 @@ pub mod ollama;
 pub mod openai_compat;
 
 use crate::core::models::LiveModel;
+use crate::ierr;
 
 /// 构造带超时与代理的 reqwest client（4 个插件的共享实现——历史上逐字复制了 4 份）。
 /// user-agent 携带 crate 版本号，避免硬编码版本随发布漂移。
@@ -36,12 +37,18 @@ pub fn build_http_client(
         .timeout(std::time::Duration::from_secs(timeout_secs));
     if let Some(p) = proxy_url {
         if !p.trim().is_empty() {
-            let proxy = reqwest::Proxy::all(p).map_err(|e| format!("代理 URL 非法: {}", e))?;
+            let proxy = reqwest::Proxy::all(p)
+                .map_err(|e| ierr!("代理 URL 非法: {}", "Invalid proxy URL: {}", e))?;
             b = b.proxy(proxy);
         }
     }
-    b.build()
-        .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
+    b.build().map_err(|e| {
+        ierr!(
+            "构造 HTTP 客户端失败: {}",
+            "Failed to build HTTP client: {}",
+            e
+        )
+    })
 }
 
 /// Provider 插件 trait —— 各厂商 API 适配器
@@ -150,16 +157,24 @@ mod manager_tests {
     }
 }
 
-/// 把 reqwest 错误分类为用户友好提示（中文）
+/// 把 reqwest 错误分类为用户友好提示（跟随 locale）
 pub fn classify_reqwest_error(err: &reqwest::Error, host: &str) -> String {
     if err.is_timeout() {
-        format!("请求超时 ({}): 请检查网络或代理设置", host)
+        ierr!(
+            "请求超时 ({}): 请检查网络或代理设置",
+            "Request timed out ({}): check your network or proxy settings",
+            host
+        )
     } else if err.is_connect() {
-        format!("网络无法访问 {}: 请检查网络或配置代理 (proxyUrl)", host)
+        ierr!(
+            "网络无法访问 {}: 请检查网络或配置代理 (proxyUrl)",
+            "Cannot reach {}: check your network or configure a proxy (proxyUrl)",
+            host
+        )
     } else if err.is_request() {
-        format!("请求错误 ({}): {}", host, err)
+        ierr!("请求错误 ({}): {}", "Request error ({}): {}", host, err)
     } else {
-        format!("HTTP 客户端错误: {}", err)
+        ierr!("HTTP 客户端错误: {}", "HTTP client error: {}", err)
     }
 }
 

@@ -1,6 +1,7 @@
 //! 压缩归档与交接文档（snapcompact 式归档、handoff 文档、子智能体进度摘要）。
 
 use crate::commands::llm::*;
+use crate::ierr;
 use tauri::AppHandle;
 
 /// 从子智能体上下文提取已完成工作的进度摘要（命中轮数上限或未产出最终文本时使用），
@@ -91,7 +92,13 @@ pub(crate) fn archive_early_messages(
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("获取数据目录失败: {e}"))?
+        .map_err(|e| {
+            ierr!(
+                "获取数据目录失败: {}",
+                "Failed to resolve the app data directory: {}",
+                e
+            )
+        })?
         .join("archives");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let artifact_id = uuid::Uuid::new_v4().simple().to_string();
@@ -155,7 +162,13 @@ pub(crate) fn write_handoff_doc(
     let dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("获取数据目录失败: {e}"))?
+        .map_err(|e| {
+            ierr!(
+                "获取数据目录失败: {}",
+                "Failed to resolve the app data directory: {}",
+                e
+            )
+        })?
         .join("handoffs");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 

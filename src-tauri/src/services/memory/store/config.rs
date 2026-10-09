@@ -1,5 +1,6 @@
 //! 配置与 meta 域：每项目启用开关、嵌入/重排配置、meta 表、迁移（从 store.rs 拆出）。
 use super::*;
+use crate::ierr;
 
 impl MemoryStore {
     /// 读取本项目记忆开关（meta 覆盖；None = 跟随全局默认）。
@@ -117,7 +118,7 @@ impl MemoryStore {
         conn.execute_batch(
             "UPDATE facts SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE embedding IS NOT NULL;              UPDATE code_chunks SET embedding = NULL, embedding_model = NULL, embedding_dim = NULL WHERE embedding IS NOT NULL;              DROP TABLE IF EXISTS vec_facts; DROP TABLE IF EXISTS vec_code;",
         )
-        .map_err(|e| format!("清空向量失败: {e}"))
+        .map_err(|e| ierr!("清空向量失败: {}", "Failed to clear vectors: {}", e))
     }
 
     pub fn meta_get(&self, key: &str) -> Result<Option<String>, String> {

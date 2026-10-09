@@ -7,6 +7,7 @@ use crate::commands::attachment::{
 use crate::core::models::*;
 use crate::core::secure_store;
 use crate::core::state::DbState;
+use crate::ierr;
 use rusqlite::params;
 use std::fs; // 导入标准库文件系统模块
 use tauri::{AppHandle, Manager};
@@ -21,6 +22,13 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
 #[tauri::command]
 pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
     crate::core::config::load_app_config(&app)
+}
+
+/// 同步前端 locale 到后端（错误消息等用户可见文案的语言）。
+/// 前端启动与语言切换时各调用一次；缺省/未知值按中文处理。
+#[tauri::command]
+pub fn set_locale(locale: String) {
+    crate::core::i18n::set_locale(locale);
 }
 
 /// 加载全部助手（含其话题与消息树）。
@@ -323,7 +331,13 @@ pub async fn save_assistant(app: tauri::AppHandle, assistant: Assistant) -> Resu
         persist_assistant(&conn, &assistant)
     })
     .await
-    .map_err(|e| format!("保存助手线程失败: {e}"))?
+    .map_err(|e| {
+        ierr!(
+            "保存助手线程失败: {}",
+            "Failed to run assistant save task: {}",
+            e
+        )
+    })?
 }
 
 /// 删除助手及其关联数据。
@@ -523,10 +537,20 @@ pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, Strin
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("读取 profile-model-overrides.json 失败: {}", e))?;
-    let file: ProfileModelOverridesFile = serde_json::from_str(&raw)
-        .map_err(|e| format!("解析 profile-model-overrides.json 失败: {}", e))?;
+    let raw = fs::read_to_string(&path).map_err(|e| {
+        ierr!(
+            "读取 profile-model-overrides.json 失败: {}",
+            "Failed to read profile-model-overrides.json: {}",
+            e
+        )
+    })?;
+    let file: ProfileModelOverridesFile = serde_json::from_str(&raw).map_err(|e| {
+        ierr!(
+            "解析 profile-model-overrides.json 失败: {}",
+            "Failed to parse profile-model-overrides.json: {}",
+            e
+        )
+    })?;
     Ok(file.overrides)
 }
 
@@ -563,10 +587,20 @@ pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, Str
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
-    let file: CustomSubagentProfilesFile = serde_json::from_str(&raw)
-        .map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    let raw = fs::read_to_string(&path).map_err(|e| {
+        ierr!(
+            "读取 custom-subagent-profiles.json 失败: {}",
+            "Failed to read custom-subagent-profiles.json: {}",
+            e
+        )
+    })?;
+    let file: CustomSubagentProfilesFile = serde_json::from_str(&raw).map_err(|e| {
+        ierr!(
+            "解析 custom-subagent-profiles.json 失败: {}",
+            "Failed to parse custom-subagent-profiles.json: {}",
+            e
+        )
+    })?;
     Ok(file.profiles)
 }
 
@@ -577,10 +611,20 @@ pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, Str
 pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<(), String> {
     let path = custom_profiles_path()?;
     let mut profiles: Vec<CustomSubagentProfile> = if path.exists() {
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
-        let file: CustomSubagentProfilesFile = serde_json::from_str(&raw)
-            .map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+        let raw = fs::read_to_string(&path).map_err(|e| {
+            ierr!(
+                "读取 custom-subagent-profiles.json 失败: {}",
+                "Failed to read custom-subagent-profiles.json: {}",
+                e
+            )
+        })?;
+        let file: CustomSubagentProfilesFile = serde_json::from_str(&raw).map_err(|e| {
+            ierr!(
+                "解析 custom-subagent-profiles.json 失败: {}",
+                "Failed to parse custom-subagent-profiles.json: {}",
+                e
+            )
+        })?;
         file.profiles
     } else {
         Vec::new()
@@ -615,10 +659,20 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
     if !path.exists() {
         return Ok(());
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("读取 custom-subagent-profiles.json 失败: {}", e))?;
-    let file: CustomSubagentProfilesFile = serde_json::from_str(&raw)
-        .map_err(|e| format!("解析 custom-subagent-profiles.json 失败: {}", e))?;
+    let raw = fs::read_to_string(&path).map_err(|e| {
+        ierr!(
+            "读取 custom-subagent-profiles.json 失败: {}",
+            "Failed to read custom-subagent-profiles.json: {}",
+            e
+        )
+    })?;
+    let file: CustomSubagentProfilesFile = serde_json::from_str(&raw).map_err(|e| {
+        ierr!(
+            "解析 custom-subagent-profiles.json 失败: {}",
+            "Failed to parse custom-subagent-profiles.json: {}",
+            e
+        )
+    })?;
     let profiles: Vec<CustomSubagentProfile> = file
         .profiles
         .into_iter()
@@ -646,7 +700,13 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let app_name = "AIO";
     // 获取当前可执行文件路径
-    let exe_path = std::env::current_exe().map_err(|e| format!("无法获取可执行文件路径: {}", e))?;
+    let exe_path = std::env::current_exe().map_err(|e| {
+        ierr!(
+            "无法获取可执行文件路径: {}",
+            "Failed to get executable path: {}",
+            e
+        )
+    })?;
     let exe_str = exe_path.to_string_lossy().to_string();
 
     #[cfg(target_os = "windows")]
@@ -666,10 +726,20 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                     "/f",
                 ])
                 .output()
-                .map_err(|e| format!("执行注册表写入失败: {}", e))?;
+                .map_err(|e| {
+                    ierr!(
+                        "执行注册表写入失败: {}",
+                        "Failed to run registry write: {}",
+                        e
+                    )
+                })?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("注册表写入失败: {}", stderr));
+                return Err(ierr!(
+                    "注册表写入失败: {}",
+                    "Registry write failed: {}",
+                    stderr
+                ));
             }
         } else {
             let output = Command::new("reg")
@@ -681,13 +751,23 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                     "/f",
                 ])
                 .output()
-                .map_err(|e| format!("执行注册表删除失败: {}", e))?;
+                .map_err(|e| {
+                    ierr!(
+                        "执行注册表删除失败: {}",
+                        "Failed to run registry delete: {}",
+                        e
+                    )
+                })?;
             // 删除不存在的键不算错误（reg delete /f 对不存在的键仍返回成功）
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 // reg delete: "错误: 系统找不到指定的注册表项或值" 视为成功
                 if !stderr.contains("找不到") {
-                    return Err(format!("注册表删除失败: {}", stderr));
+                    return Err(ierr!(
+                        "注册表删除失败: {}",
+                        "Registry delete failed: {}",
+                        stderr
+                    ));
                 }
             }
         }
@@ -696,7 +776,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let plist_dir = dirs::home_dir()
-            .ok_or_else(|| "无法获取用户主目录".to_string())?
+            .ok_or_else(|| ierr!("无法获取用户主目录", "Failed to get user home directory"))?
             .join("Library/LaunchAgents");
         fs::create_dir_all(&plist_dir).map_err(|e| e.to_string())?;
         let plist_path = plist_dir.join(format!("{}.plist", crate::core::paths::BUNDLE_ID));
@@ -719,11 +799,22 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 crate::core::paths::BUNDLE_ID,
                 exe_str
             );
-            fs::write(&plist_path, plist).map_err(|e| format!("写入 LaunchAgent 失败: {}", e))?;
+            fs::write(&plist_path, plist).map_err(|e| {
+                ierr!(
+                    "写入 LaunchAgent 失败: {}",
+                    "Failed to write LaunchAgent: {}",
+                    e
+                )
+            })?;
         } else {
             if plist_path.exists() {
-                fs::remove_file(&plist_path)
-                    .map_err(|e| format!("删除 LaunchAgent 失败: {}", e))?;
+                fs::remove_file(&plist_path).map_err(|e| {
+                    ierr!(
+                        "删除 LaunchAgent 失败: {}",
+                        "Failed to delete LaunchAgent: {}",
+                        e
+                    )
+                })?;
             }
         }
     }
@@ -731,7 +822,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let autostart_dir = dirs::home_dir()
-            .ok_or_else(|| "无法获取用户主目录".to_string())?
+            .ok_or_else(|| ierr!("无法获取用户主目录", "Failed to get user home directory"))?
             .join(".config/autostart");
         fs::create_dir_all(&autostart_dir).map_err(|e| e.to_string())?;
         let desktop_path = autostart_dir.join("aio.desktop");
@@ -745,11 +836,22 @@ Terminal=false
 X-GNOME-Autostart-enabled=true"#,
                 exe_str
             );
-            fs::write(&desktop_path, desktop).map_err(|e| format!("写入 autostart 失败: {}", e))?;
+            fs::write(&desktop_path, desktop).map_err(|e| {
+                ierr!(
+                    "写入 autostart 失败: {}",
+                    "Failed to write autostart file: {}",
+                    e
+                )
+            })?;
         } else {
             if desktop_path.exists() {
-                fs::remove_file(&desktop_path)
-                    .map_err(|e| format!("删除 autostart 失败: {}", e))?;
+                fs::remove_file(&desktop_path).map_err(|e| {
+                    ierr!(
+                        "删除 autostart 失败: {}",
+                        "Failed to delete autostart file: {}",
+                        e
+                    )
+                })?;
             }
         }
     }
@@ -789,7 +891,7 @@ pub async fn branch_topic(
             params![source_topic_id],
             |row| row.get(0),
         )
-        .map_err(|e| format!("查询源话题失败: {}", e))?;
+        .map_err(|e| ierr!("查询源话题失败: {}", "Failed to query source topic: {}", e))?;
 
     // 2. 读取源话题的所有消息，截取到分支点（含）
     let mut m_stmt = conn
@@ -848,9 +950,11 @@ pub async fn branch_topic(
     let history: Vec<Message> = match branch_pos {
         Some(pos) => all_msgs.into_iter().take(pos + 1).collect(),
         None => {
-            return Err(format!(
+            return Err(ierr!(
                 "消息 {} 不在话题 {} 中",
-                source_message_id, source_topic_id
+                "Message {} is not in topic {}",
+                source_message_id,
+                source_topic_id
             ))
         }
     };
@@ -899,7 +1003,7 @@ pub async fn branch_topic(
             new_topic.parent_topic_id,
         ],
     )
-    .map_err(|e| format!("创建分支话题失败: {}", e))?;
+    .map_err(|e| ierr!("创建分支话题失败: {}", "Failed to create branch topic: {}", e))?;
 
     // 5. 插入复制的消息
     for msg in &history {
@@ -934,7 +1038,7 @@ pub async fn branch_topic(
                 msg.cached_input_tokens,
             ],
         )
-        .map_err(|e| format!("插入分支消息失败: {}", e))?;
+        .map_err(|e| ierr!("插入分支消息失败: {}", "Failed to insert branch messages: {}", e))?;
     }
 
     Ok(new_topic)

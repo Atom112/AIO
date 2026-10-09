@@ -24,6 +24,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Window};
 use tokio::io::AsyncWriteExt;
 
+use crate::ierr;
+
 // manifest 注册表与目录解析已下沉到 core::model_registry（插件层需要，命令层仅再导出）。
 pub(crate) use crate::core::model_registry::entry_dir;
 pub use crate::core::model_registry::*;
@@ -142,11 +144,11 @@ pub fn embedding_models_get_dir(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
     let old = embed_models_dir(&app);
-    let mut cfg =
-        crate::core::config::load_app_config(&app).map_err(|e| format!("读取配置失败: {e}"))?;
+    let mut cfg = crate::core::config::load_app_config(&app)
+        .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
     cfg.embedding_models_dir = dir.trim().to_string();
     crate::commands::config::save_app_config(app.clone(), cfg)
-        .map_err(|e| format!("保存配置失败: {e}"))?;
+        .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     let new = embed_models_dir(&app);
     if !same_path(&old, &new) {
         migrate_embed_models(&old, &new);
@@ -161,9 +163,9 @@ pub fn embedding_model_set_enabled(
     id: String,
     enabled: bool,
 ) -> Result<ModelInfo, String> {
-    let entry = find_entry(&id).ok_or_else(|| format!("未知模型: {id}"))?;
-    let mut cfg =
-        crate::core::config::load_app_config(&app).map_err(|e| format!("读取配置失败: {e}"))?;
+    let entry = find_entry(&id).ok_or_else(|| ierr!("未知模型: {}", "Unknown model: {}", id))?;
+    let mut cfg = crate::core::config::load_app_config(&app)
+        .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
     let mut list: Vec<EmbeddingModelSetting> = cfg
         .embedding_models
         .iter()
@@ -176,7 +178,7 @@ pub fn embedding_model_set_enabled(
     });
     cfg.embedding_models = list;
     crate::commands::config::save_app_config(app.clone(), cfg)
-        .map_err(|e| format!("保存配置失败: {e}"))?;
+        .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     Ok(model_info(&app, entry))
 }
 
@@ -191,7 +193,7 @@ pub async fn embedding_model_download(
     app: AppHandle,
     id: String,
 ) -> Result<DownloadOutcome, String> {
-    let entry = find_entry(&id).ok_or_else(|| format!("未知模型: {id}"))?;
+    let entry = find_entry(&id).ok_or_else(|| ierr!("未知模型: {}", "Unknown model: {}", id))?;
     if entry.bundled {
         return Ok(DownloadOutcome {
             status: "ok".into(),
@@ -218,7 +220,13 @@ pub async fn embedding_model_download(
     let _guard = UnregisterGuard(id.clone());
 
     let dir = entry_dir(&app, entry);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建模型目录失败: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        ierr!(
+            "创建模型目录失败: {}",
+            "Failed to create model directory: {}",
+            e
+        )
+    })?;
     let client = reqwest::Client::new();
     for file in entry.files {
         let dest = dir.join(file.name);
@@ -227,7 +235,13 @@ pub async fn embedding_model_download(
         }
         // manifest 文件名可含子目录（onnx/model_quantized.onnx），先建父目录
         if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("创建模型目录失败: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                ierr!(
+                    "创建模型目录失败: {}",
+                    "Failed to create model directory: {}",
+                    e
+                )
+            })?;
         }
         let tmp = dest.with_extension("part");
         // 断点续传：.part 残留时带 Range 从断点继续
@@ -244,21 +258,36 @@ pub async fn embedding_model_download(
         } else {
             client.get(file.url).send().await
         }
-        .map_err(|e| format!("下载 {} 失败: {e}", file.name))?;
+        .map_err(|e| {
+            ierr!(
+                "下载 {} 失败: {}",
+                "Failed to download {}: {}",
+                file.name,
+                e
+            )
+        })?;
         // .part 大于远端文件（损坏）→ 删除断点整档重下
         if resp.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
             let _ = tokio::fs::remove_file(&tmp).await;
             resume_from = 0;
-            resp = client
-                .get(file.url)
-                .send()
-                .await
-                .map_err(|e| format!("下载 {} 失败: {e}", file.name))?;
+            resp = client.get(file.url).send().await.map_err(|e| {
+                ierr!(
+                    "下载 {} 失败: {}",
+                    "Failed to download {}: {}",
+                    file.name,
+                    e
+                )
+            })?;
         }
         let partial = resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
         if !resp.status().is_success() {
             let status = resp.status();
-            return Err(format!("下载 {} 失败（{status}）", file.name));
+            return Err(ierr!(
+                "下载 {} 失败（{}）",
+                "Failed to download {} ({})",
+                file.name,
+                status
+            ));
         }
         if !partial {
             resume_from = 0; // 服务器忽略 Range → 整档重下
@@ -275,16 +304,22 @@ pub async fn embedding_model_download(
                 .open(&tmp)
                 .await
         }
-        .map_err(|e| format!("创建临时文件失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "创建临时文件失败: {}",
+                "Failed to create temporary file: {}",
+                e
+            )
+        })?;
         let mut downloaded: u64 = resume_from;
         let mut interrupted: Option<&'static str> = None;
         let mut last_emit: Option<Instant> = None;
         use futures_util::StreamExt as _;
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("下载中断: {e}"))?;
+            let chunk = chunk.map_err(|e| ierr!("下载中断: {}", "Download interrupted: {}", e))?;
             out.write_all(&chunk)
                 .await
-                .map_err(|e| format!("写入失败: {e}"))?;
+                .map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
             downloaded += chunk.len() as u64;
             // 进度事件节流（首个分块立即发一次）
             if last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(200)) {
@@ -308,7 +343,9 @@ pub async fn embedding_model_download(
                 break;
             }
         }
-        out.flush().await.map_err(|e| format!("落盘失败: {e}"))?;
+        out.flush()
+            .await
+            .map_err(|e| ierr!("落盘失败: {}", "Failed to flush to disk: {}", e))?;
         drop(out);
         match interrupted {
             Some("cancelled") => {
@@ -325,7 +362,8 @@ pub async fn embedding_model_download(
                 });
             }
             _ => {
-                std::fs::rename(&tmp, &dest).map_err(|e| format!("重命名失败: {e}"))?;
+                std::fs::rename(&tmp, &dest)
+                    .map_err(|e| ierr!("重命名失败: {}", "Failed to rename: {}", e))?;
             }
         }
     }
@@ -366,7 +404,7 @@ pub fn embedding_model_cancel_download(app: AppHandle, id: String) -> Result<boo
 /// 删除已下载模型（释放磁盘 + 清理进程内已加载的实例缓存；内置模型为 no-op）。
 #[tauri::command]
 pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let entry = find_entry(&id).ok_or_else(|| format!("未知模型: {id}"))?;
+    let entry = find_entry(&id).ok_or_else(|| ierr!("未知模型: {}", "Unknown model: {}", id))?;
     if entry.bundled {
         return Ok(());
     }
@@ -377,7 +415,8 @@ pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> 
     }
     let dir = entry_dir(&app, entry);
     if dir.exists() {
-        std::fs::remove_dir_all(&dir).map_err(|e| format!("删除模型失败: {e}"))?;
+        std::fs::remove_dir_all(&dir)
+            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
     }
     Ok(())
 }

@@ -7,6 +7,7 @@ pub mod cache;
 pub mod local_onnx;
 
 use crate::core::models::MemoryEmbeddingConfig;
+use crate::ierr;
 use std::sync::Arc;
 use tauri::AppHandle;
 
@@ -44,7 +45,7 @@ pub struct EmbeddingTestResult {
 /// 模型名无效或模型未下载/全局停用时报错（检索侧退化为关键词）。
 pub fn resolve(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> Result<Arc<dyn Embedder>, String> {
     if !cfg.enabled {
-        return Err("嵌入未启用".into());
+        return Err(ierr!("嵌入未启用", "Embedding is not enabled"));
     }
     let id = if cfg.model.trim().is_empty() {
         local_onnx::LOCAL_MODEL_NAME
@@ -54,13 +55,17 @@ pub fn resolve(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> Result<Arc<dyn E
     // 全局启用/停用校验（与供应商设置类似）
     if let Some(entry) = crate::core::model_registry::find_entry(id) {
         if entry.kind == "embed" && !crate::core::model_registry::is_model_enabled(app, id) {
-            return Err(format!(
-                "嵌入模型 {id} 已全局停用，请在「Embedding 模型管理」中启用"
+            return Err(ierr!(
+                "嵌入模型 {} 已全局停用，请在「Embedding 模型管理」中启用",
+                "Embedding model {} is globally disabled, enable it in Settings → Embedding Models",
+                id
             ));
         }
     } else {
-        return Err(format!(
-            "未知嵌入模型: {id}，请在「Embedding 模型管理」中选择已支持的模型"
+        return Err(ierr!(
+            "未知嵌入模型: {}，请在「Embedding 模型管理」中选择已支持的模型",
+            "Unknown embedding model: {}, select a supported model in Settings → Embedding Models",
+            id
         ));
     }
     Ok(Arc::new(local_onnx::LocalEmbedder::new(app, cfg)))

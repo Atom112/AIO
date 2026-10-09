@@ -2,6 +2,7 @@
 
 use crate::commands::llm::*;
 use crate::core::events as ev;
+use crate::ierr;
 use serde_json::json;
 use tauri::{Emitter, Window};
 use tokio_util::sync::CancellationToken;
@@ -142,7 +143,12 @@ pub(crate) async fn compress_context(
                 post_chat_completion(client, api_url, api_key, &body),
             ) => result,
         }
-        .map_err(|_| "压缩摘要请求超时（45s）".to_string())?
+        .map_err(|_| {
+            ierr!(
+                "压缩摘要请求超时（45s）",
+                "Compression summary request timed out (45s)"
+            )
+        })?
         .map_err(|e| e.to_string())?;
 
         let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
@@ -153,7 +159,7 @@ pub(crate) async fn compress_context(
 
         let s = chat_text_content(&val, is_anthropic);
         if s.is_empty() {
-            Err("摘要为空".to_string())
+            Err(ierr!("摘要为空", "Summary is empty"))
         } else {
             Ok(s)
         }

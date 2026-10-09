@@ -4,6 +4,7 @@
 //! 向量以 float32 BLOB 存在 facts.embedding，检索先用 Rust 暴力余弦（P3 换 sqlite-vec）。
 
 use crate::core::models::{MemoryEmbeddingConfig, MemoryRerankConfig};
+use crate::ierr;
 use crate::utils::knowledge;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -288,7 +289,13 @@ impl MemoryStore {
         // 必须先注册自动扩展，再打开连接
         let _ = crate::services::memory::vec0::vec0_available();
         let dir = Path::new(project_root).join(".aio").join("memory");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("创建记忆目录失败: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            ierr!(
+                "创建记忆目录失败: {}",
+                "Failed to create memory directory: {}",
+                e
+            )
+        })?;
         let path = dir.join("memory.sqlite");
         let conn = Connection::open(&path).map_err(|e| e.to_string())?;
         conn.pragma_update(None, "journal_mode", "WAL")
@@ -431,7 +438,7 @@ impl MemoryStore {
         )
         .optional()
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("事实不存在: {id}"))
+        .ok_or_else(|| ierr!("事实不存在: {}", "Fact not found: {}", id))
     }
 
     /// 列出事实（status/category 可选过滤，按更新时间倒序，分页）。
@@ -615,12 +622,17 @@ impl MemoryStore {
 
     /// 从导出的 JSON 导入事实（按 key 去重；返回导入条数）。
     pub fn import_facts(&self, json: &str) -> Result<usize, String> {
-        let parsed: serde_json::Value =
-            serde_json::from_str(json).map_err(|e| format!("解析导入数据失败: {e}"))?;
+        let parsed: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| ierr!("解析导入数据失败: {}", "Failed to parse import data: {}", e))?;
         let facts = parsed
             .get("facts")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| "导入数据缺少 facts 数组".to_string())?;
+            .ok_or_else(|| {
+                ierr!(
+                    "导入数据缺少 facts 数组",
+                    "Import data is missing the facts array"
+                )
+            })?;
         let mut count = 0usize;
         for item in facts {
             let fact = NewFact {

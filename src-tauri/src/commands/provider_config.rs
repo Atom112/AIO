@@ -22,6 +22,8 @@ use crate::plugins::provider::{
     classify_reqwest_error, ProviderManager, DEFAULT_TIMEOUT_SECS, TEST_TIMEOUT_SECS,
 };
 
+use crate::ierr;
+
 /// 兼容常量：应用配置目录名（统一定义在 core::paths::BUNDLE_ID）。
 const APPDATA_DIRNAME: &str = crate::core::paths::BUNDLE_ID;
 const PROVIDER_FILE: &str = "provider-configs.json";
@@ -190,7 +192,8 @@ fn save_provider_configs_internal(
     _app: &AppHandle,
     file: &ProviderConfigFile,
 ) -> Result<(), String> {
-    let p = provider_path().ok_or_else(|| "无法获取 config 目录".to_string())?;
+    let p = provider_path()
+        .ok_or_else(|| ierr!("无法获取 config 目录", "Failed to get config directory"))?;
     // 在落盘前剥离 api_key（明文 key 一律只存 keyring/降级加密文件）。
     // 仅当安全存储写入成功时才清空明文；失败则保留明文 + 记录 error（绝不静默丢失密钥）。
     let mut sanitized = file.clone();
@@ -205,7 +208,7 @@ fn save_provider_configs_internal(
         }
     }
     let json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
-    fs::write(&p, json).map_err(|e| format!("写入失败: {}", e))?;
+    fs::write(&p, json).map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
     Ok(())
 }
 
@@ -225,13 +228,23 @@ pub fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result
         };
         if !cfg.api_url.is_empty() {
             if let Err(e) = crate::utils::url_validation::validate_http_url(&cfg.api_url, &opts) {
-                return Err(format!("provider[{}].apiUrl 非法: {}", id, e));
+                return Err(ierr!(
+                    "provider[{}].apiUrl 非法: {}",
+                    "provider[{}].apiUrl is invalid: {}",
+                    id,
+                    e
+                ));
             }
         }
         if let Some(proxy) = &cfg.proxy_url {
             if !proxy.is_empty() {
                 if let Err(e) = validate_api_url(proxy) {
-                    return Err(format!("provider[{}].proxyUrl 非法: {}", id, e));
+                    return Err(ierr!(
+                        "provider[{}].proxyUrl 非法: {}",
+                        "provider[{}].proxyUrl is invalid: {}",
+                        id,
+                        e
+                    ));
                 }
             }
         }
@@ -281,9 +294,17 @@ pub async fn test_provider_connection(
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         let msg = if status == 401 || status == 403 {
-            format!("HTTP {}: 认证失败，请检查 API Key 是否正确", status)
+            ierr!(
+                "HTTP {}: 认证失败，请检查 API Key 是否正确",
+                "HTTP {}: authentication failed, please check that the API key is correct",
+                status
+            )
         } else if status == 404 {
-            format!("HTTP 404: 端点不存在 ({})", plugin.identifier())
+            ierr!(
+                "HTTP 404: 端点不存在 ({})",
+                "HTTP 404: endpoint not found ({})",
+                plugin.identifier()
+            )
         } else {
             format!("HTTP {}", status)
         };
@@ -303,7 +324,7 @@ pub async fn test_provider_connection(
                 success: false,
                 model_count: 0,
                 sample_model_ids: vec![],
-                error: Some(format!("读取响应失败: {}", e)),
+                error: Some(ierr!("读取响应失败: {}", "Failed to read response: {}", e)),
                 elapsed_ms: started.elapsed().as_millis(),
             });
         }
@@ -316,7 +337,7 @@ pub async fn test_provider_connection(
                 success: false,
                 model_count: 0,
                 sample_model_ids: vec![],
-                error: Some(format!("响应非 JSON: {}", e)),
+                error: Some(ierr!("响应非 JSON: {}", "Response is not JSON: {}", e)),
                 elapsed_ms: started.elapsed().as_millis(),
             });
         }
@@ -374,9 +395,17 @@ pub async fn fetch_provider_models(
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         let msg = if status == 401 || status == 403 {
-            format!("HTTP {}: 认证失败，请检查 API Key", status)
+            ierr!(
+                "HTTP {}: 认证失败，请检查 API Key",
+                "HTTP {}: authentication failed, please check the API key",
+                status
+            )
         } else if status == 404 {
-            format!("HTTP 404: 端点不存在 ({})", plugin.identifier())
+            ierr!(
+                "HTTP 404: 端点不存在 ({})",
+                "HTTP 404: endpoint not found ({})",
+                plugin.identifier()
+            )
         } else {
             format!("HTTP {}", status)
         };
@@ -394,7 +423,7 @@ pub async fn fetch_provider_models(
             return Ok(FetchLiveModelsResult {
                 success: false,
                 models: vec![],
-                error: Some(format!("读取响应失败: {}", e)),
+                error: Some(ierr!("读取响应失败: {}", "Failed to read response: {}", e)),
                 elapsed_ms: started.elapsed().as_millis(),
             });
         }
@@ -406,7 +435,7 @@ pub async fn fetch_provider_models(
             return Ok(FetchLiveModelsResult {
                 success: false,
                 models: vec![],
-                error: Some(format!("响应非 JSON: {}", e)),
+                error: Some(ierr!("响应非 JSON: {}", "Response is not JSON: {}", e)),
                 elapsed_ms: started.elapsed().as_millis(),
             });
         }

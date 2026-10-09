@@ -4,6 +4,7 @@
 //! 跳转到定义、查找引用、悬浮类型信息、文档符号列表。
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::ierr;
 use crate::plugins::lsp::{LspClient, LspManager};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -147,10 +148,21 @@ fn extension_to_language_id(ext: &str) -> Option<&str> {
 /// 相对文件路径 → file:// URI（仿照 client.rs 中同名私有函数）。
 fn file_path_to_uri(project_root: &Path, file_path: &str) -> Result<String, String> {
     let full = project_root.join(file_path);
-    let canonical = std::fs::canonicalize(&full)
-        .map_err(|e| format!("无法解析路径 {}: {}", full.display(), e))?;
-    let url = url::Url::from_file_path(&canonical)
-        .map_err(|_| format!("路径转 URI 失败: {}", canonical.display()))?;
+    let canonical = std::fs::canonicalize(&full).map_err(|e| {
+        ierr!(
+            "无法解析路径 {}: {}",
+            "Failed to resolve path {}: {}",
+            full.display(),
+            e
+        )
+    })?;
+    let url = url::Url::from_file_path(&canonical).map_err(|_| {
+        ierr!(
+            "路径转 URI 失败: {}",
+            "Failed to convert path to URI: {}",
+            canonical.display()
+        )
+    })?;
     Ok(url.to_string())
 }
 
@@ -170,8 +182,10 @@ fn resolve_lsp_client(
         .and_then(|e| e.to_str())
         .unwrap_or("");
     let language_id = extension_to_language_id(ext).ok_or_else(|| {
-        format!(
-            "不支持的文件类型 .{ext}：无法找到对应的语言服务器。支持的类型: .rs, .ts, .tsx, .js, .jsx, .py, .go。请使用 auto_detect_ls 工具启动语言服务器。"
+        ierr!(
+            "不支持的文件类型 .{}：无法找到对应的语言服务器。支持的类型: .rs, .ts, .tsx, .js, .jsx, .py, .go。请使用 auto_detect_ls 工具启动语言服务器。",
+            "Unsupported file type .{}: no matching language server. Supported types: .rs, .ts, .tsx, .js, .jsx, .py, .go. Use the auto_detect_ls tool to start a language server.",
+            ext
         )
     })?;
 
@@ -182,8 +196,11 @@ fn resolve_lsp_client(
         .get(&client_key)
         .map(|entry| entry.value().clone())
         .ok_or_else(|| {
-            format!(
-                "未找到 {language_id} 语言服务器客户端 (key={client_key})。请先使用 auto_detect_ls 工具启动语言服务器。"
+            ierr!(
+                "未找到 {} 语言服务器客户端 (key={})。请先使用 auto_detect_ls 工具启动语言服务器。",
+                "No {} language server client found (key={}). Start a language server first with the auto_detect_ls tool.",
+                language_id,
+                client_key
             )
         })?;
 
@@ -203,11 +220,11 @@ fn extract_position(args: &Value) -> Result<(u32, u32), String> {
     let line = args
         .get("line")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| "缺少 'line' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'line' 参数", "Missing 'line' argument"))?;
     let character = args
         .get("character")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| "缺少 'character' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'character' 参数", "Missing 'character' argument"))?;
     Ok((line as u32, character as u32))
 }
 
@@ -240,7 +257,7 @@ pub async fn execute_lsp_definition(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
@@ -258,7 +275,13 @@ pub async fn execute_lsp_definition(
             Duration::from_secs(10),
         )
         .await
-        .map_err(|e| format!("LSP definition 请求失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "LSP definition 请求失败: {}",
+                "LSP definition request failed: {}",
+                e
+            )
+        })?;
 
     if response.is_null() {
         return Ok(tool_ok(format!(
@@ -301,7 +324,7 @@ pub async fn execute_lsp_references(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
@@ -320,7 +343,13 @@ pub async fn execute_lsp_references(
             Duration::from_secs(10),
         )
         .await
-        .map_err(|e| format!("LSP references 请求失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "LSP references 请求失败: {}",
+                "LSP references request failed: {}",
+                e
+            )
+        })?;
 
     if response.is_null() {
         return Ok(tool_ok(format!(
@@ -328,9 +357,13 @@ pub async fn execute_lsp_references(
         )));
     }
 
-    let arr = response
-        .as_array()
-        .ok_or_else(|| format!("LSP references 返回了意外的响应格式: {response}"))?;
+    let arr = response.as_array().ok_or_else(|| {
+        ierr!(
+            "LSP references 返回了意外的响应格式: {}",
+            "LSP references returned an unexpected response format: {}",
+            response
+        )
+    })?;
 
     if arr.is_empty() {
         return Ok(tool_ok(format!(
@@ -354,7 +387,7 @@ pub async fn execute_lsp_hover(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
@@ -368,7 +401,7 @@ pub async fn execute_lsp_hover(
     let response = client
         .request("textDocument/hover", Some(params), Duration::from_secs(10))
         .await
-        .map_err(|e| format!("LSP hover 请求失败: {e}"))?;
+        .map_err(|e| ierr!("LSP hover 请求失败: {}", "LSP hover request failed: {}", e))?;
 
     if response.is_null() {
         return Ok(tool_ok(format!(
@@ -395,7 +428,7 @@ pub async fn execute_lsp_symbols(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
     let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
@@ -411,15 +444,25 @@ pub async fn execute_lsp_symbols(
             Duration::from_secs(10),
         )
         .await
-        .map_err(|e| format!("LSP documentSymbol 请求失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "LSP documentSymbol 请求失败: {}",
+                "LSP documentSymbol request failed: {}",
+                e
+            )
+        })?;
 
     if response.is_null() {
         return Ok(tool_ok(format!("文件中无符号: {file_path}")));
     }
 
-    let arr = response
-        .as_array()
-        .ok_or_else(|| format!("LSP documentSymbol 返回了意外的响应格式: {response}"))?;
+    let arr = response.as_array().ok_or_else(|| {
+        ierr!(
+            "LSP documentSymbol 返回了意外的响应格式: {}",
+            "LSP documentSymbol returned an unexpected response format: {}",
+            response
+        )
+    })?;
 
     if arr.is_empty() {
         return Ok(tool_ok(format!("文件中无符号: {file_path}")));
@@ -453,13 +496,23 @@ pub async fn fetch_document_symbol_ranges(
             Duration::from_secs(10),
         )
         .await
-        .map_err(|e| format!("LSP documentSymbol 请求失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "LSP documentSymbol 请求失败: {}",
+                "LSP documentSymbol request failed: {}",
+                e
+            )
+        })?;
     if response.is_null() {
         return Ok(Vec::new());
     }
-    let arr = response
-        .as_array()
-        .ok_or_else(|| format!("LSP documentSymbol 返回了意外的响应格式: {response}"))?;
+    let arr = response.as_array().ok_or_else(|| {
+        ierr!(
+            "LSP documentSymbol 返回了意外的响应格式: {}",
+            "LSP documentSymbol returned an unexpected response format: {}",
+            response
+        )
+    })?;
     let mut out: Vec<(String, i64, i64)> = Vec::new();
     fn collect_symbol(symbol: &Value, out: &mut Vec<(String, i64, i64)>) {
         let name = symbol

@@ -1,5 +1,6 @@
 //! 记忆管线用的 LLM 调用封装：复用主 Agent 的非流式请求路径（含 Anthropic 适配）。
 
+use crate::ierr;
 use serde_json::Value;
 use std::time::Duration;
 use tauri::AppHandle;
@@ -16,7 +17,10 @@ pub(crate) struct LlmConfig {
 pub(crate) fn llm_config(app: &AppHandle) -> Result<LlmConfig, String> {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     if cfg.api_url.trim().is_empty() || cfg.default_model.trim().is_empty() {
-        return Err("未配置模型（apiUrl/model 为空），无法执行记忆提取/仲裁".into());
+        return Err(ierr!(
+            "未配置模型（apiUrl/model 为空），无法执行记忆提取/仲裁",
+            "No model configured (apiUrl/model is empty); cannot run memory extraction/arbitration"
+        ));
     }
     Ok(LlmConfig {
         api_url: cfg.api_url,
@@ -51,11 +55,14 @@ pub(crate) async fn chat_json(
         crate::plugins::llm::post_chat_completion(&client, &cfg.api_url, &cfg.api_key, &body),
     )
     .await
-    .map_err(|_| "LLM 调用超时（45s）".to_string())??;
-    let val: Value = res
-        .json()
-        .await
-        .map_err(|e| format!("解析 LLM 响应失败: {e}"))?;
+    .map_err(|_| ierr!("LLM 调用超时（45s）", "LLM request timed out (45s)"))??;
+    let val: Value = res.json().await.map_err(|e| {
+        ierr!(
+            "解析 LLM 响应失败: {}",
+            "Failed to parse LLM response: {}",
+            e
+        )
+    })?;
     if let Some(err) = crate::plugins::llm::chat_error_message(&val) {
         return Err(err);
     }
@@ -86,8 +93,9 @@ pub(crate) fn parse_json_text(text: &str) -> Result<Value, String> {
                         .map_err(|e| e.to_string());
                 }
             }
-            Err(format!(
+            Err(ierr!(
                 "无法解析模型输出的 JSON: {}",
+                "Failed to parse JSON from model output: {}",
                 trimmed.chars().take(120).collect::<String>()
             ))
         }

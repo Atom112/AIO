@@ -11,6 +11,8 @@ use crate::services::memory::store::{
 use crate::utils::file_tools;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::ierr;
+
 /// 嵌入器就绪状态（memory_get_status 返回）。
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -350,7 +352,8 @@ pub fn memory_export_file(app: AppHandle, project_id: String, path: String) -> R
         .state::<MemoryStoreManager>()
         .open(&root)?
         .export_facts()?;
-    std::fs::write(&path, json).map_err(|e| format!("写入导出文件失败: {e}"))
+    std::fs::write(&path, json)
+        .map_err(|e| ierr!("写入导出文件失败: {}", "Failed to write export file: {}", e))
 }
 
 /// 从用户指定路径的 JSON 文件导入记忆事实（按 key 去重；向量需重建）。
@@ -362,7 +365,8 @@ pub fn memory_import_file(
     path: String,
 ) -> Result<usize, String> {
     let root = resolve_root(&app, &project_id)?;
-    let json = std::fs::read_to_string(&path).map_err(|e| format!("读取导入文件失败: {e}"))?;
+    let json = std::fs::read_to_string(&path)
+        .map_err(|e| ierr!("读取导入文件失败: {}", "Failed to read import file: {}", e))?;
     app.state::<MemoryStoreManager>()
         .open(&root)?
         .import_facts(&json)
@@ -507,10 +511,14 @@ pub async fn memory_update_embedding(
     config.provider = "local".into();
     config.api_url.clear();
     if config.model.trim().is_empty() {
-        return Err("请选择嵌入模型".into());
+        return Err(ierr!("请选择嵌入模型", "Please select an embedding model"));
     }
     if crate::commands::model_download::find_entry(config.model.trim()).is_none() {
-        return Err(format!("未知嵌入模型: {}", config.model));
+        return Err(ierr!(
+            "未知嵌入模型: {}",
+            "Unknown embedding model: {}",
+            config.model
+        ));
     }
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
@@ -527,7 +535,12 @@ pub async fn memory_update_embedding(
     // 1) 用所选模型探测实际维度与模型标识（比配置里手填的 dimensions/model 更可靠）
     let (model_key, dims, _) = embed_one(&app, &config, "embedding probe")
         .await
-        .ok_or_else(|| "无法使用所选嵌入模型（请先下载并启用该模型）".to_string())?;
+        .ok_or_else(|| {
+            ierr!(
+                "无法使用所选嵌入模型（请先下载并启用该模型）",
+                "Unable to use the selected embedding model (download and enable it first)"
+            )
+        })?;
     // 2) 固化到项目 meta（model/维度按实测值；apiKey 不落盘）
     let mut resolved = config.clone();
     resolved.model = model_key;
@@ -589,11 +602,11 @@ pub fn memory_update_rerank(
     config.provider = "local".into();
     let model = config.model.trim().to_string();
     if model.is_empty() {
-        return Err("请选择重排模型".into());
+        return Err(ierr!("请选择重排模型", "Please select a rerank model"));
     }
     match crate::commands::model_download::find_entry(&model) {
         Some(entry) if entry.kind == "rerank" => {}
-        _ => return Err(format!("未知重排模型: {model}")),
+        _ => return Err(ierr!("未知重排模型: {}", "Unknown rerank model: {}", model)),
     }
     config.model = model;
     let root = resolve_root(&app, &project_id)?;

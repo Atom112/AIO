@@ -1,6 +1,7 @@
 //! 话题标题与历史摘要命令（generate_topic_title、summarize_history、archive_history）。
 
 use crate::commands::llm::*;
+use crate::ierr;
 use serde_json::json;
 
 /// 生成历史摘要（供前端手动触发的上下文压缩使用）。
@@ -75,7 +76,7 @@ pub(crate) async fn summarize_history(
         post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
-    .map_err(|_| "摘要请求超时（45s）".to_string())?
+    .map_err(|_| ierr!("摘要请求超时（45s）", "Summary request timed out (45s)"))?
     .map_err(|e| e.to_string())?;
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
@@ -86,7 +87,7 @@ pub(crate) async fn summarize_history(
 
     let summary = chat_text_content(&val, is_anthropic);
     let summary = if summary.is_empty() {
-        "无法生成总结".to_string()
+        ierr!("无法生成总结", "Unable to generate a summary")
     } else {
         summary
     };
@@ -114,7 +115,10 @@ pub(crate) fn archive_history(
     let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
         .map_err(|e| format!("Invalid messages JSON: {}", e))?;
     if messages.is_empty() {
-        return Err("归档需要至少一条消息".to_string());
+        return Err(ierr!(
+            "归档需要至少一条消息",
+            "Archive requires at least one message"
+        ));
     }
     archive_early_messages(&app, &messages, &model, &locale.unwrap_or_default())
 }
@@ -250,7 +254,10 @@ pub(crate) async fn generate_topic_title(
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
     if messages.is_empty() {
-        return Err("生成标题需要至少一条消息".to_string());
+        return Err(ierr!(
+            "生成标题需要至少一条消息",
+            "Title generation requires at least one message"
+        ));
     }
 
     let client = non_streaming_http_client();
@@ -296,7 +303,12 @@ pub(crate) async fn generate_topic_title(
         post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
-    .map_err(|_| "标题生成请求超时（45s）".to_string())?
+    .map_err(|_| {
+        ierr!(
+            "标题生成请求超时（45s）",
+            "Title generation request timed out (45s)"
+        )
+    })?
     .map_err(|e| e.to_string())?;
 
     let val: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
@@ -311,8 +323,9 @@ pub(crate) async fn generate_topic_title(
 
     if cleaned.is_empty() {
         let finish = chat_finish_reason(&val, is_anthropic);
-        return Err(format!(
+        return Err(ierr!(
             "模型 {} 返回的标题为空 (finish_reason={}, raw_len={})",
+            "Model {} returned an empty title (finish_reason={}, raw_len={})",
             model,
             finish,
             raw.len()

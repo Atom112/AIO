@@ -6,6 +6,7 @@
 use rusqlite::Connection;
 
 use super::vector::f32_to_bytes;
+use crate::ierr;
 use crate::services::memory::CollectRowsWarn;
 
 static VEC0_ONCE: std::sync::Once = std::sync::Once::new();
@@ -40,7 +41,7 @@ pub fn ensure_vec_table(conn: &Connection, dim: usize) -> Result<(), String> {
         "CREATE VIRTUAL TABLE IF NOT EXISTS vec_facts USING vec0(embedding float[{dim}] distance_metric=cosine, fact_id text +)"
     );
     conn.execute_batch(&sql)
-        .map_err(|e| format!("创建 vec0 表失败: {e}"))
+        .map_err(|e| ierr!("创建 vec0 表失败: {}", "Failed to create vec0 table: {}", e))
 }
 
 /// vec0 kNN 检索：返回 (fact_id, cosine_similarity) 按相似度降序。

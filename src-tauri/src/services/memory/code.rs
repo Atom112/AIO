@@ -5,6 +5,7 @@
 
 use crate::core::events as ev;
 use crate::core::models::MemoryEmbeddingConfig;
+use crate::ierr;
 use crate::services::memory::CollectRowsWarn;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -118,7 +119,13 @@ pub async fn index_code(
     };
     let mut done = 0usize;
     for f in &files {
-        let meta = std::fs::metadata(f).map_err(|e| format!("读取文件元数据失败: {e}"))?;
+        let meta = std::fs::metadata(f).map_err(|e| {
+            ierr!(
+                "读取文件元数据失败: {}",
+                "Failed to read file metadata: {}",
+                e
+            )
+        })?;
         let mtime = meta
             .modified()
             .ok()
@@ -269,7 +276,13 @@ pub async fn search_code(
         search_code_db(&root, &q, k, qv.as_deref(), ff.as_deref(), sf.as_deref())
     })
     .await
-    .map_err(|e| format!("search_code 检索线程失败: {e}"))?
+    .map_err(|e| {
+        ierr!(
+            "search_code 检索线程失败: {}",
+            "search_code retrieval thread failed: {}",
+            e
+        )
+    })?
 }
 
 /// `search_code` 的同步检索主体（向量/FTS/RRF 融合），运行在阻塞线程上。
@@ -597,8 +610,13 @@ fn ensure_code_vec_table(
     let sql = format!(
         "CREATE VIRTUAL TABLE IF NOT EXISTS vec_code USING vec0(embedding float[{dim}] distance_metric=cosine, chunk_id text +)"
     );
-    conn.execute_batch(&sql)
-        .map_err(|e| format!("创建 vec_code 表失败: {e}"))
+    conn.execute_batch(&sql).map_err(|e| {
+        ierr!(
+            "创建 vec_code 表失败: {}",
+            "Failed to create vec_code table: {}",
+            e
+        )
+    })
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! 项目记忆未启用时，工具执行返回错误提示（旧版 knowledge.json 回退路径已随 RAG 移除）。
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::ierr;
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::manager::MemoryStoreManager;
 use crate::services::memory::store::{MemoryStore, NewFact, SearchOptions};
@@ -183,12 +184,21 @@ pub async fn execute_memory_tool(
     project_root: &str,
 ) -> Result<ToolResult, String> {
     if !memory_effective(app, project_root) {
-        return Err("项目记忆未启用（请在项目设置中开启）".into());
+        return Err(ierr!(
+            "项目记忆未启用（请在项目设置中开启）",
+            "Project memory is not enabled (enable it in project settings)"
+        ));
     }
     let store = app
         .state::<MemoryStoreManager>()
         .open(project_root)
-        .map_err(|e| format!("打开项目记忆库失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "打开项目记忆库失败: {}",
+                "Failed to open project memory store: {}",
+                e
+            )
+        })?;
     match tool_name {
         "remember" => execute_remember(app, &store, arguments).await,
         "recall" => execute_recall(app, &store, arguments).await,
@@ -196,7 +206,11 @@ pub async fn execute_memory_tool(
         "update_memory" => execute_update(app, &store, arguments).await,
         "forget_memory" => execute_forget(&store, arguments),
         "search_code" => execute_search_code(app, project_root, arguments).await,
-        _ => Err(format!("未知记忆工具: {tool_name}")),
+        _ => Err(ierr!(
+            "未知记忆工具: {}",
+            "Unknown memory tool: {}",
+            tool_name
+        )),
     }
 }
 
@@ -208,7 +222,7 @@ async fn execute_search_code(
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少参数 query".to_string())?;
+        .ok_or_else(|| ierr!("缺少参数 query", "Missing parameter: query"))?;
     let k = args
         .get("k")
         .and_then(|v| v.as_u64())
@@ -281,7 +295,7 @@ async fn execute_remember(
     let content = args
         .get("content")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少参数 content".to_string())?;
+        .ok_or_else(|| ierr!("缺少参数 content", "Missing parameter: content"))?;
     let category = args
         .get("category")
         .and_then(|v| v.as_str())
@@ -387,7 +401,7 @@ async fn execute_recall(
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少参数 query".to_string())?;
+        .ok_or_else(|| ierr!("缺少参数 query", "Missing parameter: query"))?;
     let category = args
         .get("category")
         .and_then(|v| v.as_str())
@@ -421,7 +435,7 @@ async fn execute_search(
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少参数 query".to_string())?;
+        .ok_or_else(|| ierr!("缺少参数 query", "Missing parameter: query"))?;
     let category = args
         .get("category")
         .and_then(|v| v.as_str())
@@ -507,7 +521,7 @@ async fn execute_update(
     let id = args
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少参数 id".to_string())?;
+        .ok_or_else(|| ierr!("缺少参数 id", "Missing parameter: id"))?;
     let existing = store.get_fact(id)?;
     let new_content = args
         .get("content")
@@ -537,7 +551,7 @@ fn execute_forget(store: &Arc<MemoryStore>, args: &Value) -> Result<ToolResult, 
     let id = args
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少参数 id".to_string())?;
+        .ok_or_else(|| ierr!("缺少参数 id", "Missing parameter: id"))?;
     store.set_status(id, crate::services::memory::store::STATUS_ARCHIVED, None)?;
     Ok(tool_ok(format!("已归档记忆: {id}")))
 }

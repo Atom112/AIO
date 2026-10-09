@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
+use crate::ierr;
+
 const DEFAULT_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/Atom112/aio-models-data/main/dist/data/models.json";
 
@@ -177,10 +179,15 @@ fn validate_catalog_url(target: &str) -> Result<(), String> {
         &crate::utils::url_validation::HttpUrlOptions::https_only(),
     )?;
     // 额外的 host 白名单（仅允许 raw.githubusercontent.com）
-    let parsed = url::Url::parse(target).map_err(|e| format!("URL 解析失败: {}", e))?;
+    let parsed = url::Url::parse(target)
+        .map_err(|e| ierr!("URL 解析失败: {}", "Failed to parse URL: {}", e))?;
     let host = parsed.host_str().unwrap_or("").to_lowercase();
     if !ALLOWED_CATALOG_HOSTS.iter().any(|h| host == *h) {
-        return Err(format!("catalog host 未在白名单内: {}", host));
+        return Err(ierr!(
+            "catalog host 未在白名单内: {}",
+            "Catalog host is not in the allowlist: {}",
+            host
+        ));
     }
     Ok(())
 }
@@ -215,13 +222,19 @@ pub async fn update_models_catalog(
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(5))
         .build()
-        .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "构造 HTTP 客户端失败: {}",
+                "Failed to build HTTP client: {}",
+                e
+            )
+        })?;
 
     let resp = client
         .get(&target_url)
         .send()
         .await
-        .map_err(|e| format!("拉取失败: {}", e))?;
+        .map_err(|e| ierr!("拉取失败: {}", "Fetch failed: {}", e))?;
 
     if !resp.status().is_success() {
         return Ok(UpdateResult {
@@ -244,7 +257,7 @@ pub async fn update_models_catalog(
     let body = resp
         .bytes()
         .await
-        .map_err(|e| format!("读取响应体失败: {}", e))?;
+        .map_err(|e| ierr!("读取响应体失败: {}", "Failed to read response body: {}", e))?;
     if body.len() > MAX_CATALOG_BYTES {
         return Ok(UpdateResult {
             success: false,
@@ -252,8 +265,9 @@ pub async fn update_models_catalog(
             provider_count: 0,
             version: String::new(),
             cached_path: String::new(),
-            error: Some(format!(
+            error: Some(ierr!(
                 "响应体超过 {}MB 上限",
+                "Response body exceeds the {}MB limit",
                 MAX_CATALOG_BYTES / 1024 / 1024
             )),
             bytes: body.len(),
@@ -269,8 +283,9 @@ pub async fn update_models_catalog(
             provider_count: 0,
             version: String::new(),
             cached_path: String::new(),
-            error: Some(format!(
+            error: Some(ierr!(
                 "响应体过小 ({} 字节)，可能不是有效 catalog",
+                "Response body too small ({} bytes), may not be a valid catalog",
                 body_str.len()
             )),
             bytes: body_str.len(),
@@ -286,16 +301,26 @@ pub async fn update_models_catalog(
             provider_count: 0,
             version: version.clone().unwrap_or_default(),
             cached_path: String::new(),
-            error: Some("响应体不包含 modelCount 字段，可能不是 catalog JSON".to_string()),
+            error: Some(ierr!(
+                "响应体不包含 modelCount 字段，可能不是 catalog JSON",
+                "Response body has no modelCount field, may not be a catalog JSON"
+            )),
             bytes: body_str.len(),
             elapsed_ms: started.elapsed().as_millis(),
         });
     }
 
-    let cached = appdata_catalog_path(&app).ok_or_else(|| "无法获取 AppData 目录".to_string())?;
+    let cached = appdata_catalog_path(&app)
+        .ok_or_else(|| ierr!("无法获取 AppData 目录", "Failed to get AppData directory"))?;
 
-    fs::write(&cached, &body)
-        .map_err(|e| format!("写入 AppData 失败 ({}): {}", cached.display(), e))?;
+    fs::write(&cached, &body).map_err(|e| {
+        ierr!(
+            "写入 AppData 失败 ({}): {}",
+            "Failed to write to AppData ({}): {}",
+            cached.display(),
+            e
+        )
+    })?;
 
     let _ = app.emit(
         "models-catalog-updated",

@@ -4,6 +4,7 @@
 /// 1. 优先使用 app data 下通过自动安装的引擎（EngineInstaller）
 /// 2. 回退到系统安装的 llama-server（PATH / WinGet / conda / brew / nix）
 use crate::core::state::LocalEngineState;
+use crate::ierr;
 use crate::plugins::engine::installer::EngineInstaller;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::io::{BufRead, BufReader};
@@ -324,7 +325,10 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             );
 
             if gpu_layers <= 0 {
-                return Err("GPU 层数必须大于 0，建议设置为 99 或 999".to_string());
+                return Err(ierr!(
+                    "GPU 层数必须大于 0，建议设置为 99 或 999",
+                    "GPU layers must be greater than 0, recommended values are 99 or 999"
+                ));
             }
 
             // 优先级：app data 安装 > 系统安装 (PATH/WinGet/conda/brew/nix)
@@ -333,27 +337,36 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             } else if let Some(found) = Self::find_llama_server() {
                 found
             } else {
-                return Err(
-                    "找不到 llama.cpp 引擎。请安装 llama-server 并确保其在 PATH 中，或参照设置页面的安装指南。"
-                        .to_string(),
-                );
+                return Err(ierr!(
+                    "找不到 llama.cpp 引擎。请安装 llama-server 并确保其在 PATH 中，或参照设置页面的安装指南。",
+                    "llama.cpp engine not found. Install llama-server and make sure it is on PATH, or follow the installation guide in Settings."
+                ));
             };
 
             if !Path::new(model_path).exists() {
-                return Err(format!("模型文件不存在: {}", model_path));
+                return Err(ierr!(
+                    "模型文件不存在: {}",
+                    "Model file does not exist: {}",
+                    model_path
+                ));
             }
 
             let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
-                Err(e) => return Err(format!("启动失败: {}", e)),
+                Err(e) => return Err(ierr!("启动失败: {}", "Failed to start: {}", e)),
             };
 
             let _ = app.emit(self.progress_event_name(), 0.05);
 
             let stderr = match child.stderr.take() {
                 Some(s) => s,
-                None => return Err("无法获取子进程 stderr".to_string()),
+                None => {
+                    return Err(ierr!(
+                        "无法获取子进程 stderr",
+                        "Failed to capture child process stderr"
+                    ))
+                }
             };
             let app_clone = app.clone();
             let event_name = self.progress_event_name().to_string();
@@ -385,9 +398,19 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             match child.try_wait() {
                 Ok(None) => {}
                 Ok(Some(status)) => {
-                    return Err(format!("进程启动后立即退出，退出码: {}", status));
+                    return Err(ierr!(
+                        "进程启动后立即退出，退出码: {}",
+                        "Process exited immediately after startup, exit code: {}",
+                        status
+                    ));
                 }
-                Err(e) => return Err(format!("无法检查进程状态: {}", e)),
+                Err(e) => {
+                    return Err(ierr!(
+                        "无法检查进程状态: {}",
+                        "Failed to check process status: {}",
+                        e
+                    ))
+                }
             }
 
             let client = reqwest::Client::builder()
@@ -402,7 +425,10 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                 }
                 Err(_) => {
                     let _ = child.kill();
-                    return Err("服务未响应健康检查，可能启动失败".to_string());
+                    return Err(ierr!(
+                        "服务未响应健康检查，可能启动失败",
+                        "Service did not respond to the health check, startup may have failed"
+                    ));
                 }
             }
 

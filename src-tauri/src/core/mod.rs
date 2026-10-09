@@ -1,6 +1,7 @@
 pub mod config;
 pub mod db;
 pub mod events;
+pub mod i18n;
 pub mod ids;
 pub mod migrate;
 pub mod model_registry;

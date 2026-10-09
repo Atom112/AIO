@@ -2,6 +2,7 @@
 
 use crate::commands::llm::*;
 use crate::core::events as ev;
+use crate::ierr;
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use serde_json::json;
@@ -218,10 +219,19 @@ pub(crate) async fn handle_delegate_task(
     let profile_id = arguments["profile"].as_str().unwrap_or("general");
     let task_desc = arguments["task"].as_str().unwrap_or("").to_string();
     if task_desc.is_empty() {
-        return Err("delegate_task 缺少必填参数 'task'".into());
+        return Err(ierr!(
+            "delegate_task 缺少必填参数 'task'",
+            "delegate_task is missing the required 'task' parameter"
+        ));
     }
     let profile = subagent::find_profile(profile_id, custom_profiles)
-        .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
+        .ok_or_else(|| {
+            ierr!(
+                "未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID",
+                "Unknown subagent profile: '{}'. Available: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, or a custom profile id",
+                profile_id
+            )
+        })?;
 
     let context_files: Vec<String> = arguments["context_files"]
         .as_array()
@@ -247,7 +257,10 @@ pub(crate) async fn handle_delegate_task(
         );
         match action {
             PermissionAction::Deny => {
-                return Err("delegate_task 在当前模式下被安全策略禁止".into());
+                return Err(ierr!(
+                    "delegate_task 在当前模式下被安全策略禁止",
+                    "delegate_task is blocked by the security policy in the current mode"
+                ));
             }
             PermissionAction::Ask => {
                 let pending = app.state::<PendingApprovals>();
@@ -401,15 +414,24 @@ pub(crate) async fn handle_delegate_tasks(
     locale: &str,
 ) -> Result<ToolResult, String> {
     // 解析 tasks 数组
-    let tasks_array = arguments["tasks"]
-        .as_array()
-        .ok_or_else(|| "delegate_tasks 缺少必填参数 'tasks'（应为数组）".to_string())?;
+    let tasks_array = arguments["tasks"].as_array().ok_or_else(|| {
+        ierr!(
+            "delegate_tasks 缺少必填参数 'tasks'（应为数组）",
+            "delegate_tasks is missing the required 'tasks' parameter (expected an array)"
+        )
+    })?;
 
     if tasks_array.is_empty() {
-        return Err("delegate_tasks: 'tasks' 数组不能为空".into());
+        return Err(ierr!(
+            "delegate_tasks: 'tasks' 数组不能为空",
+            "delegate_tasks: 'tasks' array must not be empty"
+        ));
     }
     if tasks_array.len() > 10 {
-        return Err("delegate_tasks: 'tasks' 数组最多 10 个元素".into());
+        return Err(ierr!(
+            "delegate_tasks: 'tasks' 数组最多 10 个元素",
+            "delegate_tasks: 'tasks' array allows at most 10 elements"
+        ));
     }
 
     let shared_context = arguments["context"]
@@ -422,14 +444,16 @@ pub(crate) async fn handle_delegate_tasks(
         let profile = task_obj["profile"].as_str();
         let task = task_obj["task"].as_str();
         if profile.is_none() || profile.unwrap().is_empty() {
-            return Err(format!(
+            return Err(ierr!(
                 "delegate_tasks: 第 {} 个 task 缺少必填字段 'profile'",
+                "delegate_tasks: task {} is missing the required 'profile' field",
                 idx + 1
             ));
         }
         if task.is_none() || task.unwrap().is_empty() {
-            return Err(format!(
+            return Err(ierr!(
                 "delegate_tasks: 第 {} 个 task 缺少必填字段 'task'",
+                "delegate_tasks: task {} is missing the required 'task' field",
                 idx + 1
             ));
         }
@@ -449,7 +473,10 @@ pub(crate) async fn handle_delegate_tasks(
         );
         match action {
             PermissionAction::Deny => {
-                return Err("delegate_tasks 在当前模式下被安全策略禁止".into());
+                return Err(ierr!(
+                    "delegate_tasks 在当前模式下被安全策略禁止",
+                    "delegate_tasks is blocked by the security policy in the current mode"
+                ));
             }
             PermissionAction::Ask => {
                 let pending = app.state::<PendingApprovals>();
@@ -673,7 +700,7 @@ pub(crate) async fn execute_workflow(
                 ev::WORKFLOW_COMPLETE,
                 serde_json::json!({ "workflowId": workflow.workflow_id }),
             );
-            return Err("工作流被用户取消".into());
+            return Err(ierr!("工作流被用户取消", "Workflow cancelled by the user"));
         }
 
         // 发射 workflow-step-start 事件
@@ -1223,7 +1250,7 @@ pub(crate) async fn execute_subagent(
                         error: e.clone(),
                     },
                 );
-                return Err(format!("子 Agent API 错误: {}", e));
+                return Err(ierr!("子 Agent API 错误: {}", "Subagent API error: {}", e));
             }
         }
     }

@@ -9,6 +9,8 @@ use crate::utils::file_tools::strip_windows_extended_prefix;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+use crate::ierr;
+
 const AIO_DIR: &str = ".aio";
 
 // projects.json 路径与读取统一由 utils::project_index 提供（全仓唯一来源）
@@ -35,7 +37,13 @@ fn now_timestamp() -> String {
 /// 初始化项目的 .aio/ 目录结构。
 fn init_project_dir(project_path: &str) -> Result<(), String> {
     let aio_dir = PathBuf::from(project_path).join(AIO_DIR);
-    std::fs::create_dir_all(&aio_dir).map_err(|e| format!("创建 .aio 目录失败: {}", e))?;
+    std::fs::create_dir_all(&aio_dir).map_err(|e| {
+        ierr!(
+            "创建 .aio 目录失败: {}",
+            "Failed to create .aio directory: {}",
+            e
+        )
+    })?;
 
     // 写入项目元数据
     let _project_json = aio_dir.join("project.json");
@@ -52,7 +60,13 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
             &skills_path,
             serde_json::to_string_pretty(&empty_skills).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| format!("创建 skills.json 失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "创建 skills.json 失败: {}",
+                "Failed to create skills.json: {}",
+                e
+            )
+        })?;
     }
 
     // 初始化 mcp-servers.json（包含内置文件系统 MCP server）
@@ -91,7 +105,13 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
             &mcp_path,
             serde_json::to_string_pretty(&mcp_config).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| format!("创建 mcp-servers.json 失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "创建 mcp-servers.json 失败: {}",
+                "Failed to create mcp-servers.json: {}",
+                e
+            )
+        })?;
     }
 
     Ok(())
@@ -106,19 +126,23 @@ pub fn create_project(
     path: String,
 ) -> Result<Project, String> {
     if name.trim().is_empty() {
-        return Err("项目名称不能为空".into());
+        return Err(ierr!("项目名称不能为空", "Project name must not be empty"));
     }
     let path_clean = path.trim().to_string();
     if path_clean.is_empty() {
-        return Err("项目路径不能为空".into());
+        return Err(ierr!("项目路径不能为空", "Project path must not be empty"));
     }
-    let canonical = std::fs::canonicalize(&path_clean).map_err(|e| format!("路径无效: {}", e))?;
+    let canonical = std::fs::canonicalize(&path_clean)
+        .map_err(|e| ierr!("路径无效: {}", "Invalid path: {}", e))?;
     let canonical_str = strip_windows_extended_prefix(&canonical.to_string_lossy());
 
     // 检查路径是否已被其他项目使用
     let mut file = load_projects_file(&app);
     if file.projects.values().any(|p| p.path == canonical_str) {
-        return Err("该目录已绑定到其他项目".into());
+        return Err(ierr!(
+            "该目录已绑定到其他项目",
+            "This directory is already bound to another project"
+        ));
     }
 
     // 初始化 .aio/ 目录
@@ -149,7 +173,7 @@ pub fn create_project(
         conn.execute(
             "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, '', NULL, ?5, '[]', ?3, ?4, 'project')",
             rusqlite::params![assistant_id, project.name, project.id, agent_mode_str, default_mcp_ids],
-        ).map_err(|e| format!("创建项目助理失败: {}", e))?;
+        ).map_err(|e| ierr!("创建项目助理失败: {}", "Failed to create project assistant: {}", e))?;
     }
 
     file.projects.insert(id, project.clone());
@@ -172,7 +196,7 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<Project>, String> {
 #[tauri::command]
 pub fn update_project(app: AppHandle, id: String, name: String) -> Result<(), String> {
     if name.trim().is_empty() {
-        return Err("项目名称不能为空".into());
+        return Err(ierr!("项目名称不能为空", "Project name must not be empty"));
     }
     let mut file = load_projects_file(&app);
     match file.projects.get_mut(&id) {
@@ -182,7 +206,7 @@ pub fn update_project(app: AppHandle, id: String, name: String) -> Result<(), St
             file.updated_at = now_timestamp();
             save_projects_file(&app, &file)
         }
-        None => Err("项目不存在".into()),
+        None => Err(ierr!("项目不存在", "Project not found")),
     }
 }
 
@@ -197,7 +221,7 @@ pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
             .remove(&project.path);
         save_projects_file(&app, &file)
     } else {
-        Err("项目不存在".into())
+        Err(ierr!("项目不存在", "Project not found"))
     }
 }
 
@@ -209,21 +233,21 @@ pub fn open_project_directory(_app: AppHandle, path: String) -> Result<(), Strin
         std::process::Command::new("explorer")
             .arg(&path)
             .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
+            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
             .arg(&path)
             .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
+            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
             .arg(&path)
             .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
+            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     }
     Ok(())
 }
@@ -231,7 +255,8 @@ pub fn open_project_directory(_app: AppHandle, path: String) -> Result<(), Strin
 /// 通过路径查找项目 ID（用于从 .aio/ 目录反向定位）。
 #[tauri::command]
 pub fn get_project_by_path(app: AppHandle, path: String) -> Result<Option<Project>, String> {
-    let canonical = std::fs::canonicalize(&path).map_err(|e| format!("路径无效: {}", e))?;
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| ierr!("路径无效: {}", "Invalid path: {}", e))?;
     let canonical_str = strip_windows_extended_prefix(&canonical.to_string_lossy());
     let file = load_projects_file(&app);
     Ok(file
@@ -248,7 +273,7 @@ pub fn validate_project_path(app: AppHandle, path: String) -> Result<serde_json:
         Err(e) => {
             return Ok(serde_json::json!({
                 "valid": false,
-                "reason": format!("路径无效: {}", e)
+                "reason": ierr!("路径无效: {}", "Invalid path: {}", e)
             }));
         }
     };
@@ -256,14 +281,14 @@ pub fn validate_project_path(app: AppHandle, path: String) -> Result<serde_json:
     if !is_dir {
         return Ok(serde_json::json!({
             "valid": false,
-            "reason": "路径不是目录"
+            "reason": ierr!("路径不是目录", "Path is not a directory")
         }));
     }
     let file = load_projects_file(&app);
     let existing = file.projects.values().find(|p| p.path == canonical);
     Ok(serde_json::json!({
         "valid": existing.is_none(),
-        "reason": existing.map(|p| format!("该目录已绑定到项目: {}", p.name)).unwrap_or_default(),
+        "reason": existing.map(|p| ierr!("该目录已绑定到项目: {}", "This directory is already bound to project: {}", p.name)).unwrap_or_default(),
         "canonicalPath": canonical,
     }))
 }

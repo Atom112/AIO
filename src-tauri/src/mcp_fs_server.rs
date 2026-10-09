@@ -1,22 +1,23 @@
-//! 内置文件系统 MCP Server — 直接实现 MCP JSON-RPC over stdio。
+//! Built-in filesystem MCP server - a direct MCP JSON-RPC implementation over stdio.
 //!
-//! 当前仍是新项目的默认文件系统服务器：`commands/project.rs` 会在项目创建时把
-//! `__aio-filesystem__`（命令 = 当前 exe + `--fs-server <path>`，autoStart）写入
-//! 项目的 `mcp-servers.json`，因此本文件属于线上代码路径，维护与 Agent 进程内
-//! 文件工具同等对待。后续如要退役，需同时处理存量项目配置的迁移。
+//! Still the default filesystem server for new projects: `commands/project.rs` writes
+//! `__aio-filesystem__` (command = current exe + `--fs-server <path>`, autoStart) into
+//! the project's `mcp-servers.json` on creation, so this file is on the live code path
+//! and must be maintained like the agent's in-process file tools. Retiring it later
+//! requires migrating existing project configs.
 //!
-//! P4.3 去分叉：工具实现整体委托 `utils/file_tools.rs` 的
-//! `execute_file_tool`（单一实现），本文件仅做 MCP JSON-RPC 协议适配——
-//! 此前的分叉副本缺 max_lines/max_bytes/行号/hashline/replace_in_file。
+//! Tool implementations are fully delegated to `execute_file_tool` in
+//! `utils/file_tools.rs` (single source of truth); this file only adapts the
+//! MCP JSON-RPC protocol.
 //!
-//! MCP 协议本身很简单（JSON-RPC 2.0 over stdin/stdout），
-//! 手写实现比引入 rmcp 更轻量，且避免了 rmcp 版本 API 兼容问题。
+//! The MCP protocol is simple (JSON-RPC 2.0 over stdin/stdout); a hand-written
+//! implementation is lighter than rmcp and avoids rmcp version API compatibility issues.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
-// ====== JSON-RPC 模型 ======
+// ====== JSON-RPC models ======
 
 #[derive(Deserialize, Debug)]
 struct JsonRpcRequest {
@@ -67,11 +68,11 @@ fn respond_error(id: Option<Value>, code: i32, message: &str) -> String {
     serde_json::to_string(&resp).unwrap()
 }
 
-// ====== 沙箱 ======
-// P4.3 去分叉后，工具实现与安全边界（safe_path 等）全部来自
-// utils::file_tools 的进程内单一实现——本文件仅做 MCP JSON-RPC 协议适配。
+// ====== Sandbox ======
+// Tool implementations and security boundaries (safe_path etc.) all come from
+// the single in-process implementation in utils::file_tools; this file is only the MCP JSON-RPC adapter.
 
-// ====== 工具实现 ======
+// ====== Tool implementations ======
 
 struct FileServer {
     dir: String,
@@ -79,11 +80,10 @@ struct FileServer {
 
 impl FileServer {
     fn handle(&self, name: &str, arguments: &Value) -> Value {
-        // P4.3 去分叉：全部文件工具委托 file_tools::execute_file_tool 单一实现。
-        // 此前的分叉副本缺 max_lines/max_bytes/行号输出/hashline 协议/replace_in_file，
-        // 与进程内工具行为漂移（仅 safe_path 安全边界共享）。
+        // All file tools delegate to the single file_tools::execute_file_tool implementation,
+        // so MCP behavior matches the in-process agent file tools exactly.
         let r = crate::utils::file_tools::execute_file_tool(name, arguments, &self.dir);
-        // ToolResult（进程内形态）→ MCP JSON-RPC 结果形态
+        // ToolResult (in-process shape) -> MCP JSON-RPC result shape
         let text = r
             .content
             .iter()
@@ -98,7 +98,7 @@ impl FileServer {
     }
 }
 
-// ====== MCP 协议处理 ======
+// ====== MCP protocol handling ======
 
 fn server_info() -> Value {
     json!({
@@ -176,7 +176,7 @@ pub fn run(allowed_dir: String) {
                 let _ = stdout.flush();
             }
             "notifications/initialized" => {
-                // 客户端发来的 initialized 通知，不需要回复
+                // Initialized notification from the client; no reply needed
                 eprintln!("[aio-fs-server] received initialized notification");
                 _initialized = true;
             }
@@ -224,4 +224,4 @@ pub fn run(allowed_dir: String) {
     eprintln!("[aio-fs-server] stdin closed, exiting");
 }
 
-// 入口在 main.rs 的 --fs-server 分支调用 run()
+// Entry point: main.rs invokes run() from its --fs-server branch

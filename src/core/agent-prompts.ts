@@ -1,8 +1,8 @@
 /**
- * Agent 模式系统提示词模板。
+ * System prompt templates for Agent mode.
  *
- * 将 agent 模式的提示词集中管理，便于维护和定制。
- * 每个模式返回一段 system 级别的指令文本，注入到 LLM 上下文中。
+ * Agent-mode prompts are centralized here for easier maintenance and customization.
+ * Each mode returns a system-level instruction text injected into the LLM context.
  */
 
 export interface ProjectInfo {
@@ -14,12 +14,12 @@ import type { AgentMode } from './store/store';
 import { locale } from './i18n';
 
 /**
- * 构建 Agent 模式系统提示词。
+ * Build the Agent mode system prompt.
  *
- * @param mode - 当前 agent 模式
- * @param project - 当前项目信息（路径、名称）
- * @param customInstructions - 可选的附加指令（从项目自定义配置读取）
- * @returns 系统提示词文本，或 null（off 模式不注入 agent 提示）
+ * @param mode - current agent mode
+ * @param project - current project info (path, name)
+ * @param customInstructions - optional extra instructions (read from the project's custom config)
+ * @returns the system prompt text, or null (off mode injects no agent prompt)
  */
 export function buildAgentSystemPrompt(
   mode: AgentMode,
@@ -74,7 +74,7 @@ export function buildAgentSystemPrompt(
     `- 禁止嵌套子智能体（子智能体不能再创建子智能体）；并行子智能体间无法通信，确保子任务相互独立。`,
   ];
 
-  // 模式特定的行为指令
+  // mode-specific behavior instructions
   switch (mode) {
     case 'normal':
       lines.push(
@@ -107,7 +107,7 @@ export function buildAgentSystemPrompt(
   );
   lines.push(`- 完成多步任务后，总结你做了哪些修改`);
 
-  // 附加自定义指令
+  // appended custom instructions
   if (customInstructions) {
     lines.push(``);
     lines.push(`自定义指令:`);

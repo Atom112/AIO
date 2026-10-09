@@ -1,7 +1,7 @@
-//! 语义嵌入缓存：模型 + 文本哈希 → 向量，容量上限 + FIFO 淘汰。
+//! Semantic embedding cache: model + text hash -> vector, capacity cap + FIFO eviction.
 //!
-//! 写入与查询两侧共用：同一文本（事实内容/查询）不必跨会话重复调用在线 API 或本地推理。
-//! 键包含模型名与目标维度（Matryoshka 裁剪后维度不同的向量不混用）。批量重索引路径不走缓存。
+//! Shared by the write and lookup sides: identical text (fact content / query) need not repeat online API calls or local inference across sessions.
+//! Keys include the model name and target dims (vectors with different post-Matryoshka truncation dims are never mixed). Bulk reindex paths bypass the cache.
 
 use dashmap::DashMap;
 use std::collections::VecDeque;
@@ -11,7 +11,7 @@ const CACHE_CAP: usize = 2048;
 
 struct EmbedCache {
     map: DashMap<String, Vec<f32>>,
-    /// FIFO 淘汰序（插入顺序）
+    /// FIFO eviction order (insertion order)
     order: Mutex<VecDeque<String>>,
 }
 
@@ -39,12 +39,12 @@ fn key(model: &str, dims: usize, text: &str) -> String {
     )
 }
 
-/// 命中缓存（向量与模型/维度绑定，维度不一致视为未命中）。
+/// Cache lookup (vectors are bound to model/dims; a dim mismatch counts as a miss).
 pub fn get(model: &str, dims: usize, text: &str) -> Option<Vec<f32>> {
     cache().map.get(&key(model, dims, text)).map(|v| v.clone())
 }
 
-/// 写入缓存（容量上限，超出淘汰最旧条目）。
+/// Cache write (capacity cap; evicts the oldest entry when exceeded).
 pub fn put(model: &str, dims: usize, text: &str, v: Vec<f32>) {
     let c = cache();
     let k = key(model, dims, text);
@@ -72,7 +72,7 @@ mod tests {
     fn test_cache_roundtrip_and_dim_isolation() {
         put("m1", 384, "你好", vec![1.0, 2.0, 3.0]);
         assert_eq!(get("m1", 384, "你好"), Some(vec![1.0, 2.0, 3.0]));
-        // 不同维度/不同模型不共享
+        // Different dims/models do not share entries
         assert_eq!(get("m1", 512, "你好"), None);
         assert_eq!(get("m2", 384, "你好"), None);
         assert_eq!(get("m1", 384, "其他"), None);

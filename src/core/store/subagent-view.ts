@@ -1,18 +1,18 @@
-// 子智能体独立对话视图状态 —— 自包含域（自 subagent 工作流 UI 重构引入）。
+// Subagent standalone conversation view state (self-contained domain).
 //
-// 主代理时间线不再内嵌子智能体的工作细节；改为：
-// - 状态条右侧上拉菜单列出当前话题的全部子代理（数据随消息 agentSteps 持久化）；
-// - activeSubagentView 指示当前正在查看的子代理（null = 主代理对话视图）。
+// The main agent timeline no longer embeds subagent work details; instead:
+// - a pull-up menu at the right of the status bar lists all subagents of the current topic (data persisted with message agentSteps);
+// - activeSubagentView indicates the subagent currently being viewed (null = main agent conversation view).
 
 import { createSignal } from 'solid-js';
 import type { AgentStep, Topic } from './types';
 
-/** 当前查看的子智能体 ID（对应 AgentStep.subagentId），null 表示主对话视图 */
+/** Subagent ID currently being viewed (matches AgentStep.subagentId); null means the main conversation view. */
 export const [activeSubagentView, setActiveSubagentView] = createSignal<string | null>(null);
 
 /**
- * 收集当前话题中出现的全部子智能体步骤（含已完成的历史轮次）。
- * 遍历 assistant 消息的 agentSteps，按时间顺序返回 type='subagent' 的步骤。
+ * Collect all subagent steps in the current topic (including finished past rounds).
+ * Walks the agentSteps of assistant messages and returns type='subagent' steps in time order.
  */
 export function collectSubagents(topic: Topic | null | undefined): AgentStep[] {
   if (!topic || !Array.isArray(topic.history)) return [];
@@ -28,7 +28,7 @@ export function collectSubagents(topic: Topic | null | undefined): AgentStep[] {
   return out;
 }
 
-/** 按 subagentId 查找当前话题中的子智能体步骤（找不到返回 undefined） */
+/** Find a subagent step in the current topic by subagentId (undefined if not found). */
 export function findSubagentStep(
   topic: Topic | null | undefined,
   subagentId: string | null | undefined,

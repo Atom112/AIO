@@ -1,7 +1,7 @@
-// 用量统计类型（镜像后端 commands/usage.rs 的返回结构）。
-// 此前误放在组件文件 UsageSummaryCards.tsx 中 —— 领域类型应属于 core/types。
+// Usage statistics types (mirror the return structures of backend commands/usage.rs).
+// Domain types belong in core/types.
 
-/** 按天聚合的用量（对应 Rust UsageSummary） */
+/** Usage aggregated by day (Rust UsageSummary) */
 export interface UsageSummary {
   date: string;
   inputTokens: number;
@@ -10,7 +10,7 @@ export interface UsageSummary {
   requestCount: number;
 }
 
-/** 按模型聚合的用量（对应 Rust UsageSummaryByModel） */
+/** Usage aggregated by model (Rust UsageSummaryByModel) */
 export interface UsageSummaryByModel {
   modelId: string;
   inputTokens: number;

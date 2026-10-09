@@ -1,11 +1,11 @@
 /**
- * Provider 详情页 (lobehub v2)
- * 路由: /settings/provider/:providerId
+ * Provider detail page (LobeHub v2)
+ * Route: /settings/provider/:providerId
  *
- * 数据流:
- * - 启用状态 / 模型启用列表 / 表单字段: 直接写入 providerConfigs + 磁盘, 无需保存按钮
- * - 开关 (model toggle / provider enabled / orphan remove): 立即 auto-save
- * - 文本字段 (URL/Key/Proxy/displayName): onInput 立即 auto-save
+ * Data flow:
+ * - Enabled state / enabled model list / form fields: written directly to providerConfigs + disk, no save button
+ * - Toggles (model toggle / provider enabled / orphan remove): auto-save immediately
+ * - Text fields (URL/Key/Proxy/displayName): auto-save on input
  */
 import { Component, createSignal, createMemo, Show, For, onMount, onCleanup } from 'solid-js';
 import { useNavigate, useParams } from '@solidjs/router';
@@ -55,7 +55,7 @@ const ProviderDetail: Component = () => {
   const localEngineDef = () => getLocalEngineProvider(providerId());
   const isLocalEngine = () => localEngineDef() !== undefined;
 
-  // ===== catalog / 状态 =====
+  // ===== catalog / state =====
   const [catalogReady, setCatalogReady] = createSignal(false);
   const [toast, setToast] = createSignal<{ msg: string; ok: boolean } | null>(null);
 
@@ -73,11 +73,11 @@ const ProviderDetail: Component = () => {
   const [search, setSearch] = createSignal('');
   const [sortKey, setSortKey] = createSignal<SortKey>('releaseDesc');
   const [isServerAlive, setIsServerAlive] = createSignal<'checking' | 'alive' | 'dead'>('checking');
-  // ===== 引擎安装状态（启动时扫描一次 + 进入本页时刷新） =====
+  // ===== engine install state (scanned once at startup + refreshed on page entry) =====
   const engineInstallInfo = createMemo(() => {
     if (!isLocalEngine()) return null;
     const results = engineScanResults();
-    if (!results) return null; // 尚未扫描完成
+    if (!results) return null; // scan not finished yet
     const match = results.find((r) => r.id === localEngineDef()!.engineType);
     return match ? { installed: match.installed, version: match.version } : null;
   });
@@ -88,7 +88,7 @@ const ProviderDetail: Component = () => {
       await loadModelsCatalog();
     }
     setCatalogReady(true);
-    // 本地引擎页打开时刷新一次安装状态（启动扫描可能已过期，如用户新装了引擎）
+    // Refresh install state once when opening the local engine page (the startup scan may be stale, e.g. an engine installed since)
     if (isLocalEngine()) {
       await initEngineScan();
     }
@@ -99,10 +99,10 @@ const ProviderDetail: Component = () => {
   const isCatalogProvider = () =>
     !isCustom() && !!cat()?.providers.find((p: ProviderMeta) => p.id === providerId());
 
-  /** 用户对该 provider 的当前配置 (从 store) */
+  /** The user's current config for this provider (from the store) */
   const userCfg = () => providerConfigs()[providerId()] ?? null;
 
-  /** 从 catalog 拿 provider 元数据; 找不到则用 fallback（local engine 等） */
+  /** Provider metadata from the catalog; falls back (e.g. local engine) when not found */
   const providerMeta = createMemo(() => {
     const c = cat();
     if (!c) return null;
@@ -119,7 +119,7 @@ const ProviderDetail: Component = () => {
     }
     const catMeta = c.providers.find((p: ProviderMeta) => p.id === providerId());
     if (catMeta) return catMeta;
-    // 本地引擎 fallback
+    // local engine fallback
     if (isLocalEngine()) {
       const def = localEngineDef()!;
       return {
@@ -132,7 +132,7 @@ const ProviderDetail: Component = () => {
     return null;
   });
 
-  /** 写入磁盘并更新 store. overrides 用于局部修改 (如切换 enabledModels) */
+  /** Persists to disk and updates the store. overrides supports partial updates (e.g. toggling enabledModels) */
   const persist = async (overrides: Partial<ProviderConfig> = {}) => {
     const cur = userCfg();
     const meta = providerMeta();
@@ -167,30 +167,30 @@ const ProviderDetail: Component = () => {
     }
   };
 
-  /** 表格字段 onInput: 立即 auto-save 整个 cfg */
+  /** Form field onInput: auto-save the whole cfg immediately */
   const updateField = <K extends keyof ProviderConfig>(key: K, value: ProviderConfig[K]) => {
     persist({ [key]: value } as Partial<ProviderConfig>);
   };
 
-  /** 模型启用开关: 立即写盘 */
+  /** Model enable toggle: persists immediately */
   const toggleModel = (modelId: string) => {
     const cur = userCfg()?.enabledModels ?? [];
     const next = cur.includes(modelId) ? cur.filter((m) => m !== modelId) : [...cur, modelId];
     persist({ enabledModels: next });
   };
 
-  /** 孤儿模型移除 */
+  /** Orphan model removal */
   const removeOrphan = (modelId: string) => {
     const cur = userCfg()?.enabledModels ?? [];
     persist({ enabledModels: cur.filter((m) => m !== modelId) });
   };
 
-  /** Provider 启用 toggle */
+  /** Provider enable toggle */
   const toggleProviderEnabled = (enabled: boolean) => {
     persist({ enabled });
   };
 
-  /** 选择本地模型文件（GGUF 等） */
+  /** Pick a local model file (GGUF, etc.) */
   const pickLocalModelFile = async () => {
     if (!localEngineDef()) return;
     try {
@@ -212,7 +212,7 @@ const ProviderDetail: Component = () => {
     }
   };
 
-  /** 移除本地模型文件 */
+  /** Remove a local model file */
   const removeLocalModelFile = (modelId: string) => {
     const current = userCfg()?.localModelPaths ?? {};
     const next = { ...current };
@@ -223,7 +223,7 @@ const ProviderDetail: Component = () => {
     });
   };
 
-  /** 启动本地引擎 */
+  /** Start the local engine */
   const handleStartEngine = async () => {
     const def = localEngineDef();
     if (!def) return;
@@ -258,7 +258,7 @@ const ProviderDetail: Component = () => {
       setEngineActionLoading(false);
     }
   };
-  /** 停止本地引擎 */
+  /** Stop the local engine */
   const handleStopEngine = async () => {
     const def = localEngineDef();
     if (!def) return;
@@ -276,7 +276,7 @@ const ProviderDetail: Component = () => {
     }
   };
 
-  // ===== 模型分组 (修复 IIFE bug: 必须用 createMemo 保留响应式) =====
+  // ===== model grouping (createMemo is required to keep reactivity) =====
   const modelGroups = createMemo(() => {
     const c = cat();
     if (!c || isCustom()) return { enabled: [], available: [], orphans: [] as string[] };
@@ -344,12 +344,12 @@ const ProviderDetail: Component = () => {
     }
   };
 
-  // ===== 本地引擎运行状态探测 =====
+  // ===== local engine liveness probe =====
   let alivePoll: number | undefined;
   onMount(() => {
     if (!isLocalEngine()) return;
     const probe = async () => {
-      // 启动/停止操作进行中时跳过轮询，避免竞态覆盖状态
+      // Skip polling while a start/stop operation is in flight to avoid races overwriting the state
       if (engineActionLoading()) return;
       const u = userCfg();
       if (!u?.apiUrl) {
@@ -449,7 +449,7 @@ const ProviderDetail: Component = () => {
   return (
     <div class="h-full overflow-y-auto">
       <div class="max-w-5xl mx-auto p-4 sm:p-6">
-        {/* 顶部返回 + 标题 */}
+        {/* Top: back button + title */}
         <div class="flex items-center gap-3 mb-5 animate-row-in">
           <button type="button" class={btnSecondarySm} onClick={() => navigate('/settings')}>
             <Icon name="arrow-left" size={14} /> {t('provider.back')}
@@ -554,7 +554,7 @@ const ProviderDetail: Component = () => {
           </Show>
         </div>
 
-        {/* 本地引擎安装引导 */}
+        {/* Local engine install guide */}
         <Show when={isLocalEngine() && !userCfg()}>
           <div
             class="glass-card mb-4 p-4 text-xs text-[rgba(var(--text-base-rgb),0.65)] leading-relaxed animate-row-in"
@@ -573,7 +573,7 @@ const ProviderDetail: Component = () => {
             </Show>
           </div>
         </Show>
-        {/* 表单 + 操作按钮 组合卡片 */}
+        {/* Form + action buttons combined card */}
         <div class="glass-card mb-4 animate-row-in" style={{ 'animation-delay': '60ms' }}>
           <div class="section-label mb-3">{t('provider.connectionConfig')}</div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
@@ -633,7 +633,7 @@ const ProviderDetail: Component = () => {
             </Show>
           </div>
 
-          {/* 启用 toggle + 操作按钮 */}
+          {/* Enable toggle + action buttons */}
           <div class="flex items-center gap-3 flex-wrap pt-3 border-t border-white/5">
             <button
               type="button"
@@ -704,7 +704,7 @@ const ProviderDetail: Component = () => {
           </div>
         </div>
 
-        {/* vLLM Windows 平台警告 */}
+        {/* vLLM Windows platform warning */}
         <Show
           when={
             isLocalEngine() &&
@@ -723,10 +723,10 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* 引擎状态面板 */}
+        {/* Engine status panel */}
         <Show when={isLocalEngine()}>
           <div class="glass-card mb-4 animate-row-in" style={{ 'animation-delay': '80ms' }}>
-            {/* 安装状态 */}
+            {/* Install status */}
             <div class="flex items-center gap-3 mb-3 text-sm">
               <span
                 class="w-2 h-2 rounded-full"
@@ -747,7 +747,7 @@ const ProviderDetail: Component = () => {
               </Show>
             </div>
 
-            {/* 运行状态 + 操作按钮 */}
+            {/* Running state + action buttons */}
             <div class="flex items-center gap-3 flex-wrap">
               <span
                 class="w-2 h-2 rounded-full"
@@ -801,7 +801,7 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* 测试/拉取反馈 */}
+        {/* Test/fetch feedback */}
         <Show when={testState().status !== 'idle'}>
           <div
             class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border backdrop-blur-[20px] mb-4 animate-row-in"
@@ -859,7 +859,7 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* 本地引擎运行模型信息卡片 */}
+        {/* Local engine active models info card */}
         <Show
           when={
             isLocalEngine() &&
@@ -883,7 +883,7 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* 本地模型文件选择器 (仅 allowModelFileSelection 的引擎) */}
+        {/* Local model file picker (only for engines with allowModelFileSelection) */}
         <Show when={isLocalEngine() && localEngineDef()!.allowModelFileSelection}>
           <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '75ms' }}>
             <div class="section-label mb-3">{t('provider.localModels')}</div>
@@ -928,7 +928,7 @@ const ProviderDetail: Component = () => {
             </button>
           </div>
         </Show>
-        {/* ===== 模型列表区 ===== */}
+        {/* ===== model list section ===== */}
         <Show when={isCustom() && !isLocalEngine()}>
           <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '90ms' }}>
             <div class="flex items-center justify-between mb-3">
@@ -1019,7 +1019,7 @@ const ProviderDetail: Component = () => {
               </div>
             </div>
 
-            {/* 已启用 */}
+            {/* Enabled */}
             <Show when={visibleEnabled().length > 0}>
               <div class="section-label mt-2 mb-2 flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full bg-green-400" />
@@ -1036,7 +1036,7 @@ const ProviderDetail: Component = () => {
               </div>
             </Show>
 
-            {/* 未启用 */}
+            {/* Not enabled */}
             <Show when={visibleAvailable().length > 0}>
               <div class="section-label mt-4 mb-2 flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full bg-[rgba(var(--text-base-rgb),0.4)]" />
@@ -1053,7 +1053,7 @@ const ProviderDetail: Component = () => {
               </div>
             </Show>
 
-            {/* 孤儿 (catalog 没有但用户启用过) */}
+            {/* Orphans (not in the catalog but previously enabled by the user) */}
             <Show when={visibleOrphans().length > 0}>
               <div class="section-label mt-4 mb-2 flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full bg-yellow-400/60" />
@@ -1081,7 +1081,7 @@ const ProviderDetail: Component = () => {
               </div>
             </Show>
 
-            {/* 空状态 */}
+            {/* Empty state */}
             <Show
               when={
                 modelGroups().enabled.length === 0 &&
@@ -1108,7 +1108,7 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* Toast 提示 */}
+        {/* Toast notification */}
         <Show when={toast()}>
           <div
             class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"

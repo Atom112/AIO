@@ -1,71 +1,70 @@
-//! 后端 → 前端事件名常量 —— 全仓唯一来源。
+//! Backend-to-frontend event-name constants - the single source of truth repo-wide.
 //!
-//! 历史：23 个事件名以裸字符串散落在 50 处 emit 调用点，改名/查引用只能靠全局搜索。
-//! 约定：新增事件必须在此登记（kebab-case），前端 `core/api/events.ts` 使用同名常量。
+//! Convention: every new event must be registered here (kebab-case); the frontend `core/api/events.ts` uses matching constants.
 
-/// 引擎启动进度（通用；所有本地引擎默认使用）
+/// Engine start progress (generic; default for all local engines)
 pub const ENGINE_PROGRESS: &str = "engine-progress";
-/// llama.cpp 历史事件名（向后兼容保留，新代码用 ENGINE_PROGRESS）
+/// Legacy llama.cpp event name (kept for backward compatibility; new code uses ENGINE_PROGRESS)
 pub const LLAMA_PROGRESS: &str = "llama-progress";
-/// 模型下载进度
+/// Model download progress
 pub const MODEL_DOWNLOAD_PROGRESS: &str = "model-download-progress";
-/// 嵌入模型索引重建进度
+/// Embedding model reindex progress
 pub const REINDEX_PROGRESS: &str = "reindex-progress";
-/// 代码库索引进度
+/// Codebase indexing progress
 pub const CODE_INDEX_PROGRESS: &str = "code-index-progress";
-/// 应用更新下载进度
+/// App update download progress
 pub const APP_UPDATE_PROGRESS: &str = "app-update-progress";
 
-/// 一轮 LLM 调用开始（前端 push 空 assistant 占位）
+/// One LLM round starts (the frontend pushes an empty assistant placeholder)
 pub const LLM_ROUND_START: &str = "llm-round-start";
-/// 流式增量（文本）
+/// Streaming delta (text)
 pub const LLM_CHUNK: &str = "llm-chunk";
-/// 流式增量（推理/思考内容）
+/// Streaming delta (reasoning/thinking content)
 pub const LLM_REASONING: &str = "llm-reasoning";
-/// 工具调用开始（展示"调用中"气泡）
+/// Tool call starts (frontend shows a "running" bubble)
 pub const LLM_TOOL_CALL: &str = "llm-tool-call";
-/// 工具调用结果
+/// Tool call result
 pub const LLM_TOOL_RESULT: &str = "llm-tool-result";
-/// 上下文压缩完成
+/// Context compression completed
 pub const LLM_COMPRESSION: &str = "llm-compression";
-/// 上下文压缩失败
+/// Context compression failed
 pub const LLM_COMPRESSION_FAILED: &str = "llm-compression-failed";
-/// 未完成任务已生成交接文档（payload: assistant_id/topic_id/path/reason）
+/// Handoff document generated for an unfinished task (payload: assistant_id/topic_id/path/reason)
 pub const LLM_HANDOFF: &str = "llm-handoff";
 
-/// 子智能体启动
+/// Subagent started
 pub const SUBAGENT_START: &str = "subagent-start";
-/// 子智能体单步进展
+/// Subagent step progress
 pub const SUBAGENT_STEP: &str = "subagent-step";
-/// 子智能体完成
+/// Subagent finished
 pub const SUBAGENT_DONE: &str = "subagent-done";
-/// 子智能体错误
+/// Subagent error
 pub const SUBAGENT_ERROR: &str = "subagent-error";
 
-/// 工作流开始 / 步骤开始 / 步骤完成 / 完成
+/// Workflow started / step started / step completed / finished
 pub const WORKFLOW_START: &str = "workflow-start";
 pub const WORKFLOW_STEP_START: &str = "workflow-step-start";
 pub const WORKFLOW_STEP_COMPLETE: &str = "workflow-step-complete";
 pub const WORKFLOW_COMPLETE: &str = "workflow-complete";
 
-/// MCP server 状态变化
+/// MCP server status change
 pub const MCP_SERVER_STATUS: &str = "mcp-server-status";
-/// MCP server stderr 输出
+/// MCP server stderr output
 pub const MCP_SERVER_STDERR: &str = "mcp-server-stderr";
-/// MCP server 工具列表变化（notifications/tools/list_changed，P4.1）
+/// MCP server tool list changed (notifications/tools/list_changed)
 pub const MCP_TOOLS_CHANGED: &str = "mcp-tools-changed";
 
-/// 工具审批请求（等待用户确认）
+/// Tool approval request (waiting for user confirmation)
 pub const TOOL_APPROVAL_REQUESTED: &str = "tool-approval-requested";
 
-/// BTW 旁路问答的流式增量（前端覆盖层）
+/// Streaming delta for BTW side-question answers (frontend overlay)
 pub const BTW_CHUNK: &str = "btw-chunk";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 事件名必须保持 kebab-case（前端监听依赖此约定）。
+    /// Event names must stay kebab-case (frontend listeners rely on this convention).
     #[test]
     fn event_names_are_kebab_case() {
         for name in [

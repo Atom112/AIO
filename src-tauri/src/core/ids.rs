@@ -1,12 +1,11 @@
-//! 内部保留标识符常量 —— 避免魔法字符串散落全仓（历史：`__builtin__` 曾出现于
-//! 25 处、`__aio-filesystem__` 曾出现于 22 处，均为裸字面量）。
+//! Reserved internal identifier constants — avoids magic strings scattered repo-wide.
 
-/// 内置文件系统 MCP server 的保留 id。
+/// Reserved id of the built-in filesystem MCP server.
 ///
-/// 历史别名：早期文件工具经 `mcp_fs_server.rs`（stdio）提供，权限规则与该 id 绑定；
-/// 现进程内文件工具仍沿用同一 id 以兼容存量 `.aio/permissions.json` 与项目配置。
-/// 勿改字符串值（会破坏存量权限规则匹配）。
+/// Permission rules bind to this id (originally served by the stdio `mcp_fs_server.rs`);
+/// in-process file tools keep it for compatibility with existing `.aio/permissions.json`
+/// and project configs. Do not change the string value (breaks permission rule matching).
 pub const BUILTIN_FS_SERVER_ID: &str = "__aio-filesystem__";
 
-/// Agent 循环内部工具的调用方标识（非 MCP 通道的内置工具）。
+/// Caller identifier for agent-loop built-in tools (not routed through MCP).
 pub const BUILTIN_SERVER_ID: &str = "__builtin__";

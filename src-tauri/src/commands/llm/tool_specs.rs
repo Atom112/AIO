@@ -1,12 +1,12 @@
-//! Agent 的 skill/artifact 读取工具规格与执行（read_skill / read_artifact）。
+//! Agent skill/artifact read tool specs and execution (read_skill / read_artifact).
 
 use crate::commands::llm::*;
 use crate::ierr;
 use serde_json::json;
 use tauri::AppHandle;
 
-/// read_skill 工具的 ToolSpec：让模型按需读取已启用 Skill 的完整说明。
-/// 配合前端「技能目录」注入，避免把每个 Skill 的全量内容随每次请求发送。
+/// ToolSpec of the read_skill tool: lets the model read the full instructions of an enabled skill on demand.
+/// Works with the frontend "skill catalog" injection, avoiding sending every skill's full content with each request.
 pub(crate) fn skill_read_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
@@ -24,7 +24,7 @@ pub(crate) fn skill_read_tool_spec() -> ToolSpec {
     }
 }
 
-/// 执行 read_skill：按名称（不区分大小写）或 ID 查找技能并返回完整内容。
+/// Execute read_skill: look up a skill by name (case-insensitive) or ID and return its full content.
 pub(crate) fn execute_skill_read(skills: &[SkillConfig], name: &str) -> Result<ToolResult, String> {
     if name.is_empty() {
         return Err(ierr!(
@@ -49,8 +49,8 @@ pub(crate) fn execute_skill_read(skills: &[SkillConfig], name: &str) -> Result<T
     }
 }
 
-/// read_artifact 工具的 ToolSpec：读取压缩时本地归档的历史档案（snapcompact 式）。
-/// 摘要生成失败或需要恢复早期细节时，模型按 [历史归档 #id] 占位中的 id 调用本工具。
+/// ToolSpec of the read_artifact tool: reads history archives stored locally during compression (snapcompact-style).
+/// When summary generation fails or early details are needed, the model calls this tool with the id from a [历史归档 #id] placeholder.
 pub(crate) fn artifact_read_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
@@ -68,7 +68,7 @@ pub(crate) fn artifact_read_tool_spec() -> ToolSpec {
     }
 }
 
-/// 执行 read_artifact：读取 {app_data}/archives/{id}.txt 并截断返回。
+/// Execute read_artifact: read {app_data}/archives/{id}.txt and return it truncated.
 pub(crate) fn execute_artifact_read(
     app: &AppHandle,
     artifact_id: &str,

@@ -1,13 +1,13 @@
 /**
- * 亚克力风格自定义下拉组件
+ * Acrylic-style custom dropdown component
  *
- * 用法:
+ * Usage:
  *   <Dropdown
  *       value={sortKey()}
  *       onChange={setSortKey}
  *       options={[
- *           { value: 'releaseDesc', label: '发布日期 ↓' },
- *           { value: 'nameAsc', label: '名称 A-Z' },
+ *           { value: 'releaseDesc', label: 'Release date ↓' },
+ *           { value: 'nameAsc', label: 'Name A-Z' },
  *       ]}
  *   />
  */
@@ -26,19 +26,19 @@ export interface DropdownProps<V extends string = string> {
   value: V;
   onChange: (value: V) => void;
   options: DropdownOption<V>[];
-  /** 触发器占位符 (无选中时显示) */
+  /** Trigger placeholder (shown when nothing is selected) */
   placeholder?: string;
-  /** 自定义 class 应用到触发器 */
+  /** Custom class applied to the trigger */
   class?: string;
-  /** 自定义 class 应用到触发器按钮（如工具栏内调整高度对齐） */
+  /** Custom class applied to the trigger button (e.g. height alignment in toolbars) */
   triggerClass?: string;
-  /** 触发器对齐方式 */
+  /** Trigger alignment */
   align?: 'left' | 'right';
-  /** 自定义触发器渲染 (用于插入图标等) */
+  /** Custom trigger renderer (e.g. to insert icons) */
   trigger?: (current: DropdownOption<V> | undefined) => JSX.Element;
-  /** 禁用整个下拉 */
+  /** Disables the whole dropdown */
   disabled?: boolean;
-  /** 唯一 ID (用于 aria) */
+  /** Unique ID (used for aria) */
   id?: string;
 }
 
@@ -49,7 +49,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
 
   const current = () => props.options.find((o) => o.value === props.value);
 
-  /** 点击外部关闭 */
+  /** Close on outside click */
   const onDocClick = (e: MouseEvent) => {
     if (!containerRef) return;
     if (!containerRef.contains(e.target as Node)) {
@@ -57,7 +57,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
     }
   };
 
-  /** Escape 关闭, 方向键导航 */
+  /** Escape closes, arrow keys navigate */
   const onKeyDown = (e: KeyboardEvent) => {
     if (!open()) return;
     if (e.key === 'Escape') {

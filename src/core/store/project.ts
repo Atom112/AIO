@@ -1,11 +1,11 @@
-// 项目域：项目列表 / 当前项目 / Git 分支与切换 —— 从 store.ts 拆出。
-// 叶域：仅依赖 types 与 invoke，不依赖其他 store 域（聊天相关判定见 chat 域）。
+// Project domain: project list / current project / Git branch and switching.
+// Leaf domain: depends only on types and invoke, not on other store domains (chat-related checks live in the chat domain).
 
 import { createEffect, createSignal } from 'solid-js';
 import { getGitBranch, listGitBranches, listProjects, switchGitBranch } from '../api/project';
 import type { Project } from './types';
 
-/** 当前活跃的项目 ID（null = 全局模式）。从 localStorage 持久化恢复。 */
+/** Active project ID (null = global mode). Restored from localStorage. */
 const SAVED_PROJECT_KEY = 'aio-current-project-id';
 const savedProjectId = (() => {
   try {
@@ -17,7 +17,7 @@ const savedProjectId = (() => {
 
 export const [currentProjectId, setCurrentProjectId] = createSignal<string | null>(savedProjectId);
 
-/** 项目 ID 变更时自动持久化到 localStorage */
+/** Auto-persist the project ID to localStorage whenever it changes. */
 createEffect(() => {
   const id = currentProjectId();
   try {
@@ -31,7 +31,7 @@ createEffect(() => {
   }
 });
 
-/** 上次 Agent 模式下使用的工作目录 ID（用于从对话模式切换到 Agent 时自动恢复） */
+/** Working-directory ID last used in Agent mode (auto-restored when switching from chat mode to Agent). */
 const LAST_AGENT_PROJECT_KEY = 'aio-last-agent-project-id';
 export const getLastAgentProjectId = (): string | null => {
   try {
@@ -52,20 +52,20 @@ export const saveLastAgentProjectId = (id: string | null) => {
   }
 };
 
-/** 所有项目列表 */
+/** Full list of all projects. */
 export const [projects, setProjects] = createSignal<Project[]>([]);
 
-/** 当前活跃项目的完整对象（派生） */
+/** Full object of the active project (derived). */
 export const currentProject = (): Project | null => {
   const id = currentProjectId();
   if (!id) return null;
   return projects().find((p) => p.id === id) ?? null;
 };
 
-/** 当前项目的 Git 分支名称（null = 非 git 仓库或尚未加载） */
+/** Git branch name of the current project (null = not a git repo or not loaded yet). */
 export const [gitBranch, setGitBranch] = createSignal<string | null>(null);
 
-// 当前项目变更时自动获取 Git 分支
+// Fetch the Git branch automatically when the current project changes.
 createEffect(() => {
   const project = currentProject();
   if (project?.path) {
@@ -77,10 +77,10 @@ createEffect(() => {
   }
 });
 
-/** 当前项目的所有 Git 本地分支列表（null = 非 git 仓库或尚未加载） */
+/** All local Git branches of the current project (null = not a git repo or not loaded yet). */
 export const [gitBranches, setGitBranches] = createSignal<string[] | null>(null);
 
-// 当前项目变更时自动获取 Git 分支列表
+// Fetch the Git branch list automatically when the current project changes.
 createEffect(() => {
   const project = currentProject();
   if (project?.path) {
@@ -92,27 +92,27 @@ createEffect(() => {
   }
 });
 
-/** 切换到指定 Git 分支并更新本地状态 */
+/** Switch to the given Git branch and update local state. */
 export const switchBranch = async (branchName: string): Promise<void> => {
   const project = currentProject();
   if (!project?.path) return;
   try {
     await switchGitBranch(project.path, branchName);
-    // 切换成功后，立即更新当前分支名（不需要等待下一个 effect 周期）
+    // On success, update the current branch name immediately (no need to wait for the next effect cycle).
     setGitBranch(branchName);
   } catch (e) {
-    // 切换失败时，通过控制台或 UI 反馈错误
+    // On failure, surface the error via console or UI feedback.
     console.error('切换分支失败:', e);
-    throw e; // 让调用方处理显示
+    throw e; // rethrow so the caller handles display
   }
 };
 
-/** 加载项目列表，恢复后验证持久化的项目 ID 仍然有效 */
+/** Load the project list, then verify the persisted project ID is still valid. */
 export const initProjects = async () => {
   try {
     const list = await listProjects();
     setProjects(list);
-    // 验证持久化的 projectId 是否仍存在，不存在则回退全局模式
+    // Verify the persisted projectId still exists; fall back to global mode if not.
     const saved = currentProjectId();
     if (saved && !list.find((p) => p.id === saved)) {
       setCurrentProjectId(null);
@@ -122,5 +122,5 @@ export const initProjects = async () => {
   }
 };
 
-/** 键盘快捷键触发的"新建项目"弹窗信号 */
+/** Signal for the "new project" modal triggered by a keyboard shortcut. */
 export const [showProjectCreateModal, setShowProjectCreateModal] = createSignal(false);

@@ -1,14 +1,14 @@
-//! # Provider 配置模块 (lobehub v2 形态)
+//! # Provider configuration module (LobeHub v2 shape)
 //!
-//! 每个 provider 独立配置：开关 / API URL / Key / 启用的模型列表。
-//! 持久化到 `$APPDATA/com.loch.aio/provider-configs.json`。
+//! Each provider is configured independently: toggle / API URL / key / enabled model list.
+//! Persisted to `$APPDATA/com.loch.aio/provider-configs.json`.
 //!
-//! ## 设计 (v2)
-//! - 完整的 provider 列表来自前端 catalog (`@aio/models-data`)，后端不持有预设。
-//! - `version=2` 配置文件与旧版本不兼容：加载时若 version 不匹配或解析失败，直接清空返回。
-//! - 旧 `activated_models.json` / `config.json` 不再迁移（用户需重新配置）。
-//! - 模型元数据（displayName / contextWindow / pricing / capabilities）由 catalog 提供，
-//!   后端 `fetch_provider_models` 仅作为可选的"实时校验"通道。
+//! ## Design (v2)
+//! - The full provider list comes from the frontend catalog (`@aio/models-data`); the backend holds no presets.
+//! - `version=2` config files are incompatible with older versions: on load, a version mismatch or parse failure clears the file and returns empty.
+//! - Legacy `activated_models.json` / `config.json` are not migrated (users must reconfigure).
+//! - Model metadata (displayName / contextWindow / pricing / capabilities) comes from the catalog;
+//!   the backend `fetch_provider_models` is only an optional "live validation" channel.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -24,7 +24,7 @@ use crate::plugins::provider::{
 
 use crate::ierr;
 
-/// 兼容常量：应用配置目录名（统一定义在 core::paths::BUNDLE_ID）。
+/// Compat constant: app config directory name (canonical definition lives in core::paths::BUNDLE_ID).
 const APPDATA_DIRNAME: &str = crate::core::paths::BUNDLE_ID;
 const PROVIDER_FILE: &str = "provider-configs.json";
 const CURRENT_VERSION: u32 = 2;
@@ -36,10 +36,10 @@ pub struct ProviderConfig {
     pub enabled: bool,
     pub display_name: String,
     pub api_url: String,
-    /// 兼容字段：旧配置可能含明文 api_key；新代码不再写盘，只从 keyring 读
+    /// Compatibility field: legacy configs may contain a plaintext api_key; new code never writes it to disk, reading only from the keyring
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub api_key: String,
-    /// 标记 key 是否存放在 keyring（前端展示用）
+    /// Flags whether the key is stored in the keyring (for frontend display)
     #[serde(default)]
     pub has_stored_key: bool,
     #[serde(default)]
@@ -48,16 +48,16 @@ pub struct ProviderConfig {
     pub is_custom: bool,
     #[serde(default)]
     pub custom_model_ids: Vec<String>,
-    /// per-provider HTTP/HTTPS 代理 URL (例如 `http://127.0.0.1:7890`)。
-    /// 旧配置无此字段时反序列化为 None，逻辑上视为"不代理"。
+    /// per-provider HTTP/HTTPS proxy URL (e.g. `http://127.0.0.1:7890`).
+    /// Legacy configs without this field deserialize to None, treated as "no proxy".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
-    /// 从 API 持久化拉取的模型列表（含 displayName/releasedAt）。
-    /// 旧配置无此字段时反序列化为空数组。
+    /// Model list persisted from the API fetch (includes displayName/releasedAt).
+    /// Legacy configs without this field deserialize to an empty array.
     #[serde(default)]
     pub fetched_models: Vec<LiveModel>,
-    /// 本地引擎专属：模型文件路径映射 { modelId → localPath }。
-    /// 旧配置无此字段时反序列化为 None。
+    /// Local-engine only: model file path mapping { modelId → localPath }.
+    /// Legacy configs without this field deserialize to None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_model_paths: Option<std::collections::HashMap<String, String>>,
 }
@@ -101,14 +101,14 @@ fn provider_path() -> Option<PathBuf> {
     Some(config_dir()?.join(PROVIDER_FILE))
 }
 
-/// 当前 UNIX 秒时间戳的字符串形式（历史格式：provider 配置的 updated_at 存的是秒级时间戳）。
-/// 注意命名：这里不是 ISO 字符串，实现统一在 utils::time。
+/// Current UNIX second timestamp as a string (legacy format: provider config updated_at stores second-level timestamps).
+/// Naming note: this is not an ISO string; the implementation lives in utils::time.
 fn now_unix_secs_str() -> String {
     crate::utils::time::now_unix_secs_string()
 }
 
-/// 拉取 provider 的实际 api_key（从 keyring）
-/// 给前端 chat 调用时拼 header 用，不直接暴露在配置对象中
+/// Fetch a provider's actual api_key (from the keyring)
+/// Used by the frontend chat call to build the auth header; not exposed directly in the config object
 #[tauri::command]
 pub fn read_provider_api_key(app: AppHandle, provider_id: String) -> Result<String, String> {
     let key_name = secure_store::accounts::provider_key(&provider_id);
@@ -117,16 +117,16 @@ pub fn read_provider_api_key(app: AppHandle, provider_id: String) -> Result<Stri
         .map_err(|e| e.to_string())
 }
 
-/// 显式删除某 provider 的 key
+/// Explicitly delete a provider's key
 #[tauri::command]
 pub fn delete_provider_api_key(app: AppHandle, provider_id: String) -> Result<(), String> {
     let key_name = secure_store::accounts::provider_key(&provider_id);
     secure_store::delete(&app, &key_name).map_err(|e| e.to_string())
 }
 
-/// 校验 API URL 安全性（SSRF 防护）。
+/// Validate API URL safety (SSRF protection).
 ///
-/// 使用统一的 URL 校验模块，禁止内网地址和 cloud metadata 端点。
+/// Uses the shared URL validation module; intranet addresses and cloud metadata endpoints are rejected.
 pub fn validate_api_url(input: &str) -> Result<String, String> {
     crate::utils::url_validation::validate_http_url(
         input,
@@ -134,17 +134,17 @@ pub fn validate_api_url(input: &str) -> Result<String, String> {
     )
 }
 
-/// 加载 provider 配置
-/// - 文件存在且 version=CURRENT_VERSION: 正常返回
-/// - 文件不存在 / 解析失败 / version 不匹配: 视为首次安装, 返回空 map
-/// - 不会从旧 activated_models.json / config.json 迁移 (v2 设计)
+/// Load provider configs
+/// - File exists with version=CURRENT_VERSION: returned as-is
+/// - File missing / parse failure / version mismatch: treated as first install, returns an empty map
+/// - No migration from legacy activated_models.json / config.json (v2 design)
 #[tauri::command]
 pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, String> {
     if let Some(p) = provider_path() {
         if let Ok(raw) = fs::read_to_string(&p) {
             match serde_json::from_str::<ProviderConfigFile>(&raw) {
                 Ok(mut parsed) if parsed.version == CURRENT_VERSION => {
-                    // 还原每个 provider 的 api_key：优先 keyring，缺失时退回明文（旧配置）
+                    // Restore each provider's api_key: keyring first, falling back to plaintext (legacy configs)
                     for cfg in parsed.providers.values_mut() {
                         let key_name = secure_store::accounts::provider_key(&cfg.id);
                         match secure_store::get(&app, &key_name) {
@@ -154,9 +154,9 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
                             }
                             _ => {
                                 if !cfg.api_key.is_empty() {
-                                    // 旧配置含明文 → 迁出到安全存储；成功才标记 has_stored_key
-                                    // （落盘明文的清除由 save_provider_configs_internal 的条件剥离保证；
-                                    //  失败时保留明文，下次加载会重试迁移）
+                                    // Legacy plaintext present → migrate to secure storage; mark has_stored_key only on success
+                                    // (persisted plaintext is stripped conditionally by save_provider_configs_internal;
+                                    //  on failure the plaintext is kept and migration retries on next load)
                                     if secure_store::set_reported(&app, &key_name, &cfg.api_key) {
                                         cfg.has_stored_key = true;
                                     }
@@ -167,18 +167,18 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
                     return Ok(parsed);
                 }
                 Ok(_) => {
-                    // 旧 version (1) 不兼容，直接删除
+                    // Old version (1) is incompatible; delete outright
                     let _ = fs::remove_file(&p);
                 }
                 Err(_) => {
-                    // 解析失败（旧 snake_case 格式等），删除
+                    // Parse failure (legacy snake_case format etc.); delete
                     let _ = fs::remove_file(&p);
                 }
             }
         }
     }
 
-    // 首次：返回空 map，立即写回 v2 文件
+    // First run: return an empty map and immediately write back a v2 file
     let file = ProviderConfigFile {
         version: CURRENT_VERSION,
         updated_at: now_unix_secs_str(),
@@ -194,12 +194,12 @@ fn save_provider_configs_internal(
 ) -> Result<(), String> {
     let p = provider_path()
         .ok_or_else(|| ierr!("无法获取 config 目录", "Failed to get config directory"))?;
-    // 在落盘前剥离 api_key（明文 key 一律只存 keyring/降级加密文件）。
-    // 仅当安全存储写入成功时才清空明文；失败则保留明文 + 记录 error（绝不静默丢失密钥）。
+    // Strip api_key before writing to disk (plaintext keys only ever live in keyring/the fallback encrypted file).
+    // Clear the plaintext only when the secure store write succeeds; on failure keep it and record the error (never lose a key silently).
     let mut sanitized = file.clone();
     for (id, cfg) in sanitized.providers.iter_mut() {
         if !cfg.api_key.is_empty() {
-            // 同步到安全存储
+            // Sync to secure storage
             let key_name = secure_store::accounts::provider_key(id);
             if secure_store::set_reported(_app, &key_name, &cfg.api_key) {
                 cfg.api_key.clear();
@@ -212,14 +212,14 @@ fn save_provider_configs_internal(
     Ok(())
 }
 
-/// 保存 provider 配置
+/// Save provider configs
 #[tauri::command]
 pub fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result<(), String> {
     let mut f = file;
-    // 已知的本地引擎 provider ID
+    // Known local-engine provider IDs
     const LOCAL_ENGINE_IDS: &[&str] = &["local-llamacpp", "local-vllm", "ollama"];
 
-    // M5 校验：所有 provider 的 api_url 必须是合法 http/https URL
+    // Validation: every provider's api_url must be a valid http/https URL
     for (id, cfg) in f.providers.iter() {
         let opts = if LOCAL_ENGINE_IDS.contains(&id.as_str()) {
             crate::utils::url_validation::HttpUrlOptions::local_engine()
@@ -253,7 +253,7 @@ pub fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result
     save_provider_configs_internal(&app, &f)
 }
 
-/// 测试 provider 连接（按 host 派发到对应 provider 插件；local engine 使用 OpenAI-compat 端点）
+/// Test a provider connection (dispatches to the matching provider plugin by host; local engines use the OpenAI-compat endpoint)
 #[tauri::command]
 pub async fn test_provider_connection(
     api_url: String,
@@ -263,11 +263,11 @@ pub async fn test_provider_connection(
 ) -> Result<TestConnectionResult, String> {
     let started = std::time::Instant::now();
 
-    // local engine (llama_cpp / vllm) → 绕过 host 匹配直接走 OpenAI-compat
+    // local engine (llama_cpp / vllm) → bypass host matching and go straight to OpenAI-compat
     let use_openai_compat =
         engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
 
-    // 插件选择单点化：由 ProviderManager::boxed_for_url 负责（新增插件不再改命令层）
+    // Plugin selection is centralized: ProviderManager::boxed_for_url owns it (new plugins need no command-layer changes)
     let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
         Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
     } else {
@@ -356,7 +356,7 @@ pub async fn test_provider_connection(
     })
 }
 
-/// 从 provider 的 API 拉取模型列表（按 host 派发到对应 provider 插件；local engine 使用 OpenAI-compat 端点）
+/// Fetch the model list from a provider's API (dispatches to the matching provider plugin by host; local engines use the OpenAI-compat endpoint)
 #[tauri::command]
 pub async fn fetch_provider_models(
     api_url: String,
@@ -369,7 +369,7 @@ pub async fn fetch_provider_models(
     let use_openai_compat =
         engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
 
-    // 插件选择单点化：由 ProviderManager::boxed_for_url 负责（新增插件不再改命令层）
+    // Plugin selection is centralized: ProviderManager::boxed_for_url owns it (new plugins need no command-layer changes)
     let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
         Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
     } else {
@@ -451,11 +451,11 @@ pub async fn fetch_provider_models(
     })
 }
 
-/// 探测本地引擎健康状态 (llama.cpp / vLLM / Ollama).
+/// Probe local engine health (llama.cpp / vLLM / Ollama).
 ///
-/// - llama.cpp / vLLM: 使用 `/health` 端点 (比 `/v1/models` 更轻量).
-/// - Ollama: 使用 `/api/version` 端点 (Ollama 无 /health).
-/// - 请求超时 3 秒连接 + 5 秒完整响应; 失败统一返回 false, 不抛错误.
+/// - llama.cpp / vLLM: use the `/health` endpoint (lighter than `/v1/models`).
+/// - Ollama: use the `/api/version` endpoint (Ollama has no /health).
+/// - Request timeouts: 3s connect + 5s full response; failures uniformly return false, no error thrown.
 #[tauri::command]
 pub async fn probe_engine_health(
     api_url: String,
@@ -466,7 +466,7 @@ pub async fn probe_engine_health(
     let health_url = if engine_type.as_deref() == Some("ollama") {
         format!("{}/api/version", base)
     } else {
-        // 去掉 /v1, /v1beta, /models 后缀, 再拼接 /health
+        // Strip /v1, /v1beta, /models suffixes, then append /health
         let stripped = base
             .trim_end_matches("/v1beta")
             .trim_end_matches("/v1")

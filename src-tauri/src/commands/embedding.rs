@@ -1,12 +1,12 @@
-//! 嵌入供给命令（embedding_*）：连接测试。
+//! Embedding provider commands (embedding_*): connection testing.
 //!
-//! 自 v0.8 起仅支持本地嵌入模型（内置或按需下载），不再支持在线 OpenAI 兼容端点，
-//! 相关 API Key 管理命令（embedding_save_api_key）已移除。
+//! As of v0.8 only local embedding models are supported (built-in or downloaded on demand);
+//! online OpenAI-compatible endpoints are no longer supported, and the related API key management command (embedding_save_api_key) has been removed.
 
 use crate::core::models::MemoryEmbeddingConfig;
 use tauri::AppHandle;
 
-/// 嵌入连接测试（返回维度与延迟；本地模型无需联网）。
+/// Embedding connection test (returns dimensions and latency; local models need no network).
 #[tauri::command]
 pub async fn embedding_test(
     app: AppHandle,

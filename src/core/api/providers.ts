@@ -1,17 +1,17 @@
-// 供应商（provider）域 Tauri 命令封装（与 commands/provider_config.rs 对应）。
+// Provider domain Tauri command wrappers (mirrors commands/provider_config.rs).
 import { invoke } from '@tauri-apps/api/core';
 import type { ProviderConfig, ProviderConfigFile, TestConnectionResult } from '../utils/models';
 
-/** 供应商连接/模型拉取的目标参数。 */
+/** Target parameters for provider connection tests and model fetching. */
 export interface ProviderEndpoint {
   apiUrl: string;
   apiKey: string;
   proxyUrl: string | null;
-  /** 本地引擎类型（llama_cpp/ollama/vllm）；云端为 null */
+  /** Local engine type (llama_cpp/ollama/vllm); null for cloud */
   engineType: string | null;
 }
 
-/** 按 providers map 持久化（补全 version/updatedAt 封套；3 处调用方此前各自拼装）。 */
+/** Persist by providers map (fills in the version/updatedAt envelope). */
 export const saveProviderMap = (providers: Record<string, ProviderConfig>) =>
   saveProviderConfigs({
     version: 2,
@@ -19,17 +19,17 @@ export const saveProviderMap = (providers: Record<string, ProviderConfig>) =>
     providers,
   });
 
-/** 保存 provider 配置文件（整文件覆盖）。 */
+/** Save the provider config file (whole-file overwrite). */
 export const saveProviderConfigs = (file: ProviderConfigFile) =>
   invoke<void>('save_provider_configs', { file: file as unknown as Record<string, unknown> });
 
-/** 测试供应商连接（返回模型数 + 延迟）。 */
+/** Test a provider connection (returns model count + latency). */
 export const testProviderConnection = (endpoint: ProviderEndpoint) =>
   invoke<TestConnectionResult>('test_provider_connection', {
     ...endpoint,
   });
 
-/** 拉取供应商可用模型列表。 */
+/** Fetch the provider's available model list. */
 export const fetchProviderModels = (endpoint: ProviderEndpoint) =>
   invoke<{
     success: boolean;

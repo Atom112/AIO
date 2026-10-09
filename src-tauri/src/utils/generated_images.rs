@@ -1,13 +1,14 @@
-//! 模型生成图像的解析、落盘与 markdown 标记重写。
+//! Parsing, disk persistence and markdown token rewriting for model-generated images.
 //!
-//! 图像生成的输出有两种来源：
-//! - chat/completions 流式响应中 `delta.content` 数组里的 `image_url`/`output_image` 块（vLLM
-//!   Qwen-Image、OpenAI gpt-image-1 chat 模式、Gemini 等），以及文本内嵌的 markdown 图片。
-//! - 专用 `/images/generations` 端点返回的 `b64_json`/`url`（dall-e-2/3 等）。
+//! Generated-image output has two sources:
+//! - `image_url`/`output_image` blocks in the `delta.content` array of chat/completions streams
+//!   (vLLM Qwen-Image, OpenAI gpt-image-1 chat mode, Gemini, etc.), plus markdown images inlined in text.
+//! - `b64_json`/`url` returned by the dedicated `/images/generations` endpoint (dall-e-2/3, etc.).
 //!
-//! 落盘到 `<app_data_dir>/attachments/generated/<uuid>.<ext>`，并把消息内容里的图片 URL /
-//! data URI 重写为本地标记 `![img](aio-image://<base64(abs_path)>)`。base64 编码避免 markdown
-//! 特殊字符；前端用 `atob` 直接解码拿到绝对路径，再经 `convertFileSrc` 转成可显示 URL。
+//! Images are written to `<app_data_dir>/attachments/generated/<uuid>.<ext>`, and image URLs /
+//! data URIs in message content are rewritten to local tokens `![img](aio-image://<base64(abs_path)>)`.
+//! base64 avoids markdown special characters; the frontend decodes with `atob` to get the absolute
+//! path, then converts it to a displayable URL via `convertFileSrc`.
 
 use crate::core::models::GeneratedImage;
 use crate::ierr;
@@ -16,13 +17,13 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use url::Url;
 
-/// 前端 Markdown 渲染器识别本地生成图片的 URL scheme。
+/// URL scheme the frontend markdown renderer uses to recognize locally generated images.
 pub const IMAGE_TOKEN_SCHEME: &str = "aio-image://";
 
-/// 单张图片最大字节数（20MB），超出则跳过。
+/// Max bytes per image (20MB); larger images are skipped.
 const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
-/// 仅允许栅格图片类型落盘；拒绝 SVG 及其它非安全类型。
+/// Only raster image types may be persisted; SVG and other unsafe types are rejected.
 fn is_safe_raster_mime(mime: &str) -> bool {
     matches!(
         mime,
@@ -30,9 +31,9 @@ fn is_safe_raster_mime(mime: &str) -> bool {
     )
 }
 
-/// 解码 `data:(image/...);base64,<data>` 形式的 data URI。
+/// Decodes a data URI of the form `data:(image/...);base64,<data>`.
 ///
-/// 返回 `(mime, 解码后的字节)`；非图像 data URI、缺失 base64 前缀或解码失败返回 `None`。
+/// Returns `(mime, decoded bytes)`; `None` for non-image data URIs, a missing base64 prefix, or a failed decode.
 pub fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
     let rest = uri.strip_prefix("data:")?;
     let (header, b64) = rest.split_once(';')?;
@@ -46,9 +47,9 @@ pub fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
     Some((mime, bytes))
 }
 
-/// 提取 markdown 内容里的图片 URL（data URI 或 http(s)）。
+/// Extracts image URLs (data URIs or http(s)) from markdown content.
 ///
-/// 返回去重保序的 URL 列表。仅匹配 `![alt](url)` 形态，不含引用式图片。
+/// Returns a deduplicated, order-preserving list. Only matches the `![alt](url)` form, not reference-style images.
 pub fn extract_markdown_image_urls(content: &str) -> Vec<String> {
     let re = regex::Regex::new(r"!\[[^\]]*\]\(\s*(data:image/[^)\s]+|https?://[^)\s]+)\s*\)")
         .expect("valid regex");
@@ -65,9 +66,9 @@ pub fn extract_markdown_image_urls(content: &str) -> Vec<String> {
     urls
 }
 
-/// 把 markdown 内容里出现的原始图片 URL 重写为 `![img](<token>)`。
+/// Rewrites raw image URLs found in markdown content to `![img](<token>)`.
 ///
-/// `replacements` 为 `(raw_url, token)` 列表；仅在 URL 确实以 markdown 图片形态出现时重写。
+/// `replacements` is a list of `(raw_url, token)`; a URL is rewritten only where it actually appears as a markdown image.
 pub fn rewrite_markdown_image_urls(content: &mut String, replacements: &[(String, String)]) {
     let mut out = content.clone();
     for (raw_url, token) in replacements {
@@ -81,15 +82,15 @@ pub fn rewrite_markdown_image_urls(content: &mut String, replacements: &[(String
     *content = out;
 }
 
-/// 移除内容里的全部 `aio-image://` 生成图片标记。
+/// Removes all `aio-image://` generated-image tokens from content.
 ///
-/// 用于把含标记的最终文本净化后回送给 LLM API（避免 token 泄漏）。
+/// Sanitizes token-bearing final text before it is sent back to the LLM API (prevents token leakage).
 pub fn strip_generated_image_tokens(content: &str) -> String {
     let re = regex::Regex::new(r"!\[[^\]]*\]\(aio-image://[^)]*\)").expect("valid regex");
     re.replace_all(content, "").into_owned()
 }
 
-/// 为绝对路径生成前端可识别的图片标记 token。
+/// Generates the frontend-recognizable image token for an absolute path.
 pub fn image_token_for(abs_path: &str) -> String {
     format!(
         "{}{}",
@@ -98,7 +99,7 @@ pub fn image_token_for(abs_path: &str) -> String {
     )
 }
 
-/// 把 mime 映射为文件扩展名；未知类型回退 `bin`。
+/// Maps a mime type to a file extension; unknown types fall back to `bin`.
 fn ext_for_mime(mime: &str) -> &'static str {
     match mime {
         "image/png" => "png",
@@ -112,13 +113,13 @@ fn ext_for_mime(mime: &str) -> &'static str {
     }
 }
 
-/// 保存生成图片并重写消息内容。
+/// Saves generated images and rewrites message content.
 ///
-/// - `content`：将被就地重写：markdown 里出现的原始 URL 替换为本地标记；来自数组 delta、
-///   未出现在 markdown 里的图追加为 `![name](token)`。
-/// - `raw_urls`：流式解析得到的 image_url 数组项（可能为空）。
+/// - `content`: rewritten in place: raw URLs appearing in markdown become local tokens; images
+///   from array deltas that do not appear in markdown are appended as `![name](token)`.
+/// - `raw_urls`: image_url array items obtained from stream parsing (may be empty).
 ///
-/// 单张图片失败只 `warn` 并跳过，绝不使整轮失败。返回落盘图像的元数据。
+/// A single failed image only `warn`s and is skipped; it never fails the whole turn. Returns metadata of persisted images.
 pub async fn save_generated_images(
     app: &AppHandle,
     content: &mut String,
@@ -134,7 +135,7 @@ pub async fn save_generated_images(
     save_images_to_dir(&dir, content, raw_urls).await
 }
 
-/// 把图片写入 `dir` 并重写 `content` 的核心逻辑（与 AppHandle 解耦，便于测试）。
+/// Core logic that writes images into `dir` and rewrites `content` (decoupled from AppHandle for testability).
 async fn save_images_to_dir(
     dir: &std::path::Path,
     content: &mut String,
@@ -160,7 +161,7 @@ async fn save_images_to_dir(
     for url in urls {
         match fetch_image(&url).await {
             Ok(Some((mime, bytes))) => {
-                //：拒绝 SVG 等非栅格类型，避免未消毒矢量内容落盘
+                // Reject non-raster types such as SVG so unsanitized vector content never lands on disk
                 if !is_safe_raster_mime(&mime) {
                     tracing::warn!("跳过非栅格生成图片 mime ({:?}): {}", mime, url);
                     continue;
@@ -210,7 +211,7 @@ async fn save_images_to_dir(
         if in_markdown.contains(raw) {
             continue;
         }
-        // 数组 delta 的图未嵌入文本：追加到内容末尾。
+        // Array-delta image not embedded in the text: append it to the end of content.
         appended.push_str(&format!("\n\n![{}]({})", "image", token));
     }
     if !appended.trim().is_empty() {
@@ -220,7 +221,7 @@ async fn save_images_to_dir(
     Ok(images)
 }
 
-/// 解析重定向 Location（支持相对路径）为绝对 URL。
+/// Resolves a redirect Location (relative paths supported) to an absolute URL.
 fn resolve_redirect(base: &str, location: &str) -> Option<String> {
     Url::parse(base)
         .ok()?
@@ -229,11 +230,11 @@ fn resolve_redirect(base: &str, location: &str) -> Option<String> {
         .map(|u| u.to_string())
 }
 
-/// 获取单张图片字节。
+/// Fetches the bytes of a single image.
 ///
-/// - data URI → 直接解码（mime 由调用方按安全白名单校验）
-/// - http(s) → 逐跳 SSRF 校验后下载（30s 超时，无鉴权头；重定向每跳重新校验）
-/// - 其它 → `Ok(None)`
+/// - data URI → decoded directly (the caller validates the mime against the safe whitelist)
+/// - http(s) → downloaded after per-hop SSRF validation (30s timeout, no auth headers; every redirect hop is re-validated)
+/// - other → `Ok(None)`
 async fn fetch_image(url: &str) -> Result<Option<(String, Vec<u8>)>, String> {
     if url.starts_with("data:image/") {
         return Ok(decode_data_uri(url));
@@ -368,7 +369,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aio-img-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
 
-        // 数组 delta 图：未嵌入 markdown，应追加到内容末尾
+        // Array-delta image: not embedded in markdown, should be appended to the end of content
         let mut content = "Here is your image:\n\n".to_string();
         let imgs = save_images_to_dir(&dir, &mut content, std::slice::from_ref(&uri))
             .await
@@ -377,13 +378,13 @@ mod tests {
         assert!(content.contains("aio-image://"));
         let expected_tail = format!("\n\n![image]({})", image_token_for(&imgs[0].storage_path));
         assert!(content.ends_with(&expected_tail));
-        // 文件已写盘且大小/扩展名正确
+        // File is on disk with the correct size and extension
         let saved = std::fs::metadata(&imgs[0].storage_path).expect("file exists");
         assert_eq!(saved.len(), 4);
         assert_eq!(imgs[0].size, 4);
         assert!(imgs[0].storage_path.ends_with(".png"));
 
-        // markdown 内嵌图：应被就地重写为本地标记
+        // Markdown-inlined image: should be rewritten in place to a local token
         let mut content2 = format!("pre ![alt]({}) post", uri);
         let imgs2 = save_images_to_dir(&dir, &mut content2, &[])
             .await

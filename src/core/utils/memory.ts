@@ -1,7 +1,7 @@
-// 记忆相关 Tauri 命令封装（与 commands/memory.rs、commands/embedding.rs、commands/rerank.rs、commands/model_download.rs 对应）
+// Tauri command wrappers for memory (mirrors commands/memory.rs, commands/embedding.rs, commands/rerank.rs, commands/model_download.rs)
 import { invoke } from '@tauri-apps/api/core';
 
-/** 内置默认本地嵌入模型 id（随应用打包；与后端 core::model_registry::BUNDLED_EMBED_ID 保持一致） */
+/** Bundled default local embedding model id (shipped with the app; kept in sync with backend core::model_registry::BUNDLED_EMBED_ID) */
 export const DEFAULT_EMBED_MODEL_ID = 'all-MiniLM-L6-v2';
 import type {
   CodeChunkHit,
@@ -71,11 +71,11 @@ export const memorySetPinned = (projectId: string, id: string, pinned: boolean) 
 
 export const memoryPrune = (projectId: string) => invoke<number>('memory_prune', { projectId });
 
-/** 导出全部记忆事实为 JSON 文件（不含向量），写入用户指定路径（dialog save 选取） */
+/** Exports all memory facts as a JSON file (vectors excluded), written to a user-chosen path (via dialog save) */
 export const memoryExportFile = (projectId: string, path: string) =>
   invoke<void>('memory_export_file', { projectId, path });
 
-/** 从用户指定路径的 JSON 文件导入记忆事实（dialog open 选取；按 key 去重，向量待重建） */
+/** Imports memory facts from a user-chosen JSON file (via dialog open; deduplicated by key, vectors rebuilt later) */
 export const memoryImportFile = (projectId: string, path: string) =>
   invoke<number>('memory_import_file', { projectId, path });
 
@@ -91,52 +91,52 @@ export const memoryCodeStatus = (projectId: string) =>
 export const embeddingTest = (config: MemoryEmbeddingConfig) =>
   invoke<EmbeddingTestResult>('embedding_test', { config });
 
-/** 切换项目嵌入模型：后端会清空本项目全部向量并自动重建索引（带 reindex-progress 事件） */
+/** Switches the project embedding model: the backend clears all project vectors and rebuilds the index automatically (emits reindex-progress events) */
 export const memoryUpdateEmbedding = (projectId: string, config: MemoryEmbeddingConfig) =>
   invoke<MemoryStatus>('memory_update_embedding', { projectId, config });
 
-/** 设置项目级重排配置（不涉及向量，不触发重建） */
+/** Sets the project-level rerank config (no vectors involved, no rebuild triggered) */
 export const memoryUpdateRerank = (projectId: string, config: MemoryRerankConfig) =>
   invoke<MemoryStatus>('memory_update_rerank', { projectId, config });
 
-/** 手动触发一次合并整理（sleep-time consolidation；预算默认取全局配置） */
+/** Manually triggers one consolidation run (sleep-time consolidation; budget defaults to the global config) */
 export const memoryConsolidate = (projectId: string) =>
   invoke<ConsolidationReport>('memory_consolidate', { projectId });
 
-/** 抽取事实关系（P3-3 轻量知识图谱；幂等，已有关系的事实跳过） */
+/** Extracts fact relations for the lightweight knowledge graph (idempotent; facts with existing relations are skipped) */
 export const memoryGraphExtract = (projectId: string) =>
   invoke<GraphExtractReport>('memory_graph_extract', { projectId });
 
-/** 重排连接测试（本地模型需已下载且全局启用） */
+/** Rerank connection test (local models must be downloaded and globally enabled) */
 export const rerankTest = (config: MemoryRerankConfig) =>
   invoke<RerankTestResult>('rerank_test', { config });
 
-/** 可下载模型清单（本地重排/嵌入模型） */
+/** Downloadable model list (local rerank/embedding models) */
 export const embeddingModelList = () => invoke<EmbeddingModelInfo[]>('embedding_model_list');
 
-/** 下载模型（带 model-download-progress 事件；支持暂停/取消，见 pause/cancel 封装） */
+/** Downloads a model (emits model-download-progress events; supports pause/cancel, see the pause/cancel wrappers) */
 export const embeddingModelDownload = (id: string) =>
   invoke<ModelDownloadOutcome>('embedding_model_download', { id });
 
-/** 暂停进行中的模型下载（保留断点，可续传）；返回是否有进行中的下载 */
+/** Pauses an in-progress model download (keeps the checkpoint for resume); returns whether a download was in progress */
 export const embeddingModelPauseDownload = (id: string) =>
   invoke<boolean>('embedding_model_pause_download', { id });
 
-/** 取消模型下载（删除断点；无进行中下载时直接清理该模型断点文件）；返回是否有进行中的下载 */
+/** Cancels a model download (deletes the checkpoint; with no active download, just cleans up the model's checkpoint file); returns whether a download was in progress */
 export const embeddingModelCancelDownload = (id: string) =>
   invoke<boolean>('embedding_model_cancel_download', { id });
 
-/** 删除已下载模型（内置模型为 no-op） */
+/** Deletes a downloaded model (no-op for bundled models) */
 export const embeddingModelDelete = (id: string) => invoke<void>('embedding_model_delete', { id });
 
-/** 全局启用/停用某个嵌入模型（与供应商设置类似） */
+/** Globally enables/disables an embedding model (similar to provider settings) */
 export const embeddingModelSetEnabled = (id: string, enabled: boolean) =>
   invoke<EmbeddingModelInfo>('embedding_model_set_enabled', { id, enabled });
 
-/** 当前 embed 模型安装目录 */
+/** Current embed model install directory */
 export const embeddingModelsGetDir = () => invoke<string>('embedding_models_get_dir');
 
-/** 设置 embed 模型安装目录（空串恢复默认目录） */
+/** Sets the embed model install directory (empty string restores the default directory) */
 export const embeddingModelsSetDir = (dir: string) =>
   invoke<string>('embedding_models_set_dir', { dir });
 

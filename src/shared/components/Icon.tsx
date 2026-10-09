@@ -1,9 +1,9 @@
 /**
- * 统一 SVG 图标库 (亚克力主题)
+ * Shared SVG icon library (acrylic theme)
  *
- * 两种用法:
- * 1. <Icon name="search" class="w-4 h-4" />            命名图标 (内联 SVG, 跟随 currentColor)
- * 2. <Icon src="/icons/app-logo/chat.svg" />            文件图标 (CSS mask-image, 历史用法)
+ * Two usage modes:
+ * 1. <Icon name="search" class="w-4 h-4" />            named icon (inline SVG, follows currentColor)
+ * 2. <Icon src="/icons/app-logo/chat.svg" />            file icon (CSS mask-image, legacy usage)
  *
  */
 import { Component, JSX, splitProps, Show } from 'solid-js';
@@ -62,12 +62,13 @@ export type IconName =
   | 'chevron-down';
 
 /**
- * 图标路径工厂表。
- * 重要: 必须用工厂函数 (() => JSX.Element) 而非静态 JSX.Element。
- * 若用静态元素 (模块作用域求值, 只创建一次), 同一图标在多处同时渲染时
- * 会共享同一个 DOM 节点, SolidJS 会把节点「移动」到后渲染的位置, 导致
- * 先渲染处图标消失 (例如点开推理按钮弹窗后触发按钮图标消失)。
- * 工厂函数让 Solid 每次调用都模板克隆出独立节点, 杜绝共享。
+ * Icon path factory table.
+ * Important: must use factory functions (() => JSX.Element), not static JSX.Element.
+ * A static element is evaluated once at module scope; the same icon rendered in
+ * multiple places would share one DOM node, and SolidJS "moves" that node to the
+ * latest render position, making the icon vanish where it rendered first (e.g. the
+ * trigger button icon disappears after opening the reasoning popover).
+ * Factories make Solid clone an independent node per call, preventing sharing.
  */
 const PATHS: Record<IconName, () => JSX.Element> = {
   folder: () => (
@@ -289,19 +290,19 @@ const PATHS: Record<IconName, () => JSX.Element> = {
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {
-  /** 命名图标 (推荐) */
+  /** Named icon (recommended) */
   name?: IconName;
-  /** 文件路径图标 (历史用法, 走 CSS mask-image) */
+  /** File-path icon (legacy usage, via CSS mask-image) */
   src?: string;
-  /** 像素尺寸 (宽高), 默认 16 */
+  /** Pixel size (width and height), default 16 */
   size?: number;
   class?: string;
 }
 
 /**
- * 通用 SVG 图标组件
- * - 1.5px 描边, currentColor 自动跟随父元素 color
- * - 统一 24x24 viewBox
+ * Generic SVG icon component
+ * - 1.5px stroke, currentColor follows the parent element color
+ * - Uniform 24x24 viewBox
  */
 export const Icon: Component<IconProps> = (props) => {
   const [local, rest] = splitProps(props, ['name', 'src', 'size', 'class']);

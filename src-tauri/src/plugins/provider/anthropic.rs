@@ -1,16 +1,16 @@
 //! Anthropic provider plugin
 //!
-//! 端点规范:
-//! - URL: ${base}/v1/models (base = https://api.anthropic.com, 不带版本号)
-//! - Auth: x-api-key: <key> + anthropic-version: 2023-06-01 (不能用 Authorization: Bearer)
-//! - Response: {data: [{id, display_name, created_at}]} —— 用 id 字段，和 OpenAI 兼容
+//! Endpoint spec:
+//! - URL: ${base}/v1/models (base = https://api.anthropic.com, without version suffix)
+//! - Auth: x-api-key: <key> + anthropic-version: 2023-06-01 (must not use Authorization: Bearer)
+//! - Response: {data: [{id, display_name, created_at}]} - uses the id field, same as OpenAI-compatible
 //!
-//! 参考 LobeHub packages/model-runtime/src/core/anthropicCompatibleFactory/index.ts:286-310
+//! Reference: LobeHub packages/model-runtime/src/core/anthropicCompatibleFactory/index.ts:286-310
 //!
-//! 除模型列表外，本模块还提供 Anthropic Messages API 的原生协议转换层：
-//! - to_anthropic_body：OpenAI 兼容请求体 → Anthropic Messages 请求体（含 cache_control 断点）
-//! - handle_anthropic_stream_event：Anthropic SSE 事件 → 统一的 delta 累积（内容/思考/工具调用/用量）
-//! - anthropic_text_content / anthropic_usage：非流式响应解析
+//! Beyond model listing, this module also provides the native protocol conversion layer for the Anthropic Messages API:
+//! - to_anthropic_body: OpenAI-compatible request body -> Anthropic Messages request body (with cache_control breakpoints)
+//! - handle_anthropic_stream_event: Anthropic SSE events -> unified delta accumulation (content/thinking/tool calls/usage)
+//! - anthropic_text_content / anthropic_usage: non-streaming response parsing
 
 use reqwest::RequestBuilder;
 use serde_json::json;
@@ -42,7 +42,7 @@ impl ProviderPlugin for AnthropicProvider {
     }
 
     fn chat_completions_url(&self, api_url: &str) -> String {
-        // 真实 Anthropic API 的聊天端点是 POST /v1/messages（非 /chat/completions）
+        // The real Anthropic API chat endpoint is POST /v1/messages (not /chat/completions)
         let trimmed = api_url.trim_end_matches('/');
         let trimmed = trimmed
             .strip_suffix("/v1")
@@ -52,7 +52,7 @@ impl ProviderPlugin for AnthropicProvider {
     }
 
     fn apply_auth(&self, req: RequestBuilder, api_key: &str) -> RequestBuilder {
-        // Anthropic 强制要求 x-api-key + anthropic-version 两个头
+        // Anthropic requires both the x-api-key and anthropic-version headers
         if api_key.is_empty() {
             req.header("anthropic-version", "2023-06-01")
         } else {
@@ -89,21 +89,21 @@ impl ProviderPlugin for AnthropicProvider {
     }
 }
 
-// ===== Anthropic Messages API 转换层 =====
+// ===== Anthropic Messages API conversion layer =====
 
-/// 判断是否为真实 Anthropic API 端点（非兼容代理）。
+/// Returns whether the URL is a real Anthropic API endpoint (not a compatible proxy).
 pub fn is_anthropic_url(api_url: &str) -> bool {
     let u = api_url.to_lowercase();
     u.contains("api.anthropic.com")
 }
 
-/// 从 OpenAI 兼容请求体转换为 Anthropic Messages API 请求体。
+/// Converts an OpenAI-compatible request body into an Anthropic Messages API request body.
 ///
-/// 转换要点：
-/// - system 消息合并到顶层 system（数组形式，最后一块加 cache_control 断点）；
-/// - assistant.tool_calls → tool_use 内容块；role:tool 消息 → user 的 tool_result 内容块；
-/// - 图片 data URL → image 内容块；tools → Anthropic 工具格式；
-/// - max_tokens 必填（缺省 8192）；最后一个 tool 与最后一条消息加 cache_control 断点。
+/// Conversion essentials:
+/// - system messages merge into the top-level system (array form, cache_control breakpoint on the last block);
+/// - assistant.tool_calls -> tool_use content blocks; role:tool messages -> user tool_result content blocks;
+/// - image data URLs -> image content blocks; tools -> Anthropic tool format;
+/// - max_tokens is required (defaults to 8192); the last tool and the last message get a cache_control breakpoint.
 pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value, String> {
     let mut system_blocks: Vec<serde_json::Value> = Vec::new();
     let mut messages: Vec<serde_json::Value> = Vec::new();
@@ -195,7 +195,7 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
         }
     }
 
-    // 最后一条消息的内容块加 cache_control 断点（让下一轮请求缓存到该前缀）
+    // Add a cache_control breakpoint to the last content block of the last message (so the next turn's request caches up to that prefix)
     if let Some(last) = messages.last_mut() {
         if let Some(blocks) = last.get_mut("content").and_then(|c| c.as_array_mut()) {
             if let Some(block) = blocks.last_mut() {
@@ -206,7 +206,7 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
         }
     }
 
-    // tools → Anthropic 格式；最后一个工具加 cache_control 断点
+    // tools -> Anthropic format; the last tool gets a cache_control breakpoint
     let mut tools_out: Vec<serde_json::Value> = Vec::new();
     if let Some(tools) = openai.get("tools").and_then(|v| v.as_array()) {
         for t in tools {
@@ -245,7 +245,7 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
         openai.get("model").cloned().unwrap_or(json!("")),
     );
     body.insert("messages".into(), json!(messages));
-    // Anthropic 强制要求 max_tokens
+    // Anthropic requires max_tokens
     body.insert(
         "max_tokens".into(),
         json!(openai
@@ -253,7 +253,7 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
             .and_then(|v| v.as_u64())
             .unwrap_or(8192)),
     );
-    // system 最后一块加 cache_control 断点（缓存完整系统提示词）
+    // Add a cache_control breakpoint to the last system block (caches the full system prompt)
     if let Some(last) = system_blocks.last_mut() {
         if let Some(obj) = last.as_object_mut() {
             obj.insert("cache_control".into(), json!({"type": "ephemeral"}));
@@ -272,7 +272,7 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
     {
         body.insert("stream".into(), json!(true));
     }
-    // tool_choice：auto（默认）省略；none → {type:"none"}；指定函数 → {type:"tool", name}
+    // tool_choice: auto (default) omitted; none -> {type:"none"}; a specific function -> {type:"tool", name}
     if let Some(tc) = openai.get("tool_choice") {
         let tc_str = tc.as_str().unwrap_or("");
         if tc_str == "none" {
@@ -286,12 +286,12 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
                 body.insert("tool_choice".into(), json!({"type": "tool", "name": name}));
             }
         }
-        // "auto" → 不设置（Anthropic 默认即为 auto）
+        // "auto" -> not set (Anthropic already defaults to auto)
     }
     Ok(serde_json::Value::Object(body))
 }
 
-/// 提取消息文本（string 或数组中的 text 部分）。
+/// Extracts message text (a string, or the text parts of an array).
 fn msg_text(msg: &serde_json::Value) -> String {
     match msg.get("content") {
         Some(serde_json::Value::String(s)) => s.clone(),
@@ -314,7 +314,7 @@ fn msg_text(msg: &serde_json::Value) -> String {
     }
 }
 
-/// 把 OpenAI 的 content（string 或数组）转换为 Anthropic 内容块。
+/// Converts OpenAI content (string or array) into Anthropic content blocks.
 fn openai_content_to_blocks(content: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
     match content {
         serde_json::Value::String(s) => {
@@ -368,7 +368,7 @@ fn openai_content_to_blocks(content: &serde_json::Value, out: &mut Vec<serde_jso
     }
 }
 
-/// 追加一条 Anthropic 消息；相邻同角色消息合并（如连续多个 tool_result 合并为一个 user 消息）。
+/// Appends an Anthropic message; adjacent same-role messages are merged (e.g. consecutive tool_results merge into one user message).
 fn push_anthropic_message(
     messages: &mut Vec<serde_json::Value>,
     role: &str,
@@ -385,7 +385,7 @@ fn push_anthropic_message(
     messages.push(json!({"role": role, "content": blocks}));
 }
 
-/// 从非流式响应提取首个文本块。
+/// Extracts the first text block from a non-streaming response.
 pub fn anthropic_text_content(body: &serde_json::Value) -> String {
     body.get("content")
         .and_then(|c| c.as_array())
@@ -399,8 +399,8 @@ pub fn anthropic_text_content(body: &serde_json::Value) -> String {
         .to_string()
 }
 
-/// 从响应提取用量 (input_tokens, output_tokens, cache_read_input_tokens)。
-/// 当前供非流式路径的后续用量统计使用（已有单测覆盖）。
+/// Extracts usage (input_tokens, output_tokens, cache_read_input_tokens) from a response.
+/// Currently used for follow-up usage statistics on the non-streaming path (covered by unit tests).
 #[allow(dead_code)]
 pub fn anthropic_usage(body: &serde_json::Value) -> (u32, u32, u32) {
     let u = body.get("usage");
@@ -419,8 +419,8 @@ pub fn anthropic_usage(body: &serde_json::Value) -> (u32, u32, u32) {
     (input, output, cached)
 }
 
-/// Anthropic SSE：提取 content_block_delta 的文本增量（非 text_delta 返回 None）。
-/// 供主循环的 handle_anthropic_stream_event 与 btw 旁路共用（btw 历史上手撸解码）。
+/// Anthropic SSE: extracts the text delta from content_block_delta (returns None for non-text_delta).
+/// Shared by the main loop's handle_anthropic_stream_event and the btw side path.
 pub fn anthropic_sse_text_delta(val: &serde_json::Value) -> Option<&str> {
     if val.get("type").and_then(|v| v.as_str()) != Some("content_block_delta") {
         return None;
@@ -432,13 +432,13 @@ pub fn anthropic_sse_text_delta(val: &serde_json::Value) -> Option<&str> {
     delta.get("text").and_then(|v| v.as_str())
 }
 
-/// Anthropic SSE：是否为 message_stop（流结束）。
+/// Anthropic SSE: whether the event is message_stop (end of stream).
 pub fn anthropic_sse_is_message_stop(val: &serde_json::Value) -> bool {
     val.get("type").and_then(|v| v.as_str()) == Some("message_stop")
 }
 
-/// Anthropic SSE：从 message_start 中提取 (input_tokens, cache_read_input_tokens)。
-/// 第二元为 None 表示该事件未携带缓存命中数（调用方应保留原值，不清零）。
+/// Anthropic SSE: extracts (input_tokens, cache_read_input_tokens) from message_start.
+/// A None second element means the event carries no cache-hit count (the caller must keep the previous value, not zero it).
 pub fn anthropic_sse_message_usage(val: &serde_json::Value) -> Option<(u32, Option<u32>)> {
     let usage = val.get("message")?.get("usage")?;
     let input = usage.get("input_tokens")?.as_u64()? as u32;
@@ -449,7 +449,7 @@ pub fn anthropic_sse_message_usage(val: &serde_json::Value) -> Option<(u32, Opti
     Some((input, cached))
 }
 
-/// 处理一条 Anthropic 流式事件，累积内容/思考/工具调用/用量并向前端发射增量事件。
+/// Handles one Anthropic stream event: accumulates content/thinking/tool calls/usage and emits delta events to the frontend.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_anthropic_stream_event(
     val: &serde_json::Value,
@@ -469,7 +469,7 @@ pub fn handle_anthropic_stream_event(
         "message_start" => {
             if let Some((inp, cached)) = anthropic_sse_message_usage(val) {
                 *input_tokens = inp;
-                // 事件未携带缓存命中数时保留原值（不覆盖为 0）
+                // Keep the previous value when the event carries no cache-hit count (do not overwrite with 0)
                 if let Some(c) = cached {
                     *cached_input_tokens = c;
                 }

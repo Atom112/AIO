@@ -1,47 +1,47 @@
-// 项目与 Git 域 Tauri 命令封装（与 commands/project.rs、commands/git.rs 对应）。
+// Project and Git domain Tauri command wrappers (mirrors commands/project.rs and commands/git.rs).
 import { invoke } from '@tauri-apps/api/core';
 import type { Project } from '../store/types';
 
-/** 列出所有项目。 */
+/** List all projects. */
 export const listProjects = () => invoke<Project[]>('list_projects');
 
-/** 读取项目当前 Git 分支（非 git 仓库返回 null）。 */
+/** Read the project's current Git branch (null if not a git repo). */
 export const getGitBranch = (projectPath: string) =>
   invoke<string | null>('get_git_branch', { projectPath });
 
-/** 列出项目本地 Git 分支。 */
+/** List the project's local Git branches. */
 export const listGitBranches = (projectPath: string) =>
   invoke<string[]>('list_git_branches', { projectPath });
 
-/** 切换到指定 Git 分支。 */
+/** Switch to the given Git branch. */
 export const switchGitBranch = (projectPath: string, branchName: string) =>
   invoke<string>('switch_git_branch', { projectPath, branchName });
 
-/** 批量撤销一组文件变更（按 Agent 步骤记录的 fileChanges 还原）。 */
+/** Revert a batch of file changes (restores the fileChanges recorded by an Agent step). */
 export const revertFileChangesBatch = (projectPath: string, filePaths: string[]) =>
   invoke<void>('revert_file_changes_batch', { projectPath, filePaths });
 
-/** 撤销单个文件变更。 */
+/** Revert a single file change. */
 export const revertFileChange = (projectPath: string, filePath: string) =>
   invoke<void>('revert_file_change', { projectPath, filePath });
 
-/** 校验并规范化项目路径（返回是否可用 + 规范化路径）。 */
+/** Validate and canonicalize a project path (returns validity + canonical path). */
 export const validateProjectPath = (path: string) =>
   invoke<{ valid: boolean; reason: string; canonicalPath: string }>('validate_project_path', {
     path,
   });
 
-/** 新建项目，返回创建的项目。 */
+/** Create a project and return it. */
 export const createProject = (name: string, path: string) =>
   invoke<Project>('create_project', { name, path });
 
-/** 更新项目（改名等）。 */
+/** Update a project (e.g. rename). */
 export const updateProject = (id: string, name: string) =>
   invoke<void>('update_project', { id, name });
 
-/** 删除项目。 */
+/** Delete a project. */
 export const deleteProject = (id: string) => invoke<void>('delete_project', { id });
 
-/** 在系统文件管理器中打开项目目录。 */
+/** Open the project directory in the system file manager. */
 export const openProjectDirectory = (path: string) =>
   invoke<void>('open_project_directory', { path });

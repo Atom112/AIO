@@ -32,15 +32,15 @@ interface ProjectSidebarProps {
   onResize: (e: MouseEvent) => void;
   isResizing: boolean;
   onOpenSettings: (assistantId: string) => void;
-  /** 展开内容的窗帘布局宽度（px）：收窄时内容保持该宽度布局，被面板左缘裁剪揭示 */
+  /** Layout width (px) for expanded content: when narrowing, content keeps this width and is revealed by clipping at the panel's left edge */
   revealMinPx?: number;
 }
 
 const DIALOG_ASST_ID = 'default-assistant-id';
 
 /**
- * 项目侧边栏：聊天入口 + 项目列表。
- * 替代旧的 AssistantSidebar，提供"对话"和"项目"双模式入口。
+ * Project sidebar: chat entry + project list.
+ * Provides the "chat" and "project" dual-mode entries.
  */
 const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   const [showMenuDiv, setShowMenuDiv] = createSignal(false);
@@ -55,7 +55,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   let menuCloseTimeoutId: ReturnType<typeof setTimeout>;
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(null);
 
-  // 点击菜单外部时自动关闭（与右侧话题栏"更多"按钮行为一致）
+  // Auto-close when clicking outside the menu (matches the topic sidebar "more" button behavior)
   onMount(() => {
     const handleClickOutside = () => {
       if (menuState().isOpen) closeMenu();
@@ -73,13 +73,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     onCleanup(() => window.removeEventListener('contextmenu', handleContextMenuOutside));
   });
 
-  /** 当前助理 */
+  /** Current assistant */
   const currentAsst = () => datas.assistants.find((a) => a.id === currentAssistantId());
 
-  /** 是否是聊天模式活跃 */
+  /** Whether chat mode is active */
   const isChatActive = () =>
     currentAsst()?.assistantType === 'chat' || currentAsst()?.id === DIALOG_ASST_ID;
-  /** 当前活跃的项目 ID（从助理反查） */
+  /** Currently active project ID (resolved from the assistant) */
   const activeProjectId = () => currentAsst()?.projectId ?? null;
 
   const openMenu = (e: MouseEvent, projectId: string, isRightClick = false) => {
@@ -113,7 +113,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }, 200);
   };
 
-  /** 切换到聊天模式 */
+  /** Switch to chat mode */
   const switchToChat = () => {
     setCurrentProjectId(null);
     setCurrentAssistantId(DIALOG_ASST_ID);
@@ -123,7 +123,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }
   };
 
-  /** 切换到某个项目 */
+  /** Switch to a specific project */
   const switchToProject = async (projectId: string) => {
     try {
       setCurrentProjectId(projectId);
@@ -139,12 +139,12 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }
   };
 
-  /** 重命名项目 */
+  /** Rename a project */
   const renameProject = async (projectId: string, newName: string) => {
     if (!newName.trim()) return;
     try {
       await updateProject(projectId, newName.trim());
-      // 也更新助理名称
+      // Also update the assistant name
       const asst = datas.assistants.find((a) => a.projectId === projectId);
       if (asst) {
         setDatas('assistants', (a) => a.id === asst.id, 'name', newName.trim());
@@ -155,14 +155,14 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }
   };
 
-  /** 删除项目 */
+  /** Delete a project */
   const deleteProject = async (projectId: string) => {
     if (!confirm(t('project.deleteConfirm'))) return;
     try {
       const asst = datas.assistants.find((a) => a.projectId === projectId);
       if (asst) {
         await deleteAssistantFile(asst.id);
-        // 如果当前选中的是这个助理，切换到聊天
+        // If this assistant is currently selected, switch back to chat
         if (currentAssistantId() === asst.id) {
           switchToChat();
         }
@@ -176,10 +176,10 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     closeMenu();
   };
 
-  /** 创建项目成功后 */
+  /** After a project is created */
   const handleProjectCreated = async (projectId: string) => {
     setShowProjectCreateModal(false);
-    // 重新加载项目列表
+    // Reload the project list
     try {
       const list = await listProjects();
       setProjects(list);
@@ -189,25 +189,25 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     await switchToProject(projectId);
   };
 
-  /** 过滤：仅显示 project-type 的助理关联的项目（排除 chat 和游离助理） */
+  /** Filter: only show projects tied to project-type assistants (excludes chat and orphan assistants) */
   const projectList = createMemo(() => {
     const allProjects = projects();
     return allProjects;
   });
 
-  /** 展开程度 0–1：用于插值内边距与按宽度渐显内容 */
+  /** Expansion ratio 0-1: used to interpolate padding and fade content in by width */
   const expandRatio = () => Math.min(Math.max(props.width / 15, 0), 1);
   /**
-   * 展开态内容不透明度：与轨道图标的淡出曲线首尾相接（4%–5% 交叉），
-   * 保证任意宽度下两套内容至少一套可见，不再出现空过渡帧；
-   * 内容本体走"窗帘式揭示"（固定布局 + 裁剪），不依赖淡出来遮丑。
+   * Expanded-content opacity: meets the rail icons' fade-out curve end to end (crossing at 4%-5%),
+   * so at any width at least one of the two content layers stays visible with no empty transition frames;
+   * the content itself uses a curtain-style reveal (fixed layout + clipping) and does not rely on fading to hide it.
    */
   const expandedOpacity = () => Math.min(Math.max((props.width - 4) / 1, 0), 1);
   /**
-   * 窗帘软过渡遮罩：按"精确溢出量"计算右缘渐隐区（完整覆盖被裁剪区域并留 20px 余量），
-   * 杜绝裁剪线裸露——图标始终清晰、标签渐隐，不会被拦腰截断；
-   * 宽度回到 15%（无溢出）时渐隐区收敛为 0，切换无缝。
-   * 容器宽度由 revealMin 反推：revealMin = base×0.15 − 38（ChatPage 同口径，留 2px 安全余量）。
+   * Curtain soft-transition mask: computes the right-edge fade zone from the exact overflow amount
+   * (covering the whole clipped region plus a 20px margin) so no raw clip line is exposed: icons stay sharp
+   * while labels fade out instead of being cut mid-glyph. Back at 15% width (no overflow) the fade zone
+   * collapses to 0 for a seamless switch. Container width is derived from revealMin: revealMin = base*0.15 - 38 (same as ChatPage, with 2px safety margin).
    */
   const revealMask = () => {
     const w = props.width;
@@ -215,21 +215,21 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     const revealMin = props.revealMinPx ?? 0;
     if (revealMin <= 0) return 'none';
     const base = (revealMin + 38) / 0.15;
-    const contentPx = (w / 100) * base - 2 * padX() - PAGE_SIDE_INSET_PX; // 扣两侧不对称内边距
+    const contentPx = (w / 100) * base - 2 * padX() - PAGE_SIDE_INSET_PX; // subtract the asymmetric horizontal padding
     const overflowPx = revealMin - contentPx;
     if (overflowPx <= 0.5) return 'none';
     const fadePx = Math.min(overflowPx + 20, contentPx * 0.6);
     return `linear-gradient(to right, black calc(100% - ${fadePx}px), transparent 100%)`;
   };
   /**
-   * 页面容器左内边距（ChatPage 根节点 px-[6px]）。右侧分隔线紧贴面板外缘，
-   * 而左侧元素与窗口边界之间隔着这 6px——把右侧内边距补上同值，
-   * 元素到左窗口边界与到右分隔线的间距才相等（展开/收起各自保持对应的间距值）。
+   * Page container left inset (ChatPage root px-[6px]). The right divider sits flush against the panel edge,
+   * while left-side elements are 6px away from the window edge. Adding the same value to the right padding
+   * makes the spacing to the left window edge and to the right divider equal (each state keeps its own spacing values).
    */
   const PAGE_SIDE_INSET_PX = 6;
-  /** 收起轨道宽度：54px 使图标两侧各留 12px（与窗口边界间距一致），图标在窗口↔分隔线区间居中 */
+  /** Collapsed rail width: 54px leaves 12px on each side of the icons (matching the window-edge spacing), centering icons between window edge and divider */
   const RAIL_WIDTH_PX = 54;
-  /** 实际生效的内边距（px）：收起态为轨道值；展开态随宽度从轨道值插值到 15px */
+  /** Effective padding (px): rail value when collapsed; when expanded, interpolated from the rail value to 15px by width */
   const padY = () => (props.isCollapsed ? 6 : 6 + 9 * expandRatio());
   const padX = () => (props.isCollapsed ? 4 : 4 + 11 * expandRatio());
 
@@ -237,20 +237,20 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     <div
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10 h-full"
       style={{
-        // CSS 级最窄限制：无论上层计算出什么宽度，面板物理上不可能窄于收起轨道
+        // CSS-level minimum width: whatever width the upper layer computes, the panel physically cannot be narrower than the collapsed rail
         'min-width': `${RAIL_WIDTH_PX}px`,
-        // 窗帘揭示的布局宽度（子内容以该宽度排版，收窄时被裁剪而不是重排）
+        // Curtain-reveal layout width (child content lays out at this width; narrowing clips it instead of reflowing)
         '--reveal-min': `${props.revealMinPx ?? 0}px`,
         width: props.isCollapsed ? `${RAIL_WIDTH_PX}px` : `${props.width}%`,
-        // 右内边距比左侧多 PAGE_SIDE_INSET_PX：补偿页面容器左内边距，
-        // 使元素到左窗口边界与到右分隔线的间距相等（随宽度插值，两态各自独立取值）
+        // Right padding exceeds the left by PAGE_SIDE_INSET_PX to compensate the page container's left inset,
+        // equalizing spacing to the left window edge and the right divider (interpolated by width; each state takes its own value)
         padding: `${padY()}px ${padX() + PAGE_SIDE_INSET_PX}px ${padY()}px ${padX()}px`,
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <div class="relative flex-1 min-h-0">
-        {/* 展开状态 — 窗帘式软揭示：内容保持完整布局不重排，超出面板的部分被裁剪，右缘用 mask 渐隐替代硬裁剪 */}
+        {/* Expanded state - curtain-style soft reveal: content keeps its full layout without reflow, the part beyond the panel is clipped, and the right edge uses a mask fade instead of a hard clip */}
         <div
           class="absolute inset-0 overflow-hidden transition-opacity ease-out"
           style={{
@@ -264,7 +264,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             class="h-full w-full overflow-hidden hover:overflow-y-auto"
             style={{ 'min-width': 'var(--reveal-min, 0px)' }}
           >
-            {/* 聊天入口 */}
+            {/* Chat entry */}
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
               classList={{
@@ -282,10 +282,10 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               </span>
             </div>
 
-            {/* 分隔线 */}
+            {/* Divider */}
             <div class="my-3 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
 
-            {/* 项目区域 */}
+            {/* Project section */}
             <div
               class="flex items-center h-12 text-xs uppercase tracking-[1.5px] font-semibold px-3 mb-1"
               style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
@@ -357,7 +357,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               }}
             </For>
 
-            {/* 新建项目按钮 */}
+            {/* New project button */}
             <button
               class="w-full mt-[10px] px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
               style={{
@@ -379,7 +379,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </div>
       </div>
 
-      {/* 收起状态（图标轨道）— 挂在面板根上，右缩进 PAGE_SIDE_INSET_PX：图标在"窗口边界↔分隔线"区间居中，两侧间距恒等；展开态随透明度归零，右缩进无视觉影响 */}
+      {/* Collapsed state (icon rail) - attached to the panel root with right inset PAGE_SIDE_INSET_PX: icons center in the window-edge-to-divider band with equal spacing on both sides; fades to zero with opacity when expanded, so the right inset has no visual effect */}
       <div
         class="absolute ease-out"
         style={{
@@ -429,7 +429,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </div>
       </div>
 
-      {/* 上下文菜单 */}
+      {/* Context menu */}
       {showMenuDiv() && (
         <Portal>
           <div
@@ -480,7 +480,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </Portal>
       )}
 
-      {/* 新建项目弹窗 — Portal 到 body 避免被侧边栏 overflow-hidden 裁剪 */}
+      {/* New project modal - portaled to body to avoid clipping by the sidebar's overflow-hidden */}
       <Show when={showProjectCreateModal()}>
         <Portal>
           <ProjectCreateModal
@@ -490,14 +490,14 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </Portal>
       </Show>
 
-      {/* 三栏分界浅竖线：置于面板外缘（±0.5px），中心与下方调整把手的中心严格重合 */}
+      {/* Three-pane divider line: placed on the panel edge (+/-0.5px), its center exactly aligned with the resize handle below */}
       <span
         aria-hidden="true"
         class="absolute top-0 bottom-0 w-px pointer-events-none"
         style={{ right: '-0.5px', background: 'rgba(var(--text-base-rgb),0.12)' }}
       />
 
-      {/* 调整大小把手：6px 抓取条居中于面板外缘（与分界竖线同心），收起态仍可向外拖出展开 */}
+      {/* Resize handle: 6px grab strip centered on the panel edge (concentric with the divider line); when collapsed it can still be dragged outward to expand */}
       <div
         class="absolute top-0 bottom-0 right-[-3px] w-[6px] flex items-center justify-center cursor-ew-resize z-[1000] group"
         onMouseDown={(e) => props.onResize(e as MouseEvent)}

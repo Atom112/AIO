@@ -1,24 +1,19 @@
-//! 时间与日期工具 —— 全仓唯一来源（不引入 chrono 依赖）。
-//!
-//! 历史背景：now_iso / 日期换算曾在 6 处独立实现（knowledge.rs、config.rs、
-//! memory/store.rs、provider/mod.rs、provider_config.rs、mcp/mod.rs），
-//! 且 knowledge.rs 的副本注释自认是"config.rs 的同款实现"——违反
-//! AGENTS.md "never duplicate logic"。现统一收敛于此。
+//! Time and date utilities — the single source repo-wide (no chrono dependency).
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 当前时间的 ISO 8601 字符串（UTC，精度到秒，**不含** Z 后缀）。
+/// Current time as an ISO 8601 string (UTC, second precision, **without** a Z suffix).
 pub fn now_iso() -> String {
     secs_to_iso(now_unix_secs())
 }
 
-/// 当前时间的 ISO 8601 字符串（UTC，**带** Z 后缀）。
-/// 供 profile-model-overrides 等要求 Z 后缀的配置文件使用。
+/// Current time as an ISO 8601 string (UTC, **with** a Z suffix).
+/// For configs that require the Z suffix, e.g. profile-model-overrides.
 pub fn now_iso_z() -> String {
     format!("{}Z", now_iso())
 }
 
-/// 当前 UNIX 时间戳（秒）。
+/// Current UNIX timestamp (seconds).
 pub fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -26,19 +21,19 @@ pub fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// 当前 UNIX 时间戳（秒）的字符串形式。
-/// 供历史配置文件的 updated_at 字段使用（provider_config / mcp 的存量格式）。
+/// Current UNIX timestamp (seconds) as a string.
+/// For the updated_at field of legacy config files (the provider_config / mcp on-disk format).
 pub fn now_unix_secs_string() -> String {
     format!("{}", now_unix_secs())
 }
 
-/// 将 UNIX 时间戳（秒）转为 YYYY-MM-DDTHH:MM:SS（UTC，不含 Z）。
+/// Converts a UNIX timestamp (seconds) to YYYY-MM-DDTHH:MM:SS (UTC, no Z).
 pub fn secs_to_iso(secs: u64) -> String {
     let (y, mo, d, h, m, s) = secs_to_date_parts(secs);
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}")
 }
 
-/// YYYY-MM-DDTHH:MM:SS（可带 Z）→ UNIX 秒；解析失败或早于 1970 返回 None。
+/// YYYY-MM-DDTHH:MM:SS (Z optional) → UNIX seconds; returns None on parse failure or dates before 1970.
 pub fn iso_to_secs(iso: &str) -> Option<u64> {
     let s = iso.trim();
     if s.len() < 19 {
@@ -51,14 +46,14 @@ pub fn iso_to_secs(iso: &str) -> Option<u64> {
     let mi: i64 = s[14..16].parse().ok()?;
     let se: i64 = s[17..19].parse().ok()?;
     let total = days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se;
-    // days_from_civil 用 i64 计算以支持 1970 之前的日期；UNIX 秒语义下为负值即无效
+    // days_from_civil computes in i64 to support dates before 1970; a negative total is invalid in UNIX-seconds semantics
     if total < 0 {
         return None;
     }
     Some(total as u64)
 }
 
-/// 公历换算：UNIX 秒 → (年, 月, 日, 时, 分, 秒)。
+/// Gregorian conversion: UNIX seconds → (year, month, day, hour, minute, second).
 pub fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     const SECS_PER_DAY: u64 = 86400;
     let days = secs / SECS_PER_DAY;
@@ -93,13 +88,13 @@ pub fn secs_to_date_parts(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     (y, mo, remaining + 1, hours, mins, s)
 }
 
-/// 闰年判定（Gregorian）。
+/// Leap year check (Gregorian).
 pub fn is_leap(year: u64) -> bool {
     (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
-/// Howard Hinnant days_from_civil：公历日期 → 自 1970-01-01 的天数。
-/// 用 i64 计算，1970 之前的日期返回负值（调用方决定语义，如 iso_to_secs 拒绝负值）。
+/// Howard Hinnant days_from_civil: Gregorian date → days since 1970-01-01.
+/// Computed in i64; dates before 1970 yield negative values (semantics are up to the caller, e.g. iso_to_secs rejects them).
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
@@ -110,9 +105,9 @@ pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-/// Howard Hinnant civil_from_days：自 1970-01-01 的天数 → YYYY-MM-DD。
+/// Howard Hinnant civil_from_days: days since 1970-01-01 → YYYY-MM-DD.
 pub fn days_since_epoch_to_ymd(days: i64) -> Option<String> {
-    // 算法参考：http://howardhinnant.github.io/date_algorithms.html
+    // Algorithm reference: http://howardhinnant.github.io/date_algorithms.html
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = (z - era * 146_097) as u64; // [0, 146096]
@@ -126,7 +121,7 @@ pub fn days_since_epoch_to_ymd(days: i64) -> Option<String> {
     Some(format!("{:04}-{:02}-{:02}", y, m, d))
 }
 
-/// UNIX 秒时间戳 → YYYY-MM-DD（供 OpenAI created 字段等场景）。
+/// UNIX seconds timestamp → YYYY-MM-DD (e.g. for the OpenAI created field).
 pub fn unix_to_ymd(secs: i64) -> Option<String> {
     days_since_epoch_to_ymd(secs.div_euclid(86_400))
 }
@@ -146,7 +141,7 @@ mod tests {
 
     #[test]
     fn iso_roundtrip() {
-        // 含闰日的往返：secs_to_iso ↔ iso_to_secs
+        // Round-trip including a leap day: secs_to_iso ↔ iso_to_secs
         for iso in [
             "1970-01-01T00:00:00",
             "2000-02-29T23:59:59",
@@ -155,7 +150,7 @@ mod tests {
             let secs = iso_to_secs(iso).unwrap();
             assert_eq!(secs_to_iso(secs), iso, "往返不一致: {iso}");
         }
-        // 带 Z 后缀也应解析
+        // The Z suffix should also parse
         assert_eq!(
             iso_to_secs("2024-01-15T08:00:00Z"),
             iso_to_secs("2024-01-15T08:00:00")
@@ -165,11 +160,11 @@ mod tests {
 
     #[test]
     fn leap_year_rules() {
-        assert!(is_leap(2000)); // 400 整除 → 闰
-        assert!(!is_leap(1900)); // 100 整除不闰
-        assert!(is_leap(2024)); // 4 整除 → 闰
-        assert!(!is_leap(2100)); // 100 整除不闰
-                                 // 与 Hinnant 算法互证（含 1970 之前的日期：i64 负数路径）
+        assert!(is_leap(2000)); // divisible by 400 → leap
+        assert!(!is_leap(1900)); // divisible by 100 → not leap
+        assert!(is_leap(2024)); // divisible by 4 → leap
+        assert!(!is_leap(2100)); // divisible by 100 → not leap
+                                 // Cross-checked against the Hinnant algorithm (incl. dates before 1970: the i64 negative path)
         assert_eq!(
             days_from_civil(2000, 2, 29) + 1,
             days_from_civil(2000, 3, 1)
@@ -180,7 +175,7 @@ mod tests {
             "1900 非闰年"
         );
         assert_eq!(days_from_civil(1969, 12, 31), -1);
-        // 早于 1970 的 ISO 时间不应产生包裹溢出的假时间戳
+        // ISO times before 1970 must not produce wrapped-around fake timestamps
         assert_eq!(iso_to_secs("1969-12-31T23:59:59"), None);
     }
 }

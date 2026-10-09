@@ -1,4 +1,4 @@
-// 档案级模型覆盖 + 自定义子智能体档案 —— 从 store.ts 拆出（仅依赖 invoke）。
+// Profile-level model overrides + custom subagent profiles (depends only on invoke).
 
 import { createSignal } from 'solid-js';
 import {
@@ -13,7 +13,7 @@ import { allAvailableModels } from './chat';
 
 // ====== Per-Profile Model Overrides ======
 
-/** 从后端加载的 profile 模型覆盖信息 */
+/** Profile model override loaded from the backend. */
 export interface ProfileModelOverrideBackend {
   profileId: string;
   modelId: string;
@@ -22,15 +22,15 @@ export interface ProfileModelOverrideBackend {
 }
 
 /**
- * Per-profile 模型覆盖映射。
- * Key = profile id ("explorer" | "coder" | "general")，
- * Value = 复合键 modelKey (model_id@api_url)。空字符串 = 无覆盖（使用父模型）。
+ * Per-profile model override map.
+ * Key = profile id ("explorer" | "coder" | "general"),
+ * Value = composite modelKey (model_id@api_url). Empty string = no override (use parent model).
  */
 export const [profileModelOverrides, setProfileModelOverrides] = createSignal<
   Record<string, string>
 >({});
 
-/** 应用启动时从后端加载 per-profile 模型覆盖配置 */
+/** Load per-profile model overrides from the backend at app startup. */
 export const initProfileModelOverrides = async () => {
   try {
     const overrides = await apiLoadProfileModelOverrides();
@@ -46,7 +46,7 @@ export const initProfileModelOverrides = async () => {
   }
 };
 
-/** 持久化当前 per-profile 模型覆盖到后端 */
+/** Persist the current per-profile model overrides to the backend. */
 export const saveProfileModelOverrides = async () => {
   const map = profileModelOverrides();
   const overrides: ProfileModelOverrideBackend[] = [];
@@ -67,7 +67,7 @@ export const saveProfileModelOverrides = async () => {
 
 // ====== Custom Subagent Profiles ======
 
-/** 用户自定义子智能体配置文件 */
+/** User-defined subagent profile. */
 export interface CustomSubagentProfile {
   id: string;
   name: string;
@@ -81,7 +81,7 @@ export const [customSubagentProfiles, setCustomSubagentProfiles] = createSignal<
   CustomSubagentProfile[]
 >([]);
 
-/** 应用启动时从后端加载自定义子智能体配置文件 */
+/** Load custom subagent profiles from the backend at app startup. */
 export const initCustomSubagentProfiles = async () => {
   try {
     const list = await apiListCustomSubagentProfiles();
@@ -91,14 +91,14 @@ export const initCustomSubagentProfiles = async () => {
   }
 };
 
-/** 保存（插入或更新）一个自定义子智能体配置文件 */
+/** Save (insert or update) a custom subagent profile. */
 export const saveCustomSubagentProfile = async (profile: CustomSubagentProfile) => {
   await apiSaveCustomSubagentProfile(profile);
   const list = await apiListCustomSubagentProfiles();
   setCustomSubagentProfiles(list);
 };
 
-/** 按 id 删除一个自定义子智能体配置文件 */
+/** Delete a custom subagent profile by id. */
 export const deleteCustomSubagentProfile = async (profileId: string) => {
   await apiDeleteCustomSubagentProfile(profileId);
   setCustomSubagentProfiles((prev) => prev.filter((p) => p.id !== profileId));

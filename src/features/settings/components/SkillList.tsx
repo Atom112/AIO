@@ -72,7 +72,7 @@ const writeMarketCache = (cache: SkillMarketCache) => {
   try {
     localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
   } catch {
-    // 缓存失败不应阻塞市场浏览。
+    // Cache write failure must not block market browsing.
   }
 };
 
@@ -82,8 +82,8 @@ const formatInstalls = (value: number): string => {
   return String(value);
 };
 
-// ====== npx 发现缓存（模块级信号：页面卸载/切换设置分区后保留，避免每次进入重扫） ======
-// 仅会话内有效；应用重启后首次进入 npx 标签仍会扫描一次。手动点「重新扫描」可强制刷新。
+// ====== npx discovery cache (module-level signal: survives leaving the page or switching settings tabs, avoids rescanning on every visit) ======
+// Session-only; the first npx tab visit after an app restart still scans. Click "rescan" to force a refresh.
 const [cachedNpxSkills, setCachedNpxSkills] = createSignal<DiscoveredNpxSkill[] | null>(null);
 
 const SkillList: Component = () => {
@@ -106,12 +106,12 @@ const SkillList: Component = () => {
   const [editing, setEditing] = createSignal<SkillConfig | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
-  // ====== npx 发现状态 ======
+  // ====== npx discovery state ======
   const [npxSkills, setNpxSkills] = createSignal<DiscoveredNpxSkill[]>(cachedNpxSkills() ?? []);
   const [npxLoading, setNpxLoading] = createSignal(false);
   const [npxImportingId, setNpxImportingId] = createSignal<string | null>(null);
   const [npxRefreshingId, setNpxRefreshingId] = createSignal<string | null>(null);
-  let npxScanned = cachedNpxSkills() !== null; // 首次进入 npx 标签自动扫描，之后复用缓存结果
+  let npxScanned = cachedNpxSkills() !== null; // auto-scan on first npx tab visit, then reuse the cached result
 
   const discoverNpx = async () => {
     setNpxLoading(true);
@@ -129,7 +129,7 @@ const SkillList: Component = () => {
   };
 
   const importNpx = async (pkgName: string) => {
-    // 安全确认：npx 导入会执行来自 npm 的未审查代码
+    // Safety confirmation: npx import executes unreviewed code from npm
     const confirmed = window.confirm(t('skill.importNpxConfirm', { name: pkgName }));
     if (!confirmed) return;
 
@@ -138,7 +138,7 @@ const SkillList: Component = () => {
     try {
       const imported = await importNpxSkill(pkgName, projectId());
       setSkills({ ...skills(), [imported.id]: imported });
-      // 更新列表中的 alreadyImported 标记（本地信号与模块级缓存同步）
+      // Update the alreadyImported flag in the list (keep local signal and module-level cache in sync)
       const next = npxSkills().map((s) =>
         s.packageName === pkgName ? { ...s, alreadyImported: true } : s,
       );
@@ -152,7 +152,7 @@ const SkillList: Component = () => {
   };
 
   const refreshNpx = async (id: string) => {
-    // 安全确认
+    // Safety confirmation
     const confirmed = window.confirm(t('skill.refreshConfirm'));
     if (!confirmed) return;
 
@@ -229,7 +229,7 @@ const SkillList: Component = () => {
     }
   });
 
-  // 监听 scope 切换，自动重新加载对应范围的 Skill 列表
+  // Watch scope switches and reload the skill list for the new scope
   createEffect(
     on(
       projectId,
@@ -400,7 +400,7 @@ const SkillList: Component = () => {
               {t('skill.tabNpx')}
             </button>
           </div>
-          {/* 存在活跃项目时，显示作用域切换（市场/已下载/npx 均可看到） */}
+          {/* Show scope switcher when an active project exists (visible in market/downloaded/npx views) */}
           {currentProjectId() && (
             <div
               class="flex items-center gap-1 p-1 rounded-lg"
@@ -661,7 +661,7 @@ const SkillList: Component = () => {
           </div>
         </Show>
 
-        {/* npx 发现标签页 */}
+        {/* npx discovery tab */}
         <Show when={view() === 'npx'}>
           <div class="animate-row-in flex flex-col gap-3" style={{ 'animation-delay': '30ms' }}>
             <div class="flex items-center justify-between">

@@ -1,10 +1,10 @@
-//! Diff 生成与预览辅助 —— 从 commands/llm/mod.rs 下沉（该文件中的通用工具函数）。
+//! Diff generation and preview helpers.
 //!
-//! 供 Agent 文件修改工具的审批预览使用：对 write_file / replace_in_file / delete_file
-//! 预计算 Git 风格 unified diff，展示给用户确认。
+//! Serves approval previews for the Agent file-modification tools: precomputes a
+//! Git-style unified diff for write_file / replace_in_file / delete_file for user confirmation.
 
-/// 为文件修改工具预计算 diff 预览（审批前展示用）。
-/// 返回 (preview_diff, file_path)；非文件修改类工具返回 (None, None)。
+/// Precompute the diff preview for file-modification tools (shown before approval).
+/// Returns (preview_diff, file_path); non-file-modification tools return (None, None).
 pub fn compute_diff_preview(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -62,14 +62,14 @@ pub fn compute_diff_preview(
     }
 }
 
-/// 简易 unified diff 生成器：比较 old 和 new 文本，输出 Git 风格的 diff。
-/// 策略：共同前缀 + 共同后缀裁剪，保留前后各 3 行上下文；整体超过 8000 字节截断
-/// （截断处自动落在字符边界，避免多字节文本 panic）。
+/// Simple unified diff generator: compares old and new text, outputting a Git-style diff.
+/// Strategy: trim the common prefix and suffix, keep 3 context lines on each side; truncate the
+/// whole output past 8000 bytes (truncation lands on a char boundary to avoid panics on multi-byte text).
 pub fn simple_diff(old: &str, new: &str, file_name: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
 
-    // 找共同前缀
+    // Find the common prefix
     let mut prefix = 0;
     while prefix < old_lines.len()
         && prefix < new_lines.len()
@@ -77,7 +77,7 @@ pub fn simple_diff(old: &str, new: &str, file_name: &str) -> String {
     {
         prefix += 1;
     }
-    // 找共同后缀（在去除前缀后）
+    // Find the common suffix (after removing the prefix)
     let mut suffix = 0;
     while suffix < old_lines.len().saturating_sub(prefix)
         && suffix < new_lines.len().saturating_sub(prefix)
@@ -104,29 +104,29 @@ pub fn simple_diff(old: &str, new: &str, file_name: &str) -> String {
         added.max(1),
     );
 
-    // 上下文（前3行）
+    // Context (3 preceding lines)
     let ctx_start = prefix.saturating_sub(3);
     for line in &old_lines[ctx_start..prefix] {
         diff.push_str(&format!(" {}\n", line));
     }
 
-    // 删除的行
+    // Removed lines
     for line in &old_lines[prefix..old_end] {
         diff.push_str(&format!("-{}\n", line));
     }
-    // 新增的行
+    // Added lines
     for line in &new_lines[prefix..new_end] {
         diff.push_str(&format!("+{}\n", line));
     }
 
-    // 上下文（后3行）
+    // Context (3 following lines)
     let ctx_end = (new_end + 3).min(new_lines.len());
     for line in &new_lines[new_end..ctx_end] {
         diff.push_str(&format!(" {}\n", line));
     }
 
     if diff.len() > 8000 {
-        // 不能用 str::truncate：8000 可能落在多字节字符中间导致 panic
+        // str::truncate is not safe here: 8000 may land mid multi-byte character and panic
         let end = diff.floor_char_boundary(8000);
         diff.truncate(end);
         diff.push_str("\n... [diff 已截断]");
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn simple_diff_truncation_is_char_boundary_safe() {
-        // 多字节内容使 8000 恰好落在字符中间时不得 panic
+        // Must not panic when multi-byte content puts 8000 exactly mid-character
         let big = "中".repeat(3000) + "\n";
         let d = simple_diff("", &big, "c.txt");
         assert!(d.contains("已截断"));

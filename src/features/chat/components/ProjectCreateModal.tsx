@@ -1,6 +1,6 @@
 /**
  * @file ProjectCreateModal.tsx
- * @description 新建项目弹窗：输入名称 + 选择目录。支持入场/退场过渡动画。
+ * @description New-project modal: name input + directory picker. Supports enter/exit transition animations.
  */
 import { createSignal, onMount } from 'solid-js';
 import { createProject, validateProjectPath } from '../../../core/api/project';
@@ -21,7 +21,7 @@ export default function ProjectCreateModal(props: Props) {
   const [isExiting, setIsExiting] = createSignal(false);
   const [isEntering, setIsEntering] = createSignal(true);
 
-  // 入场动画：下一帧移除 entering 状态
+  // Enter animation: drop the entering state on the next frame
   onMount(() => {
     requestAnimationFrame(() => setIsEntering(false));
   });
@@ -39,11 +39,11 @@ export default function ProjectCreateModal(props: Props) {
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
         setPath(selected);
-        // 自动填充名称为目录名
+        // Auto-fill the name with the directory name
         const dirName = selected.split(/[/\\]/).filter(Boolean).pop() || '';
         if (!name()) setName(dirName);
 
-        // 验证路径
+        // Validate the path
         try {
           const result = await validateProjectPath(selected);
           if (!result.valid) {
@@ -102,7 +102,7 @@ export default function ProjectCreateModal(props: Props) {
       >
         <h2 class="text-lg font-semibold text-white mb-4">{t('project.new')}</h2>
 
-        {/* 项目名称 */}
+        {/* Project name */}
         <label class="block text-sm text-white/60 mb-1.5">{t('project.name')}</label>
         <input
           type="text"
@@ -114,7 +114,7 @@ export default function ProjectCreateModal(props: Props) {
           onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
         />
 
-        {/* 项目目录 */}
+        {/* Project directory */}
         <label class="block text-sm text-white/60 mb-1.5">{t('project.path')}</label>
         <div class="flex gap-2 mb-1">
           <input
@@ -130,12 +130,12 @@ export default function ProjectCreateModal(props: Props) {
           </button>
         </div>
 
-        {/* 错误信息 */}
+        {/* Error message */}
         {error() && <p class="text-red-400 text-xs mb-3">{error()}</p>}
 
         <p class="text-white/30 text-xs mb-4">{t('project.aioFolderNotice')}</p>
 
-        {/* 按钮 */}
+        {/* Buttons */}
         <div class="flex justify-end gap-3">
           <button class={'px-4 py-2 text-sm ' + btnGhost} onClick={handleClose}>
             {t('common.cancel')}

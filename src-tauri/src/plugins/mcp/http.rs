@@ -1,14 +1,15 @@
-//! MCP HTTP+SSE 传输
+//! MCP HTTP+SSE transport
 //!
-//! 设计决策：HTTP 插件**不**走 McpConnection 的 pending-map 抽象（HTTP 是
-//! 请求-响应模式，不需要后台 reader 任务）。`start()` 返回的 McpConnection 仅是
-//! 满足 trait 形状的句柄（其 transport 为空操作实现），真实调用直接用 reqwest。
+//! Design decision: the HTTP plugin does **not** use McpConnection's pending-map
+//! abstraction (HTTP is request-response and needs no background reader task).
+//! The McpConnection returned by `start()` is merely a handle satisfying the trait
+//! shape (its transport is a no-op implementation); real calls go directly through reqwest.
 //!
-//! 每个 server 的传输状态（URL/头/客户端/id 计数）存放在 **本插件实例**的
-//! states 表中，由 McpServerManager 持有插件实例管理生命周期；
-//! `stop()` 会移除对应条目，错误路径不再残留。
+//! Per-server transport state (URL/headers/client/id counter) lives in the states
+//! map of **this plugin instance**, whose lifecycle is managed by McpServerManager;
+//! `stop()` removes the entry, so error paths leave no residue.
 //!
-//! Streamable SSE 长连接在 P2 完整实现。
+//! Streamable SSE long connections are fully implemented.
 
 use super::error::{McpError, McpResult};
 use crate::core::models::{
@@ -24,14 +25,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::AppHandle;
 
-/// MCP HTTP+SSE 传输插件。
+/// MCP HTTP+SSE transport plugin.
 ///
-/// 状态按 server_id 存放在**本插件实例**的表中（而不是进程级全局静态表）：
-/// 生命周期由插件实例（归 McpServerManager 所有）管理，错误路径不再残留条目。
+/// State is stored per server_id in the map of **this plugin instance** (not a
+/// process-level global static table): the lifecycle is managed by the plugin
+/// instance (owned by McpServerManager), so error paths leave no stale entries.
 pub struct HttpPlugin {
     states: Arc<parking_lot::Mutex<std::collections::HashMap<String, HttpTransportState>>>,
-    /// true = Streamable HTTP 传输（identifier "streamable_http"，接受
-    /// StreamableHttp 配置，管理 Mcp-Session-Id 会话头）；false = 旧 "http"。
+    /// true = Streamable HTTP transport (identifier "streamable_http", accepts
+    /// StreamableHttp config, manages the Mcp-Session-Id session header); false = legacy "http".
     streamable: bool,
 }
 
@@ -43,7 +45,7 @@ impl HttpPlugin {
         }
     }
 
-    /// Streamable HTTP 传输插件（P4.2：补齐此前缺失的注册，消除死枚举）。
+    /// Streamable HTTP transport plugin (registers the transport so the StreamableHttp config variant is not dead code).
     pub fn streamable() -> Self {
         Self {
             states: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
@@ -58,7 +60,7 @@ impl Default for HttpPlugin {
     }
 }
 
-/// 构造带超时的 reqwest 客户端
+/// Builds a reqwest client with timeouts
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
@@ -67,7 +69,7 @@ fn http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// HTTP transport 内部状态：url + headers + id 计数器 + 会话 id（Streamable）
+/// HTTP transport internal state: url + headers + id counter + session id (Streamable)
 #[derive(Clone)]
 pub struct HttpTransportState {
     pub base_url: String,
@@ -75,8 +77,8 @@ pub struct HttpTransportState {
     pub client: Client,
     pub next_id: Arc<AtomicU64>,
     pub closed: Arc<AtomicBool>,
-    /// Streamable HTTP 会话：initialize 响应的 Mcp-Session-Id，
-    /// 后续请求原样回传（会话过期由服务端报错，客户端透传错误即可）
+    /// Streamable HTTP session: the Mcp-Session-Id from the initialize response,
+    /// echoed back on subsequent requests (session expiry is a server-side error; the client just forwards it)
     pub session_id: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
@@ -126,16 +128,16 @@ impl super::McpServerPlugin for HttpPlugin {
             }
         };
 
-        // SSRF 防护：统一 URL 校验（MCP server 可能运行在本地，允许 localhost）
+        // SSRF protection: unified URL validation (MCP servers may run locally, so localhost is allowed)
         let url = crate::utils::url_validation::validate_http_url(
             &url,
             &crate::utils::url_validation::HttpUrlOptions::local_engine(),
         )
         .map_err(|e| McpError::TransportStartup(format!("MCP HTTP server URL 非法: {e}")))?;
 
-        // HTTP transport 不需要 McpConnection 的 pending map 机制，
-        // 但为了满足 trait，我们仍返回一个 dummy 连接。
-        // 真实调用走 HttpTransportState 路径。
+        // The HTTP transport does not need McpConnection's pending-map mechanism,
+        // but a dummy connection is still returned to satisfy the trait.
+        // Real calls go through the HttpTransportState path.
         let headers = super::resolve_env_placeholders(&app, &config.id, &headers)?;
         let state = HttpTransportState {
             base_url: url,
@@ -150,8 +152,8 @@ impl super::McpServerPlugin for HttpPlugin {
         });
         let conn =
             super::connection::McpConnection::new(&config.id, self.identifier(), dummy_transport);
-        // 把真实状态挂到 conn.server_id 之外的某个可达地方
-        // 这里用 thread_local 简化：把 state 存到全局 HashMap
+        // Stash the real state somewhere reachable other than conn.server_id
+        // Simplified: the state is stored in the plugin's states HashMap
         self.states.lock().insert(config.id.clone(), state);
         Ok(conn)
     }
@@ -232,7 +234,7 @@ impl super::McpServerPlugin for HttpPlugin {
             .and_then(|t| t.as_array())
             .cloned()
             .unwrap_or_default();
-        // 协议转换收敛在 convert 模块（stdio/http 单实现）
+        // Protocol conversion is centralized in the convert module (single implementation shared by stdio/http)
         Ok(super::convert::tools_to_specs(tools))
     }
 
@@ -373,7 +375,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     for (k, v) in state.headers.iter() {
         req = req.header(k, v);
     }
-    // Streamable HTTP 会话：后续请求回传 initialize 拿到的 Mcp-Session-Id
+    // Streamable HTTP session: subsequent requests echo back the Mcp-Session-Id obtained from initialize
     if let Some(sid) = state.session_id.lock().clone() {
         req = req.header("Mcp-Session-Id", sid);
     }
@@ -388,7 +390,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    // 捕获服务端下发/更新的会话 id（initialize 与会话续期响应都会带）
+    // Capture the session id issued/updated by the server (present in both initialize and session-renewal responses)
     if let Some(sid) = resp
         .headers()
         .get("mcp-session-id")
@@ -410,16 +412,17 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         )));
     }
     if content_type.starts_with("text/event-stream") {
-        // SSE 解析（P4.2 补全）：按空行分块；块内多行 data 按 SSE 规范以 \n 连接；
-        // event:/id:/注释行忽略；\r\n 容忍。取首个含 data 的块（请求-响应模式
-        // 下服务端把 JSON-RPC 响应作为首个事件返回）。
+        // SSE parsing: split into blocks on blank lines; multiple data lines within a
+        // block are joined with \n per the SSE spec; event:/id:/comment lines are ignored;
+        // \r\n is tolerated. Takes the first block containing data (in request-response
+        // mode the server returns the JSON-RPC response as the first event).
         use futures_util::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| McpError::Server(format!("SSE read: {}", e)))?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
-            // 以空行（\n\n 或 \r\n\r\n）为块边界
+            // A blank line (\n\n or \r\n\r\n) is the block boundary
             let block_end = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"));
             if let Some(pos) = block_end {
                 let block: String = buffer[..pos].to_string();
@@ -429,7 +432,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
                     if let Some(rest) = line.strip_prefix("data:") {
                         data_lines.push(rest.trim_start().to_string());
                     }
-                    // event: / id: / :注释 行按规范忽略
+                    // event: / id: / :comment lines are ignored per the spec
                 }
                 if !data_lines.is_empty() {
                     let data = data_lines.join("\n");
@@ -438,7 +441,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
                             .map_err(|e| McpError::Server(format!("SSE JSON: {}", e)));
                     }
                 }
-                // 无 data 的块（纯通知/心跳）继续读下一块
+                // Blocks without data (pure notifications/heartbeats): keep reading the next block
                 buffer.drain(..pos);
             }
         }
@@ -450,7 +453,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     }
 }
 
-/// Dummy transport：仅用于满足 McpConnection 抽象
+/// Dummy transport: exists only to satisfy the McpConnection abstraction
 struct DummyHttpTransport {
     closed: Arc<AtomicBool>,
 }
@@ -458,7 +461,7 @@ struct DummyHttpTransport {
 #[async_trait]
 impl super::connection::McpTransport for DummyHttpTransport {
     async fn send(&self, _payload: &str) -> McpResult<()> {
-        // HTTP 模式不走这里
+        // Not used in HTTP mode
         Err(McpError::Unimplemented(
             "HTTP 模式应直接走 HttpTransportState".into(),
         ))

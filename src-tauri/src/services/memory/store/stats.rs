@@ -1,8 +1,8 @@
-//! 统计域：用量统计、7 日滚动计数、访问计数（从 store.rs 拆出）。
+//! Stats domain: usage statistics, 7-day rolling counters, access counts.
 use super::*;
 
 impl MemoryStore {
-    /// 记忆库统计。
+    /// Memory store statistics.
     pub fn stats(&self) -> Result<MemoryStats, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let total: i64 = conn
@@ -53,7 +53,7 @@ impl MemoryStore {
         )
         .map(|m| m.len())
         .unwrap_or(0);
-        // 近 7 天质量探针
+        // 7-day quality probes
         let queries = self.rolling_get(STAT_QUERIES);
         let hits = self.rolling_get(STAT_HITS);
         let dedup = self.rolling_get(STAT_DEDUP);
@@ -83,7 +83,7 @@ impl MemoryStore {
         })
     }
 
-    /// 近 7 天滚动计数 +delta（窗口锚定于首事件，超 7 天自动重置）。用于质量探针，不阻塞主流程。
+    /// Adds +delta to the 7-day rolling counter (window anchored to the first event; auto-resets after 7 days). Used for quality probes; never blocks the main flow.
     pub fn rolling_bump(&self, key: &str, delta: i64) {
         if delta == 0 {
             return;
@@ -120,18 +120,18 @@ impl MemoryStore {
         );
     }
 
-    /// 读取近 7 天滚动计数。
+    /// Reads the 7-day rolling counter.
     pub fn rolling_get(&self, key: &str) -> i64 {
         let Ok(conn) = self.conn.lock() else { return 0 };
         let sql_key = format!("{key}_val");
-        // meta.v 为 TEXT 存储类，须经字符串解析（直接 get::<_, i64> 会因 InvalidColumnType 报错）
+        // meta.v uses the TEXT storage class; must parse via string (direct get::<_, i64> fails with InvalidColumnType)
         let v: String = conn
             .query_row("SELECT v FROM meta WHERE k = ?1", [&sql_key], |r| r.get(0))
             .unwrap_or_default();
         v.trim().parse::<i64>().unwrap_or(0)
     }
 
-    /// 检索计数累加（供使用统计）。
+    /// Increments retrieval access counts (for usage statistics).
     pub fn bump_access(&self, ids: &[String]) {
         if ids.is_empty() {
             return;

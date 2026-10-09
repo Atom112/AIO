@@ -62,7 +62,7 @@ interface MemoryPanelProps {
 type Tab = 'active' | 'archived' | 'superseded' | 'all';
 
 /**
- * 项目记忆面板：统计 / 搜索 / 列表 / 编辑 / 钉住 / 归档 / 删除 / 版本审计 / 索引维护。
+ * Project memory panel: stats / search / list / edit / pin / archive / delete / version audit / index maintenance.
  */
 const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   const [stats, setStats] = createSignal<MemoryStats | null>(null);
@@ -75,23 +75,23 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   const [codeQuery, setCodeQuery] = createSignal('');
   const [codeHits, setCodeHits] = createSignal<CodeChunkHit[]>([]);
   const [indexing, setIndexing] = createSignal(false);
-  // 项目级嵌入模型（由 memory_get_status 提供，切换保存在项目记忆库 meta）
+  // Project-level embedding model (provided by memory_get_status; the choice is persisted in the project memory DB meta)
   const [embedding, setEmbedding] = createSignal<MemoryEmbeddingConfig | null>(null);
-  // 项目级嵌入器实际状态（实际解析到的 provider/model/维度，与配置可能不一致）
+  // Actual embedder state for the project (resolved provider/model/dims; may differ from the config)
   const [embedderStatus, setEmbedderStatus] = createSignal<EmbedderStatus | null>(null);
   const [editingEmbedding, setEditingEmbedding] = createSignal(false);
   const [ebModel, setEbModel] = createSignal('');
   const [ebTesting, setEbTesting] = createSignal(false);
   const [ebTestResult, setEbTestResult] = createSignal<EmbeddingTestResult | null>(null);
   const [ebSaving, setEbSaving] = createSignal(false);
-  // Matryoshka 目标维度（0 = 模型默认全维；仅 text-embedding-3/bge-m3 等支持裁剪）
+  // Matryoshka target dims (0 = model default full dims; only text-embedding-3/bge-m3 and the like support truncation)
   const [ebDims, setEbDims] = createSignal(0);
   const [reindexProgress, setReindexProgress] = createSignal<{
     done: number;
     total: number;
   } | null>(null);
   const [rrModels, setRrModels] = createSignal<EmbeddingModelInfo[]>([]);
-  // 本地可用的嵌入模型（kind=embed 且已下载且全局启用；来自「Embedding 模型管理」）
+  // Locally available embedding models (kind=embed, downloaded, globally enabled; from Embedding model management)
   const embedModels = () => {
     const list = rrModels().filter((m) => m.kind === 'embed' && m.downloaded && m.enabled);
     return list.length > 0 ? list : rrModels().filter((m) => m.kind === 'embed' && m.downloaded);
@@ -100,7 +100,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     try {
       setStats(await memoryStats(props.projectId));
     } catch {
-      // 记忆库未创建时忽略
+      // Ignore when the memory DB has not been created yet
     }
   };
 
@@ -131,9 +131,9 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       const st = await memoryGetStatus(props.projectId);
       setEmbedding(st.embedding);
       setEmbedderStatus(st.embedder);
-      // 重排配置由 MemoryRerankSection 子组件自行加载
+      // Rerank config is loaded by the MemoryRerankSection child component itself
     } catch {
-      // 记忆库未创建时忽略
+      // Ignore when the memory DB has not been created yet
     }
   };
 
@@ -145,7 +145,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     }
   };
 
-  // ---- Phase 2：sleep-time 合并整理（手动触发）+ 近 7 天质量探针 ----
+  // ---- Sleep-time consolidation (manual trigger) + last-7-days quality probe ----
   const [consolidating, setConsolidating] = createSignal(false);
 
   const consolidate = async () => {
@@ -164,13 +164,13 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       void loadList();
       void loadStats();
     } catch {
-      // 忽略
+      // Ignore
     } finally {
       setConsolidating(false);
     }
   };
 
-  // ---- Phase 3：轻量知识图谱抽取（P3-3）----
+  // ---- Lightweight knowledge-graph extraction ----
   const [graphExtracting, setGraphExtracting] = createSignal(false);
 
   const extractGraph = async () => {
@@ -185,7 +185,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
         }),
       );
     } catch {
-      // 忽略
+      // Ignore
     } finally {
       setGraphExtracting(false);
     }
@@ -211,7 +211,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
         return t('project.memoryPanel.sourceMsgs', { ids: parsed.messageIds.join(',') });
       }
     } catch {
-      // 非 JSON（旧格式）忽略
+      // Ignore non-JSON (legacy format)
     }
     return '';
   };
@@ -247,8 +247,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     }
   };
 
-  /** 短哈希（FNV-1a 32-bit → 8 位十六进制）：用于导出文件名标注项目身份。
-   *  同一项目的多次导出文件名稳定一致，跨项目不冲突。 */
+  /** Short hash (FNV-1a 32-bit → 8 hex chars): identifies the project in export file names.
+   *  Repeated exports of the same project keep a stable file name; different projects never collide. */
   const projectHash8 = (id: string): string => {
     let h = 0x811c9dc5;
     for (let i = 0; i < id.length; i++) {
@@ -259,7 +259,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const doExport = async () => {
-    // 用户经系统保存对话框指定导出路径（后端写盘，fs 权限无需放宽）
+    // Export path chosen via the system save dialog (backend writes the file; no fs permission widening needed)
     let path: string | null = null;
     try {
       path = await saveDialog({
@@ -279,7 +279,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const doImport = async () => {
-    // 用户经系统打开对话框选择导入文件（后端读盘）
+    // Import file chosen via the system open dialog (backend reads the file)
     let path: string | null = null;
     try {
       const picked = await openDialog({
@@ -335,7 +335,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       await loadList();
       await loadStats();
     } catch {
-      // 忽略编辑失败
+      // Ignore edit failure
     }
   };
 
@@ -344,7 +344,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       await memorySetPinned(props.projectId, f.id, !f.pinned);
       await loadList();
     } catch {
-      // 忽略
+      // Ignore
     }
   };
 
@@ -354,7 +354,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       await loadList();
       await loadStats();
     } catch {
-      // 忽略
+      // Ignore
     }
   };
 
@@ -365,7 +365,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       await loadList();
       await loadStats();
     } catch {
-      // 忽略
+      // Ignore
     }
   };
 
@@ -381,7 +381,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       const vs = await memoryGetVersions(props.projectId, id);
       setExpanded((prev) => ({ ...prev, [id]: vs }));
     } catch {
-      // 忽略
+      // Ignore
     }
   };
 
@@ -400,12 +400,12 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       );
       await loadStats();
     } catch {
-      // 忽略
+      // Ignore
     }
   };
 
-  // 当前嵌入模型的展示文案（provider · model · dims）：以实际解析到的嵌入器为准。
-  // 自 v0.8 起仅支持本地嵌入模型；内置模型固定为 all-MiniLM-L6-v2 · 384 维。
+  // Display label for the current embedding model (provider · model · dims), from the resolved embedder.
+  // Since v0.8 only local embedding models are supported; the built-in one is fixed to all-MiniLM-L6-v2 · 384 dims.
   const embeddingLabel = () => {
     const st = embedderStatus();
     const kind = t('app.memory.providerLocal');
@@ -433,7 +433,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       ? cur.model
       : (embedModels()[0]?.id ?? '');
     setEbModel(sel);
-    // 维度预填仅在选中模型与当前一致时有意义；换选模型后旧维度无参考价值，留空 = 模型默认
+    // Prefilling dims only makes sense when the selected model matches the current one; after switching models the old dims are meaningless. Empty = model default
     setEbDims(sel === cur.model && cur.dimensions && cur.dimensions !== 384 ? cur.dimensions : 0);
     setEbTestResult(null);
     setEditingEmbedding(true);
@@ -458,16 +458,16 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     }
   };
 
-  /** 编辑器当前选择的有效维度（输入留空 = 所选模型的默认全维） */
+  /** Effective dims for the editor's current selection (empty input = the selected model's default full dims) */
   const ebEffectiveDims = () => {
     if (ebDims() > 0) return ebDims();
     return embedModels().find((m) => m.id === ebModel().trim())?.dims ?? 0;
   };
 
-  /** 是否为会触发向量清空重建的真实切换（模型或有效维度变化） */
+  /** Whether this is a real switch that triggers clearing and rebuilding the vectors (model or effective dims changed) */
   const ebConfigChanged = () => {
     const cur = embedding();
-    // 无当前配置（状态加载失败）时按变化处理，交给确认弹窗保护
+    // No current config (status failed to load): treat as changed and let the confirm dialog guard it
     if (!cur) return true;
     return cur.model !== ebModel().trim() || cur.dimensions !== ebEffectiveDims();
   };
@@ -477,8 +477,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       setNotice(t('project.memoryPanel.embeddingNeedModel'));
       return;
     }
-    // 仅在「真实切换」且「库中已有嵌入内容」时确认：空库首次配置与原样重存
-    // 都不触发破坏性提醒（原样重存时后端对无变化配置也会直接早退，不做任何操作）
+    // Confirm only on a "real switch" when the DB already has embedded content: first-time setup on
+    // an empty DB and re-saving an unchanged config skip the destructive warning (backend early-exits on no change).
     if (ebConfigChanged() && (stats()?.embeddedFacts ?? 0) > 0) {
       if (!window.confirm(t('project.memoryPanel.embeddingSwitchConfirm'))) return;
     }
@@ -493,8 +493,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
         provider: 'local',
         model: ebModel(),
         apiUrl: '',
-        // 发送有效维度（而非原始输入 0）：让后端「无变化早退」判定真正生效，
-        // 避免 dims 留空时被误判为切换而无谓清空重建全部向量
+        // Send effective dims (not the raw input 0) so the backend's no-change early-exit works:
+        // an empty dims input must not be misjudged as a switch that needlessly clears all vectors.
         dimensions: ebEffectiveDims(),
         enabled: true,
       });
@@ -519,7 +519,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       await loadList();
       await loadStats();
     } catch {
-      // 忽略
+      // Ignore
     }
   };
 
@@ -530,7 +530,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       await loadList();
       await loadStats();
     } catch {
-      // 忽略
+      // Ignore
     }
   };
 
@@ -541,7 +541,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     { key: 'all', label: t('project.memoryPanel.tabAll') },
   ];
 
-  /** 板块分隔线（面板为单列平铺布局，各板块间以细线分隔） */
+  /** Section divider (the panel is a single-column flat layout; thin lines separate sections) */
   const SectionDivider = () => (
     <div class="h-px shrink-0" style={{ background: 'var(--border-dim)' }} />
   );
@@ -561,7 +561,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* 头部 */}
+          {/* Header */}
           <div class="flex justify-between items-center border-b border-[rgba(var(--text-base-rgb),0.27)] pb-3">
             <h2 class="m-0 text-xl">{t('project.memoryPanel.title')}</h2>
             <button class={btnClose} onClick={() => props.onClose()} aria-label={t('common.close')}>
@@ -569,7 +569,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </button>
           </div>
 
-          {/* 统计 */}
+          {/* Stats */}
           <Show when={stats()}>
             <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}>
               {t('project.memoryPanel.stats', {
@@ -583,7 +583,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </div>
           </Show>
 
-          {/* 自进化质量探针（近 7 天）+ 合并整理（sleep-time consolidation 手动触发；每日自动执行） */}
+          {/* Self-evolution quality probe (last 7 days) + consolidation (sleep-time consolidation manual trigger; runs daily automatically) */}
           <Show when={stats()}>
             <div class="flex flex-col gap-1.5">
               <div class="flex items-center justify-between gap-3">
@@ -624,7 +624,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             <SectionDivider />
           </Show>
 
-          {/* 嵌入模型（项目级；切换会清空本项目全部向量并重新嵌入） */}
+          {/* Embedding model (project-level; switching clears and re-embeds all of this project's vectors) */}
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('project.memoryPanel.embeddingTitle')}
@@ -724,7 +724,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
 
           <SectionDivider />
 
-          {/* 重排（项目级；RRF 后二阶段精排）—— 已抽为 MemoryRerankSection 子组件 */}
+          {/* Rerank (project-level; second-stage rerank after RRF) — extracted into the MemoryRerankSection child component */}
           <MemoryRerankSection
             projectId={props.projectId}
             rrModels={rrModels}
@@ -733,7 +733,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
 
           <SectionDivider />
 
-          {/* 检索 */}
+          {/* Search */}
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('project.memoryPanel.search')}
@@ -754,7 +754,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </div>
           </div>
 
-          {/* 记忆条目 */}
+          {/* Memory entries */}
           <div class="flex flex-col gap-1.5">
             <div class="flex items-center gap-1">
               <For each={tabs}>
@@ -771,7 +771,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 )}
               </For>
             </div>
-            {/* 条目列表内独立滚动：上限 240px，避免过多条目占满面板本身的滚动空间 */}
+            {/* Entry list scrolls independently with a 240px cap so many entries don't consume the panel's own scroll space */}
             <div class="flex flex-col rounded-lg border border-dark-100 p-2.5 max-h-[240px] overflow-y-auto scrollbar-thin">
               <For each={facts()}>
                 {(f) => (
@@ -856,7 +856,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
 
           <SectionDivider />
 
-          {/* 代码索引与检索 */}
+          {/* Code index and search */}
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('project.memoryPanel.codeIndex')}
@@ -908,7 +908,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
 
           <SectionDivider />
 
-          {/* 底部操作 */}
+          {/* Footer actions */}
           <div class="flex items-center gap-2">
             <Show when={notice()}>
               <span class="flex-1 text-[11px] text-pri/80">{notice()}</span>

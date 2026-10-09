@@ -1,13 +1,13 @@
 /**
- * 数字步进输入框（主题化 ±1 箭头）
+ * Number stepper input with themed ±1 arrows
  *
- * WebView 原生 number 上下箭头是实心大三角，与亚克力主题不搭；
- * 且 ::-webkit-inner-spin-button 伪元素自绘背景在 WebView2 中不渲染。
- * 故原生箭头由 index.css「Number 输入」区统一隐藏，本组件用与应用图标
- * 同风格的细线 chevron 渲染步进箭头。
+ * The WebView-native number spinners are solid triangles that clash with the acrylic theme,
+ * and self-drawn ::-webkit-inner-spin-button backgrounds do not render in WebView2.
+ * Native arrows are therefore hidden globally in the "Number input" section of index.css;
+ * this component draws the stepper arrows as thin chevrons matching the app icon style.
  *
- * 点击箭头 / 键盘上下键 / 直接输入均会 clamp 到 [min, max]；
- * 箭头按钮不参与 Tab 序，mousedown 时阻止默认行为以保留输入框焦点。
+ * Arrow clicks / keyboard up-down keys / typed input are all clamped to [min, max];
+ * the arrow buttons stay out of the tab order and prevent default on mousedown to keep input focus.
  */
 import { Component } from 'solid-js';
 import Icon from './Icon';
@@ -23,9 +23,9 @@ const NumberInput: Component<{
   min: number;
   max: number;
   onInput: (value: number) => void;
-  /** 输入无效（空/非数字）时的回退值，默认 min */
+  /** Fallback value used when input is invalid (empty/non-numeric); defaults to min */
   fallback?: number;
-  /** 容器宽度类，默认 w-[84px] */
+  /** Container width class; defaults to w-[84px] */
   class?: string;
 }> = (props) => {
   const clamp = (raw: number) =>

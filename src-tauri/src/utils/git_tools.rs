@@ -1,32 +1,33 @@
-//! 内置 Git 工具 — 结构化版本控制操作。
+//! Built-in Git tools — structured version control operations.
 //!
-//! 通过系统 `git` CLI 提供结构化的版本控制操作，替代在 `execute_command` 中
-//! 手动拼接 git 命令。所有调用使用参数数组（非 shell 字符串），杜绝注入风险。
+//! Exposes structured git operations through the system `git` CLI, replacing
+//! hand-assembled git commands in `execute_command`. All calls use argument
+//! arrays (never shell strings), eliminating injection risk.
 //!
-//! 参考：Claude Code / Cursor 的 Git 工具设计。
+//! Design reference: Claude Code / Cursor Git tools.
 
 use crate::core::models::{FileChange, ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::ierr;
 use serde_json::{json, Value};
 use std::process::Command;
 
-// ====== 常量 ======
+// ====== Constants ======
 
 const MAX_OUTPUT_BYTES: usize = 80_000;
 const MAX_COMMIT_MSG_BYTES: usize = 10_000;
 
-// ====== 辅助函数 ======
+// ====== Helpers ======
 
-// tool_ok / tool_err 统一由 utils::tool_result 提供（消除全仓副本）
+// tool_ok / tool_err are provided centrally by utils::tool_result (single source repo-wide)
 pub use crate::utils::tool_result::{tool_err, tool_ok};
 
-// 截断实现统一由 utils::truncate 提供（命名即语义）
+// Truncation is provided centrally by utils::truncate (imported under a semantic name)
 use crate::utils::truncate::truncate_bytes_head as truncate_output;
 
-/// 执行 git 命令并返回 stdout（stderr 在失败时作为错误信息返回）。
-/// 使用参数数组，永不拼接 shell 字符串。
+/// Runs a git command and returns stdout (stderr is returned as the error message on failure).
+/// Uses argument arrays; never builds shell strings.
 fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
-    // 仅允许 git 二进制
+    // Only the git binary is ever invoked
     let output = Command::new("git")
         .args(args)
         .current_dir(project_root)
@@ -57,7 +58,7 @@ fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// 检查目录是否为 git 仓库
+/// Checks whether the directory is a git repository
 pub(crate) fn is_git_repo(project_root: &str) -> bool {
     Command::new("git")
         .args(["rev-parse", "--git-dir"])
@@ -69,7 +70,7 @@ pub(crate) fn is_git_repo(project_root: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 获取当前 Git 分支名称。如果不是 git 仓库则返回 None。
+/// Returns the current git branch name, or None if it is not a git repository.
 pub fn get_current_branch(project_root: &str) -> Option<String> {
     if !is_git_repo(project_root) {
         return None;
@@ -80,7 +81,7 @@ pub fn get_current_branch(project_root: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// 列出所有本地分支名称。当前分支排在首位（带 `*` 标记）。
+/// Lists all local branch names. The current branch comes first (marked with `*`).
 pub fn list_branches(project_root: &str) -> Result<Vec<String>, String> {
     if !is_git_repo(project_root) {
         return Err(ierr!("不是 git 仓库", "Not a git repository"));
@@ -93,15 +94,15 @@ pub fn list_branches(project_root: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// 切换到指定分支（git checkout）。成功返回 Ok(()).
+/// Switches to the given branch (git checkout). Returns Ok on success.
 pub fn checkout_branch(project_root: &str, branch_name: &str) -> Result<String, String> {
     run_git(project_root, &["checkout", branch_name])?;
     Ok(format!("已切换到分支 {branch_name}"))
 }
 
-/// 在指定项目的 git 仓库中捕获某个文件的最新差异。
-/// 在工具写入文件后调用，读取 git diff 获得 patch。
-/// 返回 None 表示非 git 仓库或没有变更。
+/// Captures the latest diff of a file in the project's git repository.
+/// Called after a tool writes the file; reads the patch from git diff.
+/// Returns None when the directory is not a git repository or nothing changed.
 pub fn capture_file_diff(project_root: &str, file_path: &str) -> Option<FileChange> {
     if !is_git_repo(project_root) {
         return None;
@@ -126,7 +127,7 @@ pub fn capture_file_diff(project_root: &str, file_path: &str) -> Option<FileChan
     })
 }
 
-/// 从 unified diff 文本中解析 "+N -M" 统计
+/// Parses "+N -M" stats from unified diff text
 fn format_diff_stats(patch: &str) -> String {
     let added = patch
         .lines()
@@ -139,11 +140,11 @@ fn format_diff_stats(patch: &str) -> String {
     format!("+{} -{}", added, removed)
 }
 
-// ====== 工具定义 ======
+// ====== Tool Specs ======
 
 pub fn get_git_tool_specs() -> Vec<ToolSpec> {
     vec![
-        // ---- 只读工具 ----
+        // ---- Read-only tools ----
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
@@ -185,7 +186,7 @@ pub fn get_git_tool_specs() -> Vec<ToolSpec> {
                 }),
             },
         },
-        // ---- 写入工具 ----
+        // ---- Write tools ----
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
@@ -221,10 +222,10 @@ pub fn get_git_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-// ====== 工具执行 ======
+// ====== Tool Execution ======
 
 pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> ToolResult {
-    // 前置：检查是否为 git 仓库
+    // Precondition: verify the directory is a git repository
     if !is_git_repo(project_root) {
         return tool_err(&ierr!(
             "当前目录不是 git 仓库（或 git 未安装）",
@@ -359,8 +360,8 @@ pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> To
                     MAX_COMMIT_MSG_BYTES
                 ));
             }
-            // 防御：拒绝空提交
-            // 先检查是否有暂存的变更
+            // Guard: reject empty commits
+            // Check whether anything is staged first
             let staged_empty = run_git(project_root, &["diff", "--staged", "--quiet"]).is_ok();
             if staged_empty {
                 return tool_err(&ierr!(

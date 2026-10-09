@@ -1,11 +1,11 @@
-//! Sleep-time 合并整理：空闲/每日对高相似事实聚类，LLM 仲裁批量合并/订正/取代。
+//! Sleep-time consolidation: idle/daily clustering of highly similar facts, LLM arbitrates batch merges/corrections/supersessions.
 //!
-//! - 输入：全部带向量的 active 事实（容量上限 MAX_CLUSTER_FACTS 控制 O(n²) 成本）；
-//! - 聚类：余弦 >= CLUSTER_THRESHOLD 的连通分量；
-//! - 每簇以「importance × 访问加权」最高者为锚点，对簇内其余成员逐条仲裁；
-//! - 预算：每日仲裁调用上限（memory_consolidate_budget，默认 20），超限即止；
-//! - 互斥：per-project meta 锁（带 10 分钟过期），与用户手动操作天然并发安全（单条事务）
-//! - 失败：静默降级（tracing + 报告计数），绝不阻塞主流程。
+//! - Input: all active facts with vectors (capped at MAX_CLUSTER_FACTS to bound O(n²) cost);
+//! - Clustering: connected components with cosine >= CLUSTER_THRESHOLD;
+//! - Each cluster anchors on the member with the highest importance x access-weighted score and arbitrates the remaining members one by one;
+//! - Budget: daily arbitration call cap (memory_consolidate_budget, default 20); stop once exceeded;
+//! - Mutual exclusion: per-project meta lock (10-minute expiry) keeps daily scheduling and manual triggers concurrency-safe (single-statement transactions)
+//! - Failure: silent degradation (tracing + report counters); never blocks the main flow.
 
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::manager::MemoryStoreManager;
@@ -15,26 +15,26 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 
 const CLUSTER_THRESHOLD: f32 = 0.85;
-/// 参与聚类的最大事实数（控制 O(n²) 余弦扫描成本）。
+/// Maximum number of facts participating in clustering (bounds the O(n²) cosine scan cost).
 const MAX_CLUSTER_FACTS: usize = 600;
 const LOCK_TTL_SECS: u64 = 600;
 const META_CONSOLIDATE_LOCK: &str = "consolidate_lock_ts";
 const META_CONSOLIDATE_LAST: &str = "consolidate_last_run";
 
-/// 合并整理报告（命令返回 + 每日调度日志）。
+/// Consolidation report (command return value + daily scheduling log).
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsolidationReport {
-    /// 参与整理的聚类数（每一簇 = 一组高相似事实）
+    /// Number of clusters consolidated (each cluster = one group of highly similar facts)
     pub clusters: usize,
-    /// 实际执行的仲裁调用数
+    /// Number of arbitration calls actually executed
     pub arbitrated: usize,
     pub merged: usize,
     pub updated: usize,
     pub superseded: usize,
-    /// 仲裁判定 keep_separate 的条数
+    /// Number of facts the judge resolved as keep_separate
     pub kept: usize,
-    /// 预算使用量（达到上限即提前终止）
+    /// Budget usage (terminates early once the cap is reached)
     pub budget_used: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -44,7 +44,7 @@ fn score(importance: f32, access: i64) -> f32 {
     importance * (1.0 + 0.1 * (access.min(20)) as f32)
 }
 
-/// 余弦连通分量聚类（迭代并查集；返回索引组，每组 >1 成员）。
+/// Cosine connected-component clustering (iterative union-find); returns index groups, each with more than one member.
 fn cluster_components(facts: &[(String, Vec<f32>)], threshold: f32) -> Vec<Vec<usize>> {
     let n = facts.len();
     let mut parent: Vec<usize> = (0..n).collect();
@@ -74,7 +74,7 @@ fn cluster_components(facts: &[(String, Vec<f32>)], threshold: f32) -> Vec<Vec<u
     groups.into_values().filter(|g| g.len() > 1).collect()
 }
 
-/// 对单个项目执行一次合并整理（幂等、预算封顶、锁防重入）。
+/// Run one consolidation pass for a single project (idempotent, budget-capped, lock-guarded against re-entry).
 pub async fn consolidate(
     app: &AppHandle,
     store: &MemoryStore,
@@ -91,7 +91,7 @@ pub async fn consolidate(
         error: None,
     };
     let now = crate::utils::time::now_iso();
-    // 互斥锁（带过期）：10 分钟内不重入（每日调度与手动触发共用同一把锁）
+    // Expiring mutex: no re-entry within 10 minutes (daily scheduling and manual triggers share the same lock)
     if let Some(ts) = store.meta_get(META_CONSOLIDATE_LOCK)? {
         if let (Some(t0), Some(t1)) = (iso_to_secs_pub(&ts), iso_to_secs_pub(&now)) {
             if t1.saturating_sub(t0) < LOCK_TTL_SECS {
@@ -127,7 +127,7 @@ pub async fn consolidate(
         }
     };
     'outer: for component in components {
-        // 锚点 = 簇内加权分数最高者
+        // Anchor = the member with the highest weighted score in the cluster
         let mut anchor = component[0];
         for &idx in &component {
             if score(id_text[idx].2, id_text[idx].3) > score(id_text[anchor].2, id_text[anchor].3) {
@@ -164,7 +164,7 @@ pub async fn consolidate(
                 }
                 JudgeAction::Update => {
                     store.update_content(&anchor_fact.0, &member.1, "update")?;
-                    // 锚点内容更新后重新向量化（失败不阻塞）
+                    // Re-embed the anchor after its content is updated (failure does not block)
                     if let Some(emb) = embed_one(app, store, &member.1).await {
                         let _ = store.set_embedding(&anchor_fact.0, Some(emb));
                     }
@@ -202,15 +202,15 @@ async fn embed_one(
     Some((embedder.model_key(), v.len(), v))
 }
 
-/// 每日调度入口：遍历启用记忆的项目逐项目整理（预算各项目独立）。
+/// Daily scheduling entry point: iterate memory-enabled projects and consolidate each one (per-project budget).
 pub async fn run_daily_consolidation(app: &AppHandle) {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
-    // 与自动提取同一开关：用户关闭自动提取即无需自动整理
+    // Shares the switch with auto-extraction: if auto-extraction is disabled, auto-consolidation is unnecessary
     if !cfg.memory_auto_extract {
         return;
     }
     let budget = cfg.memory_consolidate_budget.max(1) as usize;
-    // 项目索引读取统一在 utils::project_index
+    // Project index reads are centralized in utils::project_index
     let file = crate::utils::project_index::load_projects_file(app);
     for project in file.projects.values() {
         let Ok(store) = app.state::<MemoryStoreManager>().open(&project.path) else {
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_cluster_components_finds_groups() {
-        // 三条同轴（彼此相似）+ 两条异轴（不同主题）
+        // Three facts on the same axis (mutually similar) + two on a different axis (different topic)
         let facts = vec![
             ("a".into(), v(0)),
             ("b".into(), v(0)),

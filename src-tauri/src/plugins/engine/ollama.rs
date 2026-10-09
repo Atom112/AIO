@@ -1,10 +1,10 @@
-/// Ollama 本地推理引擎插件。
+/// Ollama local inference engine plugin.
 ///
-/// 支持 GGUF 模型文件：用户选择 .gguf 文件后，插件负责确保 Ollama 服务运行、
-/// 将模型导入 Ollama，并返回 API Base URL。
+/// Supports GGUF model files: once the user picks a .gguf file, the plugin ensures the
+/// Ollama service is running, imports the model into Ollama, and returns the API Base URL.
 ///
-/// 进程生命周期：若 Ollama 已由用户自行启动（systemd / launchd / docker），
-/// 插件直接使用现有服务；否则自动拉起 ollama serve 子进程。
+/// Process lifecycle: if Ollama was already started by the user (systemd / launchd / docker),
+/// the plugin reuses that service; otherwise it spawns an `ollama serve` child process.
 use crate::core::state::LocalEngineState;
 use crate::ierr;
 use crate::plugins::engine::LocalEnginePlugin;
@@ -18,7 +18,7 @@ use std::time::Duration;
 use tauri::AppHandle;
 use tracing::{debug, warn};
 
-/// 通过 PATH 查找 `ollama` 可执行文件（Windows `where` / Unix `which`），返回第一个命中路径。
+/// Locate the `ollama` executable via PATH (Windows `where` / Unix `which`), returning the first hit.
 fn ollama_on_path() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -56,16 +56,17 @@ fn ollama_on_path() -> Option<PathBuf> {
     }
 }
 
-/// 在常见安装目录中查找 `ollama` 可执行文件。
+/// Search common install directories for the `ollama` executable.
 ///
-/// 兜底 PATH 未生效的环境：安装包/更新器拉起、开机自启、提权启动等场景下，
-/// 进程环境变量可能是旧快照，不含 Ollama 安装器写入的用户 PATH 条目（dev 调试时
-/// 终端环境是最新的，因此会出现"dev 能识别、安装包识别不到"的差异）。
+/// Fallback for environments where PATH is stale: processes launched by the installer/
+/// updater, autostart, or elevation may hold an old environment snapshot lacking the
+/// user PATH entry the Ollama installer wrote (dev terminals have the fresh env, hence
+/// the "visible in dev, invisible in the installed app" discrepancy).
 fn ollama_in_known_dirs() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     let candidates: Vec<PathBuf> = {
         let mut v = Vec::new();
-        // Ollama Windows 安装器默认安装到 %LOCALAPPDATA%\Programs\Ollama（用户级）
+        // Ollama Windows installer defaults to %LOCALAPPDATA%\Programs\Ollama (per-user)
         if let Ok(dir) = std::env::var("LOCALAPPDATA") {
             v.push(
                 PathBuf::from(dir)
@@ -74,7 +75,7 @@ fn ollama_in_known_dirs() -> Option<PathBuf> {
                     .join("ollama.exe"),
             );
         }
-        // 管理员级安装（旧版本或自定义安装位置）
+        // Machine-level install (older versions or custom install location)
         if let Ok(dir) = std::env::var("PROGRAMFILES") {
             v.push(PathBuf::from(dir).join("Ollama").join("ollama.exe"));
         }
@@ -85,7 +86,7 @@ fn ollama_in_known_dirs() -> Option<PathBuf> {
     };
     #[cfg(target_os = "macos")]
     let candidates: Vec<PathBuf> = vec![
-        // Ollama macOS 安装包固定在 /Applications/Ollama.app 内
+        // Ollama macOS bundle always lives inside /Applications/Ollama.app
         PathBuf::from("/Applications/Ollama.app/Contents/Resources/ollama"),
     ];
     #[cfg(target_os = "linux")]
@@ -108,12 +109,12 @@ fn ollama_in_known_dirs() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-/// 解析 `ollama` 可执行文件路径：PATH 优先，其次常见安装目录。
+/// Resolve the `ollama` executable path: PATH first, then common install directories.
 fn resolve_ollama_exe() -> Option<PathBuf> {
     ollama_on_path().or_else(ollama_in_known_dirs)
 }
 
-/// Windows: Ollama 安装器会注册名为 `ollama` 的用户服务；服务存在即视为已安装（即使当前停止）。
+/// Windows: the Ollama installer registers a user service named `ollama`; its existence counts as installed (even when stopped).
 #[cfg(target_os = "windows")]
 fn ollama_service_exists() -> bool {
     std::process::Command::new("sc")
@@ -131,7 +132,7 @@ fn ollama_service_exists() -> bool {
     false
 }
 
-/// macOS: Ollama 安装包会写入登录启动代理；存在即视为已安装（即使当前未运行）。
+/// macOS: the Ollama installer writes a login launch agent; its existence counts as installed (even when not running).
 #[cfg(target_os = "macos")]
 fn ollama_launch_agent_exists() -> bool {
     std::env::var("HOME")
@@ -150,7 +151,7 @@ fn ollama_launch_agent_exists() -> bool {
     false
 }
 
-/// 检查指定 host:port 的 Ollama HTTP 端点是否可达（同步，供 trait 方法使用）
+/// Check whether the Ollama HTTP endpoint at host:port is reachable (blocking, for trait methods)
 fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
     std::thread::spawn(move || {
@@ -164,7 +165,7 @@ fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
     .unwrap_or(false)
 }
 
-/// 异步版本：检查 Ollama HTTP 端点是否可达（供 start() 内部轮询使用）
+/// Async variant: check whether the Ollama HTTP endpoint is reachable (for polling inside start())
 async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
     reqwest::Client::new()
@@ -175,12 +176,12 @@ async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
         .is_ok()
 }
 
-/// 检查默认端口 11434 是否可达
+/// Check whether the default port 11434 is reachable
 fn ollama_http_reachable() -> bool {
     ollama_http_reachable_at("127.0.0.1", 11434)
 }
 
-/// 通过 `ollama --version` 获取版本号
+/// Get the version string via `ollama --version`
 fn ollama_version_from_cli() -> Option<String> {
     let exe = resolve_ollama_exe()?;
     let mut cmd = std::process::Command::new(exe);
@@ -205,7 +206,7 @@ fn ollama_version_from_cli() -> Option<String> {
     }
 }
 
-/// 从 GGUF 文件路径派生模型名（取文件名去扩展名）
+/// Derive the model name from the GGUF file path (filename without extension)
 fn model_name_from_path(model_path: &str) -> String {
     Path::new(model_path)
         .file_stem()
@@ -214,12 +215,12 @@ fn model_name_from_path(model_path: &str) -> String {
         .to_string()
 }
 
-/// 通过 ollama create 将 GGUF 文件导入 Ollama（异步，避免阻塞 tokio runtime）。
-/// 返回模型名；若模型已存在则跳过导入。
+/// Import a GGUF file into Ollama via `ollama create` (async, to avoid blocking the tokio runtime).
+/// Returns the model name; skips the import when the model already exists.
 async fn import_model(model_path: &str, api_url: &str) -> Result<String, String> {
     let model_name = model_name_from_path(model_path);
 
-    // 检查模型是否已存在于 ollama（必须检查 HTTP 状态码，不能仅靠 is_ok）
+    // Check whether the model already exists in ollama (must check the HTTP status code, not just is_ok)
     let check_url = format!("{}/api/show", api_url);
     let body = serde_json::json!({ "name": model_name });
     let client = reqwest::Client::new();
@@ -238,7 +239,7 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
 
     debug!("[ollama] 导入 GGUF 模型: {} -> {}", model_path, model_name);
 
-    // 写入临时 Modelfile
+    // Write a temporary Modelfile
     let tmpdir = std::env::temp_dir();
     let modelfile_path = tmpdir.join(format!("aio-ollama-{}.Modelfile", model_name));
     let mut f = std::fs::File::create(&modelfile_path).map_err(|e| {
@@ -252,7 +253,7 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
         .map_err(|e| ierr!("无法写入 Modelfile: {}", "Failed to write Modelfile: {}", e))?;
     drop(f);
 
-    // 执行 ollama create（异步，避免阻塞 runtime）—— 使用解析出的真实路径，规避 PATH 缺失环境
+    // Run ollama create (async, to avoid blocking the runtime); use the resolved real path to survive PATH-less environments
     let exe = resolve_ollama_exe().unwrap_or_else(|| PathBuf::from("ollama"));
     let output = tokio::process::Command::new(exe)
         .arg("create")
@@ -271,7 +272,7 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
             )
         })?;
 
-    // 清理 Modelfile
+    // Clean up the Modelfile
     let _ = std::fs::remove_file(&modelfile_path);
 
     if !output.status.success() {
@@ -298,7 +299,7 @@ impl LocalEnginePlugin for OllamaPlugin {
         "ollama"
     }
 
-    /// Ollama 使用根 URL（不挂 /v1），模型列表走 /api/tags
+    /// Ollama uses the root URL (no /v1 suffix); model listing goes through /api/tags
     fn default_api_url(&self, port: u16) -> String {
         format!("http://localhost:{port}")
     }
@@ -307,7 +308,7 @@ impl LocalEnginePlugin for OllamaPlugin {
         format!("{}/api/tags", api_url.trim_end_matches('/'))
     }
 
-    /// Ollama 响应形态：{ "models": [ { "name": ... } ] }
+    /// Ollama response shape: { "models": [ { "name": ... } ] }
     fn parse_model_ids(&self, body: &serde_json::Value) -> Vec<String> {
         body["models"]
             .as_array()
@@ -319,7 +320,7 @@ impl LocalEnginePlugin for OllamaPlugin {
             .unwrap_or_default()
     }
 
-    /// Ollama 为系统安装的外部服务，模型路径由 Ollama 自身管理，不做沙箱校验
+    /// Ollama is an externally installed system service; model paths are managed by Ollama itself and skip sandbox validation
     fn is_external(&self) -> bool {
         true
     }
@@ -395,11 +396,11 @@ impl LocalEnginePlugin for OllamaPlugin {
                 ));
             }
 
-            // 1. 确保 Ollama 服务运行
+            // 1. Ensure the Ollama service is running
             let already_running = ollama_http_reachable_async("127.0.0.1", port).await;
             if !already_running {
                 debug!("[ollama] 服务未在端口 {} 运行，尝试拉起 ollama serve", port);
-                // 用解析出的真实路径（PATH 缺失环境下兜底常见安装目录）
+                // Use the resolved real path (falls back to common install dirs when PATH is missing)
                 let exe_path = resolve_ollama_exe().unwrap_or_else(|| PathBuf::from("ollama"));
                 let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
                 let child = cmd.spawn().map_err(|e| {
@@ -410,14 +411,14 @@ impl LocalEnginePlugin for OllamaPlugin {
                     )
                 })?;
 
-                // 注册子进程到状态，供 stop 命令管理
+                // Register the child process in state so the stop command can manage it
                 {
                     let mut engines = state.lock();
                     let inner = engines.entry(self.identifier().to_string()).or_default();
                     inner.child_process = Some(child);
                 }
 
-                // 等待 ollama 就绪（轮询 /api/version）
+                // Wait for ollama to become ready (poll /api/version)
                 let deadline = std::time::Instant::now() + Duration::from_secs(30);
                 loop {
                     if std::time::Instant::now() > deadline {
@@ -436,7 +437,7 @@ impl LocalEnginePlugin for OllamaPlugin {
                 debug!("[ollama] 服务已在运行，复用现有实例");
             }
 
-            // 2. 导入 GGUF 模型（若尚未导入）
+            // 2. Import the GGUF model (if not imported yet)
             let model_name = match import_model(model_path, &api_url).await {
                 Ok(name) => name,
                 Err(e) => {
@@ -455,8 +456,8 @@ impl LocalEnginePlugin for OllamaPlugin {
 mod tests {
     use super::*;
 
-    /// 回归测试：安装包环境可能持有旧 PATH 快照（不含 Ollama 目录），
-    /// 检测必须通过常见安装目录兜底命中，而不是只依赖 PATH。
+    /// Regression test: the installed app may hold a stale PATH snapshot (without the
+    /// Ollama directory); detection must fall back to common install directories.
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     #[test]
     fn detects_ollama_via_known_dirs_when_path_is_stale() {

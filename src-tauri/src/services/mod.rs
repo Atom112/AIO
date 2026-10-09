@@ -1,3 +1,3 @@
-//! 应用级业务服务层：跨命令复用的核心逻辑。
+//! App-level service layer: core logic shared across commands.
 
 pub mod memory;

@@ -1,17 +1,21 @@
-//! 按需模型下载器（通用）：manifest 描述远端文件，下载到对应安装目录，
-//! 经 `model-download-progress` 事件推送进度。
+//! On-demand model downloader (generic): the manifest describes remote files, which are
+//! downloaded into the matching install directory; progress is reported via the
+//! `model-download-progress` event.
 //!
-//! 当前条目：
-//! - kind=embed：主流开源本地嵌入模型（ONNX，来自 HF 的 Xenova / Qdrant / Alibaba-NLP 等
-//!   导出仓库，统一取 `onnx/model_quantized.onnx` 自包含量化权重，CPU 推理快、体积小）；
-//!   安装目录可由用户在设置页自定义（默认 `<app_data_dir>/models/embed/<id>/`）。
-//! - kind=rerank：本地重排模型（bge 系列交叉编码器 + mxbai，目录固定 `<app_data_dir>/models/rerank/<id>/`）。
+//! Current entries:
+//! - kind=embed: mainstream open-source local embedding models (ONNX, from HF export
+//!   repos like Xenova / Qdrant / Alibaba-NLP; all take the self-contained quantized
+//!   weights at `onnx/model_quantized.onnx` for fast CPU inference and a small footprint);
+//!   the install dir is user-configurable in settings (default `<app_data_dir>/models/embed/<id>/`).
+//! - kind=rerank: local rerank models (bge cross-encoder family + mxbai, fixed dir `<app_data_dir>/models/rerank/<id>/`).
 //!
-//! 内置模型 all-MiniLM-L6-v2（kind=embed，bundled=true）随应用打包（include_bytes），
-//! 无需下载；列表中恒为已安装，删除为 no-op。
+//! The bundled model all-MiniLM-L6-v2 (kind=embed, bundled=true) ships with the app
+//! (include_bytes) and needs no download; it is always listed as installed, and delete
+//! is a no-op.
 //!
-//! 下载控制：暂停（保留 `.part` 断点，续传走 HTTP Range）/ 取消（删除断点）。
-//! 标志按模型 id 注册在进程级控制表，由独立命令置位，下载循环逐块检查。
+//! Download control: pause (keeps the `.part` checkpoint, resume via HTTP Range) /
+//! cancel (deletes the checkpoint). Flags are registered per model id in a
+//! process-level control table, set by dedicated commands and checked per chunk.
 
 use crate::core::events as ev;
 use crate::core::models::EmbeddingModelSetting;
@@ -26,11 +30,12 @@ use tokio::io::AsyncWriteExt;
 
 use crate::ierr;
 
-// manifest 注册表与目录解析已下沉到 core::model_registry（插件层需要，命令层仅再导出）。
+// The manifest registry and directory resolution live in core::model_registry
+// (needed by the plugin layer; this command layer only re-exports them).
 pub(crate) use crate::core::model_registry::entry_dir;
 pub use crate::core::model_registry::*;
 
-/// 模型信息（前端展示：id/kind/名称/维度/是否内置/是否启用/文件/是否已下载/占用空间）。
+/// Model info for frontend display (id/kind/name/dims/bundled/enabled/files/downloaded/size on disk).
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
@@ -53,7 +58,7 @@ pub struct ModelFileInfo {
     pub downloaded: bool,
 }
 
-/// 下载结果：status = ok（完成）| paused（已暂停，断点保留）| cancelled（已取消，断点已删）。
+/// Download outcome: status = ok (finished) | paused (paused, checkpoint kept) | cancelled (cancelled, checkpoint deleted).
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadOutcome {
@@ -61,7 +66,7 @@ pub struct DownloadOutcome {
     pub info: ModelInfo,
 }
 
-/// 进行中下载的控制标志（按模型 id 注册）。
+/// Control flags for an in-flight download (registered per model id).
 #[derive(Clone)]
 struct DownloadControl {
     cancel: Arc<AtomicBool>,
@@ -73,7 +78,7 @@ fn download_controls() -> &'static Mutex<HashMap<String, DownloadControl>> {
     CONTROLS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 置位指定模型的下载标志；返回是否存在进行中的下载。
+/// Sets a download flag for the given model; returns whether a download is in flight.
 fn signal_download(id: &str, set: impl Fn(&DownloadControl)) -> bool {
     match download_controls().lock() {
         Ok(map) => match map.get(id) {
@@ -120,27 +125,28 @@ fn model_info(app: &AppHandle, entry: &'static ManifestEntry) -> ModelInfo {
     }
 }
 
-/// 列出可下载/已安装模型及其状态（本地重排 + 本地嵌入模型）。
+/// Lists downloadable/installed models with their status (local rerank + local embedding models).
 #[tauri::command]
 pub fn embedding_model_list(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
     Ok(MANIFEST.iter().map(|e| model_info(&app, e)).collect())
 }
 
-/// 查询单个模型下载/启用状态（含文件级明细）。`id`：manifest 条目 id。
+/// Queries one model's download/enabled status (with per-file detail). `id`: manifest entry id.
 #[tauri::command]
 pub fn embedding_model_status(app: AppHandle, id: String) -> Result<Option<ModelInfo>, String> {
     Ok(find_entry(&id).map(|e| model_info(&app, e)))
 }
 
-/// 当前 embed 模型安装目录（设置页展示用）。
+/// Current install directory for embed models (shown on the settings page).
 #[tauri::command]
 pub fn embedding_models_get_dir(app: AppHandle) -> Result<String, String> {
     Ok(embed_models_dir(&app).to_string_lossy().to_string())
 }
 
-/// 设置 embed 模型安装目录（持久化到应用配置；`dir` 空串恢复默认目录）。
-/// 修改目录后，原目录下已下载的 embed 模型会自动迁移到新目录（释放原目录空间；
-/// 迁移为尽力而为，单项失败仅记录日志不阻塞目录切换）。
+/// Sets the embed model install directory (persisted to the app config; an empty `dir`
+/// restores the default directory). Downloaded embed models under the old directory are
+/// migrated to the new one (freeing space there); migration is best-effort: per-item
+/// failures are only logged and never block the directory switch.
 #[tauri::command]
 pub fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
     let old = embed_models_dir(&app);
@@ -156,7 +162,7 @@ pub fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, S
     Ok(new.to_string_lossy().to_string())
 }
 
-/// 全局启用/停用某个模型（嵌入/重排通用；停用后所有项目不可用该模型）。
+/// Globally enables/disables a model (shared by embed/rerank; once disabled, the model is unavailable in all projects).
 #[tauri::command]
 pub fn embedding_model_set_enabled(
     app: AppHandle,
@@ -182,11 +188,11 @@ pub fn embedding_model_set_enabled(
     Ok(model_info(&app, entry))
 }
 
-/// 下载模型（流式写盘 + model-download-progress 事件；已存在的文件跳过）。
-/// `id`：manifest 条目 id。返回 ok / paused / cancelled 三种结局：
-/// - 暂停：保留 `.part` 断点，再次调用时带 Range 续传；
-/// - 取消：删除 `.part` 断点；
-/// - 网络/写盘错误同样保留断点（下次续传）。
+/// Downloads a model (streamed to disk + model-download-progress events; existing files
+/// are skipped). `id`: manifest entry id. Ends in one of ok / paused / cancelled:
+/// - paused: keeps the `.part` checkpoint, resumed with Range on the next call;
+/// - cancelled: deletes the `.part` checkpoint;
+/// - network/write errors also keep the checkpoint (resumed next time).
 #[tauri::command]
 pub async fn embedding_model_download(
     window: Window,
@@ -200,7 +206,7 @@ pub async fn embedding_model_download(
             info: model_info(&app, entry),
         });
     }
-    // 注册控制标志（同 id 重复下载时覆盖旧标志）
+    // Register the control flags (a duplicate download of the same id overwrites the old flags)
     let control = DownloadControl {
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
@@ -208,7 +214,7 @@ pub async fn embedding_model_download(
     if let Ok(mut map) = download_controls().lock() {
         map.insert(id.clone(), control.clone());
     }
-    // 命令结束（含被前端放弃）时注销控制标志
+    // Unregister the control flags when the command ends (including if the frontend drops it)
     struct UnregisterGuard(String);
     impl Drop for UnregisterGuard {
         fn drop(&mut self) {
@@ -233,7 +239,7 @@ pub async fn embedding_model_download(
         if dest.exists() {
             continue;
         }
-        // manifest 文件名可含子目录（onnx/model_quantized.onnx），先建父目录
+        // Manifest file names may contain subdirectories (onnx/model_quantized.onnx); create the parent directory first
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 ierr!(
@@ -244,7 +250,7 @@ pub async fn embedding_model_download(
             })?;
         }
         let tmp = dest.with_extension("part");
-        // 断点续传：.part 残留时带 Range 从断点继续
+        // Resume: when a .part file remains, continue from the checkpoint with Range
         let mut resume_from = tokio::fs::metadata(&tmp)
             .await
             .map(|m| m.len())
@@ -266,7 +272,7 @@ pub async fn embedding_model_download(
                 e
             )
         })?;
-        // .part 大于远端文件（损坏）→ 删除断点整档重下
+        // .part larger than the remote file (corrupt) -> delete the checkpoint and restart the download
         if resp.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
             let _ = tokio::fs::remove_file(&tmp).await;
             resume_from = 0;
@@ -290,7 +296,7 @@ pub async fn embedding_model_download(
             ));
         }
         if !partial {
-            resume_from = 0; // 服务器忽略 Range → 整档重下
+            resume_from = 0; // server ignored Range -> restart the whole download
         }
         let total = resume_from + resp.content_length().unwrap_or(0);
         let mut stream = resp.bytes_stream();
@@ -321,7 +327,7 @@ pub async fn embedding_model_download(
                 .await
                 .map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
             downloaded += chunk.len() as u64;
-            // 进度事件节流（首个分块立即发一次）
+            // Throttle progress events (the first chunk is emitted immediately)
             if last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(200)) {
                 last_emit = Some(Instant::now());
                 let _ = window.emit(
@@ -377,14 +383,15 @@ pub async fn embedding_model_download(
     })
 }
 
-/// 暂停正在进行的模型下载。`id`：manifest 条目 id。返回是否有进行中的下载。
+/// Pauses an in-flight model download. `id`: manifest entry id. Returns whether a download was in flight.
 #[tauri::command]
 pub fn embedding_model_pause_download(id: String) -> bool {
     signal_download(&id, |c| c.pause.store(true, Ordering::Relaxed))
 }
 
-/// 取消模型下载。`id`：manifest 条目 id。返回是否有进行中的下载；
-/// 无进行中的下载（如已暂停）时直接清理该模型的所有 `.part` 断点文件。
+/// Cancels a model download. `id`: manifest entry id. Returns whether a download was in
+/// flight; when none is (e.g. already paused), it cleans up all `.part` checkpoint files
+/// for the model directly.
 #[tauri::command]
 pub fn embedding_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
     let active = signal_download(&id, |c| c.cancel.store(true, Ordering::Relaxed));
@@ -401,7 +408,7 @@ pub fn embedding_model_cancel_download(app: AppHandle, id: String) -> Result<boo
     Ok(active)
 }
 
-/// 删除已下载模型（释放磁盘 + 清理进程内已加载的实例缓存；内置模型为 no-op）。
+/// Deletes a downloaded model (frees disk space + evicts the in-process loaded instance cache; no-op for bundled models).
 #[tauri::command]
 pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> {
     let entry = find_entry(&id).ok_or_else(|| ierr!("未知模型: {}", "Unknown model: {}", id))?;
@@ -421,14 +428,15 @@ pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> 
     Ok(())
 }
 
-/// 规范化比较两个目录路径（存在时走 canonicalize，否则按字面比较）。
+/// Compares two directory paths in normalized form (canonicalize when they exist, literal comparison otherwise).
 fn same_path(a: &Path, b: &Path) -> bool {
     let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     canon(a) == canon(b)
 }
 
-/// 把 old 目录下已下载的 embed 模型迁移到 new 目录（rename 优先；跨盘回退递归复制）。
-/// 尽力而为：目标已存在或单项失败仅记录日志并继续。
+/// Migrates downloaded embed models from the old directory to the new one (rename first;
+/// falls back to a recursive copy across volumes). Best-effort: existing targets or
+/// per-item failures are only logged and skipped.
 fn migrate_embed_models(old: &Path, new: &Path) {
     if !old.is_dir() {
         return;
@@ -452,7 +460,7 @@ fn migrate_embed_models(old: &Path, new: &Path) {
             continue;
         }
         if std::fs::rename(&src, &dst).is_err() {
-            // 跨盘 rename 失败 → 递归复制后删除源目录
+            // Cross-volume rename failed -> recursively copy, then delete the source directory
             if let Err(e) = copy_dir_recursive(&src, &dst) {
                 tracing::warn!("[models] 迁移 {} 失败: {e}", entry.id);
                 continue;
@@ -467,7 +475,7 @@ fn migrate_embed_models(old: &Path, new: &Path) {
     }
 }
 
-/// 递归复制目录（跨盘迁移回退路径）。
+/// Recursively copies a directory (fallback path for cross-volume migration).
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for item in std::fs::read_dir(src)? {

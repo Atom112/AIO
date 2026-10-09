@@ -1,16 +1,16 @@
 /**
- * Provider 列表页 (lobehub v2)
- * 路由: /settings/ (嵌套路由默认页)
+ * Provider list page (lobehub v2)
+ * Route: /settings/ (nested-route default page)
  *
- * 结构:
- * 1. 顶部: 本地模型管理块 (从 ProviderSettings.tsx 迁移, 保留全部逻辑)
- * 2. 中部: catalog 元数据统计 (provider/model/version)
- * 3. 底部: provider 列表 (catalog + 自定义), 每行可点进详情
+ * Layout:
+ * 1. Top: local model management block (migrated from ProviderSettings.tsx, logic unchanged)
+ * 2. Middle: catalog metadata stats (provider/model/version)
+ * 3. Bottom: provider list (catalog + custom), each row opens its detail page
  *
- * 数据流:
- * - provider 列表: catalog.providers + providerConfigs 中的自定义
- * - 列表上的 inline 开关: 仅修改 `enabled` 标志, 详细配置在 ProviderDetail 页
- * - 保存: 写入整个 providerConfigs map (与 ProviderDetail 一致)
+ * Data flow:
+ * - Provider list: catalog.providers + custom entries from providerConfigs
+ * - Inline toggles on rows: only flip the `enabled` flag; detailed config lives on the ProviderDetail page
+ * - Saving: writes the whole providerConfigs map (same as ProviderDetail)
  */
 import { Component, createSignal, For, Show, onMount, createMemo } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
@@ -42,7 +42,7 @@ import { getProviderLogo } from '../../../core/utils/modelLogo';
 import type { ProviderConfig, ProviderMeta } from '../../../core/utils/models';
 import { formatNumber, reportError, t } from '../../../core/i18n';
 
-// ============== Catalog 统计 + 同步 ==============
+// ============== Catalog stats + sync ==============
 
 const CatalogStats: Component = () => {
   const [updating, setUpdating] = createSignal(false);
@@ -120,21 +120,21 @@ const ProviderList: Component = () => {
     setCatalogReady(true);
   });
 
-  /** 用户配置中的 custom providers（本地引擎 id 除外——引擎条目由上方"本地推理引擎"分区渲染，避免列表尾部出现重复表项） */
+  /** Custom providers from user config (local engine ids excluded -- engine entries are rendered by the "Local inference engines" section above, avoiding duplicate rows at the end of the list) */
   const customProviders = createMemo(() => {
     return Object.values(providerConfigs()).filter(
       (c) => c.isCustom && !isLocalEngineProvider(c.id),
     );
   });
 
-  /** 搜索后的 catalog providers (排除本地引擎 supplier，它们单独渲染) */
+  /** Searched catalog providers (local engine suppliers excluded; rendered separately) */
   const filteredCatalog = createMemo(() => {
     const c = modelsCatalog();
     if (!c) return [] as ProviderMeta[];
     return searchProviders(c, search()).filter((p) => !isLocalEngineProvider(p.id));
   });
 
-  /** 搜索后的 catalog providers, 按字母排序, 启用的置顶 */
+  /** Searched catalog providers, alphabetically sorted, enabled first */
   const sortedCatalog = createMemo(() => {
     const providers = filteredCatalog();
     const cfgs = providerConfigs();
@@ -149,7 +149,7 @@ const ProviderList: Component = () => {
     return { enabled, disabled };
   });
 
-  /** custom providers 按字母排序, 启用的置顶 */
+  /** Custom providers alphabetically sorted, enabled first */
   const sortedCustom = createMemo(() => {
     const providers = customProviders();
     const enabled = providers.filter((c) => c.enabled);
@@ -161,7 +161,7 @@ const ProviderList: Component = () => {
     return { enabled, disabled };
   });
 
-  /** 通用持久化: 把 providers map 写盘 */
+  /** Generic persistence: writes the providers map to disk */
   const persist = async (next: Record<string, ProviderConfig>, okMsg?: string) => {
     try {
       await saveProviderMap(next);
@@ -176,7 +176,7 @@ const ProviderList: Component = () => {
     }
   };
 
-  /** 开关切换: 直接写盘, 无需保存按钮 */
+  /** Toggle: writes to disk immediately, no save button needed */
   const toggleEnabled = (id: string, currentVal: boolean) => {
     const next = { ...providerConfigs() };
     const cur = next[id];
@@ -255,7 +255,7 @@ const ProviderList: Component = () => {
     <div class="h-full overflow-y-auto pr-1">
       <CatalogStats />
 
-      {/* 搜索 */}
+      {/* Search */}
       <div
         class="mb-3 flex items-center gap-2.5 animate-row-in"
         style={{ 'animation-delay': '60ms' }}
@@ -279,7 +279,7 @@ const ProviderList: Component = () => {
         </button>
       </div>
 
-      {/* 自定义 provider 模态框 */}
+      {/* Custom provider modal */}
       <Show when={showAddCustom()}>
         <div
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur"
@@ -342,7 +342,7 @@ const ProviderList: Component = () => {
         </div>
       </Show>
 
-      {/* Provider 列表 (catalog) */}
+      {/* Provider list (catalog) */}
       <Show
         when={catalogReady()}
         fallback={
@@ -357,7 +357,7 @@ const ProviderList: Component = () => {
           </div>
         </Show>
 
-        {/* 已启用 */}
+        {/* Enabled */}
         <Show when={sortedCatalog().enabled.length > 0}>
           <div class="space-y-1.5">
             <For each={sortedCatalog().enabled}>
@@ -373,7 +373,7 @@ const ProviderList: Component = () => {
           </div>
         </Show>
 
-        {/* 本地推理引擎 */}
+        {/* Local inference engines */}
         <div class="flex items-center gap-3 mt-5 mb-2">
           <div class="flex-1 h-px bg-white/[0.06]" />
           <span class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold shrink-0">
@@ -393,7 +393,7 @@ const ProviderList: Component = () => {
           </For>
         </div>
 
-        {/* 分隔线 */}
+        {/* Divider */}
         <Show when={sortedCatalog().enabled.length > 0 && sortedCatalog().disabled.length > 0}>
           <div class="flex items-center gap-3 my-4">
             <div class="flex-1 h-px bg-white/[0.06]" />
@@ -404,7 +404,7 @@ const ProviderList: Component = () => {
           </div>
         </Show>
 
-        {/* 未启用 */}
+        {/* Not enabled */}
         <Show when={sortedCatalog().disabled.length > 0}>
           <div class="space-y-1.5">
             <For each={sortedCatalog().disabled}>
@@ -420,7 +420,7 @@ const ProviderList: Component = () => {
           </div>
         </Show>
 
-        {/* 自定义 provider 区 */}
+        {/* Custom provider section */}
         <Show when={sortedCustom().enabled.length > 0 || sortedCustom().disabled.length > 0}>
           <div class="flex items-center gap-3 mt-5 mb-2">
             <div class="flex-1 h-px bg-white/[0.06]" />
@@ -429,7 +429,7 @@ const ProviderList: Component = () => {
             </span>
             <div class="flex-1 h-px bg-white/[0.06]" />
           </div>
-          {/* 已启用 */}
+          {/* Enabled */}
           <Show when={sortedCustom().enabled.length > 0}>
             <div class="space-y-1.5">
               <For each={sortedCustom().enabled}>
@@ -496,7 +496,7 @@ const ProviderList: Component = () => {
               </For>
             </div>
           </Show>
-          {/* 自定义分隔线 */}
+          {/* Custom divider */}
           <Show when={sortedCustom().enabled.length > 0 && sortedCustom().disabled.length > 0}>
             <div class="flex items-center gap-3 my-3">
               <div class="flex-1 h-px bg-white/[0.06]" />
@@ -506,7 +506,7 @@ const ProviderList: Component = () => {
               <div class="flex-1 h-px bg-white/[0.06]" />
             </div>
           </Show>
-          {/* 未启用 */}
+          {/* Not enabled */}
           <Show when={sortedCustom().disabled.length > 0}>
             <div class="space-y-1.5">
               <For each={sortedCustom().disabled}>
@@ -576,7 +576,7 @@ const ProviderList: Component = () => {
         </Show>
       </Show>
 
-      {/* Toast 提示 */}
+      {/* Toast notification */}
       <Show when={toast()}>
         <div
           class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"
@@ -597,7 +597,7 @@ const ProviderList: Component = () => {
   );
 };
 
-// 单个 provider 行
+// Single provider row
 const ProviderRow: Component<{
   provider: ProviderMeta;
   onToggleEnabled: (id: string, currentVal: boolean) => void;
@@ -711,7 +711,7 @@ const ProviderRow: Component<{
   );
 };
 
-// 本地引擎供应商行
+// Local engine provider row
 const LocalEngineRow: Component<{
   engine: LocalEngineProvider;
   config: ProviderConfig | undefined;

@@ -1,9 +1,9 @@
-//! Agent 工具调用权限规则引擎。
+//! Permission rule engine for agent tool calls.
 //!
-//! 实现 allow / ask / deny 三层权限模型，参考 Claude Code 的权限设计。
-//! 规则按优先级评估，Deny 总是优先于 Allow，无匹配规则时默认 Ask（fail-closed）。
+//! Implements the three-tier allow / ask / deny permission model, following the Claude Code permission design.
+//! Rules are evaluated by priority; Deny always wins over Allow, and calls with no matching rule default to Ask (fail-closed).
 //!
-//! 规则可自定义存储在项目 `.aio/permissions.json` 中，覆盖内置默认配置。
+//! Custom rules can be stored in the project's `.aio/permissions.json`, overriding the built-in defaults.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -11,63 +11,63 @@ use serde_json::Value;
 
 use super::models::AgentMode;
 
-// ====== 权限动作 ======
+// ====== Permission actions ======
 
-/// 权限决策结果
+/// The permission decision outcome.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionAction {
-    /// 自动允许，无需确认
+    /// Allowed automatically, no confirmation needed.
     Allow,
-    /// 需要用户确认
+    /// Requires user confirmation.
     Ask,
-    /// 直接拒绝
+    /// Denied outright.
     Deny,
 }
 
-// ====== 规则定义 ======
+// ====== Rule definitions ======
 
-/// 一条权限规则
+/// A single permission rule.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionRule {
-    /// 规则唯一 ID
+    /// Unique rule ID.
     pub id: String,
-    /// 工具名称或 glob 模式，如 `"write_file"`, `"delete_*"`, `"*"`（全部匹配）
+    /// Tool name or glob pattern, e.g. `"write_file"`, `"delete_*"`, `"*"` (matches everything).
     pub tool_pattern: String,
-    /// 限制到特定 MCP server ID，`None` = 应用于所有 server
+    /// Restricted to a specific MCP server ID; `None` = applies to all servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_id: Option<String>,
-    /// 该规则适用的 agent 模式列表，空列表 = 所有模式
+    /// Agent modes this rule applies to; an empty list means all modes.
     #[serde(default)]
     pub modes: Vec<AgentMode>,
-    /// 决策
+    /// The decision.
     pub action: PermissionAction,
-    /// 可选的路径 glob 匹配（针对 filesystem 类工具的 `path` 参数值）
+    /// Optional path glob match (against the `path` argument value of filesystem-style tools).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_pattern: Option<String>,
-    /// 可选的命令前缀匹配（仅 execute_command）：命令首个空白分词须等于该前缀
-    /// （token 级匹配，防 "cargo; rm -rf /" 这类注入绕过——配合黑名单硬阻断分层）
+    /// Optional command prefix match (execute_command only): the command's first whitespace-delimited token must equal this prefix
+    /// (token-level match blocks injection bypasses like "cargo; rm -rf /"; layered with the hard blacklist).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_prefix: Option<String>,
-    /// 优先级，越大越优先。Deny 类型的规则即使优先级低也优先于 Allow
+    /// Priority: higher wins. Deny rules beat Allow even at lower priority.
     #[serde(default)]
     pub priority: i32,
 }
 
-// ====== 持久化文件 ======
+// ====== Persistence file ======
 
-/// 权限配置持久化文件（`.aio/permissions.json`）
+/// Permission config persistence file (`.aio/permissions.json`).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionsFile {
     pub version: u32,
     pub updated_at: String,
-    /// 自定义规则列表（覆盖内置默认规则）
+    /// Custom rule list (overrides the built-in default rules).
     ///
-    /// 生效语义：Deny 全局优先（不受 priority 影响）；其余动作按 priority 高→低，
-    /// 同优先级时自定义规则胜出。路径规则（path_pattern）支持 path / basePath /
-    /// file_path / filePath / url 与 files / paths 数组参数（详见 path_matches）。
+    /// Effective semantics: Deny wins globally (regardless of priority); other actions rank by priority high -> low,
+    /// with custom rules winning ties. Path rules (path_pattern) support path / basePath /
+    /// file_path / filePath / url plus files / paths array arguments (see path_matches).
     #[serde(default)]
     pub rules: Vec<PermissionRule>,
 }
@@ -82,15 +82,14 @@ impl Default for PermissionsFile {
     }
 }
 
-// （已删除：ToolCategory / categorize_tool —— 零调用的第二张工具分类表，
-//   与下方 default_rules_for_mode 的规则表语义重叠且已漂移）
+// No separate tool-category table: categorization lives solely in the default_rules_for_mode rule table below.
 
-// ====== 内置默认规则 ======
+// ====== Built-in default rules ======
 
-/// 根据 mode 返回内置默认规则集。
-/// 自定义规则（来自 `.aio/permissions.json`）会叠加/覆盖这些默认规则。
-/// 内置规则构造器：默认 server=None / path_pattern=None / priority=10。
-/// 把 8 字段结构体字面量收敛为一行，让模式矩阵可审计。
+/// Returns the built-in default rule set for the given mode.
+/// Custom rules (from `.aio/permissions.json`) stack on top of / override these defaults.
+/// Built-in rule constructor: defaults server=None / path_pattern=None / priority=10.
+/// Collapses the 8-field struct literal to one line so the mode matrix stays auditable.
 fn r(
     id: &str,
     tool_pattern: &str,
@@ -100,7 +99,7 @@ fn r(
     rf(id, tool_pattern, modes, action, None, None, 10)
 }
 
-/// 完整构造器（server / path_pattern / priority 可覆盖）。
+/// Full constructor (server / path_pattern / priority can be overridden).
 #[allow(
     clippy::too_many_arguments,
     reason = "
@@ -131,7 +130,7 @@ fn rf(
 pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
     match mode {
         AgentMode::Off => vec![
-            // Off 模式不应有工具调用，全部拒绝
+            // Off mode must not issue tool calls: deny everything.
             rf(
                 "builtin-off-deny-all",
                 "*",
@@ -144,7 +143,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
         ],
 
         AgentMode::Normal => vec![
-            // 读操作：自动允许
+            // Read operations: auto-allowed.
             r(
                 "builtin-normal-allow-read",
                 "read_file",
@@ -163,7 +162,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
-            // 写操作：需要确认
+            // Write operations: require confirmation.
             r(
                 "builtin-normal-ask-write",
                 "write_file",
@@ -176,7 +175,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
-            // Git 读操作：自动允许
+            // Git read operations: auto-allowed.
             r(
                 "builtin-normal-allow-git-read",
                 "git_status",
@@ -195,7 +194,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
-            // Git 写操作：需要确认
+            // Git write operations: require confirmation.
             r(
                 "builtin-normal-ask-git-add",
                 "git_add",
@@ -214,14 +213,14 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
-            // 删除操作：需要确认
+            // Delete operations: require confirmation.
             r(
                 "builtin-normal-ask-delete",
                 "delete_file",
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
-            // 记忆工具：读放行、写放行（项目内低风险元数据，用户可经 permissions.json 覆盖）
+            // Memory tools: reads and writes allowed (low-risk in-project metadata; users can override via permissions.json).
             r(
                 "builtin-normal-allow-memory-read",
                 "recall",
@@ -252,7 +251,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
-            // 其他 MCP 工具（非内置 filesystem）：需要确认
+            // Other MCP tools (non-builtin filesystem): require confirmation.
             rf(
                 "builtin-normal-ask-other-tools",
                 "*",
@@ -265,7 +264,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
         ],
 
         AgentMode::Auto => vec![
-            // 所有内置 filesystem 操作：自动允许
+            // All built-in filesystem operations: auto-allowed.
             r(
                 "builtin-auto-allow-fs-read",
                 "read_file",
@@ -296,7 +295,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
-            // Git 工具：全部自动允许（Auto 模式的前提是用户已信任所有操作）
+            // Git tools: all auto-allowed (Auto mode presupposes the user has trusted all operations).
             r(
                 "builtin-auto-allow-git-status",
                 "git_status",
@@ -333,21 +332,21 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
-            // 删除操作：需要确认（危险操作）
+            // Delete operations: require confirmation (dangerous).
             r(
                 "builtin-auto-ask-delete",
                 "delete_file",
                 &[AgentMode::Auto],
                 PermissionAction::Ask,
             ),
-            // 命令执行：自动允许（Auto 模式下无需逐条确认，进入前已有风险提醒）
+            // Command execution: auto-allowed (no per-command confirmation in Auto mode; a risk notice was shown on entry).
             r(
                 "builtin-auto-allow-command",
                 "execute_command",
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
-            // 其他 MCP 工具：自动允许
+            // Other MCP tools: auto-allowed.
             rf(
                 "builtin-auto-allow-other-tools",
                 "*",
@@ -360,7 +359,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
         ],
 
         AgentMode::Workflow => vec![
-            // 完全等同于 Auto 模式的权限规则：全自动允许，文件删除需确认
+            // Identical to the Auto mode rules: fully automatic, except file deletion which still asks.
             r(
                 "builtin-workflow-allow-fs-read",
                 "read_file",
@@ -403,21 +402,21 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
-            // 删除操作：需要确认（危险操作）
+            // Delete operations: require confirmation (dangerous).
             r(
                 "builtin-workflow-ask-delete",
                 "delete_file",
                 &[AgentMode::Workflow],
                 PermissionAction::Ask,
             ),
-            // 命令执行：自动允许
+            // Command execution: auto-allowed.
             r(
                 "builtin-workflow-allow-command",
                 "execute_command",
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
-            // 其他 MCP 工具：自动允许
+            // Other MCP tools: auto-allowed.
             rf(
                 "builtin-workflow-allow-other-tools",
                 "*",
@@ -429,7 +428,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
         ],
         AgentMode::Plan => vec![
-            // Plan 模式：只读，所有写/删操作拒绝
+            // Plan mode is read-only: all write/delete operations denied.
             r(
                 "builtin-plan-allow-read",
                 "read_file",
@@ -448,7 +447,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
-            // 写/删操作：拒绝
+            // Write/delete operations: denied.
             rf(
                 "builtin-plan-deny-write",
                 "write_file",
@@ -485,7 +484,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 None,
                 20,
             ),
-            // 禁止 Web 访问
+            // No web access.
             rf(
                 "builtin-plan-deny-web-fetch",
                 "web_fetch",
@@ -504,7 +503,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 None,
                 20,
             ),
-            // Git 读操作：允许（Plan 阶段可以查看历史和状态）
+            // Git read operations: allowed (Plan may inspect history and status).
             r(
                 "builtin-plan-allow-git-status",
                 "git_status",
@@ -523,7 +522,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
-            // Git 写操作：拒绝（Plan 模式不修改文件）
+            // Git write operations: denied (Plan mode makes no file changes).
             rf(
                 "builtin-plan-deny-git-add",
                 "git_add",
@@ -542,7 +541,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 None,
                 20,
             ),
-            // 记忆工具：读放行、写拒绝
+            // Memory tools: reads allowed, writes denied.
             r(
                 "builtin-plan-allow-memory-read",
                 "recall",
@@ -582,7 +581,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 None,
                 20,
             ),
-            // 命令执行有副作用，与 Plan 模式的只研究目标冲突 → 显式拒绝
+            // Command execution has side effects, conflicting with Plan mode's research-only goal -> explicitly denied.
             rf(
                 "builtin-plan-deny-execute-command",
                 "execute_command",
@@ -592,7 +591,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 None,
                 20,
             ),
-            // 其他 MCP 工具需要确认
+            // Other MCP tools require confirmation.
             rf(
                 "builtin-plan-ask-other-tools",
                 "*",
@@ -606,11 +605,11 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
     }
 }
 
-// ====== 简单 Glob 匹配 ======
+// ====== Simple glob matching ======
 
-/// 简单 glob → 正则。
-/// 支持 `*`（任意字符序列，不跨路径分隔符）与 `**`（任意层级，含路径分隔符）。
-/// 其余字符（含 `?`、`[`、`]`）按字面转义，保持与旧实现一致。
+/// Simple glob -> regex.
+/// Supports `*` (any character sequence, not crossing path separators) and `**` (any depth, including path separators).
+/// All other characters (including `?`, `[`, `]`) are escaped literally, preserving the legacy implementation's behavior.
 fn glob_to_regex(pattern: &str) -> String {
     let mut out = String::from("^");
     let mut it = pattern.chars().peekable();
@@ -630,8 +629,8 @@ fn glob_to_regex(pattern: &str) -> String {
     out
 }
 
-/// 简单的 glob 匹配，支持 `*` 与 `**`。
-/// `*` 匹配任意字符序列（不跨 `/`），`**` 匹配任意层级（可跨 `/`）。
+/// Simple glob matching supporting `*` and `**`.
+/// `*` matches any character sequence (not crossing `/`); `**` matches any depth (may cross `/`).
 fn glob_match(pattern: &str, name: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -641,20 +640,20 @@ fn glob_match(pattern: &str, name: &str) -> bool {
         .unwrap_or(false)
 }
 
-// ====== 路径匹配 ======
+// ====== Path matching ======
 
-/// 检查工具参数中的路径类取值是否匹配路径模式。
-/// 如果规则没有 path_pattern，则忽略路径检查。
+/// Checks whether path-like values in the tool arguments match the rule's path pattern.
+/// If the rule has no path_pattern, the path check is skipped.
 ///
-/// 支持的路径类参数键：path、basePath、file_path、filePath、url（单值），
-/// 以及 files / paths（数组，逐元素）——此前只认 path，导致 search_files(basePath)、
-/// git_add(files[]) 等工具静默绕过路径规则。
+/// Supported path-like argument keys: path, basePath, file_path, filePath, url (single values),
+/// plus files / paths (arrays, checked per element), so tools such as search_files(basePath) or
+/// git_add(files[]) cannot silently bypass path rules.
 ///
-/// 语义按规则动作区分（宁紧勿松）：
-/// - Deny 规则：任一路径命中即匹配（数组参数里混入一个受限路径也要触发 Deny）；
-/// - Allow/Ask 规则：所有路径都必须命中（授权范围不允许"部分越界"）。
+/// Semantics differ by rule action (prefer strict over loose):
+/// - Deny rules: any matching path triggers the rule (one restricted path inside an array still triggers Deny);
+/// - Allow/Ask rules: all paths must match (authorization cannot be partially out of bounds).
 ///
-/// 参数完全没有路径类取值时保持历史行为：规则照常匹配（退化为纯 tool_pattern 规则）。
+/// When the arguments carry no path-like values at all, legacy behavior is kept: the rule still matches (degenerates to a pure tool_pattern rule).
 fn path_matches(rule: &PermissionRule, arguments: &Value) -> bool {
     let pattern = match &rule.path_pattern {
         Some(p) => p,
@@ -680,11 +679,11 @@ fn path_matches(rule: &PermissionRule, arguments: &Value) -> bool {
     }
 }
 
-// ====== 会话级 always-allow 规则（P4.5）======
+// ====== Session-level always-allow rules ======
 
-/// 应用运行期间有效的会话规则（审批弹窗"本次会话总是允许"产生）。
-/// 优先级 50（高于内置默认 10/20，低于用户可自定义的更高优先级）；
-/// Deny 规则（任意来源）仍然总是优先——会话放行不能越过 Deny 防线。
+/// Session rules valid while the app process runs (created by the approval dialog's "always allow this session" option).
+/// Priority 50 (above built-in defaults 10/20, below any higher user-defined priority);
+/// Deny rules (from any source) still always win - a session allow cannot cross the Deny line.
 static SESSION_RULES: std::sync::OnceLock<parking_lot::RwLock<Vec<PermissionRule>>> =
     std::sync::OnceLock::new();
 
@@ -692,20 +691,20 @@ fn session_rules() -> &'static parking_lot::RwLock<Vec<PermissionRule>> {
     SESSION_RULES.get_or_init(|| parking_lot::RwLock::new(Vec::new()))
 }
 
-/// 登记一条会话级放行规则（进程生命周期内有效）。
+/// Registers a session-level allow rule (valid for the process lifetime).
 pub fn add_session_rule(rule: PermissionRule) {
     session_rules().write().push(rule);
 }
 
-/// 清空会话规则（测试用）。
+/// Clears session rules (for tests).
 #[cfg(test)]
 pub fn clear_session_rules() {
     session_rules().write().clear();
 }
 
-// ====== 规则评估 ======
+// ====== Rule evaluation ======
 
-/// 检查一条规则是否匹配当前工具调用。
+/// Checks whether a single rule matches the current tool call.
 fn rule_matches(
     rule: &PermissionRule,
     tool_name: &str,
@@ -713,25 +712,25 @@ fn rule_matches(
     arguments: &Value,
     agent_mode: &AgentMode,
 ) -> bool {
-    // 1. 检查模式匹配
+    // 1. Check mode match.
     if !rule.modes.is_empty() && !rule.modes.contains(agent_mode) {
         return false;
     }
-    // 2. 检查 server_id
+    // 2. Check server_id.
     if let Some(ref sid) = rule.server_id {
         if sid != server_id {
             return false;
         }
     }
-    // 3. 检查工具名称 glob
+    // 3. Check tool name glob.
     if !glob_match(&rule.tool_pattern, tool_name) {
         return false;
     }
-    // 4. 检查路径模式（支持多路径键，语义见 path_matches）
+    // 4. Check path pattern (multiple path keys; semantics in path_matches).
     if !path_matches(rule, arguments) {
         return false;
     }
-    // 5. 命令前缀（P4.5）：仅 execute_command 适用——首个空白分词精确匹配
+    // 5. Command prefix: execute_command only - the first whitespace-delimited token must match exactly.
     if let Some(prefix) = &rule.command_prefix {
         let cmd = arguments
             .get("command")
@@ -748,19 +747,19 @@ fn rule_matches(
     true
 }
 
-/// 评估工具调用权限。
+/// Evaluates permission for a tool call.
 ///
-/// # 参数
-/// - `tool_name` — MCP 工具名称
+/// # Arguments
+/// - `tool_name` — MCP tool name
 /// - `server_id` — MCP server ID
-/// - `arguments` — 工具调用参数（JSON）
-/// - `agent_mode` — 当前 agent 模式
-/// - `custom_rules` — 用户自定义规则（来自 `.aio/permissions.json`）
+/// - `arguments` — tool call arguments (JSON)
+/// - `agent_mode` — current agent mode
+/// - `custom_rules` — user-defined rules (from `.aio/permissions.json`)
 ///
-/// # 返回
-/// `PermissionAction::Allow` — 可执行
-/// `PermissionAction::Ask` — 需要用户确认
-/// `PermissionAction::Deny` — 已拒绝
+/// # Returns
+/// `PermissionAction::Allow` — may execute
+/// `PermissionAction::Ask` — requires user confirmation
+/// `PermissionAction::Deny` — denied
 pub fn check_permission(
     tool_name: &str,
     server_id: &str,
@@ -768,7 +767,7 @@ pub fn check_permission(
     agent_mode: &AgentMode,
     custom_rules: &[PermissionRule],
 ) -> PermissionAction {
-    // 1. 收集所有匹配规则（内置 + 自定义 + 会话 always-allow），并标记是否自定义
+    // 1. Collect all matching rules (built-in + custom + session always-allow), flagging which are custom.
     let builtin_rules = default_rules_for_mode(agent_mode);
     let session = session_rules().read().clone();
     let mut all_candidates: Vec<(&PermissionRule, bool)> = Vec::new();
@@ -783,16 +782,15 @@ pub fn check_permission(
             all_candidates.push((rule, true));
         }
     }
-    // P4.5 会话规则：以高优先级参与评估；Deny（任意来源）仍在步骤 3 全局优先
+    // Session rules: participate at high priority; Deny (any source) still wins globally at step 3.
     for rule in &session {
         if rule_matches(rule, tool_name, server_id, arguments, agent_mode) {
             all_candidates.push((rule, true));
         }
     }
 
-    // 2. 按优先级排序（高 → 低）；同优先级时自定义规则优先于内置规则——
-    //    对齐 PermissionsFile.rules 的文档承诺（"覆盖内置默认规则"）。
-    //    （修复前：内置先入列 + 稳定排序，使同优先级自定义规则永远不会赢。）
+    // 2. Sort by priority (high -> low); at equal priority, custom rules beat built-in rules,
+    //    matching the documented promise of PermissionsFile.rules ("override built-in default rules").
     all_candidates.sort_by_key(|(rule, is_custom)| {
         (
             std::cmp::Reverse(rule.priority),
@@ -800,25 +798,25 @@ pub fn check_permission(
         )
     });
 
-    // 3. 检查是否有 Deny（Deny 总是优先于 Allow 和 Ask，不受优先级影响）
+    // 3. Check for any Deny (Deny always beats Allow and Ask, regardless of priority).
     for (rule, _) in &all_candidates {
         if rule.action == PermissionAction::Deny {
             return PermissionAction::Deny;
         }
     }
 
-    // 4. 取最高优先级的非 Deny 动作（同优先级自定义优先）
+    // 4. Take the highest-priority non-Deny action (custom wins ties).
     if let Some((highest, _)) = all_candidates.first() {
         return highest.action.clone();
     }
 
-    // 5. 无匹配规则：fail-closed → Ask
+    // 5. No matching rule: fail-closed -> Ask.
     PermissionAction::Ask
 }
 
-/// 检查工具调用权限（简化版，仅使用内置默认规则，不读取自定义规则）。
-/// 仅供测试与需要"纯内置语义"的内部路径使用；真实工具调用一律走
-/// [`check_permission`]（含 .aio/permissions.json 自定义规则）。
+/// Checks tool call permission (simplified: built-in default rules only, no custom rules read).
+/// For tests and internal paths that need "pure built-in semantics" only; real tool calls must
+/// always go through [`check_permission`] (which includes .aio/permissions.json custom rules).
 #[allow(dead_code)]
 pub fn check_permission_defaults(
     tool_name: &str,
@@ -830,10 +828,10 @@ pub fn check_permission_defaults(
     check_permission(tool_name, server_id, arguments, agent_mode, &custom_rules)
 }
 
-// ====== 路径工具 ======
+// ====== Path utilities ======
 
-/// 加载项目级权限配置。
-/// 如果文件不存在，返回默认空配置。
+/// Loads the project-level permission config.
+/// Returns the default empty config if the file does not exist.
 pub fn load_permissions(project_path: Option<&str>) -> PermissionsFile {
     let path = match project_path {
         Some(p) => std::path::Path::new(p)
@@ -847,7 +845,7 @@ pub fn load_permissions(project_path: Option<&str>) -> PermissionsFile {
     match std::fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<PermissionsFile>(&content) {
             Ok(f) => f,
-            // 解析失败时警告（旧实现静默 unwrap_or_default，用户自定义规则会无声消失）
+            // Warn on parse failure so user-defined rules do not silently vanish.
             Err(e) => {
                 tracing::warn!(
                     "[permissions] 解析 {} 失败，已回退到空配置：{}",
@@ -884,19 +882,19 @@ mod tests {
         assert!(glob_match("*_file", "delete_file"));
         assert!(!glob_match("*_file", "list_directory"));
 
-        // ** 递归匹配路径：dir/** 应匹配深层路径
+        // ** matches paths recursively: dir/** should match deep paths.
         assert!(glob_match("dir/**", "dir/a/b"));
         assert!(glob_match("dir/**", "dir/file.txt"));
         assert!(!glob_match("dir/**", "other/a"));
         assert!(!glob_match("dir/**", "beta/x"));
-        // * 不跨 `/`：dir/* 只匹配单层
+        // * does not cross `/`: dir/* matches one level only.
         assert!(glob_match("dir/*", "dir/a.rs"));
         assert!(!glob_match("dir/*", "dir/a/b.rs"));
-        // .env* 保持现有语义
+        // .env* keeps current semantics.
         assert!(glob_match(".env*", ".env"));
         assert!(glob_match(".env*", ".env.local"));
         assert!(!glob_match(".env*", "x.env"));
-        // ? / [ ] 按字面处理
+        // ? / [ ] are treated literally.
         assert!(glob_match("a?b", "a?b"));
         assert!(!glob_match("a?b", "axb"));
     }
@@ -961,8 +959,8 @@ mod tests {
         assert_eq!(result, PermissionAction::Deny);
     }
 
-    /// P4.5：会话级 always-allow——登记后同形态调用不再 Ask；
-    /// 命令前缀为 token 级匹配（防注入绕过）；Deny 仍然优先。
+    /// Session-level always-allow: once registered, identical calls no longer ask;
+    /// command prefix is token-level matching (blocks injection bypass); Deny still wins.
     #[test]
     fn session_allow_rules_override_ask_but_not_deny() {
         clear_session_rules();
@@ -995,7 +993,7 @@ mod tests {
             ),
             PermissionAction::Allow
         );
-        // 不同前缀 → 不匹配（回落内置 Ask）
+        // Different prefix -> no match (falls back to built-in Ask).
         let npm_args = serde_json::json!({"command": "npm test"});
         assert_eq!(
             check_permission_defaults(
@@ -1006,7 +1004,7 @@ mod tests {
             ),
             PermissionAction::Ask
         );
-        // 前缀注入绕过：首 token 非 cargo → 不匹配
+        // Prefix injection bypass: first token is not cargo -> no match.
         let inject_args = serde_json::json!({"command": "cargox; rm -rf /"});
         assert_eq!(
             check_permission_defaults(
@@ -1017,7 +1015,7 @@ mod tests {
             ),
             PermissionAction::Ask
         );
-        // 会话放行不能越过 Deny（Plan 模式 execute_command 内置 Deny）
+        // Session allow cannot cross Deny (Plan mode has a built-in Deny for execute_command).
         assert_eq!(
             check_permission_defaults(
                 "execute_command",
@@ -1076,7 +1074,7 @@ mod tests {
             action: PermissionAction::Allow,
             path_pattern: None,
             command_prefix: None,
-            priority: 100, // 高于内置（默认 10）
+            priority: 100, // above built-in (default 10)
         }];
         let args = serde_json::json!({"path": "src/old.rs"});
         let result = check_permission(
@@ -1099,7 +1097,7 @@ mod tests {
             action: PermissionAction::Deny,
             path_pattern: Some(".env*".into()),
             command_prefix: None,
-            priority: 5, // 低于内置 allow（10），但 Deny 总是优先
+            priority: 5, // below built-in allow (10), but Deny always wins
         }];
         let args = serde_json::json!({"path": ".env"});
         let result = check_permission(
@@ -1161,18 +1159,17 @@ mod tests {
 
     #[test]
     fn test_no_match_fallbacks_to_ask() {
-        // 自定义工具不在内置规则中
+        // Custom tool not covered by built-in rules.
         let args = serde_json::json!({"query": "SELECT * FROM users"});
         let result =
             check_permission_defaults("custom_db_query", "my-db-server", &args, &AgentMode::Normal);
         assert_eq!(result, PermissionAction::Ask);
     }
 
-    /// 回归：同优先级自定义规则必须覆盖内置规则（对齐文档"覆盖内置默认规则"）。
-    /// 修复前：内置先入列 + 稳定排序，使同优先级自定义永远不会赢。
+    /// Regression: same-priority custom rules must override built-in rules (per the documented "override built-in default rules").
     #[test]
     fn test_custom_rule_same_priority_overrides_builtin() {
-        // Normal 模式 read_file 内置为 Allow（priority 10）；自定义同优先级收紧为 Ask
+        // Normal mode: read_file is built-in Allow (priority 10); a same-priority custom rule tightens it to Ask.
         let custom = vec![PermissionRule {
             id: "tighten-read".into(),
             tool_pattern: "read_file".into(),
@@ -1194,7 +1191,7 @@ mod tests {
         assert_eq!(result, PermissionAction::Ask, "同优先级自定义规则必须胜出");
     }
 
-    /// Deny 全局优先：低优先级自定义 Deny 依然生效。
+    /// Deny wins globally: a low-priority custom Deny still takes effect.
     #[test]
     fn test_custom_low_priority_deny_still_wins() {
         let custom = vec![PermissionRule {
@@ -1218,7 +1215,7 @@ mod tests {
         assert_eq!(result, PermissionAction::Deny);
     }
 
-    /// 回归：path_pattern 必须对 basePath / files[] 参数生效（此前只认 path）。
+    /// Regression: path_pattern must apply to basePath / files[] arguments.
     #[test]
     fn test_path_pattern_matches_basepath_and_files_array() {
         let deny_env = vec![PermissionRule {
@@ -1231,7 +1228,7 @@ mod tests {
             command_prefix: None,
             priority: 100,
         }];
-        // search_files 用 basePath
+        // search_files uses basePath.
         let r = check_permission(
             "search_files",
             crate::core::ids::BUILTIN_FS_SERVER_ID,
@@ -1244,7 +1241,7 @@ mod tests {
             PermissionAction::Deny,
             "basePath 命中 .env* 必须触发 Deny"
         );
-        // git_add 用 files 数组：Deny 语义为任一命中即匹配
+        // git_add uses a files array: Deny semantics match on any hit.
         let r = check_permission(
             "git_add",
             crate::core::ids::BUILTIN_FS_SERVER_ID,
@@ -1259,7 +1256,7 @@ mod tests {
         );
     }
 
-    /// Allow/Ask 路径规则采用全命中语义（不允许部分越界授权）。
+    /// Allow/Ask path rules use all-paths-must-match semantics (no partially out-of-bounds authorization).
     #[test]
     fn test_allow_path_rule_requires_all_paths_to_match() {
         let allow_src = vec![PermissionRule {
@@ -1272,7 +1269,7 @@ mod tests {
             command_prefix: None,
             priority: 100,
         }];
-        // 全部在 src/** 内 → 匹配该 Allow
+        // All paths inside src/** -> matches this Allow rule.
         let r = check_permission(
             "git_add",
             crate::core::ids::BUILTIN_FS_SERVER_ID,
@@ -1281,7 +1278,7 @@ mod tests {
             &allow_src,
         );
         assert_eq!(r, PermissionAction::Allow);
-        // 混入了 src/** 之外的路径 → 该 Allow 规则不匹配，回落到内置/Ask
+        // A path outside src/** mixed in -> this Allow rule no longer matches, falls back to built-in/Ask.
         let r2 = check_permission(
             "git_add",
             crate::core::ids::BUILTIN_FS_SERVER_ID,

@@ -1,9 +1,9 @@
-//! 配置与 meta 域：每项目启用开关、嵌入/重排配置、meta 表、迁移（从 store.rs 拆出）。
+//! Config and meta domain: per-project enable flag, embedding/rerank config, meta table, migrations (split from store.rs).
 use super::*;
 use crate::ierr;
 
 impl MemoryStore {
-    /// 读取本项目记忆开关（meta 覆盖；None = 跟随全局默认）。
+    /// Read this project's memory toggle (meta override; None = follow the global default).
     pub fn project_enabled(&self) -> Result<Option<bool>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let v: Option<String> = conn
@@ -21,7 +21,7 @@ impl MemoryStore {
         }))
     }
 
-    /// 设置本项目记忆开关（None = 清除覆盖，跟随全局默认）。
+    /// Set this project's memory toggle (None = clear the override and follow the global default).
     pub fn set_project_enabled(&self, enabled: Option<bool>) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         match enabled {
@@ -47,8 +47,8 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// 读取 meta 键值。
-    /// 读取项目级嵌入配置（未设置时返回 (本地默认, false)）。
+    /// Read a meta key's value.
+    /// Read the project-level embedding config (returns (local default, false) when unset).
     pub fn embedding_cfg(&self) -> (MemoryEmbeddingConfig, bool) {
         let provider = self.meta_get(META_EMBED_PROVIDER).ok().flatten();
         let model = self.meta_get(META_EMBED_MODEL).ok().flatten();
@@ -62,8 +62,8 @@ impl MemoryStore {
         match provider {
             Some(_) => (
                 MemoryEmbeddingConfig {
-                    // 兼容旧配置：历史 provider 名为 "openai_compat" / "online" / "ollama"，
-                    // 自 v0.8 起全部归一化为 local（在线嵌入已移除），模型名交由解析层迁移。
+                    // Backward compat: legacy provider names were "openai_compat" / "online" / "ollama";
+                    // since v0.8 all normalize to local (online embedding was removed); model names are migrated by the resolution layer.
                     provider: "local".into(),
                     model: model.unwrap_or_default(),
                     api_url: api_url.unwrap_or_default(),
@@ -77,7 +77,7 @@ impl MemoryStore {
         }
     }
 
-    /// 写入项目级嵌入配置（provider/model/apiUrl/维度；apiKey 不落盘，仍在 secure_store）。
+    /// Write the project-level embedding config (provider/model/apiUrl/dimensions; apiKey is not persisted here, it stays in secure_store).
     pub fn set_embedding_cfg(&self, cfg: &MemoryEmbeddingConfig) -> Result<(), String> {
         self.meta_put(META_EMBED_PROVIDER, cfg.provider.as_str())?;
         self.meta_put(META_EMBED_MODEL, cfg.model.as_str())?;
@@ -88,8 +88,8 @@ impl MemoryStore {
         )
     }
 
-    /// 读取项目级重排配置（未设置时返回 (默认, false)）。旧 JSON 中的在线字段
-    /// （apiUrl/apiKey）随结构体收敛被 serde 忽略；provider 统一归一化为 local。
+    /// Read the project-level rerank config (returns (default, false) when unset). Online fields in old JSON
+    /// (apiUrl/apiKey) are ignored by serde now that the struct was narrowed; provider is always normalized to local.
     pub fn rerank_cfg(&self) -> (MemoryRerankConfig, bool) {
         match self.meta_get(META_RERANK).ok().flatten() {
             Some(json) => match serde_json::from_str::<MemoryRerankConfig>(&json) {
@@ -103,7 +103,7 @@ impl MemoryStore {
         }
     }
 
-    /// 写入项目级重排配置（provider/model；写入侧统一归一化 provider 为 local）。
+    /// Write the project-level rerank config (provider/model; provider is always normalized to local on write).
     pub fn set_rerank_cfg(&self, cfg: &MemoryRerankConfig) -> Result<(), String> {
         let mut c = cfg.clone();
         c.provider = "local".into();
@@ -111,8 +111,8 @@ impl MemoryStore {
         self.meta_put(META_RERANK, &json)
     }
 
-    /// 清空全部向量（切换嵌入模型后调用）：事实与代码块保留文本，仅弃用向量；
-    /// vec0/vec_code 表删除，由后续写入按新维度重建。
+    /// Clear all vectors (called after switching embedding models): facts and code chunks keep their text, only vectors are dropped;
+    /// the vec0/vec_code tables are deleted and rebuilt with the new dimensions by later writes.
     pub fn reset_vectors(&self) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute_batch(
@@ -128,7 +128,7 @@ impl MemoryStore {
             .map_err(|e| e.to_string())
     }
 
-    /// 写入 meta 键值。
+    /// Write a meta key's value.
     pub fn meta_put(&self, key: &str, value: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         self.meta_put_inner(&conn, key, value)
@@ -148,7 +148,7 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// 项目记忆库当前的向量维度（meta 记录；从未写入向量时为 None）。
+    /// Current embedding dimension of the project memory store (tracked in meta; None if no vector has ever been written).
     pub fn embedding_dim_meta(&self) -> Option<usize> {
         self.meta_get(META_EMBEDDING_DIM)
             .ok()
@@ -156,7 +156,7 @@ impl MemoryStore {
             .and_then(|v| v.parse::<usize>().ok())
     }
 
-    /// 从旧版 .aio/knowledge.json 迁移事实（幂等，已迁移则跳过）。
+    /// Migrate facts from the legacy .aio/knowledge.json (idempotent; skipped when already migrated).
     pub fn migrate_from_knowledge_json(&self) -> Result<usize, String> {
         let migrated: Option<String> = {
             let conn = self.conn.lock().map_err(|e| e.to_string())?;

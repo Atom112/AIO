@@ -1,6 +1,6 @@
 /**
- * 分享弹窗 — 对话导出为 Markdown / JSON / Screenshot / PDF，支持预览、复制、下载。
- * 仅纯对话模式（isChatMode()）可用；外部需通过 open/onClose 控制显隐。
+ * Share modal - exports the conversation as Markdown / JSON / Screenshot / PDF, with preview, copy, and download.
+ * Only available in pure chat mode (isChatMode()); visibility is controlled externally via open/onClose.
  */
 import {
   Component,
@@ -47,12 +47,12 @@ interface ShareModalProps {
   open: boolean;
   onClose: () => void;
   topic: Topic | null;
-  /** 消息级筛选：仅导出指定 ID 的消息；undefined = 全部 */
+  /** Message-level filter: export only messages with the given IDs; undefined = all */
   selectedMessageIds?: Set<string>;
 }
 
 // -------- standalone utils --------
-/** 触发下载：优先走 Tauri 原生保存对话框，失败则回退到 Blob + anchor */
+/** Trigger a download: prefer the native Tauri save dialog, fall back to Blob + anchor on failure */
 async function downloadBlob(content: string | Blob, filename: string, mime: string) {
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
   try {
@@ -62,9 +62,9 @@ async function downloadBlob(content: string | Blob, filename: string, mime: stri
       await saveBinaryFile(filePath, Array.from(buf));
       return;
     }
-    // 用户取消了保存对话框 → 静默结束
+    // User cancelled the save dialog -> end silently
   } catch {
-    // 非 Tauri 环境或写文件失败 → 回退到浏览器下载
+    // Non-Tauri environment or file write failed -> fall back to browser download
   }
   fallbackDownload(blob, filename);
 }
@@ -89,7 +89,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-/** 拷贝图片到剪贴板（PNG blob） */
+/** Copy an image to the clipboard (PNG blob) */
 async function copyImageToClipboard(dataUrl: string): Promise<boolean> {
   try {
     const res = await fetch(dataUrl);
@@ -101,7 +101,7 @@ async function copyImageToClipboard(dataUrl: string): Promise<boolean> {
   }
 }
 
-/** 从消息提取纯文本 */
+/** Extract plain text from a message */
 function extractText(msg: Message): string {
   if (msg.displayText != null) return String(msg.displayText);
   if (typeof msg.content === 'string') return msg.content;
@@ -113,7 +113,7 @@ function extractText(msg: Message): string {
   return '';
 }
 
-/** 将消息内容渲染为 HTML：assistant 消息走 marked 解析，user 消息保持纯文本（转义） */
+/** Render message content as HTML: assistant messages go through marked, user messages stay plain text (escaped) */
 function renderMessageHtml(msg: Message): string {
   const raw = extractText(msg);
   if (!raw) return `<span style="opacity:0.4">${t('export.empty')}</span>`;
@@ -272,7 +272,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
     return t ? exportAsHtml(t, currentOpts()) : '';
   });
 
-  /** 需要过滤的消息列表（跳过 tool 和可选的 system，并按 selectedMessageIds 筛选） */
+  /** Message list after filtering (skips tool and optional system messages, filtered by selectedMessageIds) */
   const visibleMessages = createMemo(() => {
     const t = topic();
     if (!t) return [];
@@ -285,7 +285,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
     });
   });
 
-  // 弹窗打开时触发入场动画
+  // Trigger the enter animation when the modal opens
   createEffect(() => {
     if (props.open) {
       setIsEntering(true);
@@ -409,7 +409,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
 
   // ---- filter options row (shared by markdown / screenshot / pdf) ----
 
-  /** 自定义复选框（内联组件，避免额外文件依赖） */
+  /** Custom checkbox (inline component to avoid an extra file dependency) */
   const Checkbox = (p: { checked: boolean; onChange: (v: boolean) => void; label: string }) => (
     <label
       class="flex items-center gap-1.5 cursor-pointer select-none hover:text-white/70 transition-colors"
@@ -454,7 +454,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
     </>
   );
 
-  // 分段控件：统一取 btnTabMd 基类 + 选中/未选中态
+  // Segmented control: shared btnTabMd base class + active/inactive states
   const tabClass = (t: Tab) => `${btnTabMd} ${tab() === t ? tabActive : tabInactive}`;
 
   return (
@@ -480,7 +480,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
               border: '1px solid var(--acrylic-border)',
             }}
           >
-            {/* 标题行 */}
+            {/* Title bar */}
             <div class="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] shrink-0">
               <h2 class="m-0 text-lg font-semibold text-white/90">{t('export.shareTitle')}</h2>
               <button onClick={handleClose} class={btnClose} aria-label={t('common.close')}>
@@ -488,7 +488,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
               </button>
             </div>
 
-            {/* Tab 栏 */}
+            {/* Tab bar */}
             <div class="flex gap-0 px-6 pt-4 border-b border-white/[0.06] shrink-0">
               <button class={tabClass('screenshot')} onClick={() => setActiveTab('screenshot')}>
                 {t('export.screenshot')}
@@ -504,7 +504,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
               </button>
             </div>
 
-            {/* 内容区 */}
+            {/* Content area */}
             <div class="flex flex-col flex-1 min-h-0 overflow-hidden">
               <Switch>
                 {/* ======== Screenshot Tab ======== */}
@@ -542,7 +542,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                       </button>
                     </div>
 
-                    {/* 截图预览区 */}
+                    {/* Screenshot preview area */}
                     <div class="flex-1 min-h-0 px-6 pb-2 overflow-auto">
                       <div
                         ref={captureRef}

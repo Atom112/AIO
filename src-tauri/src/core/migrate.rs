@@ -1,26 +1,27 @@
-//! 版本化 SQLite 迁移运行器。
+//! Versioned SQLite migration runner.
 //!
-//! 以 `PRAGMA user_version` 记录已应用到第几版；每条迁移在独立事务中执行，
-//! 成功后推进版本号。迁移动作必须是**幂等**的：历史库可能已通过旧的
-//! "临时 ALTER" 路径部分应用过同一变更（首个版本化运行从 user_version=0 起跑）。
+//! Tracks the applied version via `PRAGMA user_version`; each migration runs in its own
+//! transaction and bumps the version on success. Migration actions must be idempotent:
+//! legacy databases may have partially applied the same change via the old ad-hoc
+//! "temporary ALTER" path (the first versioned run starts at user_version=0).
 //!
-//! 供 chat_history.db（core::db）与项目记忆库（services::memory::store）共用，
-//! 替代此前两处各自手写的 "add column if missing" 序列。
+//! Shared by chat_history.db (core::db) and per-project memory stores
+//! (services::memory::store) as the single source of truth for schema migrations.
 
 use crate::ierr;
 use rusqlite::Connection;
 
-/// 一条迁移：`version` 必须严格递增且 > 0。
+/// A single migration: `version` must be strictly increasing and > 0.
 pub struct Migration {
-    /// 应用后写入 user_version 的目标版本
+    /// Target version written to user_version after applying
     pub version: u32,
-    /// 迁移名（日志定位用）
+    /// Migration name (for log lookup)
     pub name: &'static str,
-    /// 迁移动作（必须是幂等的）
+    /// Migration action (must be idempotent)
     pub run: fn(&Connection) -> Result<(), String>,
 }
 
-/// 按版本顺序执行未应用的迁移；返回本次实际应用的条数。
+/// Runs unapplied migrations in version order; returns how many were applied this run.
 pub fn run_migrations(conn: &Connection, migrations: &[Migration]) -> Result<usize, String> {
     let current: u32 = conn
         .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -71,11 +72,11 @@ pub fn run_migrations(conn: &Connection, migrations: &[Migration]) -> Result<usi
     Ok(applied)
 }
 
-/// 若指定表缺少指定列，则执行 ALTER TABLE ADD COLUMN（幂等辅助）。
+/// Adds a column via ALTER TABLE ADD COLUMN when the table lacks it (idempotent helper).
 ///
-/// # 安全
-/// table / column 仅允许字母、数字、下划线（SQL 标识符白名单），col_type 由调用方
-/// 传入**字面量**常量（不接受外部输入）。
+/// # Safety
+/// table / column allow only letters, digits, and underscores (SQL identifier whitelist);
+/// col_type is a **literal** constant supplied by the caller (never external input).
 pub fn add_column_if_missing(
     conn: &Connection,
     table: &str,
@@ -145,7 +146,7 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(v, 2);
-        // 二次运行应为空操作（幂等）
+        // A second run is a no-op (idempotent)
         assert_eq!(run_migrations(&conn, MIGS).unwrap(), 0);
     }
 
@@ -154,7 +155,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE t (id TEXT);").unwrap();
         add_column_if_missing(&conn, "t", "a", "TEXT").unwrap();
-        add_column_if_missing(&conn, "t", "a", "TEXT").unwrap(); // 重复调用不报错
+        add_column_if_missing(&conn, "t", "a", "TEXT").unwrap(); // Repeated calls do not error
         assert!(add_column_if_missing(&conn, "t", "bad name", "TEXT").is_err());
         assert!(add_column_if_missing(&conn, "t; DROP", "a", "TEXT").is_err());
     }

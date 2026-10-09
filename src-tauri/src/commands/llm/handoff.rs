@@ -1,11 +1,11 @@
-//! 压缩归档与交接文档（snapcompact 式归档、handoff 文档、子智能体进度摘要）。
+//! Compression archives and handoff documents (snapcompact-style archives, handoff docs, subagent progress summaries).
 
 use crate::commands::llm::*;
 use crate::ierr;
 use tauri::AppHandle;
 
-/// 从子智能体上下文提取已完成工作的进度摘要（命中轮数上限或未产出最终文本时使用），
-/// 保证即使任务被截断也能向主 Agent 返回有效信息。
+/// Extract a progress summary of completed work from the subagent context (used when the
+/// round cap is hit or no final text was produced), so a truncated task still returns useful info.
 pub(crate) fn build_subagent_progress_summary(
     sub_msgs: &[serde_json::Value],
     max_rounds: usize,
@@ -79,10 +79,11 @@ pub(crate) fn build_subagent_progress_summary(
     )
 }
 
-/// 本地归档早期消息（snapcompact 式零成本压缩回退）：
-/// 写入 {app_data}/archives/{uuid}.txt，返回 [历史归档 #id] 占位文本（含条数/token 估算/涉及工具）。
-/// 归档与 read_artifact 工具共用同一目录，模型可按占位 ID 读回完整内容。
-/// 占位文本跟随 locale（en-US 英文，其余中文）。
+/// Archive early messages locally (snapcompact-style zero-cost compression fallback):
+/// writes {app_data}/archives/{uuid}.txt and returns a locale-dependent `[Archive #id]`-style
+/// placeholder (message count / token estimate / tools involved). The archive directory is
+/// shared with read_artifact, so the model can read the full content back by placeholder ID.
+/// Placeholder text follows the locale (en-US English, otherwise Chinese).
 pub(crate) fn archive_early_messages(
     app: &AppHandle,
     early: &[serde_json::Value],
@@ -149,8 +150,8 @@ pub(crate) fn archive_early_messages(
     })
 }
 
-/// 生成工作交接文档（handoff）：写入 {app_data}/handoffs/{assistant}-{topic}-{ts}.md。
-/// 内容：时间/状态、已完成内容（截断）、涉及文件（从工具调用参数提取）、未完成原因。
+/// Write a work handoff document: {app_data}/handoffs/{assistant}-{topic}-{ts}.md.
+/// Contents: time/status, completed work (truncated), files touched (from tool-call args), failure reason.
 pub(crate) fn write_handoff_doc(
     app: &AppHandle,
     assistant_id: &str,
@@ -172,7 +173,7 @@ pub(crate) fn write_handoff_doc(
         .join("handoffs");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    // 收集涉及文件（从 assistant 消息的 tool_calls 参数中提取 path）
+    // collect files involved (path extracted from tool_calls args in assistant messages)
     let mut files: Vec<String> = Vec::new();
     for msg in messages {
         if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
@@ -263,7 +264,7 @@ pub(crate) fn write_handoff_doc(
     Ok(path.display().to_string())
 }
 
-/// ID 安全化（文件名前缀用）：仅保留字母数字与连字符，截断 12 字符。
+/// Sanitize an ID for a filename prefix: keep only alphanumerics and hyphens, truncated to 12 chars.
 fn sanitize_id(id: &str) -> String {
     id.chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
@@ -271,11 +272,12 @@ fn sanitize_id(id: &str) -> String {
         .collect()
 }
 
-/// 从指定目录消费交接文档（核心逻辑，可单测）：
-/// - 查找 {assistant}-{topic}-*.md，按文件名字典序（unix 秒后缀 → 时间序）取最新；
-/// - 读取内容（头尾截断 4000 字符，与写入侧一致）；
-/// - 删除该前缀全部文件（consume-once：每次未完成回合只回注一次；
-///   更早的同话题文档已被最新者取代，一并清理）。
+/// Consume the handoff document from a directory (core logic, unit-testable):
+/// - find {assistant}-{topic}-*.md and take the newest by lexicographic filename order
+///   (unix-second suffix -> chronological order);
+/// - read the content (head/tail truncated to 4000 chars, matching the writer);
+/// - delete all files with that prefix (consume-once: re-injected once per unfinished
+///   turn; superseded earlier docs for the same topic are cleaned up as well).
 pub(crate) fn consume_handoff_doc_from_dir(
     dir: &std::path::Path,
     assistant_id: &str,
@@ -295,7 +297,7 @@ pub(crate) fn consume_handoff_doc_from_dir(
         .collect();
     candidates.sort();
     let newest = candidates.pop()?;
-    // 清理被取代的旧文档（同前缀）
+    // clean up superseded older docs (same prefix)
     for old in &candidates {
         let _ = std::fs::remove_file(old);
     }
@@ -307,8 +309,8 @@ pub(crate) fn consume_handoff_doc_from_dir(
     Some(truncate_chars_head_tail(&content, 4000))
 }
 
-/// 消费上回合交接文档（app_data/handoffs），供新回合回注。
-/// 无文档/目录不存在时返回 None。
+/// Consume the previous turn's handoff document (app_data/handoffs) for re-injection into
+/// the new turn. Returns None when no document or directory exists.
 pub(crate) fn consume_handoff_doc(
     app: &AppHandle,
     assistant_id: &str,
@@ -317,13 +319,13 @@ pub(crate) fn consume_handoff_doc(
     let dir = app.path().app_data_dir().ok()?.join("handoffs");
     consume_handoff_doc_from_dir(&dir, assistant_id, topic_id)
 }
-// compute_diff_preview / simple_diff 已下沉到 utils::diff（通用工具函数）
+// compute_diff_preview / simple_diff live in utils::diff (generic utilities)
 
-/// 为自动事实提取构造对话转写：取最近 12 条非 system 消息，截断到 ~10k 字符。
+/// Build a conversation transcript for automated fact extraction: last 12 non-system messages, truncated to ~10k chars.
 pub(crate) fn build_extract_transcript(messages: &[serde_json::Value]) -> String {
     let mut parts: Vec<String> = Vec::new();
     let recent: Vec<&serde_json::Value> = messages.iter().rev().take(12).collect();
-    // 序号从 0 递增（[role#idx]），供提取器以 evidence 引用依据消息
+    // index increments from 0 ([role#idx]), letting the extractor cite messages as evidence
     let mut idx = 0usize;
     for m in recent.iter().rev() {
         let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("");
@@ -352,7 +354,7 @@ mod handoff_tests {
         dir
     }
 
-    /// 消费语义：取最新、consume-once、清理同前缀旧文件、不影响其他话题。
+    /// Consume semantics: newest wins, consume-once, same-prefix cleanup, other topics untouched.
     #[test]
     fn consume_returns_newest_and_cleans_up() {
         let dir = temp_dir("consume");
@@ -380,7 +382,7 @@ mod handoff_tests {
             consume_handoff_doc_from_dir(&dir, "a1", "t2").is_some(),
             "其他话题不受影响"
         );
-        // t1 的两个文档在第一次消费时清理；t2 的文档在上一行断言时被消费
+        // t1's two docs are cleaned up by the first consume; t2's doc was consumed by the assertion above
         let remaining: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -393,7 +395,7 @@ mod handoff_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 长文档头尾截断到 4000 字符（与写入侧一致）。
+    /// Long documents are head/tail truncated to 4000 chars (matching the writer).
     #[test]
     fn consume_truncates_long_content() {
         let dir = temp_dir("truncate");
@@ -403,7 +405,7 @@ mod handoff_tests {
             &long,
         )
         .unwrap();
-        // 长 ID 会被 sanitize 到 12 字符：与写入侧命名一致
+        // long IDs are sanitized to 12 chars: matches the writer-side naming
         let got =
             consume_handoff_doc_from_dir(&dir, &"a".repeat(20), &"b".repeat(20)).expect("应找到");
         assert!(got.len() < 5_000, "应头尾截断: {}", got.len());
@@ -411,7 +413,7 @@ mod handoff_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 空文档视为无交接。
+    /// An empty document counts as no handoff.
     #[test]
     fn consume_empty_doc_returns_none() {
         let dir = temp_dir("empty");

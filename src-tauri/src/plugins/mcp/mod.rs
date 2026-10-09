@@ -1,9 +1,9 @@
-//! MCP 插件系统入口
+//! MCP plugin system entry point
 //!
-//! 设计参考 [`crate::plugins::engine`] 模块的 `LocalEnginePlugin` 模式：
-//! - 各传输实现 [`McpServerPlugin`] trait
-//! - [`McpServerManager`] 集中管理所有插件，按 transport 类型分发
-//! - 持久化在 `$APPDATA/com.loch.aio/mcp-servers.json`（独立于 provider-configs.json）
+//! Design follows the `LocalEnginePlugin` pattern of the [`crate::plugins::engine`] module:
+//! - each transport implements the [`McpServerPlugin`] trait
+//! - [`McpServerManager`] centrally manages all plugins and dispatches by transport type
+//! - persisted at `$APPDATA/com.loch.aio/mcp-servers.json` (separate from provider-configs.json)
 
 pub mod connection;
 pub mod convert;
@@ -26,22 +26,22 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-/// MCP 传输插件 trait
+/// MCP transport plugin trait
 #[async_trait]
 pub trait McpServerPlugin: Send + Sync {
-    /// 唯一标识符：stdio / http / streamable_http
+    /// Unique identifier: stdio / http / streamable_http
     fn identifier(&self) -> &'static str;
 
-    /// 启动一个 MCP server 连接
+    /// Start an MCP server connection
     async fn start(&self, app: AppHandle, config: &McpServerConfig) -> McpResult<McpConnection>;
 
-    /// MCP 协议握手：initialize
+    /// MCP protocol handshake: initialize
     async fn initialize(&self, conn: &McpConnection) -> McpResult<McpServerInfo>;
 
-    /// 获取 server 提供的工具列表
+    /// List the tools provided by the server
     async fn list_tools(&self, conn: &McpConnection) -> McpResult<Vec<ToolSpec>>;
 
-    /// 调用一个工具
+    /// Call a tool
     async fn call_tool(
         &self,
         conn: &McpConnection,
@@ -50,12 +50,12 @@ pub trait McpServerPlugin: Send + Sync {
         timeout: Duration,
     ) -> McpResult<ToolResult>;
 
-    /// 获取 server 提供的资源列表
+    /// List the resources provided by the server
     async fn list_resources(&self, _conn: &McpConnection) -> McpResult<Vec<McpResource>> {
         Ok(Vec::new())
     }
 
-    /// 读取一个资源
+    /// Read a resource
     async fn read_resource(
         &self,
         _conn: &McpConnection,
@@ -64,12 +64,12 @@ pub trait McpServerPlugin: Send + Sync {
         Err(McpError::Unimplemented("resources/read 未实现".into()))
     }
 
-    /// 获取 server 提供的提示词列表
+    /// List the prompts provided by the server
     async fn list_prompts(&self, _conn: &McpConnection) -> McpResult<Vec<McpPrompt>> {
         Ok(Vec::new())
     }
 
-    /// 获取一个提示词
+    /// Get a prompt
     async fn get_prompt(
         &self,
         _conn: &McpConnection,
@@ -79,52 +79,52 @@ pub trait McpServerPlugin: Send + Sync {
         Err(McpError::Unimplemented("prompts/get 未实现".into()))
     }
 
-    /// 关闭连接
+    /// Close the connection
     async fn stop(&self, conn: McpConnection) -> McpResult<()>;
 }
 
-/// 默认调用工具超时
-/// 单个 server 最多允许的工具数（防御 tools/list 爆炸）
+/// Default tool call timeout
+/// Maximum number of tools allowed per server (guards against tools/list explosion)
 pub const MAX_TOOLS_PER_SERVER: usize = 100;
 
-/// MCP 插件注册中心
+/// MCP plugin registry
 pub struct McpServerManager {
     plugins: HashMap<String, Arc<dyn McpServerPlugin>>,
 }
 
 impl McpServerManager {
-    /// 构造并注册所有内置插件
+    /// Construct and register all built-in plugins
     pub fn builtin() -> Self {
         let mut mgr = Self {
             plugins: HashMap::new(),
         };
         mgr.register(Arc::new(stdio::StdioPlugin));
         mgr.register(Arc::new(http::HttpPlugin::new()));
-        // P4.2：补齐 Streamable HTTP 传输注册（此前枚举存在但无插件，配置即启动失败）
+        // Register the Streamable HTTP transport (the enum variant previously had no plugin, so any such config failed at startup)
         mgr.register(Arc::new(http::HttpPlugin::streamable()));
         mgr
     }
 
-    /// 注册一个新传输插件
+    /// Register a new transport plugin
     pub fn register(&mut self, plugin: Arc<dyn McpServerPlugin>) {
         self.plugins.insert(plugin.identifier().to_string(), plugin);
     }
 
-    /// 按 transport 字符串获取插件
+    /// Get a plugin by transport string
     pub fn get(&self, id: &str) -> Option<Arc<dyn McpServerPlugin>> {
         self.plugins.get(id).cloned()
     }
 
-    /// 列出所有已注册插件的 identifier
+    /// List the identifiers of all registered plugins
     pub fn list(&self) -> Vec<String> {
         self.plugins.keys().cloned().collect()
     }
 }
 
-// ====== MCP 运行时状态 ======
+// ====== MCP runtime state ======
 
-/// MCP 服务器连接池：server_id → McpConnection
-/// 锁策略：与 LocalEngineState 一致，单锁避免嵌套死锁
+/// MCP server connection pool: server_id -> McpConnection
+/// Lock policy: single lock (same as LocalEngineState) to avoid nested deadlocks
 pub struct McpServerState(
     pub parking_lot::Mutex<std::collections::HashMap<String, Arc<McpConnection>>>,
 );
@@ -143,8 +143,8 @@ impl McpServerState {
     }
 }
 
-/// 在途 MCP 工具调用：call_id → JoinHandle<Result<ToolResult, McpError>>
-/// 用户点停止时遍历 abort 所有
+/// In-flight MCP tool calls: call_id -> JoinHandle<Result<ToolResult, McpError>>
+/// When the user hits stop, all entries are iterated and aborted
 pub struct McpRequestManager(
     pub Arc<DashMap<String, JoinHandle<std::result::Result<ToolResult, McpError>>>>,
 );
@@ -154,7 +154,7 @@ impl McpRequestManager {
         Self(Arc::new(DashMap::new()))
     }
 
-    /// 中止所有在途调用
+    /// Abort all in-flight calls
     pub fn abort_all(&self) {
         for entry in self.0.iter() {
             entry.value().abort();
@@ -163,7 +163,7 @@ impl McpRequestManager {
     }
 }
 
-/// 审批上下文（P4.5："本次会话总是允许"派生会话规则的依据）
+/// Approval context (basis for deriving a session rule from "always allow this session")
 #[derive(Clone, Debug)]
 pub struct ApprovalContext {
     pub server_id: String,
@@ -171,9 +171,9 @@ pub struct ApprovalContext {
     pub arguments: serde_json::Value,
 }
 
-/// 待处理的工具调用审批：approval_id → (oneshot::Sender<bool>, 审批上下文)
-/// 前端调用 `respond_tool_approval(approval_id, approved, always?)` 时触发对应 channel；
-/// always=Some("session") 时按上下文派生会话级放行规则。
+/// Pending tool-call approvals: approval_id -> (oneshot::Sender<bool>, approval context)
+/// The channel is signaled when the frontend calls `respond_tool_approval(approval_id, approved, always?)`;
+/// always=Some("session") derives a session-level allow rule from the context.
 pub struct PendingApprovals(pub Arc<DashMap<String, (oneshot::Sender<bool>, ApprovalContext)>>);
 
 impl PendingApprovals {
@@ -181,20 +181,20 @@ impl PendingApprovals {
         Self(Arc::new(DashMap::new()))
     }
 
-    /// 插入一个待审批项，返回 approval_id
+    /// Insert a pending approval item and return its approval_id
     pub fn insert(&self, tx: oneshot::Sender<bool>, ctx: ApprovalContext) -> String {
         let id = uuid::Uuid::new_v4().to_string();
         self.0.insert(id.clone(), (tx, ctx));
         id
     }
 
-    /// 移除并返回对应 channel 与审批上下文（消费一次）
+    /// Remove and return the channel and approval context (consumed once)
     pub fn remove(&self, id: &str) -> Option<(oneshot::Sender<bool>, ApprovalContext)> {
         self.0.remove(id).map(|(_, v)| v)
     }
 }
 
-// ====== 持久化 ======
+// ====== Persistence ======
 
 const MCP_FILE: &str = "mcp-servers.json";
 
@@ -225,9 +225,9 @@ pub fn save_mcp_servers(app: &AppHandle, file: &McpServersFile) -> McpResult<()>
     Ok(())
 }
 
-// ====== 项目级 MCP 文件操作 ======
+// ====== Project-level MCP file operations ======
 
-/// 加载项目级 mcp-servers.json（不存在则返回空）。
+/// Load the project-level mcp-servers.json (returns empty if the file does not exist).
 pub fn load_project_mcp_servers(project_path: &str) -> McpServersFile {
     let p = std::path::PathBuf::from(project_path)
         .join(".aio")
@@ -241,7 +241,7 @@ pub fn load_project_mcp_servers(project_path: &str) -> McpServersFile {
         .unwrap_or_default()
 }
 
-/// 保存项目级 mcp-servers.json。
+/// Save the project-level mcp-servers.json.
 pub fn save_project_mcp_servers(project_path: &str, file: &McpServersFile) -> McpResult<()> {
     let p = std::path::PathBuf::from(project_path)
         .join(".aio")
@@ -254,7 +254,7 @@ pub fn save_project_mcp_servers(project_path: &str, file: &McpServersFile) -> Mc
     Ok(())
 }
 
-/// 合并全局 + 项目的 MCP configs（项目同 ID 覆盖全局）。
+/// Merge global + project MCP configs (project entries with the same ID override global ones).
 pub fn merge_mcp_configs(
     global: &McpServersFile,
     project: &McpServersFile,
@@ -266,7 +266,7 @@ pub fn merge_mcp_configs(
     merged
 }
 
-/// 列出合并后的 server 列表（全局 + 项目，项目优先）。
+/// List the merged server configs (global + project, project takes precedence).
 pub fn list_configs_merged(
     app: &AppHandle,
     project_id: Option<&str>,
@@ -283,8 +283,8 @@ pub fn list_configs_merged(
     Ok(merged.into_values().collect())
 }
 
-/// 通过 project_id 解析项目路径（实现统一在 utils::project_index：
-/// 类型化解析 + Windows 扩展前缀归一化）。
+/// Resolve a project path by project_id (implementation lives in utils::project_index:
+/// typed resolution + Windows extended-path prefix normalization).
 pub(crate) fn resolve_project_path(app: &AppHandle, project_id: &str) -> McpResult<String> {
     crate::utils::project_index::project_path(app, project_id).map_err(McpError::Server)
 }
@@ -296,7 +296,7 @@ pub fn upsert_config(app: &AppHandle, config: McpServerConfig) -> McpResult<()> 
     save_mcp_servers(app, &file)
 }
 
-/// Upsert 到项目级文件。
+/// Upsert into the project-level file.
 pub fn upsert_project_config(project_path: &str, config: McpServerConfig) -> McpResult<()> {
     let mut file = load_project_mcp_servers(project_path);
     file.servers.insert(config.id.clone(), config);
@@ -311,7 +311,7 @@ pub fn remove_config(app: &AppHandle, id: &str) -> McpResult<()> {
     save_mcp_servers(app, &file)
 }
 
-/// 从项目级文件删除。
+/// Remove from the project-level file.
 pub fn remove_project_config(project_path: &str, id: &str) -> McpResult<()> {
     let mut file = load_project_mcp_servers(project_path);
     file.servers.remove(id);
@@ -319,13 +319,13 @@ pub fn remove_project_config(project_path: &str, id: &str) -> McpResult<()> {
     save_project_mcp_servers(project_path, &file)
 }
 
-/// 查找 MCP server 配置（合并视图：项目级优先）。
+/// Look up an MCP server config (merged view: project-level first).
 pub fn get_config_merged(
     app: &AppHandle,
     id: &str,
     project_id: Option<&str>,
 ) -> Option<McpServerConfig> {
-    // 1. 有 project_id → 精确查找项目
+    // 1. With project_id -> resolve the exact project
     if let Some(pid) = project_id {
         if let Ok(project_path) = resolve_project_path(app, pid) {
             let project = load_project_mcp_servers(&project_path);
@@ -334,27 +334,27 @@ pub fn get_config_merged(
             }
         }
     }
-    // 2. 全局查找
+    // 2. Global lookup
     let global = load_mcp_servers(app);
     global.servers.get(id).cloned()
 }
 
-/// 轻量级时间戳（秒级 Unix time，不引入 chrono 依赖）。
-/// 实现统一在 utils::time。
+/// Lightweight timestamp (Unix seconds; avoids pulling in chrono).
+/// Implementation lives in utils::time.
 fn now_timestamp() -> String {
     crate::utils::time::now_unix_secs_string()
 }
 
-// ====== 工具函数：解析 env 占位符 ======
+// ====== Helpers: resolving env placeholders ======
 
-/// 检查 env 字段中是否包含 keyring 占位符
+/// Check whether any env field contains a keyring placeholder
 #[allow(dead_code)]
 pub fn env_has_keyring_placeholder(env: &BTreeMap<String, String>) -> bool {
     env.values().any(|v| v.contains("${KEYRING:"))
 }
 
-/// 把 env 中的 keyring 占位符解析为真实值
-/// 仅供 stdio transport 在启动子进程前调用
+/// Resolve keyring placeholders in env to real values
+/// Called only by the stdio transport before spawning the child process
 pub fn resolve_env_placeholders(
     app: &AppHandle,
     server_id: &str,
@@ -365,7 +365,7 @@ pub fn resolve_env_placeholders(
         let actual = if let Some(start) = v.find("${KEYRING:") {
             if let Some(end) = v[start..].find('}') {
                 let account_full = &v[start + 9..start + end];
-                // account_full 形如 "mcp-server-{server_id}-env-{env_key}"
+                // account_full looks like "mcp-server-{server_id}-env-{env_key}"
                 let value = crate::core::secure_store::get(app, account_full)
                     .map_err(|e| {
                         McpError::Server(format!("读取 keyring {} 失败: {}", account_full, e))
@@ -382,7 +382,7 @@ pub fn resolve_env_placeholders(
         } else {
             v.clone()
         };
-        // 防止把 keyring account 名误传给子进程：server_id 占位
+        // Prevent the keyring account name from being passed to the child process: substitute the server_id placeholder
         let actual = actual.replace(&"${SERVER_ID}".to_string(), server_id);
         resolved.insert(k.clone(), actual);
     }

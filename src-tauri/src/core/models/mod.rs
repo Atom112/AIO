@@ -1,6 +1,6 @@
-//! 共享数据模型（按域拆分；原为 1152 行单文件倾倒场）。
+//! Shared data models, split by domain.
 //!
-//! 兼容性：此处以 pub use 全量再导出，外部路径 crate::core::models::X 保持不变。
+//! Compatibility: everything is re-exported here via pub use, so external paths like crate::core::models::X stay unchanged.
 
 pub mod agent;
 pub mod chat;

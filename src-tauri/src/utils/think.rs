@@ -1,15 +1,15 @@
-//! 内置 Think 工具 — 结构化思考。
+//! Built-in Think tool — structured thinking.
 //!
-//! 提供一个 no-op 工具，允许模型在工具调用中输出结构化思考。
-//! 工具接收一个 `thought` 参数并返回确认文本，无副作用。
+//! Provides a no-op tool that lets the model emit structured thinking within tool calls.
+//! The tool takes a `thought` parameter and returns a confirmation text; no side effects.
 //!
-//! 用于 Plan 模式和编排场景，让模型在调用执行工具前先整理思路。
+//! Used in Plan mode and orchestration scenarios so the model can organize its thoughts before calling execution tools.
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::utils::tool_result::tool_ok;
 use serde_json::json;
 
-/// 返回 Think 工具的 ToolSpec。
+/// Return the ToolSpec of the Think tool.
 pub fn tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
@@ -30,7 +30,7 @@ pub fn tool_spec() -> ToolSpec {
     }
 }
 
-/// 执行 Think 工具（no-op，返回确认文本）。
+/// Execute the Think tool (no-op; returns a confirmation text).
 pub fn execute(arguments: &serde_json::Value) -> ToolResult {
     let thought = arguments["thought"].as_str().unwrap_or("");
 

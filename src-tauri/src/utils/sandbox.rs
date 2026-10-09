@@ -1,21 +1,21 @@
-//! Windows Job Object 沙箱 —— 限制 Agent 命令子进程的能力。
+//! Windows Job Object sandbox — restricts the capabilities of Agent command subprocesses.
 //!
-//! 当 Agent 通过 `execute_command` 执行系统命令时，为**每次执行**创建独立的
-//! Job Object 并将子进程分配进去（返回守卫），实现以下限制：
-//! - 守卫 Drop 时（超时/正常返回/提前放弃）自动清理整棵子进程树（KILL_ON_JOB_CLOSE）
-//! - 活跃进程数上限 256（允许真实构建工具链并行，同时兜底 fork bomb）
-//! - 禁止子进程访问桌面/创建窗口（UILIMIT_DESKTOP）
+//! When the Agent runs a system command via `execute_command`, an independent Job Object
+//! is created **per execution** and the child process assigned into it (returning a guard):
+//! - On guard Drop (timeout / normal return / early abandon) the whole child process tree is cleaned up automatically (KILL_ON_JOB_CLOSE)
+//! - Active process count capped at 256 (lets real build toolchains run in parallel while still bounding fork bombs)
+//! - Child processes are denied desktop access / window creation (UILIMIT_DESKTOP)
 //!
-//! 注意：不限制文件读写（工具需要）和网络访问（web_tools 有独立防护）。
+//! Note: file reads/writes (needed by tools) and network access (web_tools has its own guard) are not restricted.
 //!
-//! 非 Windows 平台此模块为空实现（no-op 守卫）。
+//! On non-Windows platforms this module is an empty implementation (no-op guard).
 
 #[cfg(windows)]
 mod imp {
     use crate::ierr;
     use std::process::Child;
 
-    // Win32 类型
+    // Win32 types
     type Handle = isize;
     type Bool = i32;
     type Dword = u32;
@@ -89,10 +89,10 @@ mod imp {
         ui_restrictions_class: Dword,
     }
 
-    /// 每次执行独立的 Job Object 守卫：持有唯一句柄，Drop 时关闭句柄，
-    /// 触发 KILL_ON_JOB_CLOSE 清理整棵进程树（超时/正常返回统一兜底，
-    /// 孙进程不再存活到应用退出——修复旧全局 job 从不关闭、超时只杀
-    /// 直接子进程的问题）。
+    /// Per-execution Job Object guard: holds the unique handle; closing it on Drop
+    /// triggers KILL_ON_JOB_CLOSE and tears down the whole process tree (uniform
+    /// backstop for both timeout and normal return, so grandchild processes
+    /// never outlive the execution).
     pub struct JobGuard {
         handle: Handle,
     }
@@ -105,16 +105,16 @@ mod imp {
         }
     }
 
-    /// 创建并配置限制性 Job Object（每次执行独立创建）。
+    /// Creates and configures a restrictive Job Object (one per execution).
     fn configure_job_object() -> Result<Handle, String> {
         unsafe {
-            // 创建未命名的 Job Object
+            // Create an unnamed Job Object
             let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if handle == 0 {
                 return Err(ierr!("CreateJobObjectW 失败", "CreateJobObjectW failed"));
             }
 
-            // 设置扩展限制：KILL_ON_JOB_CLOSE + 活跃进程限制
+            // Set extended limits: KILL_ON_JOB_CLOSE + active process limit
             let extended = JobObjectExtendedLimitInformation {
                 basic_limit_information: JobObjectBasicLimitInformation {
                     per_process_user_time_limit: 0,
@@ -123,10 +123,10 @@ mod imp {
                         | JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
                     minimum_working_set_size: 0,
                     maximum_working_set_size: 0,
-                    // 允许真实工具链运行（cargo build 并行 rustc、npm 工作进程等），
-                    // 同时兜底 fork bomb（配合危险命令词法检测）。旧全局 job 上限 2
-                    // 会让任何派生 2 个以上子进程的构建工具直接失败，且并发命令共享
-                    // 同一个 job 相互挤压。
+                    // Lets real toolchains run (cargo build spawning parallel rustc,
+                    // npm worker processes, etc.) while still bounding fork bombs
+                    // (together with dangerous-command lexical screening). Per-execution
+                    // jobs keep concurrent commands from squeezing each other's process quota.
                     active_process_limit: 256,
                     affinity: 0,
                     priority_class: 0,
@@ -160,7 +160,7 @@ mod imp {
                 ));
             }
 
-            // 设置 UI 限制：禁止桌面/窗口访问
+            // Set UI restrictions: deny desktop / window access
             let ui_restrictions = JobObjectBasicUiRestrictions {
                 ui_restrictions_class: JOB_OBJECT_UILIMIT_DESKTOP | JOB_OBJECT_UILIMIT_HANDLES,
             };
@@ -182,23 +182,23 @@ mod imp {
         }
     }
 
-    /// 为单次执行创建独立 Job Object 并分配子进程，返回守卫。
+    /// Creates an independent Job Object for a single execution, assigns the child process, and returns the guard.
     ///
     /// # Safety
-    /// 此函数调用 Win32 FFI。调用方必须确保 `child` 已成功 spawn。
+    /// This function calls Win32 FFI. The caller must ensure `child` was spawned successfully.
     pub fn create_job_for_child(child: &Child) -> Result<JobGuard, String> {
         create_job_for_pid_impl(child.id())
     }
 
-    /// 按 PID 创建独立 Job Object 并分配（AppContainer 挂起进程入队复用）。
+    /// Creates an independent Job Object and assigns the process by PID (reused to enqueue AppContainer suspended processes).
     pub(crate) fn create_job_for_pid_impl(pid: u32) -> Result<JobGuard, String> {
         let job = configure_job_object()?;
 
         unsafe {
-            // 打开进程句柄（需要 SET_QUOTA 和 TERMINATE 权限）
+            // Open the process handle (needs SET_QUOTA and TERMINATE access rights)
             let process_handle = OpenProcess(
                 PROCESS_SET_QUOTA | PROCESS_TERMINATE,
-                0, // 不继承句柄
+                0, // do not inherit the handle
                 pid,
             );
             if process_handle == 0 {
@@ -206,7 +206,7 @@ mod imp {
                 return Err(ierr!("OpenProcess({}) 失败", "OpenProcess({}) failed", pid));
             }
 
-            // 分配到 Job Object
+            // Assign to the Job Object
             let result = AssignProcessToJobObject(job, process_handle);
             CloseHandle(process_handle);
 
@@ -224,19 +224,19 @@ mod imp {
     }
 }
 
-/// Windows Job Object 沙箱守卫（每次执行独立创建，见模块头注释）。
+/// Windows Job Object sandbox guard (created per execution; see the module header).
 #[cfg(windows)]
 pub use imp::JobGuard;
 
-/// 非 Windows 平台的 no-op 守卫（调用方无需平台条件编译）。
+/// No-op guard for non-Windows platforms (callers need no platform-specific cfg).
 #[cfg(not(windows))]
 pub struct JobGuard;
 
-/// 将子进程分配到**每次执行独立**的 Windows Job Object 沙箱，返回守卫。
+/// Assigns the child process to a Windows Job Object sandbox created **per execution** and returns the guard.
 ///
-/// 守卫必须存活到该次执行结束；超时路径可提前 drop 以立即清理整棵进程树。
+/// The guard must stay alive until that execution finishes; the timeout path may drop it early to clean up the whole process tree immediately.
 ///
-/// 非 Windows 平台：返回 no-op 守卫，始终成功。
+/// Non-Windows platforms: returns a no-op guard and always succeeds.
 #[allow(unused_variables)]
 pub fn assign_to_job(child: &std::process::Child) -> Result<JobGuard, String> {
     #[cfg(windows)]
@@ -249,34 +249,36 @@ pub fn assign_to_job(child: &std::process::Child) -> Result<JobGuard, String> {
     }
 }
 
-/// 按 PID 将进程加入每次执行独立的 Job Object（AppContainer 路径使用：
-/// 进程以 CREATE_SUSPENDED 创建后、ResumeThread 之前入队，避免竞态逃逸）。
+/// Adds a process by PID to a per-execution Job Object (used by the AppContainer path:
+/// the process is enqueued after CREATE_SUSPENDED creation and before ResumeThread, avoiding race-condition escapes).
 #[cfg(windows)]
 pub fn create_job_for_pid(pid: u32) -> Result<JobGuard, String> {
     imp::create_job_for_pid_impl(pid)
 }
 
-// ====== Windows AppContainer 沙箱（P3.3）======
+// ====== Windows AppContainer sandbox ======
 //
-// OS 级文件写管控 + 默认断网：每项目独立 profile，ACL 仅授权项目根/专用临时
-// 目录/配置的工具链目录；进程经 SECURITY_CAPABILITY 属性在 AppContainer 令牌
-// 下创建，无 capability = 无网络出口（network=true 注入 internetClient）。
-// 与 Job Object 叠加（进程数/生命周期限制 + 整树清理）。详见模块头注释。
+// OS-level file-write control + network denied by default: one profile per project,
+// ACLs grant only the project root / dedicated temp dir / configured toolchain dirs;
+// processes are created under an AppContainer token via the SECURITY_CAPABILITY
+// attribute — no capability = no network egress (network=true injects internetClient).
+// Layered on top of the Job Object (process count / lifetime limits + whole-tree cleanup). See the module header.
 #[cfg(windows)]
 pub(crate) mod win_appcontainer;
 #[cfg(windows)]
 pub use win_appcontainer::{spawn_in_appcontainer, terminate, wait_with_timeout};
 
-// ====== Linux / macOS 命令沙箱 ======
+// ====== Linux / macOS command sandbox ======
 //
-// 在 Unix 上 Agent 命令默认无进程隔离。这里做 best-effort 包装：
-// - Linux：若 `bwrap`(bubblewrap) 可用，以“系统只读 + 仅项目目录可写 + 私有 /tmp +
-//   独立 PID 命名空间”的方式执行；命令可正常联网/写项目，无法写到系统其它位置。
-// - macOS：若 `sandbox-exec` 可用，以 SBPL 配置“仅项目目录可写”。
-// 两者都仅在对应工具存在时启用；不存在则回退原生执行（由 `setpgid` 进程组清理兜底），
-// 保证任何环境都不会因缺失依赖而回归。
+// On Unix, Agent commands have no process isolation by default. This is a best-effort wrapper:
+// - Linux: when `bwrap` (bubblewrap) is available, runs with "system read-only + only the
+//   project dir writable + private /tmp + separate PID namespace"; the command can use
+//   the network and write the project, but cannot write anywhere else on the system.
+// - macOS: when `sandbox-exec` is available, uses an SBPL profile configured "only the project dir writable".
+// Both are enabled only when the tool exists; otherwise execution falls back to native
+// (backstopped by `setpgid` process-group cleanup), so no environment regresses on a missing dependency.
 
-/// 在 PATH 中查找可执行文件（仅 Unix 使用）。
+/// Looks up an executable in PATH (Unix only).
 #[cfg(unix)]
 fn find_in_path(bin: &str) -> bool {
     let path = match std::env::var_os("PATH") {
@@ -286,11 +288,11 @@ fn find_in_path(bin: &str) -> bool {
     std::env::split_paths(&path).any(|d| d.join(bin).is_file())
 }
 
-/// Linux bubblewrap 包装 argv（完整替换“sh -c cmd”的启动 argv）。纯函数，跨平台可单测。
+/// Builds the Linux bubblewrap wrapper argv (fully replaces the "sh -c cmd" launch argv). Pure function, unit-testable cross-platform.
 ///
-/// 网络出口管控（P3.1）：`allow_network=false`（默认）追加 `--unshare-net`——
-/// 命令在隔离网络命名空间中运行，无任何外部出口（含 localhost）；
-/// `true` 保持宿主网络（下载依赖、API 调用等场景由模型显式声明）。
+/// Network egress control: `allow_network=false` (default) appends `--unshare-net` —
+/// the command runs in an isolated network namespace with no external egress (including localhost);
+/// `true` keeps the host network (dependency downloads, API calls, etc., declared explicitly by the model).
 #[allow(dead_code)]
 pub fn build_bwrap_argv(
     project_root: &str,
@@ -333,10 +335,10 @@ pub fn build_bwrap_argv(
     Some(argv)
 }
 
-/// macOS sandbox-exec 包装 argv（写保护：仅项目目录可写）。纯函数，跨平台可单测。
+/// Builds the macOS sandbox-exec wrapper argv (write protection: only the project dir is writable). Pure function, unit-testable cross-platform.
 ///
-/// 网络出口管控（P3.1）：`allow_network=false`（默认）在 SBPL 中追加
-/// `(deny network*)`——阻断全部网络出口；`true` 保持宿主网络。
+/// Network egress control: `allow_network=false` (default) appends
+/// `(deny network*)` to the SBPL — blocking all network egress; `true` keeps the host network.
 #[allow(dead_code)]
 pub fn build_sandbox_exec_argv(
     project_root: &str,
@@ -369,11 +371,11 @@ pub fn build_sandbox_exec_argv(
     ])
 }
 
-/// 若可用则为命令返回替换后的启动 argv（argv[0] 为沙箱二进制）；否则 None（保持原生执行）。
-/// Windows 走 Job Object，恒返回 None。
+/// Returns the replaced launch argv for a command when a sandbox is available (argv[0] is the sandbox binary); otherwise None (run natively).
+/// Windows uses the Job Object path and always returns None.
 ///
-/// `allow_network`：false（默认）= 沙箱内无网络出口（Linux `--unshare-net` /
-/// macOS SBPL `deny network*`）；true = 保持宿主网络（模型显式声明，审批可见）。
+/// `allow_network`: false (default) = no network egress inside the sandbox (Linux `--unshare-net` /
+/// macOS SBPL `deny network*`); true = keep the host network (explicitly declared by the model, visible in approvals).
 #[allow(unused_variables)]
 pub fn sandbox_command_prefix(
     shell: &str,
@@ -402,10 +404,10 @@ pub fn sandbox_command_prefix(
     }
 }
 
-/// 沙箱是否可用（P3.2 fail-closed 判定）：
-/// - Linux：PATH 中存在 bwrap
-/// - macOS：PATH 中存在 sandbox-exec（系统自带）
-/// - Windows：恒 true（Job Object 无外部依赖；AppContainer 见 P3.3）
+/// Whether the sandbox is available (fail-closed check):
+/// - Linux: bwrap exists in PATH
+/// - macOS: sandbox-exec exists in PATH (system-provided)
+/// - Windows: always true (Job Object has no external dependency; AppContainer is covered separately)
 pub fn sandbox_available() -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -446,7 +448,7 @@ mod tests {
         );
     }
 
-    /// 网络出口管控（P3.1）：默认（allow_network=false）追加 --unshare-net。
+    /// Network egress control: default (allow_network=false) appends --unshare-net.
     #[test]
     fn bwrap_network_isolation() {
         let root = std::env::temp_dir().to_string_lossy().into_owned();
@@ -478,7 +480,7 @@ mod tests {
         );
     }
 
-    /// 网络出口管控（P3.1）：默认（allow_network=false）SBPL 含 deny network*。
+    /// Network egress control: default (allow_network=false) makes the SBPL contain deny network*.
     #[test]
     fn sandbox_exec_network_isolation() {
         let root = std::env::temp_dir().to_string_lossy().into_owned();

@@ -1,12 +1,12 @@
-//! 记忆重排命令（rerank_*）：连接测试。
+//! Memory rerank commands (rerank_*): connection testing.
 //!
-//! 仅本地 ONNX 重排模型（manifest 中 kind=rerank 条目）。
-//! 自 v0.8.1 起移除在线 rerank 端点支持，rerank_save_api_key 命令随之删除。
+//! Only local ONNX rerank models (manifest entries with kind=rerank).
+//! Online rerank endpoint support was removed as of v0.8.1, along with the rerank_save_api_key command.
 
 use crate::core::models::MemoryRerankConfig;
 use tauri::AppHandle;
 
-/// 重排连接测试（本地模型需已下载且全局启用；返回延迟与错误信息）。
+/// Rerank connection test (local model must be downloaded and globally enabled; returns latency and error info).
 #[tauri::command]
 pub async fn rerank_test(
     app: AppHandle,

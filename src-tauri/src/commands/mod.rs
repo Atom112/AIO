@@ -1,5 +1,5 @@
-//! 命令层入口（Tauri commands 按域拆分为各子模块；命令必须薄，业务下沉到 plugins/services/utils）。
-//! 新增命令：在对应域文件实现 + 在此声明 + 在 lib.rs 注册（check:gates 的 cmd-dispatch 门禁校验一致性）。
+//! Command layer entry point (Tauri commands are split into per-domain submodules; commands must stay thin, with business logic pushed down to plugins/services/utils).
+//! Adding a command: implement it in the matching domain file, declare it here, and register it in lib.rs (the check:gates cmd-dispatch gate verifies consistency).
 
 pub mod attachment;
 pub mod catalog;

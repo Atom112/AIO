@@ -1,8 +1,8 @@
 /**
- * TokenStatsBar — 紧凑型一行式 Token/上下文统计条
+ * TokenStatsBar - compact single-line token/context stats bar
  *
- * 位于聊天输入框与 Agent 模式选择器之间，一行展示：
- *   上下文进度条 | 输入/输出 tokens | 消息数 | 工具调用
+ * Sits between the chat input and the agent mode selector, showing one row:
+ *   context progress bar | input/output tokens | message count | tool calls
  */
 
 import { Component, Show, createMemo } from 'solid-js';
@@ -91,14 +91,14 @@ const TokenStatsBar: Component = () => {
     };
   });
 
-  // 缓存命中率 = 命中输入 / 总输入（本话题累计）
-  // input 已包含命中部分：OpenAI/DeepSeek 的 cached_tokens 是 prompt_tokens 的子集，
-  // Anthropic 的 input_tokens 已排除 cache_read_input_tokens，故统一按 (cached + input) 归一。
+  // Cache hit rate = cached input / total input (cumulative for this topic)
+  // input already includes the cached portion: OpenAI/DeepSeek cached_tokens is a subset of prompt_tokens,
+  // while Anthropic input_tokens excludes cache_read_input_tokens, so normalize as (cached + input).
   const cacheDenom = () => stats().input + stats().cached;
   const cachePct = () => (cacheDenom() > 0 ? Math.round((stats().cached / cacheDenom()) * 100) : 0);
-  /** 是否拿到过缓存命中数据：后端未上报缓存用量的模型恒为 false */
+  /** Whether any cache hit data was ever received: always false for models whose backend does not report cached usage */
   const hasCacheStats = () => stats().cached > 0;
-  /** 有输入用量即可展示命中率；无缓存命中数据显示 —（区分"没有缓存"与"未上报"） */
+  /** Any input usage is enough to show the rate; with no cache hit data show "—" (distinguishes "no cache" from "not reported") */
   const showCacheRate = () => cacheDenom() > 0;
 
   const total = () => stats().contextInput;
@@ -119,7 +119,7 @@ const TokenStatsBar: Component = () => {
           cacheHit: hasCacheStats() ? `${cachePct()}%` : '—',
         })}
       >
-        {/* 微型进度条 */}
+        {/* Mini progress bar */}
         <div
           class="w-8 h-1 rounded-full overflow-hidden shrink-0"
           style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
@@ -130,7 +130,7 @@ const TokenStatsBar: Component = () => {
           />
         </div>
 
-        {/* 用量数字 */}
+        {/* Usage numbers */}
         <span class="font-mono whitespace-nowrap" style={{ color: color() }}>
           {fmt(total())}
         </span>
@@ -179,7 +179,7 @@ const TokenStatsBar: Component = () => {
           </span>
         </Show>
 
-        {/* 缓存命中率（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens / Anthropic cache_read_input_tokens） */}
+        {/* Cache hit rate (OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens / Anthropic cache_read_input_tokens) */}
         <Show when={showCacheRate()}>
           <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
           <span

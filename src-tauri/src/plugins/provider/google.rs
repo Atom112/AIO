@@ -1,12 +1,12 @@
 //! Google Gemini provider plugin
 //!
-//! 端点规范:
-//! - URL: `${base}/v1beta/models` (base 不带版本)
-//! - Auth: `x-goog-api-key: <key>` (不能用 Authorization: Bearer)
+//! Endpoint spec:
+//! - URL: `${base}/v1beta/models` (base carries no version)
+//! - Auth: `x-goog-api-key: <key>` (must not use Authorization: Bearer)
 //! - Response: `{models: [{name: "models/gemini-...", displayName, ...}]}`
-//!   字段名是 `name` (需要剥掉 `models/` 前缀)，不是 `id`；外层是 `models`，不是 `data`
+//!   the field is `name` (strip the `models/` prefix), not `id`; the outer key is `models`, not `data`
 //!
-//! 参考 LobeHub `packages/model-runtime/src/providers/google/index.ts:351-365`
+//! Reference: LobeHub `packages/model-runtime/src/providers/google/index.ts:351-365`
 
 use reqwest::RequestBuilder;
 
@@ -26,18 +26,18 @@ impl ProviderPlugin for GoogleProvider {
     }
 
     fn models_url(&self, api_url: &str) -> String {
-        // 用户的 api_url 形如 `https://generativelanguage.googleapis.com/v1beta`
-        // 需要去掉尾部版本号后再拼 `/v1beta/models`
+        // The user's api_url looks like `https://generativelanguage.googleapis.com/v1beta`
+        // strip the trailing version before appending `/v1beta/models`
         let trimmed = api_url.trim_end_matches('/');
         if trimmed.ends_with("/v1beta") || trimmed.ends_with("/v1") {
-            // 已经是带版本的，去掉版本号再拼标准路径
+            // Already versioned: strip the version, then append the standard path
             let base = trimmed
                 .trim_end_matches("/v1beta")
                 .trim_end_matches("/v1")
                 .trim_end_matches('/');
             format!("{}/v1beta/models", base)
         } else {
-            // 裸 host，直接拼
+            // Bare host: append directly
             format!("{}/v1beta/models", trimmed)
         }
     }
@@ -58,18 +58,18 @@ impl ProviderPlugin for GoogleProvider {
             .unwrap_or_default();
         arr.iter()
             .filter_map(|m| {
-                // Gemini 返回的 name 形如 "models/gemini-2.5-pro"
+                // Gemini's returned name looks like "models/gemini-2.5-pro"
                 let raw_name = m.get("name").and_then(|x| x.as_str())?.to_string();
                 let id = raw_name
                     .strip_prefix("models/")
                     .unwrap_or(&raw_name)
                     .to_string();
-                // displayName 是人类可读名（如 "Gemini 2.5 Pro"），应填到 display_name
+                // displayName is the human-readable name (e.g. "Gemini 2.5 Pro"); map it to display_name
                 let display_name = m
                     .get("displayName")
                     .and_then(|x| x.as_str())
                     .map(String::from);
-                // Gemini 响应没有标准发布日期字段，保持 None
+                // Gemini responses have no standard release-date field; keep None
                 Some(LiveModel {
                     id,
                     owned_by: "Google".to_string(),

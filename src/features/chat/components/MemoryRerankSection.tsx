@@ -1,9 +1,9 @@
-// 项目级重排（rerank）配置子组件 —— 从 MemoryPanel 拆出。
+// Project-level rerank configuration subcomponent.
 //
-// 自 v0.8.1 起仅支持本地重排模型（manifest kind=rerank 条目）：
-// - 模型的下载/删除/全局启停在「设置 → Embedding 模型管理 → 重排模型」中管理
-// - 本组件负责：项目级启用/停用 + 模型选择（已下载且全局启用的模型）+ 测试 + 保存
-// 与父组件的共享：rrModels（模型清单信号）+ onNotice（提示区）经 props 传入。
+// Since v0.8.1 only local rerank models are supported (manifest kind=rerank entries):
+// - Model download/delete/global enable-disable lives in Settings -> Embedding model management -> Rerank models
+// - This component handles project-level enable/disable + model selection (downloaded and globally enabled models) + testing + saving
+// Shared with the parent via props: rrModels (model list signal) + onNotice (notice area).
 
 import { createSignal, onMount, Show } from 'solid-js';
 import { t } from '../../../core/i18n';
@@ -19,28 +19,28 @@ import Switch from '../../../shared/components/Switch';
 
 export interface MemoryRerankSectionProps {
   projectId: string;
-  /** 重排/嵌入模型清单信号（父组件持有） */
+  /** Rerank/embedding model list signal (owned by the parent) */
   rrModels: () => EmbeddingModelInfo[];
-  /** 设置提示消息 */
+  /** Show a notice message */
   onNotice: (msg: string) => void;
 }
 
 const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
-  // 项目级重排配置（由 memory_get_status 提供，存于项目记忆库 meta；未加载时用默认值，
-  // 保证「启用/停用」「配置」入口在记忆未启用或 status 失败时依然可见可操作）
+  // Project-level rerank config (served by memory_get_status, stored in the project memory store meta; defaults before load,
+  // so the enable/disable and configure entry points stay visible and usable when memory is disabled or status fails)
   const [rerank, setRerank] = createSignal<MemoryRerankConfig>({
     enabled: false,
     provider: 'local',
     model: '',
   });
 
-  // 子组件自行加载项目级重排配置（父组件不再耦合 rerank 状态）
+  // The subcomponent loads project-level rerank config itself (the parent no longer couples to rerank state)
   onMount(async () => {
     try {
       const st = await memoryGetStatus(props.projectId);
       setRerank(st.rerank);
     } catch {
-      // 记忆库未创建时保留默认值，入口仍可见可操作
+      // Keep defaults when the memory store is not created; the entry point stays visible and usable
     }
   });
   const [editingRerank, setEditingRerank] = createSignal(false);
@@ -49,10 +49,10 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
   const [rrTestResult, setRrTestResult] = createSignal<RerankTestResult | null>(null);
   const [rrSaving, setRrSaving] = createSignal(false);
 
-  // 可选模型：已下载且全局启用（下载/删除/启停在设置页管理）
+  // Selectable models: downloaded and globally enabled (download/delete/enable-disable managed in settings)
   const rerankModels = () =>
     props.rrModels().filter((m) => m.kind === 'rerank' && m.downloaded && m.enabled);
-  // 当前配置模型的信息（可能未下载/已停用——用于状态展示与启用前检查）
+  // Info of the currently configured model (may be not downloaded/disabled - used for status display and pre-enable checks)
   const currentModelInfo = () =>
     props.rrModels().find((m) => m.kind === 'rerank' && m.id === rerank()?.model);
 
@@ -70,9 +70,9 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
     const r = rerank();
     if (!r) return;
     if (next) {
-      // 启用前说明性能开销（内存/CPU 延迟），用户知情确认
+      // Explain the perf cost (memory/CPU latency) before enabling; require informed user confirmation
       if (!window.confirm(t('project.memoryPanel.rerankEnableConfirm'))) return;
-      // 本地重排需先下载模型（下载/全局启停入口在设置页）
+      // Local rerank needs the model downloaded first (download/global toggle lives in settings)
       if (currentModelInfo()?.downloaded === false || rerankModels().length === 0) {
         props.onNotice(t('project.memoryPanel.rerankNeedModelFirst'));
         return;
@@ -141,7 +141,7 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
   return (
     <>
       {' '}
-      {/* 重排（项目级；RRF 后二阶段精排，未启用/失败时回退原序） */}
+      {/* Rerank (project-level; second-stage refinement after RRF; falls back to original order when disabled or failing) */}
       <div class="flex flex-col gap-1.5">
         <div class="flex items-center justify-between gap-3">
           <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
@@ -171,7 +171,7 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
           </Show>
         </div>
         <Show when={editingRerank()}>
-          {/* 预留高度与有模型时一致，空态不塌缩 */}
+          {/* Reserve the same height as when models exist so the empty state does not collapse */}
           <div class="flex flex-col rounded-lg border border-dark-100 p-2.5 min-h-[110px]">
             <Show
               when={rerankModels().length > 0}

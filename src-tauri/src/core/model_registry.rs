@@ -1,35 +1,35 @@
-//! 嵌入/重排模型 manifest 注册表与安装目录解析。
+//! Embedding/rerank model manifest registry and install-directory resolution.
 //!
-//! 从 commands/model_download.rs 下沉：plugins/embed 需要查表与目录解析，
-//! 而插件不应反向依赖命令层。下载/删除等 IPC 逻辑仍留在命令层。
+//! Moved down from commands/model_download.rs: plugins/embed needs the manifest lookup and
+//! directory resolution, and plugins must not depend back on the command layer. Download/delete IPC logic stays in the command layer.
 
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
-/// 单个远端文件。
+/// A single remote file.
 pub struct ManifestFile {
     pub url: &'static str,
     pub name: &'static str,
 }
 
-/// manifest 条目。
+/// A manifest entry.
 pub struct ManifestEntry {
     pub id: &'static str,
     /// embed | rerank
     pub kind: &'static str,
     pub label: &'static str,
-    /// 向量维度（rerank 无意义，恒 0）
+    /// Vector dimensions (meaningless for rerank, always 0)
     pub dims: usize,
-    /// 池化方式：mean | cls（rerank 无意义，恒 "none"）
+    /// Pooling mode: mean | cls (meaningless for rerank, always "none")
     pub pooling: &'static str,
-    /// 内置模型（随应用打包，无需下载）
+    /// Bundled model (shipped with the app, no download needed)
     pub bundled: bool,
     pub files: &'static [ManifestFile],
 }
 
-/// 内置嵌入模型 id（随应用打包，开箱即用）。
+/// Bundled embedding model id (shipped with the app, works out of the box).
 pub const BUNDLED_EMBED_ID: &str = "all-MiniLM-L6-v2";
 
-/// 生成 HF 仓库的 onnx + tokenizer 文件清单（Xenova/Qdrant/Alibaba-NLP 等导出仓库通用）。
+/// Build the onnx + tokenizer file list for an HF repo (works for export repos like Xenova/Qdrant/Alibaba-NLP).
 macro_rules! hf_files {
     ($repo:expr, $onnx:expr) => {
         &[
@@ -73,9 +73,9 @@ macro_rules! hf_files {
     };
 }
 
-/// 模型清单。
+/// Model manifest.
 pub const MANIFEST: &[ManifestEntry] = &[
-    // ---- 本地重排（下载目录固定 <app_data_dir>/models/rerank/<id>/）----
+    // ---- Local rerank models (download dir fixed at <app_data_dir>/models/rerank/<id>/) ----
     ManifestEntry {
         id: "bge-reranker-base",
         kind: "rerank",
@@ -133,7 +133,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
         bundled: false,
         files: hf_files!("mixedbread-ai/mxbai-rerank-base-v1", "onnx/model_quantized.onnx"),
     },
-    // ---- 本地嵌入模型（安装目录可在设置页自定义，默认 <app_data_dir>/models/embed/<id>/）----
+    // ---- Local embedding models (install dir customizable in settings, default <app_data_dir>/models/embed/<id>/) ----
     ManifestEntry {
         id: BUNDLED_EMBED_ID,
         kind: "embed",
@@ -253,12 +253,12 @@ pub const MANIFEST: &[ManifestEntry] = &[
     },
 ];
 
-/// 按 id 查 manifest 条目。
+/// Look up a manifest entry by id.
 pub fn find_entry(id: &str) -> Option<&'static ManifestEntry> {
     MANIFEST.iter().find(|e| e.id == id)
 }
 
-/// 重排/通用模型根目录（非 embed kind 使用）。
+/// Root directory for rerank/general models (used by non-embed kinds).
 fn models_root(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
@@ -266,12 +266,12 @@ fn models_root(app: &AppHandle) -> PathBuf {
         .join("models")
 }
 
-/// embed 模型默认安装目录：<app_data_dir>/models/embed。
+/// Default install directory for embed models: <app_data_dir>/models/embed.
 pub fn default_embed_models_dir(app: &AppHandle) -> PathBuf {
     models_root(app).join("embed")
 }
 
-/// embed 模型实际安装目录（设置页可自定义；空配置回退默认目录）。
+/// Actual install directory for embed models (customizable in settings; empty config falls back to the default).
 pub fn embed_models_dir(app: &AppHandle) -> PathBuf {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     let dir = cfg.embedding_models_dir.trim();
@@ -290,7 +290,7 @@ pub(crate) fn entry_dir(app: &AppHandle, entry: &ManifestEntry) -> PathBuf {
     }
 }
 
-/// 全局是否启用该模型（嵌入与重排通用；缺省视为启用）。
+/// Whether the model is globally enabled (applies to embed and rerank alike; absent entries count as enabled).
 pub fn is_model_enabled(app: &AppHandle, id: &str) -> bool {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     match cfg.embedding_models.iter().find(|s| s.id == id) {

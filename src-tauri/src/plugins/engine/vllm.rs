@@ -1,9 +1,10 @@
-/// vLLM 本地推理引擎插件实现
+/// vLLM local inference engine plugin implementation
 ///
-/// ⚠️ 注意：vLLM 官方仅支持 Linux 和 macOS，Windows 上不提供此引擎选项。
-/// 启动策略：
-/// 1. 扫描候选 Python 解释器，找到已安装 vllm 的那个
-/// 2. 通过 python -m vllm.entrypoints.openai.api_server 启动 OpenAI 兼容服务
+/// Note: vLLM officially supports Linux and macOS only; this engine option is
+/// unavailable on Windows.
+/// Startup strategy:
+/// 1. Scan candidate Python interpreters and pick one with vllm installed
+/// 2. Start the OpenAI-compatible server via python -m vllm.entrypoints.openai.api_server
 use crate::core::state::LocalEngineState;
 use crate::ierr;
 use crate::plugins::engine::LocalEnginePlugin;
@@ -32,7 +33,7 @@ fn create_progress_cmd(program: &str, args: &[&str]) -> std::process::Command {
     cmd
 }
 
-/// 检查指定 Python 解释器中是否已安装 vllm 包
+/// Check whether the vllm package is installed in the given Python interpreter
 fn check_vllm_installed(python: &str) -> bool {
     let mut cmd = create_progress_cmd(python, &["-c", "import vllm; print(vllm.__version__)"]);
     cmd.spawn()
@@ -41,7 +42,7 @@ fn check_vllm_installed(python: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 获取 vLLM 版本号（使用解析出的 Python 解释器）
+/// Get the vLLM version string (using the resolved Python interpreter)
 fn get_vllm_version(python: &str) -> Option<String> {
     let mut cmd = create_progress_cmd(python, &["-c", "import vllm; print(vllm.__version__)"]);
     match cmd.output() {
@@ -53,7 +54,7 @@ fn get_vllm_version(python: &str) -> Option<String> {
     }
 }
 
-/// 执行 `python --version` 验证解释器可运行
+/// Run `python --version` to verify the interpreter works
 fn python_runs(python: &str) -> bool {
     create_progress_cmd(python, &["--version"])
         .spawn()
@@ -62,11 +63,12 @@ fn python_runs(python: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 收集所有候选 Python 解释器路径列表。
+/// Collect all candidate Python interpreter paths.
 ///
-/// 搜索策略：PATH 名称 → VIRTUAL_ENV → 系统绝对路径 → CONDA_PREFIX → HOME 目录（conda/venv/pyenv/pip --user）。
-/// 安装包/桌面启动器拉起的进程可能持有旧 PATH 快照（不含用户自定义 Python 安装），
-/// 因此不能只依赖 PATH 上的 `python` / `python3`。
+/// Search order: PATH names → VIRTUAL_ENV → system absolute paths → CONDA_PREFIX → HOME dirs (conda/venv/pyenv/pip --user).
+/// Processes launched by the installer or desktop launcher may hold a stale PATH snapshot
+/// (missing user-installed Python), so relying on `python` / `python3` from PATH alone
+/// is not enough.
 fn python_candidates() -> Vec<String> {
     let mut candidates: Vec<String> = Vec::new();
 
@@ -148,8 +150,8 @@ fn python_candidates() -> Vec<String> {
                 .display()
                 .to_string(),
         );
-        // ~/.local/bin (pip install --user) — 关键：桌面启动器 PATH 不含用户安装路径
-        // Ollama 插件同样兜底此路径，见 plugins/engine/ollama.rs
+        // ~/.local/bin (pip install --user) — critical: the desktop launcher PATH lacks user install paths
+        // The Ollama plugin falls back to this same path; see plugins/engine/ollama.rs
         candidates.push(
             Path::new(&home)
                 .join(".local")
@@ -163,7 +165,7 @@ fn python_candidates() -> Vec<String> {
     candidates
 }
 
-/// 使用 `verify` 闭包过滤候选列表，返回第一个匹配的 Python 路径。
+/// Filter the candidate list with the `verify` closure, returning the first matching Python path.
 fn find_python_impl(verify: impl Fn(&str) -> bool) -> Result<String, String> {
     for python in python_candidates() {
         if verify(&python) {
@@ -176,16 +178,20 @@ fn find_python_impl(verify: impl Fn(&str) -> bool) -> Result<String, String> {
     ))
 }
 
-/// 扫描所有候选 Python，返回第一个**同时满足**「能运行」且「已安装 vllm」的解释器。
+/// Scan all candidate Pythons and return the first interpreter that **both** runs
+/// **and** has vllm installed.
 ///
-/// 逐候选尝试（如 `~/.local/bin/python3`、conda env、pyenv shims），
-/// 解决桌面启动器环境下 PATH 不完整导致的 "dev 能识别、打包后识别不到" 问题。
+/// Trying each candidate (e.g. `~/.local/bin/python3`, conda env, pyenv shims) fixes
+/// the "detected in dev, undetected in the packaged app" problem caused by the
+/// incomplete PATH in desktop-launcher environments.
 fn find_python_with_vllm() -> Result<String, String> {
     find_python_impl(|p| python_runs(p) && check_vllm_installed(p))
 }
 
-/// 检查 vLLM 服务是否已在默认端口 8000 运行（HTTP 兜底，与 ollama 插件一致：
-/// 服务在跑即视为引擎可用，即使进程环境探测不到 Python）
+/// Check whether a vLLM service is already running on the default port 8000
+/// (HTTP fallback, consistent with the ollama plugin: a running service counts
+/// as the engine being available even when Python is not detectable from the
+/// process environment)
 fn vllm_http_reachable() -> bool {
     let url = "http://127.0.0.1:8000/health";
     std::thread::spawn(move || {
@@ -223,15 +229,15 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn is_installed(&self, _app: &AppHandle) -> bool {
-        // 扫描所有候选 Python 解释器，只要有一个已安装 vllm 即视为已就绪。
-        // 逐候选尝试解决桌面启动器 PATH 不完整问题。
-        // 兜底：8000 端口已有 vLLM 服务在运行（用户手动启动的情况）。
+        // Scan all candidate Python interpreters; any one with vllm installed means ready.
+        // Per-candidate probing works around the incomplete PATH of desktop launchers.
+        // Fallback: a vLLM service already running on port 8000 (started manually by the user).
         find_python_with_vllm().is_ok() || vllm_http_reachable()
     }
 
     fn detect_installation(&self, _app: &AppHandle) -> crate::core::models::EngineInstallInfo {
-        // 优先使用 find_python_with_vllm：扫描所有候选，返回同时能运行且已安装 vllm 的解释器。
-        // 若找不到（解释器未安装 vllm 或 HTTP 兜底成功），退回 fallback 检测。
+        // Prefer find_python_with_vllm: scan all candidates for an interpreter that both runs and has vllm installed.
+        // If none is found (no interpreter with vllm, or the HTTP fallback hit), fall back to service detection.
         let python = find_python_with_vllm().ok();
         let has_vllm = python.is_some();
         let installed = has_vllm || vllm_http_reachable();
@@ -286,8 +292,8 @@ impl LocalEnginePlugin for VllmPlugin {
             }
             let _ = app.emit(self.progress_event_name(), 0.02);
 
-            // Step 1: 优先尝试 find_python_with_vllm() — 扫描所有候选，找到已安装 vllm 的解释器。
-            // 逐个候选验证（系统 Python 可能不含 vllm，但 ~/.local/bin/python3、conda env、pyenv shims 等仍有）。
+            // Step 1: try find_python_with_vllm() first — scan all candidates for one with vllm installed.
+            // Verify each candidate (system Python may lack vllm while ~/.local/bin/python3, conda env, pyenv shims etc. have it).
             let python = match tokio::task::spawn_blocking(find_python_with_vllm)
                 .await
                 .map_err(|_| ierr!("python 检测线程 panic", "Python detection thread panicked"))?
@@ -441,8 +447,8 @@ mod tests {
         }
     }
 
-    // 下列测试会读写进程级环境变量（HOME / CONDA_PREFIX / VIRTUAL_ENV），
-    // Rust 测试并行运行时会相互竞争导致偶发失败，故用全局锁串行化。
+    // The tests below read and write process-wide environment variables (HOME / CONDA_PREFIX / VIRTUAL_ENV);
+    // Rust tests run in parallel and would race, causing flaky failures, so they are serialized with a global lock.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
@@ -489,7 +495,7 @@ mod tests {
     #[test]
     fn python_candidates_includes_local_bin() {
         let _guard = ENV_LOCK.lock().unwrap();
-        // 验证 ~/.local/bin/python3 在候选列表中（HOME 设置了才生效）
+        // Verify ~/.local/bin/python3 is in the candidate list (only effective when HOME is set)
         if let Ok(home) = std::env::var("HOME") {
             let candidates = python_candidates();
             let expected = Path::new(&home)
@@ -504,13 +510,13 @@ mod tests {
                 candidates
             );
         }
-        // HOME 未设置时，此候选不加入列表，跳过断言
+        // When HOME is unset this candidate is not added, so skip the assertion
     }
 
     #[test]
     fn python_candidates_starts_with_path_names() {
         let _guard = ENV_LOCK.lock().unwrap();
-        // 验证候选列表的前两个条目是 PATH 名称
+        // Verify the first two entries of the candidate list are PATH names
         let old_conda = std::env::var_os("CONDA_PREFIX");
         let old_venv = std::env::var_os("VIRTUAL_ENV");
         std::env::remove_var("CONDA_PREFIX");
@@ -527,8 +533,8 @@ mod tests {
     #[test]
     fn find_python_with_vllm_returns_err_when_not_installed() {
         let _guard = ENV_LOCK.lock().unwrap();
-        // 当没有任何 Python 安装了 vllm 时，应返回 Err（而非 panic）
-        // 使用一个不存在的路径作为 HOME 来隔离系统环境干扰
+        // When no Python has vllm installed, this should return Err (not panic).
+        // Use a nonexistent HOME path to isolate from system environment interference.
         let old_home = std::env::var_os("HOME");
         let old_conda = std::env::var_os("CONDA_PREFIX");
         let old_venv = std::env::var_os("VIRTUAL_ENV");

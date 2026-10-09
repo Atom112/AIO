@@ -1,10 +1,10 @@
-//! 聊天域模型：消息/话题/助手/模型与流式载荷（AgentStep 相关载荷在 chat 域）。
+//! Chat domain models: messages/topics/assistants/models and streaming payloads (AgentStep payloads live in the chat domain).
 
 use crate::core::models::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 激活模型的连接配置信息。
+/// Connection configuration for an activated model.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ActivatedModel {
     pub api_url: String,
@@ -12,78 +12,78 @@ pub struct ActivatedModel {
     pub api_key: String,
     pub model_id: String,
     pub owned_by: String,
-    /// 可选的本地路径，仅在本地运行模式下使用。
+    /// Optional local path, only used in local-run mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
-    /// 本地推理引擎类型标识，如 "llama_cpp", "vllm"。
-    /// 旧配置无此字段时反序列化为 None，逻辑上视为 legacy llama.cpp 行为。
+    /// Local inference engine type identifier, e.g. "llama_cpp", "vllm".
+    /// Old configs without this field deserialize to None, treated as legacy llama.cpp behavior.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine_type: Option<String>,
 }
 
-/// 处理 SSE (Server-Sent Events) 流式输出时的消息负载。
+/// Message payload for SSE (Server-Sent Events) streaming output.
 #[derive(Serialize, Clone)]
 pub struct StreamPayload {
     pub assistant_id: String,
     pub topic_id: String,
     pub content: String,
     pub done: bool,
-    /// done=true 时携带的错误信息（整轮因错误/取消结束时填充）
+    /// Error message carried when done=true (set when the whole round ends in error or cancellation)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// 本轮输入 tokens（服务端返回，仅 done=true 时有意义）
+    /// Input tokens for this round (server-reported; only meaningful when done=true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_tokens: Option<u32>,
-    /// 本轮输出 tokens（服务端返回，仅 done=true 时有意义）
+    /// Output tokens for this round (server-reported; only meaningful when done=true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
-    /// 上下文峰值 tokens：最后一轮 API 调用的 input_tokens，代表实际上下文窗口使用量。
-    /// 用于前端进度条展示，区别于 input_tokens（跨轮累计，用于成本统计）。
+    /// Peak context tokens: input_tokens of the last API call, i.e. actual context window usage.
+    /// Drives the frontend progress bar; distinct from input_tokens (cumulative across rounds, for cost stats).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u32>,
-    /// 缓存命中的输入 tokens（仅 done=true 时有意义）。
-    /// 来源：OpenAI `usage.prompt_tokens_details.cached_tokens`；DeepSeek `usage.prompt_cache_hit_tokens`。
+    /// Cache-hit input tokens (only meaningful when done=true).
+    /// Source: OpenAI `usage.prompt_tokens_details.cached_tokens`; DeepSeek `usage.prompt_cache_hit_tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_input_tokens: Option<u32>,
-    /// 模型生成的图像元数据（done=true 且有图时携带）
+    /// Metadata of model-generated images (carried when done=true and images exist)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<GeneratedImage>>,
 }
 
-/// 新一轮 LLM 调用开始时通知前端，前端据此 push 一条空 assistant 占位消息。
+/// Notifies the frontend that a new LLM round started, so it pushes an empty assistant placeholder message.
 #[derive(Serialize, Clone)]
 pub struct RoundStartPayload {
     pub assistant_id: String,
     pub topic_id: String,
-    /// 第几轮（从 1 开始）
+    /// Round number (1-based)
     pub round: u32,
 }
 
-/// 单个工具执行结果（后端执行完 MCP 工具后 emit，前端据此更新气泡状态并追加 role:tool 消息）。
+/// Single tool execution result (emitted after the backend runs an MCP tool; the frontend updates the bubble status and appends a role:tool message).
 #[derive(Serialize, Clone)]
 pub struct ToolResultPayload {
     pub assistant_id: String,
     pub topic_id: String,
     pub tool_call_id: String,
     pub name: String,
-    /// 给前端展示用的纯文本结果
+    /// Plain-text result for frontend display
     pub content: String,
-    /// 原始结构化结果（ToolResultContent 数组）
+    /// Raw structured result (ToolResultContent array)
     pub result: serde_json::Value,
-    /// 是否为错误
+    /// Whether this is an error
     pub is_error: bool,
-    /// 本次工具调用产生的文件变更（write_file/replace_in_file/delete_file 时非空）
+    /// File changes produced by this tool call (non-empty for write_file/replace_in_file/delete_file)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_changes: Option<Vec<FileChange>>,
-    /// 完整工具结果（前端 agentSteps 展示用，不截断）
+    /// Full tool result (for frontend agentSteps display, untruncated)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_content: Option<String>,
 }
 
-/// 流式 tool_call 累积载荷（发往前端用，仅用于通知前端展示"调用中"气泡）。
+/// Streaming tool_call accumulation payload (sent to the frontend only to drive the "calling" bubble).
 ///
-/// 位于 core 层：plugins/provider（Anthropic 流式适配）需要构造它，
-/// 而插件不应依赖命令层。
+/// Lives in the core layer: plugins/provider (Anthropic streaming adapter) must construct it,
+/// and plugins must not depend on the command layer.
 #[derive(Serialize, Clone)]
 pub struct ToolCallPayload {
     pub assistant_id: String,
@@ -93,36 +93,36 @@ pub struct ToolCallPayload {
     pub arguments: String,
 }
 
-/// 单次文件修改记录（供前端展示 diff 预览 + 跳转 + 回滚）
+/// Single file modification record (frontend uses it for diff preview, jump-to-file, and rollback)
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
-    /// 文件路径（相对于项目根目录）
+    /// File path (relative to the project root)
     pub file_path: String,
-    /// 操作类型: create | modify | delete
+    /// Action type: create | modify | delete
     pub action: String,
-    /// unified diff 字符串（git diff 格式，含行号上下文）
+    /// Unified diff string (git diff format, with line-number context)
     pub diff: String,
-    /// 受影响行数概览（"+N -M"）
+    /// Affected-line overview ("+N -M")
     pub summary: String,
 }
 
-/// 从 provider 实时拉取的单个模型信息（OpenAI-兼容 /v1/models 或厂商自定义端点）。
+/// A single model fetched live from a provider (OpenAI-compatible /v1/models or a vendor-specific endpoint).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveModel {
     pub id: String,
     #[serde(default)]
     pub owned_by: String,
-    /// 厂商返回的展示名（Google/Anthropic 有；OpenAI/Ollama 无 → None）
+    /// Vendor-reported display name (present for Google/Anthropic; absent for OpenAI/Ollama → None)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    /// 发布日期 YYYY-MM-DD（OpenAI 的 `created` 转；Anthropic 的 `created_at` 原样；Google/Ollama 无 → None）
+    /// Release date YYYY-MM-DD (converted from OpenAI `created`; Anthropic `created_at` as-is; absent for Google/Ollama → None)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub released_at: Option<String>,
 }
 
-/// 消息关联的附件元数据。旧记录只有 `name`，其余字段保持可选以兼容历史数据。
+/// Attachment metadata for a message. Legacy records carry only `name`; other fields stay optional for backward compatibility.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FileMeta {
@@ -133,12 +133,12 @@ pub struct FileMeta {
     pub mime_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
-    /// 附件在磁盘上的绝对路径，用于前端渲染图片缩略图（convertFileSrc 资产 URL）；仅新数据可能携带
+    /// Absolute on-disk path of the attachment, used by the frontend to render image thumbnails (convertFileSrc asset URL); only newer records carry it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_path: Option<String>,
 }
 
-/// 上传到应用附件目录后的完整元数据。
+/// Full metadata after uploading into the app attachment directory.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredAttachment {
@@ -149,7 +149,7 @@ pub struct StoredAttachment {
     pub storage_path: String,
 }
 
-/// 模型生成的图像元数据（assistant 消息）。用于前端下载按钮与历史回放（重新展开为 image_url 块）。
+/// Metadata of a model-generated image (assistant message). Used for the frontend download button and history replay (re-expanded into an image_url block).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedImage {
@@ -159,7 +159,7 @@ pub struct GeneratedImage {
     pub storage_path: String,
 }
 
-/// 单条聊天消息模型。
+/// A single chat message.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
@@ -172,57 +172,57 @@ pub struct Message {
     pub display_files: Option<Vec<FileMeta>>,
     #[serde(rename = "displayText", skip_serializing_if = "Option::is_none")]
     pub display_text: Option<String>,
-    /// role="tool" 时对应触发的 tool_call id
+    /// Tool_call id that produced this message when role="tool"
     #[serde(
         rename = "toolCallId",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub tool_call_id: Option<String>,
-    /// role="tool" 时为被调用的函数名；role="assistant" 携带 tool_calls 时为 "assistant"
+    /// Invoked function name when role="tool"; "assistant" when role="assistant" carries tool_calls
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// role="assistant" 时携带模型发起的工具调用请求（OpenAI 兼容格式）
+    /// Tool call requests initiated by the model when role="assistant" (OpenAI-compatible format)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
-    /// 模型原生思维链（GLM/DeepSeek-R1/Qwen3 等的 reasoning_content），仅 assistant 消息可能携带
+    /// Model-native chain of thought (reasoning_content from GLM/DeepSeek-R1/Qwen3 etc.); only assistant messages may carry it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
-    /// 本轮输入 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
+    /// Input tokens for this round (server-reported; only meaningful on assistant messages; defaults to None for legacy data)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_tokens: Option<u32>,
-    /// 本轮输出 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）
+    /// Output tokens for this round (server-reported; only meaningful on assistant messages; defaults to None for legacy data)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
-    /// 本轮缓存命中的输入 tokens（服务端返回，仅 assistant 消息有意义；旧数据缺省为 None）。
-    /// 来源：OpenAI `usage.prompt_tokens_details.cached_tokens`；DeepSeek `usage.prompt_cache_hit_tokens`；
-    /// Anthropic `message_start.usage.cache_read_input_tokens`。
+    /// Cache-hit input tokens for this round (server-reported; only meaningful on assistant messages; legacy default None).
+    /// Source: OpenAI `usage.prompt_tokens_details.cached_tokens`; DeepSeek `usage.prompt_cache_hit_tokens`;
+    /// Anthropic `message_start.usage.cache_read_input_tokens`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_input_tokens: Option<u32>,
-    /// Agent 工作过程步骤（JSON 序列化的 AgentStep[]），跨重启持久化
+    /// Agent work steps (JSON-serialized AgentStep[]), persisted across restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_steps: Option<serde_json::Value>,
-    /// Agent 执行中的中间内容（流式文本暂存），跨重启持久化
+    /// Interim content during agent execution (streaming text staging), persisted across restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interim_content: Option<String>,
-    /// Agent 开始执行时间戳（毫秒），跨重启持久化
+    /// Agent start timestamp (milliseconds), persisted across restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_start_time: Option<i64>,
-    /// 父消息 ID（用于会话分支树），NULL = 主题根消息
+    /// Parent message ID (for the conversation branch tree); NULL = topic root message
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_message_id: Option<String>,
-    /// 分支索引：从同一父消息分叉时递增（0 = 原始/主干）
+    /// Branch index: increments when branching from the same parent message (0 = original/trunk)
     #[serde(default)]
     pub branch_index: i32,
-    /// 模型生成的图像元数据（仅 assistant 消息），用于下载与历史回放
+    /// Model-generated image metadata (assistant messages only), used for download and history replay
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<GeneratedImage>>,
-    /// 完整工具执行结果（LLM 上下文中只包含截断版），仅 role=tool 消息有效，会话级内存字段不持久化到 SQLite
+    /// Full tool execution result (the LLM context only holds the truncated version); valid only for role=tool messages; session-memory field, not persisted to SQLite
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_tool_result: Option<String>,
 }
 
-/// OpenAI 风格的工具调用（assistant 消息中）
+/// OpenAI-style tool call (in assistant messages)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ToolCall {
     pub id: String,
@@ -245,11 +245,11 @@ pub struct ToolCall {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ToolCallFunction {
     pub name: String,
-    /// JSON 字符串（OpenAI 规范要求）
+    /// JSON string (required by the OpenAI spec)
     pub arguments: String,
 }
 
-/// OpenAI 风格的工具规范（在 `tools` 数组中发送给 LLM）
+/// OpenAI-style tool spec (sent to the LLM in the `tools` array)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ToolSpec {
     #[serde(rename = "type")]
@@ -265,16 +265,16 @@ pub struct ToolFunctionSpec {
     pub parameters: serde_json::Value,
 }
 
-/// 按助手视角聚合的 MCP 工具集：扁平 `tools` 喂给 LLM，`tool_server_map` 供前端解析 toolName → serverId。
+/// MCP tools aggregated per assistant: the flat `tools` list feeds the LLM; `tool_server_map` resolves toolName → serverId for the frontend.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantTools {
     pub tools: Vec<ToolSpec>,
-    /// toolName → serverId（call_mcp_tool 时用，替代前端启发式查找）
+    /// toolName → serverId (used by call_mcp_tool instead of frontend heuristic lookup)
     pub tool_server_map: HashMap<String, String>,
 }
 
-/// MCP 工具调用结果
+/// MCP tool invocation result
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolResult {
@@ -291,10 +291,9 @@ pub struct ToolResultContent {
     pub data: serde_json::Value,
 }
 
-// （已删除：ToolCallDelta / ToolCallFunctionDelta —— 零引用的流式增量类型，
-//   实际流式累积使用 commands/llm 内部的 ToolCallAccum）
+// Streaming tool_call accumulation is centralized in commands/llm's ToolCallAccum.
 
-/// 包含历史记录的对话主题模型。
+/// A conversation topic with its message history.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Topic {
     pub id: String,
@@ -302,19 +301,19 @@ pub struct Topic {
     pub history: Vec<Message>,
     #[serde(default)]
     pub summary: Option<String>,
-    /// 是否已经自动重命名过。新建话题为 `false`；首次对话结束后由前端置为 `true`，
-    /// 之后不再触发自动重命名。旧配置 / 旧数据库行反序列化为 `false`，
-    /// 由数据迁移在加载时统一修复。
+    /// Whether the topic has been auto-renamed. New topics are `false`; the frontend sets `true`
+    /// after the first conversation ends, disabling further auto-rename. Legacy configs / DB rows
+    /// deserialize as `false` and are fixed up by data migration at load time.
     #[serde(default)]
     pub renamed: bool,
-    /// 分支来源消息 ID（此话题从哪条消息分支而来）
+    /// Source message ID of the branch (which message this topic branched from)
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "branchedFromMessageId"
     )]
     pub branched_from_message_id: Option<String>,
-    /// 父话题 ID（用于话题树结构）
+    /// Parent topic ID (for the topic tree structure)
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -323,55 +322,55 @@ pub struct Topic {
     pub parent_topic_id: Option<String>,
 }
 
-/// AI 助手预设模型，包含系统提示词和相关的对话列表。
+/// AI assistant preset with a system prompt and its conversation topics.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Assistant {
     pub id: String,
     pub name: String,
     pub prompt: String,
-    /// 助手绑定的首选模型 ID（可选）。未设置时由前端回退到全局默认模型。
-    /// 旧配置 / 旧数据库行反序列化为 None，逻辑上视为「使用全局默认」。
+    /// Preferred model ID bound to the assistant (optional). When unset, the frontend falls back to the global default model.
+    /// Legacy configs / DB rows deserialize to None, meaning "use the global default".
     #[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
-    /// 助手启用的 MCP server id 列表；空数组 = 该助手不使用任何 MCP 工具（opt-in 语义）。
-    /// 旧数据库行 mcp_server_ids 列为 NULL → 反序列化为空 vec，等价于「未启用 MCP」。
+    /// MCP server ids enabled for the assistant; an empty array = the assistant uses no MCP tools (opt-in semantics).
+    /// Legacy DB rows with NULL mcp_server_ids deserialize to an empty vec, equivalent to "MCP disabled".
     #[serde(
         rename = "mcpServerIds",
         default,
         skip_serializing_if = "Vec::is_empty"
     )]
     pub mcp_server_ids: Vec<String>,
-    /// 助手启用的 Skill id 列表；空数组表示不注入任何 Skill 指令。
+    /// Skill ids enabled for the assistant; an empty array means no Skill instructions are injected.
     #[serde(rename = "skillIds", default, skip_serializing_if = "Vec::is_empty")]
     pub skill_ids: Vec<String>,
-    /// 助手所属的项目 ID。None = 全局助手（不属于任何项目）。
+    /// Project the assistant belongs to. None = global assistant (not tied to any project).
     #[serde(rename = "projectId", default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
-    /// Agent 执行模式。Off = 对话模式。旧数据缺省反序列化为 Off。
+    /// Agent execution mode. Off = plain chat mode. Legacy data defaults to Off.
     #[serde(rename = "agentMode", default)]
     pub agent_mode: AgentMode,
-    /// 助理类型（chat = 对话模式专属，project = 项目助理）
-    /// 旧数据缺省反序列化为 "project"，再通过迁移将 default-assistant-id 修正为 "chat"。
+    /// Assistant type (chat = chat-mode only, project = project assistant).
+    /// Legacy data defaults to "project"; migration fixes default-assistant-id to "chat".
     #[serde(rename = "assistantType", default = "default_assistant_type")]
     pub assistant_type: String,
     #[serde(default)]
     pub topics: Vec<Topic>,
 }
 
-/// 远程 API 返回的单个模型基础信息。
+/// Basic info of a single model returned by a remote API.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ModelInfo {
     pub id: String,
     pub owned_by: Option<String>,
 }
 
-/// 兼容 OpenAI 格式的模型列表响应。
+/// OpenAI-compatible model list response.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ModelsResponse {
     pub data: Vec<ModelInfo>,
 }
 
-/// 旧数据无 assistant_type 时默认为 "project"
+/// Defaults to "project" when legacy data lacks assistant_type
 fn default_assistant_type() -> String {
     "project".into()
 }

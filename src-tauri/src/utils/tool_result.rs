@@ -1,12 +1,9 @@
-//! 工具结果构造辅助 —— 内置工具 ToolResult 构造的唯一入口。
-//!
-//! 历史上 tool_ok/tool_err 在 8+5 个模块中各复制一份（project_map/think 还内联
-//! 相同字面量），任何格式调整都要全仓同步极易漏改；现统一收敛于此。
+//! Tool result construction helpers — the single entry point for building the built-in tools' ToolResult.
 
 use crate::core::models::{ToolResult, ToolResultContent};
 use serde_json::json;
 
-/// 构造成功的工具结果（进程内工具形态）。
+/// Construct a successful tool result (in-process tool shape).
 pub fn tool_ok(text: String) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
@@ -17,7 +14,7 @@ pub fn tool_ok(text: String) -> ToolResult {
     }
 }
 
-/// 构造失败的工具结果（进程内工具形态），文本自动加 `[Error] ` 前缀。
+/// Construct a failed tool result (in-process tool shape); the text is automatically prefixed with `[Error] `.
 pub fn tool_err(msg: &str) -> ToolResult {
     ToolResult {
         content: vec![ToolResultContent {
@@ -28,8 +25,8 @@ pub fn tool_err(msg: &str) -> ToolResult {
     }
 }
 
-// MCP 协议形态的 tool_ok_mcp/tool_err_mcp 已随 P4.3 fs-server 去分叉移除
-//（fs-server 现委托 execute_file_tool 并自行构造 JSON-RPC 结果）。
+// The MCP-protocol-shaped tool_ok_mcp/tool_err_mcp were removed;
+// fs-server now delegates to execute_file_tool and builds its own JSON-RPC results.
 
 #[cfg(test)]
 mod tests {

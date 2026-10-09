@@ -1,15 +1,11 @@
-//! 项目索引（`projects.json`）读取 —— 全仓唯一来源。
+//! Project index (`projects.json`) loading — single source of truth repo-wide.
 //!
-//! 位置：app_data_dir/projects.json（**不是** core::paths 的 config_dir，勿合并）。
-//!
-//! 历史背景：同一读取逻辑曾在 5 处各自实现，其中 2 处用未类型化的
-//! `Value["projects"][id]["path"]` 下标读取（字段改名即静默返回"项目不存在"），
-//! 1 处漏了 Windows 扩展长度前缀归一化，另有 1 处注释谎称"复用 skill.rs 的逻辑"。
+//! Location: app_data_dir/projects.json (**not** core::paths's config_dir; do not merge them).
 
 use crate::core::models::ProjectsFile;
 use tauri::{AppHandle, Manager};
 
-/// `projects.json` 的完整路径。
+/// Full path of `projects.json`.
 pub fn projects_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()
         .app_data_dir()
@@ -17,10 +13,10 @@ pub fn projects_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String>
         .map_err(|e| e.to_string())
 }
 
-/// 读取项目索引。
+/// Load the project index.
 ///
-/// 容错语义（与历史实现一致）：文件缺失或 JSON 解析失败时返回空表。
-/// 需要区分"无项目"与"索引损坏"的调用方请直接用 [`projects_file_path`] + 自行解析。
+/// Fault-tolerance semantics (historical behavior preserved): returns an empty table when the file is missing or JSON parsing fails.
+/// Callers that must distinguish "no projects" from "corrupt index" should use [`projects_file_path`] and parse the file themselves.
 pub fn load_projects_file(app: &AppHandle) -> ProjectsFile {
     let Ok(path) = projects_file_path(app) else {
         return ProjectsFile::default();
@@ -31,7 +27,7 @@ pub fn load_projects_file(app: &AppHandle) -> ProjectsFile {
         .unwrap_or_default()
 }
 
-/// 按 project_id 解析项目根路径（已归一化 Windows 扩展长度前缀 `\\?\`）。
+/// Resolve the project root path by project_id (normalizes the Windows extended-length prefix `\\?\`).
 pub fn project_path(app: &AppHandle, project_id: &str) -> Result<String, String> {
     let file = load_projects_file(app);
     file.projects
@@ -46,8 +42,8 @@ mod tests {
 
     #[test]
     fn missing_file_yields_empty_index() {
-        // 无 AppHandle 时不可直接调用；此处仅固化 ProjectsFile 的默认语义，
-        // 确保"空表"与"解析失败"在调用方看来一致（历史行为）。
+        // Cannot be called directly without an AppHandle; this only pins down ProjectsFile's
+        // default semantics so "empty table" and "parse failure" look identical to callers (historical behavior).
         let f = ProjectsFile::default();
         assert!(f.projects.is_empty());
     }

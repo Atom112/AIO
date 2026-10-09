@@ -1,5 +1,5 @@
-// MCP 域 Tauri 命令封装（与 commands/mcp.rs 对应）。
-// 约定：组件不得直接 invoke 这些命令名，一律走本模块。
+// MCP-domain Tauri command wrappers (counterpart of commands/mcp.rs).
+// Convention: components must not invoke these command names directly; always go through this module.
 import { invoke } from '@tauri-apps/api/core';
 import type {
   McpCatalogInstallRequest,
@@ -9,34 +9,34 @@ import type {
   ToolSpec,
 } from '../types/mcp';
 
-/** 列出 MCP 服务器配置（projectId 为空时列全局）。 */
+/** List MCP server configs (global list when projectId is empty). */
 export const listMcpServers = (projectId?: string | null) =>
   invoke<McpServerConfig[]>('list_mcp_servers', { projectId: projectId ?? null });
 
-/** 启动一个 MCP server 并返回其工具列表。 */
+/** Start an MCP server and return its tool list. */
 export const startMcpServer = (id: string, projectId?: string | null) =>
   invoke<ToolSpec[]>('start_mcp_server', { id, projectId: projectId ?? null });
 
-/** 停止一个 MCP server。 */
+/** Stop an MCP server. */
 export const stopMcpServer = (id: string) => invoke<void>('stop_mcp_server', { id });
 
-/** 列出全部 MCP server 的运行时状态。 */
+/** List runtime status of all MCP servers. */
 export const listMcpServerStatuses = () =>
   invoke<Record<string, McpServerStatusInfo>>('list_mcp_server_status');
 
-/** 列出当前可用的 MCP 工具（projectId 为空时取全局）。 */
+/** List currently available MCP tools (global when projectId is empty). */
 export const listMcpTools = (projectId?: string | null) =>
   invoke<ToolSpec[]>('list_mcp_tools', { projectId: projectId ?? null });
 
-/** 新增一个 MCP server 配置。 */
+/** Add an MCP server config. */
 export const addMcpServer = (config: McpServerConfig, projectId?: string | null) =>
   invoke<void>('add_mcp_server', { config, projectId: projectId ?? null });
 
-/** 测试一个 MCP server 配置的连通性（不落盘），返回其工具列表。 */
+/** Test connectivity of an MCP server config (nothing is persisted) and return its tool list. */
 export const testMcpServerConnection = (config: McpServerConfig) =>
   invoke<ToolSpec[]>('test_mcp_server_connection', { config });
 
-/** MCP 市场目录分页查询参数。 */
+/** Paged query params for the MCP marketplace catalog. */
 export interface McpCatalogQuery {
   search?: string | null;
   cursor?: string | null;
@@ -44,15 +44,15 @@ export interface McpCatalogQuery {
   forceRefresh?: boolean;
 }
 
-/** 浏览 MCP 市场目录（分页）。 */
+/** Browse the MCP marketplace catalog (paginated). */
 export const listMcpCatalog = (q: McpCatalogQuery) =>
   invoke<McpCatalogPage>('list_mcp_catalog', q as unknown as Record<string, unknown>);
 
-/** 删除一个 MCP server。 */
+/** Remove an MCP server. */
 export const removeMcpServer = (id: string, projectId?: string | null) =>
   invoke<void>('remove_mcp_server', { id, projectId: projectId ?? null });
 
-/** 保存一个 MCP server 的敏感值到系统密钥环，返回可写入配置的占位符。 */
+/** Save an MCP server secret to the system keyring; returns the placeholder to write into the config. */
 export const saveMcpServerSecret = (
   serverId: string,
   target: 'env' | 'header',
@@ -60,18 +60,18 @@ export const saveMcpServerSecret = (
   value: string,
 ) => invoke<string>('save_mcp_server_secret', { serverId, target, key, value });
 
-/** 响应工具审批（approved = 本次允许，false = 拒绝；always='session' = 会话级放行）。 */
+/** Respond to a tool approval (approved = allow once, false = deny; always='session' = session-level allow). */
 export const respondToolApproval = (approvalId: string, approved: boolean, always?: 'session') =>
   invoke<void>('respond_tool_approval', { approvalId, approved, always });
 
-/** 列出可用的 MCP 传输类型。 */
+/** List available MCP transport types. */
 export const listMcpTransports = () => invoke<string[]>('list_mcp_transports');
 
-/** 检查某交付形态所需的运行时是否可用（如 npm/http）。 */
+/** Check whether the runtime required by a package type is available (e.g. npm/http). */
 export const checkMcpCatalogRuntime = (packageType: string) =>
   invoke<boolean>('check_mcp_catalog_runtime', { packageType });
 
-/** 从市场目录安装一个 MCP server（按交付形态 + 用户填值），返回其配置。 */
+/** Install an MCP server from the marketplace catalog (per package type + user-supplied values); returns its config. */
 export const installMcpCatalogServer = (request: McpCatalogInstallRequest) =>
   invoke<McpServerConfig>('install_mcp_catalog_server', {
     request: request as unknown as Record<string, unknown>,

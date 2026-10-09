@@ -1,8 +1,8 @@
-//! 记忆重排（二阶段精排）插件层：本地 ONNX 交叉编码器（manifest 中的 kind=rerank 模型）。
+//! Memory rerank (second-stage refine) plugin layer: local ONNX cross-encoder (kind=rerank models in the manifest).
 //!
-//! 检索流程：混合检索 RRF 融合 top-k → 重排精排 → token 预算截断注入。
-//! 未启用/解析失败/模型未下载时调用方回退 RRF-only（fail-safe，行为同未引入重排前）。
-//! 自 v0.8.1 起移除在线 rerank 端点支持，旧配置中的 online/openai_compat 自动归一化为 local。
+//! Retrieval flow: hybrid retrieval RRF-fused top-k -> rerank refine -> token-budget truncation before injection.
+//! When disabled, resolution fails, or the model is not downloaded, the caller falls back to RRF-only (fail-safe, same behavior as before rerank was introduced).
+//! Since v0.8.1, online rerank endpoint support is removed; online/openai_compat in legacy configs is normalized to local.
 
 pub mod local_onnx;
 
@@ -11,39 +11,39 @@ use crate::ierr;
 use std::sync::Arc;
 use tauri::AppHandle;
 
-/// 重排插件 trait。
+/// Rerank plugin trait.
 #[async_trait::async_trait]
 pub trait Reranker: Send + Sync {
-    /// 插件标识：local | online
+    /// Plugin identifier: local | online
     fn id(&self) -> &str;
-    /// 当前重排模型名。
+    /// Current rerank model name.
     fn model_key(&self) -> String;
-    /// 对 (id, text) 候选按查询精排，返回 (id, score) 降序。
+    /// Reranks (id, text) candidates by query; returns (id, score) sorted descending.
     async fn rerank(
         &self,
         query: &str,
         docs: &[(String, String)],
     ) -> Result<Vec<(String, f32)>, String>;
-    /// 是否具备可用前提（本地模型已下载 / 在线地址已配置）；真实可用性由 rerank 探测。
+    /// Whether prerequisites hold (local model downloaded / online URL configured); real availability is probed by rerank.
     fn is_available(&self) -> bool;
 }
 
-/// 重排连接测试结果（rerank_test 命令返回）。
+/// Rerank connection test result (returned by the rerank_test command).
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RerankTestResult {
     pub ok: bool,
     pub provider: String,
     pub model: String,
-    /// 是否具备可用前提（本地模型已下载 / 在线地址已配置）
+    /// Whether prerequisites hold (local model downloaded / online URL configured)
     pub available: bool,
     pub latency_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
-/// 按配置解析重排器（不缓存；模型加载在插件内部按模型 id 惰性缓存）。
-/// 仅支持本地模型；旧配置中的 online / openai_compat provider 在此归一化为 local。
+/// Resolves a reranker from config (not cached here; model loading is lazily cached per model id inside the plugin).
+/// Local models only; online / openai_compat providers in legacy configs are normalized to local here.
 pub fn resolve(app: &AppHandle, cfg: &MemoryRerankConfig) -> Result<Arc<dyn Reranker>, String> {
     if !cfg.enabled {
         return Err(ierr!("重排未启用", "Rerank is not enabled"));
@@ -72,7 +72,7 @@ pub fn resolve(app: &AppHandle, cfg: &MemoryRerankConfig) -> Result<Arc<dyn Rera
     Ok(Arc::new(local_onnx::LocalReranker::new(app, cfg)))
 }
 
-/// 连通性测试（rerank_test 命令用）。
+/// Connectivity test (used by the rerank_test command).
 pub async fn test(app: &AppHandle, cfg: &MemoryRerankConfig) -> RerankTestResult {
     let started = std::time::Instant::now();
     match resolve(app, cfg) {

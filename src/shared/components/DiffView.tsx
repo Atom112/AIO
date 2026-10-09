@@ -6,7 +6,7 @@ import type { FileChangeInfo } from '../../core/store/store';
 
 interface DiffViewProps {
   changes: FileChangeInfo[];
-  /** 当整轮文件变更已被批量撤销时为 true，所有卡片变暗且隐藏单项撤销按钮 */
+  /** True when the whole round of file changes was batch-reverted; all cards dim and per-item revert buttons are hidden */
   allReverted?: boolean;
 }
 
@@ -38,7 +38,7 @@ function parseDiffLines(diff: string): { type: 'ctx' | 'add' | 'del' | 'hdr'; te
   return lines;
 }
 
-/** 解析 hunk header `@@ -1,5 +1,6 @@` 为红绿分段 */
+/** Parse hunk header `@@ -1,5 +1,6 @@` into red/green segments */
 function parseHunkHeader(text: string): { text: string; color?: string }[] {
   const segs: { text: string; color?: string }[] = [];
   // regex: match leading @@, then -N[,M], then +N[,M], then trailing @@
@@ -55,7 +55,7 @@ function parseHunkHeader(text: string): { text: string; color?: string }[] {
   return segs;
 }
 
-/** 解析 summary `+N -M` 为红绿分段 */
+/** Parse summary `+N -M` into red/green segments */
 function parseSummary(summary: string): { text: string; color?: string }[] {
   const segs: { text: string; color?: string }[] = [];
   // split on whitespace, preserve delimiters

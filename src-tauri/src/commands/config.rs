@@ -1,5 +1,5 @@
-//! 应用配置与助手管理命令（assistant/config/profile 覆盖等）。
-//! 配置的磁盘读写与迁移下沉在 core/config.rs（AppConfigDisk）；本文件只留薄 IPC 包装。
+//! App configuration and assistant management commands (assistant/config/profile overrides, etc.).
+//! Disk persistence and migration for config live in core/config.rs (AppConfigDisk); this file keeps only thin IPC wrappers.
 
 use crate::commands::attachment::{
     cleanup_attachment_ids, load_message_attachments_batch, sync_message_attachments,
@@ -9,34 +9,34 @@ use crate::core::secure_store;
 use crate::core::state::DbState;
 use crate::ierr;
 use rusqlite::params;
-use std::fs; // 导入标准库文件系统模块
+use std::fs;
 use tauri::{AppHandle, Manager};
 
-/// 保存应用程序通用配置（业务实现见 core::config）。
+/// Save the general app configuration (business logic lives in core::config).
 #[tauri::command]
 pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     crate::core::config::save_app_config(&app, &config)
 }
 
-/// 读取应用程序通用配置（业务实现见 core::config）。
+/// Load the general app configuration (business logic lives in core::config).
 #[tauri::command]
 pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
     crate::core::config::load_app_config(&app)
 }
 
-/// 同步前端 locale 到后端（错误消息等用户可见文案的语言）。
-/// 前端启动与语言切换时各调用一次；缺省/未知值按中文处理。
+/// Sync the frontend locale to the backend (language of user-visible text such as error messages).
+/// Called once at frontend startup and once per language switch; missing/unknown values fall back to Chinese.
 #[tauri::command]
 pub fn set_locale(locale: String) {
     crate::core::i18n::set_locale(locale);
 }
 
-/// 加载全部助手（含其话题与消息树）。
+/// Load all assistants (with their topics and message trees).
 #[tauri::command]
 pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Assistant>, String> {
     let conn = state.0.lock();
 
-    // 1. 加载助手
+    // 1. Load assistants
     let mut stmt = conn
         .prepare("SELECT id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type FROM assistants ORDER BY id")
         .map_err(|e| e.to_string())?;
@@ -74,7 +74,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
     for asst in assistant_iter {
         let mut asst = asst.map_err(|e| e.to_string())?;
 
-        // 2. 为每个助手加载话题
+        // 2. Load topics for each assistant
         let mut t_stmt = conn
             .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id FROM topics WHERE assistant_id = ?")
             .map_err(|e| e.to_string())?;
@@ -96,23 +96,23 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. 加载历史消息（含 tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens，支持跨重启续接工具调用会话及 token 统计）
+            // 3. Load history messages (including tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens, so tool-call sessions resume across restarts and token stats are kept)
             let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
                 .query_map([&topic.id], |row| {
-                    // 提取 display_files (在 index 4)
+                    // Extract display_files (at index 4)
                     let display_files_json: Option<String> = row.get(4)?;
                     let display_files =
                         display_files_json.and_then(|s| serde_json::from_str(&s).ok());
 
-                    // 提取 content (在 index 2)
+                    // Extract content (at index 2)
                     let content_json: String = row.get(2)?;
                     let content_value = serde_json::from_str(&content_json)
                         .unwrap_or(serde_json::Value::String(content_json));
 
-                    // 提取 tool_calls_json (在 index 9)
+                    // Extract tool_calls_json (at index 9)
                     let tool_calls_json: Option<String> = row.get(9)?;
                     let tool_calls = tool_calls_json
                         .and_then(|s| serde_json::from_str::<Vec<ToolCall>>(&s).ok());
@@ -122,11 +122,11 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         role: row.get(1)?,                 // index 1: role
                         content: content_value,            // index 2: content (JSON)
                         model_id: row.get(3)?,             // index 3: model_id
-                        display_files,                     // 已经解析好的 files
+                        display_files,                     // already-parsed files
                         display_text: row.get(5)?,         // index 5: display_text
                         tool_call_id: row.get(7)?,         // index 7: tool_call_id
                         name: row.get(8)?,                 // index 8: name
-                        tool_calls,                        // index 9: tool_calls_json（已解析）
+                        tool_calls,                        // index 9: tool_calls_json (parsed)
                         reasoning: row.get(6)?,            // index 6: reasoning
                         input_tokens: row.get(10)?,        // index 10: input_tokens
                         output_tokens: row.get(11)?,       // index 11: output_tokens
@@ -141,12 +141,12 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         images: row
                             .get::<_, Option<String>>(17)?
                             .and_then(|s| serde_json::from_str(&s).ok()), // index 17: images_json
-                        full_tool_result: None,        // 会话级内存字段，不持久化
+                        full_tool_result: None, // session-only in-memory field, not persisted
                     })
                 })
                 .map_err(|e| e.to_string())?;
 
-            // 批量加载附件：先收集所有消息 ID，再一次性查询（修复 N+1 查询）
+            // Batch-load attachments: collect all message IDs first, then query once (avoids N+1 queries)
             let mut messages: Vec<Message> = Vec::new();
             let mut msg_ids: Vec<String> = Vec::new();
             for msg in msg_iter {
@@ -183,9 +183,9 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
     Ok(assistants)
 }
 
-/// 同步执行助手持久化（在 spawn_blocking 中调用，避免阻塞异步运行时 ——避免阻塞异步运行时）。
+/// Synchronously persists an assistant (called inside spawn_blocking to avoid blocking the async runtime).
 ///
-/// 外层包一个 SQLite 事务（事务批量写入）：避免逐条自动提交的大量 fsync，随历史增长显著降本。
+/// Wraps the writes in one SQLite transaction (batched writes): avoids per-row autocommit fsync, which gets expensive as history grows.
 fn persist_assistant(conn: &rusqlite::Connection, assistant: &Assistant) -> Result<(), String> {
     conn.execute_batch("BEGIN IMMEDIATE")
         .map_err(|e| e.to_string())?;
@@ -198,12 +198,12 @@ fn persist_assistant(conn: &rusqlite::Connection, assistant: &Assistant) -> Resu
     result
 }
 
-/// persist_assistant 的事务内主体。
+/// The transactional body of persist_assistant.
 fn persist_assistant_inner(
     conn: &rusqlite::Connection,
     assistant: &Assistant,
 ) -> Result<(), String> {
-    // 1. 保存/更新助手基本信息
+    // 1. Insert/update the assistant's base info
     let mcp_ids_json =
         serde_json::to_string(&assistant.mcp_server_ids).unwrap_or_else(|_| "[]".to_string());
     let skill_ids_json =
@@ -219,7 +219,7 @@ fn persist_assistant_inner(
     )
     .map_err(|e| e.to_string())?;
 
-    // 2. 【核心修复】清理已被前端删除的话题 (解决死而复生问题)
+    // 2. Delete topics that were removed on the frontend (otherwise they would reappear on reload)
     let current_topic_ids: Vec<String> = assistant.topics.iter().map(|t| t.id.clone()).collect();
     let mut stmt = conn
         .prepare("SELECT id FROM topics WHERE assistant_id = ?")
@@ -233,7 +233,7 @@ fn persist_assistant_inner(
     for db_id in db_topic_ids {
         if !current_topic_ids.contains(&db_id) {
             let attachment_ids = attachment_ids_for_topic(conn, &db_id)?;
-            // P4.4：话题删除时同步清理检查点（该表无外键，需显式）
+            // Delete checkpoints together with the topic (that table has no foreign key, so this must be explicit)
             crate::commands::llm::checkpoints::delete_topic_checkpoints(conn, &db_id);
             conn.execute("DELETE FROM topics WHERE id = ?", params![db_id])
                 .map_err(|e| e.to_string())?;
@@ -241,7 +241,7 @@ fn persist_assistant_inner(
         }
     }
 
-    // 3. 遍历话题执行增量同步
+    // 3. Incrementally sync each topic
     for topic in &assistant.topics {
         conn.execute(
             "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -250,8 +250,8 @@ fn persist_assistant_inner(
         )
         .map_err(|e| e.to_string())?;
 
-        // 4. 【性能优化重点】增量同步消息
-        // 不再 DELETE ALL，而是使用 ON CONFLICT DO NOTHING (如果 ID 存在则跳过，不存在则插入)
+        // 4. Incremental message sync
+        // Messages sync by ID via the ON CONFLICT clause (insert new, update existing) instead of DELETE ALL + reinsert
         let current_message_ids: Vec<String> = topic
             .history
             .iter()
@@ -276,7 +276,6 @@ fn persist_assistant_inner(
         }
 
         for msg in &topic.history {
-            // 假设 Message 结构体现在也有了 id 字段
             let msg_id = msg
                 .id
                 .clone()
@@ -285,8 +284,8 @@ fn persist_assistant_inner(
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
             let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
-            // 写入 tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens，支持跨重启续接工具调用会话及 token 统计。
-            // 用 ON CONFLICT(id) DO UPDATE 覆盖更新（旧实现 DO NOTHING 会导致再次保存不更新内容）。
+            // Persist tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens so tool-call sessions resume across restarts and token stats are kept.
+            // ON CONFLICT(id) DO UPDATE overwrites rows on re-save; DO NOTHING would leave stale content.
             conn.execute(
                 "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
@@ -316,13 +315,13 @@ fn persist_assistant_inner(
     Ok(())
 }
 
-/// 持久化单个助手（含其全部话题与消息）。
+/// Persist a single assistant (with all its topics and messages).
 ///
-/// # 参数
-/// - `assistant` — 完整助手对象（新建与更新共用此命令，按 id upsert）
+/// # Arguments
+/// - `assistant` — the full assistant object (create and update share this command; upsert by id)
 ///
-/// # 行为
-/// 在阻塞线程中持 DB 锁执行事务写入（事务批量提交，避免逐条 fsync）。
+/// # Behavior
+/// Runs the transactional write on a blocking thread while holding the DB lock (batch commit avoids per-row fsync).
 #[tauri::command]
 pub async fn save_assistant(app: tauri::AppHandle, assistant: Assistant) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
@@ -340,19 +339,19 @@ pub async fn save_assistant(app: tauri::AppHandle, assistant: Assistant) -> Resu
     })?
 }
 
-/// 删除助手及其关联数据。
+/// Delete an assistant and its associated data.
 ///
-/// # 参数
-/// - `id` — 助手 ID
+/// # Arguments
+/// - `id` — assistant ID
 ///
-/// # 行为
-/// 依赖外键 ON DELETE CASCADE 级联删除其话题与消息；同时清理该助手关联的
-/// 附件文件。助手不存在时静默成功（幂等）。
+/// # Behavior
+/// Relies on foreign-key ON DELETE CASCADE to delete its topics and messages; also cleans up
+/// the assistant's attachment files. Succeeds silently when the assistant does not exist (idempotent).
 #[tauri::command]
 pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
     let conn = state.0.lock();
     let attachment_ids = attachment_ids_for_assistant(&conn, &id)?;
-    // 由于设置了 ON DELETE CASCADE，会自动删除关联的话题和消息
+    // ON DELETE CASCADE automatically removes the associated topics and messages
     conn.execute("DELETE FROM assistants WHERE id = ?", params![id])
         .map_err(|e| e.to_string())?;
     cleanup_attachment_ids(&conn, &attachment_ids)?;
@@ -415,22 +414,22 @@ fn attachment_ids_for_assistant(
     Ok(ids)
 }
 
-/// 保存"已激活模型"列表（api_key 剥离到系统 keyring，落盘不含明文密钥）
+/// Save the activated-models list (api_key is stripped into the system keyring; no plaintext keys on disk)
 #[tauri::command]
 pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
     let path = crate::core::paths::app_config_file("activated_models.json")?;
 
-    // 剥离 api_key 到 secure_store，落盘模型不含明文密钥。
-    // 仅当安全存储写入成功时才剥离：失败则保留明文 + 记录 error（绝不静默丢失密钥）。
+    // Strip api_key into secure_store so persisted models contain no plaintext keys.
+    // Strip only when the secure-store write succeeds; on failure keep the plaintext and report the error (never silently lose a key).
     let mut sanitized: Vec<serde_json::Value> = Vec::new();
     for m in &models {
         let key_stored = if !m.api_key.is_empty() && m.api_key != "local-no-key" {
             let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
             secure_store::set_reported(&app, &account, &m.api_key)
         } else {
-            true // 无密钥需要存储（或占位符），可安全剥离
+            true // no key to store (or a placeholder) - safe to strip
         };
-        // 序列化为 JSON Value，按存储结果决定是否移除 api_key 字段
+        // Serialize to a JSON Value; drop the api_key field depending on the store result
         let mut v = serde_json::to_value(m).map_err(|e| e.to_string())?;
         if key_stored {
             if let Some(obj) = v.as_object_mut() {
@@ -445,7 +444,7 @@ pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Res
     Ok(())
 }
 
-/// 加载"已激活模型"列表（从 keyring 恢复 api_key）
+/// Load the activated-models list (api_key restored from the keyring)
 #[tauri::command]
 pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
     let path = crate::core::paths::app_config_dir()?.join("activated_models.json");
@@ -457,28 +456,28 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
     let mut models: Vec<ActivatedModel> =
         serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
-    // 从 secure_store 恢复 api_key，并自动迁移旧数据（含明文 api_key 的旧文件）
+    // Restore api_key from secure_store and auto-migrate legacy data (old files containing plaintext api_key)
     let mut needs_migration = false;
     let mut migrated_ok: std::collections::HashSet<String> = std::collections::HashSet::new();
     for m in &mut models {
-        // 检查是否为旧格式（JSON 中直接含有 api_key）
+        // Legacy format check (JSON still contains api_key directly)
         if !m.api_key.is_empty() && m.api_key != "local-no-key" {
             let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
-            // 迁移到安全存储；仅成功条目允许在写回时剔除明文（绝不静默丢失密钥）
+            // Migrate into secure storage; only successfully migrated entries may have their plaintext stripped on write-back (never silently lose a key)
             if secure_store::set_reported(&app, &account, &m.api_key) {
                 migrated_ok.insert(account);
             }
             needs_migration = true;
         }
 
-        // 从 secure_store 恢复（覆盖旧 JSON 中的值，或补充新格式缺失的 key）
+        // Restore from secure_store (overriding the legacy JSON value, or filling in a key missing in the new format)
         let account = secure_store::accounts::activated_model_key(&m.api_url, &m.model_id);
         if let Ok(Some(key)) = secure_store::get(&app, &account) {
             m.api_key = key;
         }
     }
 
-    // 迁移：立即写回清理后的 JSON（仅剔除迁移成功条目的明文 api_key）
+    // Migration: write back the sanitized JSON immediately (strip plaintext api_key only for successfully migrated entries)
     if needs_migration {
         let mut sanitized: Vec<serde_json::Value> = Vec::new();
         for m in &models {
@@ -504,7 +503,7 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
     Ok(models)
 }
 
-/// 保存从云端或 API 获取的模型原始信息列表
+/// Save the raw model info list fetched from the cloud or an API
 #[tauri::command]
 pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
     let path = crate::core::paths::app_config_file("fetched_models.json")?;
@@ -513,7 +512,7 @@ pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
     Ok(())
 }
 
-/// 加载之前获取过的模型信息列表
+/// Load the previously fetched model info list
 #[tauri::command]
 pub fn load_fetched_models() -> Result<Vec<ModelInfo>, String> {
     let path = crate::core::paths::app_config_dir()?.join("fetched_models.json");
@@ -529,8 +528,8 @@ pub fn load_fetched_models() -> Result<Vec<ModelInfo>, String> {
 // ====== Per-Profile Model Override Persistence ======
 
 ///
-/// 从磁盘加载 profile-model-overrides.json 并返回覆盖配置列表。
-/// 文件不存在或损坏时返回空 vec（不视为错误，所有 profile 回退到父模型）。
+/// Load profile-model-overrides.json from disk and return the override list.
+/// A missing or corrupt file returns an empty vec (not an error; all profiles fall back to the parent model).
 #[tauri::command]
 pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, String> {
     let path = crate::core::paths::app_config_dir()?.join("profile-model-overrides.json");
@@ -555,7 +554,7 @@ pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, Strin
 }
 
 ///
-/// 将子智能体 profile 的模型覆盖配置持久化到磁盘。
+/// Persist the subagent profile model overrides to disk.
 #[tauri::command]
 pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Result<(), String> {
     let path = crate::core::paths::app_config_file("profile-model-overrides.json")?;
@@ -579,8 +578,8 @@ fn custom_profiles_path() -> Result<std::path::PathBuf, String> {
 }
 
 ///
-/// 从磁盘加载所有自定义子智能体配置文件。
-/// 文件不存在或损坏时返回空 vec（不视为错误，仅无自定义配置）。
+/// Load all custom subagent profiles from disk.
+/// A missing or corrupt file returns an empty vec (not an error; it just means no custom profiles).
 #[tauri::command]
 pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, String> {
     let path = custom_profiles_path()?;
@@ -605,8 +604,8 @@ pub fn list_custom_subagent_profiles() -> Result<Vec<CustomSubagentProfile>, Str
 }
 
 ///
-/// 保存（插入或更新）一个自定义子智能体配置文件。
-/// 按 id 去重：同名 id 覆盖，否则追加。
+/// Save (insert or update) a custom subagent profile.
+/// Deduplicated by id: an existing id is overwritten, otherwise appended.
 #[tauri::command]
 pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<(), String> {
     let path = custom_profiles_path()?;
@@ -652,7 +651,7 @@ pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<()
 }
 
 ///
-/// 按 id 删除一个自定义子智能体配置文件。
+/// Delete a custom subagent profile by id.
 #[tauri::command]
 pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> {
     let path = custom_profiles_path()?;
@@ -689,17 +688,17 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
     Ok(())
 }
 
-// ====== 系统自启 ======
+// ====== System auto-start ======
 
-/// 启用或禁用系统自启。
-/// - Windows: 注册表 HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+/// Enable or disable system auto-start.
+/// - Windows: registry HKCU\Software\Microsoft\Windows\CurrentVersion\Run
 /// - macOS: ~/Library/LaunchAgents/com.loch.aio.plist
 /// - Linux: ~/.config/autostart/aio.desktop
 #[tauri::command]
 pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let app_name = "AIO";
-    // 获取当前可执行文件路径
+    // Resolve the current executable path
     let exe_path = std::env::current_exe().map_err(|e| {
         ierr!(
             "无法获取可执行文件路径: {}",
@@ -758,10 +757,10 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                         e
                     )
                 })?;
-            // 删除不存在的键不算错误（reg delete /f 对不存在的键仍返回成功）
+            // Deleting a nonexistent key is not an error (reg delete /f still returns success for missing keys)
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                // reg delete: "错误: 系统找不到指定的注册表项或值" 视为成功
+                // reg delete: the localized not-found error (matched via the stderr check below) is treated as success
                 if !stderr.contains("找不到") {
                     return Err(ierr!(
                         "注册表删除失败: {}",
@@ -856,26 +855,26 @@ X-GNOME-Autostart-enabled=true"#,
         }
     }
 
-    // 持久化状态
+    // Persist the state
     let mut config = load_app_config(app.clone())?;
     config.auto_start_enabled = enabled;
     save_app_config(app, config)
 }
 
-/// 查询系统自启是否已开启。
+/// Return whether system auto-start is enabled.
 #[tauri::command]
 pub fn is_auto_start_enabled(app: AppHandle) -> Result<bool, String> {
     let config = load_app_config(app)?;
     Ok(config.auto_start_enabled)
 }
 
-// ====== 会话分支 ======
+// ====== Topic branching ======
 
-/// 从指定消息处分叉出新话题。
-/// - 将源话题中该消息及之前的所有消息复制到新话题
-/// - 新话题的 `branched_from_message_id` 设为源消息 ID
-/// - 新话题的 `parent_topic_id` 设为源话题 ID
-/// 返回新话题对象。
+/// Branch a new topic off the given message.
+/// - Copies the source topic's messages up to and including that message into the new topic
+/// - The new topic's `branched_from_message_id` is set to the source message ID
+/// - The new topic's `parent_topic_id` is set to the source topic ID
+/// Returns the new topic object.
 #[tauri::command]
 pub async fn branch_topic(
     state: tauri::State<'_, DbState>,
@@ -884,7 +883,7 @@ pub async fn branch_topic(
 ) -> Result<Topic, String> {
     let conn = state.0.lock();
 
-    // 1. 查询源话题的 assistant_id
+    // 1. Look up the source topic's assistant_id
     let assistant_id: String = conn
         .query_row(
             "SELECT assistant_id FROM topics WHERE id = ?1",
@@ -893,7 +892,7 @@ pub async fn branch_topic(
         )
         .map_err(|e| ierr!("查询源话题失败: {}", "Failed to query source topic: {}", e))?;
 
-    // 2. 读取源话题的所有消息，截取到分支点（含）
+    // 2. Read all messages of the source topic, up to the branch point (inclusive)
     let mut m_stmt = conn
         .prepare(
             "SELECT id, role, content, model_id, display_files, display_text, reasoning,
@@ -943,7 +942,7 @@ pub async fn branch_topic(
 
     drop(m_stmt);
 
-    // 截取到分支点（含）
+    // Truncate at the branch point (inclusive)
     let branch_pos = all_msgs
         .iter()
         .position(|m| m.id.as_deref() == Some(&source_message_id));
@@ -959,7 +958,7 @@ pub async fn branch_topic(
         }
     };
 
-    // 3. 创建新话题
+    // 3. Create the new topic
     let new_topic_id = uuid::Uuid::new_v4().to_string();
     let source_topic_name: String = conn
         .query_row(
@@ -969,7 +968,7 @@ pub async fn branch_topic(
         )
         .unwrap_or_else(|_| "分支".into());
 
-    // 统计已有子话题数量（同一 parent_topic_id），自动编号
+    // Count existing sibling topics (same parent_topic_id) for automatic numbering
     let sibling_count: i32 = conn
         .query_row(
             "SELECT COUNT(*) FROM topics WHERE parent_topic_id = ?1",
@@ -989,7 +988,7 @@ pub async fn branch_topic(
         parent_topic_id: Some(source_topic_id.clone()),
     };
 
-    // 4. 插入新话题
+    // 4. Insert the new topic
     conn.execute(
         "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1005,7 +1004,7 @@ pub async fn branch_topic(
     )
     .map_err(|e| ierr!("创建分支话题失败: {}", "Failed to create branch topic: {}", e))?;
 
-    // 5. 插入复制的消息
+    // 5. Insert the copied messages
     for msg in &history {
         let msg_id = uuid::Uuid::new_v4().to_string();
         let files_json = serde_json::to_string(&msg.display_files).ok();

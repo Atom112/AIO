@@ -1,13 +1,13 @@
-//! OpenAI 兼容 provider plugin (兜底)
+//! OpenAI-compatible provider plugin (fallback)
 //!
-//! 覆盖: OpenAI / DeepSeek / Groq / Mistral / xAI / Cohere / OpenRouter / 自定义 OpenAI-兼容
+//! Covers: OpenAI / DeepSeek / Groq / Mistral / xAI / Cohere / OpenRouter / custom OpenAI-compatible
 //!
-//! 端点规范:
-//! - URL: 智能拼接 `/v1/models` 或 `/models`
+//! Endpoint spec:
+//! - URL: smartly appends `/v1/models` or `/models`
 //! - Auth: `Authorization: Bearer <key>`
 //! - Response: `{data: [{id, owned_by}]}`
 //!
-//! 必须是最后一个注册 —— 兜底插件。
+//! Must be registered last - it is the fallback plugin.
 
 use reqwest::RequestBuilder;
 
@@ -22,7 +22,7 @@ impl ProviderPlugin for OpenAICompatProvider {
     }
 
     fn matches(&self, _api_url: &str) -> bool {
-        // 永远不主动匹配，仅作为 manager 兜底
+        // Never matches on its own; serves only as the manager's fallback
         false
     }
 
@@ -61,7 +61,7 @@ impl ProviderPlugin for OpenAICompatProvider {
                     .and_then(|x| x.as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                // OpenAI `created` 是 Unix 秒，转换为 YYYY-MM-DD
+                // OpenAI `created` is Unix seconds; convert to YYYY-MM-DD
                 let released_at = m
                     .get("created")
                     .and_then(|x| x.as_i64())

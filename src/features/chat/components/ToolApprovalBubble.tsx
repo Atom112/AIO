@@ -1,8 +1,8 @@
 /**
- * 工具调用审批气泡组件
+ * Tool-call approval bubble component
  *
- * 当 agent 处于 normal/plan 模式，工具调用需要用户确认时，
- * 在 chat 中内联显示此气泡，提供批准/拒绝操作。
+ * When an agent in normal/plan mode needs user confirmation for a tool call,
+ * this bubble is shown inline in the chat with approve/deny actions.
  */
 import { Component, Show } from 'solid-js';
 import { respondToolApproval } from '../../../core/api/mcp';
@@ -16,9 +16,9 @@ export interface PendingApproval {
   toolName: string;
   arguments: any;
   reason: string;
-  /** 文件变更预览（unified diff） */
+  /** File-change preview (unified diff) */
   previewDiff?: string;
-  /** 受影响的文件路径 */
+  /** Path of the affected file */
   filePath?: string;
 }
 
@@ -38,8 +38,8 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     }
   };
 
-  // P4.5：本次会话总是允许——按审批上下文自动派生规则
-  //（execute_command → 命令首 token；文件写 → 同目录；MCP → 同 server 同工具）
+  // Always allow for this session — the rule is auto-derived from the approval context
+  // (execute_command → first command token; file writes → same directory; MCP → same server and tool)
   const handleAlwaysAllow = async () => {
     try {
       await respondToolApproval(props.approval.approvalId, true, 'session');
@@ -60,12 +60,12 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     }
   };
 
-  // 格式化参数显示
+  // Format arguments for display
   const formatArgs = () => {
     const args = props.approval.arguments;
     if (!args || Object.keys(args).length === 0) return t('agent.approval.noArguments');
     const parts: string[] = [];
-    // path 参数放最前面
+    // Put the path argument first
     if (args.path) {
       parts.push(`path: "${args.path}"`);
     }
@@ -81,7 +81,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     return parts.join(', ');
   };
 
-  // 根据工具名选择图标
+  // Choose an icon based on the tool name
   const toolIcon = () => {
     const name = props.approval.toolName;
     if (name === 'write_file') return 'edit';
@@ -92,7 +92,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     return 'wrench';
   };
 
-  // 根据工具名判断危险等级
+  // Determine danger level from the tool name
   const isDangerous = () => {
     const name = props.approval.toolName;
     return name === 'delete_file';

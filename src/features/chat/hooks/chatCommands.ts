@@ -1,9 +1,8 @@
-// ChatPage 的键盘/斜杠命令注册（19 个 registerCommand）—— 从 ChatPage.onMount 抽出。
+// Keyboard/slash command registration for ChatPage (19 registerCommand calls) — extracted from ChatPage.onMount.
 //
-// 抽取策略与 chatEventListeners 一致：函数顶部从 deps 解构依赖，命令主体逐字迁移；
-// label/description 走 t() 取词（命令面板为面向用户界面）。
+// label/description strings go through t() (the command palette is user-facing).
 //
-// 返回注册返回的 id 列表（组件 onCleanup 时 unregister）。
+// Returns the registered command ids (the component unregisters them in onCleanup).
 
 import {
   getCommandDisplayDescription,
@@ -19,31 +18,31 @@ import {
   type DatasState,
 } from '../../../core/store/store';
 
-/** ChatPage 提供给命令注册的依赖包（组件作用域的 setter/信号/工具）。 */
+/** Deps the ChatPage component provides to command registration (component-scope setters/signals/utilities). */
 export interface ChatCommandDeps {
-  // 面板折叠/宽度
+  // Panel collapse / width
   isLeftCollapsed: () => boolean;
-  /** 左侧面板收起状态统一入口（含持久化与宽度兜底恢复） */
+  /** Single entry point for the left-panel collapsed state (persistence plus width fallback restore) */
   setLeftCollapsed: (collapsed: boolean) => void;
   isRightCollapsed: () => boolean;
   setIsRightCollapsed: (v: boolean) => void;
   rightPanelWidth: () => number;
   setRightPanelWidth: (v: number) => void;
-  // 话题/项目
+  // Topic / project
   addTopic: () => Promise<void>;
   setShowProjectCreateModal: (v: boolean) => void;
   switchToChat: () => void;
   switchToProject: (id: string) => Promise<void>;
-  // 生成控制
+  // Generation control
   isThinking: () => boolean;
   setIsThinking: (v: boolean) => void;
   handleStopGeneration: () => Promise<void>;
-  // 模式与搜索
+  // Mode & search
   reasoningLevel: () => 'off' | 'low' | 'medium' | 'high';
   setReasoningLevel: (v: 'off' | 'low' | 'medium' | 'high') => void;
   webSearchEnabled: () => boolean;
   setWebSearchEnabled: (v: boolean) => void;
-  // 数据访问
+  // Data access
   datas: DatasState;
   setDatas: typeof storeSetDatas;
   projects: () => { id: string; name: string }[];
@@ -52,7 +51,7 @@ export interface ChatCommandDeps {
   currentTopicId: () => string | null;
   setCurrentTopicId: (id: string | null) => void;
   saveSingleAssistantToBackend: (id: string) => Promise<void>;
-  /** force=true 跳过自动压缩阈值守卫（手动 /compact 立即执行） */
+  /** force=true skips the auto-compaction threshold guard (manual /compact runs immediately) */
   checkAndSummarize: (
     keepBudgetOverride?: number,
     opts?: { force?: boolean },
@@ -60,7 +59,7 @@ export interface ChatCommandDeps {
   navigate: (path: string) => void;
 }
 
-/** 注册全部快捷键与斜杠命令，返回已注册的命令 id 列表（用于清理）。 */
+/** Registers all shortcuts and slash commands; returns the registered command ids (for cleanup). */
 export function registerChatCommands(deps: ChatCommandDeps): string[] {
   const {
     isLeftCollapsed,
@@ -135,11 +134,11 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     id: 'prev-assistant',
     category: 'sidebar',
     handler: () => {
-      // 构建顺序: [chat, ...projects]
+      // Ordering: [chat, ...projects]
       const projList = projects();
       const currentProjId = currentAssistant()?.projectId;
       if (!currentProjId) {
-        // 当前是聊天模式，上一个 = 最后一个项目
+        // In chat mode: previous = last project
         if (projList.length > 0) {
           const lastProj = projList[projList.length - 1];
           void switchToProject(lastProj.id);
@@ -149,7 +148,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
         if (idx > 0) {
           void switchToProject(projList[idx - 1].id);
         } else {
-          // 第一个项目，上一个 = 聊天
+          // First project: previous = chat
           switchToChat();
         }
       }
@@ -163,7 +162,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
       const projList = projects();
       const currentProjId = currentAssistant()?.projectId;
       if (!currentProjId) {
-        // 当前是聊天模式，下一个 = 第一个项目
+        // In chat mode: next = first project
         if (projList.length > 0) {
           void switchToProject(projList[0].id);
         }
@@ -172,7 +171,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
         if (idx >= 0 && idx < projList.length - 1) {
           void switchToProject(projList[idx + 1].id);
         } else {
-          // 最后一个项目，下一个 = 聊天
+          // Last project: next = chat
           switchToChat();
         }
       }
@@ -251,7 +250,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     },
   });
 
-  // ---- 斜杠命令处理器（覆盖 shortcuts.ts 中的 no-op） ----
+  // ---- Slash command handlers (override the no-ops in shortcuts.ts) ----
   const cmdSlashClear = registerCommand({
     id: 'slash-clear',
     handler: () => {
@@ -271,7 +270,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     },
   });
 
-  /** 将压缩结果转为用户反馈文案（区分已压缩/归档回退/无需压缩/失败）。 */
+  /** Maps a compaction outcome to user-facing feedback text (compressed / archived fallback / skipped / failed). */
   const compactOutcomeFeedback = (outcome: CompactOutcome): string => {
     switch (outcome.kind) {
       case 'compressed':
@@ -293,8 +292,8 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
   const cmdSlashCompact = registerCommand({
     id: 'slash-compact',
     handler: async (args?: string) => {
-      // 可选参数：保留的 token 预算（`/compact 10000`），默认 2 万；
-      // 手动执行跳过自动压缩的 75% 阈值守卫，无条件立即压缩（对齐主流 Agent 行为）
+      // Optional arg: kept token budget (`/compact 10000`), default 20k;
+      // manual execution skips the auto-compaction 75% threshold guard and compacts immediately (matches mainstream agent behavior)
       const budgetArg = args ? Number(args.trim()) : NaN;
       const budget = Number.isFinite(budgetArg) && budgetArg > 0 ? budgetArg : undefined;
       setIsThinking(true);
@@ -349,7 +348,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
       );
     },
   });
-  // 收集全部命令 id 供调用方在 onCleanup 时注销
+  // Collect all command ids so the caller can unregister them in onCleanup
   ids.push(
     cmdToggleLeft,
     cmdToggleRight,

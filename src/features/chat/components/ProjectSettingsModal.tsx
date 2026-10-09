@@ -34,10 +34,10 @@ interface ProjectSettingsModalProps {
 }
 
 /**
- * 项目设置弹窗
- * 集中管理单个项目的：名称、绑定模型、MCP 服务器、Skill。
- * - 名称：blur/Enter 即时存
- * - 模型：点击即时生效（setAssistantModel 立即同步 selectedModel + 持久化 + 必要时拉起本地引擎）
+ * Project settings modal
+ * Central management for a single project's name, bound model, MCP servers, and skills.
+ * - Name: saved immediately on blur/Enter
+ * - Model: click takes effect immediately (setAssistantModel syncs selectedModel + persists + starts the local engine if needed)
  */
 const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
   const [nameText, setNameText] = createSignal<string>('');
@@ -46,7 +46,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
   const [memoryStatus, setMemoryStatus] = createSignal<MemoryStatus | null>(null);
   const [showPanel, setShowPanel] = createSignal(false);
 
-  /** 弹窗打开时刷新项目记忆状态 */
+  /** Refresh project memory status when the modal opens */
   createEffect(() => {
     if (props.show && currentProjectId()) {
       void memoryGetStatus(currentProjectId()!)
@@ -78,7 +78,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
     }
   };
 
-  /** 当前编辑的助手对象（响应式） */
+  /** The assistant being edited (reactive) */
   const asst = () =>
     datas.assistants.find((a: any) => a.id === props.assistantId) as
       | {
@@ -92,7 +92,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
         }
       | undefined;
 
-  /** 弹窗打开时同步名称到本地编辑态，并触发入场动画 */
+  /** Sync the name into local edit state when the modal opens, and trigger the enter animation */
   createEffect(() => {
     if (props.show && props.assistantId) {
       const a = asst();
@@ -110,7 +110,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
     }, 300);
   };
 
-  /** 即时保存项目名称 */
+  /** Save the project name immediately */
   const saveName = async () => {
     const id = props.assistantId;
     const newName = nameText().trim();
@@ -119,15 +119,15 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
     await saveSingleAssistantToBackend(id);
   };
 
-  /** 选中某模型：立即绑定 + 同步全局 + 持久化（本地模型顺带拉起引擎） */
+  /** Pick a model: bind at once + sync global state + persist (local models also start the engine) */
   const handlePickModel = (model: ActivatedModel) => {
     const id = props.assistantId;
     if (!id) return;
     void setAssistantModel(id, model);
   };
 
-  /** 为当前助手启用或停用一个 MCP server，并立即持久化。
-   *  启用时若 server 未运行则自动启动。 */
+  /** Enable or disable an MCP server for the current assistant and persist immediately.
+   *  Auto-starts the server if it is not running when enabled. */
   const handleToggleMcpServer = async (serverId: string, enabled: boolean) => {
     const id = props.assistantId;
     const current = asst()?.mcpServerIds ?? [];
@@ -139,7 +139,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
     setDatas('assistants', (a) => a.id === id, 'mcpServerIds', next);
     await saveSingleAssistantToBackend(id);
 
-    // 启用时若 server 未运行，自动启动它
+    // Auto-start the server if it is not running when enabled
     if (enabled) {
       const status = mcpServerStatus()[serverId]?.status;
       if (!status || status === 'disconnected' || status === 'error') {
@@ -153,7 +153,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
       .filter((s) => s.id !== '__aio-filesystem__')
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-  /** 为当前助手启用或停用一个 Skill，并立即持久化。 */
+  /** Enable or disable a skill for the current assistant and persist immediately. */
   const handleToggleSkill = async (skillId: string, enabled: boolean) => {
     const id = props.assistantId;
     const current = asst()?.skillIds ?? [];
@@ -168,9 +168,9 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
 
   const sortedSkills = () => Object.values(skills()).sort((a, b) => a.name.localeCompare(b.name));
 
-  // NOTE: 此函数与 SubagentModelSettings.tsx 中的 getProviderIdFor 存在分支副本；
-  // 两者行为略有差异（此版本不含 .trim() 和 deepseek.ai 检查），
-  // 合并前需确认行为差异是否有意。另见 core/utils/models.ts 中的 detectProviderByUrl。
+  // NOTE: branch copy of getProviderIdFor in SubagentModelSettings.tsx;
+  // behavior differs slightly (this version lacks .trim() and the deepseek.ai check).
+  // Confirm the difference is intentional before merging. See also detectProviderByUrl in core/utils/models.ts.
   const getProviderIdFor = (model: ActivatedModel): string => {
     if ((model as any).provider_id) return (model as any).provider_id;
 
@@ -207,23 +207,23 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
 
   const getModelLogo = (modelName: string) => getLogoByIds(null, modelName);
 
-  /** 当前生效模型（用于回显「当前使用」标识） */
+  /** Currently effective model (used to echo the "in use" marker) */
   const activeModel = () => resolveAssistantModel(asst() as any);
 
   const cloudModels = () => allAvailableModels().filter((m) => !isLocalModel(m));
   const localModels = () => allAvailableModels().filter((m) => isLocalModel(m));
 
   /**
-   * 判断某模型是否为「当前选中」。
-   * 统一用复合键 modelKey 精确匹配：助手绑定 modelId 时按其匹配，
-   * 未绑定时回退到当前生效模型（resolveAssistantModel）的键。
+   * Whether a model is the "currently selected" one.
+   * Matches exactly by the composite modelKey: when the assistant has a bound modelId, match against it;
+   * otherwise fall back to the key of the currently effective model (resolveAssistantModel).
    */
   const isSelected = (model: ActivatedModel): boolean => {
     const bound = asst()?.modelId;
     const targetKey = bound ?? (activeModel() ? modelKey(activeModel()!) : null);
     if (!targetKey) return false;
     if (modelKey(model) === targetKey) return true;
-    // 兼容旧数据：绑定的 modelId 为纯 id（无 @）时，按 model_id 兜底匹配本地模型
+    // Legacy data compat: when the bound modelId is a bare id (no @), fall back to matching local models by model_id
     if (bound && !bound.includes('@') && isLocalModel(model) && model.model_id === bound)
       return true;
     return false;
@@ -259,7 +259,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               </button>
             </div>
 
-            {/* 名称 */}
+            {/* Name */}
             <div class="flex flex-col gap-1.5">
               <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                 {t('project.name')}
@@ -274,13 +274,13 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               />
             </div>
 
-            {/* 模型 */}
+            {/* Model */}
             <div class="flex flex-col gap-1.5">
               <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                 {t('project.bindModel')}
               </label>
               <div class="flex flex-row h-[240px] rounded-lg overflow-hidden border border-dark-100">
-                {/* 线上模型 */}
+                {/* Cloud models */}
                 <div class="flex-1 flex flex-col min-w-0">
                   <div
                     class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
@@ -414,7 +414,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                     'align-self': 'stretch',
                   }}
                 />
-                {/* 本地模型 */}
+                {/* Local models */}
                 <div class="flex-1 flex flex-col min-w-0">
                   <div
                     class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
@@ -490,7 +490,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               </div>
             </div>
 
-            {/* 项目记忆 */}
+            {/* Project memory */}
             <div class="flex flex-col gap-1.5">
               <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                 {t('project.memory.title')}
@@ -520,7 +520,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                   <button
                     class={btnSecondarySm}
                     onClick={() => {
-                      // 先退出项目设置弹窗，再打开记忆面板（避免面板被设置弹窗遮住）
+                      // Exit the project settings modal first, then open the memory panel (avoids the panel being covered by the modal)
                       setShowPanel(true);
                       handleClose();
                     }}
@@ -531,7 +531,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               </div>
             </div>
 
-            {/* MCP 服务器 */}
+            {/* MCP servers */}
             <div class="flex flex-col gap-1.5">
               <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                 {t('mcp.title')}
@@ -589,7 +589,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               </div>
             </div>
 
-            {/* Skill */}
+            {/* Skills */}
             <div class="flex flex-col gap-1.5">
               <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                 {t('project.skill')}

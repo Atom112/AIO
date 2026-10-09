@@ -1,9 +1,9 @@
-//! 检索域：向量/FTS5/混合检索、打分与提示块装配（从 store.rs 拆出）。
+//! Retrieval domain: vector/FTS5/hybrid search, scoring, and prompt-block assembly (split from store.rs).
 use super::*;
 use crate::services::memory::CollectRowsWarn;
 
 impl MemoryStore {
-    /// 向量检索：vec0 优先，失败回退暴力余弦（表缺失/维度变化等）。
+    /// Vector search: vec0 first, brute-force cosine fallback on failure (missing table, dimension change, etc.).
     fn vector_search(
         &self,
         conn: &Connection,
@@ -34,8 +34,8 @@ impl MemoryStore {
         Ok(brute_force_topk(&decoded, query, k))
     }
 
-    /// 纯向量余弦检索（判重/仲裁用）：返回 (id, cosine_similarity) 按相似度降序。
-    /// 只检索 active 事实；维度不匹配时返回空表（由调用方降级为关键词）。
+    /// Pure vector cosine search (for dedup/arbitration): returns (id, cosine_similarity) sorted by descending similarity.
+    /// Only active facts are searched; a dimension mismatch returns an empty list (the caller falls back to keywords).
     pub fn search_similar(
         &self,
         query_vec: &[f32],
@@ -48,7 +48,7 @@ impl MemoryStore {
         self.vector_search(&conn, query_vec, k)
     }
 
-    /// 混合检索：向量 top-k（query_vec 提供时）+ FTS5 BM25 → RRF 融合 + 时新度加成。
+    /// Hybrid search: vector top-k (when query_vec is given) + FTS5 BM25 -> RRF fusion + recency boost.
     pub fn search_hybrid(
         &self,
         query_text: &str,
@@ -58,7 +58,7 @@ impl MemoryStore {
         let k = opts.k.clamp(1, 50);
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
 
-        // 1) 向量召回（vec0 加速，不可用时暴力余弦）
+        // 1) Vector recall (vec0-accelerated, brute-force cosine when unavailable)
         let mut vector_ranks: Vec<(String, usize)> = Vec::new();
         if let Some(qv) = query_vec {
             let top = self.vector_search(&conn, qv, k * 2)?;
@@ -67,13 +67,13 @@ impl MemoryStore {
             }
         }
 
-        // 2) FTS5 召回（trigram，支持中文子串；仅 active 事实）→
-        //    短查询（<3 字符，trigram 无法命中）或表达式失败/空结果时降级 LIKE
+        // 2) FTS5 recall (trigram, supports Chinese substrings; active facts only) ->
+        //    short queries (<3 chars, which trigram cannot match) or failed/empty expressions fall back to LIKE
         let mut fts_ranks: Vec<(String, usize)> = Vec::new();
         let sanitized = sanitize_fts_query(query_text);
         let mut like_query = false;
         if sanitized.chars().count() < 3 {
-            // trigram 需要 ≥3 字符，中文 1-2 字查询（重构/测试等）直接走 LIKE
+            // trigram needs >=3 chars, so 1-2 char Chinese queries go straight to LIKE
             like_query = true;
         } else if !sanitized.trim().is_empty() {
             let sql = "SELECT f.fact_id FROM fts_facts f JOIN facts ON facts.rowid = f.rowid WHERE f.fts_facts MATCH ?1 AND facts.status = ?2 ORDER BY bm25(f.fts_facts) LIMIT ?3";
@@ -98,7 +98,7 @@ impl MemoryStore {
             like_query = true;
         }
         if like_query {
-            // LIKE 模糊匹配（status 过滤，避免同名子串把非 active 事实召回）
+            // LIKE fuzzy match (status-filtered, so substring hits do not recall non-active facts)
             let pattern = format!("%{}%", query_text.trim());
             let mut stmt = conn
                 .prepare("SELECT id FROM facts WHERE status = ?1 AND (content LIKE ?2 OR category LIKE ?2) LIMIT ?3")
@@ -113,7 +113,7 @@ impl MemoryStore {
             }
         }
 
-        // 3) RRF 融合
+        // 3) RRF fusion
         let mut rrf: HashMap<String, f32> = HashMap::new();
         for (id, rank) in vector_ranks.iter().chain(fts_ranks.iter()) {
             let entry = rrf.entry(id.clone()).or_insert(0.0);
@@ -123,7 +123,7 @@ impl MemoryStore {
             return Ok(Vec::new());
         }
 
-        // 4) 取详情 + 时新度加成 + 排序
+        // 4) Fetch details + recency boost + sort
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -131,7 +131,7 @@ impl MemoryStore {
         let mut scored: Vec<ScoredFact> = Vec::new();
         for (id, score) in rrf.iter() {
             if let Ok(fact) = self.fetch_scored(id, *score, now_secs, &conn) {
-                // 类别过滤（向量/FTS/LIKE 三路统一在此收敛；off-category 不再进入结果）
+                // Category filter (vector/FTS/LIKE paths all converge here; off-category facts never enter the result)
                 if let Some(cat) = &opts.category {
                     if &fact.category != cat {
                         continue;
@@ -154,10 +154,10 @@ impl MemoryStore {
         Ok(scored)
     }
 
-    // ===== P3-2/P3-5 稀疏腿（FTS-only）检索：评估用，与混合检索同过滤口径 =====
+    // ===== Sparse-leg (FTS-only) search: for evaluation, same filtering criteria as hybrid search =====
 
-    /// 仅关键词检索（FTS5/LIKE + status/category/时新度），不参与向量路。
-    /// 供 RAG 评测（eval_rag）对比"纯向量 / FTS / 混合"三路使用。
+    /// Keyword-only search (FTS5/LIKE + status/category/recency); the vector path is not used.
+    /// Used by RAG evaluation (eval_rag) to compare the vector-only / FTS / hybrid paths.
     #[cfg(test)]
     pub fn search_fts_only(
         &self,
@@ -181,7 +181,7 @@ impl MemoryStore {
             }
         }
         if ids.is_empty() {
-            // 短查询或不支持 trigram 时回退 LIKE（status 过滤）
+            // Fall back to LIKE for short queries or when trigram is unavailable (status-filtered)
             let pattern = format!("%{}%", query_text.trim());
             let mut stmt = conn
                 .prepare("SELECT id FROM facts WHERE status = ?1 AND (content LIKE ?2 OR category LIKE ?2) LIMIT ?3")
@@ -258,7 +258,7 @@ impl MemoryStore {
         })
     }
 
-    /// 读取全部带向量的 active 事实（合并整理/聚类用）。
+    /// Read all active facts that have vectors (for consolidation/clustering).
     pub fn list_active_facts_with_vectors(&self) -> Result<Vec<FactWithVector>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -280,9 +280,9 @@ impl MemoryStore {
         Ok(rows.collect_rows("search"))
     }
 
-    // ===== P3-3 轻量知识图谱（facts_relations）=====
+    // ===== Lightweight knowledge graph (facts_relations) =====
 
-    /// 由检索结果生成注入块（按 token 预算裁剪；同样素材下输出稳定，利于 prompt cache）。
+    /// Build the injection block from search results (trimmed to the token budget; stable output for identical input, which favors prompt caching).
     pub fn build_block_from(
         &self,
         results: Vec<ScoredFact>,

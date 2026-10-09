@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EVENTS } from './events';
 
-// 前端事件名必须与后端 core/events.rs 的 kebab-case 守门测试保持同一约定
+// Frontend event names must follow the same convention as the kebab-case gate test in backend core/events.rs
 describe('EVENTS', () => {
   it('事件名全部为 kebab-case', () => {
     for (const [key, value] of Object.entries(EVENTS)) {

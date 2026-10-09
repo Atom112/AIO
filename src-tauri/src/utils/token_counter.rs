@@ -1,31 +1,31 @@
-//! Token 计数工具
+//! Token counting utilities
 //!
-//! 封装 tiktoken-rs 提供本地 token 计数能力：
-//! - 单文本 token 计数
-//! - 聊天消息数组 token 估算
-//! - 模型名 → 编码器自动映射
+//! Wraps tiktoken-rs for local token counting:
+//! - Token count for a single text
+//! - Token estimation for chat message arrays
+//! - Automatic model name -> encoder mapping
 //!
-//! 性能说明：tiktoken-rs 的 cl100k_base()/o200k_base() 每次调用都会重新解析
-//! 整个 BPE 词表（10 万+ 条、base64 解码 + HashMap 构建，约百毫秒级），
-//! 必须全局缓存，否则 Agent 循环中逐消息调用会严重拖慢（曾导致子代理工具调用卡顿数分钟）。
+//! Performance note: tiktoken-rs's cl100k_base()/o200k_base() re-parses the entire
+//! BPE vocab (100k+ entries, base64 decode + HashMap build, ~100ms) on each call;
+//! encoders must be globally cached or per-message counting stalls the agent loop.
 
 use std::sync::{LazyLock, Mutex};
 use tiktoken_rs::CoreBPE;
 
-/// cl100k_base（GPT-4 / GPT-3.5 系列）——全局缓存，只解析一次
+/// cl100k_base (GPT-4 / GPT-3.5 family): globally cached, parsed only once
 static CL100K: LazyLock<Mutex<CoreBPE>> = LazyLock::new(|| {
     Mutex::new(tiktoken_rs::cl100k_base().expect("无法加载 cl100k_base tokenizer"))
 });
-/// o200k_base（GPT-4o / o1 / o3 系列）
+/// o200k_base (GPT-4o / o1 / o3 family)
 static O200K: LazyLock<Mutex<CoreBPE>> =
     LazyLock::new(|| Mutex::new(tiktoken_rs::o200k_base().expect("无法加载 o200k_base tokenizer")));
-/// p50k_base（davinci / babbage / curie / ada 系列）
+/// p50k_base (davinci / babbage / curie / ada family)
 static P50K: LazyLock<Mutex<CoreBPE>> =
     LazyLock::new(|| Mutex::new(tiktoken_rs::p50k_base().expect("无法加载 p50k_base tokenizer")));
 
-/// 根据模型名选择编码器（返回全局缓存引用，零重建开销）
+/// Select the encoder by model name (returns a globally cached reference, zero rebuild cost)
 fn get_bpe(model: &str) -> &'static Mutex<CoreBPE> {
-    // o200k 优先（gpt-4o 同时匹配 "gpt-4" 前缀，必须先判 o 系列）
+    // o200k takes priority (gpt-4o also matches the "gpt-4" prefix, so check the o-series first)
     if model.contains("gpt-4o")
         || model.contains("o1")
         || model.contains("o3")
@@ -41,12 +41,12 @@ fn get_bpe(model: &str) -> &'static Mutex<CoreBPE> {
     {
         &P50K
     } else {
-        // 默认 cl100k_base（GPT-4 / GPT-3.5 / 兼容模型的最常用估算）
+        // Default to cl100k_base (the most common estimate for GPT-4 / GPT-3.5 / compatible models)
         &CL100K
     }
 }
 
-/// 估算单个文本的 token 数
+/// Estimate the token count of a single text
 pub fn count_tokens(model: &str, text: &str) -> Result<usize, String> {
     let bpe = get_bpe(model);
     let bpe = bpe.lock().map_err(|e| e.to_string())?;
@@ -54,9 +54,9 @@ pub fn count_tokens(model: &str, text: &str) -> Result<usize, String> {
     Ok(tokens.len())
 }
 
-// ====== Tauri 命令 ======
+// ====== Tauri commands ======
 
-/// 估算文本的 token 数（供前端输入框实时预览）
+/// Estimate the token count of a text (for live preview in the frontend input box)
 pub fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
     count_tokens(&model, &text)
 }
@@ -65,8 +65,9 @@ pub fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
 mod tests {
     use super::*;
 
-    /// 性能回归守卫：BPE 编码器必须全局缓存（每次调用重新解析词表会导致 Agent 循环卡顿）。
-    /// 100 次短文本计数在缓存下应 < 100ms；未缓存时约 10-30 秒，必然触发 10s 宽松上限。
+    /// Performance regression guard: BPE encoders must be globally cached
+    /// (re-parsing the vocab on every call stalls the agent loop).
+    /// 100 short-text counts should take < 100ms cached; uncached ~10-30s, which trips the lenient 10s limit.
     #[test]
     fn count_tokens_is_cached_and_fast() {
         let text = "你好，这是一个用于 token 计数的测试文本 hello world 12345";

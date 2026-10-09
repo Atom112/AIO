@@ -1,5 +1,5 @@
-/// 本地推理引擎插件系统
-/// 提供统一的 LocalEnginePlugin trait 和 EngineManager 注册中心
+/// Local inference engine plugin system
+/// Provides the unified LocalEnginePlugin trait and the EngineManager registry
 pub mod installer;
 pub mod llama_cpp;
 pub mod ollama;
@@ -12,29 +12,29 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use tauri::AppHandle;
 
-/// 本地推理引擎插件 trait
-/// 所有本地推理后端（llama.cpp, vLLM 等）必须实现此 trait
+/// Local inference engine plugin trait
+/// All local inference backends (llama.cpp, vLLM, etc.) must implement this trait
 pub trait LocalEnginePlugin: Send + Sync {
-    /// 人类可读名称，如 "llama.cpp"（用于引擎扫描结果展示）
+    /// Human-readable name, e.g. "llama.cpp" (shown in engine scan results)
     fn name(&self) -> &'static str;
-    /// 机器标识符，如 "llama_cpp"
+    /// Machine identifier, e.g. "llama_cpp"
     fn identifier(&self) -> &'static str;
 
-    /// 当前平台是否支持此引擎
+    /// Whether this engine is supported on the current platform
     fn is_platform_supported(&self) -> bool {
         true
     }
 
-    /// 获取引擎在 app data 下的安装路径。
-    /// 注：当前 installer 对 llama-cpp 硬编码了路径（plugins/engine/installer.rs），
-    /// 此方法尚未被调用——保留为插件扩展契约（自动安装流程的挂接点）。
+    /// Get the engine install path under app data.
+    /// Note: the installer currently hardcodes the llama-cpp path (plugins/engine/installer.rs),
+    /// so this method is not called yet; kept as the plugin extension contract (auto-install hook point).
     #[allow(dead_code)]
     fn install_path(&self, app: &AppHandle) -> PathBuf;
 
-    /// 引擎是否已安装
+    /// Whether the engine is installed
     fn is_installed(&self, app: &AppHandle) -> bool;
 
-    /// 启动引擎，返回其暴露的 OpenAI-compatible API Base URL
+    /// Start the engine and return the OpenAI-compatible API Base URL it exposes
     fn start<'a>(
         &'a self,
         app: AppHandle,
@@ -45,12 +45,12 @@ pub trait LocalEnginePlugin: Send + Sync {
         trust_remote_code: bool,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
 
-    /// 发送进度事件的事件名
+    /// Event name used to emit progress events
     fn progress_event_name(&self) -> &'static str {
         ev::ENGINE_PROGRESS
     }
 
-    /// 构建命令行参数（供 start 内部使用）
+    /// Build the command line (used internally by start)
     fn build_command(
         &self,
         exe_path: &std::path::Path,
@@ -59,8 +59,8 @@ pub trait LocalEnginePlugin: Send + Sync {
         gpu_layers: i32,
     ) -> std::process::Command;
 
-    /// 深度检测：检查引擎是否实际安装在系统上（PATH / 包管理器 / 默认端口可访问）。
-    /// 默认实现调用 is_installed()；外部引擎应覆盖以检查 PATH + HTTP 可达。
+    /// Deep detection: check whether the engine is actually installed on the system (PATH / package managers / default port reachable).
+    /// The default implementation calls is_installed(); external engines should override to check PATH + HTTP reachability.
     fn detect_installation(&self, app: &AppHandle) -> crate::core::models::EngineInstallInfo {
         crate::core::models::EngineInstallInfo {
             installed: self.is_installed(app),
@@ -68,23 +68,23 @@ pub trait LocalEnginePlugin: Send + Sync {
         }
     }
 
-    /// 此引擎的默认端口（供前端预填 URL 和启动时使用）。
+    /// Default port for this engine (frontend prefills the URL with it and uses it at startup).
     fn default_port(&self) -> u16 {
         8080
     }
 
-    /// 默认 API base URL（前端预填用）。默认 OpenAI 兼容形态 `http://localhost:{port}/v1`；
-    /// 非 OpenAI 形态的引擎（如 Ollama 的根 URL）必须覆盖。
+    /// Default API base URL (for frontend prefill). Defaults to the OpenAI-compatible shape `http://localhost:{port}/v1`;
+    /// engines with a non-OpenAI shape (e.g. Ollama's root URL) must override.
     fn default_api_url(&self, port: u16) -> String {
         format!("http://localhost:{port}/v1")
     }
 
-    /// 模型列表端点 URL。默认 `{base}/models`（OpenAI 兼容）；其他形态必须覆盖。
+    /// Model list endpoint URL. Defaults to `{base}/models` (OpenAI compatible); other shapes must override.
     fn models_url(&self, api_url: &str) -> String {
         format!("{}/models", api_url.trim_end_matches('/'))
     }
 
-    /// 从模型列表响应解析模型名。默认按 OpenAI `{{"data":[{{"id":...}}]}}` 解析。
+    /// Parse model ids from the model list response. Defaults to the OpenAI `{{"data":[{{"id":...}}]}}` shape.
     fn parse_model_ids(&self, body: &serde_json::Value) -> Vec<String> {
         body["data"]
             .as_array()
@@ -96,14 +96,14 @@ pub trait LocalEnginePlugin: Send + Sync {
             .unwrap_or_default()
     }
 
-    /// 是否为"外部引擎"（不由本进程管理子进程，如系统安装的 Ollama）。
-    /// 外部引擎的模型路径不做沙箱校验（其模型由引擎自身管理）。
+    /// Whether this is an "external engine" (its child process is not managed by us, e.g. a system-installed Ollama).
+    /// External engines skip model-path sandbox validation (their models are managed by the engine itself).
     fn is_external(&self) -> bool {
         false
     }
 }
 
-/// 引擎管理器：维护所有已注册插件
+/// Engine manager: holds all registered plugins
 pub struct EngineManager {
     plugins: HashMap<String, Box<dyn LocalEnginePlugin>>,
 }
@@ -127,7 +127,7 @@ impl EngineManager {
         self.plugins.get(id).map(|b| b.as_ref())
     }
 
-    /// 返回所有已注册插件的引用（按标识符字母序排列）。
+    /// Return references to all registered plugins (sorted alphabetically by identifier).
     pub fn all_plugins(&self) -> Vec<&dyn LocalEnginePlugin> {
         let mut plugins: Vec<&dyn LocalEnginePlugin> =
             self.plugins.values().map(|b| b.as_ref()).collect();

@@ -1,6 +1,6 @@
-//! 本地 ONNX 交叉编码器重排：模型按需下载到 `<app_data_dir>/models/rerank/<id>/`，
-//! 通过 fastembed 的 `TextRerank`（user-defined）加载，按模型 id 分槽惰性缓存。
-//! 支持 manifest 中全部 kind=rerank 模型（bge-reranker 系列 + mxbai-rerank）。
+//! Local ONNX cross-encoder rerank: models are downloaded on demand to `<app_data_dir>/models/rerank/<id>/`,
+//! loaded via fastembed's `TextRerank` (user-defined) and lazily cached per model id.
+//! Supports every kind=rerank model in the manifest (bge-reranker series + mxbai-rerank).
 
 use super::Reranker;
 use crate::core::models::MemoryRerankConfig;
@@ -13,29 +13,29 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::AppHandle;
 
-/// manifest 中的默认本地重排模型 id（与 core/models/config.rs 的默认配置一致）。
+/// Default local rerank model id in the manifest (matches the default in core/models/config.rs).
 pub const LOCAL_MODEL_ID: &str = "bge-reranker-base";
 const MAX_LENGTH: usize = 512;
 
-/// 应用数据目录（由 lib.rs 启动时注入；本地模型加载不依赖 AppHandle 生命周期）。
+/// App data directory (injected at startup by lib.rs; local model loading does not depend on the AppHandle lifecycle).
 static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// 已加载重排模型的进程内缓存（按模型 id 分槽：每个模型仅加载一次；
-/// 删除模型文件时经 evict_model 卸载对应槽位）。
+/// In-process cache of loaded rerank models (slotted by model id: each model loads only once;
+/// deleting model files unloads the slot via evict_model).
 static MODEL_CACHE: OnceLock<Mutex<HashMap<String, Arc<TextRerank>>>> = OnceLock::new();
 
 fn model_cache() -> &'static Mutex<HashMap<String, Arc<TextRerank>>> {
     MODEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 卸载已加载的重排模型实例（删除模型文件时调用；未加载为 no-op）。
+/// Unload a loaded rerank model instance (called when deleting model files; no-op if not loaded).
 pub fn evict_model(id: &str) {
     if let Ok(mut map) = model_cache().lock() {
         map.remove(id);
     }
 }
 
-/// 启动时注入应用数据目录（lib.rs setup 调用）。
+/// Inject the app data directory at startup (called from lib.rs setup).
 pub fn init_app_data_dir(dir: PathBuf) {
     let _ = APP_DATA_DIR.set(dir);
 }
@@ -44,7 +44,7 @@ fn app_data_dir() -> Option<&'static PathBuf> {
     APP_DATA_DIR.get()
 }
 
-/// 本地重排模型目录：<app_data_dir>/models/rerank/<id>/
+/// Local rerank model directory: <app_data_dir>/models/rerank/<id>/
 fn model_dir(model_id: &str) -> Result<PathBuf, String> {
     let base = app_data_dir().ok_or_else(|| {
         ierr!(
@@ -55,8 +55,8 @@ fn model_dir(model_id: &str) -> Result<PathBuf, String> {
     Ok(base.join("models").join("rerank").join(model_id))
 }
 
-/// 模型的 ONNX 权重文件相对路径（各模型量化版命名不同：model_int8 / model_quantized），
-/// 从 manifest 条目的文件清单中取唯一的 .onnx 条目。
+/// Relative path of the model's ONNX weights file (quantized variants differ per model: model_int8 / model_quantized),
+/// taken as the unique .onnx entry from the manifest entry's file list.
 fn onnx_rel_path(model_id: &str) -> Result<&'static str, String> {
     let entry = crate::core::model_registry::find_entry(model_id)
         .ok_or_else(|| ierr!("未知重排模型: {}", "Unknown rerank model: {}", model_id))?;
@@ -77,8 +77,8 @@ fn onnx_rel_path(model_id: &str) -> Result<&'static str, String> {
         })
 }
 
-/// 本地重排模型是否已下载（onnx + tokenizer 文件齐备）。未下载时 is_available()=false，
-/// 检索回退 RRF-only，UI 显示"待下载"并引导下载。
+/// Whether the local rerank model is downloaded (onnx + tokenizer files all present). When missing, is_available()=false,
+/// retrieval falls back to RRF-only, and the UI shows "pending download" and guides the user to download it.
 fn files_present(model_id: &str) -> bool {
     let Ok(dir) = model_dir(model_id) else {
         return false;
@@ -91,7 +91,7 @@ fn files_present(model_id: &str) -> bool {
         && dir.join("config.json").exists()
 }
 
-/// 本地重排器：按配置的模型 id 惰性加载对应 ONNX 模型（进程内每模型仅一次）。
+/// Local reranker: lazily loads the ONNX model for the configured model id (once per model in-process).
 pub struct LocalReranker {
     model_id: String,
 }
@@ -139,7 +139,7 @@ impl LocalReranker {
             tokenizer_config_file: read("tokenizer_config.json").unwrap_or_default(),
         };
         let user_model = UserDefinedRerankingModel::new(OnnxSource::File(onnx), tokenizer_files);
-        // RerankInitOptionsUserDefined 为 #[non_exhaustive]，须用 Default + 可变字段
+        // RerankInitOptionsUserDefined is #[non_exhaustive]; must be built via Default + mutable fields
         let mut init = RerankInitOptionsUserDefined::default();
         init.max_length = MAX_LENGTH;
         let m = Arc::new(
@@ -183,7 +183,7 @@ impl Reranker for LocalReranker {
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-        // RerankResult.index 即文档下标，映射回 (id, score) 并降序
+        // RerankResult.index is the document index; map back to (id, score) and sort descending
         let mut out: Vec<(String, f32)> = Vec::with_capacity(result.len());
         for r in result {
             if let Some(doc) = docs.get(r.index) {

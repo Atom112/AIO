@@ -1,18 +1,19 @@
-//! 话题标题与历史摘要命令（generate_topic_title、summarize_history、archive_history）。
+//! Topic title and history summary commands (generate_topic_title, summarize_history, archive_history).
 
 use crate::commands::llm::*;
 use crate::ierr;
 use serde_json::json;
 
-/// 生成历史摘要（供前端手动触发的上下文压缩使用）。
+/// Generate a history summary (used by the frontend's manually triggered context compression).
 ///
-/// # 参数
-/// - `api_url` / `api_key` / `model` — 目标 LLM 端点与模型
-/// - `messages_json` — 待摘要消息的 JSON 数组字符串（由前端序列化传入）
-/// - `locale` — UI 语言（"en-US" 英文提示词，其余中文）
+/// # Parameters
+/// - `api_url` / `api_key` / `model` — target LLM endpoint and model
+/// - `messages_json` — JSON array string of messages to summarize (frontend-serialized)
+/// - `locale` — UI language ("en-US" gets the English prompt, otherwise Chinese)
 ///
-/// # 行为
-/// 校验 URL 后发起一次非流式补全请求，返回摘要文本；失败时以中文错误串上抛。
+/// # Behavior
+/// Validates the URL, then issues one non-streaming completion request and returns the
+/// summary text; on failure a Chinese error string is raised.
 #[tauri::command]
 pub(crate) async fn summarize_history(
     api_url: String,
@@ -23,7 +24,7 @@ pub(crate) async fn summarize_history(
 ) -> Result<String, String> {
     let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
         .map_err(|e| format!("Invalid messages JSON: {}", e))?;
-    // 诊断日志（仅 debug：避免生产日志记录对话结构）
+    // diagnostic log (debug only: keeps conversation structure out of production logs)
     for (i, m) in messages.iter().enumerate() {
         tracing::debug!(
             "[summarize_history] messages[{}] role={} has_tool_call_id={} has_tool_calls={} has_name={}",
@@ -34,7 +35,7 @@ pub(crate) async fn summarize_history(
             m.get("name").is_some()
         );
     }
-    // SSRF 防护
+    // SSRF protection
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
@@ -95,16 +96,18 @@ pub(crate) async fn summarize_history(
     Ok(summary)
 }
 
-/// 归档早期消息到本地（手动 /compact 的摘要失败回退，snapcompact 式零 API 成本）。
+/// Archive early messages locally (fallback when manual /compact summarization fails;
+/// snapcompact-style, zero API cost).
 ///
-/// # 参数
-/// - `messages_json` — 待归档消息的 JSON 数组字符串（由前端序列化传入）
-/// - `model` — 用于 token 估算的模型名
-/// - `locale` — UI 语言（"en-US" 英文占位文本，其余中文）
+/// # Parameters
+/// - `messages_json` — JSON array string of messages to archive (frontend-serialized)
+/// - `model` — model name used for token estimation
+/// - `locale` — UI language ("en-US" gets the English placeholder, otherwise Chinese)
 ///
-/// # 行为
-/// 写入 {app_data}/archives/{uuid}.txt（与 read_artifact 工具共用目录），
-/// 返回 `[历史归档 #id]` 占位文本；Agent 模式下模型可按占位 ID 调 read_artifact 读回原文。
+/// # Behavior
+/// Writes {app_data}/archives/{uuid}.txt (directory shared with the read_artifact tool) and
+/// returns a locale-dependent `[Archive #id]`-style placeholder; the model can call
+/// read_artifact with that placeholder ID to read the original content back.
 #[tauri::command]
 pub(crate) fn archive_history(
     app: tauri::AppHandle,
@@ -123,18 +126,18 @@ pub(crate) fn archive_history(
     archive_early_messages(&app, &messages, &model, &locale.unwrap_or_default())
 }
 
-/// 清洗模型返回的原始字符串为合规标题。
-/// 1. 去除首尾空白与首尾成对引号（半角 / 全角 / 中文书名号 / 反引号）
-/// 2. 取第一个非空行（避免多行输出）
-/// 3. 递归剥离常见中英文前缀（"标题：" / "Title:" / "好的，" / "以下是" 等）
-/// 4. 去除成对 Markdown 标记（**...** / `...`）
+/// Clean a raw model-returned string into a well-formed title:
+/// 1. Trim whitespace and paired quotes (half/full width, CJK quotes, backticks)
+/// 2. Take the first non-empty line (avoids multi-line output)
+/// 3. Recursively strip common Chinese/English prefixes ("Title:" and its Chinese variants)
+/// 4. Remove paired Markdown markers (**...** / `...`)
 pub(crate) fn clean_topic_title(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return String::new();
     }
 
-    // 取第一个非空行
+    // take the first non-empty line
     let first_line = trimmed
         .lines()
         .map(|l| l.trim())
@@ -143,7 +146,7 @@ pub(crate) fn clean_topic_title(raw: &str) -> String {
 
     let mut s = first_line.to_string();
 
-    // 剥离常见前缀（最多尝试 3 轮，防止 "好的，标题是：xxx" 这种嵌套）
+    // strip common prefixes (up to 3 passes, to handle nested prefixes)
     const PREFIXES: &[&str] = &[
         "好的，标题是：",
         "好的，标题是:",
@@ -184,7 +187,7 @@ pub(crate) fn clean_topic_title(raw: &str) -> String {
         }
     }
 
-    // 去除首尾成对引号（中英文 + 反引号 + 书名号）
+    // strip paired leading/trailing quotes (Chinese/English + backticks + CJK quotes)
     s = s
         .trim_matches(|c: char| {
             matches!(
@@ -203,7 +206,7 @@ pub(crate) fn clean_topic_title(raw: &str) -> String {
         })
         .to_string();
 
-    // 去除成对 Markdown 标记
+    // remove paired Markdown markers
     if s.len() > 4 && s.starts_with("**") && s.ends_with("**") {
         s = s[2..s.len() - 2].to_string();
     } else if s.len() > 2 && s.starts_with('`') && s.ends_with('`') {
@@ -213,21 +216,23 @@ pub(crate) fn clean_topic_title(raw: &str) -> String {
     s.trim().to_string()
 }
 
-/// 为话题生成一个简短标题（4-20 个字符）。
-/// 由前端在新话题的"第一次对话"后调用一次，生成后前端将 `topic.renamed` 置为 `true`，
-/// 后续不再调用以避免重复重命名。
-/// 仅做内容生成，不写入数据库 —— 持久化由前端在更新 Store 后通过 `save_assistant` 完成。
+/// Generate a short title (4-20 characters) for a topic.
+/// Called once by the frontend after the first exchange in a new topic; the frontend then
+/// sets `topic.renamed` to `true` and does not call again, avoiding duplicate renames.
+/// Content generation only, no database writes; persistence happens in the frontend via
+/// `save_assistant` after the Store update.
 ///
-/// # 参数
-/// - `api_url` / `api_key` / `model`：调用方所用的 LLM 凭据（与流式对话保持一致）
-/// - `messages`：用于生成标题的对话内容（建议取前 2~4 条）
+/// # Parameters
+/// - `api_url` / `api_key` / `model`: LLM credentials used by the caller (same as streaming chat)
+/// - `messages`: conversation content for title generation (first 2-4 messages recommended)
 ///
-/// # 返回
-/// 成功时返回清洗后的标题字符串（已去除引号、空白、换行与常见前缀，长度限制在 1-20 字符内）。
+/// # Returns
+/// On success, the cleaned title string (quotes, whitespace, newlines and common prefixes
+/// stripped; length capped at 1-20 characters).
 ///
-/// # 失败模式
-/// 若 LLM 长时间返回空内容（finish_reason=stop 且 content 为空），错误信息会附带
-/// 模型名与原始长度，便于排查。前端应在 catch 中走启发式后备方案。
+/// # Failure modes
+/// If the LLM returns empty content (finish_reason=stop with empty content), the error carries
+/// the model name and raw length for diagnosis; the frontend should use its heuristic fallback.
 #[tauri::command]
 pub(crate) async fn generate_topic_title(
     api_url: String,
@@ -237,7 +242,7 @@ pub(crate) async fn generate_topic_title(
 ) -> Result<String, String> {
     let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
         .map_err(|e| format!("Invalid messages JSON: {}", e))?;
-    // 诊断日志
+    // diagnostic log
     for (i, m) in messages.iter().enumerate() {
         tracing::info!(
             "[generate_topic_title] messages[{}] role={} has_tool_call_id={} has_tool_calls={} has_name={}",
@@ -248,7 +253,7 @@ pub(crate) async fn generate_topic_title(
             m.get("name").is_some()
         );
     }
-    // SSRF 防护
+    // SSRF protection
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),

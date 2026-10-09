@@ -1,46 +1,46 @@
-//! 统一 HTTP URL 安全校验。
+//! Unified HTTP URL safety validation.
 //!
-//! 提供单一的 `validate_http_url` 函数，供所有 HTTP 入口点（LLM API、
-//! Provider 配置、MCP HTTP transport、Web fetch 等）复用。
+//! Provides the single `validate_http_url` function reused by every HTTP entry point
+//! (LLM API, provider config, MCP HTTP transport, web fetch, etc.).
 //!
-//! # 校验规则
+//! # Validation rules
 //!
-//! - 非空 + 合法 URL parse
-//! - scheme 为 `http` 或 `https`（可配置 HTTPS-only）
-//! - 拒绝裸 IP 地址（IPv4 / IPv6）
-//! - 拒绝内网/云 metadata hostname
-//! - 可配置是否放行 localhost（本地引擎 / MCP server 需要）
+//! - Non-empty + valid URL parse
+//! - Scheme is `http` or `https` (HTTPS-only is configurable)
+//! - Reject bare IP addresses (IPv4 / IPv6)
+//! - Reject intranet / cloud metadata hostnames
+//! - Whether localhost is allowed is configurable (local engines / MCP servers need it)
 //!
 //! # DNS Rebinding
 //!
-//! 本模块仅做静态 hostname 字符串检查，不执行 DNS 解析。
-//! 域名到私有 IP 的 DNS rebinding 攻击需 OS 或网络层防护。
+//! This module only performs static hostname string checks; it does no DNS resolution.
+//! DNS rebinding attacks that map a domain to a private IP require OS- or network-layer defenses.
 //!
-//! # 使用示例
+//! # Usage
 //!
 //! ```ignore
 //! use crate::utils::url_validation::{validate_http_url, HttpUrlOptions};
 //!
-//! // Provider API URL（远程 API 不应使用 localhost）
+//! // Provider API URL (remote APIs must not use localhost)
 //! validate_http_url(&api_url, &HttpUrlOptions::default())?;
 //!
-//! // 本地 LLM 引擎 URL（需要 HTTP + localhost）
+//! // Local LLM engine URL (needs HTTP + localhost)
 //! validate_http_url(&api_url, &HttpUrlOptions::local_engine())?;
 //! ```
 
 use crate::ierr;
 
-/// 校验选项。
+/// Validation options.
 pub struct HttpUrlOptions {
-    /// 是否允许 HTTP 协议（`false` = 仅 HTTPS）。
+    /// Whether the HTTP protocol is allowed (`false` = HTTPS only).
     pub allow_http: bool,
-    /// 是否允许 localhost / 127.0.0.1 / [::1]。
+    /// Whether localhost / 127.0.0.1 / [::1] is allowed.
     pub allow_localhost: bool,
 }
 
 impl Default for HttpUrlOptions {
-    /// 默认配置：允许 HTTP，禁止 localhost。
-    /// 适用于远程 Provider API URL 校验。
+    /// Default: HTTP allowed, localhost forbidden.
+    /// Intended for remote provider API URL validation.
     fn default() -> Self {
         Self {
             allow_http: true,
@@ -50,7 +50,7 @@ impl Default for HttpUrlOptions {
 }
 
 impl HttpUrlOptions {
-    /// 预置：HTTPS only（用于 Web fetch/search）。
+    /// Preset: HTTPS only (for web fetch/search).
     pub fn https_only() -> Self {
         Self {
             allow_http: false,
@@ -58,7 +58,7 @@ impl HttpUrlOptions {
         }
     }
 
-    /// 预置：允许 HTTP + localhost（用于本地引擎 / MCP server）。
+    /// Preset: HTTP + localhost allowed (for local engines / MCP servers).
     pub fn local_engine() -> Self {
         Self {
             allow_http: true,
@@ -67,18 +67,18 @@ impl HttpUrlOptions {
     }
 }
 
-/// Cloud metadata 端点（拒绝访问）
+/// Cloud metadata endpoints (access is denied)
 const CLOUD_METADATA_HOSTS: &[&str] = &["169.254.169.254", "metadata.google.internal"];
 
-/// 校验 HTTP URL 的安全性。
+/// Validates the safety of an HTTP URL.
 ///
-/// # 参数
-/// - `url_str` — 待校验的 URL 字符串
-/// - `options` — 校验选项
+/// # Arguments
+/// - `url_str` — the URL string to validate
+/// - `options` — validation options
 ///
-/// # 返回
-/// `Ok(normalized_url)` — 校验通过，返回规范化后的 URL 字符串
-/// `Err(reason)` — 校验失败
+/// # Returns
+/// `Ok(normalized_url)` — validation passed; returns the normalized URL string
+/// `Err(reason)` — validation failed
 pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<String, String> {
     let trimmed = url_str.trim();
     if trimmed.is_empty() {
@@ -89,7 +89,7 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
     let parsed = url::Url::parse(trimmed)
         .map_err(|e| ierr!("URL 解析失败: {}", "Failed to parse URL: {}", e))?;
 
-    // 2. scheme 检查
+    // 2. scheme check
     match parsed.scheme() {
         "https" => {}
         "http" if options.allow_http => {}
@@ -103,13 +103,13 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
         }
     }
 
-    // 3. host 必须存在
+    // 3. host must exist
     let host = parsed
         .host_str()
         .ok_or_else(|| ierr!("URL 必须包含 host", "URL must contain a host"))?;
 
-    // 4. 拒绝裸 IP 地址（所有 IPv4 / IPv6）
-    // 注意：url crate 2.x 中 host_str() 对 IPv6 地址返回带括号的 "[::1]" 格式
+    // 4. Reject bare IP addresses (all IPv4 / IPv6)
+    // Note: in url crate 2.x, host_str() returns IPv6 addresses in bracketed "[::1]" form
     let host_for_ip_check = host
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
@@ -117,7 +117,7 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
     if host_for_ip_check.parse::<std::net::Ipv4Addr>().is_ok()
         || host_for_ip_check.parse::<std::net::Ipv6Addr>().is_ok()
     {
-        // localhost IP 地址：若 allow_localhost 为 true，放行
+        // localhost IP: allowed when allow_localhost is true
         if options.allow_localhost
             && (host_for_ip_check == "127.0.0.1" || host_for_ip_check == "::1")
         {
@@ -131,7 +131,7 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
 
     let host_lower = host.to_lowercase();
 
-    // 5. localhost 域名检查
+    // 5. localhost hostname check
     if host_lower == "localhost" {
         if options.allow_localhost {
             return Ok(parsed.to_string());
@@ -142,7 +142,7 @@ pub fn validate_http_url(url_str: &str, options: &HttpUrlOptions) -> Result<Stri
         ));
     }
 
-    // 6. Cloud metadata 端点拦截
+    // 6. Cloud metadata endpoint blocking
     if CLOUD_METADATA_HOSTS.contains(&host_lower.as_str()) {
         return Err(ierr!(
             "不允许访问云 metadata 服务地址",

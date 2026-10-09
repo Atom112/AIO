@@ -1,8 +1,8 @@
-/// llama.cpp 本地推理引擎插件实现
+/// llama.cpp local inference engine plugin implementation
 ///
-/// 启动策略：
-/// 1. 优先使用 app data 下通过自动安装的引擎（EngineInstaller）
-/// 2. 回退到系统安装的 llama-server（PATH / WinGet / conda / brew / nix）
+/// Startup strategy:
+/// 1. Prefer the engine auto-installed under app data (EngineInstaller)
+/// 2. Fall back to a system-installed llama-server (PATH / WinGet / conda / brew / nix)
 use crate::core::state::LocalEngineState;
 use crate::ierr;
 use crate::plugins::engine::installer::EngineInstaller;
@@ -21,10 +21,10 @@ use std::os::windows::process::CommandExt;
 pub struct LlamaCppPlugin;
 
 impl LlamaCppPlugin {
-    /// 在多个已知位置搜索 `llama-server` 可执行文件，返回第一个找到的路径。
-    /// 搜索顺序：PATH → 各平台包管理器安装目录。
+    /// Search known locations for the `llama-server` executable, returning the first path found.
+    /// Search order: PATH → per-platform package manager install directories.
     fn find_llama_server() -> Option<std::path::PathBuf> {
-        // ── 1. PATH 查找 ──
+        // ── 1. PATH lookup ──
         #[cfg(target_os = "windows")]
         {
             let output = std::process::Command::new("where")
@@ -80,8 +80,8 @@ impl LlamaCppPlugin {
             }
         }
 
-        // ── 3. Conda (全平台) ──
-        // Conda 把 llama-server 装在 $CONDA_PREFIX/bin (Unix) 或 %CONDA_PREFIX%\Library\bin (Win)
+        // ── 3. Conda (all platforms) ──
+        // Conda installs llama-server into $CONDA_PREFIX/bin (Unix) or %CONDA_PREFIX%\Library\bin (Win)
         for conda_root in Self::conda_roots() {
             #[cfg(target_os = "windows")]
             let candidate = conda_root.join("Library").join("bin").join(exe_name);
@@ -110,7 +110,7 @@ impl LlamaCppPlugin {
             }
         }
 
-        // ── 6. Nix (全平台) ──
+        // ── 6. Nix (all platforms) ──
         for nix_profile in Self::nix_profile_dirs() {
             let candidate = nix_profile.join("bin").join(exe_name);
             if candidate.exists() {
@@ -121,7 +121,7 @@ impl LlamaCppPlugin {
         None
     }
 
-    /// 在目录（非递归）下查找指定文件名，返回第一个匹配的完整路径。
+    /// Search a directory (non-recursively) for the given file name, returning the first matching full path.
     fn search_dir_for(dir: &std::path::Path, exe_name: &str) -> Option<std::path::PathBuf> {
         let entries = std::fs::read_dir(dir).ok()?;
         for entry in entries.filter_map(|e| e.ok()) {
@@ -133,13 +133,13 @@ impl LlamaCppPlugin {
         None
     }
 
-    /// Conda 可能的根目录列表。
+    /// List of possible conda root directories.
     fn conda_roots() -> Vec<std::path::PathBuf> {
         let mut roots = Vec::new();
-        // $CONDA_PREFIX 环境变量（当前激活的环境）
+        // $CONDA_PREFIX environment variable (currently activated env)
         if let Ok(prefix) = std::env::var("CONDA_PREFIX") {
             roots.push(std::path::PathBuf::from(&prefix));
-            // Windows 上 CONDA_PREFIX 可能指向 .../Library，需要取其父目录
+            // On Windows, CONDA_PREFIX may point to .../Library; use its parent directory
             #[cfg(target_os = "windows")]
             if prefix.ends_with("Library") {
                 if let Some(parent) = std::path::Path::new(&prefix).parent() {
@@ -147,7 +147,7 @@ impl LlamaCppPlugin {
                 }
             }
         }
-        // 常见 conda 安装路径
+        // Common conda install paths
         if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
             for name in &[
                 "miniconda3",
@@ -161,7 +161,7 @@ impl LlamaCppPlugin {
                 roots.push(std::path::PathBuf::from(&home).join(name));
             }
         }
-        // Linux/macOS: 系统级 conda
+        // Linux/macOS: system-level conda
         #[cfg(not(target_os = "windows"))]
         for sys_prefix in &[
             "/opt/conda",
@@ -173,15 +173,15 @@ impl LlamaCppPlugin {
         roots
     }
 
-    /// Homebrew 可能的 prefix 列表（macOS / Linux）。
+    /// List of possible Homebrew prefixes (macOS / Linux).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn homebrew_prefixes() -> Vec<std::path::PathBuf> {
         let mut prefixes = Vec::new();
         #[cfg(target_os = "macos")]
         {
-            // Apple Silicon 默认
+            // Apple Silicon default
             prefixes.push(std::path::PathBuf::from("/opt/homebrew"));
-            // Intel Mac 默认
+            // Intel Mac default
             prefixes.push(std::path::PathBuf::from("/usr/local"));
         }
         #[cfg(target_os = "linux")]
@@ -194,7 +194,7 @@ impl LlamaCppPlugin {
         prefixes
     }
 
-    /// Nix profile 可能的 bin 父目录列表。
+    /// List of possible parent directories of a nix profile's bin.
     fn nix_profile_dirs() -> Vec<std::path::PathBuf> {
         let mut dirs = Vec::new();
         if let Ok(home) = std::env::var("HOME") {
@@ -204,14 +204,14 @@ impl LlamaCppPlugin {
         dirs
     }
 
-    /// 检查系统中是否存在 llama-server（任意位置）
+    /// Check whether llama-server exists anywhere on the system
     fn detect_on_path() -> bool {
         Self::find_llama_server().is_some()
     }
 
-    /// 通过 `llama-server --version` 获取版本号
+    /// Get the version string via `llama-server --version`
     fn get_version(app: &AppHandle) -> Option<String> {
-        // 优先使用 AIO bundled 引擎
+        // Prefer the AIO bundled engine
         let exe_path = EngineInstaller::get_exe_path(app);
         let exe = if exe_path.exists() {
             exe_path
@@ -249,7 +249,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
     }
 
     fn is_platform_supported(&self) -> bool {
-        true // llama.cpp 全平台支持
+        true // llama.cpp supports all platforms
     }
 
     fn install_path(&self, app: &AppHandle) -> PathBuf {
@@ -331,7 +331,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                 ));
             }
 
-            // 优先级：app data 安装 > 系统安装 (PATH/WinGet/conda/brew/nix)
+            // Priority: app data install > system install (PATH/WinGet/conda/brew/nix)
             let exe_path = if EngineInstaller::get_exe_path(&app).exists() {
                 EngineInstaller::get_exe_path(&app)
             } else if let Some(found) = Self::find_llama_server() {
@@ -373,7 +373,7 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             task::spawn_blocking(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines().map_while(Result::ok) {
-                    // 只在调试时记录子进程日志，避免泄露
+                    // Log child process output only at debug level to avoid leaking it
                     debug!("[llama-server] {}", line);
                     let progress = if line.contains("build info") || line.contains("system info") {
                         Some(0.1)

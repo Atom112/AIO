@@ -1,4 +1,4 @@
-/// 数据库模块：负责初始化 SQLite 数据库连接，创建必要的表结构，并提供数据库访问接口。
+/// Database module: initializes the SQLite connection, creates the required tables, and provides the database access interface.
 use rusqlite::{Connection, Result};
 use std::fs;
 use tauri::AppHandle;
@@ -13,11 +13,11 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     let db_path = app_dir.join("chat_history.db");
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
-    // 启用外键支持
+    // Enable foreign key support
     conn.execute("PRAGMA foreign_keys = ON;", [])
         .map_err(|e| e.to_string())?;
 
-    // 创建表结构
+    // Create the table schema
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS assistants (
         id TEXT PRIMARY KEY,
@@ -68,7 +68,7 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         ON message_attachments(attachment_id);",
     )
     .map_err(|e| e.to_string())?;
-    // 上次异常退出可能留下尚未关联消息的临时上传；应用启动时安全清理。
+    // A previous abnormal exit may leave temporary uploads not yet linked to messages; clean them up safely at startup.
     let mut orphan_stmt = conn
         .prepare(
             "SELECT storage_path FROM attachments
@@ -91,21 +91,21 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
         let _ = fs::remove_file(path);
     }
 
-    // 版本化迁移（PRAGMA user_version 记录进度；每条幂等，历史库可能已部分应用）。
+    // Versioned migrations (PRAGMA user_version tracks progress; each is idempotent, legacy DBs may be partially applied).
     crate::core::migrate::run_migrations(&conn, CHAT_DB_MIGRATIONS)?;
 
     Ok(conn)
 }
 
-// ====== 版本化迁移表（按 version 升序；每条幂等）======
+// ====== Versioned migration table (ascending by version; each entry idempotent) ======
 //
-// 历史：此处曾是 12+ 处手写的 "add column if missing" 序列；现统一走
-// core::migrate 的 user_version 事务化运行器（应用一次，可审计、可回放）。
+// All migrations run through the core::migrate user_version transactional runner
+// (applied once, auditable, replayable).
 
 use crate::core::migrate::{add_column_if_missing, Migration};
 
-/// v1：topics.renamed 列 + 旧话题标记（仅列不存在时执行，
-/// 保留"列新加时把存量话题标记为已重命名"的历史语义——避免升级后历史话题被自动改名）。
+/// v1: topics.renamed column + marking legacy topics (runs only when the column is missing,
+/// keeping the historical semantics of marking existing topics as renamed when the column is added - prevents legacy topics being auto-renamed after upgrade).
 fn m_topics_renamed(c: &Connection) -> Result<(), String> {
     let has: i32 = c
         .query_row(
@@ -126,7 +126,7 @@ fn m_topics_renamed(c: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// v2：messages 的 MCP 工具调用与思维链列。
+/// v2: MCP tool-call and chain-of-thought columns on messages.
 fn m_messages_tool_calls(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "tool_call_id", "TEXT")?;
     add_column_if_missing(c, "messages", "name", "TEXT")?;
@@ -134,7 +134,7 @@ fn m_messages_tool_calls(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "reasoning", "TEXT")
 }
 
-/// v3：assistants 扩展列（首选模型 / MCP 绑定 / Skill 绑定 / 项目归属）。
+/// v3: assistants extension columns (preferred model / MCP binding / skill binding / project ownership).
 fn m_assistants_extensions(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "assistants", "model_id", "TEXT")?;
     add_column_if_missing(c, "assistants", "mcp_server_ids", "TEXT")?;
@@ -142,7 +142,7 @@ fn m_assistants_extensions(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "assistants", "project_id", "TEXT")
 }
 
-/// v4：projects 表（首次创建）。
+/// v4: projects table (first creation).
 fn m_projects_table(c: &Connection) -> Result<(), String> {
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS projects (
@@ -156,30 +156,30 @@ fn m_projects_table(c: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// v5：assistants.agent_mode（默认 off = 对话模式）。
+/// v5: assistants.agent_mode (default off = chat mode).
 fn m_assistants_agent_mode(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "assistants", "agent_mode", "TEXT NOT NULL DEFAULT 'off'")
 }
 
-/// v6：messages 的 token 用量列（修复重启清零）。
+/// v6: token usage columns on messages (retained across restarts).
 fn m_messages_tokens(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "input_tokens", "INTEGER")?;
     add_column_if_missing(c, "messages", "output_tokens", "INTEGER")
 }
 
-/// v7：messages 的 Agent 过程列（跨重启保留 agent_steps / interim / start_time）。
+/// v7: agent process columns on messages (agent_steps / interim / start_time survive restarts).
 fn m_messages_agent_process(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "agent_steps_json", "TEXT")?;
     add_column_if_missing(c, "messages", "interim_content", "TEXT")?;
     add_column_if_missing(c, "messages", "agent_start_time", "INTEGER")
 }
 
-/// v8：messages.images_json（生成图像元数据，供下载与回放）。
+/// v8: messages.images_json (generated image metadata, used for download and replay).
 fn m_messages_images(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "images_json", "TEXT")
 }
 
-/// v9：usage_log 表与索引（不可变 append-only 用量记录）。
+/// v9: usage_log table and indexes (immutable append-only usage records).
 fn m_usage_log(c: &Connection) -> Result<(), String> {
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS usage_log (
@@ -201,12 +201,12 @@ fn m_usage_log(c: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// v10：usage_log.cached_input_tokens（OpenAI cached_tokens / DeepSeek cache hit）。
+/// v10: usage_log.cached_input_tokens (OpenAI cached_tokens / DeepSeek cache hits).
 fn m_usage_cached_tokens(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "usage_log", "cached_input_tokens", "INTEGER")
 }
 
-/// v11：assistants.assistant_type + 内置默认助手标记为 chat。
+/// v11: assistants.assistant_type + mark the built-in default assistant as chat.
 fn m_assistants_type(c: &Connection) -> Result<(), String> {
     add_column_if_missing(
         c,
@@ -222,7 +222,7 @@ fn m_assistants_type(c: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// v12：messages 分支列 + parent 索引（会话分支树）。
+/// v12: messages branch columns + parent index (conversation branch tree).
 fn m_messages_branch(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "parent_message_id", "TEXT")?;
     add_column_if_missing(c, "messages", "branch_index", "INTEGER NOT NULL DEFAULT 0")?;
@@ -234,13 +234,13 @@ fn m_messages_branch(c: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// v13：topics 分支列（话题级分支来源）。
+/// v13: topics branch columns (topic-level branch origin).
 fn m_topics_branch(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "topics", "branched_from_message_id", "TEXT")?;
     add_column_if_missing(c, "topics", "parent_topic_id", "TEXT")
 }
 
-/// v14：Agent 回合检查点表（P4.4：崩溃后无损续跑）。
+/// v14: agent turn checkpoint table (lossless resume after a crash).
 fn m_agent_checkpoints(c: &Connection) -> Result<(), String> {
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS agent_turn_checkpoints (
@@ -258,12 +258,12 @@ fn m_agent_checkpoints(c: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// v15：messages.cached_input_tokens（跨重启保留缓存命中统计）。
+/// v15: messages.cached_input_tokens (cache-hit stats survive restarts).
 fn m_messages_cached_tokens(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "cached_input_tokens", "INTEGER")
 }
 
-/// chat_history.db 的迁移表（严格递增；新增迁移只允许追加，不得修改已发布条目）。
+/// Migration table for chat_history.db (strictly increasing; new migrations may only be appended, released entries must never be modified).
 const CHAT_DB_MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,

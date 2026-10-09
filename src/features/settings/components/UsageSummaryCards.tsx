@@ -1,8 +1,8 @@
 /**
- * UsageSummaryCards — 用量统计卡片行
+ * UsageSummaryCards - usage summary cards row
  *
- * 展示：总 Token、总请求数、预估费用、活跃天数
- * 4 张等宽卡片水平排列
+ * Shows: total tokens, total requests, estimated cost, active days
+ * 4 equal-width cards laid out horizontally
  */
 import { Component, createMemo } from 'solid-js';
 import { getCachedCatalog } from '../../../core/utils/models';
@@ -11,7 +11,7 @@ import { formatNumber, t } from '../../../core/i18n';
 
 import type { UsageSummary, UsageSummaryByModel } from '../../../core/types/usage';
 
-// 用量类型已移至 core/types/usage.ts（本组件仅作再导出，保旧导入路径）
+// Usage types moved to core/types/usage.ts (re-exported here to keep the old import path)
 export type { UsageSummary, UsageSummaryByModel };
 
 function fmt(n: number): string {
@@ -70,7 +70,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
 
   return (
     <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-      {/* 总 Token */}
+      {/* Total tokens */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
@@ -96,7 +96,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
         </div>
       </div>
 
-      {/* 总请求 */}
+      {/* Total requests */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
@@ -121,7 +121,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
         </span>
       </div>
 
-      {/* 预估费用 */}
+      {/* Estimated cost */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
@@ -146,7 +146,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
         </span>
       </div>
 
-      {/* 活跃天数 */}
+      {/* Active days */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{

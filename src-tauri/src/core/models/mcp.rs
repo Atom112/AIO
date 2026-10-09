@@ -1,9 +1,9 @@
-//! MCP 域模型：server 配置、目录市场、状态、资源与提示协议类型。
+//! MCP domain models: server config, catalog marketplace, status, and resource/prompt protocol types.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// MCP 传输方式。serde tag = "transport"，按 transport 字段分发。
+/// MCP transport. serde tag = "transport"; dispatch on the transport field.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "transport", rename_all = "lowercase")]
 pub enum McpTransport {
@@ -11,7 +11,7 @@ pub enum McpTransport {
         command: String,
         #[serde(default)]
         args: Vec<String>,
-        /// 密钥值支持 `${KEYRING:account_id}` 占位（运行时反向解析）
+        /// Secret values support the `${KEYRING:account_id}` placeholder (resolved back at runtime)
         #[serde(default)]
         env: BTreeMap<String, String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -29,24 +29,24 @@ pub enum McpTransport {
     },
 }
 
-/// MCP server 配置
+/// MCP server configuration
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerConfig {
     pub id: String,
     pub display_name: String,
     pub transport: McpTransport,
-    /// 工具白名单；空数组 = 全部启用
+    /// Tool allowlist; empty array = all enabled
     #[serde(default)]
     pub enabled_tools: Vec<String>,
-    /// 应用启动时是否自动连接（是否被某助手使用由 Assistant.mcp_server_ids 决定）
+    /// Whether to auto-connect at app startup (whether an assistant uses it is decided by Assistant.mcp_server_ids)
     #[serde(default)]
     pub auto_start: bool,
-    /// 提示 UI 是否存在密钥存于 keyring
+    /// Hints the UI that a secret is stored in the keyring
     #[serde(default)]
     pub has_stored_secret: bool,
-    /// 是否受信任：未信任 server 的工具在 Auto/Workflow 模式下也强制逐次审批
-    /// （防止自主模式对陌生外部工具全放行）。默认 false，用户在 server 设置中勾选。
+    /// Whether trusted: tools of untrusted servers require per-call approval even in Auto/Workflow mode
+    /// (prevents autonomous mode from blanket-approving unknown external tools). Default false; opted in via server settings.
     #[serde(default)]
     pub trusted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,7 +134,7 @@ pub struct McpCatalogInstallRequest {
     pub secrets: BTreeMap<String, String>,
 }
 
-/// MCP server 运行时状态
+/// MCP server runtime status
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -146,7 +146,7 @@ pub enum McpStatus {
     Error,
 }
 
-/// MCP server 状态信息（暴露给前端）
+/// MCP server status info (exposed to the frontend)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerStatusInfo {
@@ -162,7 +162,7 @@ pub struct McpServerStatusInfo {
     pub prompt_count: usize,
 }
 
-/// MCP server 持久化文件
+/// MCP server persistence file
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServersFile {
@@ -181,21 +181,21 @@ impl Default for McpServersFile {
     }
 }
 
-// ====== Skill 配置 ======
+// ====== Skill configuration ======
 
-/// MCP server 初始化握手返回的服务端信息
+/// Server info returned by the MCP initialize handshake
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerInfo {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// 服务端声明的能力（tools / resources / prompts）
+    /// Capabilities declared by the server (tools / resources / prompts)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<McpCapabilities>,
 }
 
-/// MCP 服务端能力声明（从 initialize 响应解析）
+/// MCP server capability declaration (parsed from the initialize response)
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct McpCapabilities {
@@ -209,7 +209,7 @@ pub struct McpCapabilities {
 
 // ====== MCP Resources ======
 
-/// MCP 资源元数据（resources/list 返回条目）
+/// MCP resource metadata (entry returned by resources/list)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpResource {
@@ -221,7 +221,7 @@ pub struct McpResource {
     pub mime_type: Option<String>,
 }
 
-/// resources/read 返回值
+/// Return value of resources/read
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadResourceResult {
@@ -242,7 +242,7 @@ pub struct ResourceContent {
 
 // ====== MCP Prompts ======
 
-/// MCP 提示词元数据（prompts/list 返回条目）
+/// MCP prompt metadata (entry returned by prompts/list)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpPrompt {
@@ -263,7 +263,7 @@ pub struct PromptArgument {
     pub required: Option<bool>,
 }
 
-/// prompts/get 返回值
+/// Return value of prompts/get
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GetPromptResult {
@@ -279,4 +279,4 @@ pub struct PromptMessage {
     pub content: serde_json::Value,
 }
 
-// ====== 项目配置 ======
+// ====== Project configuration ======

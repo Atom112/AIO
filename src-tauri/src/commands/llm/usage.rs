@@ -1,11 +1,11 @@
-//! Token 用量统计与计数命令（usage_log 表写入/查询、count_tokens）。
+//! Token usage statistics and counting commands (usage_log table writes/queries, count_tokens).
 
 use crate::commands::llm::*;
 use crate::core::state::DbState;
 
-/// 将单轮 LLM 调用的 token 用量写入 usage_log 表（不可变 append-only 记录）。
+/// Write the token usage of a single LLM call into the usage_log table (immutable append-only records).
 ///
-/// 跳过 input + output 均为 0 的空记录（本地引擎可能不返回 usage）。
+/// Skips empty records where input + output are both 0 (local engines may not report usage).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_usage_log(
     app: &AppHandle,
@@ -38,8 +38,8 @@ pub(crate) fn insert_usage_log(
     );
 }
 
-/// 返回按日期降序排列的每日 input/output tokens 与请求次数。
-/// 用于前端用量面板展示（如"过去 7 天 / 30 天用量"）。
+/// Return daily input/output tokens and request counts ordered by date descending.
+/// Used by the frontend usage panel (e.g. "last 7 / 30 days usage").
 #[tauri::command]
 pub(crate) fn get_usage_summary(
     db_state: tauri::State<'_, DbState>,
@@ -78,9 +78,9 @@ pub(crate) fn get_usage_summary(
     Ok(summaries)
 }
 
-/// 查询最近 N 天的 token 用量按模型聚合。
+/// Query token usage for the last N days aggregated by model.
 ///
-/// 返回按总 token 数降序排列的各模型用量，用于前端模型分布面板。
+/// Returns per-model usage ordered by total tokens descending, for the frontend model-distribution panel.
 #[tauri::command]
 pub(crate) fn get_usage_summary_by_model(
     db_state: tauri::State<'_, DbState>,
@@ -152,8 +152,8 @@ pub(crate) fn get_usage_summary_by_model(
     }
 }
 
-/// 估算文本的 token 数（供前端输入框实时预览）。
-/// 包装调用 `utils::token_counter::count_tokens_cmd` 纯函数。
+/// Estimate the token count of a text (for live preview in the frontend input box).
+/// Thin wrapper over the pure `utils::token_counter::count_tokens_cmd`.
 #[tauri::command]
 pub(crate) fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
     crate::utils::token_counter::count_tokens_cmd(model, text)
@@ -212,11 +212,11 @@ mod tests {
         let out = message_for_api(&conn(), &msg).unwrap();
         let obj = out.as_object().unwrap();
         let parts = obj.get("content").unwrap().as_array().unwrap();
-        // 文本部分已剥离 aio-image 标记（防 token 泄漏）
+        // The text part has aio-image tokens stripped (prevents token leakage)
         let text = parts[0]["text"].as_str().unwrap();
         assert!(!text.contains("aio-image://"));
         assert!(text.contains("text before"));
-        // 图像部分重新展开为 image_url data URI（历史回放）
+        // The image part is re-expanded into an image_url data URI (history replay)
         assert_eq!(parts[1]["type"], "image_url");
         let url = parts[1]["image_url"]["url"].as_str().unwrap();
         assert!(url.starts_with("data:image/png;base64,"));

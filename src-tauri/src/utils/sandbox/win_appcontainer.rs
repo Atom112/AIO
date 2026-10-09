@@ -1,22 +1,22 @@
-//! Windows AppContainer 沙箱（P3.3）—— OS 级文件写管控 + 默认断网。
+//! Windows AppContainer sandbox: OS-level file-write control + network denied by default.
 //!
-//! 此前 Windows 仅有 Job Object（进程生命周期/UI 限制，不限制文件与网络），
-//! Auto 模式下的 execute_command 实质无沙箱。本模块补齐：
-//! - 每项目一个 AppContainer profile（AIO.Agent.<fnv1a(canonical_path)>），
-//!   低权限令牌默认拒绝一切，仅按授权放行；
-//! - ACL 授权：项目根 RW+X（继承）、专用临时目录 RW；系统目录依赖内置的
-//!   ALL APPLICATION PACKAGES ACE；用户工具链目录经配置追加 R+X；
-//! - 进程创建：CreateProcessW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITY，
-//!   无 capability = 默认断网（P3.1 的 Windows 面）；network=true 时注入
-//!   internetClient capability（S-1-15-3-1）；
-//! - CREATE_SUSPENDED + Job Object + ResumeThread：外层保留进程数/生命周期
-//!   限制，超时 Drop 守卫清理整棵进程树；
-//! - fail-closed：profile/ACL/进程创建任一失败直接报错，绝不静默回退裸跑
-//!   （配置 sandboxWindows=off 可整体关闭）。
+//! Job Objects alone only constrain process lifetime/UI (not files or network); this module
+//! adds the missing enforcement for execute_command:
+//! - One AppContainer profile per project (AIO.Agent.<fnv1a(canonical_path)>); its
+//!   low-privilege token denies everything by default and only lets granted access through;
+//! - ACL grants: project root RW+X (inherited), dedicated temp dir RW; system dirs rely on
+//!   the built-in ALL APPLICATION PACKAGES ACE; user toolchain dirs get R+X via config;
+//! - Process creation: CreateProcessW + PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITY;
+//!   no capability = network denied by default; network=true injects the
+//!   internetClient capability (S-1-15-3-1);
+//! - CREATE_SUSPENDED + Job Object + ResumeThread: keeps the outer process-count/lifetime
+//!   limits; on timeout the Drop guard tears down the whole process tree;
+//! - fail-closed: any profile/ACL/process-creation failure returns an error; never silently
+//!   falls back to running unsandboxed (config sandboxWindows=off disables the module).
 //!
-//! 注：AppContainer 令牌无法事后附加到已运行进程，必须在进程创建时指定，
-//! 因此本模块自带 CreateProcessW 路径（含 stdio 管道与 TEMP 重定向环境块），
-//! 与 std::process::Command 的原生路径在 shell_tools 中分流。
+//! Note: an AppContainer token cannot be attached to an already-running process; it must be set
+//! at creation. So this module ships its own CreateProcessW path (stdio pipes + TEMP-redirected
+//! environment block); shell_tools routes between it and the native std::process::Command path.
 
 #![allow(non_snake_case)]
 
@@ -31,7 +31,7 @@ const ERROR_SUCCESS: u32 = 0;
 const WAIT_TIMEOUT: u32 = 258;
 const STILL_ACTIVE: u32 = 259;
 
-// ---- 常量 ----
+// ---- constants ----
 const SE_FILE_OBJECT: u32 = 1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
 const GRANT_ACCESS: i32 = 1;
@@ -40,9 +40,9 @@ const TRUSTEE_IS_SID: i32 = 0;
 const TRUSTEE_IS_UNKNOWN: i32 = 0;
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 1;
 const ACL_SIZE_INFORMATION: u32 = 2;
-// 注意：属性编号以本机 SDK 的 WinBase.h 枚举为准（SecurityCapabilities = 9，
-// 9 | PROC_THREAD_ATTRIBUTE_INPUT = 0x20009）。曾误用 21（其他属性），导致
-// UpdateProcThreadAttribute 返回 ERROR_BAD_LENGTH。
+// Note: attribute numbers must follow the local SDK's WinBase.h enum (SecurityCapabilities = 9,
+// 9 | PROC_THREAD_ATTRIBUTE_INPUT = 0x20009). Using 21 (a different attribute) makes
+// UpdateProcThreadAttribute return ERROR_BAD_LENGTH.
 const PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITY: usize = 0x0002_0009;
 const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x0008_0000;
 const CREATE_SUSPENDED: u32 = 0x4;
@@ -51,10 +51,10 @@ const STARTF_USESTDHANDLES: u32 = 0x100;
 pub const FILE_GENERIC_READ: u32 = 0x0012_0089;
 pub const FILE_GENERIC_WRITE: u32 = 0x0012_0116;
 pub const FILE_GENERIC_EXECUTE: u32 = 0x0012_00A0;
-/// internetClient capability（S-1-15-3-1）：仅出站 TCP/UDP 客户端。
+/// internetClient capability (S-1-15-3-1): outbound TCP/UDP client only.
 const INTERNET_CLIENT_SID: &str = "S-1-15-3-1";
 
-// ---- FFI 结构 ----
+// ---- FFI structs ----
 #[repr(C)]
 struct SidAndAttributes {
     sid: *mut c_void,
@@ -245,14 +245,14 @@ extern "system" {
     fn EqualSid(p_sid1: *const c_void, p_sid2: *const c_void) -> Bool;
 }
 
-// ---- 工具 ----
+// ---- helpers ----
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// FNV-1a（确定性，跨进程稳定）：profile 名与临时目录名都持久化在用户系统上，
-/// 不能用带随机种子的 DefaultHasher（每次启动不同会导致 profile 泄漏）。
+/// FNV-1a (deterministic, stable across processes): profile and temp dir names persist on the
+/// user's system, so a randomly-seeded DefaultHasher must not be used (per-launch seeds leak profiles).
 fn fnv1a_hex(bytes: &[u8]) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
@@ -262,7 +262,7 @@ fn fnv1a_hex(bytes: &[u8]) -> String {
     format!("{h:016x}")
 }
 
-/// 已完成 ACL 授权的 (profile, 目录) 缓存：同一进程内避免每条命令重复读 DACL。
+/// Cache of (profile, dir) pairs with ACL grants already applied: skips re-reading DACLs per command within a process.
 fn grants_cache() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
         std::sync::OnceLock::new();
@@ -271,9 +271,9 @@ fn grants_cache() -> &'static std::sync::Mutex<std::collections::HashSet<String>
 
 // ---- profile / SID ----
 
-/// 取（必要时创建）项目对应 AppContainer profile 的 SID。
-/// profile 已存在时 Create 返回失败 HRESULT，回落到 Derive 取 SID。
-/// 返回的 SID 由 LocalFree 释放（调用方负责）。
+/// Get the project's AppContainer profile SID, creating the profile when needed.
+/// If the profile already exists, Create returns a failing HRESULT; fall back to Derive.
+/// The returned SID is freed with LocalFree (caller-owned).
 fn ensure_profile_sid(profile_name: &str) -> Result<*mut c_void, String> {
     let name_w = wide(profile_name);
     let display_w = wide("AIO Agent Sandbox");
@@ -296,7 +296,7 @@ fn ensure_profile_sid(profile_name: &str) -> Result<*mut c_void, String> {
     if hr == 0 && !sid.is_null() {
         return Ok(sid);
     }
-    // 已存在（或创建失败但可派生）：按名派生 SID
+    // Already exists (or creation failed but derivable): derive the SID by name
     let mut derived: *mut c_void = std::ptr::null_mut();
     let hr2 = unsafe { DeriveAppContainerSidFromAppContainerName(name_w.as_ptr(), &mut derived) };
     if hr2 == 0 && !derived.is_null() {
@@ -312,7 +312,7 @@ fn ensure_profile_sid(profile_name: &str) -> Result<*mut c_void, String> {
 
 // ---- ACL ----
 
-/// 判断 DACL 中是否已存在针对指定 SID 的 allow-ACE（幂等去重，防止 ACE 累积）。
+/// Check whether the DACL already contains an allow-ACE for the given SID (idempotent dedup, prevents ACE accumulation).
 fn dacl_has_sid_ace(dacl: *mut c_void, sid: *const c_void) -> bool {
     if dacl.is_null() {
         return false;
@@ -351,9 +351,9 @@ fn dacl_has_sid_ace(dacl: *mut c_void, sid: *const c_void) -> bool {
     false
 }
 
-/// 向目录 DACL 追加对 AppContainer SID 的授权（不覆盖既有 ACE——System32 等
-/// 依赖 ALL APPLICATION PACKAGES ACE，覆盖会破坏系统可执行文件的可见性）。
-/// 幂等：进程内缓存 + DACL 遍历去重。
+/// Append an allow-ACE for the AppContainer SID to the directory DACL (never overwrites
+/// existing ACEs: System32 etc. rely on the ALL APPLICATION PACKAGES ACE, and overwriting
+/// would break system-executable visibility). Idempotent: in-process cache + DACL scan dedup.
 fn grant_dir_access(
     path: &str,
     sid: *mut c_void,
@@ -373,7 +373,7 @@ fn grant_dir_access(
     }
     let path_w = wide(&canon_s);
 
-    // 读现有 DACL
+    // Read the existing DACL
     let mut dacl: *mut c_void = std::ptr::null_mut();
     let mut sd: *mut c_void = std::ptr::null_mut();
     let rc = unsafe {
@@ -456,18 +456,18 @@ fn grant_dir_access(
     Ok(())
 }
 
-// ---- 环境块 ----
+// ---- environment block ----
 
-/// 构造 Unicode 环境块：继承父环境，覆盖 TEMP/TMP 指向 AC 专用临时目录
-/// （AppContainer 令牌默认无权写用户 %TEMP%，npm/cargo 等依赖临时目录的工具
-/// 需要重定向；未重定向则全部报 Permission denied）。
+/// Build a Unicode environment block: inherit the parent environment, override TEMP/TMP to the
+/// AC-dedicated temp dir (the AppContainer token cannot write the user's %TEMP%; npm/cargo and
+/// other temp-dir-dependent tools need the redirect or they fail with Permission denied).
 fn build_env_block(ac_temp: &std::path::Path) -> Vec<u16> {
     let mut block: Vec<u16> = Vec::new();
     let temp_s = ac_temp.to_string_lossy().into_owned();
     for (k, v) in std::env::vars_os() {
         let key = k.to_string_lossy().to_ascii_uppercase();
         if key == "TEMP" || key == "TMP" {
-            continue; // 用覆盖值替换
+            continue; // replaced by the override below
         }
         block.extend(k.to_string_lossy().encode_utf16());
         block.push('=' as u16);
@@ -480,18 +480,18 @@ fn build_env_block(ac_temp: &std::path::Path) -> Vec<u16> {
         block.extend(v.encode_utf16());
         block.push(0);
     }
-    block.push(0); // 块结尾双 NUL
+    block.push(0); // block terminator: double NUL
     block
 }
 
-// ---- 进程 ----
+// ---- process ----
 
-/// AppContainer 进程创建结果（shell_tools 消费）。
+/// AppContainer process spawn result (consumed by shell_tools).
 pub struct AcChild {
-    /// 进程句柄（Drop 时关闭）
+    /// Process handle (closed on Drop)
     pub process: Handle,
     pub pid: u32,
-    /// stdout 读取端（File 实现了 Read；take() 接入读取器线程，Option 便于移出所有权）
+    /// stdout read end (File implements Read; take() hands it to the reader thread; Option eases moving ownership out)
     pub stdout_read: Option<std::fs::File>,
     pub stderr_read: Option<std::fs::File>,
 }
@@ -504,15 +504,15 @@ impl Drop for AcChild {
     }
 }
 
-/// 在 AppContainer 中执行命令（完整 shell 命令行，由调用方拼好 shell -c 形态）。
+/// Run a command in an AppContainer (full shell command line; the caller builds the shell -c form).
 ///
-/// 参数：
-/// - command_line：完整命令行（如 "cmd /C echo hi"）
-/// - working_dir：工作目录 = 项目根（须已 canonicalize 可解析）
-/// - allow_network：true 时注入 internetClient capability
-/// - extra_rx_dirs：额外授予 R+X 的目录（工具链；仅在存在时授予）
+/// Params:
+/// - command_line: full command line (e.g. "cmd /C echo hi")
+/// - working_dir: working dir = project root (must be canonicalize-resolvable)
+/// - allow_network: inject the internetClient capability when true
+/// - extra_rx_dirs: extra dirs granted R+X (toolchains; granted only when present)
 ///
-/// 返回 (AcChild, JobGuard)：守卫 Drop 清理整棵进程树（超时路径提前 drop）。
+/// Returns (AcChild, JobGuard): guard Drop tears down the whole tree (timeout path drops it early).
 pub fn spawn_in_appcontainer(
     command_line: &str,
     working_dir: &str,
@@ -520,8 +520,8 @@ pub fn spawn_in_appcontainer(
     extra_rx_dirs: &[String],
 ) -> Result<(AcChild, crate::utils::sandbox::JobGuard), String> {
     // 1) profile + SID
-    // canonicalize() 在 Windows 返回 \? 前缀扩展路径，CreateProcessW 的
-    // lpCurrentDirectory 不接受（ERROR_FILE_NOT_FOUND）——统一剥除。
+    // canonicalize() on Windows returns a \?-prefixed extended path, which CreateProcessW's
+    // lpCurrentDirectory rejects (ERROR_FILE_NOT_FOUND) -- strip it uniformly.
     let canon_root = std::path::Path::new(working_dir)
         .canonicalize()
         .map_err(|e| {
@@ -538,7 +538,7 @@ pub fn spawn_in_appcontainer(
     let profile_name = format!("AIO.Agent.{hash}");
     let sid = ensure_profile_sid(&profile_name)?;
 
-    // 2) ACL：项目根 RW+X；AC 专用临时目录 RW；工具链目录 R+X
+    // 2) ACLs: project root RW+X; AC-dedicated temp dir RW; toolchain dirs R+X
     grant_dir_access(
         &canon_s,
         sid,
@@ -571,7 +571,7 @@ pub fn spawn_in_appcontainer(
         }
     }
 
-    // 3) capability（network=true → internetClient）
+    // 3) capability (network=true -> internetClient)
     let mut internet_sid: *mut c_void = std::ptr::null_mut();
     let mut caps: Vec<SidAndAttributes> = Vec::new();
     if allow_network {
@@ -589,7 +589,7 @@ pub fn spawn_in_appcontainer(
         });
     }
 
-    // 4) stdio 管道（两端可继承；写端交给子进程，读端留在父进程）
+    // 4) stdio pipes (both ends inheritable; write ends go to the child, read ends stay in the parent)
     let sa = SecurityAttributes {
         n_length: std::mem::size_of::<SecurityAttributes>() as u32,
         lp_security_descriptor: std::ptr::null_mut(),
@@ -598,7 +598,7 @@ pub fn spawn_in_appcontainer(
     let (out_read, mut out_write) = create_pipe(&sa)?;
     let (err_read, mut err_write) = create_pipe(&sa)?;
 
-    // 5) 属性表 + SECURITY_CAPABILITIES
+    // 5) attribute list + SECURITY_CAPABILITIES
     let sec_caps = SecurityCapabilities {
         app_container_sid: sid,
         capabilities: if caps.is_empty() {
@@ -620,8 +620,8 @@ pub fn spawn_in_appcontainer(
             "InitializeProcThreadAttributeList size query failed"
         ));
     }
-    // 属性表缓冲必须指针对齐（Vec<u8> 的 1 字节对齐会导致
-    // UpdateProcThreadAttribute 返回 ERROR_BAD_LENGTH —— 实测诊断确认）
+    // The attribute-list buffer must be pointer-aligned (a 1-byte-aligned Vec<u8> makes
+    // UpdateProcThreadAttribute return ERROR_BAD_LENGTH)
     let mut attr_buf: Vec<u64> = vec![0u64; attr_size.div_ceil(8)];
     let attr_list = attr_buf.as_mut_ptr() as *mut c_void;
     if unsafe { InitializeProcThreadAttributeList(attr_list, 1, 0, &mut attr_size) } == 0 {
@@ -656,7 +656,7 @@ pub fn spawn_in_appcontainer(
         ));
     }
 
-    // 6) 环境块（TEMP/TMP 重定向）+ CreateProcessW（挂起启动，先入 Job 再恢复）
+    // 6) environment block (TEMP/TMP redirect) + CreateProcessW (start suspended, join Job, then resume)
     let env_block = build_env_block(&ac_temp);
     let mut cmdw = command_line.encode_utf16().collect::<Vec<u16>>();
     cmdw.push(0);
@@ -696,7 +696,7 @@ pub fn spawn_in_appcontainer(
             cmdw.as_mut_ptr(),
             std::ptr::null(),
             std::ptr::null(),
-            1, // 继承句柄（管道写端）
+            1, // inherit handles (pipe write ends)
             CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
             env_block.as_ptr() as *const c_void,
             cwd_w.as_ptr(),
@@ -705,8 +705,8 @@ pub fn spawn_in_appcontainer(
         )
     };
     unsafe { DeleteProcThreadAttributeList(attr_list) };
-    // 父进程侧关闭管道写端（EOF 语义：子进程退出后读端结束）。
-    // 置零防止错误路径的 cleanup_spawn 二次关闭（句柄值复用会误关无关句柄）。
+    // Close the pipe write ends on the parent side (EOF: the read end ends once the child exits).
+    // Zero them to keep error-path cleanup_spawn from double-closing (handle reuse would close unrelated handles).
     unsafe {
         CloseHandle(out_write);
         CloseHandle(err_write);
@@ -725,9 +725,9 @@ pub fn spawn_in_appcontainer(
         ));
     }
 
-    // 7) Job Object（挂起态先入队，避免竞态派生进程逃逸）→ ResumeThread → 关线程句柄
+    // 7) Job Object (join while suspended so racing spawned children cannot escape) -> ResumeThread -> close thread handle
     let job = crate::utils::sandbox::create_job_for_pid(pi.dw_process_id).map_err(|e| {
-        // 入队失败：终止刚创建的进程，fail-closed 报错
+        // Join failed: terminate the just-created process; fail closed with an error
         unsafe {
             TerminateProcess(pi.h_process, 1);
             CloseHandle(pi.h_process);
@@ -740,7 +740,7 @@ pub fn spawn_in_appcontainer(
         )
     })?;
     if unsafe { ResumeThread(pi.h_thread) } == u32::MAX {
-        // 恢复失败：Job 守卫仍在，drop 时清理；此处显式终止更直接
+        // Resume failed: the Job guard still cleans up on drop; terminating here is more direct
         let _ = unsafe { TerminateProcess(pi.h_process, 1) };
     }
     unsafe { CloseHandle(pi.h_thread) };
@@ -802,7 +802,7 @@ fn cleanup_spawn(
     }
 }
 
-/// 等待进程退出（毫秒），返回 (退出码, 是否超时)。
+/// Wait for process exit (milliseconds); returns (exit code, timed out).
 pub fn wait_with_timeout(child: &AcChild, timeout_ms: u32) -> (Option<i32>, bool) {
     let r = unsafe { WaitForSingleObject(child.process, timeout_ms) };
     if r == WAIT_TIMEOUT {
@@ -815,7 +815,7 @@ pub fn wait_with_timeout(child: &AcChild, timeout_ms: u32) -> (Option<i32>, bool
     (Some(code as i32), false)
 }
 
-/// 终止进程（配合 Job 守卫 Drop 清理整棵树）。
+/// Terminate the process (the Job guard's Drop cleans up the whole tree).
 pub fn terminate(child: &AcChild) {
     unsafe { TerminateProcess(child.process, 1) };
 }
@@ -824,7 +824,7 @@ pub fn terminate(child: &AcChild) {
 mod tests {
     use super::*;
 
-    /// 在 AppContainer 中跑真实命令并收集输出（本机 Windows 集成验证）。
+    /// Run a real command in the AppContainer and collect output (local Windows integration check).
     fn run_ac(cmd: &str, project: &std::path::Path, network: bool) -> (String, Option<i32>) {
         std::fs::create_dir_all(project).unwrap();
         let cmd_path = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
@@ -845,7 +845,7 @@ mod tests {
         (out, code)
     }
 
-    /// 基本执行：cmd echo 在 AC 内正常输出。
+    /// Basic execution: cmd echo outputs normally inside the AC.
     #[test]
     fn appcontainer_basic_exec() {
         let project = std::env::temp_dir().join("aio-ac-test-basic");
@@ -855,7 +855,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&project);
     }
 
-    /// 文件写越界：AC 令牌对项目外路径无权写入（P3.3 核心安全属性）。
+    /// File-write boundary: the AC token cannot write paths outside the project (core security property).
     #[test]
     fn appcontainer_blocks_write_outside_project() {
         let project = std::env::temp_dir().join("aio-ac-test-escape");
@@ -874,7 +874,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&project);
     }
 
-    /// 项目内写入正常（授权路径可用，防止过度封锁）。
+    /// Writes inside the project succeed (granted paths stay usable, guarding against over-blocking).
     #[test]
     fn appcontainer_allows_write_inside_project() {
         let project = std::env::temp_dir().join("aio-ac-test-inside");
@@ -887,7 +887,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&project);
     }
 
-    /// 默认断网：无 capability 时外部网络访问被拒（P3.1 Windows 面）。
+    /// Network denied by default: without a capability, external network access is refused.
     #[test]
     fn appcontainer_blocks_network_by_default() {
         let project = std::env::temp_dir().join("aio-ac-test-net");

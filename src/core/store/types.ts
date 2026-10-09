@@ -1,39 +1,39 @@
-// 领域类型定义 —— 从 store.ts 拆出的纯接口层（无运行期依赖）。
+// Domain type definitions — pure interface layer split out of store.ts (no runtime dependencies).
 
 import type { MemoryEmbeddingConfig, MemoryRerankConfig } from '../types/memory';
 
-/** Agent 工作过程时间线步骤 */
+/** Agent workflow timeline step */
 export interface AgentStep {
   id: string;
   type: 'thinking' | 'tool_call' | 'content' | 'subagent';
   timestamp: number;
   status: 'running' | 'complete' | 'error';
-  /** 步骤耗时（ms），步骤关闭时计算 */
+  /** Step duration in ms; computed when the step closes */
   duration?: number;
-  /** 思考步骤文本（仅 type=thinking） */
+  /** Thinking step text (only for type=thinking) */
   thinkingText?: string;
-  /** 工具调用详情（仅 type=tool_call） */
+  /** Tool call details (only for type=tool_call) */
   toolCall?: ToolCallDisplay;
-  /** 阶段性总结 / 回复文本（仅 type=content） */
+  /** Interim summary / reply text (only for type=content) */
   contentText?: string;
-  // ===== 子智能体字段（仅 type=subagent） =====
-  /** 子智能体唯一 ID */
+  // ===== Subagent fields (only for type=subagent) =====
+  /** Subagent unique ID */
   subagentId?: string;
-  /** 子智能体类型标识（explorer | coder | general） */
+  /** Subagent profile identifier (explorer | coder | general) */
   subagentProfile?: string;
-  /** 子智能体显示名称 */
+  /** Subagent display name */
   subagentName?: string;
-  /** 子智能体的任务描述摘要 */
+  /** Task description assigned to the subagent */
   subagentTask?: string;
-  /** 子智能体内部的步骤时间线 */
+  /** Subagent internal step timeline */
   subagentSteps?: SubagentStep[];
-  /** 子智能体完成的最终结果 */
+  /** Final result produced by the subagent */
   subagentResult?: string;
-  /** 完整工具结果（不截断），仅 type=tool_call 时有效 */
+  /** Full (untruncated) tool result; only valid for type=tool_call */
   fullResult?: string;
 }
 
-/** 子智能体步骤（内部时间线，结构与 AgentStep 相同但不含嵌套子智能体） */
+/** Subagent step (internal timeline; same shape as AgentStep but without nested subagents) */
 export interface SubagentStep {
   id: string;
   type: 'thinking' | 'tool_call' | 'content' | 'streaming';
@@ -42,68 +42,68 @@ export interface SubagentStep {
   duration?: number;
   summary?: string;
   toolName?: string;
-  /** 所属 LLM 轮次（后端 subagent-step 载荷 round；旧持久化数据缺省） */
+  /** Owning LLM round (round field of the backend subagent-step payload; absent in old persisted data) */
   round?: number;
 }
 
-/** 消息内容分块（多模态：文本 / 图片 URL；与 OpenAI content parts 对齐） */
+/** Message content part (multimodal: text / image URL; aligned with OpenAI content parts) */
 export interface ContentPart {
   type: 'text' | 'image_url';
   text?: string;
   image_url?: { url: string };
 }
 
-/* 消息项接口，定义聊天消息的数据结构 */
+/* Message interface defining the chat message data structure */
 export interface Message {
-  id?: string; // 消息唯一 ID（工具消息/assistant 消息持久化需要）
-  role: 'user' | 'assistant' | 'tool' | 'system'; // 消息发送者角色：'tool' 为工具执行结果，'system' 为系统指令
-  /** 消息内容：纯文本字符串，或多模态分块数组（文本 + 图片） */
+  id?: string; // Unique message ID (needed to persist tool/assistant messages)
+  role: 'user' | 'assistant' | 'tool' | 'system'; // Sender role: 'tool' is a tool execution result, 'system' is a system instruction
+  /** Message content: plain text string, or multimodal part array (text + images) */
   content: string | ContentPart[];
-  modelId?: string; // 生成回复的模型标识符，仅在 AI 助手回复时存在
-  displayFiles?: AttachmentMeta[]; // 消息关联的附件元数据
-  displayText?: string; // 用于界面显示的纯文本内容（已脱敏或解析处理）
-  reasoning?: string; // 模型原生思维链（reasoning_content），仅 assistant 消息可能携带
-  toolCallId?: string; // role="tool" 时对应触发的 tool_call id（OpenAI API 要求配对）
-  name?: string; // role="tool" 时为被调用的函数名；role="assistant" 携带 tool_calls 时为 "assistant"
-  toolCalls?: ToolCallDisplay[]; // role="assistant" 时携带模型发起的工具调用请求（含前端 UI 状态 state/result/error）
-  agentStartTime?: number; // Agent 轮次开始时间戳（ms），用于计算工作耗时
-  interimContent?: string; // 多轮 Agent 工作中，中间轮次的阶段性总结文本累积
-  agentSteps?: AgentStep[]; // Agent 工作过程时间线（新），按时间顺序记录每个步骤
-  inputTokens?: number; // 本轮/本消息输入 tokens 用量（跨轮累计，用于成本统计）
-  outputTokens?: number; // 本轮/本消息输出 tokens 用量（跨轮累计，用于成本统计）
-  contextTokens?: number; // 上下文峰值 tokens（最后一轮 API 调用的 input_tokens），用于上下文窗口进度条
-  parentMessageId?: string; // 父消息 ID（用于会话分支树）
-  branchIndex?: number; // 分支索引（缺省视为 0；旧数据可能无此字段）
-  cachedInputTokens?: number; // 本轮缓存命中 tokens（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens）
-  images?: GeneratedImageInfo[]; // 模型生成的图片（assistant 消息），用于下载与历史回放
+  modelId?: string; // Model ID that generated the reply; present only on assistant messages
+  displayFiles?: AttachmentMeta[]; // Attachment metadata associated with the message
+  displayText?: string; // Plain text for UI display (sanitized or parsed)
+  reasoning?: string; // Model-native chain of thought (reasoning_content); only assistant messages may carry it
+  toolCallId?: string; // tool_call id this role="tool" message answers (OpenAI API requires pairing)
+  name?: string; // For role="tool", the invoked function name; for role="assistant" with tool_calls, "assistant"
+  toolCalls?: ToolCallDisplay[]; // Tool calls issued by the model on role="assistant" messages (with frontend UI state/result/error)
+  agentStartTime?: number; // Agent turn start timestamp (ms), used to compute working time
+  interimContent?: string; // Accumulated interim-round summary text across multi-round agent runs
+  agentSteps?: AgentStep[]; // Agent workflow timeline, one entry per step in chronological order
+  inputTokens?: number; // Input token usage for this turn/message (accumulated across turns, for cost stats)
+  outputTokens?: number; // Output token usage for this turn/message (accumulated across turns, for cost stats)
+  contextTokens?: number; // Peak context tokens (input_tokens of the last API call), used for the context window progress bar
+  parentMessageId?: string; // Parent message ID (for the conversation branch tree)
+  branchIndex?: number; // Branch index (defaults to 0; old data may lack this field)
+  cachedInputTokens?: number; // Cache-hit tokens this turn (OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens)
+  images?: GeneratedImageInfo[]; // Model-generated images (assistant messages), for download and history replay
 }
 
-/** 前端展示用的工具调用（在 OpenAI tool_calls 基础上增加 UI 状态字段） */
+/** Tool call for frontend display (OpenAI tool_calls plus UI state fields) */
 export interface ToolCallDisplay {
   id: string;
   type: 'function';
   function: { name: string; arguments: string };
-  /** UI 状态：calling / success / error */
+  /** UI state: calling / success / error */
   state?: 'calling' | 'success' | 'error';
-  /** 工具返回的结构化结果 */
+  /** Structured result returned by the tool */
   result?: any;
-  /** 错误信息（state=error 时） */
+  /** Error message (when state=error) */
   error?: string;
-  /** 文件变更详情（写/替换/删文件时由后端提供） */
+  /** File change details (provided by the backend on write/replace/delete) */
   fileChanges?: FileChangeInfo[];
-  /** 完整工具结果（未截断版）。content 是截断版（≤10000 字符）。 */
+  /** Full (untruncated) tool result. content is the truncated version (10000-char cap). */
   fullContent?: string;
 }
 
-/** 单次文件修改记录 */
+/** Single file modification record */
 export interface FileChangeInfo {
-  /** 文件路径（相对于项目根目录） */
+  /** File path (relative to the project root) */
   filePath: string;
-  /** 操作类型: create | modify | delete */
+  /** Action type: create | modify | delete */
   action: 'create' | 'modify' | 'delete';
-  /** unified diff 文本 */
+  /** Unified diff text */
   diff: string;
-  /** 增删行数概览 "+N -M" */
+  /** Line change overview "+N -M" */
   summary: string;
 }
 
@@ -112,11 +112,11 @@ export interface AttachmentMeta {
   name: string;
   mimeType?: string;
   size?: number;
-  /** 附件在磁盘上的绝对路径，用于渲染图片缩略图（convertFileSrc 资产 URL） */
+  /** Absolute on-disk path of the attachment, used to render image thumbnails (convertFileSrc asset URL) */
   storagePath?: string;
 }
 
-/** 模型生成的图像元数据（assistant 消息），用于下载按钮与历史回放 */
+/** Model-generated image metadata (assistant messages), for the download button and history replay */
 export interface GeneratedImageInfo {
   name: string;
   mimeType: string;
@@ -136,34 +136,34 @@ export interface PendingAttachment extends StoredAttachment {
   previewUrl?: string;
 }
 
-/* 话题接口，定义对话主题的数据结构 */
+/* Topic interface defining the conversation topic data structure */
 export interface Topic {
-  id: string; // 话题唯一标识符
-  name: string; // 话题显示名称
-  history: Message[]; // 该话题下的历史消息记录数组
-  summary: string; // 话题的长期记忆摘要，对应数据库存储的 summary 字段
+  id: string; // Topic unique identifier
+  name: string; // Topic display name
+  history: Message[]; // Message history of this topic
+  summary: string; // Long-term memory summary of the topic; maps to the summary column stored in the database
   /**
-   * 是否已自动重命名。
-   * - false：新建话题或迁移前的旧话题；首次对话结束后会被自动改名为 AI 生成的标题，并置为 true
-   * - true：已自动重命名过，或用户手动改过名；后续不再触发自动重命名
-   * - 缺省：兼容旧数据，等价于 false
+   * Whether the topic has been auto-renamed.
+   * - false: new topic or pre-migration old topic; after the first conversation it is auto-renamed to the AI-generated title and set to true
+   * - true: already auto-renamed or manually renamed; auto-rename never triggers again
+   * - absent: tolerated for old data, equivalent to false
    */
   renamed?: boolean;
-  /** 分支来源消息 ID（此话题从哪条消息分支而来） */
+  /** Source message ID this topic was branched from */
   branchedFromMessageId?: string;
-  /** 父话题 ID（用于话题树结构） */
+  /** Parent topic ID (for the topic tree structure) */
   parentTopicId?: string;
 }
 
-/** Agent 执行模式 */
+/** Agent execution mode */
 export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
 
 /**
- * 上下文压缩（/compact 或自动触发）的结果，供 UI 给出准确反馈。
- * - compressed：摘要成功落库（覆盖 topic.summary 并裁剪历史）
- * - archived：摘要失败，已回退本地归档（read_artifact 可读回）
- * - skipped：未执行压缩（未达自动阈值 / 保留区覆盖全部历史 / 无可压缩内容）
- * - failed：摘要与归档均失败，历史未改动
+ * Context compaction outcome (/compact or auto-triggered), so the UI can report accurately.
+ * - compressed: summary persisted (overwrites topic.summary and trims history)
+ * - archived: summary failed, fell back to local archive (readable via read_artifact)
+ * - skipped: compaction not run (below auto threshold / preserve zone covers all history / nothing to compact)
+ * - failed: summary and archive both failed, history unchanged
  */
 export type CompactOutcome =
   | { kind: 'compressed'; summarizedCount: number; keptCount: number }
@@ -171,101 +171,101 @@ export type CompactOutcome =
   | { kind: 'skipped'; reason: 'below-threshold' | 'short-history' | 'nothing-to-compact' }
   | { kind: 'failed'; error: string };
 
-/* 助手接口，定义 AI 助手的数据结构 */
+/* Assistant interface defining the AI assistant data structure */
 export interface Assistant {
-  id: string; // 助手唯一标识符
-  name: string; // 助手显示名称
-  prompt: string; // 助手的系统提示词（Prompt）
-  modelId?: string; // 助手绑定的首选模型 ID；未设置时回退到全局默认模型
-  mcpServerIds?: string[]; // 助手启用的 MCP server id 列表；空/未设置 = 该助手不使用任何 MCP 工具（opt-in）
-  skillIds?: string[]; // 助手启用的 Skill id 列表；空/未设置 = 不注入 Skill 指令
-  projectId?: string; // 助手所属的项目 ID；未设置 = 全局助手
-  agentMode?: AgentMode; // Agent 执行模式；'off' = 对话模式
-  assistantType?: 'chat' | 'project'; // 助理类型：chat = 聊天模式，project = 项目助理
-  topics: Topic[]; // 助手关联的话题列表
+  id: string; // Assistant unique identifier
+  name: string; // Assistant display name
+  prompt: string; // System prompt for the assistant
+  modelId?: string; // Preferred model ID for the assistant; falls back to the global default model when unset
+  mcpServerIds?: string[]; // MCP server ids enabled for the assistant; empty/unset = no MCP tools (opt-in)
+  skillIds?: string[]; // Skill ids enabled for the assistant; empty/unset = no skill instructions injected
+  projectId?: string; // Project the assistant belongs to; unset = global assistant
+  agentMode?: AgentMode; // Agent execution mode; 'off' = plain conversation
+  assistantType?: 'chat' | 'project'; // Assistant type: chat = conversation, project = project assistant
+  topics: Topic[]; // Topics belonging to the assistant
 }
 
-/* 应用基础配置接口，存储 API 连接等全局设置 */
-/** 记忆嵌入模型的启用/停用设置条目。 */
+/* Base app config interface holding global settings such as API connection */
+/** Enable/disable setting entry for a memory embedding model. */
 export interface EmbeddingModelSetting {
-  /** 模型 id（对应模型注册表条目） */
+  /** Model id (matches a model registry entry) */
   id: string;
-  /** 是否启用（缺省条目视为启用） */
+  /** Whether enabled (missing entries are treated as enabled) */
   enabled: boolean;
 }
 
 /**
- * 应用程序全局配置（镜像后端 core/models/config.rs 的 AppConfig 序列化形状）。
+ * App-wide configuration (mirrors the serialized shape of AppConfig in backend core/models/config.rs).
  *
- * 注意：后端仅对常用字段做了 serde rename（camelCase），autoRetry* 等保留
- * snake_case（历史兼容）——此处按**实际序列化名**声明，切勿想当然改成 camelCase。
+ * Note: the backend serde-renames only common fields to camelCase; autoRetry* and
+ * similar stay snake_case for backward compatibility — declare the ACTUAL serialized names here; never assume camelCase.
  */
 export interface AppConfig {
-  /** API 服务提供商的基础 URL 地址 */
+  /** Base URL of the API service provider */
   apiUrl: string;
-  /** 用于身份验证的 API 密钥 */
+  /** API key for authentication */
   apiKey: string;
-  /** 用户偏好的默认模型 ID */
+  /** User's preferred default model ID */
   defaultModel: string;
-  /** 本地模型目录路径 */
+  /** Local model directory path */
   localModelPath: string;
-  /** 工具调用失败时是否自动重试（默认 true；序列化名保留 snake_case） */
+  /** Whether to auto-retry failed tool calls (default true; serialized name stays snake_case) */
   auto_retry_enabled: boolean;
-  /** 自动重试次数上限（默认 2） */
+  /** Max auto-retry attempts (default 2) */
   auto_retry_count: number;
-  /** 每次重试间隔（毫秒，默认 500） */
+  /** Delay between retries in ms (default 500) */
   auto_retry_delay_ms: number;
-  /** 项目级记忆（语义 RAG）总开关 */
+  /** Master switch for project-level memory (semantic RAG) */
   memoryEnabled: boolean;
-  /** 是否自动注入检索到的记忆到系统提示词（默认 true） */
+  /** Whether retrieved memories are auto-injected into the system prompt (default true) */
   memoryAutoInject: boolean;
-  /** 是否后台自动提取事实（默认 true） */
+  /** Whether facts are auto-extracted in the background (default true) */
   memoryAutoExtract: boolean;
-  /** 每项目活跃事实上限（默认 2000） */
+  /** Max active facts per project (default 2000) */
   memoryMaxFacts: number;
-  /** 记忆注入系统提示词的 token 预算（默认 3000） */
+  /** Token budget for injecting memories into the system prompt (default 3000) */
   memoryInjectionBudgetTokens: number;
-  /** 后台自动提取去抖秒数（默认 60） */
+  /** Debounce in seconds for background auto-extraction (default 60) */
   memoryExtractDebounceSecs: number;
-  /** 记忆嵌入配置（项目级嵌入的旧全局迁移源；仅 local） */
+  /** Memory embedding config (legacy global migration source for project-level embeddings; local only) */
   memoryEmbedding: MemoryEmbeddingConfig;
-  /** 全局嵌入模型安装目录（空 = 默认 app_data_dir/models/embed） */
+  /** Global embedding model install directory (empty = default app_data_dir/models/embed) */
   embeddingModelsDir: string;
-  /** 全局嵌入模型启用/停用注册表 */
+  /** Global embedding model enable/disable registry */
   embeddingModels: EmbeddingModelSetting[];
-  /** 记忆重排配置（RRF 后二阶段精排；默认关） */
+  /** Memory rerank config (second-stage rerank after RRF; default off) */
   memoryRerank: MemoryRerankConfig;
-  /** 判重/仲裁触发的余弦相似度阈值（默认 0.92） */
+  /** Cosine similarity threshold that triggers dedup/arbitration (default 0.92) */
   memoryDedupThreshold: number;
-  /** 检索时是否用 LLM 改写查询（默认关） */
+  /** Whether queries are rewritten by an LLM at retrieval time (default off) */
   memoryQueryRewrite: boolean;
-  /** 每日后台合并整理的 LLM 仲裁调用预算上限（默认 20） */
+  /** Max LLM arbitration calls for daily background consolidation (default 20) */
   memoryConsolidateBudget: number;
-  /** 系统自启（默认关） */
+  /** Launch the app at system startup (default off) */
   autoStartEnabled: boolean;
-  /** 最大并发子智能体数量（undefined = 默认 5） */
+  /** Max concurrent subagents (undefined = default 5) */
   maxConcurrentSubagents?: number;
-  /** 单次 Agent 运行最大工具调用轮数（undefined = 默认） */
+  /** Max tool-call rounds per agent run (undefined = default) */
   maxToolRounds?: number;
 }
 
-/* 已激活模型配置接口，定义可用 AI 模型的连接信息 */
+/* Activated model config interface holding connection info for available models */
 export interface ActivatedModel {
-  api_url: string; // 模型 API 端点地址
-  api_key: string; // 访问模型所需的 API 密钥
-  model_id: string; // 模型唯一标识符，例如 'gpt-4o', 'llama3'
-  owned_by: string; // 模型提供商或厂商名称
-  local_path?: string; // 本地模型的文件系统绝对路径，仅本地模型有效
-  engine_type?: string; // 本地推理引擎类型标识，如 "llama_cpp", "vllm"
+  api_url: string; // Model API endpoint URL
+  api_key: string; // API key required to access the model
+  model_id: string; // Model unique identifier, e.g. 'gpt-4o', 'llama3'
+  owned_by: string; // Model provider or vendor name
+  local_path?: string; // Absolute filesystem path of the local model; valid only for local models
+  engine_type?: string; // Local inference engine type identifier, e.g. "llama_cpp", "vllm"
 }
 
-/** 项目接口 */
+/** Project interface */
 export interface Project {
   id: string;
   name: string;
   path: string;
   createdAt: string;
   updatedAt: string;
-  /** 项目关联的助理 id（后端 list_projects 一并返回） */
+  /** Assistant id linked to the project (returned alongside by the backend list_projects command) */
   assistantId: string;
 }

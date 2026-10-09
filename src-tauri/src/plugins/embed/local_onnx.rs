@@ -1,10 +1,12 @@
-//! 本地嵌入模型（ONNX）：内置 all-MiniLM-L6-v2（随应用打包，开箱即用）与
-//! 设置页按需下载的主流开源模型（安装目录可自定义）。
+//! Local embedding models (ONNX): bundled all-MiniLM-L6-v2 (shipped with the app,
+//! works out of the box) and mainstream open-source models downloaded on demand
+//! from Settings (install directory is customizable).
 //!
-//! 模型文件加载约定：内置模型走 `include_bytes!`；下载模型读取
-//! `<embed_dir>/<id>/`（onnx + tokenizer 文件，与 commands/model_download.rs manifest 一致），
-//! 通过 fastembed `UserDefinedEmbeddingModel` 加载，进程内按模型 id 惰性缓存一次。
-//! 池化方式（mean/cls）取自 manifest（BGE/GTE/MXBAI 为 CLS，MiniLM/E5/paraphrase 为 Mean）。
+//! Model file loading convention: bundled models use `include_bytes!`; downloaded
+//! models read from `<embed_dir>/<id>/` (onnx + tokenizer files, matching the
+//! commands/model_download.rs manifest), loaded via fastembed
+//! `UserDefinedEmbeddingModel`, cached lazily once per model id in-process.
+//! Pooling (mean/cls) comes from the manifest (BGE/GTE/MXBAI use CLS; MiniLM/E5/paraphrase use Mean).
 
 use super::Embedder;
 use crate::core::models::MemoryEmbeddingConfig;
@@ -20,7 +22,7 @@ use tauri::AppHandle;
 pub const LOCAL_MODEL_NAME: &str = "all-MiniLM-L6-v2";
 pub const LOCAL_DIMENSIONS: usize = 384;
 
-/// 打包进二进制的内置模型文件（随安装分发，构成"开箱即用"）。
+/// Built-in model files embedded into the binary (shipped with installs, enabling out-of-the-box use).
 struct BundledModel;
 
 impl BundledModel {
@@ -38,7 +40,7 @@ impl BundledModel {
 
 type ModelCache = HashMap<String, Result<Arc<TextEmbedding>, String>>;
 
-/// 进程内模型实例缓存（按模型 id；加载结果缓存，失败不重复尝试直至重启）。
+/// In-process model instance cache (keyed by model id; load results are cached, failures are not retried until restart).
 static INSTANCES: OnceLock<Mutex<ModelCache>> = OnceLock::new();
 
 fn instances() -> &'static Mutex<ModelCache> {
@@ -55,7 +57,7 @@ fn pooling_of(id: &str) -> Pooling {
     }
 }
 
-/// 加载（或取缓存）模型实例。内置模型走 include_bytes；下载模型读安装目录。
+/// Loads (or fetches from cache) a model instance. Bundled models use include_bytes; downloaded models read from the install directory.
 fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> {
     {
         let map = instances().lock().map_err(|e| e.to_string())?;
@@ -137,16 +139,16 @@ fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> 
     result
 }
 
-/// 从进程内实例缓存移除模型（删除模型文件后调用，避免旧实例继续可用）。
+/// Removes a model from the in-process instance cache (called after model files are deleted, so stale instances do not remain usable).
 pub fn evict_model(id: &str) {
     if let Ok(mut map) = instances().lock() {
         map.remove(id);
     }
 }
 
-/// 本地嵌入器。
+/// Local embedder.
 pub struct LocalEmbedder {
-    /// 嵌入模型安装根目录（<embed_dir>/<id>/ 存放模型文件）。
+    /// Root install directory for embedding models (<embed_dir>/<id>/ holds the model files).
     embed_dir: PathBuf,
     cfg: MemoryEmbeddingConfig,
     id: String,
@@ -159,7 +161,7 @@ impl LocalEmbedder {
         Self::with_dir(dir, cfg)
     }
 
-    /// 指定安装目录构造（测试与自定义目录共用）。
+    /// Constructs with an explicit install directory (shared by tests and custom directories).
     pub fn with_dir(embed_dir: PathBuf, cfg: &MemoryEmbeddingConfig) -> Self {
         let id = if cfg.model.trim().is_empty() {
             LOCAL_MODEL_NAME.to_string()
@@ -238,11 +240,11 @@ impl Embedder for LocalEmbedder {
 mod tests {
     use super::*;
 
-    /// 内置模型开箱即用：应能独立产出 384 维向量（无需联网/下载）。
+    /// The bundled model works out of the box: must produce 384-dim vectors standalone (no network/download needed).
     #[tokio::test]
     async fn bundled_embedder_produces_384_dim() {
         let cfg = MemoryEmbeddingConfig::default();
-        // bundled 路径不访问安装目录，测试传入空目录即可
+        // The bundled path never touches the install directory, so an empty dir suffices for the test
         let e = LocalEmbedder::with_dir(PathBuf::new(), &cfg);
         assert_eq!(e.dimensions(), 384);
         let v = e

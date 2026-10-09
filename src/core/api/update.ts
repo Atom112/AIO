@@ -1,21 +1,21 @@
-// 应用更新域 Tauri 命令封装（与 commands/update.rs 对应）。
-// CheckUpdateResult 此前在 Layout.tsx 与 AppSettings.tsx 中各自重复定义，现收敛于此。
+// App update domain Tauri command wrappers (mirrors commands/update.rs).
+// Single source of truth for CheckUpdateResult.
 import { invoke } from '@tauri-apps/api/core';
 
-/** 可用更新信息（镜像 commands/update.rs 的 AppUpdateInfo）。 */
+/** Available update info (mirrors AppUpdateInfo in commands/update.rs). */
 export interface AppUpdateInfo {
-  /** 最新版本号（已去掉 v 前缀） */
+  /** Latest version (v prefix stripped) */
   version: string;
   currentVersion: string;
-  /** Release notes（Markdown 原文） */
+  /** Release notes (raw Markdown) */
   notes?: string;
-  /** 发布时间（ISO8601） */
+  /** Publication time (ISO 8601) */
   pubDate?: string;
 }
 
 /**
- * check_app_update 的返回结果（镜像 commands/update.rs 的 CheckUpdateResult）。
- * 判别字段 kind：up_to_date / update_available / service_not_ready / network / failed。
+ * Result of check_app_update (mirrors CheckUpdateResult in commands/update.rs).
+ * Discriminant field kind: up_to_date / update_available / service_not_ready / network / failed.
  */
 export type CheckUpdateResult =
   | { kind: 'up_to_date'; current_version: string }
@@ -24,11 +24,11 @@ export type CheckUpdateResult =
   | { kind: 'network'; current_version: string; endpoint: string; reason: string }
   | { kind: 'failed'; current_version: string; endpoint: string; reason: string };
 
-/** 检查应用更新。 */
+/** Check for app updates. */
 export const checkAppUpdate = () => invoke<CheckUpdateResult>('check_app_update');
 
-/** 下载并安装更新（进度经 app-update-progress 事件回报）。 */
+/** Download and install the update (progress reported via the app-update-progress event). */
 export const installAppUpdate = () => invoke<void>('install_app_update');
 
-/** 重启应用（安装更新后）。 */
+/** Restart the app (after installing an update). */
 export const restartApp = () => invoke<void>('restart_app');

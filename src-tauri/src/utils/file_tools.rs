@@ -1,10 +1,10 @@
-//! 内置文件系统工具 — 原生函数调用（非 MCP 子进程）。
+//! Built-in filesystem tools — native in-process calls (not MCP subprocesses).
 //!
-//! 原 `mcp_fs_server.rs` 通过 stdio JSON-RPC 子进程提供文件操作，
-//! 但子进程断连导致 Agent 文件操作频繁失败。现改为 in-process 直接调用，
-//! 沙箱逻辑（`safe_path`）保持不变，工具名与参数完全兼容，前端无须改动。
+//! Previously served by `mcp_fs_server.rs` over a stdio JSON-RPC subprocess, whose disconnections
+//! made Agent file operations fail frequently; now called in-process. The sandboxing logic
+//! (`safe_path`) is unchanged and tool names/parameters are fully compatible, so the frontend needs no changes.
 //!
-//! 供 `run_agent_turn` 在工具分发时直接调用，跳过 MCP 通道。
+//! Called directly by `run_agent_turn` during tool dispatch, bypassing the MCP channel.
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::ierr;
@@ -12,27 +12,27 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-// ====== 常量 ======
+// ====== Constants ======
 
-const MAX_R: u64 = 1_000_000; // 读文件上限 1MB
-const MAX_W: u64 = 5_000_000; // 写文件上限 5MB
-const MAX_S: usize = 10_000; // 列表/搜索上限 10K 条
+const MAX_R: u64 = 1_000_000; // read size cap: 1MB
+const MAX_W: u64 = 5_000_000; // write size cap: 5MB
+const MAX_S: usize = 10_000; // list/search cap: 10K entries
 
-// ====== 辅助函数 ======
+// ====== Helpers ======
 
-/// 计算文件内容的 SHA-256 十六进制摘要（hashline 协议：编辑按 hash 锚定防漂移）。
+/// Computes the SHA-256 hex digest of the file content (hashline protocol: edits are anchored by hash to prevent drift).
 fn sha256_hex(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
     hex::encode(hasher.finalize())
 }
 
-/// 路径沙箱：解析请求的路径，确保在 `allowed_dir` 以内。
+/// Path sandbox: resolves the requested path and ensures it stays within `allowed_dir`.
 ///
-/// 安全不变式：无论目标是否存在、能否 canonicalize，最终都必须经过末尾的
-/// 越界检查后才能放行 —— 任何分支都不得提前 return（历史上上溯到根时曾提前返回，
-/// 导致不存在的盘符/UNC 根路径绕过校验）。该函数同时被进程内文件工具与
-/// `mcp_fs_server`（stdio 文件服务器）复用。
+/// Safety invariant: regardless of whether the target exists or can be canonicalized, it
+/// must pass the final out-of-bounds check before being allowed — no branch may return
+/// early. Reused by both the in-process file tools and `mcp_fs_server`
+/// (the stdio file server).
 pub(crate) fn safe_path(
     allowed_dir: &str,
     requested: &str,
@@ -54,7 +54,7 @@ pub(crate) fn safe_path(
         match std::fs::canonicalize(&resolved) {
             Ok(c) => c,
             Err(_) => {
-                // 文件尚不存在：逐级上溯找到存在的父目录再拼接
+                // Target does not exist yet: walk up level by level to an existing parent dir, then re-append
                 let mut exist = resolved.clone();
                 let mut trail: Vec<std::ffi::OsString> = Vec::new();
                 let mut walked_past_root = false;
@@ -68,8 +68,8 @@ pub(crate) fn safe_path(
                     }
                 }
                 if walked_past_root {
-                    // 全路径无一存在（如不存在的盘符/UNC 根）：无法 canonicalize 锚点，
-                    // 退化为纯词法重建（展开 ../..），随后仍须经过末尾的越界检查。
+                    // No component of the path exists (e.g. a nonexistent drive/UNC root): no canonicalize
+                    // anchor, so fall back to purely lexical reconstruction (expanding ../..), still subject to the final out-of-bounds check.
                     let mut r = PathBuf::new();
                     for c in resolved.components() {
                         match c {
@@ -124,12 +124,12 @@ pub(crate) fn sz(b: u64) -> String {
     }
 }
 
-// tool_ok / tool_err 统一由 utils::tool_result 提供（消除全仓 8+5 份副本）
+// tool_ok / tool_err are provided solely by utils::tool_result (single source of truth repo-wide)
 pub use crate::utils::tool_result::{tool_err, tool_ok};
 
-// ====== 工具定义 ======
+// ====== Tool definitions ======
 
-/// 返回内置文件工具的 ToolSpec 列表（直接喂给 LLM 的 tools 字段）。
+/// Returns the ToolSpec list of the built-in file tools (fed directly to the LLM's tools field).
 pub fn get_file_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -208,11 +208,11 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-// ====== 工具执行 ======
+// ====== Tool execution ======
 
-/// 直接执行一个文件工具，返回 ToolResult。
+/// Executes a single file tool directly and returns a ToolResult.
 ///
-/// `project_root` 是项目根目录的绝对路径，所有路径操作均限定在该目录内。
+/// `project_root` is the absolute path of the project root; all path operations are confined to that directory.
 pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> ToolResult {
     match name {
         "read_file" => {
@@ -220,8 +220,8 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
             }
-            // 读取上限：默认 300 行 / 32KB（token 效率：防止大文件全文注入上下文）；
-            // max_lines 传 -1 表示不限行数，max_bytes 传 -1 表示不限制字节（仍受 MAX_R 硬上限约束）。
+            // Read caps: default 300 lines / 32KB (token efficiency: keeps full large files out of the context);
+            // max_lines = -1 means unlimited lines, max_bytes = -1 means unlimited bytes (still bounded by the MAX_R hard cap).
             let max_lines_arg = arguments["max_lines"].as_i64().unwrap_or(300);
             let max_lines = if max_lines_arg < 0 {
                 usize::MAX
@@ -248,7 +248,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Ok(m) => m,
                 Err(e) => return tool_err(&e.to_string()),
             };
-            // 一次性读取字节（1MB 硬上限），并计算文件 SHA-256（hashline 协议用）
+            // Read all bytes at once (1MB hard cap) and compute the file's SHA-256 (used by the hashline protocol)
             let bytes = match std::fs::read(&t) {
                 Ok(b) => b,
                 Err(e) => return tool_err(&e.to_string()),
@@ -258,14 +258,14 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             let raw = String::from_utf8_lossy(&bytes[..hash_len]).into_owned();
             let over_size = meta.len() > MAX_R;
             let total_lines = raw.lines().count();
-            // 行号输出（1-based，cat -n 风格）：模型可精确引用行号（replace_in_file
-            // 的行范围模式、错误报告等）。行号在行数截断之前编号，保持文件真实位置。
+            // Line-numbered output (1-based, cat -n style): lets the model cite exact line numbers
+            // (replace_in_file line-range mode, error reporting, etc.). Lines are numbered before line truncation to preserve real file positions.
             let numbered: Vec<String> = raw
                 .lines()
                 .enumerate()
                 .map(|(i, l)| format!("{:>5}| {}", i + 1, l))
                 .collect();
-            // 行数限制（头部+尾部，保留关键首尾信息；省略标记标注被省略的行号区间）
+            // Line limit (head + tail, keeping the key leading/trailing content; the omission marker notes the omitted line range)
             let limited = if total_lines > max_lines {
                 let head_lines = (max_lines * 6) / 10;
                 let tail_lines = max_lines - head_lines;
@@ -282,7 +282,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             } else {
                 numbered.join("\n")
             };
-            // 文件过大警告置于编号内容之前（不占用行号）
+            // The oversize warning goes before the numbered content (consumes no line number)
             let limited = if over_size {
                 format!(
                     "⚠ 文件过大 ({}KB/{}KB截断)\n\n{}",
@@ -293,7 +293,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             } else {
                 limited
             };
-            // 字节限制（UTF-8 安全边界，头部+尾部）
+            // Byte limit (UTF-8-safe boundaries, head + tail)
             let c = if limited.len() > max_bytes {
                 let head_bytes = (max_bytes * 6) / 10;
                 let tail_bytes = max_bytes - head_bytes;
@@ -314,7 +314,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             } else {
                 limited
             };
-            // with_hash=true：追加文件摘要，供 replace_in_file 的 anchor_hash 锚定
+            // with_hash=true: append the file digest for replace_in_file's anchor_hash anchoring
             let with_hash = arguments["with_hash"].as_bool().unwrap_or(false);
             if with_hash {
                 tool_ok(format!("{}\n\n[HASH sha256:{}]", c, file_hash))
@@ -544,8 +544,8 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Ok(c) => c,
                 Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
             };
-            // hashline 协议：anchor_hash 锚定防漂移——文件当前摘要必须与模型持有的 hash 一致，
-            // 否则说明文件已被修改（或模型上下文过期），要求重新 read_file(with_hash=true)。
+            // hashline protocol: anchor_hash guards against drift — the file's current digest must match the hash the model holds,
+            // otherwise the file was modified (or the model's context is stale) and it must re-run read_file(with_hash=true).
             let anchor_hash = arguments["anchor_hash"].as_str().unwrap_or("");
             if !anchor_hash.is_empty() {
                 let current_hash = sha256_hex(content.as_bytes());
@@ -558,8 +558,8 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     ));
                 }
             }
-            // 行范围锚定模式（token 效率）：old_string 留空 + start_line/end_line 时，
-            // 由工具从当前文件内容构造待替换文本，模型无需回传整段旧代码。
+            // Line-range anchor mode (token efficiency): with old_string empty + start_line/end_line,
+            // the tool builds the text to replace from the current file content, so the model need not echo the whole old block.
             if old_s.is_empty() {
                 match arguments["start_line"].as_i64() {
                     None => {
@@ -576,7 +576,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                                 "Invalid start_line/end_line (1-based, end_line >= start_line)"
                             ));
                         }
-                        // 构造行范围文本（不含行尾换行，匹配后保留原有换行结构）
+                        // Build the line-range text (without the trailing newline; the original newline structure is preserved after replacement)
                         let lines: Vec<&str> = content.split('\n').collect();
                         let last_empty = lines.last().is_some_and(|s| s.is_empty());
                         let total = if last_empty { lines.len() - 1 } else { lines.len() };
@@ -600,7 +600,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     "old_string must not be empty (to prepend/append content, include surrounding context lines)"
                 ));
             }
-            // 统计 old_string 出现次数及行号
+            // Count old_string occurrences and their line numbers
             let mut matches: Vec<usize> = Vec::new();
             let mut pos = 0;
             while let Some(found) = content[pos..].find(old_s.as_str()) {
@@ -654,18 +654,18 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
     }
 }
 
-/// 根据 project_id 解析项目根目录绝对路径。
+/// Resolves the absolute project root path from project_id.
 pub fn resolve_project_root(
     app: &tauri::AppHandle,
     project_id: Option<&str>,
 ) -> Result<String, String> {
     let pid = project_id.ok_or_else(|| ierr!("未指定项目", "No project specified"))?;
-    // 路径解析统一在 utils::project_index（含 Windows 扩展前缀归一化）
+    // Path resolution is centralized in utils::project_index (includes Windows extended-prefix normalization)
     crate::utils::project_index::project_path(app, pid)
 }
 
-/// 去掉 Windows 扩展长度路径前缀 `\\?\`（由 `std::fs::canonicalize` 产生）。
-/// 该前缀对文件操作透明，但暴露给 LLM 时会造成困惑。
+/// Strips the Windows extended-length path prefix `\\?\` (produced by `std::fs::canonicalize`).
+/// The prefix is transparent to file operations but confuses the LLM when exposed.
 pub fn strip_windows_extended_prefix(path: &str) -> String {
     #[cfg(target_os = "windows")]
     {
@@ -690,8 +690,8 @@ mod safe_path_tests {
         dir
     }
 
-    /// 绝对路径指向不存在的盘符/UNC 根（walk-up 走到根仍无锚点）——
-    /// 修复前此分支提前 return、绕过末尾的越界检查。
+    /// Absolute path targeting a nonexistent drive/UNC root (walk-up reaches the root with no anchor)
+    /// must still be rejected by the final out-of-bounds check.
     #[test]
     fn rejects_absolute_path_on_nonexistent_root() {
         let base = fresh_base("noroot");
@@ -705,7 +705,7 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
-    /// 通过 .. 上溯逃逸项目目录。
+    /// Escaping the project directory via .. traversal.
     #[test]
     fn rejects_parent_traversal_escape() {
         let base = fresh_base("dotdot");
@@ -715,7 +715,7 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
-    /// 项目目录内不存在的新文件（含不存在的中级目录）应允许写入。
+    /// A new file inside the project directory (including nonexistent intermediate directories) must be allowed.
     #[test]
     fn allows_new_file_inside_project() {
         let base = fresh_base("inside");
@@ -730,7 +730,7 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
-    /// must_exist=true 时目标必须真实存在。
+    /// With must_exist=true the target must actually exist.
     #[test]
     fn must_exist_rejects_missing_path() {
         let base = fresh_base("mustexist");
@@ -751,13 +751,13 @@ mod safe_path_tests {
             .to_string()
     }
 
-    /// read_file 输出带 1-based 行号；行数截断后行号保持文件真实位置，
-    /// 省略标记标注被省略的行号区间（供 replace_in_file 行范围模式引用）。
+    /// read_file output carries 1-based line numbers; after line truncation the numbers keep the real file positions,
+    /// and the omission marker notes the omitted line range (for replace_in_file line-range mode).
     #[test]
     fn read_file_outputs_real_line_numbers() {
         let base = fresh_base("lineno");
         let base_s = base.to_string_lossy().to_string();
-        // 10 行文件，max_lines=5 → 头 3 行 + 尾 2 行，省略第 4–8 行
+        // 10-line file, max_lines=5 -> head 3 lines + tail 2 lines, omitting lines 4-8
         let body: String = (1..=10).map(|i| format!("line{i}\n")).collect();
         fs::write(base.join("ten.txt"), body).unwrap();
 
@@ -775,7 +775,7 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
-    /// 行号输出与 hashline 协议兼容（with_hash 摘要仍在末尾）。
+    /// Line-numbered output stays compatible with the hashline protocol (the with_hash digest still trails).
     #[test]
     fn read_file_line_numbers_with_hash() {
         let base = fresh_base("lineno-hash");

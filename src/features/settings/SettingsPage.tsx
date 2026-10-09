@@ -5,16 +5,16 @@ import Icon from '../../shared/components/Icon';
 import { t } from '../../core/i18n';
 
 /**
- * 设置页面布局 (lobehub v2 嵌套路由)
- * - 侧栏: 切换顶级 tab (provider / account / app)
- * - 主区域: 渲染当前匹配的子路由 (props.children)
- * - provider tab 下还有子路由: /settings/provider (列表) + /settings/provider/:id (详情)
- *   进入详情时侧栏隐藏, 详情页自带返回按钮
+ * Settings page layout (LobeHub v2 nested routes)
+ * - Sidebar: switches top-level tabs (provider / account / app)
+ * - Main area: renders the currently matched child route (props.children)
+ * - The provider tab has sub-routes: /settings/provider (list) + /settings/provider/:id (detail)
+ *   The sidebar hides in detail view; the detail page provides its own back button
  */
 const Settings: Component<{ children?: JSX.Element }> = (props) => {
   const location = useLocation();
 
-  /** 详情页 (匹配 /settings/provider/<id>) 时隐藏侧栏 */
+  /** Hide the sidebar on detail pages (matching /settings/provider/<id>) */
   const isProviderDetail = () => /^\/settings\/provider\/[^/]+/.test(location.pathname);
 
   const menuItems = createMemo(
@@ -75,7 +75,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
   return (
     <div class="h-full flex p-4 gap-4" style={{ background: 'transparent' }}>
       <Show when={!isProviderDetail()}>
-        {/* 侧边栏 */}
+        {/* Sidebar */}
         <div
           class="w-[200px] flex flex-col rounded-lg overflow-hidden shrink-0"
           style={{
@@ -117,7 +117,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         </div>
       </Show>
 
-      {/* 主内容区 */}
+      {/* Main content area */}
       <Transition name="subpage-fade">
         <div
           class="flex-1 overflow-y-auto overflow-x-hidden min-w-0"

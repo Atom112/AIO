@@ -1,8 +1,6 @@
-// ChatPage 的事件监听器注册集合（18 个 listen）—— 从 ChatPage.onMount 抽出。
+// Event listener registration set for ChatPage (18 listen calls) — extracted from ChatPage.onMount.
 //
-// 抽取策略（低风险）：函数顶部把依赖从 deps 解构，监听器主体与原代码**逐字一致**；
-// 行为不变，仅把 ~740 行的注册块移出组件，便于独立测试与审阅。
-// deps 里的每一项都来自 ChatPage 组件作用域（Solid 的 setter/signal 是稳定引用，可安全传递）。
+// Every dep comes from the ChatPage component scope (Solid setters/signals are stable references, safe to pass along).
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { EVENTS } from '../../../core/api/events';
@@ -23,7 +21,7 @@ import {
 import type { PendingApproval } from '../components/ToolApprovalBubble';
 import { TOOL_INTERRUPTED } from '../constants';
 
-/** ChatPage 组件提供给监听器集合的依赖包（真实类型：保证 setDatas 回调的参数也被类型检查）。 */
+/** Deps the ChatPage component provides to the listener set (concrete types: setDatas callback params are type-checked too). */
 export interface ChatEventDeps {
   setDatas: typeof storeSetDatas;
   datas: DatasState;
@@ -36,7 +34,7 @@ export interface ChatEventDeps {
   selectedModel: () => ActivatedModel | null;
   saveSingleAssistantToBackend: (id: string) => Promise<void>;
   checkAndRename: (eventAsstId: string, eventTopicId: string) => Promise<void>;
-  /** 自动路径（对话结束后调用，不带 force，遵守 75% 阈值守卫）；返回结果仅手动路径消费 */
+  /** Auto path (called after the conversation ends, without force, honoring the 75% threshold guard); the result is consumed only by the manual path */
   checkAndSummarize: (
     keepBudgetOverride?: number,
     opts?: { force?: boolean },
@@ -44,11 +42,11 @@ export interface ChatEventDeps {
 }
 
 /**
- * 注册 ChatPage 的全部事件监听器，返回 unlisten Promise 数组（onCleanup 时逐个调用）。
- * 注意：listener 的注册先于 invoke 调用，避免丢失首个 chunk 的竞态。
+ * Registers all ChatPage event listeners; returns an array of unlisten Promises (each called from onCleanup).
+ * Note: listeners register before any invoke call, to avoid the race of losing the first chunk.
  */
 export function registerChatEventListeners(deps: ChatEventDeps): Promise<UnlistenFn>[] {
-  // 解构依赖：与监听器主体使用的名字一一对应
+  // Destructure deps so the names match those used in the listener bodies
   const {
     setDatas,
     setIsDragging,
@@ -64,7 +62,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
     checkAndSummarize,
   } = deps;
 
-  // 流式内容批量合并状态（50ms 窗口）—— 从组件作用域随迁（仅本模块监听器使用）。
+  // Stream content batching state (50ms window) — used only by listeners in this module.
   let streamBatch: {
     assistant_id: string;
     topic_id: string;
@@ -81,11 +79,11 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       setIsDragging(false);
       for (const p of e.payload.paths) await handleFileUpload(p, 'file');
     }),
-    // 新一轮 LLM 调用开始：多轮 Agent 工作时复用同一条 assistant 消息
+    // A new LLM round starts: multi-round agent work reuses the same assistant message
     listen<any>(EVENTS.llmRoundStart, (e) => {
       const { assistant_id, topic_id, round } = e.payload;
 
-      // 后续轮次：关闭上一轮的步骤，准备新轮次（不再整体压扁到 interimContent）
+      // Later rounds: close the previous round's steps and set up the new round (no longer flattened wholesale into interimContent)
       if (round > 1) {
         const asst = datas.assistants.find((a) => a.id === assistant_id);
         const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
@@ -93,7 +91,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
           const lastIdx = topic.history.length - 1;
           const lastMsg = topic.history[lastIdx];
           if (lastMsg?.role === 'assistant') {
-            // 关闭当前运行的步骤
+            // Close the currently running step
             const now = Date.now();
             setDatas(
               'assistants',
@@ -113,7 +111,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
                 ];
               },
             );
-            // 重置 content / reasoning，准备接收新轮次输出
+            // Reset content / reasoning to receive the new round's output
             setDatas(
               'assistants',
               (a) => a.id === assistant_id,
@@ -126,13 +124,13 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
                 reasoning: '',
               },
             );
-            // 打字机索引保持不变（仍指向同一条消息）
+            // Typewriter index stays unchanged (still pointing at the same message)
             return;
           }
         }
       }
 
-      // 第一轮：创建新 assistant 占位消息
+      // First round: create a new assistant placeholder message
       const currentMdl = selectedModel();
       setDatas(
         'assistants',
@@ -153,7 +151,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
           },
         ],
       );
-      // 设置打字机索引为新 assistant 消息位置
+      // Point the typewriter index at the new assistant message
       const asst = datas.assistants.find((a) => a.id === assistant_id);
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (topic) setTypingIndex(topic.history.length - 1);
@@ -172,7 +170,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         images,
       } = e.payload;
       if (done) {
-        // 刷新可能残余的 rAF 批量内容
+        // Flush any residual rAF-batched content
         if (streamBatchRAF !== undefined) {
           clearTimeout(streamBatchRAF);
           streamBatchRAF = undefined;
@@ -191,9 +189,9 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
             (old) => (typeof old === 'string' ? old : '') + batch.content,
           );
         }
-        // 整轮真正结束（后端 run_agent_turn epilogue 唯一发出 done）
+        // The whole round is truly over (only the backend run_agent_turn epilogue emits done)
         if (error) {
-          // 错误：追加错误文本到最后一条 assistant 消息
+          // Error: append the error text to the last assistant message
           const asst = datas.assistants.find((a) => a.id === assistant_id);
           const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
           if (topic) {
@@ -212,12 +210,12 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
             }
           }
         }
-        // 关闭未完结状态：最后一个 running 步骤、以及中断产生的孤儿 toolCalls。
-        // 用户点停止时后端 cancel 直接 break，不会为在途工具发 llm-tool-result，
-        // 导致 msg.toolCalls 中残留 state==='calling' 的条目。下一次请求重建 API 载荷时，
-        // 这些条目会被 filter 跳过，assistant.tool_calls 失去配对的 role:tool 消息，
-        // 触发 API 400（missing field tool_call_id）。这里统一标记为 error 并写明中断原因，
-        // 重建逻辑会自动为它们生成配对的 tool 消息，模型也能感知“上次操作被中断”。
+        // Close unfinished state: the last running step plus orphaned toolCalls left by an interrupt.
+        // When the user hits stop, the backend cancel breaks without emitting llm-tool-result for
+        // in-flight tools, leaving state==='calling' entries in msg.toolCalls. On the next request those
+        // are filtered out, so assistant.tool_calls loses its paired role:tool messages and the API
+        // rejects with 400 (missing field tool_call_id). Here they are uniformly marked as error with the
+        // interrupt reason; the rebuild logic generates paired tool messages so the model sees the interruption.
         const finishTime = Date.now();
         setDatas(
           'assistants',
@@ -232,15 +230,15 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
             const steps: any[] = msg.agentSteps || [];
             const toolCalls: any[] = msg.toolCalls || [];
             const updatedMsg: any = { ...msg };
-            // 保存 token 用量
+            // Save token usage
             if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
             if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
             if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
             if (cached_input_tokens != null) updatedMsg.cachedInputTokens = cached_input_tokens;
-            // 模型生成的图像元数据（下载按钮）+ 后端重写（去 token 标记）后的最终文本
+            // Model-generated image metadata (download button) + final text after the backend rewrite (token markers stripped)
             if (images) updatedMsg.images = images;
             if (!error && content) updatedMsg.content = content;
-            // 孤儿 toolCalls：仍为 calling 的条目标记为中断错误
+            // Orphaned toolCalls: entries still in calling are marked as interrupted errors
             if (toolCalls.some((tc: any) => tc.state === 'calling')) {
               updatedMsg.toolCalls = toolCalls.map((tc: any) =>
                 tc.state === 'calling' ? { ...tc, state: 'error', error: TOOL_INTERRUPTED } : tc,
@@ -255,8 +253,8 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
                 ...updatedMsg,
                 agentSteps: steps.map((s: any, i: number) => {
                   if (s.status !== 'running') return s;
-                  // 中断的 tool_call 步骤与其 toolCall 状态保持一致（标记 error）；
-                  // 其余 running 步骤（含最后一个）按完成关闭
+                  // Interrupted tool_call steps stay consistent with their toolCall state (marked error);
+                  // other running steps (including the last) are closed as complete
                   if (s.type === 'tool_call' && s.toolCall?.state === 'calling') {
                     return {
                       ...s,
@@ -276,7 +274,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         setIsThinking(false);
         saveSingleAssistantToBackend(assistant_id);
         setTypingIndex(null);
-        // 串行执行：先尝试自动重命名（非默认话题的首次对话），再触发历史压缩总结
+        // Sequential: first try auto-rename (first exchange in a non-default topic), then trigger history compaction
         setTimeout(async () => {
           await checkAndRename(assistant_id, topic_id);
           await checkAndSummarize();
@@ -284,7 +282,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         return;
       }
 
-      // 流式数据追加：rAF 批量合并，避免逐 token 的打字机效果
+      // Streaming append: batched via rAF to avoid a per-token typewriter effect
       const asst = datas.assistants.find((a) => a.id === assistant_id);
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (topic) {
@@ -302,7 +300,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
               const batch = streamBatch!;
               streamBatch = null;
               streamBatchRAF = undefined;
-              // 一次性应用批量内容（50ms 窗口内累积的所有 token）
+              // Apply the batched content in one shot (all tokens accumulated within the 50ms window)
               setDatas(
                 'assistants',
                 (a) => a.id === batch.assistant_id,
@@ -367,8 +365,8 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         }
       }
     }),
-    // 思维链片段追加：原生 reasoning_content 流式累积到对应消息的 reasoning 字段
-    // 同时构建 agentSteps 时间线中的 thinking 步骤
+    // Chain-of-thought chunk append: raw reasoning_content accumulates into the message's reasoning field
+    // while also building thinking steps in the agentSteps timeline
     listen<any>(EVENTS.llmReasoning, (e) => {
       if (reasoningLevel() === 'off') return;
       const { assistant_id, topic_id, content } = e.payload;
@@ -377,7 +375,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       if (topic) {
         const lastIdx = topic.history.length - 1;
         if (lastIdx >= 0) {
-          // 追加到 reasoning 字段（保持向后兼容）
+          // Append to the reasoning field (kept for backward compatibility)
           setDatas(
             'assistants',
             (a) => a.id === assistant_id,
@@ -388,7 +386,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
             'reasoning',
             (old) => (typeof old === 'string' ? old : '') + content,
           );
-          // 构建 agentSteps 时间线：若最后一步不是 thinking 则新建，否则追加
+          // Build the agentSteps timeline: create a new step if the last is not thinking, otherwise append
           setDatas(
             'assistants',
             (a) => a.id === assistant_id,
@@ -400,7 +398,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
             (steps: any[] = []) => {
               const lastStep = steps[steps.length - 1];
               if (lastStep && lastStep.type === 'thinking' && lastStep.status === 'running') {
-                // 追加到当前 thinking 步骤
+                // Append to the current thinking step
                 return [
                   ...steps.slice(0, -1),
                   {
@@ -409,7 +407,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
                   },
                 ];
               }
-              // 关闭上一步（如果仍在运行），新建 thinking 步骤
+              // Close the previous step (if still running) and create a new thinking step
               const now = Date.now();
               const closed =
                 lastStep && lastStep.status === 'running'
@@ -433,7 +431,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         }
       }
     }),
-    // LLM 工具调用事件：展示"调用中"气泡并构建 agentSteps 时间线
+    // LLM tool-call event: show the "calling" bubble and build the agentSteps timeline
     listen<any>(EVENTS.llmToolCall, (e) => {
       const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
       const newTc = {
@@ -452,11 +450,11 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
           const lastIdx = h.length - 1;
           if (lastIdx >= 0 && h[lastIdx]?.role === 'assistant') {
             const msg = h[lastIdx];
-            // 保持 toolCalls 数组（消息重建用）
+            // Keep the toolCalls array (used when rebuilding messages)
             const existing = msg.toolCalls || [];
             if (existing.find((tc: any) => tc.id === tool_call_id)) return h;
             const newToolCalls = [...existing, newTc];
-            // 构建 agentSteps：关闭上一步，新建 tool_call 步骤
+            // Build agentSteps: close the previous step and add a new tool_call step
             const now = Date.now();
             const steps: any[] = msg.agentSteps || [];
             const lastStep = steps[steps.length - 1];
@@ -486,7 +484,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         },
       );
     }),
-    // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与 agentSteps 时间线
+    // Tool execution result: update the matching toolCall state on the assistant message and the agentSteps timeline
     listen<any>(EVENTS.llmToolResult, (e) => {
       const {
         assistant_id,
@@ -520,7 +518,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
                   }
                 : tc,
             );
-            // 同步更新 agentSteps 中对应 tool_call 步骤
+            // Also update the matching tool_call step in agentSteps
             const now = Date.now();
             const newSteps = (m.agentSteps || []).map((s: any) => {
               if (s.type === 'tool_call' && s.toolCall?.id === tool_call_id) {
@@ -546,17 +544,17 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
           }),
       );
     }),
-    // 运行内上下文压缩事件：仅主 Agent 压缩会更新会话记忆——
-    // 覆盖式更新 topic.summary 并按 token 预算裁剪历史，使后续轮次不再全量重发已压缩部分（P1-5）
+    // In-run context compaction event: only main-agent compaction updates conversation memory —
+    // topic.summary is overwritten and history trimmed to the token budget so later rounds stop resending the compacted part
     listen<any>(EVENTS.llmCompression, (e) => {
       const { assistant_id, topic_id, source, summary } = e.payload;
       if (!assistant_id || !topic_id) return;
-      if (source === 'subagent') return; // 子智能体上下文压缩与主会话无关
+      if (source === 'subagent') return; // subagent context compaction is unrelated to the main conversation
       if (!summary || typeof summary !== 'string' || summary.trim() === '') return;
       const asst = datas.assistants.find((a: any) => a.id === assistant_id);
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (!topic) return;
-      // 与后端 keep_recent_tokens 对齐：从尾部累计约 2 万 token，至少保留最近 4 条（一个完整回合）
+      // Aligned with the backend keep_recent_tokens: accumulate ~20k tokens from the tail, keeping at least the last 4 messages (one full exchange)
       const KEEP_TOKEN_BUDGET = 20_000;
       const estTokens = (m: any): number => {
         const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
@@ -582,8 +580,8 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       );
       saveSingleAssistantToBackend(assistant_id);
     }),
-    // 未完成任务已生成交接文档：在最后一条 assistant 消息的时间线中记录可追溯的交接步骤
-    // （后端同时会在消息文本末尾追加说明；此监听提供结构化记录与文档路径）
+    // A handoff doc was generated for unfinished work: record a traceable handoff step in the last assistant message's timeline
+    // (the backend also appends a note to the message text; this listener provides the structured record and the doc path)
     listen<{ assistant_id: string; topic_id: string; path: string; reason: string }>(
       EVENTS.llmHandoff,
       (e) => {
@@ -612,7 +610,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         );
       },
     ),
-    // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
+    // Tool-call approval request event: the backend needs user confirmation before running a tool (fields are snake_case to match the backend)
     listen<any>(EVENTS.toolApprovalRequested, (e) => {
       const {
         approval_id,
@@ -637,9 +635,9 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       ]);
     }),
 
-    // ===== 子智能体事件监听 =====
+    // ===== Subagent event listeners =====
 
-    // 子智能体启动：在当前 assistant 消息的 agentSteps 中推入一个 subagent 步骤
+    // Subagent start: push a subagent step into the current assistant message's agentSteps
     listen<any>(EVENTS.subagentStart, (e) => {
       const {
         parent_assistant_id,
@@ -677,7 +675,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       );
     }),
 
-    // 子智能体步骤更新：追加子 Agent 内部步骤
+    // Subagent step update: append the sub-agent's internal steps
     listen<any>(EVENTS.subagentStep, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, round, step_type, summary } =
         e.payload;
@@ -723,7 +721,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       );
     }),
 
-    // 子智能体完成：标记 subagent 步骤为完成，记录结果
+    // Subagent done: mark the subagent step complete and record the result
     listen<any>(EVENTS.subagentDone, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, result } = e.payload;
       const finishTime = Date.now();
@@ -758,7 +756,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       );
     }),
 
-    // 子智能体出错
+    // Subagent error
     listen<any>(EVENTS.subagentError, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, error } = e.payload;
       setDatas(
@@ -791,7 +789,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         },
       );
     }),
-    // ---- 工作流事件 ----
+    // ---- Workflow events ----
     listen<WorkflowState>(EVENTS.workflowStart, (e) => {
       setWorkflowState({
         workflowId: e.payload.workflowId,

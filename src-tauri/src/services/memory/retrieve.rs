@@ -1,17 +1,17 @@
-//! 检索后处理：二阶段精排（rerank）、查询改写（可选）与多查询 RRF 融合。
+//! Retrieval post-processing: two-stage rerank, optional query rewrite, and multi-query RRF fusion.
 //!
-//! 供 Agent 循环自动注入与检索工具（recall / search_memory / memory_search）共用，
-//! 避免各调用方重复实现同一套"检索 → 精排 → 裁剪"流程。
-//! 全部失败/未启用时 fail-open：回退 RRF-only 行为，与引入重排前一致。
+//! Shared by the agent loop's auto-injection and the retrieval tools (recall / search_memory / memory_search),
+//! so no caller reimplements the same "retrieve -> rerank -> trim" pipeline.
+//! Fails open when everything fails or features are disabled: falls back to RRF-only behavior, as before rerank existed.
 
 use super::store::{MemoryStore, ScoredFact, SearchOptions};
 use crate::core::models::MemoryRerankConfig;
 use std::collections::HashMap;
 use tauri::AppHandle;
 
-/// 项目级重排配置的一次性迁移（**显式命名的写操作**，便于审计）：
-/// 无项目 meta 时把旧全局配置快照到项目（幂等）。
-/// 调用点：记忆命令入口（memory_get_status / memory_update_rerank）。
+/// One-time migration of the project-level rerank config (**an explicitly named write**, easy to audit):
+/// snapshots the legacy global config into the project when no project meta exists (idempotent).
+/// Call sites: memory command entry points (memory_get_status / memory_update_rerank).
 pub fn migrate_project_rerank(app: &AppHandle, store: &MemoryStore) {
     let (_, set) = store.rerank_cfg();
     if !set {
@@ -22,10 +22,10 @@ pub fn migrate_project_rerank(app: &AppHandle, store: &MemoryStore) {
     }
 }
 
-/// 解析项目级重排配置（**纯读取**，不写盘：偏好项目 meta，无则回退全局旧配置）。
-/// 落盘迁移见 [`migrate_project_rerank`]（在命令入口显式执行）。
-/// 归一化：provider 恒 local；model 不在 manifest 的 rerank 条目中（如旧在线
-/// 模型名 rerank-multilingual-v3）时回退默认 bge-reranker-base。
+/// Resolve the project-level rerank config (**pure read**, no disk writes: prefers project meta, falls back to the legacy global config).
+/// The on-disk migration is [`migrate_project_rerank`] (run explicitly at command entry points).
+/// Normalization: provider is always local; a model not in the manifest's rerank entries (e.g. the
+/// legacy online model name rerank-multilingual-v3) falls back to the default bge-reranker-base.
 pub fn resolve_project_rerank(app: &AppHandle, store: &MemoryStore) -> MemoryRerankConfig {
     let (mut cfg, set) = store.rerank_cfg();
     if !set {
@@ -43,7 +43,7 @@ pub fn resolve_project_rerank(app: &AppHandle, store: &MemoryStore) -> MemoryRer
     cfg
 }
 
-/// 对检索结果应用项目级重排；未启用/解析失败/调用失败时原顺序返回（fail-safe）。
+/// Apply the project-level rerank to retrieval results; when disabled/resolve fails/call fails, returns the original order (fail-safe).
 pub async fn apply_rerank(
     app: &AppHandle,
     store: &MemoryStore,
@@ -81,7 +81,7 @@ pub async fn apply_rerank(
     }
 }
 
-/// 查询向量（项目级配置 + 维度守卫：维度与库不一致时返回 None，退化为关键词检索）。
+/// Query vector (project-level config + dimension guard: returns None when the dimension mismatches the store, degrading to keyword retrieval).
 pub async fn embed_query(app: &AppHandle, store: &MemoryStore, text: &str) -> Option<Vec<f32>> {
     let ecfg = super::resolve_project_embedding(app, store);
     let embedder = crate::plugins::embed::resolve(app, &ecfg).ok()?;
@@ -104,8 +104,8 @@ pub async fn embed_query(app: &AppHandle, store: &MemoryStore, text: &str) -> Op
     Some(v)
 }
 
-/// 生成注入块（含重排）：混合检索 top-20 → 项目级重排 → token 预算裁剪。
-/// 任何环节失败返回 None（本轮不注入，不打断任务）。
+/// Build the injection block (with rerank): hybrid search top-20 -> project-level rerank -> token-budget trim.
+/// Returns None if any stage fails (skip injection this round; never interrupts the task).
 pub async fn inject_block(
     app: &AppHandle,
     store: &MemoryStore,
@@ -129,7 +129,7 @@ pub async fn inject_block(
     store.build_block_from(results, budget).ok().flatten()
 }
 
-/// 查询改写（可选，默认关）：LLM 生成 1-2 个查询变体；LLM 不可用返回空。
+/// Query rewrite (optional, off by default): the LLM generates 1-2 query variants; returns empty when the LLM is unavailable.
 pub async fn rewrite_query(app: &AppHandle, query: &str) -> Vec<String> {
     match super::llm::llm_config(app) {
         Ok(cfg) => super::llm::rewrite_query(&cfg, query)
@@ -139,8 +139,8 @@ pub async fn rewrite_query(app: &AppHandle, query: &str) -> Vec<String> {
     }
 }
 
-/// 多查询检索 + RRF 融合：每个查询独立做混合检索（含项目级重排），
-/// 结果按 reciprocal rank 融合排序后取 top k。单查询时等价于普通检索。
+/// Multi-query retrieval + RRF fusion: each query runs its own hybrid search (with project-level rerank),
+/// results are fused and ranked by reciprocal rank, then truncated to top k. A single query degrades to plain retrieval.
 pub async fn merged_search(
     app: &AppHandle,
     store: &MemoryStore,
@@ -150,7 +150,7 @@ pub async fn merged_search(
     if queries.is_empty() {
         return Ok(Vec::new());
     }
-    // 各查询独立检索（查询向量按项目配置生成）
+    // Independent search per query (query vectors generated per project config)
     let mut lists: Vec<Vec<ScoredFact>> = Vec::with_capacity(queries.len());
     for q in queries {
         let qv = embed_query(app, store, q).await;
@@ -159,7 +159,7 @@ pub async fn merged_search(
         let hits = apply_graph_boost(store, q, hits).await;
         lists.push(hits);
     }
-    // RRF 融合
+    // RRF fusion
     let mut rrf: HashMap<String, f32> = HashMap::new();
     let mut first_seen: HashMap<String, ScoredFact> = HashMap::new();
     for list in lists {
@@ -187,8 +187,8 @@ pub async fn merged_search(
     Ok(out)
 }
 
-/// P3-1 Agentic/迭代检索（默认关）：首轮取 top-3，以其内容摘要作为扩展查询再检索一轮，
-/// 两轮结果 RRF 融合。对表述模糊/术语缺失的查询可提升召回；成本 ≈ 两次查询嵌入。
+/// Agentic/iterative retrieval (off by default): take top-3, use their content summaries as an expanded
+/// query for a second round, then RRF-fuse both rounds. Helps vague/terminology-poor queries; cost ~ two query embeddings.
 pub async fn iterative_search(
     app: &AppHandle,
     store: &MemoryStore,
@@ -212,7 +212,7 @@ pub async fn iterative_search(
         .collect();
     let ext = format!("{}\n相关要点：{}", query, snippets.join("\n"));
     let second = merged_search(app, store, &[ext], opts).await?;
-    // 两轮 RRF 融合（迭代轮权重与首轮相同）
+    // RRF fusion of both rounds (the iterative round weighs the same as the first)
     let mut rrf: HashMap<String, f32> = HashMap::new();
     let mut first_seen: HashMap<String, ScoredFact> = HashMap::new();
     for list in [&first, &second] {
@@ -239,9 +239,9 @@ pub async fn iterative_search(
     Ok(out)
 }
 
-/// P3-3 图谱加分纯函数：实体命中数 → 分数加成（每命中 +15%，封顶 +30%）。
-/// 匹配规则与 store::relation_entity_hits 一致：查询包含实体或实体包含查询（长度 >= 2）。
-/// 运行时实现见 [apply_graph_boost]（按命中计数内联同式）；本函数供单元测试回归公式。
+/// Pure graph-boost function: entity hit count -> score bonus (+15% per hit, capped at +30%).
+/// Matching rule matches store::relation_entity_hits: the query contains the entity or vice versa (length >= 2).
+/// Runtime implementation is [apply_graph_boost] (same formula inlined by hit count); this function exists for unit-test regression of the formula.
 #[cfg(test)]
 pub fn graph_boost(fact_entities: &[String], query: &str, base: f32) -> f32 {
     let q = query.trim();
@@ -255,7 +255,7 @@ pub fn graph_boost(fact_entities: &[String], query: &str, base: f32) -> f32 {
     base * (1.0 + 0.15 * hits.min(2) as f32)
 }
 
-/// 对检索结果应用图谱实体加分（实体来自 facts_relations；无命中保持原序）。
+/// Apply the graph entity boost to retrieval results (entities from facts_relations; original order kept on no hits).
 pub async fn apply_graph_boost(
     store: &MemoryStore,
     query: &str,
@@ -290,26 +290,26 @@ mod tests {
 
     #[test]
     fn test_graph_boost() {
-        // 无实体/空查询 → 原分
+        // No entities / empty query -> unchanged score
         assert_eq!(graph_boost(&[], "查询", 1.0), 1.0);
         assert_eq!(graph_boost(&["实体".into()], "  ", 0.5), 0.5);
-        // 查询包含实体 → +15%
+        // Query contains entity -> +15%
         let boosted = graph_boost(&["rusqlite".into()], "数据库用 rusqlite", 1.0);
         assert!((boosted - 1.15).abs() < 1e-5, "命中实体应 +15%：{boosted}");
-        // 实体包含查询（短查询）→ +15%
+        // Entity contains query (short query) -> +15%
         let boosted2 = graph_boost(&["sqlite-vec".into()], "sqlite", 1.0);
         assert!(
             (boosted2 - 1.15).abs() < 1e-5,
             "实体包含查询应 +15%：{boosted2}"
         );
-        // 封顶 +30%（两个及以上命中）
+        // Cap +30% (two or more hits)
         let capped = graph_boost(&["存储".into(), "SQLite".into()], "存储 SQLite 方案", 1.0);
         assert!((capped - 1.3).abs() < 1e-5, "命中封顶应 ×1.3：{capped}");
     }
 
     #[test]
     fn test_rrf_merge() {
-        // 仅验证融合函数逻辑（不触达 SQLite/网络）
+        // Only verifies the fusion logic (no SQLite/network access)
         let a = vec![
             ScoredFact {
                 id: "a".into(),
@@ -341,7 +341,7 @@ mod tests {
             k: 5,
             min_score: None,
         };
-        // 双查询均在列表：a 只出现一次（rank0 → 1/61），b 出现两次（1/61 + 1/62）
+        // Both queries present: a appears once (rank0 -> 1/61), b appears twice (1/61 + 1/62)
         let lists = vec![a.clone(), b];
         let mut rrf: HashMap<String, f32> = HashMap::new();
         let mut first: HashMap<String, ScoredFact> = HashMap::new();

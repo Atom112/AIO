@@ -1,11 +1,11 @@
 /**
- * 安全外链打开（D4）：
- * 仅放行 http/https，阻止 file: / 自定义 scheme 经 plugin-opener 拉起本地程序。
- * 远程 catalog/market JSON 提供的 URL 非可信，打开前必须校验。
+ * Safe external URL opening:
+ * Allows only http/https; blocks file: and custom schemes that could launch local
+ * programs via plugin-opener. Remote catalog/market JSON URLs are untrusted and must be validated before opening.
  */
 import { openUrl } from '@tauri-apps/plugin-opener';
 
-/** 仅打开 http/https 链接；非法或非白名单 scheme 一律静默忽略。 */
+/** Opens only http/https links; invalid or non-whitelisted schemes are silently ignored. */
 export async function openSafeUrl(url?: string | null): Promise<void> {
   if (!url) return;
   let parsed: URL;

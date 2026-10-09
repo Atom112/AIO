@@ -1,5 +1,5 @@
-// 本地推理引擎域：启动 / 进度 / 连接状态 / 引擎扫描缓存 —— 从 store.ts 拆出。
-// 依赖方向：engine → models（选择模型）、engine → chat（持久化助手绑定）；单向无环。
+// Local inference engine domain: start / progress / connection state / engine scan cache.
+// Dependency direction: engine → models (model selection), engine → chat (persisting assistant bindings); one-way, acyclic.
 
 import { createSignal } from 'solid-js';
 import {
@@ -13,7 +13,7 @@ import type { ActivatedModel } from './types';
 import { isLocalModel, modelKey, setSelectedModel } from './models';
 import { saveSingleAssistantToBackend, setDatas } from './chat';
 import { isLocalAutoStartConfirmed, setLocalAutoStartConfirmed } from './ui-prefs';
-/** engine_type → 展示名称 */
+/** engine_type → display name */
 const engineDisplayName = (engineType?: string): string => {
   switch (engineType) {
     case 'llama_cpp':
@@ -27,7 +27,7 @@ const engineDisplayName = (engineType?: string): string => {
   }
 };
 /**
- * 检查本地推理引擎服务是否就绪（2s 超时）
+ * Check whether the local inference engine service is ready (2s timeout).
  */
 const checkServerHealth = async (baseUrl: string): Promise<boolean> => {
   try {
@@ -66,8 +66,8 @@ export const startLocalEngineForAssistant = async (
       setLocalAutoStartConfirmed();
     }
     const engineName = engineDisplayName(model.engine_type);
-    // Ollama：始终调用 start_local_server 以确保模型已导入（插件内部处理"已运行"情况）
-    // 其他引擎：若已在运行则跳过
+    // Ollama: always call start_local_server to ensure the model is imported (the plugin handles the already-running case)
+    // Other engines: skip if already running
     if (engineType !== 'ollama') {
       const isRunning = await isLocalServerRunning(engineType);
       if (isRunning) {
@@ -133,11 +133,11 @@ export const startLocalEngineForAssistant = async (
 };
 
 /**
- * 为某助手设置绑定模型并立即同步全局 selectedModel + 持久化。
- * 若为本地模型则顺带拉起推理引擎。供助手设置弹窗复用。
+ * Set the bound model for an assistant, sync the global selectedModel immediately, and persist.
+ * If the model is local, also start the inference engine. Reused by the assistant settings modal.
  */
 export const setAssistantModel = async (asstId: string, model: ActivatedModel): Promise<void> => {
-  // 存复合键 modelKey（model_id@api_url 或纯 model_id），确保同名异源模型可区分
+  // Store the composite modelKey (model_id@api_url or plain model_id) so same-named models from different sources stay distinguishable.
   setDatas('assistants', (a: any) => a.id === asstId, 'modelId', modelKey(model));
   setSelectedModel(model);
   await saveSingleAssistantToBackend(asstId);
@@ -146,17 +146,17 @@ export const setAssistantModel = async (asstId: string, model: ActivatedModel): 
   }
 };
 
-/** 是否正在启动本地模型 */
+/** Whether a local model is starting. */
 export const [isStartingLocalModel, setIsStartingLocalModel] = createSignal(false);
-/** 本地模型启动进度百分比 */
+/** Local model start progress percentage. */
 export const [localModelStartProgress, setLocalModelStartProgress] = createSignal(0);
 
-/** 本地推理引擎是否已连接（健康检查通过） */
+/** Whether the local inference engine is connected (health check passed). */
 export const [localEngineConnected, setLocalEngineConnected] = createSignal(false);
-/** 已连接的本地推理引擎展示名（由 engine_type 映射） */
+/** Display name of the connected local inference engine (mapped from engine_type). */
 export const [localEngineName, setLocalEngineName] = createSignal('');
 
-// ====== 引擎扫描缓存（应用启动时扫一次） ======
+// ====== Engine scan cache (scanned once at app startup) ======
 
 export interface EngineScanEntry {
   id: string;
@@ -167,12 +167,12 @@ export interface EngineScanEntry {
   defaultApiUrl: string;
 }
 
-/** 引擎扫描结果缓存，null = 尚未扫描 */
+/** Engine scan results cache; null = not scanned yet. */
 export const [engineScanResults, setEngineScanResults] = createSignal<EngineScanEntry[] | null>(
   null,
 );
 
-/** 应用启动时扫描一次已安装的推理引擎 */
+/** Scan installed inference engines once at app startup. */
 export const initEngineScan = async () => {
   try {
     const results = await scanInstalledEngines();

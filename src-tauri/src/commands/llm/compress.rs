@@ -1,4 +1,4 @@
-//! 上下文自动压缩（Agent 循环内运行时压缩，供主循环与子 Agent 共用）。
+//! Automatic context compression (runtime compression inside the Agent loop, shared by the main loop and sub-agents).
 
 use crate::commands::llm::*;
 use crate::core::events as ev;
@@ -7,12 +7,12 @@ use serde_json::json;
 use tauri::{Emitter, Window};
 use tokio_util::sync::CancellationToken;
 
-/// 上下文自动压缩：将早期消息压缩为摘要，按 token 预算保留最近消息。
-/// 用于 Agent 循环中避免超出模型上下文窗口限制。
-/// - 前置的 system 消息块（稳定提示词前缀：locale / 知识 / 工作流指令等）永不压缩；
-/// - 保留区按 keep_recent_tokens token 预算从尾部累计，并回退到完整轮次边界（不切断 role:tool）；
-/// - 摘要输入有界（最多约 30k 字符，最近优先），并固定带上首条 user 消息（原始任务）；
-/// - 摘要提示词与注入标记跟随 locale（en-US 英文，其余中文）。
+/// Automatic context compression: compress early messages into a summary and keep recent messages within a token budget.
+/// Used inside the Agent loop to avoid exceeding the model context window.
+/// - The leading system block (stable prompt prefix: locale / knowledge / workflow instructions) is never compressed;
+/// - The retention region accumulates from the tail within the keep_recent_tokens budget and snaps back to whole-round boundaries (never splits role:tool);
+/// - Summary input is bounded (~30k chars max, most recent first) and always includes the first user message (the original task);
+/// - The summary prompt and injection marker follow locale (English for en-US, Chinese otherwise).
 #[allow(
     clippy::too_many_arguments,
     reason = "context compression reuses the active stream request context"
@@ -35,12 +35,12 @@ pub(crate) async fn compress_context(
         return Ok(());
     }
 
-    // 检查取消信号
+    // Check the cancellation signal
     if token.is_cancelled() {
         return Err("cancelled".into());
     }
 
-    // 1) 保护前置 system 消息块（稳定提示词前缀），永不压缩
+    // 1) Protect the leading system block (stable prompt prefix); never compressed
     let mut prefix_end = 0usize;
     while prefix_end < messages.len()
         && messages[prefix_end].get("role").and_then(|v| v.as_str()) == Some("system")
@@ -51,7 +51,7 @@ pub(crate) async fn compress_context(
         return Ok(());
     }
 
-    // 2) 按 token 预算从尾部累计保留区
+    // 2) Accumulate the retention region from the tail within the token budget
     let mut tail_start = messages.len();
     let mut acc: usize = 0;
     for i in (prefix_end..messages.len()).rev() {
@@ -62,21 +62,21 @@ pub(crate) async fn compress_context(
         }
     }
     if tail_start == messages.len() {
-        return Ok(()); // 整个可压缩区都在预算内，无需压缩
+        return Ok(()); // the whole compressible region fits the budget; nothing to compress
     }
-    // 切割点不得落在 role:tool 上（避免 tool 消息与其 assistant(tool_calls) 分离导致 API 400）
+    // The split point must not land on role:tool (separating a tool message from its assistant(tool_calls) triggers an API 400)
     while tail_start < messages.len()
         && messages[tail_start].get("role").and_then(|v| v.as_str()) == Some("tool")
     {
         tail_start += 1;
     }
     if tail_start <= prefix_end {
-        return Ok(()); // 保留区已覆盖全部可压缩区
+        return Ok(()); // the retention region already covers the whole compressible region
     }
 
     let early: Vec<serde_json::Value> = messages.drain(prefix_end..tail_start).collect();
 
-    // 3) 构造有界的摘要提示：首条 user 消息（原始任务）+ 最近的早期消息（最多 ~30k 字符，最近优先）
+    // 3) Build a bounded summary prompt: first user message (original task) + most recent early messages (~30k chars max, most recent first)
     let mut blocks: Vec<String> = Vec::new();
     let mut budget = 30_000usize;
     for msg in early.iter().rev() {
@@ -94,8 +94,8 @@ pub(crate) async fn compress_context(
         budget -= block.len();
         blocks.push(block);
     }
-    blocks.reverse(); // 恢复时间顺序
-                      // 固定带上首条 user 消息（原始任务描述），防止其被预算丢弃
+    blocks.reverse(); // restore chronological order
+                      // Always include the first user message (the original task description) so the budget never drops it
     if let Some(first_user) = early
         .iter()
         .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
@@ -133,8 +133,8 @@ pub(crate) async fn compress_context(
         "stream": false,
         "max_tokens": 1024
     });
-    // 摘要生成；失败（超时/网络/API/空）时回退到本地归档（snapcompact 式：零摘要 API 成本，
-    // 细节可经 read_artifact 工具恢复），保证压缩绝不丢失早期上下文。
+    // Summary generation; on failure (timeout/network/API/empty) fall back to local archiving (snapcompact-style:
+    // zero summary API cost, details recoverable via the read_artifact tool), guaranteeing compression never loses early context.
     let summary = match (async {
         let (res, is_anthropic) = tokio::select! {
             _ = token.cancelled() => return Err("cancelled".to_string()),
@@ -179,7 +179,7 @@ pub(crate) async fn compress_context(
         }
     };
 
-    // 4) 重建消息列表：稳定前缀 → 摘要消息 → 保留尾部
+    // 4) Rebuild the message list: stable prefix -> summary message -> retained tail
     let tail: Vec<serde_json::Value> = messages.split_off(prefix_end);
     messages.push(json!({
         "role": "system",

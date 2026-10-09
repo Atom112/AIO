@@ -1,34 +1,34 @@
-//! 上下文 token 估算与错误分类辅助（粗估预检 / 溢出判定 / 可重试判定）。
+//! Context token estimation and error classification helpers (rough pre-check / overflow detection / retryability).
 
-/// 估算单条 API 消息的 token 数（tiktoken 本地计数；失败时回退到字符数/2）。
-/// 用于上下文压缩触发与保留预算的判定。
+/// Estimate the token count of a single API message (local tiktoken count; falls back to chars/2 on failure).
+/// Used to decide when to trigger context compression and the retention budget.
 pub(crate) fn estimate_message_tokens(model: &str, msg: &serde_json::Value) -> usize {
     let s = serde_json::to_string(msg).unwrap_or_default();
     crate::utils::token_counter::count_tokens(model, &s).unwrap_or(s.len() / 2)
 }
 
-/// CJK 感知的字符级粗估（整数四分位运算，1 token = 4 quarters）：
-/// - ASCII 字符：约 4 字符/token（cl100k/o200k 对英文的平均值）
-/// - 非 ASCII（CJK/重音字符/emoji）：约 1.25 token/字符
+/// CJK-aware character-level rough estimate (integer quarter arithmetic, 1 token = 4 quarters):
+/// - ASCII chars: ~4 chars/token (cl100k/o200k average for English)
+/// - Non-ASCII (CJK/accented/emoji): ~1.25 tokens/char
 ///
-/// 相比旧的 字节len/3 启发式：中文场景（3 字节/字符 ≈ 1.0-1.5 真实 token）
-/// 从最多低估 ~50% 收敛到 ±25%；英文从高估 ~33% 收敛到 ±20%。粗估只用于
-/// 决定是否运行精确 tiktoken 统计——宁可略高（多跑一次精确统计）也不要
-/// 低估（漏掉触发压缩的时机，只能靠溢出报错兜底）。
+/// Versus the old bytes/3 heuristic: Chinese text (3 bytes/char ≈ 1.0-1.5 real tokens)
+/// moves from up to ~50% underestimation to ±25%; English from ~33% overestimation to ±20%.
+/// The rough estimate only decides whether to run exact tiktoken counting — erring high
+/// (one extra exact pass) beats erring low (a missed compression trigger, caught only by overflow errors).
 pub(crate) fn rough_tokens(s: &str) -> usize {
     let mut quarters = 0usize;
     for ch in s.chars() {
         if ch.is_ascii() {
-            quarters += 1; // 4 ASCII 字符 ≈ 1 token
+            quarters += 1; // 4 ASCII chars ≈ 1 token
         } else {
-            quarters += 5; // 非 ASCII 字符 ≈ 1.25 token
+            quarters += 5; // non-ASCII chars ≈ 1.25 tokens
         }
     }
     quarters / 4
 }
 
-/// 上下文 token 估算（带粗估预检）：先用 CJK 感知粗估，远低于预算时直接返回，
-/// 避免每轮对全部消息做 tiktoken 编码拖慢 Agent 循环；接近预算时才精确统计。
+/// Context token estimation (with a rough pre-check): use the CJK-aware rough estimate first and
+/// return it directly when far below budget, avoiding tiktoken-encoding all messages every round; count exactly only near budget.
 pub(crate) fn estimate_context_tokens(
     model: &str,
     messages: &[serde_json::Value],
@@ -51,7 +51,7 @@ pub(crate) fn estimate_context_tokens(
         .sum()
 }
 
-/// 判断 API 错误是否由上下文超限导致（用于溢出自动恢复：压缩后重试一次）。
+/// Whether an API error is caused by context-length overflow (used for overflow auto-recovery: retry once after compression).
 pub(crate) fn is_context_overflow_error(e: &str) -> bool {
     let e = e.to_lowercase();
     [
@@ -74,7 +74,7 @@ pub(crate) fn is_context_overflow_error(e: &str) -> bool {
     .any(|k| e.contains(k))
 }
 
-/// 判断工具错误是否可重试（网络类错误可重试，权限/参数错误不可重试）
+/// Whether a tool error is retryable (network-class errors are retryable; permission/parameter errors are not)
 pub(crate) fn is_retryable_error(e: &str) -> bool {
     let lower = e.to_lowercase();
     lower.contains("timeout")
@@ -91,12 +91,12 @@ pub(crate) fn is_retryable_error(e: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// 中文粗估不得显著低于精确值（旧 字节/3 启发式对 CJK 最多低估 ~50%，
-    /// 会漏掉触发压缩的时机）。验收：偏差在精确值的 2 倍以内且高于旧启发式。
+    /// The Chinese rough estimate must not fall significantly below the exact count (the old
+    /// bytes/3 heuristic underestimates CJK by up to ~50%, missing compression triggers). Acceptance: within 2x of exact and above the old heuristic.
     #[test]
     fn rough_estimate_is_cjk_aware() {
         let zh = "这是一段用于验证上下文预算估算的中文文本，包含标点、顿号与常见汉字词汇。";
-        let model = "gpt-4"; // cl100k 编码器
+        let model = "gpt-4"; // cl100k encoder
         let exact =
             crate::utils::token_counter::count_tokens(model, zh).expect("tiktoken 计数失败");
         let rough = rough_tokens(zh);
@@ -104,7 +104,7 @@ mod tests {
             rough >= exact / 2 && rough <= exact * 2,
             "中文粗估偏差过大: rough={rough} exact={exact}"
         );
-        // 旧启发式对照：字节/3（每 CJK 字符 3 字节 → 1.0 token/字符）
+        // Old heuristic for comparison: bytes/3 (3 bytes per CJK char -> 1.0 token/char)
         let old = zh.len() / 3;
         assert!(
             rough > old,
@@ -112,7 +112,7 @@ mod tests {
         );
     }
 
-    /// 英文粗估同样须落在精确值 2 倍以内（ASCII 4 字符/token 假设）。
+    /// The English rough estimate must likewise stay within 2x of exact (assumes 4 ASCII chars/token).
     #[test]
     fn rough_estimate_english_within_bounds() {
         let en = "The quick brown fox jumps over the lazy dog while the compiler emits warnings. ";
@@ -126,7 +126,7 @@ mod tests {
         );
     }
 
-    /// 空串与纯 ASCII 边界。
+    /// Empty-string and pure-ASCII edge cases.
     #[test]
     fn rough_estimate_edges() {
         assert_eq!(rough_tokens(""), 0);

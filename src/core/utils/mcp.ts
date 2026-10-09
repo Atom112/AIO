@@ -1,19 +1,19 @@
-// MCP 工具函数
+// MCP utility functions
 
 import type { McpTransport, McpStatus } from '../types/mcp';
 import { t } from '../i18n';
 
-/** 构造 keyring 占位符 */
+/** Builds a keyring placeholder */
 export function buildKeyringPlaceholder(serverId: string, envKey: string): string {
   return `\${KEYRING:mcp-server-${serverId}-env-${envKey}}`;
 }
 
-/** 检查 env 字段是否包含密钥占位符 */
+/** Checks whether any env value contains a secret placeholder */
 export function hasSecretInEnv(env: Record<string, string>): boolean {
   return Object.values(env).some((v) => v.includes('${KEYRING:'));
 }
 
-/** 获取 transport 的人类可读标签 */
+/** Returns a human-readable label for the transport */
 export function transportLabel(t: McpTransport): string {
   switch (t.transport) {
     case 'stdio':
@@ -34,7 +34,7 @@ function shortUrl(url: string): string {
   }
 }
 
-/** 状态徽章颜色（用于 UI） */
+/** Status badge color (for the UI) */
 export function statusColor(s: McpStatus): string {
   switch (s) {
     case 'connected':

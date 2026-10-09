@@ -1,17 +1,17 @@
 /**
  * @file SlashCommandMenu.tsx
- * @description 斜杠命令浮动菜单 — 在聊天输入框中输入 `/` 时弹出，注入提示词到对话
+ * @description Slash command popup menu — appears when `/` is typed in the chat input and injects prompt text into the conversation
  *
- * 用法：<SlashCommandMenu
+ * Usage: <SlashCommandMenu
  *   textareaRef={textareaRef}
  *   inputMessage={inputMessage}
  *   setInputMessage={setInputMessage}
  * />
- * 交互：
- * - 在输入框行首或空格后输入 `/` 时弹出
- * - 继续输入时实时模糊过滤
- * - ↑↓ 导航，Enter 选中填入输入框，Escape 关闭
- * - 选中后替换为完整命令名；参数通过 $ARGUMENTS 注入由 ChatPage 处理
+ * Interaction:
+ * - Opens when `/` is typed at the start of a line or after whitespace
+ * - Fuzzy-filters in real time as typing continues
+ * - ↑↓ to navigate, Enter to select and fill into the input, Escape to close
+ * - On selection the query is replaced with the full command name; arguments are injected via $ARGUMENTS and handled by ChatPage
  */
 
 import {
@@ -34,37 +34,37 @@ import {
 import { t } from '../../core/i18n';
 
 interface SlashCommandMenuProps {
-  /** 输入框 DOM 引用（用于定位菜单和读写光标） */
+  /** Textarea DOM ref (used to position the menu and read/write the caret) */
   textareaRef: HTMLTextAreaElement | undefined;
-  /** 输入框当前文本 */
+  /** Current textarea text */
   inputMessage: string;
-  /** 输入框文本 setter */
+  /** Textarea text setter */
   setInputMessage: Setter<string>;
 }
 
-// ---- 匹配工具 ----
+// ---- matching utilities ----
 
-/** 从文本中提取当前正在输入的斜杠命令词（光标位置之前的最后一个以 / 开头的词） */
+/** Extract the slash command word currently being typed (the last /-prefixed word before the caret) */
 function extractSlashQuery(
   text: string,
   cursorPos: number,
 ): { query: string; start: number; args: string } | null {
   const before = text.slice(0, cursorPos);
 
-  // 找到最后一个以 / 开头的词（在行首或空格后）
+  // Find the last /-prefixed word (at line start or after whitespace)
   const slashMatch = before.match(/(?:^|[\s\n])(\/[^\s\n]*)$/);
   if (!slashMatch) return null;
 
-  const fullMatch = slashMatch[0]; // 如 " /review" 或 "/review"
+  const fullMatch = slashMatch[0]; // e.g. " /review" or "/review"
   const cmdWithSlash = slashMatch[1]; // "/review"
 
-  // 排除 URL（如 https://...）
+  // Exclude URLs (e.g. https://...)
   if (cmdWithSlash.length > 1 && cmdWithSlash[1] === '/') return null;
 
-  // 斜杠在原文中的起始位置
+  // Start offset of the slash in the original text
   const startIdx = cursorPos - fullMatch.length + (fullMatch[0] === '/' ? 0 : 1);
 
-  // 用户可能在命令词后输入了参数，用第一个空格分割
+  // The user may have typed arguments after the command word; split at the first space
   const spaceIdx = cmdWithSlash.indexOf(' ');
   const query = spaceIdx > 0 ? cmdWithSlash.slice(0, spaceIdx) : cmdWithSlash;
   const args = spaceIdx > 0 ? cmdWithSlash.slice(spaceIdx + 1) : '';
@@ -72,7 +72,7 @@ function extractSlashQuery(
   return { query, start: startIdx, args };
 }
 
-/** 简单模糊匹配：查询字符按顺序出现在目标字符串中 */
+/** Simple fuzzy match: query characters appear in order within the target string */
 function fuzzyMatch(query: string, target: string): boolean {
   const q = query.toLowerCase();
   const t = target.toLowerCase();
@@ -93,21 +93,21 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
   let menuRef: HTMLDivElement | undefined;
   let justSelected = false;
 
-  // 所有斜杠命令
+  // All slash commands
   const allSlashCommands = createMemo(() => getSlashCommands());
 
-  // 模糊过滤后的命令列表
+  // Fuzzy-filtered command list
   const filteredCommands = createMemo(() => {
-    const q = query().slice(1); // 去掉开头的 /
+    const q = query().slice(1); // strip the leading /
     if (!q) return allSlashCommands();
     return allSlashCommands().filter((cmd) => {
-      // 匹配命令名（去掉 / 前缀）和描述
+      // Match the command name (minus the / prefix) and the description
       const name = cmd.label.startsWith('/') ? cmd.label.slice(1) : cmd.label;
       return fuzzyMatch(q, name) || fuzzyMatch(q, getCommandDisplayDescription(cmd));
     });
   });
 
-  // 更新菜单位置
+  // Update the menu position
   const updatePosition = () => {
     const ta = props.textareaRef;
     if (!ta) return;
@@ -119,14 +119,14 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     });
   };
 
-  // 关闭菜单
+  // Close the menu
   const close = () => {
     setOpen(false);
     setQuery('');
     setSelectedIndex(0);
   };
 
-  // 选中命令：在输入框放置 /commandName（保留用户已输入的参数）
+  // Select a command: place /commandName into the input (keeping arguments the user typed)
   const selectCommand = (cmd: CommandAction) => {
     const ta = props.textareaRef;
     if (!ta) return;
@@ -135,7 +135,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     const start = slashStartIdx();
     const cursorPos = ta.selectionStart;
 
-    // 保留用户已输入的参数（/review src/main.rs → args = "src/main.rs"）
+    // Keep arguments the user typed (/review src/main.rs → args = "src/main.rs")
     const args = slashArgs();
     const cmdText = args ? `${cmd.label} ${args}` : cmd.label;
 
@@ -145,7 +145,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
 
     props.setInputMessage(newText);
 
-    // 焦点移到命令文本末尾
+    // Move focus to the end of the command text
     const newCursorPos = before.length + cmdText.length;
     requestAnimationFrame(() => {
       ta.focus();
@@ -191,7 +191,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     }
   };
 
-  // 菜单打开/关闭时注册/注销捕获阶段监听
+  // Register/unregister capture-phase listeners as the menu opens/closes
   createEffect(() => {
     if (open()) {
       document.addEventListener('keydown', handleKeyDown, true);
@@ -204,7 +204,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     document.removeEventListener('keydown', handleKeyDown, true);
   });
 
-  // 滚动到选中项（使用 data-selected 属性避免脆弱的长 CSS 选择器）
+  // Scroll the selected item into view (uses the data-selected attribute instead of brittle long CSS selectors)
   const scrollToSelected = () => {
     requestAnimationFrame(() => {
       const el = menuRef?.querySelector('[data-selected="true"]') as HTMLElement;
@@ -212,7 +212,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     });
   };
 
-  // ---- 监听输入变化，检测 / 触发 ----
+  // ---- watch input changes to detect / triggers ----
 
   createEffect(() => {
     const text = props.inputMessage;
@@ -223,11 +223,11 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     const result = extractSlashQuery(text, cursorPos);
 
     if (result) {
-      // 菜单选中后抑制重开：如果刚选中且当前查询是完整命令名，不弹菜单
+      // Suppress reopening right after selection: if a command was just selected and the query is already a full command name, keep the menu closed
       if (justSelected) {
         const isExactCmd = allSlashCommands().some((c) => c.label === result.query);
         if (isExactCmd) return;
-        // 用户继续编辑了（查询已不是完整命令），允许菜单重新弹出
+        // The user kept editing (the query is no longer a full command), allow the menu to reopen
         justSelected = false;
       }
       setQuery(result.query);
@@ -242,12 +242,12 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     }
   });
 
-  // 监听滚动/窗口大小变化，更新菜单位置
+  // Track scroll/resize and update the menu position
   const onScrollOrResize = () => {
     if (open()) updatePosition();
   };
 
-  // 使用 MutationObserver 以外，更简单的方式：在 createEffect 里每次打开时更新
+  // Simpler than a MutationObserver: re-attach inside a createEffect each time the menu opens
   createEffect(() => {
     if (open()) {
       window.addEventListener('scroll', onScrollOrResize, true);
@@ -263,7 +263,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     window.removeEventListener('resize', onScrollOrResize);
   });
 
-  // 点击外部关闭
+  // Close on outside click
   const onDocClick = (e: MouseEvent) => {
     if (open() && menuRef && !menuRef.contains(e.target as Node)) {
       close();
@@ -282,7 +282,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     document.removeEventListener('mousedown', onDocClick);
   });
 
-  // ---- 渲染 ----
+  // ---- rendering ----
 
   return (
     <Portal>

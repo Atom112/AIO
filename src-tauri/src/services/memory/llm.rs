@@ -1,11 +1,11 @@
-//! 记忆管线用的 LLM 调用封装：复用主 Agent 的非流式请求路径（含 Anthropic 适配）。
+//! LLM call wrapper for the memory pipeline: reuses the main agent's non-streaming request path (including the Anthropic adapter).
 
 use crate::ierr;
 use serde_json::Value;
 use std::time::Duration;
 use tauri::AppHandle;
 
-/// LLM 调用配置（apiUrl / apiKey / model 来自应用配置）。
+/// LLM call config (apiUrl / apiKey / model come from the app config).
 #[derive(Clone, Debug)]
 pub(crate) struct LlmConfig {
     pub api_url: String,
@@ -13,7 +13,7 @@ pub(crate) struct LlmConfig {
     pub model: String,
 }
 
-/// 从应用配置构建 LLM 调用配置（无有效模型时返回 Err）。
+/// Build the LLM call config from the app config (returns Err when no valid model is configured).
 pub(crate) fn llm_config(app: &AppHandle) -> Result<LlmConfig, String> {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     if cfg.api_url.trim().is_empty() || cfg.default_model.trim().is_empty() {
@@ -29,7 +29,7 @@ pub(crate) fn llm_config(app: &AppHandle) -> Result<LlmConfig, String> {
     })
 }
 
-/// 发起非流式聊天补全，要求模型返回 JSON（失败返回 Err；模型回复无法解析 JSON 时由调用方兜底）。
+/// Issue a non-streaming chat completion asking the model to return JSON (returns Err on failure; if the model reply cannot be parsed as JSON, the caller provides the fallback).
 pub(crate) async fn chat_json(
     cfg: &LlmConfig,
     system: &str,
@@ -70,7 +70,7 @@ pub(crate) async fn chat_json(
     parse_json_text(&text)
 }
 
-/// 从模型输出文本中解析 JSON（容忍 ```json 代码围栏与前后缀）。
+/// Parse JSON from model output text (tolerates ```json code fences and surrounding text).
 pub(crate) fn parse_json_text(text: &str) -> Result<Value, String> {
     let trimmed = text.trim();
     let mut candidate = trimmed;
@@ -80,7 +80,7 @@ pub(crate) fn parse_json_text(text: &str) -> Result<Value, String> {
     match serde_json::from_str::<Value>(candidate) {
         Ok(v) => Ok(v),
         Err(_) => {
-            // 尝试提取第一个 { 到最后一个 } 之间的子串
+            // Try to extract the substring between the first { and the last }
             if let (Some(start), Some(end)) = (candidate.find('{'), candidate.rfind('}')) {
                 if end > start {
                     return serde_json::from_str::<Value>(&candidate[start..=end])
@@ -115,8 +115,8 @@ fn strip_fence(text: &str) -> Option<&str> {
     }
 }
 
-/// 查询改写（可选，检索前调用）：让模型产出 1-2 个更利于语义检索的查询变体。
-/// 返回不含原查询的新变体；失败/无输出返回空 Vec（调用方回退原查询）。
+/// Query rewrite (optional, called before retrieval): asks the model for 1-2 query variants better suited to semantic retrieval.
+/// Returns only new variants, never the original query; returns an empty Vec on failure or no output (the caller falls back to the original query).
 pub(crate) async fn rewrite_query(cfg: &LlmConfig, query: &str) -> Result<Vec<String>, String> {
     let system = concat!(
         "你是检索查询改写器。给定用户的检索意图，输出 1-2 个更利于语义/关键词检索的查询变体：\n",

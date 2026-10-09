@@ -87,11 +87,11 @@ function getReasoningPrompt(level: string): string | null {
 }
 
 /**
- * 获取当前选中模型的上下文窗口大小（从模型目录读取，缺省 128k）。
- * 用于后端 Agent 循环的 token 预算计算与前端历史压缩阈值。
+ * Get the context window size of the currently selected model (read from the model catalog, default 128k).
+ * Used for backend Agent loop token budgeting and frontend history compression thresholds.
  */
 async function getModelContextWindow(): Promise<number> {
-  let maxContext = 128_000; // 默认 128K
+  let maxContext = 128_000; // default 128K
   try {
     const { getCachedCatalog } = await import('../../core/utils/models');
     const cat = getCachedCatalog();
@@ -103,17 +103,18 @@ async function getModelContextWindow(): Promise<number> {
       }
     }
   } catch {
-    // 模型目录不可用时保持默认值
+    // keep the default when the model catalog is unavailable
   }
   return maxContext;
 }
 
 /**
- * 构建 Skill 系统消息（token 效率）：
- * - 聊天模式（无 read_skill 工具）：全量注入技能内容（保持原有行为）；
- * - Agent 模式：小技能（≤800 字符）始终全量注入（避免模型漏读、保持可用性）；
- *   大技能仅注入目录行（名称+描述），由模型通过 read_skill 工具按需读取完整说明，
- *   避免 docx/pptx/xlsx 等大技能每次请求全量计费。
+ * Build Skill system messages (token efficiency):
+ * - Chat mode (no read_skill tool): inject full skill content (previous behavior);
+ * - Agent mode: small skills (<= 800 chars) are always fully injected (avoids the
+ *   model missing them, keeps them usable); large skills inject only catalog lines
+ *   (name + description) and are read in full on demand via the read_skill tool,
+ *   so docx/pptx/xlsx-sized skills are not billed in full on every request.
  */
 function buildSkillMessages(asst: any, fullInject: boolean): { role: 'system'; content: string }[] {
   const skills = resolveAssistantSkills(asst);
@@ -148,120 +149,120 @@ import { clearAllDiagnostics } from '../../core/store/diagnostics';
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = 'default-assistant-id';
 
-// 跟踪当前正在进行的"标题生成"任务，用于在用户切换话题时取消未完成的回调
-// （Tauri invoke 暂不支持 AbortSignal，这里仅在 JS 侧跳过结果处理；
-//  服务端调用仍会完成但结果被忽略，避免不必要的 state 更新）
+// Tracks the in-flight "title generation" task so unfinished callbacks can be cancelled
+// when the user switches topics (Tauri invoke has no AbortSignal support yet; only result
+// handling is skipped on the JS side — the call still completes, its result is ignored)
 let activeTitleGen: { topicId: string; cancelled: boolean } | null = null;
 
 /**
- * 辅助函数：创建新话题对象
- * @param name - 可选的话题名称，默认生成带时间戳的名称
- * @returns Topic 对象，包含唯一 ID、名称、空历史记录和空摘要
+ * Helper: create a new topic object.
+ * @param name - optional topic name; defaults to a timestamped name
+ * @returns Topic with a unique ID, name, empty history, and empty summary
  */
 const createTopic = (name?: string): Topic => ({
-  id: Date.now().toString(), // 使用当前时间戳作为唯一标识符
-  name: name || t('chat.untitledTopic', { time: new Date().toLocaleTimeString(locale()) }), // 默认名称包含创建时间
-  history: [], // 消息历史记录数组
-  summary: '', // SQLite 存储方案新增：长期记忆摘要，用于压缩历史上下文
+  id: Date.now().toString(), // current timestamp used as the unique identifier
+  name: name || t('chat.untitledTopic', { time: new Date().toLocaleTimeString(locale()) }), // default name includes the creation time
+  history: [], // message history array
+  summary: '', // long-term memory summary (SQLite storage), used to compress history context
 });
 
 /**
- * 辅助函数：创建新助手对象
- * @param name - 可选的助手名称
- * @param id - 可选的指定 ID（用于从数据库恢复时使用已有 ID）
- * @returns Assistant 对象，包含 ID、名称、系统提示词和默认话题
+ * Helper: create a new assistant object.
+ * @param name - optional assistant name
+ * @param id - optional explicit ID (reuses the existing ID when restoring from the database)
+ * @returns Assistant with ID, name, system prompt, and a default topic
  */
 const createAssistant = (name?: string, id?: string): Assistant => ({
-  id: id ?? Date.now().toString(), // 若未提供 ID 则生成新的时间戳 ID
-  name: name || t('chat.newAssistant'), // 默认助手名称
-  prompt: t('chat.defaultAssistantPrompt'), // 默认系统提示词
-  modelId: selectedModel() ? modelKey(selectedModel()!) : undefined, // 继承当前生效模型（复合键）作为新助手默认模型
-  // 有项目上下文时自动启用内置文件系统 MCP，让 agent 开箱即用
+  id: id ?? Date.now().toString(), // generate a fresh timestamp ID when none is provided
+  name: name || t('chat.newAssistant'), // default assistant name
+  prompt: t('chat.defaultAssistantPrompt'), // default system prompt
+  modelId: selectedModel() ? modelKey(selectedModel()!) : undefined, // inherit the active model (composite key) as the default model
+  // with a project context, auto-enable the built-in filesystem MCP so agents work out of the box
   mcpServerIds: currentProjectId() ? ['__aio-filesystem__'] : [],
   skillIds: [],
-  projectId: currentProjectId() ?? undefined, // 关联当前项目
+  projectId: currentProjectId() ?? undefined, // linked project
   assistantType: id === DEFAULT_ASST_ID ? 'chat' : 'project',
-  topics: [createTopic(t('chat.defaultTopic'))], // 每个助手默认创建一个"默认话题"
+  topics: [createTopic(t('chat.defaultTopic'))], // every assistant starts with one "default topic"
 });
 
 /**
- * 聊天页面主组件
- * 管理三栏布局、所有业务逻辑和状态流转
+ * Chat page root component.
+ * Owns the three-column layout, all business logic, and state transitions.
  * @component
  */
 const ChatPage: Component = () => {
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
     Number(localStorage.getItem('chat-left-panel-width')) || 18,
-  ); // 左侧面板宽度百分比（助手列表），默认 18%，范围 15%-30%
+  ); // left panel width percentage (assistant list), default 18%, range 15%-30%
   const [rightPanelWidth, setRightPanelWidth] = createSignal(
     Number(localStorage.getItem('chat-right-panel-width')) || 18,
-  ); // 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30%
+  ); // right panel width percentage (topic list), default 18%, range 15%-30%
   /**
-   * 左侧面板：宽度全程与光标 1:1 跟手（展开/收起两个方向都是），松手时才吸附。
-   * 最窄跟手宽度即收起轨道宽度，保证把手始终可抓取、内容不外溢。
+   * Left panel: width tracks the cursor 1:1 throughout the drag (both directions), snapping only
+   * on release; the narrowest tracking width equals the collapsed rail width, so the handle stays grabbable and content never overflows.
    */
-  const LEFT_RAIL_WIDTH_PX = 54; // 收起轨道宽度，与 ProjectSidebar 保持一致
+  const LEFT_RAIL_WIDTH_PX = 54; // collapsed rail width, kept in sync with ProjectSidebar
   const LEFT_MAX_WIDTH_PCT = 30;
-  /** 松手判定死区（px）：向外拖出不足该距离视为未真正拉开，松手仍收起 */
+  /** Release deadzone (px): dragging out less than this counts as not really opened, so it still collapses on release */
   const LEFT_RELEASE_DEADZONE_PX = 12;
   const [isResizing, setIsResizing] = createSignal(false);
-  /** 拖拽中的实时宽度预览（%）：跟手期间用它渲染，松手后清空并落到 leftPanelWidth 记忆值 */
+  /** Live width preview (%) while dragging: rendered during tracking, cleared on release to fall back to the remembered leftPanelWidth */
   const [leftDragWidth, setLeftDragWidth] = createSignal<number | null>(null);
   /**
-   * 展开内容的"窗帘"布局宽度（px，= 15% 最小面板的内容盒宽）。
-   * 跟手收窄时内容不重排、不淡出，只被面板左缘逐步裁掉（窗帘式揭示），
-   * 避免出现两套内容都不可见的空过渡帧；随窗口尺寸变化重算。
+   * "Curtain" layout width of the expanded content (px, = content-box width of the 15% minimal panel).
+   * While narrowing, content neither reflows nor fades — it is progressively clipped by the panel's left
+   * edge (curtain reveal), avoiding an empty transition frame with both content sets invisible; recomputed on resize.
    */
   const [leftRevealMinPx, setLeftRevealMinPx] = createSignal(0);
-  /** 松手吸附动画的 rAF id：新一轮拖拽开始时取消，避免与用户手势打架 */
+  /** rAF id of the release snap animation: cancelled when a new drag starts so it never fights the user's gesture */
   let leftSnapRaf: number | undefined;
   const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(
     localStorage.getItem('left-collapsed') === 'true',
-  ); // 左右两侧面板宽度调整逻辑
+  ); // left/right panel width adjustment logic
   const [isRightCollapsed, setIsRightCollapsed] = createSignal(
     localStorage.getItem('right-collapsed') === 'true',
   );
-  const [inputMessage, setInputMessage] = createSignal(''); // 当前输入框中的消息文本
-  const [pendingFiles, setPendingFiles] = createSignal<PendingAttachment[]>([]); // 待发送的文件列表（已复制到应用附件目录但尚未关联消息）
-  const [isThinking, setIsThinking] = createSignal(false); // AI 是否正在思考/生成回复（控制加载动画和停止按钮）
-  const [isProcessing, setIsProcessing] = createSignal(false); // 是否正在处理文件（控制文件解析加载状态）
-  const [isDragging, setIsDragging] = createSignal(false); // 是否正在拖拽文件到窗口（控制拖拽状态样式）
-  const [typingIndex, setTypingIndex] = createSignal<number | null>(null); // 当前正在打字机效果显示的消息索引，null 表示无打字效果
-  const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null); // 当前正在编辑名称的话题 ID，null 表示无编辑中
-  const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null); // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
-  // 待用户审批的工具调用列表
-  /** 分享弹窗状态 */
+  const [inputMessage, setInputMessage] = createSignal(''); // message text currently in the input box
+  const [pendingFiles, setPendingFiles] = createSignal<PendingAttachment[]>([]); // files staged for sending (copied into the app attachment dir, not yet linked to a message)
+  const [isThinking, setIsThinking] = createSignal(false); // whether the AI is thinking/generating a reply (drives the loading animation and stop button)
+  const [isProcessing, setIsProcessing] = createSignal(false); // whether a file is being processed (drives the file-parsing loading state)
+  const [isDragging, setIsDragging] = createSignal(false); // whether files are being dragged over the window (drives drag-state styling)
+  const [typingIndex, setTypingIndex] = createSignal<number | null>(null); // index of the message currently shown with the typewriter effect; null means no effect
+  const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null); // ID of the topic whose name is being edited; null when not editing
+  const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null); // ID of the assistant whose settings modal is open; null when closed
+  // tool calls awaiting user approval
+  /** Share modal state */
   const [showShareModal, setShowShareModal] = createSignal(false);
   const [activeShareTopicId, setActiveShareTopicId] = createSignal<string | null>(null);
-  /** 消息级选择模式 */
+  /** Message-level selection mode */
   const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
   const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
   const [pendingApprovals, setPendingApprovals] = createSignal<PendingApproval[]>([]);
-  /** /btw 悬浮问答框列表（临时展示，不存历史） */
+  /** /btw floating Q&A overlay list (ephemeral, not stored in history) */
   const [btwOverlays, setBtwOverlays] = createSignal<
     Array<{ id: string; question: string; answer: string | null; loading: boolean }>
   >([]);
-  /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
+  /** Page root element ref, used to compute relative positions while resizing panels */
   let chatPageRef: HTMLDivElement | undefined;
   /**
-   * 计算左侧面板显示宽度
-   * @returns {number} 拖拽中返回实时跟手宽度，否则返回记忆宽度（收起态由子组件处理为轨道宽）
+   * Compute the left panel display width.
+   * @returns {number} live tracking width while dragging, otherwise the remembered width (collapsed state is rendered as rail width by the child component)
    */
   const displayLeftWidth = () => leftDragWidth() ?? leftPanelWidth();
   /**
-   * 左侧面板当前是否按"收起轨道"渲染。
-   * 跟手过程中（leftDragWidth 非空）始终按展开态渲染，这样从轨道往外拖时
-   * 宽度才能真正由光标驱动，而不是等松手后靠 CSS 过渡"弹"开。
+   * Whether the left panel currently renders as the collapsed rail.
+   * During tracking (leftDragWidth non-null) it always renders expanded, so dragging
+   * out from the rail is truly cursor-driven instead of popping open via CSS on release.
    */
   const leftPanelCollapsed = () => isLeftCollapsed() && leftDragWidth() === null;
 
-  // 历史遗留：旧版拖拽可能把 <15% 的中间宽度写进记忆值（localStorage），展开态下兜底恢复默认
+  // Legacy: old drag code could persist intermediate widths < 15% to localStorage; restore the default when expanded
   createEffect(() => {
     if (!isLeftCollapsed() && leftPanelWidth() < 15) setLeftPanelWidth(18);
   });
 
-  // 窗帘揭示的目标宽度：15% 最小面板的内容盒宽（左 15 + 右 21 两侧不对称内边距，另留 2px 安全余量，
-  // 保证停稳在 15% 时内容绝不溢出），随窗口缩放重算；ProjectSidebar 按 −38 口径反推容器宽
+  // Curtain-reveal target width: content-box width of the 15% minimal panel (asymmetric padding 15 left
+  // + 21 right, plus a 2px safety margin so content never overflows at 15%); recomputed on resize; ProjectSidebar infers container width from -38
   onMount(() => {
     const updateRevealMin = () => {
       const base = chatPageRef?.clientWidth ?? window.innerWidth;
@@ -275,14 +276,14 @@ const ChatPage: Component = () => {
     });
   });
   /**
-   * 计算右侧面板显示宽度
-   * @returns {number} 右侧面板宽度，如果折叠则返回0
+   * Compute the right panel display width.
+   * @returns {number} right panel width, or 0 when collapsed
    */
   const displayRightWidth = () => (isRightCollapsed() ? 0 : rightPanelWidth());
 
   /**
-   * 设置左侧面板收起状态并持久化（折叠/展开统一入口，含宽度兜底恢复）。
-   * @param collapsed - 目标收起状态
+   * Set the left panel collapsed state and persist it (single entry point for collapse/expand, with width fallback).
+   * @param collapsed - target collapsed state
    */
   const setLeftCollapsed = (collapsed: boolean) => {
     setIsLeftCollapsed(collapsed);
@@ -293,17 +294,17 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 切换左侧面板的折叠状态
-   * @param {MouseEvent} e - 鼠标事件
+   * Toggle the left panel collapsed state.
+   * @param {MouseEvent} e - mouse event
    */
   const toggleLeft = (e: MouseEvent) => {
-    e.stopPropagation(); // 防止触发拖拽
+    e.stopPropagation(); // prevent triggering the drag
     setLeftCollapsed(!isLeftCollapsed());
   };
 
   /**
-   * 切换右侧面板的折叠状态
-   * @param {MouseEvent} e - 鼠标事件
+   * Toggle the right panel collapsed state.
+   * @param {MouseEvent} e - mouse event
    */
   const toggleRight = (e: MouseEvent) => {
     e.stopPropagation();
@@ -316,13 +317,13 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 当前选中的助手对象
+   * Currently selected assistant object.
    * @returns Assistant | undefined
    */
   const currentAssistant = () => datas.assistants.find((a) => a.id === currentAssistantId());
 
   /**
-   * 当前激活的话题对象
+   * Currently active topic object.
    * @returns Topic | null
    */
   const activeTopic = () => {
@@ -331,7 +332,7 @@ const ChatPage: Component = () => {
     return asst.topics.find((t: Topic) => t.id === currentTopicId()) || asst.topics[0] || null;
   };
 
-  /** 分享弹窗展示的话题：优先使用来自 TopicSidebar 右键菜单指定的 ID，否则用当前活跃话题 */
+  /** Topic shown in the share modal: prefer the ID set from the TopicSidebar context menu, otherwise the active topic */
   const shareTopic = (): Topic | null => {
     const asst = currentAssistant();
     if (!asst) return null;
@@ -340,9 +341,9 @@ const ChatPage: Component = () => {
     return activeTopic();
   };
 
-  // -------- 消息级选择 --------
+  // -------- message-level selection --------
 
-  /** 进入选择模式 */
+  /** Enter selection mode */
   const enterSelectionMode = (topicId?: string | null) => {
     if (topicId) {
       setActiveShareTopicId(topicId);
@@ -352,7 +353,7 @@ const ChatPage: Component = () => {
     setIsSelectingMessages(true);
   };
 
-  /** 切换单条消息的选中状态 */
+  /** Toggle the selected state of one message */
   const handleToggleMessage = (msgId: string) => {
     setSelectedMessageIds((prev) => {
       const next = new Set<string>(prev);
@@ -362,7 +363,7 @@ const ChatPage: Component = () => {
     });
   };
 
-  /** 全选当前话题的可导出消息（排除 tool 消息） */
+  /** Select all exportable messages in the current topic (excluding tool messages) */
   const handleSelectAll = () => {
     const topic = activeTopic();
     if (!topic) return;
@@ -373,25 +374,25 @@ const ChatPage: Component = () => {
     setSelectedMessageIds(ids);
   };
 
-  /** 取消选择，退出选择模式 */
+  /** Cancel the selection and exit selection mode */
   const handleCancelSelection = () => {
     setIsSelectingMessages(false);
     setSelectedMessageIds(new Set<string>());
     setActiveShareTopicId(null);
   };
 
-  /** 确认选择，打开分享弹窗 */
+  /** Confirm the selection and open the share modal */
   const handleConfirmSelection = () => {
     setIsSelectingMessages(false);
     setShowShareModal(true);
   };
 
   /**
-   * 处理文件上传和解析
-   * 调用 Tauri 后端读取本地文件内容，支持文本文件和图片
-   * M7 加固：前端做扩展名白名单预校验，避免无效调用
-   * @param filePath - 文件的绝对路径
-   * @param fileType - 文件类型提示（'file' 或 'image'）
+   * Handle file upload and parsing.
+   * Calls the Tauri backend to read local file content; supports text files and images.
+   * Hardening: the frontend pre-validates the extension whitelist to avoid pointless calls.
+   * @param filePath - absolute path of the file
+   * @param fileType - file type hint ('file' or 'image')
    */
   const handleFileUpload = async (filePath: string, fileType: 'file' | 'image') => {
     const fileName = filePath.split(/[\\/]/).pop() || t('chat.unknownFile');
@@ -411,7 +412,7 @@ const ChatPage: Component = () => {
       'yml',
       'ini',
       'tsv',
-      // 源代码 / 文本
+      // source code / text
       'rs',
       'c',
       'h',
@@ -488,10 +489,10 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 检查并总结对话历史（Token-based）。
-   * 自动路径（对话结束事件）：占用超过模型上下文窗口 75% 时触发压缩；
-   * 手动路径（/compact，force=true）：跳过阈值守卫，无条件立即压缩（对齐主流 Agent 行为）。
-   * 摘要失败时回退本地归档（snapcompact 式），早期上下文不丢失且可用 read_artifact 读回。
+   * Check and summarize conversation history (token-based).
+   * Automatic path (conversation-end event): compress when usage exceeds 75% of the model context window;
+   * manual path (/compact, force=true): skips the threshold guard and compresses immediately (mainstream agent behavior).
+   * On summarize failure, falls back to local archiving (snapcompact-style): early context is not lost and can be read back via read_artifact.
    */
   const checkAndSummarize = async (
     keepBudgetOverride?: number,
@@ -501,11 +502,11 @@ const ChatPage: Component = () => {
     const currentMdl = selectedModel();
     if (!topic || !currentMdl) return { kind: 'skipped', reason: 'nothing-to-compact' };
 
-    // 获取当前模型的上下文窗口大小
+    // get the current model's context window size
     const maxContext = await getModelContextWindow();
 
-    // 统计上下文占用：优先取最后一条 assistant 消息的上下文峰值
-    // （contextTokens 已含全部历史 + 系统前缀 + 输出，勿再重复累加 user 消息估算）
+    // Measure context usage: prefer the context peak of the last assistant message
+    // (contextTokens already includes all history + system prefix + output; do not double-count user messages)
     let totalUsed = 0;
     let hasAssistantCtx = false;
     for (let i = topic.history.length - 1; i >= 0; i--) {
@@ -516,7 +517,7 @@ const ChatPage: Component = () => {
         break;
       }
     }
-    // 无 assistant 回复（尚未完成过对话）时退回字符估算
+    // fall back to character estimation when there is no assistant reply yet (no completed turn)
     if (!hasAssistantCtx) {
       for (const msg of topic.history) {
         const text = typeof msg.content === 'string' ? msg.content : msg.displayText || '';
@@ -525,7 +526,7 @@ const ChatPage: Component = () => {
     }
 
     const usageRatio = maxContext > 0 ? totalUsed / maxContext : 0;
-    // 自动路径保留阈值与最短历史守卫；手动 /compact 一律放行（由 summarizeCount 决定是否真有内容可压）
+    // automatic path keeps the threshold and minimum-history guards; manual /compact always passes (summarizeCount decides whether anything is compressible)
     if (!opts?.force && (usageRatio < 0.75 || topic.history.length <= 10)) {
       return {
         kind: 'skipped',
@@ -539,8 +540,8 @@ const ChatPage: Component = () => {
       );
     }
 
-    // Token 预算制保留：默认从尾部累计约 2 万 token（至少保留最近 4 条消息，即一个完整回合）；
-    // 可通过 `/compact <n>` 指定本次保留预算
+    // Token-budget retention: by default keep ~20k tokens accumulated from the tail (at least the
+    // last 4 messages, i.e. one full turn); `/compact <n>` overrides the keep budget for this run
     const KEEP_TOKEN_BUDGET =
       keepBudgetOverride && keepBudgetOverride > 0 ? keepBudgetOverride : 20_000;
     const estimateMsgTokens = (m: any): number => {
@@ -557,7 +558,7 @@ const ChatPage: Component = () => {
     keepCount = Math.max(keepCount, 4);
     const summarizeCount = topic.history.length - keepCount;
     if (summarizeCount <= 0) return { kind: 'skipped', reason: 'nothing-to-compact' };
-    // 覆盖式摘要：把旧摘要作为输入上下文注入，新摘要整体替换旧摘要，避免拼接式膨胀
+    // Overwriting summary: the old summary is injected as input context and replaced wholesale by the new one, avoiding concatenation bloat
     const messagesToSummarize = topic.summary
       ? [
           { role: 'system' as const, content: t('chat.historyBackground') + topic.summary },
@@ -565,7 +566,7 @@ const ChatPage: Component = () => {
         ]
       : topic.history.slice(0, summarizeCount);
 
-    // 落库：裁剪历史并把 topic.summary 替换为新摘要/归档占位文本
+    // Persist: trim the history and replace topic.summary with the new summary or archive placeholder
     const persistCompactedTopic = async (newSummary: string): Promise<CompactOutcome> => {
       const latestTopic = activeTopic();
       if (!latestTopic) return { kind: 'skipped', reason: 'nothing-to-compact' };
@@ -597,7 +598,7 @@ const ChatPage: Component = () => {
       );
       return await persistCompactedTopic(newSummarySnippet);
     } catch (e) {
-      // 摘要失败 → 本地归档回退（零 API 成本；Agent 模式下可用 read_artifact 工具按占位 ID 读回原文）
+      // summarize failed -> local archive fallback (zero API cost; in Agent mode the read_artifact tool can read the original back via the placeholder ID)
       try {
         const placeholder = await archiveHistory(
           JSON.stringify(messagesToSummarize),
@@ -616,9 +617,9 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 启发式后备方案：从历史中提取一段文本作为标题。
-   * 用于 LLM 标题生成失败时保证至少能给出有意义的命名。
-   * 取第一条 user 消息的前 12 个字符。
+   * Heuristic fallback: derive a title from the history text.
+   * Guarantees at least a meaningful name when LLM title generation fails.
+   * Uses the first 12 characters of the first user message.
    */
   const fallbackTitle = (history: Message[]): string => {
     const firstUser = history.find((m) => m.role === 'user');
@@ -629,7 +630,7 @@ const ChatPage: Component = () => {
     } else if (firstUser.displayText) {
       text = firstUser.displayText;
     } else {
-      // 多模态：尝试提取 text 片段
+      // multimodal: try extracting text parts
       try {
         text = (firstUser.content as any[])
           .filter((p: any) => p?.type === 'text' && p?.text)
@@ -639,23 +640,23 @@ const ChatPage: Component = () => {
         text = '';
       }
     }
-    // 去掉换行避免标题跨行
+    // strip newlines so the title stays on one line
     const cleaned = text.trim().replace(/\s+/g, ' ');
     return cleaned.length > 12 ? cleaned.slice(0, 12) : cleaned;
   };
 
   /**
-   * 为"非默认话题"在首次对话后自动重命名。
-   * 规则：
-   *   1. 跳过默认话题（每个助手的话题列表第一项）
-   *   2. 跳过已重命名过的话题（topic.renamed === true）
-   *   3. 跳过 AI 回复为空/为错误的情况
-   *   4. 优先调用 LLM 生成标题；LLM 失败时回退到启发式（取首条 user 消息前 12 字）
-   *   5. 成功后更新 topic.name 并置 renamed=true，持久化到后端
-   *   6. 用户切换到其他话题时通过 activeTitleGen 取消未完成的回调处理
+   * Auto-rename non-default topics after the first conversation turn.
+   * Rules:
+   *   1. Skip the default topic (first entry in each assistant's topic list)
+   *   2. Skip already-renamed topics (topic.renamed === true)
+   *   3. Skip empty or errored AI replies
+   *   4. Prefer LLM-generated titles; fall back to the heuristic on failure (first 12 chars of the first user message)
+   *   5. On success update topic.name, set renamed=true, and persist to the backend
+   *   6. Cancel unfinished callback handling via activeTitleGen when the user switches topics
    */
   const checkAndRename = async (eventAsstId: string, eventTopicId: string) => {
-    // 取消之前未完成的标题生成任务（用户切换话题或触发了新的重命名）
+    // cancel any unfinished title-generation task (the user switched topics or triggered a new rename)
     if (activeTitleGen) {
       activeTitleGen.cancelled = true;
       activeTitleGen = null;
@@ -668,30 +669,30 @@ const ChatPage: Component = () => {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
-    // 必须用事件中的 topicId 重新定位（用户可能已切换话题）
+    // must re-locate via the event's topicId (the user may have switched topics)
     const topic = (asst.topics as Topic[]).find((t: Topic) => t.id === eventTopicId);
     if (!topic) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
 
-    // 1. 默认话题不重命名
+    // 1. never rename the default topic
     if (asst.topics[0]?.id === topic.id) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
-    // 2. 已经重命名过的话题不再重命名
+    // 2. never rename an already-renamed topic
     if (topic.renamed) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
-    // 3. 没有可参考的对话内容
+    // 3. no conversation content to reference
     if (topic.history.length < 2) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
 
-    // 4. 检查最后一条 AI 消息是否有效（避免错误响应触发重命名）
+    // 4. check the last AI message is valid (avoid error responses triggering a rename)
     const lastMsg = topic.history[topic.history.length - 1];
     if (lastMsg?.role !== 'assistant') {
       if (activeTitleGen === task) activeTitleGen = null;
@@ -709,15 +710,15 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 截断到前 2 条消息：业界标准做法（user + assistant 即可概括主题，省 token）
+    // truncate to the first 2 messages: standard practice (user + assistant is enough to summarize the topic, saves tokens)
     const sample = topic.history.slice(0, 2);
 
-    // 第一阶段：尝试 LLM 生成
+    // phase 1: try LLM generation
     let newName: string | null = null;
     let llmError: unknown = null;
     try {
       const result = await generateTopicTitle(llmCreds(currentMdl), JSON.stringify(sample));
-      // 用户中途切换了话题或触发了新任务：放弃本次结果
+      // user switched topics or started a new task mid-flight: discard this result
       if (task.cancelled) return;
       if (result && result.trim()) {
         newName = result.trim();
@@ -727,10 +728,10 @@ const ChatPage: Component = () => {
       llmError = e;
     }
 
-    // 用户在 LLM 调用期间切换了话题：放弃处理
+    // user switched topics during the LLM call: abandon processing
     if (task.cancelled) return;
 
-    // 第二阶段：LLM 失败时用启发式后备
+    // phase 2: heuristic fallback when the LLM fails
     if (!newName) {
       newName = fallbackTitle(topic.history);
       if (newName) {
@@ -738,7 +739,7 @@ const ChatPage: Component = () => {
       }
     }
 
-    // 二次校验：状态可能在异步期间被改变
+    // re-validate: state may have changed during the async work
     const latestAsst = datas.assistants.find((a: any) => a.id === eventAsstId);
     const latestTopic = latestAsst?.topics.find((t: Topic) => t.id === eventTopicId);
     if (!latestAsst || !latestTopic) {
@@ -754,7 +755,7 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 实在拿不到任何名字：仅标记为已重命名，避免下次再尝试
+    // no name obtainable at all: just mark as renamed to avoid retrying
     if (!newName) {
       setDatas(
         'assistants',
@@ -770,7 +771,7 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 与旧名相同则视为无效，但仍标记为已重命名
+    // same as the old name: treat as invalid but still mark as renamed
     if (newName === latestTopic.name) {
       setDatas(
         'assistants',
@@ -801,9 +802,9 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 截断过长的工具返回内容（头尾保留式，与后端 truncate_tool_result 对齐：前 60% + 后 40%，
-   * 20k 字符），防止 LLM 上下文膨胀，同时保留 read_file 已保留的文件首尾。
-   * 完整内容保留在 agentSteps 中供用户查看。
+   * Truncate oversized tool results (head+tail retention, aligned with the backend truncate_tool_result:
+   * 60% head + 40% tail, 20k chars), preventing LLM context bloat while preserving the file head/tail
+   * that read_file already kept. Full content stays in agentSteps for the user.
    */
   const truncateToolResult = (content: string): string => {
     const MAX_LEN = 20000;
@@ -823,21 +824,22 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 把一条历史消息展开为 API 载荷消息（可能 1 条或多条：assistant + 其 tool 结果）。
+   * Expand one history message into API payload messages (one or more: assistant + its tool results).
    *
-   * 关键防御：state 停留在 'calling' 的孤儿 toolCall（用户中断 / 应用被杀 / 旧版本遗留），
-   * 就地合成为中断错误的 tool 结果消息，保证每个 tool_calls 都有配对的 role:tool 响应。
-   * 否则严格校验的 API 会返回 400（missing field tool_call_id / insufficient tool messages）。
+   * Key defense: orphan toolCalls stuck in state 'calling' (user interrupt / app killed / legacy data)
+   * are synthesized in place as interrupted-error tool results so every tool_calls has a paired
+   * role:tool response; otherwise strictly-validated APIs return 400 (missing field
+   * tool_call_id / insufficient tool messages).
    */
   function buildApiMessages(m: any): any[] {
     const obj: any = { role: m.role, content: m.content };
-    if (m.images?.length) obj.images = m.images; // 后端据此剥离 aio-image 标记并展开 image_url 块
-    if (m.displayFiles?.length) obj.displayFiles = m.displayFiles; // 携带附件（含图片），后端据此读取并展开 image_url 块
+    if (m.images?.length) obj.images = m.images; // the backend strips the aio-image marker from this and expands image_url blocks
+    if (m.displayFiles?.length) obj.displayFiles = m.displayFiles; // attachments (incl. images); the backend reads these and expands image_url blocks
     if (m.toolCallId) obj.toolCallId = m.toolCallId;
     if (m.name) obj.name = m.name;
     if (!m.toolCalls || m.toolCalls.length === 0) return [obj];
 
-    // 缺 id 的条目无法配对，直接剔除（避免 JSON.stringify 丢弃 undefined 字段导致 400）
+    // entries without an ID cannot be paired; drop them (avoids JSON.stringify dropping undefined fields and causing 400)
     const validCalls = m.toolCalls.filter((tc: any) => tc.id != null);
     if (validCalls.length === 0) return [obj];
 
@@ -847,7 +849,7 @@ const ChatPage: Component = () => {
       function: { name: tc.function?.name, arguments: tc.function?.arguments },
     }));
     const toolMsgs = validCalls.map((tc: any) => {
-      // 孤儿（calling / 无状态）：视为中断，合成错误结果
+      // orphan (calling / no state): treat as interrupted, synthesize an error result
       const interrupted = tc.state !== 'success' && tc.state !== 'error';
       const raw = interrupted
         ? TOOL_INTERRUPTED
@@ -865,15 +867,15 @@ const ChatPage: Component = () => {
   }
 
   /**
-   * 确保 messagesForAI 中的所有 assistant(tool_calls) 都有对应的 role:tool 消息。
-   * 如果缺少某个 tool_call_id 的 tool 响应，自动补全占位消息，
-   * 防止 API 400 "insufficient tool messages" 错误。
+   * Ensure every assistant(tool_calls) in messagesForAI has matching role:tool messages.
+   * If the tool response for a tool_call_id is missing, auto-fill a placeholder message
+   * to prevent the API 400 "insufficient tool messages" error.
    */
   function ensureToolMessagesComplete(msgs: any[]): any[] {
     const result: any[] = [];
     let pendingToolCallIds: string[] = [];
 
-    // 补全 pending 中所有未配对 toolCallId 的占位 tool 消息
+    // fill placeholder tool messages for all unpaired toolCallIds in pending
     const flushPending = (target: any[]) => {
       for (const id of pendingToolCallIds) {
         console.warn(`[ensureToolMessages] 补全缺失的 tool 响应: ${id}`);
@@ -888,8 +890,8 @@ const ChatPage: Component = () => {
     };
 
     for (const msg of msgs) {
-      // 遇到新的 assistant(toolCalls) 时，先补全前一组未配对的 toolCallId，
-      // 避免连续多个 tool 调用回合时前一组 pending 被直接覆盖丢失
+      // on a new assistant(toolCalls), flush the previous unpaired toolCallIds first so the
+      // previous pending set is not silently overwritten across consecutive tool-call turns
       if (msg.role === 'assistant' && msg.toolCalls?.length && pendingToolCallIds.length > 0) {
         flushPending(result);
       }
@@ -897,16 +899,16 @@ const ChatPage: Component = () => {
       result.push(msg);
 
       if (msg.role === 'assistant' && msg.toolCalls?.length) {
-        // 收集这条 assistant 消息声明的所有 toolCallId
+        // collect all toolCallIds declared by this assistant message
         pendingToolCallIds = msg.toolCalls.map((tc: any) => tc.id);
       } else if (msg.role === 'tool' && msg.toolCallId) {
-        // 匹配到对应的 tool 响应，移除
+        // a matching tool response was found; remove it
         const idx = pendingToolCallIds.indexOf(msg.toolCallId);
         if (idx !== -1) pendingToolCallIds.splice(idx, 1);
       }
 
-      // 遇到 user 或 assistant(无 toolCalls) 消息时，如果还有未匹配的 toolCallId，
-      // 说明之前 assistant 的 toolCalls 缺少足够 tool 响应——补全占位消息
+      // on a user or assistant (no toolCalls) message, any unmatched toolCallId means the
+      // previous assistant toolCalls lack sufficient tool responses — fill placeholder messages
       if (
         (msg.role === 'user' || (msg.role === 'assistant' && !msg.toolCalls?.length)) &&
         pendingToolCallIds.length > 0
@@ -915,16 +917,16 @@ const ChatPage: Component = () => {
       }
     }
 
-    // 收尾：如果数组结束时仍有未匹配的 toolCallId，补全占位消息
+    // final flush: fill placeholders for toolCallIds still unmatched at the end of the array
     if (pendingToolCallIds.length > 0) flushPending(result);
 
     return result;
   }
 
   /**
-   * /btw 侧问：基于已有对话上下文流式回答（无工具、不修改对话历史）。
-   * 监听 `btw-chunk` 事件逐 chunk 更新 overlay。
-   * unlisten 在收到 done/error 事件时触发，避免 invoke resolve 与事件交付的竞态。
+   * /btw side question: streams an answer over the existing conversation context (no tools, no history changes).
+   * Listens to the `btw-chunk` event and updates the overlay chunk by chunk.
+   * unlisten fires on the done/error event, avoiding a race between invoke resolve and event delivery.
    */
   const askBtwQuestion = async (question: string, overlayId: string) => {
     const currentMdl = selectedModel();
@@ -934,7 +936,7 @@ const ChatPage: Component = () => {
 
     let resolved = false;
 
-    // 在 invoke 之前注册监听，确保不丢失首个 chunk
+    // register the listener before invoke so the first chunk is never lost
     const unlisten = await listen<{
       overlay_id: string;
       content: string;
@@ -968,7 +970,7 @@ const ChatPage: Component = () => {
     });
 
     try {
-      // 使用 BTW 专用 system prompt：禁止模型继续执行主任务，仅基于上下文回答
+      // dedicated BTW system prompt: forbid continuing the main task, answer from context only
       const btwSystemPrompt = `[SIDE QUESTION — DO NOT CONTINUE THE MAIN TASK]
 You are answering a brief side question about the conversation above.
 Do NOT continue, repeat, or redo any work from the conversation.
@@ -996,8 +998,8 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 斜杠命令 — promptBody 类型（/review、/explain 等）
-   * 聊天显示原始命令文本，后台发送解析后的 promptBody 给 LLM
+   * Slash command — promptBody type (/review, /explain, etc.)
+   * Chat shows the raw command text; the resolved promptBody is sent to the LLM
    */
   const handleSlashPromptMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
     if (!resolved) return;
@@ -1013,7 +1015,7 @@ ${asstObj.prompt}`;
     const displayText = resolved.command.label + (resolved.args ? ` ${resolved.args}` : '');
     let content = resolved.resolvedBody || resolved.command.label;
 
-    // 无参数时自动注入当前项目路径，给 LLM 提供上下文
+    // with no args, inject the current project path to give the LLM context
     if (!resolved.args) {
       const project = currentProject();
       if (project) {
@@ -1028,7 +1030,7 @@ ${asstObj.prompt}`;
       displayText,
     };
 
-    // 构建完整消息数组（与普通发送流程一致）
+    // build the full message array (same as the normal send flow)
     const reasoningPrompt = getReasoningPrompt(reasoningLevel());
 
     const agentMode = currentAsst?.agentMode || 'off';
@@ -1047,7 +1049,7 @@ ${asstObj.prompt}`;
 
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
-      // 输出风格约束（emoji 规避等，对齐主流 Agent 的系统提示词风格章节）
+      // output style constraints (emoji avoidance etc., mirroring mainstream agent system-prompt style sections)
       { role: 'system', content: t('chat.prompt.style') },
       ...buildSkillMessages(currentAsst, agentMode === 'off'),
       ...agentSystemPrompt,
@@ -1066,7 +1068,7 @@ ${asstObj.prompt}`;
     ];
     messagesForAI = ensureToolMessagesComplete(messagesForAI);
 
-    // 持久化用户消息
+    // persist the user message
     try {
       await appendMessage(topicId, newUserMsg);
     } catch (err) {
@@ -1075,7 +1077,7 @@ ${asstObj.prompt}`;
       return;
     }
 
-    // 更新本地状态
+    // update local state
     setDatas(
       'assistants',
       (a: any) => a.id === asstId,
@@ -1085,7 +1087,7 @@ ${asstObj.prompt}`;
       (h: any[]) => [...h, newUserMsg],
     );
 
-    // 调用 LLM
+    // call the LLM
     try {
       setIsThinking(true);
       await runAgentTurn({
@@ -1110,7 +1112,7 @@ ${asstObj.prompt}`;
     }
   };
 
-  // ===== P4.4 检查点恢复：崩溃残留回合的"继续未完成的回合"入口 =====
+  // ===== Checkpoint resume: "continue unfinished turn" entry for crash-orphaned turns =====
   const [activeCheckpoint, setActiveCheckpoint] = createSignal<ActiveCheckpoint | null>(null);
   createEffect(() => {
     const tid = currentTopicId();
@@ -1119,10 +1121,10 @@ ${asstObj.prompt}`;
     void (async () => {
       try {
         const cp = await getActiveCheckpoint(tid);
-        // 竞态防护：仅当话题未再切换时应用
+        // race guard: apply only if the topic has not switched again
         if (currentTopicId() === tid) setActiveCheckpoint(cp);
       } catch {
-        /* 查询失败静默：入口不展示 */
+        /* silent on query failure: the entry point is not shown */
       }
     })();
   });
@@ -1142,7 +1144,7 @@ ${asstObj.prompt}`;
         ...llmCreds(currentMdl),
         assistantId: asstId,
         topicId: tid,
-        messages: [], // 恢复时后端用检查点快照替换，前端消息不参与
+        messages: [], // on resume the backend substitutes the checkpoint snapshot; frontend messages are unused
         mcpServerIds: currentAsst?.mcpServerIds ?? [],
         agentMode: resumeAgentMode,
         projectId: currentProjectId() ?? null,
@@ -1161,8 +1163,8 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 斜杠命令 — 纯操作类型（/compact、/clear、/search、/settings、/help）
-   * 聊天显示命令 + 执行 handler + 简短反馈
+   * Slash command — pure action type (/compact, /clear, /search, /settings, /help)
+   * Chat shows the command, runs the handler, then shows brief feedback
    */
   const handleSlashActionMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
     if (!resolved) return;
@@ -1173,7 +1175,7 @@ ${asstObj.prompt}`;
     const cmd = resolved.command;
     const displayText = cmd.label;
 
-    // 添加用户消息
+    // append the user message
     setDatas(
       'assistants',
       (a: any) => a.id === asstId,
@@ -1191,11 +1193,11 @@ ${asstObj.prompt}`;
       ],
     );
 
-    // 执行 handler（Action 型命令可携带参数，如 `/compact 10000` 指定保留 token 预算）；
-    // handler 返回 string 时作为自定义反馈（/compact 用它区分已压缩/无需压缩/失败）
+    // run the handler (action commands may take args, e.g. `/compact 10000` sets the keep-token budget);
+    // a string return value is used as custom feedback (/compact distinguishes compressed / skipped / failed)
     const handlerResult = await cmd.handler(resolved.args);
 
-    // 根据命令类型给出反馈消息
+    // produce a feedback message per command type
     let feedback = '';
     if (cmd.id === 'slash-compact') {
       feedback =
@@ -1203,23 +1205,23 @@ ${asstObj.prompt}`;
           ? handlerResult
           : `✓ /compact — ${t('slash.feedback.compactSkipped')}`;
     } else if (cmd.id === 'slash-clear') {
-      // /clear handler 已清空历史，无需额外反馈
+      // the /clear handler already emptied the history; no extra feedback needed
       return;
     } else if (cmd.id === 'slash-search') {
       feedback = webSearchEnabled()
         ? `✓ ${t('slash.feedback.searchOn')}`
         : `✓ ${t('slash.feedback.searchOff')}`;
     } else if (cmd.id === 'slash-help') {
-      // /help handler 已添加帮助信息，无需额外反馈
+      // the /help handler already appended help info; no extra feedback needed
       return;
     } else if (cmd.id === 'slash-settings') {
-      // /settings handler 已跳转页面
+      // the /settings handler already navigated away
       return;
     } else {
       feedback = `✓ ${t('slash.feedback.executed', { command: cmd.label })}`;
     }
 
-    // 添加反馈消息
+    // append the feedback message
     setDatas(
       'assistants',
       (a: any) => a.id === asstId,
@@ -1239,29 +1241,29 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 处理发送消息的逻辑
-   * 包括文件处理、API调用和状态更新
+   * Send-message flow.
+   * Covers file handling, API calls, and state updates
    */
   const handleSendMessage = async () => {
     const currentMdl = selectedModel();
     const topicObj = activeTopic();
     const asstObj = currentAssistant();
 
-    // 前置条件检查：必须有模型、话题、助手，且 AI 不在生成中
+    // precondition check: model, topic, and assistant must exist, and the AI must not be generating
     if (!currentMdl || !topicObj || !asstObj) return;
 
     const userInput = inputMessage().trim();
     const files = pendingFiles();
-    // isThinking 时阻止普通消息发送（/btw 由下方独立处理）
+    // block normal message sends while isThinking (/btw is handled separately below)
     if (isThinking() && !userInput.startsWith('/btw')) return;
-    // 必须满足：有文本输入或有文件附件
+    // require text input or file attachments
     if (!userInput && files.length === 0) return;
 
-    // ---- 斜杠命令拦截 ----
+    // ---- slash command interception ----
     if (userInput.startsWith('/')) {
       const resolved = resolveSlashCommand(userInput);
       if (resolved) {
-        // /btw 独立处理：立即基于当前上下文回答，不中断主 agent
+        // /btw handled separately: answer immediately from the current context without interrupting the main agent
         if (resolved.command.id === 'slash-btw') {
           const question = resolved.args || '';
           const id = crypto.randomUUID();
@@ -1280,7 +1282,7 @@ ${asstObj.prompt}`;
         setPendingFiles([]);
         return;
       }
-      // 未识别的斜杠命令 — 给出反馈，阻止发送给 LLM
+      // unrecognized slash command — show feedback and do not send to the LLM
       const unknownAsstId = currentAssistantId();
       const unknownTopicId = currentTopicId();
       if (unknownAsstId && unknownTopicId) {
@@ -1333,7 +1335,7 @@ ${asstObj.prompt}`;
     const currentTopic = activeTopic();
     if (!currentAsst || !currentTopic) return;
 
-    /** 根据推理强度注入对应的 system 提示, 让模型使用 <think>...</think> 输出思考过程 */
+    /** Inject the system prompt matching the reasoning level so the model uses <think>...</think> to emit its thinking output */
     const reasoningPrompt = getReasoningPrompt(reasoningLevel());
 
     const agentMode = currentAsst?.agentMode || 'off';
@@ -1351,7 +1353,7 @@ ${asstObj.prompt}`;
       : [];
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
-      // 输出风格约束（emoji 规避等，对齐主流 Agent 的系统提示词风格章节）
+      // output style constraints (emoji avoidance etc., mirroring mainstream agent system-prompt style sections)
       { role: 'system', content: t('chat.prompt.style') },
       ...buildSkillMessages(currentAsst, isChatMode()),
       ...agentSystemPrompt,
@@ -1368,7 +1370,7 @@ ${asstObj.prompt}`;
       ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
       { role: 'user', content: newUserMsg.content, displayFiles: newUserMsg.displayFiles },
     ];
-    // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
+    // safety net: ensure every assistant(tool_calls) has matching role:tool messages
     messagesForAI = ensureToolMessagesComplete(messagesForAI);
 
     const lastMsg = messagesForAI[messagesForAI.length - 1];
@@ -1377,7 +1379,7 @@ ${asstObj.prompt}`;
       return;
     }
 
-    // 先持久化用户消息和附件关联，避免流式请求期间退出或重复上传导致附件成为孤儿。
+    // persist the user message and attachment links first so exiting during streaming or duplicate uploads does not orphan attachments.
     try {
       await appendMessage(topicId, newUserMsg);
     } catch (err) {
@@ -1386,8 +1388,8 @@ ${asstObj.prompt}`;
       return;
     }
 
-    // 更新本地 Store：添加用户消息，聊天模式下同时创建空 assistant 占位消息
-    // （项目/Agent 模式下占位消息由 llm-round-start 事件创建）
+    // update the local Store: append the user message; in chat mode also create an empty assistant placeholder
+    // (in project/Agent mode the placeholder is created by the llm-round-start event)
     if (isChatMode()) {
       setDatas(
         'assistants',
@@ -1420,12 +1422,12 @@ ${asstObj.prompt}`;
       );
     }
 
-    // 清空输入状态和文件列表，设置生成中状态
+    // clear input state and file list, mark as generating
     setInputMessage('');
     setPendingFiles([]);
     setIsThinking(true);
 
-    // 设置打字机索引（聊天模式下刚创建的 assistant 占位消息位置）
+    // set the typewriter index (position of the assistant placeholder just created in chat mode)
     if (isChatMode()) {
       const asst = datas.assistants.find((a) => a.id === asstId);
       const topic = asst?.topics.find((t: Topic) => t.id === topicId);
@@ -1433,15 +1435,15 @@ ${asstObj.prompt}`;
     }
 
     try {
-      // 聊天模式：纯对话，直接调用 call_llm_stream（无 agent 循环、无工具调用）
-      // 项目模式/Agent 模式：调用 run_agent_turn（含工具调用、子智能体等）
+      // chat mode: plain conversation, calls call_llm_stream directly (no agent loop, no tools)
+      // project/Agent mode: calls run_agent_turn (with tool calls, subagents, etc.)
       if (isChatMode() && isImageGenModel(currentMdl.model_id, currentMdl.api_url)) {
-        // 专用端点（dall-e-2/3 等）：非流式生成，结果经 llm-chunk(done) 回传
+        // dedicated endpoints (dall-e-2/3 etc.): non-streaming generation, the result comes back via llm-chunk(done)
         await generateImage(llmCreds(currentMdl), asstId, topicId, userInput);
       } else if (isChatMode()) {
         await callLlmStream(llmCreds(currentMdl), asstId, topicId, messagesForAI);
       } else {
-        // 解析 per-profile 模型覆盖（仅 agent 模式需要）
+        // resolve per-profile model overrides (only needed in agent mode)
         const resolvedOverrides: Array<{
           profileId: string;
           modelId: string;
@@ -1485,7 +1487,7 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 停止当前的AI生成过程
+   * Stop the current AI generation.
    */
   const handleStopGeneration = async () => {
     try {
@@ -1496,7 +1498,7 @@ ${asstObj.prompt}`;
     setPendingApprovals([]);
   };
 
-  /** 切换到聊天模式 */
+  /** Switch to chat mode */
   const switchToChat = () => {
     setCurrentAssistantId(DEFAULT_ASST_ID);
     const asst = datas.assistants.find((a) => a.id === DEFAULT_ASST_ID);
@@ -1505,7 +1507,7 @@ ${asstObj.prompt}`;
     }
   };
 
-  /** 切换到指定项目 */
+  /** Switch to the given project */
   const switchToProject = async (projectId: string) => {
     try {
       const asstId = await ensureProjectAssistant(projectId);
@@ -1520,8 +1522,8 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 添加新的话题到当前助手
-   * 创建新话题并设置为当前选中话题
+   * Add a new topic to the current assistant.
+   * Creates the topic and makes it the selected one
    */
   const addTopic = async () => {
     const asstId = currentAssistantId();
@@ -1538,9 +1540,9 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 从指定消息处分叉出新话题（会话分支）。
-   * 将当前话题中该消息及之前的所有消息复制到新话题，并导航过去。
-   * @param sourceMessageId - 分支点的消息 ID
+   * Branch a new topic from the given message (conversation branching).
+   * Copies that message and everything before it into a new topic, then navigates to it.
+   * @param sourceMessageId - message ID at the branch point
    */
   const branchFromMessage = async (sourceMessageId: string) => {
     const asstId = currentAssistantId();
@@ -1562,9 +1564,9 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 通用拖拽调整宽度：绑定 mousemove/mouseup，按百分比回调更新宽度。
-   * @param e - MouseEvent 鼠标事件
-   * @param onDragMove - 每次鼠标移动时回调，入参为光标相对整页宽度换算的百分比
+   * Generic drag-to-resize: binds mousemove/mouseup and updates width via a percentage callback.
+   * @param e - MouseEvent mouse event
+   * @param onDragMove - callback per mouse move, receives the percentage of the cursor across the full page width
    */
   const attachResizeDrag = (e: MouseEvent, onDragMove: (pct: number) => void) => {
     e.preventDefault();
@@ -1586,27 +1588,29 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 拖拽调整左侧面板宽度：展开/收起两个方向都严格 1:1 跟手，松手时才吸附。
+   * Drag-resize the left panel: strict 1:1 cursor tracking in both expand and collapse directions; snap only on release.
    *
-   * - 跟手原点：把面板"当前占用的像素宽"折算到光标坐标轴上——收起态用轨道宽，
-   *   展开态用 DOM 实测的渲染宽（把手就在面板右缘，实测能保证首帧零位移、无跳变）。
-   *   宽度增量 = 光标位移，严格 1:1；
-   * - 百分比换算基用 `clientWidth`（内容宽），与 CSS `width:%` 的解析基准一致；
-   * - 最窄限制：跟手宽度不低于收起轨道宽，把手拖不到最左，内容不外溢；
-   * - 松手吸附：顶到最窄或拖出距离仍在死区内 → 收起；否则落到 ≥15% 并记住宽度。
+   * - Tracking origin: map the panel's "currently occupied pixel width" onto the cursor axis — the rail
+   *   width when collapsed, the DOM-measured rendered width when expanded (the handle sits at the
+   *   panel's right edge, so measuring guarantees zero first-frame displacement and no jump).
+   *   Width delta = cursor delta, strictly 1:1;
+   * - Percentage conversion uses `clientWidth` (content width), matching how CSS `width:%` resolves;
+   * - Minimum width: tracking width never drops below the collapsed rail width, so the handle cannot
+   *   be dragged to the far left and content never overflows;
+   * - Release snap: pinned at the minimum or still inside the deadzone -> collapse; otherwise land at >= 15% and remember.
    *
-   * @param e - MouseEvent 鼠标事件
+   * @param e - MouseEvent mouse event
    */
   const startLeftResize = (e: MouseEvent) => {
-    // 用户重新抓起把手：取消进行中的吸附动画，手势接管
+    // user re-grabbed the handle: cancel the in-flight snap animation, the gesture takes over
     if (leftSnapRaf !== undefined) {
       cancelAnimationFrame(leftSnapRaf);
       leftSnapRaf = undefined;
     }
     const cssBase = chatPageRef?.clientWidth ?? window.innerWidth;
     const wasCollapsed = isLeftCollapsed();
-    const doCollapse = LEFT_RAIL_WIDTH_PX / cssBase; // 跟手最窄宽度（%）
-    // 面板当前占用的像素宽：收起态 = 轨道宽；展开态实测（量不到时退回记忆宽度换算）
+    const doCollapse = LEFT_RAIL_WIDTH_PX / cssBase; // narrowest tracking width (%)
+    // panel's current occupied pixel width: rail width when collapsed; measured when expanded (falls back to the remembered width if unmeasurable)
     const handleEl = e.currentTarget instanceof Element ? e.currentTarget : null;
     const measuredPx = handleEl?.parentElement?.getBoundingClientRect().width ?? 0;
     const basePx = wasCollapsed
@@ -1614,7 +1618,7 @@ ${asstObj.prompt}`;
       : measuredPx > 0
         ? measuredPx
         : (leftPanelWidth() / 100) * cssBase;
-    // 光标坐标轴零点：光标横坐标减去它即为面板应占宽度
+    // cursor axis zero point: cursor X minus this equals the width the panel should occupy
     const anchorX = e.clientX - basePx;
     setIsResizing(true);
     e.preventDefault();
@@ -1630,19 +1634,19 @@ ${asstObj.prompt}`;
       const dragged = leftDragWidth();
       if (dragged === null) {
         setIsResizing(false);
-        return; // 按下未拖动：保持原状
+        return; // pressed without dragging: keep as-is
       }
       const draggedPx = (dragged / 100) * cssBase;
       if (draggedPx <= LEFT_RAIL_WIDTH_PX + LEFT_RELEASE_DEADZONE_PX) {
-        // 顶到最窄/没真正拉开：吸附回收起轨道（走 CSS 过渡收拢动画）
+        // pinned at the minimum / never really opened: snap back to the collapsed rail (via the CSS collapse transition)
         setLeftDragWidth(null);
         setIsResizing(false);
         setLeftCollapsed(true);
         return;
       }
-      // 拉开：用 rAF 把预览宽度缓动到吸附目标（≥15%）。
-      // 遮罩/内边距/透明度随每帧宽度同步变化，收尾无硬裁剪、无跳变；
-      // 期间保持 isResizing=true（禁用 CSS 过渡），避免双重平滑。
+      // Opened: ease the preview width to the snap target (>= 15%) with rAF.
+      // Mask/padding/opacity follow each frame's width, so the ending has no hard clip or jump;
+      // isResizing stays true (CSS transitions disabled) during it to avoid double smoothing.
       const target = Math.max(dragged, 15);
       const durationMs = 250;
       const start = performance.now();
@@ -1664,13 +1668,13 @@ ${asstObj.prompt}`;
     };
 
     document.addEventListener('mousemove', handleMove);
-    // 立即监听 mouseup：仅在把手上按下后直接松开（无 mousemove）时也能完成吸附
+    // listen for mouseup immediately: a press-and-release on the handle without any mousemove still completes the snap
     document.addEventListener('mouseup', stopResize);
   };
 
   /**
-   * 拖拽调整右侧面板宽度（原行为不变：仅展开态可用）。
-   * @param e - MouseEvent 鼠标事件
+   * Drag-resize the right panel (original behavior: only available when expanded).
+   * @param e - MouseEvent mouse event
    */
   const startResizeRight = (e: MouseEvent) => {
     attachResizeDrag(e, (pct) => {
@@ -1681,7 +1685,7 @@ ${asstObj.prompt}`;
   onMount(() => {
     const navigate = useNavigate();
 
-    // 注册全部键盘/斜杠命令（19 个 registerCommand 已抽取为 hooks/chatCommands.ts）。
+    // register all keyboard/slash commands (19 registerCommand calls, extracted to hooks/chatCommands.ts).
     const commandIds = registerChatCommands({
       isLeftCollapsed,
       setLeftCollapsed,
@@ -1712,16 +1716,16 @@ ${asstObj.prompt}`;
       navigate,
     });
 
-    // ---- 原有初始化逻辑 ----
-    // 首次进入：从 SQLite 加载所有助手数据
+    // ---- pre-existing initialization logic ----
+    // first entry: load all assistant data from SQLite
     loadAssistants()
       .then(async (loaded) => {
         let finalAssistants = [...loaded];
 
-        // 1. 确保默认助手存在
+        // 1. ensure the default assistant exists
         let defaultAsst = finalAssistants.find((a) => a.id === DEFAULT_ASST_ID);
         if (!defaultAsst) {
-          // createAssistant 内部已经带了一个“默认话题”
+          // createAssistant already includes one "default topic"
           defaultAsst = createAssistant(t('chat.defaultAssistant'), DEFAULT_ASST_ID);
           finalAssistants = [defaultAsst, ...finalAssistants];
           setDatas('assistants', finalAssistants);
@@ -1730,9 +1734,9 @@ ${asstObj.prompt}`;
           setDatas('assistants', finalAssistants);
         }
 
-        // 2. 处理应用启动时的默认选中（仅冷启动触发）
+        // 2. apply the default selection on app startup (cold start only)
         if (isFirstAppLaunch) {
-          // 尝试恢复上次的项目选择，否则默认选中对话
+          // try to restore the last project selection; otherwise default to the chat assistant
           const lastProjectId = getLastAgentProjectId();
           const lastProjectValid = lastProjectId && projects().find((p) => p.id === lastProjectId);
           if (lastProjectValid) {
@@ -1756,14 +1760,14 @@ ${asstObj.prompt}`;
         console.log('成功加载数据');
       })
       .catch((err) => {
-        // 如果后端报错，这里会打印出来
+        // backend errors are logged here
         console.error('加载助手列表失败:', err);
         console.error('load_all_assistants failed:', err);
         alert(t('error.load'));
       });
 
-    // 注册全部事件监听器（18 个 listen 已抽取为 hooks/chatEventListeners.ts；
-    // 存储 unlisten 函数用于组件卸载时清理）。
+    // register all event listeners (18 listen() calls, extracted to hooks/chatEventListeners.ts;
+    // the unlisten functions are stored for cleanup on unmount).
     const unlistens = registerChatEventListeners({
       setDatas,
       setIsDragging,
@@ -1779,16 +1783,16 @@ ${asstObj.prompt}`;
       checkAndSummarize,
     });
 
-    // 组件卸载时清理所有事件监听和命令注册
+    // clean up all event listeners and command registrations on unmount
     onCleanup(() => {
       unlistens.forEach((u) => u.then((fn) => fn()));
-      // 卸载全部已注册命令（id 由 registerChatCommands 返回）
+      // unregister all registered commands (IDs are returned by registerChatCommands)
       commandIds.forEach(unregisterCommand);
     });
   });
 
-  // 监听手动触发的"重新生成标题"请求（来自 TopicSidebar 右键菜单）
-  // 消费后立即清空信号，避免后续误触发
+  // watch for manually triggered "regenerate title" requests (from the TopicSidebar context menu);
+  // the signal is cleared right after consumption to avoid accidental re-triggering
   createEffect(() => {
     const req = pendingRenameRequest();
     if (req) {
@@ -1797,18 +1801,18 @@ ${asstObj.prompt}`;
     }
   });
 
-  // 切换话题（或助手，必然伴随话题切换）时退出子智能体对话视图，回到主代理对话
+  // exit the subagent conversation view when the topic switches (or the assistant switches, which implies a topic switch), returning to the main agent conversation
   createEffect(() => {
     currentTopicId();
     setActiveSubagentView(null);
   });
 
-  // 监听 currentTopicId 变化：若用户切换到与正在生成标题的话题不同的话题，
-  // 取消该任务的结果处理（abort）
+  // watch currentTopicId changes: if the user switches to a topic other than the one whose title
+  // is being generated, abort that task's result handling
   let prevTitleGenTopicId: string | null = null;
   createEffect(() => {
     const tId = currentTopicId();
-    // 首次运行时不处理（仅记录）
+    // skip processing on first run (record only)
     if (prevTitleGenTopicId === null && activeTitleGen === null) {
       prevTitleGenTopicId = tId;
       return;
@@ -1826,11 +1830,11 @@ ${asstObj.prompt}`;
     localStorage.setItem('chat-right-panel-width', rightPanelWidth().toString());
   });
 
-  // 项目切换时自动检测并启动语言服务器
+  // auto-detect and start language servers when the project switches
   createEffect(() => {
     const pid = currentProjectId();
     if (!pid) {
-      // 没有打开项目，清除诊断
+      // no project open; clear diagnostics
       clearAllDiagnostics();
       return;
     }
@@ -1839,16 +1843,16 @@ ${asstObj.prompt}`;
 
     void (async () => {
       try {
-        // 自动检测语言
+        // auto-detect languages
         const result = await autoDetectLsp(project.path);
         const languages: Array<{ languageId: string }> = result?.languages || [];
 
-        // 为检测到的每种语言启动语言服务器
+        // start a language server for each detected language
         for (const lang of languages) {
           try {
             await startLspServer(project.path, lang.languageId);
           } catch (e) {
-            // 静默失败（语言服务器可能未安装）
+            // fail silently (the language server may not be installed)
             console.debug(`[LSP] 无法启动 ${lang.languageId} 服务器:`, e);
           }
         }
@@ -1858,8 +1862,8 @@ ${asstObj.prompt}`;
     })();
   });
 
-  // 项目切换时初始化 MCP 服务器（含内置文件系统 MCP 的自动连接）
-  // 必须等 projects 加载完毕，否则 currentProject 为 null，MCP config 读不到
+  // initialize MCP servers when the project switches (incl. auto-connect of the built-in
+  // filesystem MCP); must wait for projects to load or currentProject is null and the MCP config is unreadable
   createEffect(() => {
     const pid = currentProjectId();
     const loaded = projects().length > 0 || !pid;
@@ -1869,16 +1873,17 @@ ${asstObj.prompt}`;
   });
 
   /**
-   * 模型跟随当前助手：
-   * 切换助手 / 助手绑定模型变化 / 可用模型列表变化时，
-   * 把全局 selectedModel 同步为该助手解析出的有效模型。
-   * 助手未绑定 modelId 时 resolveAssistantModel 会回退到当前 selectedModel，跳过覆盖。
-   * resolved 为 null（尚无可用模型）时不覆盖，避免启动早期清空。
+   * Model follows the current assistant:
+   * on assistant switch, assistant model binding change, or available model list change,
+   * sync the global selectedModel to the assistant's resolved model.
+   * When the assistant has no bound modelId, resolveAssistantModel falls back to the current
+   * selectedModel, so no override happens. A null resolved value (no available models yet)
+   * is skipped to avoid clearing it early at startup.
    */
   createEffect(() => {
     const id = currentAssistantId();
     const asst = datas.assistants.find((a: any) => a.id === id) as Assistant | undefined;
-    // 触发依赖：助手 modelId 与可用模型列表（providerConfigs / activatedModels 在 store 内驱动）
+    // trigger deps: assistant modelId and the available model list (providerConfigs / activatedModels drive it in the store)
     void asst?.modelId;
     const resolved = resolveAssistantModel(asst ?? null);
     if (resolved && resolved.model_id !== selectedModel()?.model_id) {
@@ -1904,7 +1909,7 @@ ${asstObj.prompt}`;
       />
 
       <div class="flex-1 flex flex-col min-w-0 min-h-0">
-        {/* 子智能体独立对话视图：替换整个对话栏（含状态条/输入框），左上角返回按钮回到主对话 */}
+        {/* Subagent standalone conversation view: replaces the whole chat column (incl. status bar and input); the back button top-left returns to the main conversation */}
         <Show
           when={!activeSubagentView()}
           fallback={<SubagentConversationView topic={activeTopic()} />}
@@ -1913,7 +1918,7 @@ ${asstObj.prompt}`;
             <WorkflowVisualization />
           </Show>
 
-          {/* P4.4 检查点恢复入口：崩溃残留的回合提示 */}
+          {/* Checkpoint resume entry: banner for crash-orphaned turns */}
           <Show when={activeCheckpoint() && !isThinking()}>
             <button
               type="button"

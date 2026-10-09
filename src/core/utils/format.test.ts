@@ -7,7 +7,7 @@ describe('formatSize', () => {
     expect(formatSize(-5)).toBe('');
   });
   it('KB：整数，最小 1 KB', () => {
-    expect(formatSize(512)).toBe('1 KB'); // 512B 向上取整到 1KB
+    expect(formatSize(512)).toBe('1 KB'); // 512B rounds up to 1KB
     expect(formatSize(1536)).toBe('2 KB'); // 1.5KB → 2
     expect(formatSize(1024 * 999)).toBe('999 KB');
   });

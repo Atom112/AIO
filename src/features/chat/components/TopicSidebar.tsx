@@ -23,7 +23,7 @@ interface TopicSidebarProps {
   isCollapsed: boolean;
   onToggle: (e: MouseEvent) => void;
   isResizing: boolean;
-  /** 打开指定话题的导出弹窗 */
+  /** Opens the export dialog for the given topic */
   onExportTopic: (topicId: string) => void;
 }
 
@@ -38,7 +38,7 @@ const createTopic = (name?: string): Topic => ({
   summary: '',
 });
 
-/** 根据 parentTopicId 构建话题树。返回 [根话题列表, 子话题映射(parentId → children)] */
+/** Build a topic tree from parentTopicId. Returns [root topic list, children map (parentId → children)] */
 const buildTopicTree = (topics: Topic[]): { roots: Topic[]; children: Map<string, Topic[]> } => {
   const children = new Map<string, Topic[]>();
   const roots: Topic[] = [];
@@ -74,7 +74,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
   const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
     if (!newName.trim()) return props.setEditingTopicId(null);
-    // 用户手动重命名时也标记为已重命名，避免首次对话后又自动覆盖
+    // Mark manual renames as renamed so the auto title won't overwrite them later
     setDatas(
       'assistants',
       (a) => a.id === asstId,
@@ -135,9 +135,9 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   };
 
   /**
-   * 手动重新生成话题标题。
-   * 仅对非默认话题可用（默认话题永远不重命名）。
-   * 通过 `requestRenameTopic` 通知 ChatPage 执行实际的 LLM 调用。
+   * Manually regenerate the topic title.
+   * Only available for non-default topics (the default topic is never renamed).
+   * Notifies ChatPage via `requestRenameTopic` to perform the actual LLM call.
    */
   const handleRegenerateTitle = () => {
     const asst = props.currentAssistant;
@@ -147,15 +147,15 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     if (!target) return;
     const ok = requestRenameTopic(asst.id, target.id);
     if (!ok) {
-      // 默认话题：理论上菜单项已隐藏，这里是防御性提示
+      // Default topic: the menu item should already be hidden; this is a defensive warning
       console.warn('默认话题不支持重新生成标题');
     }
     closeTopicMenu();
   };
 
   /**
-   * 当前右键菜单指向的话题是否为默认话题。
-   * 默认话题不显示"重新生成标题"菜单项。
+   * Whether the context-menu target topic is the default topic.
+   * The default topic hides the "regenerate title" menu item.
    */
   const isMenuTargetDefault = (): boolean => {
     const asst = props.currentAssistant;
@@ -176,7 +176,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 三栏分界浅竖线：置于面板外缘（±0.5px），中心与下方调整把手的中心严格重合；收起态隐藏 */}
+      {/* Faint divider between the three columns: sits on the panel edge (+/-0.5px), centered exactly with the resize handle below; hidden when collapsed */}
       <Show when={!props.isCollapsed}>
         <span
           aria-hidden="true"
@@ -185,7 +185,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         />
       </Show>
 
-      {/* 调整大小把手（左侧）：6px 抓取条居中于面板外缘（与分界竖线同心） */}
+      {/* Resize handle (left): 6px grab strip centered on the panel edge (concentric with the divider line) */}
       <div
         class="absolute top-0 bottom-0 left-[-3px] w-[6px] flex items-center justify-center cursor-ew-resize z-[1000] group"
         onMouseDown={(e) => props.onResize(e as MouseEvent)}
@@ -234,7 +234,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
               <div class="mt-[15px] space-y-1">
                 {(() => {
                   const { roots, children } = buildTopicTree(asst().topics);
-                  // 递归渲染话题树
+                  // Render the topic tree recursively
                   const renderTopic = (topic: Topic, depth: number): any => {
                     const isChild = depth > 0;
                     return (
@@ -247,7 +247,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           }}
                           onClick={() => setCurrentTopicId(topic.id)}
                         >
-                          {/* 子话题分支标记 */}
+                          {/* Branch marker for child topics */}
                           {isChild && (
                             <span
                               class="mr-1 shrink-0 leading-none"
@@ -313,7 +313,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                             />
                           </button>
                         </div>
-                        {/* 递归渲染子话题 — 更紧凑的间距 */}
+                        {/* Render child topics recursively - tighter spacing */}
                         <div class="space-y-0.5">
                           {
                             <For each={children.get(topic.id)}>

@@ -30,7 +30,7 @@ const McpServerDetail: Component<Props> = (props) => {
   const [testing, setTesting] = createSignal(false);
   const [availableTools, setAvailableTools] = createSignal<ToolSpec[]>([]);
 
-  // 加载已注册 transports
+  // Load registered transports
   const [transports, setTransports] = createSignal<string[]>([]);
   onMount(() => {
     void listMcpTransports()
@@ -145,7 +145,7 @@ const McpServerDetail: Component<Props> = (props) => {
           {props.isNew ? t('mcp.detail.titleAdd') : t('mcp.detail.titleEdit')}
         </h3>
 
-        {/* 名称 + 启用 */}
+        {/* Name + enable */}
         <div class="flex flex-col gap-1">
           <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.name')}
@@ -189,7 +189,7 @@ const McpServerDetail: Component<Props> = (props) => {
           </span>
         </div>
 
-        {/* 传输类型 */}
+        {/* Transport type */}
         <div class="flex flex-col gap-1">
           <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.transport')}
@@ -222,7 +222,7 @@ const McpServerDetail: Component<Props> = (props) => {
           </select>
         </div>
 
-        {/* stdio 字段 */}
+        {/* stdio fields */}
         <Show when={config().transport.transport === 'stdio'}>
           {(() => {
             const trans = () => config().transport as Extract<McpTransport, { transport: 'stdio' }>;
@@ -331,7 +331,7 @@ const McpServerDetail: Component<Props> = (props) => {
           })()}
         </Show>
 
-        {/* http 字段 */}
+        {/* http fields */}
         <Show
           when={
             config().transport.transport === 'http' ||
@@ -376,7 +376,7 @@ const McpServerDetail: Component<Props> = (props) => {
           })()}
         </Show>
 
-        {/* 测试连接 */}
+        {/* Test connection */}
         <div class="flex items-center gap-2">
           <button class={btnSuccess} disabled={testing()} onClick={handleTest}>
             {testing() ? t('mcp.detail.testing') : t('mcp.detail.testConnection')}
@@ -397,7 +397,7 @@ const McpServerDetail: Component<Props> = (props) => {
           </Show>
         </div>
 
-        {/* 工具白名单 */}
+        {/* Tool whitelist */}
         <Show when={availableTools().length > 0}>
           <div class="flex flex-col gap-2">
             <div class="flex items-center justify-between">
@@ -456,7 +456,7 @@ const McpServerDetail: Component<Props> = (props) => {
           </div>
         </Show>
 
-        {/* 按钮 */}
+        {/* Buttons */}
         <div class="flex justify-end gap-2 mt-2">
           <button class={btnSecondarySm} onClick={() => props.onCancel()}>
             {t('common.cancel')}

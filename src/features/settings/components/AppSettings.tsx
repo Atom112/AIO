@@ -54,36 +54,36 @@ import {
 import { locale, setLocale, t, type Locale } from '../../../core/i18n';
 
 /**
- * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）
- * 用 `kind` 字段做 tag，前端按类别显示不同提示
+ * Structured result returned by the backend check_app_update (mirrors src-tauri/src/commands/update.rs)
+ * The `kind` field acts as the tag; the frontend shows a different hint per kind
  */
 
 /**
- * 应用设置页面组件
- * @returns {JSX.Element} 应用设置页面的 JSX 元素
+ * App settings page component
+ * @returns {JSX.Element} The app settings page JSX element
  */
 const AppSettings: Component = () => {
-  const [h, setH] = createSignal(0); // 色相 (0-360 度)
-  const [s, setS] = createSignal(0); // 饱和度 (0-100%)
-  const [l, setL] = createSignal(0); // 亮度 (0-100%)
+  const [h, setH] = createSignal(0); // Hue (0-360 degrees)
+  const [s, setS] = createSignal(0); // Saturation (0-100%)
+  const [l, setL] = createSignal(0); // Lightness (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
-  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // 单次 Agent 最大工具调用轮数（默认 25）
-  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // 并发子智能体上限（默认 5）
-  const [version, setVersion] = createSignal(''); // 应用版本号
-  const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
-  const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
+  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (default 25)
+  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
+  const [version, setVersion] = createSignal(''); // App version
+  const [checkUpdating, setCheckUpdating] = createSignal(false); // Manual update check in progress
+  const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // Result of the last manual check
 
-  // ---- 快捷键设置状态 ----
-  const [recordingActionId, setRecordingActionId] = createSignal<string | null>(null); // 正在录制的命令 ID
+  // ---- Shortcut settings state ----
+  const [recordingActionId, setRecordingActionId] = createSignal<string | null>(null); // Command ID currently being recorded
   const [conflictDialog, setConflictDialog] = createSignal<{
     actionId: string;
     newKeys: string;
     conflictActionId: string;
-  } | null>(null); // 冲突确认对话框状态
-  const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // 重置全部确认状态
-  const [langOpen, setLangOpen] = createSignal(false); // 语言切换下拉开关
-  let langRef: HTMLDivElement | undefined; // 语言切换下拉容器
-  let recordingCleanup: (() => void) | null = null; // 录制模式清理函数
+  } | null>(null); // Conflict confirmation dialog state
+  const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // Reset-all confirmation state
+  const [langOpen, setLangOpen] = createSignal(false); // Language dropdown open state
+  let langRef: HTMLDivElement | undefined; // Language dropdown container
+  let recordingCleanup: (() => void) | null = null; // Recording-mode cleanup function
 
   onMount(() => {
     const onDocMouse = (e: MouseEvent) => {
@@ -94,7 +94,7 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * 初始化 HSL 状态和获取应用版本
+   * Initialize HSL state and fetch the app version
    */
   onMount(async () => {
     const initialHsl = hexToHsl(themeColor());
@@ -109,7 +109,7 @@ const AppSettings: Component = () => {
       console.error('获取版本失败', e);
     }
 
-    // 加载系统自启配置
+    // Load the auto-start config
     try {
       const cfg = await loadAppConfig();
       if (typeof cfg?.autoStartEnabled === 'boolean') {
@@ -127,7 +127,7 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * 监听全局主题色变化，同步更新本地 HSL 状态
+   * Track global theme color changes and sync local HSL state
    */
   createEffect(() => {
     const currentHex = themeColor();
@@ -146,9 +146,9 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * 处理色相/饱和度/亮度滑块输入
-   * @param {('h' | 's' | 'l')} type - 滑块类型
-   * @param {number} val - 滑块数值
+   * Handle hue/saturation/lightness slider input
+   * @param {('h' | 's' | 'l')} type - Slider type
+   * @param {number} val - Slider value
    */
   const handleSliderUpdate = (type: 'h' | 's' | 'l', val: number) => {
     let nextH = h();
@@ -171,7 +171,7 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 手动检查更新：调用后端 check_app_update，根据结构化结果更新 toast 状态和按钮提示
+   * Manual update check: calls backend check_app_update, then updates toast state and button hint from the structured result
    */
   const handleManualCheck = async () => {
     setCheckUpdating(true);
@@ -195,7 +195,7 @@ const AppSettings: Component = () => {
         case 'service_not_ready':
         case 'network':
         case 'failed':
-          // 这几种情况都不弹左下角 Toast
+          // These kinds never show the bottom-left toast
           break;
       }
     } catch (e) {
@@ -213,7 +213,7 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 把结构化的检查结果翻译为显示在按钮旁的提示文字
+   * Map the structured check result to the hint text shown next to the button
    */
   const checkResultMessage = (): string => {
     const r = checkResult();
@@ -233,9 +233,9 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * Hex 颜色转 RGB 对象
-   * @param {string} hex - Hex 颜色字符串
-   * @returns {{r: number, g: number, b: number}} RGB 分量对象
+   * Convert a Hex color to an RGB object
+   * @param {string} hex - Hex color string
+   * @returns {{r: number, g: number, b: number}} RGB component object
    */
   const hexToRgb = (hex: string) => {
     const r = parseInt(hex.slice(1, 3), 16) || 0;
@@ -245,9 +245,9 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * Hex 颜色转 HSL 对象
-   * @param {string} hex - Hex 颜色字符串
-   * @returns {{h: number, s: number, l: number}} HSL 分量对象（h:0-360, s/l:0-100）
+   * Convert a Hex color to an HSL object
+   * @param {string} hex - Hex color string
+   * @returns {{h: number, s: number, l: number}} HSL component object (h: 0-360, s/l: 0-100)
    */
   const hexToHsl = (hex: string) => {
     let { r, g, b } = hexToRgb(hex);
@@ -280,9 +280,9 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 环形色盘交互处理：将鼠标/触摸位置映射为色相角度
-   * @param {MouseEvent | TouchEvent} e - 鼠标或触摸事件
-   * @param {DOMRect} rect - 色环元素的边界
+   * Ring color-wheel interaction: map the mouse/touch position to a hue angle
+   * @param {MouseEvent | TouchEvent} e - Mouse or touch event
+   * @param {DOMRect} rect - Bounds of the ring element
    */
   const handleRingInteraction = (e: MouseEvent | TouchEvent, rect: DOMRect) => {
     const centerX = rect.left + rect.width / 2;
@@ -296,7 +296,7 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 计算色环指示点位置（基于当前色相）
+   * Compute the ring indicator position (from the current hue)
    */
   const pointerStyle = createMemo(() => {
     const rad = ((h() - 90) * Math.PI) / 180;
@@ -310,11 +310,11 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * HSL 颜色转 Hex 字符串
-   * @param {number} h - 色相 (0-360)
-   * @param {number} s - 饱和度 (0-100)
-   * @param {number} l - 亮度 (0-100)
-   * @returns {string} Hex 颜色字符串
+   * Convert an HSL color to a Hex string
+   * @param {number} h - Hue (0-360)
+   * @param {number} s - Saturation (0-100)
+   * @param {number} l - Lightness (0-100)
+   * @returns {string} Hex color string
    */
   const hslToHex = (h: number, s: number, l: number) => {
     l /= 100;
@@ -331,13 +331,13 @@ const AppSettings: Component = () => {
     return `#${f(0)}${f(8)}${f(4)}`;
   };
 
-  const rgb = createMemo(() => hexToRgb(themeColor())); // 当前主题色的 RGB 值
+  const rgb = createMemo(() => hexToRgb(themeColor())); // RGB value of the current theme color
 
-  // ---- 快捷键录制逻辑 ----
+  // ---- Shortcut recording logic ----
 
-  /** 开始录制快捷键 */
+  /** Start recording a shortcut */
   const startRecording = (actionId: string) => {
-    // 先清理之前的录制
+    // Clean up any previous recording first
     if (recordingCleanup) {
       recordingCleanup();
       recordingCleanup = null;
@@ -351,21 +351,21 @@ const AppSettings: Component = () => {
       e.preventDefault();
       e.stopPropagation();
 
-      // 检查冲突
+      // Check for conflicts
       const conflictId = getActionByKeys(combo);
       if (conflictId && conflictId !== actionId) {
-        // 有冲突，弹确认框
+        // Conflict found: show the confirmation dialog
         setConflictDialog({
           actionId,
           newKeys: combo,
           conflictActionId: conflictId,
         });
       } else {
-        // 无冲突，直接设置
+        // No conflict: apply directly
         setShortcutBinding(actionId, combo);
       }
 
-      // 停止录制
+      // Stop recording
       stopRecording();
     };
 
@@ -375,7 +375,7 @@ const AppSettings: Component = () => {
     };
   };
 
-  /** 停止录制 */
+  /** Stop recording */
   const stopRecording = () => {
     setRecordingActionId(null);
     if (recordingCleanup) {
@@ -384,7 +384,7 @@ const AppSettings: Component = () => {
     }
   };
 
-  /** 处理冲突确认：覆盖 */
+  /** Handle conflict confirmation: override */
   const handleConflictOverride = () => {
     const d = conflictDialog();
     if (d) {
@@ -393,15 +393,15 @@ const AppSettings: Component = () => {
     setConflictDialog(null);
   };
 
-  /** 处理冲突确认：取消 */
+  /** Handle conflict confirmation: cancel */
   const handleConflictCancel = () => {
     setConflictDialog(null);
   };
 
-  // 点击页面其他地方取消录制
+  // Clicking elsewhere on the page cancels recording
   const onDocClick = (e: MouseEvent) => {
     if (recordingActionId()) {
-      // 检查点击是否在快捷键徽章上
+      // Check whether the click is on a shortcut badge
       const target = e.target as HTMLElement;
       if (
         !target.closest(
@@ -422,10 +422,10 @@ const AppSettings: Component = () => {
     if (recordingCleanup) recordingCleanup();
   });
 
-  // 所有注册的命令（用于设置列表显示）
+  // All registered commands (displayed in the settings list)
   const allCommands = createMemo(() => getRegisteredCommands());
 
-  // 按类别分组
+  // Grouped by category
   const groupedCommands = createMemo(() => {
     const groups: { category: string; label: string; items: CommandAction[] }[] = [];
     const seen = new Set<string>();
@@ -602,7 +602,7 @@ const AppSettings: Component = () => {
                   await apiSetAutoStart(val);
                 } catch (err) {
                   console.warn('设置自启失败:', err);
-                  setAutoStart(!val); // 回滚
+                  setAutoStart(!val); // Roll back
                 }
               }}
             />
@@ -795,7 +795,7 @@ const AppSettings: Component = () => {
                 </span>
               </div>
 
-              {/* gate-allow: color 色相旋钮光晕（色相选择器 UI 原语，白色基底） */}
+              {/* gate-allow: color hue knob glow (hue picker UI primitive, white base) */}
               <div
                 class="absolute top-1/2 left-1/2 w-[18px] h-[18px] border-[3px] border-white rounded-full shadow-[0_0_5px_#fff,inset_0_0_10px_#fff] pointer-events-none z-[3]"
                 style={pointerStyle()}
@@ -850,7 +850,7 @@ const AppSettings: Component = () => {
                 value={l()}
                 class="custom-slider light-slider"
                 style={{
-                  background: `linear-gradient(to right, #000, hsl(${h()}, ${s()}%, 50%), #fff)`, // gate-allow: color 色相条黑白锚点
+                  background: `linear-gradient(to right, #000, hsl(${h()}, ${s()}%, 50%), #fff)`, // gate-allow: color hue bar black/white anchors
                 }}
                 onInput={(e) => handleSliderUpdate('l', parseInt(e.currentTarget.value))}
               />
@@ -859,7 +859,7 @@ const AppSettings: Component = () => {
         </div>
       </div>
 
-      {/* 快捷键设置面板 */}
+      {/* Shortcut settings panel */}
       <div
         class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in"
         style={{
@@ -884,7 +884,7 @@ const AppSettings: Component = () => {
           </button>
         </div>
 
-        {/* 恢复全部确认对话框 */}
+        {/* Reset-all confirmation dialog */}
         <Show when={resetAllConfirm()}>
           <div
             class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -916,7 +916,7 @@ const AppSettings: Component = () => {
           </div>
         </Show>
 
-        {/* 冲突确认对话框 */}
+        {/* Conflict confirmation dialog */}
         <Show when={conflictDialog()}>
           <div
             class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -952,7 +952,7 @@ const AppSettings: Component = () => {
           </div>
         </Show>
 
-        {/* 快捷键列表（按类别分组） */}
+        {/* Shortcut list (grouped by category) */}
         <For each={groupedCommands()}>
           {(group) => (
             <div class="mb-4 last:mb-0">
@@ -982,7 +982,7 @@ const AppSettings: Component = () => {
                         </span>
                       </div>
                       <div class="flex items-center gap-2 shrink-0">
-                        {/* 快捷键徽章 */}
+                        {/* Shortcut badge */}
                         <div
                           class={`inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]${isRecording() ? ' recording' : ''}${modified() ? ' modified' : ''}`}
                           onClick={() => {
@@ -1001,7 +1001,7 @@ const AppSettings: Component = () => {
                           <Show
                             when={!isRecording()}
                             fallback={
-                              // gate-allow: color 色相预览白字（截屏预览 UI 原语）
+                              // gate-allow: color hue preview in white (screenshot preview UI primitive)
                               <span class="text-[11px] font-medium" style={{ color: '#fff' }}>
                                 {t('app.shortcuts.recording')}
                               </span>
@@ -1022,7 +1022,7 @@ const AppSettings: Component = () => {
                           </Show>
                         </div>
 
-                        {/* 重置按钮（仅修改后显示） */}
+                        {/* Reset button (shown only when modified) */}
                         <Show when={modified()}>
                           <button
                             class={'w-[22px] h-[22px] text-white/30 hover:text-white/60 ' + btnIcon}
@@ -1044,7 +1044,7 @@ const AppSettings: Component = () => {
           )}
         </For>
 
-        {/* 无命令时的空状态 */}
+        {/* Empty state when there are no commands */}
         <Show when={allCommands().length === 0}>
           <div
             class="text-center py-8 text-[13px]"

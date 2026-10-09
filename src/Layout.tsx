@@ -1,7 +1,7 @@
 /**
  * @file Layout.tsx
- * @description 应用的通用布局组件, 整窗为统一亚克力面板(NavBar + 页面共享同块玻璃),
- * 背景为静态多色渐变(不受主题色影响), 主题色仅作用于按钮/开关等交互元素.
+ * @description Root layout component: the whole window is a single acrylic panel (NavBar + pages share one glass surface);
+ * the background is a static multi-color gradient (unaffected by the theme color), and the theme color only applies to interactive elements like buttons and switches.
  */
 import NavBar from './shared/components/NavBar';
 import UpdateNotification from './shared/components/UpdateNotification';
@@ -34,39 +34,39 @@ import {
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
 
 /**
- * Layout 组件
- * @param props - 包含 children (当前匹配路由指向的组件内容)
- * @returns 返回一个包含通用导航和过渡动画的内容区域
+ * Layout component
+ * @param props - contains children (the matched route's component content)
+ * @returns a content area with global navigation and transition animations
  */
 const Layout: Component<ParentProps> = (props) => {
-  // 窗口是否处于最大化（透明窗口下最大化时应取消圆角，避免四角透出桌面）
+  // Whether the window is maximized (a transparent window should drop rounded corners when maximized so the desktop doesn't show through the corners)
   const [windowMaximized, setWindowMaximized] = createSignal(false);
   const appWindow = new Window('main');
   let unlistenDiagnostics: (() => void) | undefined;
   let unlistenResized: (() => void) | undefined;
 
   /**
-   * 应用启动时自动检查更新
-   * 流程：延迟 1.5s（避开首屏渲染高峰）→ 调用 check_app_update
-   *      → 若发现新版本且未被用户忽略则点亮左下角 Toast
+   * Check for app updates automatically on startup
+   * Flow: delay 1.5s (to avoid the first-paint peak) -> call check_app_update
+   *      -> if a new version is found and not user-ignored, light up the bottom-left Toast
    */
   onMount(async () => {
     const currentVersion = await getVersion().catch(() => '');
 
-    // 初始化最大化状态，并在窗口尺寸变化时同步（控制圆角）
+    // Initialize the maximized state and keep it in sync on window resize (drives rounded corners)
     setWindowMaximized(await appWindow.isMaximized().catch(() => false));
     unlistenResized = await appWindow.onResized(async () => {
       setWindowMaximized(await appWindow.isMaximized().catch(() => false));
     });
 
-    // 启动时重置一次性状态（防止上次会话残留）
+    // Reset one-shot state on startup (guards against leftovers from the previous session)
     setAppUpdateAvailable(false);
     setAppUpdateDismissed(false);
     setAppUpdateDownloading(false);
     setAppUpdateProgress(0);
     setAppUpdateReady(false);
 
-    // 监听 LSP 诊断更新事件
+    // Listen for LSP diagnostics update events
     unlistenDiagnostics = await listen<LspDiagnosticsUpdatePayload>(
       'lsp-diagnostics-updated',
       (event) => {
@@ -74,7 +74,7 @@ const Layout: Component<ParentProps> = (props) => {
       },
     );
 
-    // 异步加载模型目录（不阻塞首屏，由 settings 页面按需使用）
+    // Load the models catalog asynchronously (non-blocking for first paint; consumed on demand by the settings page)
     setModelsCatalogStatus('loading');
     loadModelsCatalog()
       .then((c) => {
@@ -88,12 +88,12 @@ const Layout: Component<ParentProps> = (props) => {
       })
       .catch(() => setModelsCatalogStatus('failed'));
 
-    // 异步加载 provider 配置（启动后做一次）
+    // Load provider configs asynchronously (once after startup)
     loadProviderConfigs()
       .then((file) => setProviderConfigs(file.providers))
       .catch((e) => console.warn('[provider-configs] 启动加载失败:', e));
 
-    // 静默后台检查 catalog 更新（仅在已加载完成后再触发，避免阻塞首屏）
+    // Silently check for catalog updates in the background (fires only after the initial load completes, to avoid blocking first paint)
     setTimeout(async () => {
       try {
         const result = await updateModelsCatalog();
@@ -117,7 +117,7 @@ const Layout: Component<ParentProps> = (props) => {
 
         if (result.kind === 'update_available') {
           const info = result.info;
-          // 用户已经点过"稍后"过该版本就不再提示
+          // Skip re-prompting if the user already snoozed this version
           if (getIgnoredUpdateVersion() === info.version) return;
 
           setAppUpdateInfo({
@@ -128,16 +128,16 @@ const Layout: Component<ParentProps> = (props) => {
           });
           setAppUpdateAvailable(true);
         }
-        // 其他情况：up_to_date / service_not_ready / network / failed → 静默不打扰
+        // Other cases: up_to_date / service_not_ready / network / failed -> stay silent
       } catch (e) {
-        // 网络失败静默处理，不打扰用户
+        // Handle network failures silently; do not disturb the user
         console.warn('启动时检查更新失败:', e);
       }
     }, 1500);
   });
 
   onCleanup(() => {
-    // 清理 LSP 事件监听与窗口尺寸监听
+    // Clean up the LSP diagnostics listener and the window resize listener
     unlistenDiagnostics?.();
     unlistenResized?.();
   });

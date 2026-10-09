@@ -1,7 +1,7 @@
 //! MCP Tauri Commands
 //!
-//! 提供前端调用的 MCP 命令（配置 CRUD、连接生命周期、工具/资源/提示拉取、
-//! 工具调用与审批）；MCP 运行时状态由 [`McpServerState`] 持有。
+//! MCP commands invoked by the frontend (config CRUD, connection lifecycle, tool/resource/prompt
+//! fetching, tool invocation and approvals); MCP runtime state is held by [`McpServerState`].
 
 use crate::core::events as ev;
 use crate::core::models::*;
@@ -54,14 +54,14 @@ fn emit_status_full(
     );
 }
 
-/// 列出 MCP server 配置（全局与项目级合并视图）。
+/// List MCP server configs (global merged with project-level view).
 ///
-/// # 参数
-/// - `project_id` — 传入时叠加该项目的 `.aio/mcp-servers.json`（项目级同名 server
-///   覆盖全局）；缺省仅返回全局配置
+/// # Parameters
+/// - `project_id` — when provided, overlays the project's `.aio/mcp-servers.json` (a
+///   project-level server with the same name overrides the global one); global-only by default
 ///
-/// # 返回
-/// 合并后的配置列表；env 中的密钥以 `${KEYRING:...}` 占位符形式返回，不含明文。
+/// # Returns
+/// The merged config list; env secrets come back as `${KEYRING:...}` placeholders, never plaintext.
 #[tauri::command]
 pub async fn list_mcp_servers(
     app: AppHandle,
@@ -70,11 +70,11 @@ pub async fn list_mcp_servers(
     mcp::list_configs_merged(&app, project_id.as_deref()).map_err(|e| e.to_string())
 }
 
-/// 新增或更新（按 id upsert）一个 MCP server 配置。
+/// Add or update (upsert by id) an MCP server config.
 ///
-/// # 参数
-/// - `config` — server 配置；env 中的密钥先写入 keyring，落盘仅保存占位符
-/// - `project_id` — 传入时写入项目级配置，否则写入全局配置
+/// # Parameters
+/// - `config` — server config; env secrets go to the keyring first, only placeholders are persisted
+/// - `project_id` — when provided, writes to the project-level config, otherwise the global one
 #[tauri::command]
 pub async fn add_mcp_server(
     app: AppHandle,
@@ -90,12 +90,12 @@ pub async fn add_mcp_server(
     }
 }
 
-/// MCP 专用的项目路径解析。
+/// Project path resolution dedicated to MCP.
 fn resolve_project_path_mcp(app: &AppHandle, project_id: &str) -> Result<String, String> {
     mcp::resolve_project_path(app, project_id).map_err(|e| e.to_string())
 }
 
-/// 解析项目路径（返回 Option，不报错）。
+/// Resolve a project path (returns Option, reports no error).
 fn resolve_project_path_mcp_opt(app: &AppHandle, project_id: &str) -> Option<String> {
     mcp::resolve_project_path(app, project_id).ok()
 }
@@ -123,11 +123,12 @@ pub async fn save_mcp_server_secret(
     Ok(format!("${{KEYRING:{}}}", account))
 }
 
-/// 删除 MCP server：先优雅停止运行中的实例（abort 在途调用 + 插件 stop 清理
-/// HTTP 状态），再从配置中移除，并清理其 keyring 中的环境变量密钥。
+/// Remove an MCP server: first gracefully stop the running instance (abort in-flight
+/// calls + plugin stop to clean up HTTP state), then remove it from the config and
+/// delete its env secrets from the keyring.
 ///
-/// # 参数
-/// - `id` — server ID；`project_id` — 传入时删除项目级配置，否则删全局
+/// # Parameters
+/// - `id` — server ID; `project_id` — when provided, deletes the project-level config, otherwise the global one
 #[tauri::command]
 pub async fn remove_mcp_server(
     app: AppHandle,
@@ -137,7 +138,7 @@ pub async fn remove_mcp_server(
     id: String,
     project_id: Option<String>,
 ) -> Result<(), String> {
-    // 复用 stop_mcp_server 的清理逻辑：abort 在途调用 + plugin.stop（清理 HTTP_STATES）
+    // Reuse the stop_mcp_server cleanup logic: abort in-flight calls + plugin.stop (clears HTTP_STATES)
     {
         let prefix = format!("mcp:{}:", id);
         requests.0.retain(|k, _| !k.starts_with(&prefix));
@@ -153,7 +154,7 @@ pub async fn remove_mcp_server(
             let _ = plugin.stop(conn_owned).await;
         }
     }
-    // 清理 keyring 中该 server 的所有 env 密钥
+    // Delete all of this server's env secrets from the keyring
     let cfg = mcp::get_config_merged(&app, &id, project_id.as_deref());
     if let Some(cfg) = cfg {
         let entries = match &cfg.transport {
@@ -185,14 +186,14 @@ pub async fn remove_mcp_server(
     Ok(())
 }
 
-/// 启动并连接一个 MCP server：握手初始化后拉取其工具列表。
+/// Start and connect to an MCP server: initialize handshake, then fetch its tool list.
 ///
-/// # 参数
-/// - `id` — server ID（在合并配置中查找）；`project_id` — 叠加项目级配置
+/// # Parameters
+/// - `id` — server ID (looked up in the merged config); `project_id` — overlays project-level config
 ///
-/// # 返回
-/// 该 server 的工具规格（OpenAI 函数调用格式）；过程通过 `mcp-server-status`
-/// 事件向前端广播 Connecting/Connected/Error。
+/// # Returns
+/// The server's tool specs (OpenAI function-call format); progress is broadcast to the
+/// frontend as Connecting/Connected/Error via the `mcp-server-status` event.
 #[tauri::command]
 pub async fn start_mcp_server(
     app: AppHandle,
@@ -229,19 +230,19 @@ pub async fn start_mcp_server(
     })?;
     let conn = Arc::new(conn);
 
-    // 协议握手
+    // Protocol handshake
     let server_info = plugin
         .initialize(&conn)
         .await
         .map_err(|e| ierr!("MCP initialize 失败: {}", "MCP initialize failed: {}", e))?;
 
-    // 拉取工具列表
+    // Fetch the tool list
     let tools = plugin
         .list_tools(&conn)
         .await
         .map_err(|e| ierr!("MCP tools/list 失败: {}", "MCP tools/list failed: {}", e))?;
 
-    // 应用 enabled_tools 白名单
+    // Apply the enabled_tools allowlist
     let filtered: Vec<ToolSpec> = if config.enabled_tools.is_empty() {
         tools.clone()
     } else {
@@ -252,7 +253,7 @@ pub async fn start_mcp_server(
             .collect()
     };
 
-    // 仅当服务端声明了 resources 能力时才拉取资源列表
+    // Only fetch the resource list when the server declares the resources capability
     let (_resources, resource_count) = if server_info
         .capabilities
         .as_ref()
@@ -273,7 +274,7 @@ pub async fn start_mcp_server(
         (None, 0)
     };
 
-    // 仅当服务端声明了 prompts 能力时才拉取提示词列表
+    // Only fetch the prompt list when the server declares the prompts capability
     let (_prompts, prompt_count) = if server_info
         .capabilities
         .as_ref()
@@ -311,11 +312,12 @@ pub async fn start_mcp_server(
     Ok(filtered)
 }
 
-/// 停止一个运行中的 MCP server：abort 其在途工具调用、调用传输插件 stop
-/// （stdio 结束子进程 / HTTP 清理状态表），并从运行状态表中移除。
+/// Stop a running MCP server: abort its in-flight tool calls, invoke the transport
+/// plugin's stop (stdio terminates the child process / HTTP clears its state table),
+/// and remove the entry from the runtime state table.
 ///
-/// # 参数
-/// - `id` — server ID；未在运行时静默成功（幂等）
+/// # Parameters
+/// - `id` — server ID; succeeds silently when not running (idempotent)
 #[tauri::command]
 pub async fn stop_mcp_server(
     app: AppHandle,
@@ -324,7 +326,7 @@ pub async fn stop_mcp_server(
     requests: State<'_, McpRequestManager>,
     id: String,
 ) -> Result<(), String> {
-    // 先 abort 该 server 的在途调用
+    // First abort this server's in-flight calls
     let prefix = format!("mcp:{}:", id);
     requests.0.retain(|k, _| !k.starts_with(&prefix));
 
@@ -335,10 +337,10 @@ pub async fn stop_mcp_server(
     if let Some(conn) = conn_opt {
         let transport_id = conn.transport_kind.clone();
         if let Some(plugin) = mgr.get(&transport_id) {
-            // stop 需要 owned conn，这里 unwrap Arc
+            // stop needs an owned conn; unwrap the Arc here
             let conn_owned = Arc::try_unwrap(conn).unwrap_or_else(|arc| {
-                // 仍有其他引用：强行 take 一个新连接很复杂，这里直接 clone
-                // 实际上 plugin::stop 通常只调用 close()，可接受共享
+                // Other references remain: forcibly taking a new connection is complex, so clone;
+                // plugin::stop in practice only calls close(), so sharing is acceptable
                 (*arc).clone()
             });
             let _ = plugin.stop(conn_owned).await;
@@ -348,11 +350,11 @@ pub async fn stop_mcp_server(
     Ok(())
 }
 
-/// 返回运行状态表中所有 server 的状态摘要。
+/// Return a status summary for every server in the runtime state table.
 ///
-/// # 返回
-/// id → 状态信息（仅含已连接条目；工具/资源计数在此为占位 0，准确计数由
-/// `mcp-server-status` 事件推送）。
+/// # Returns
+/// id → status info (connected entries only; tool/resource counts are placeholder 0
+/// here, accurate counts are pushed via the `mcp-server-status` event).
 #[tauri::command]
 pub async fn list_mcp_server_status(
     state: State<'_, McpServerState>,
@@ -375,14 +377,14 @@ pub async fn list_mcp_server_status(
     Ok(out)
 }
 
-/// 列出所有已连接 MCP server 的工具（并发向各 server 发起 tools/list）。
+/// List tools from every connected MCP server (sends tools/list to each server).
 ///
-/// # 参数
-/// - `project_id` — 仅用于配置视图；已连接集合由运行状态表决定
+/// # Parameters
+/// - `project_id` — only used for the config view; the connected set comes from the runtime state table
 ///
-/// # 返回
-/// 合并后的工具规格列表（工具名带 server 命名空间）；单个 server 拉取失败不阻塞
-/// 其余 server，其工具被跳过。
+/// # Returns
+/// The merged tool spec list (tool names carry the server namespace); one server failing
+/// to fetch does not block the others, its tools are skipped.
 #[tauri::command]
 pub async fn list_mcp_tools(
     app: AppHandle,
@@ -390,13 +392,13 @@ pub async fn list_mcp_tools(
     state: State<'_, McpServerState>,
     project_id: Option<String>,
 ) -> Result<Vec<ToolSpec>, String> {
-    // 1) 取出所有 server_id 后立即释放锁
+    // 1) Collect all server_ids, then release the lock immediately
     let ids: Vec<String> = {
         let map = state.lock();
         map.keys().cloned().collect()
     };
 
-    // 2) 收集 (id, conn, cfg, plugin) 全部准备好后再 await
+    // 2) Collect (id, conn, cfg, plugin) tuples; await only once everything is ready
     let mut jobs: Vec<(
         McpServerConfig,
         Arc<dyn McpServerPlugin>,
@@ -423,7 +425,7 @@ pub async fn list_mcp_tools(
             jobs.push((cfg, plugin, conn));
         }
     }
-    // 3) 顺序调用（避免在循环中跨 await 持锁）
+    // 3) Call sequentially (avoids holding the lock across an await inside the loop)
     let mut all_tools = Vec::new();
     for (cfg, plugin, conn) in jobs {
         if let Ok(tools) = plugin.list_tools(&conn).await {
@@ -441,12 +443,13 @@ pub async fn list_mcp_tools(
     Ok(all_tools)
 }
 
-/// 按助手启用的 MCP server 列表聚合工具。
+/// Aggregate tools by the assistant's enabled MCP server list.
 ///
-/// - `mcp_server_ids`：前端传入该助手勾选的 server id 列表（opt-in，空 = 无工具）。
-/// - 仅遍历这些 id 中当前已连接的 server，应用各自 `enabled_tools` 白名单。
-/// - 返回扁平 `tools`（直接喂给 LLM）+ `tool_server_map`（toolName → serverId，供 call_mcp_tool 解析），
-///   替代前端不可靠的启发式查找。
+/// - `mcp_server_ids`: server ids the frontend selected for this assistant (opt-in; empty = no tools).
+/// - Only iterates the currently connected servers among those ids, applying each server's
+///   `enabled_tools` allowlist.
+/// - Returns flat `tools` (fed directly to the LLM) + `tool_server_map` (toolName → serverId,
+///   used by call_mcp_tool to resolve), replacing unreliable frontend heuristic lookup.
 #[tauri::command]
 pub async fn list_mcp_tools_for_assistant(
     app: AppHandle,
@@ -459,7 +462,7 @@ pub async fn list_mcp_tools_for_assistant(
         .await
 }
 
-/// 内部实现：供 `run_agent_turn` 后端复用，避免再次走 Tauri State 解包。
+/// Internal implementation: reused by the `run_agent_turn` backend so it skips the Tauri State unwrap.
 pub(crate) async fn list_mcp_tools_for_assistant_inner(
     app: &AppHandle,
     mgr: &McpServerManager,
@@ -467,7 +470,7 @@ pub(crate) async fn list_mcp_tools_for_assistant_inner(
     mcp_server_ids: Vec<String>,
     project_id: Option<String>,
 ) -> Result<AssistantTools, String> {
-    // 1) 收集入参 id 中已连接的 (cfg, plugin, conn)，先取出 conn 后立即释放锁
+    // 1) Collect connected (cfg, plugin, conn) for the input ids; take the conn out, then release the lock immediately
     let mut jobs: Vec<(
         McpServerConfig,
         Arc<dyn McpServerPlugin>,
@@ -495,7 +498,7 @@ pub(crate) async fn list_mcp_tools_for_assistant_inner(
         }
     }
 
-    // 2) 顺序拉取工具，应用白名单，构造 tools + tool_server_map
+    // 2) Fetch tools sequentially, apply the allowlists, and build tools + tool_server_map
     let mut tools = Vec::new();
     let mut tool_server_map: HashMap<String, String> = HashMap::new();
     for (cfg, plugin, conn) in jobs {
@@ -520,8 +523,8 @@ pub(crate) async fn list_mcp_tools_for_assistant_inner(
     })
 }
 
-/// 修改 `call_mcp_tool` 以加入权限检查（防御层）。
-/// 前端应预先通过 `check_tool_permission` 检查权限，但后端也做二次检查确保安全。
+/// `call_mcp_tool` enforces a permission check (defense in depth):
+/// the frontend should pre-check via `check_tool_permission`, but the backend re-checks for safety.
 #[tauri::command]
 pub async fn call_mcp_tool(
     app: AppHandle,
@@ -529,7 +532,7 @@ pub async fn call_mcp_tool(
     tool_name: String,
     arguments: Value,
     project_id: Option<String>,
-    // 当前 agent 模式（如 "normal", "auto", "plan", "off"），提供则进行权限检查
+    // Current agent mode (e.g. "normal", "auto", "plan", "off"); when provided, a permission check runs
     agent_mode: Option<String>,
 ) -> Result<ToolResult, String> {
     let mode = match agent_mode.as_deref() {
@@ -538,7 +541,7 @@ pub async fn call_mcp_tool(
         Some("plan") => AgentMode::Plan,
         _ => AgentMode::Off,
     };
-    // call_mcp_tool 路径无 CancellationToken，用一个新的（永不取消）
+    // The call_mcp_tool path has no CancellationToken; use a fresh one (never cancelled)
     let token = tokio_util::sync::CancellationToken::new();
     execute_tool_call(
         &app,
@@ -552,16 +555,16 @@ pub async fn call_mcp_tool(
     .await
 }
 
-/// 执行单个 MCP 工具调用：白名单 → 权限/审批 → spawn 调用 → 取结果。
+/// Execute a single MCP tool call: allowlist → permission/approval → spawn the call → collect the result.
 ///
-/// 供 `run_agent_turn`（带 CancellationToken，可被用户停止打断挂起审批）与
-/// `call_mcp_tool`（无取消，用独立 token）复用。MCP 全局状态通过 `AppHandle` 解析，
-/// 避免借用逃逸到 `tokio::spawn`。
+/// Reused by `run_agent_turn` (carries a CancellationToken so user stop can interrupt a
+/// pending approval) and `call_mcp_tool` (no cancellation, uses a dedicated token). MCP
+/// global state is resolved through `AppHandle` to avoid borrows escaping into `tokio::spawn`.
 ///
-/// - `call_id` 带 uuid，避免并发同名工具调用互相覆盖 handle（旧 bug：两个 `read_file` 共享 call_id
-///   导致一个报"已被中止"、一个泄漏）。
-/// - 审批等待用 `select!` 包 `request_tool_approval` 与 `token.cancelled()`，
-///   用户停止时立即打断挂起审批。
+/// - `call_id` carries a uuid so concurrent same-name tool calls cannot overwrite each
+///   other's handles.
+/// - Approval waiting wraps `request_tool_approval` and `token.cancelled()` in `select!`,
+///   so user stop immediately interrupts a pending approval.
 pub(crate) async fn execute_tool_call(
     app: &AppHandle,
     server_id: &str,
@@ -592,7 +595,7 @@ pub(crate) async fn execute_tool_call(
         ));
     }
 
-    // 权限检查（后端防御层）
+    // Permission check (backend defense layer)
     if *agent_mode != AgentMode::Off {
         let project_path = project_id.and_then(|pid| resolve_project_path_mcp_opt(app, pid));
         let custom_rules = project_path
@@ -607,8 +610,8 @@ pub(crate) async fn execute_tool_call(
             &custom_rules,
         );
 
-        // 未信任 server 的工具在 Auto/Workflow 下强制审批：防止自主模式对陌生
-        // 外部工具全放行（server 在设置中标记 trusted 后才随模式自动放行）。
+        // Force approval for untrusted-server tools under Auto/Workflow: autonomous mode must
+        // not blanket-allow unknown external tools (auto-allow only once the server is trusted in settings).
         let untrusted_auto = matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
             && action == PermissionAction::Allow
             && !cfg.trusted;
@@ -627,7 +630,7 @@ pub(crate) async fn execute_tool_call(
                 ));
             }
             PermissionAction::Ask => {
-                // 需要用户确认；用 select! 让取消可打断挂起审批
+                // Needs user confirmation; select! lets cancellation interrupt a pending approval
                 let reason = if untrusted_auto {
                     ierr!(
                         "工具 '{}' 来自未受信任的 MCP server「{}」，请在确认安全后执行（可在 MCP 设置中标记为受信任以跳过确认）",
@@ -683,7 +686,7 @@ pub(crate) async fn execute_tool_call(
         })?
     };
 
-    // 用 call_id 跟踪；带 uuid 保证唯一，避免并发同名调用互相覆盖 handle。
+    // Track by call_id; the uuid keeps it unique so concurrent same-name calls cannot overwrite each other's handles.
     let call_id = format!("mcp:{}:{}:{}", server_id, tool_name, uuid::Uuid::new_v4());
     let plugin_arc = plugin.clone();
     let conn_arc = conn.clone();
@@ -695,7 +698,7 @@ pub(crate) async fn execute_tool_call(
     });
     requests.0.insert(call_id.clone(), handle);
 
-    // 等待结果或取消
+    // Wait for the result or cancellation
     let entry = requests.0.remove(&call_id);
     let handle: tokio::task::JoinHandle<
         std::result::Result<ToolResult, crate::plugins::mcp::error::McpError>,
@@ -712,14 +715,14 @@ pub(crate) async fn execute_tool_call(
     }
 }
 
-/// 用给定（尚未保存）的配置做一次"试连接"：启动、握手、拉取工具列表后立即
-/// 断开，供设置页的"测试连接"使用。
+/// Run a one-off trial connection with the given (not yet saved) config: start, handshake,
+/// fetch the tool list, then disconnect immediately; backs the settings page's "test connection".
 ///
-/// # 参数
-/// - `config` — 待测配置；不会写入配置文件，也不会注册到运行状态表
+/// # Parameters
+/// - `config` — the config under test; not written to the config file, not registered in the runtime state table
 ///
-/// # 返回
-/// 连接成功时的工具规格列表；失败返回错误串。
+/// # Returns
+/// The tool spec list on success; an error string on failure.
 #[tauri::command]
 pub async fn test_mcp_server_connection(
     app: AppHandle,
@@ -744,32 +747,33 @@ pub async fn test_mcp_server_connection(
         .map_err(|e| e.to_string())?;
     plugin.initialize(&conn).await.map_err(|e| e.to_string())?;
     let tools = plugin.list_tools(&conn).await.map_err(|e| e.to_string())?;
-    // 测试完即关
+    // Close as soon as the test finishes
     let _ = plugin.stop(conn).await;
     Ok(tools)
 }
 
-// ====== 权限检查 ======
+// ====== Permission checks ======
 
-/// 权限检查结果（返回给前端）
+/// Permission check result (returned to the frontend)
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionCheckResult {
     pub action: String, // "allow" | "ask" | "deny"
-    /// 当 action = "ask" 时，包含审批请求 ID
+    /// When action = "ask", holds the approval request ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_id: Option<String>,
-    /// 拒绝/需要确认的原因说明
+    /// Reason explaining the deny or confirmation-required outcome
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 
-/// 检查工具调用的权限（预检）。
+/// Check tool call permission (pre-check).
 ///
-/// 前端在 `handleToolCall` 中先调用此命令，根据返回的 `action` 决定是否执行：
-/// - `"allow"` — 可直接调用 `call_mcp_tool`
-/// - `"ask"` — 需显示审批对话框，用户批准后再调用 `call_mcp_tool`
-/// - `"deny"` — 工具被禁止，跳过执行
+/// The frontend calls this command first in `handleToolCall` and decides whether to execute
+/// based on the returned `action`:
+/// - `"allow"` — may call `call_mcp_tool` directly
+/// - `"ask"` — show the approval dialog, then call `call_mcp_tool` once the user approves
+/// - `"deny"` — the tool is blocked, skip execution
 #[tauri::command]
 pub async fn check_tool_permission(
     app: AppHandle,
@@ -786,7 +790,7 @@ pub async fn check_tool_permission(
         _ => AgentMode::Off,
     };
 
-    // 加载项目级自定义规则
+    // Load project-level custom rules
     let project_path = project_id
         .as_ref()
         .and_then(|pid| resolve_project_path_mcp_opt(&app, pid));
@@ -825,12 +829,12 @@ pub async fn check_tool_permission(
     }
 }
 
-/// 审批结果负载（发送给前端的事件）
+/// Approval request payload (event sent to the frontend)
 ///
-/// 注意：字段名保持 **snake_case**，与其它 LLM 流式事件（`llm-tool-call`/`llm-chunk`）
-/// 保持一致。旧的 `rename_all="camelCase"` 会把 `approval_id` 序列化成 `approvalId`，
-/// 而前端按 `approval_id` 解构，导致全部 `undefined`、`respond_tool_approval` 永远失败、
-/// normal 模式每个写/删操作 60s 超时后报错。
+/// Note: field names must stay **snake_case**, consistent with the other LLM streaming
+/// events (`llm-tool-call`/`llm-chunk`). With `rename_all="camelCase"`, `approval_id` would
+/// serialize as `approvalId`, but the frontend destructures `approval_id`, leaving every
+/// field `undefined` and breaking `respond_tool_approval`.
 #[derive(Serialize, Clone, Debug)]
 pub struct ApprovalRequestPayload {
     pub approval_id: String,
@@ -838,22 +842,22 @@ pub struct ApprovalRequestPayload {
     pub tool_name: String,
     pub arguments: Value,
     pub reason: String,
-    /// 文件变更预览（unified diff），仅文件操作工具携带
+    /// File change preview (unified diff); only carried by file-operation tools
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_diff: Option<String>,
-    /// 受影响的文件路径
+    /// Affected file path
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
 }
 
-/// 发起一个需要用户确认的工具调用。
+/// Initiate a tool call that requires user confirmation.
 ///
-/// 在 `execute_tool_call` 中检测到权限为 `Ask` 时，会通过此流程：
-/// 1. 发送 `tool-approval-requested` 事件到前端
-/// 2. 阻塞等待前端调用 `respond_tool_approval`
-/// 3. 用户批准 → 继续执行；用户拒绝 → 返回错误
+/// When `execute_tool_call` detects permission `Ask`, the flow is:
+/// 1. Emit the `tool-approval-requested` event to the frontend
+/// 2. Block until the frontend calls `respond_tool_approval`
+/// 3. User approves → continue execution; user declines → return an error
 ///
-/// 超时分支会从 `PendingApprovals` 移除 sender，避免泄漏（旧 bug：超时后 sender 永留 map）。
+/// The timeout branch removes the sender from `PendingApprovals` to avoid leaking it.
 #[allow(
     clippy::too_many_arguments,
     reason = "approval events mirror the stable payload fields explicitly"
@@ -878,7 +882,7 @@ pub(crate) async fn request_tool_approval(
         },
     );
 
-    // 发送事件到前端
+    // Emit the event to the frontend
     let _ = app.emit(
         ev::TOOL_APPROVAL_REQUESTED,
         ApprovalRequestPayload {
@@ -892,18 +896,18 @@ pub(crate) async fn request_tool_approval(
         },
     );
 
-    // 等待前端响应（60s 超时）；超时/通道关闭时移除泄漏的 sender
+    // Wait for the frontend response (60s timeout); on timeout/channel close, remove the leaked sender
     match tokio::time::timeout(Duration::from_secs(60), rx).await {
-        Ok(Ok(true)) => Ok(()), // 用户批准
+        Ok(Ok(true)) => Ok(()), // user approved
         Ok(Ok(false)) => {
-            // 拒绝：sender 已被消费，无需移除
+            // Declined: the sender is already consumed, no removal needed
             Err(ierr!(
                 "用户已拒绝此操作",
                 "The user declined this operation"
             ))
         }
         Ok(Err(_)) => {
-            // channel 关闭：移除泄漏的 sender
+            // Channel closed: remove the leaked sender
             pending.remove(&approval_id);
             Err(ierr!(
                 "审批通道意外关闭",
@@ -911,7 +915,7 @@ pub(crate) async fn request_tool_approval(
             ))
         }
         Err(_) => {
-            // 超时：移除泄漏的 sender，否则永久驻留 PendingApprovals
+            // Timeout: remove the leaked sender, otherwise it stays in PendingApprovals forever
             pending.remove(&approval_id);
             Err(ierr!(
                 "等待用户确认超时（60s）",
@@ -921,14 +925,14 @@ pub(crate) async fn request_tool_approval(
     }
 }
 
-/// 前端调用此命令来响应工具调用审批。
+/// Command the frontend calls to respond to a tool call approval.
 ///
-/// # 参数
-/// - `approval_id`：审批请求 id
-/// - `approved`：是否批准
-/// - `always`：可选，"session" = 本次会话总是允许（P4.5，按审批上下文自动派生
-///   放行规则：execute_command → 命令首 token 前缀；文件写工具 → 同目录 glob；
-///   MCP 工具 → 同 server 同工具；其余 → 同工具名）
+/// # Parameters
+/// - `approval_id`: the approval request id
+/// - `approved`: whether the call is approved
+/// - `always`: optional, "session" = always allow for this session (derives an allow rule
+///   from the approval context: execute_command → first-token command prefix; file write
+///   tools → same-directory glob; MCP tools → same server + same tool; others → same tool name)
 #[tauri::command]
 pub async fn respond_tool_approval(
     pending: State<'_, PendingApprovals>,
@@ -950,8 +954,8 @@ pub async fn respond_tool_approval(
         .map_err(|_| ierr!("发送审批结果失败", "Failed to send approval result"))
 }
 
-/// 按审批上下文派生会话级放行规则（P4.5）。
-/// 规则优先级 50（高于内置默认）；Deny 规则（任意来源）仍然总是优先。
+/// Derive a session-level allow rule from the approval context.
+/// Rule priority is 50 (above built-in defaults); Deny rules (from any source) still always win.
 fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
     use crate::core::permission::{PermissionAction, PermissionRule};
     let mut rule = PermissionRule {
@@ -966,7 +970,7 @@ fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
     };
     match ctx.tool_name.as_str() {
         "execute_command" => {
-            // 命令首 token 前缀（如 cargo / npm / git）；token 级匹配防注入
+            // First-token command prefix (e.g. cargo / npm / git); token-level matching prevents injection
             let cmd = ctx
                 .arguments
                 .get("command")
@@ -977,7 +981,7 @@ fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
             }
         }
         "write_file" | "replace_in_file" | "delete_file" | "make_directory" => {
-            // 同目录放行（父目录 + 递归 glob）
+            // Allow the whole directory (parent dir + recursive glob)
             if let Some(path) = ctx.arguments.get("path").and_then(|v| v.as_str()) {
                 let parent = std::path::Path::new(path)
                     .parent()
@@ -987,7 +991,7 @@ fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
             }
         }
         _ => {
-            // MCP 工具：限定同 server（非内置 server 时）
+            // MCP tools: scope to the same server (when not a builtin server)
             if ctx.server_id != crate::core::ids::BUILTIN_SERVER_ID
                 && ctx.server_id != crate::core::ids::BUILTIN_FS_SERVER_ID
             {
@@ -1004,7 +1008,7 @@ fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
     crate::core::permission::add_session_rule(rule);
 }
 
-/// 列出指定 MCP server 的资源列表。
+/// List the resources of a given MCP server.
 #[tauri::command]
 pub async fn list_mcp_resources(
     mgr: State<'_, McpServerManager>,
@@ -1030,7 +1034,7 @@ pub async fn list_mcp_resources(
         .map_err(|e| ierr!("resources/list 失败: {}", "resources/list failed: {}", e))
 }
 
-/// 读取指定 MCP server 的一个资源。
+/// Read one resource of a given MCP server.
 #[tauri::command]
 pub async fn read_mcp_resource(
     mgr: State<'_, McpServerManager>,
@@ -1057,7 +1061,7 @@ pub async fn read_mcp_resource(
         .map_err(|e| ierr!("resources/read 失败: {}", "resources/read failed: {}", e))
 }
 
-/// 列出指定 MCP server 的提示词列表。
+/// List the prompts of a given MCP server.
 #[tauri::command]
 pub async fn list_mcp_prompts(
     mgr: State<'_, McpServerManager>,
@@ -1083,7 +1087,7 @@ pub async fn list_mcp_prompts(
         .map_err(|e| ierr!("prompts/list 失败: {}", "prompts/list failed: {}", e))
 }
 
-/// 获取指定 MCP server 的一个提示词。
+/// Get one prompt of a given MCP server.
 #[tauri::command]
 pub async fn get_mcp_prompt(
     mgr: State<'_, McpServerManager>,
@@ -1111,7 +1115,7 @@ pub async fn get_mcp_prompt(
         .map_err(|e| ierr!("prompts/get 失败: {}", "prompts/get failed: {}", e))
 }
 
-/// 测试用：列出已注册 transport 插件 identifier
+/// For testing: list registered transport plugin identifiers
 #[tauri::command]
 pub async fn list_mcp_transports(mgr: State<'_, McpServerManager>) -> Result<Vec<String>, String> {
     Ok(mgr.list().into_iter().map(|s| s.to_string()).collect())

@@ -1,10 +1,10 @@
-// LSP 域 Tauri 命令封装（与 commands/lsp.rs 对应）。
+// LSP domain Tauri command wrappers (mirrors commands/lsp.rs).
 import { invoke } from '@tauri-apps/api/core';
 
-/** 自动检测项目可用的语言服务器（返回 { languages: [{ languageId }] }）。 */
+/** Auto-detect language servers available for the project (returns { languages: [{ languageId }] }). */
 export const autoDetectLsp = (projectPath: string) =>
   invoke<{ languages: { languageId: string }[] }>('auto_detect_ls', { projectPath });
 
-/** 为某语言启动语言服务器。 */
+/** Start the language server for a language. */
 export const startLspServer = (projectPath: string, languageId: string) =>
   invoke<void>('start_lsp_server', { projectPath, languageId });

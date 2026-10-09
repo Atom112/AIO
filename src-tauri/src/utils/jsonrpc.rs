@@ -1,23 +1,23 @@
-//! JSON-RPC 待响应请求表（pending map）—— MCP 与 LSP 客户端公共机制。
+//! JSON-RPC pending-request map — shared mechanism for the MCP and LSP clients.
 //!
-//! 两边此前各自实现同一套：id 原子计数 + `DashMap<u64, oneshot::Sender<T>>`
-//! 注册/响应分发/超时取消清理（MCP connection.rs 与 LSP client.rs 各一份，易漂移）。
+//! Provides atomic id allocation plus a `DashMap<u64, oneshot::Sender<T>>` with
+//! registration / response dispatch / timeout-and-cancel cleanup.
 
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
-/// 等待响应失败的原因（调用方映射到自己的错误类型）。
+/// Reason a response wait failed (callers map it to their own error types).
 #[derive(Debug, Clone, Copy)]
 pub enum WaitError {
-    /// 发送端被丢弃（连接关闭 / 响应通道断开）
+    /// Sender dropped (connection closed / response channel broken)
     Canceled,
-    /// 超时（表项已自动清理）
+    /// Timed out (entry already cleaned up)
     Timeout(Duration),
 }
 
-/// id → oneshot 发送端的待响应表（含 id 原子分配）。
+/// Pending map from id to oneshot sender (with atomic id allocation).
 pub struct PendingMap<T> {
     map: DashMap<u64, oneshot::Sender<T>>,
     next_id: AtomicU64,
@@ -37,7 +37,7 @@ impl<T> PendingMap<T> {
         }
     }
 
-    /// 分配一个 id 并注册等待槽位，返回 (id, 接收端)。
+    /// Allocate an id and register a wait slot; returns (id, receiver).
     pub fn register(&self) -> (u64, oneshot::Receiver<T>) {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
@@ -45,17 +45,17 @@ impl<T> PendingMap<T> {
         (id, rx)
     }
 
-    /// 响应到达时取出发送端（notion：响应与请求一一对应，先到先得只能取一次）。
+    /// Take the sender when a response arrives (one response per request; first come, first served — can be taken only once).
     pub fn take(&self, id: u64) -> Option<oneshot::Sender<T>> {
         self.map.remove(&id).map(|(_, tx)| tx)
     }
 
-    /// 取消注册（发送失败 / 超时 / 被丢弃时清理，避免泄漏）。
+    /// Cancel a registration (cleaned up on send failure / timeout / drop to avoid leaks).
     pub fn cancel(&self, id: u64) {
         self.map.remove(&id);
     }
 
-    /// 等待响应；超时或发送端被丢弃时自动清理表项后返回 [`WaitError`]。
+    /// Wait for a response; on timeout or sender drop, cleans up the entry and returns [`WaitError`].
     pub async fn wait(
         &self,
         id: u64,

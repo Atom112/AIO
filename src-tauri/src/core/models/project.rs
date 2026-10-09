@@ -1,24 +1,24 @@
-//! 项目与用量域：项目索引、token 用量统计、子智能体 profile 模型覆盖。
+//! Project and usage domain: project index, token usage stats, and subagent profile model overrides.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// 项目定义：绑定到文件系统目录的逻辑分组单元。
+/// Project definition: a logical grouping unit bound to a filesystem directory.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
     pub id: String,
     pub name: String,
-    /// 绑定的文件系统目录绝对路径
+    /// Absolute path of the bound filesystem directory
     pub path: String,
     pub created_at: String,
     pub updated_at: String,
-    /// 该项目的对应助理 ID（创建项目时自动生成）
+    /// Assistant ID for this project (auto-generated at project creation)
     #[serde(rename = "assistantId")]
     pub assistant_id: String,
 }
 
-/// 项目持久化索引文件（app_data_dir/projects.json）。
+/// Project persistence index file (app_data_dir/projects.json).
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectsFile {
@@ -27,13 +27,13 @@ pub struct ProjectsFile {
     pub projects: BTreeMap<String, Project>,
 }
 
-// ====== Token 用量日志 ======
+// ====== Token usage log ======
 
-/// 用量摘要：按天聚合的 token 用量。
+/// Usage summary: token usage aggregated by day.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageSummary {
-    /// 日期（YYYY-MM-DD）
+    /// Date (YYYY-MM-DD)
     pub date: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
@@ -41,7 +41,7 @@ pub struct UsageSummary {
     pub request_count: i64,
 }
 
-/// 按模型聚合的用量摘要。
+/// Usage summary aggregated by model.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageSummaryByModel {
@@ -53,23 +53,23 @@ pub struct UsageSummaryByModel {
 }
 // ====== Per-Profile Model Override ======
 
-/// 子智能体 profile 的模型覆盖配置。
-/// 允许为每个 profile（explorer / coder / general）独立指定模型及连接信息，
-/// 使子智能体可以使用与主 Agent 不同的 provider。
+/// Model override config for a subagent profile.
+/// Lets each profile (explorer / coder / general) specify its own model and connection info,
+/// so subagents can use a different provider than the main agent.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileModelOverride {
-    /// 子智能体 profile 标识（"explorer" | "coder" | "general"）
+    /// Subagent profile id ("explorer" | "coder" | "general")
     pub profile_id: String,
-    /// 覆盖的模型 ID
+    /// Overriding model ID
     pub model_id: String,
-    /// 覆盖的 API 地址
+    /// Overriding API URL
     pub api_url: String,
-    /// 覆盖的 API Key
+    /// Overriding API key
     pub api_key: String,
 }
 
-/// profile-model-overrides.json 的磁盘格式
+/// On-disk format of profile-model-overrides.json
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileModelOverridesFile {

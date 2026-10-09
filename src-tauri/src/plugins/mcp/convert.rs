@@ -1,7 +1,7 @@
-//! MCP 响应 → 内部类型的转换辅助。
+//! Helpers for converting MCP responses into internal types.
 //!
-//! stdio 与 http 两种传输此前各自复制了 tools/list、tools/call、resources/list、
-//! prompts/list 四组映射逻辑（约 60 行），任一协议细节调整都要改两处。此处收敛为单实现。
+//! Single implementation of the tools/list, tools/call, resources/list and
+//! prompts/list mapping logic, shared by the stdio and http transports.
 
 use super::MAX_TOOLS_PER_SERVER;
 use crate::core::models::{
@@ -9,11 +9,11 @@ use crate::core::models::{
 };
 use serde_json::Value;
 
-/// `tools/list` 的 tools 数组 → OpenAI function calling 规格。
+/// `tools/list` tools array → OpenAI function calling spec.
 ///
-/// MCP 返回 `{ name, description, inputSchema }`，需转换为
-/// `{ type: "function", function: { name, description, parameters } }`；
-/// 无 name/description 的条目跳过，结果按 `MAX_TOOLS_PER_SERVER` 截断。
+/// MCP returns `{ name, description, inputSchema }`, which must be converted to
+/// `{ type: "function", function: { name, description, parameters } }`;
+/// entries without name/description are skipped, and the result is truncated to `MAX_TOOLS_PER_SERVER`.
 pub fn tools_to_specs(tools: Vec<Value>) -> Vec<ToolSpec> {
     tools
         .into_iter()
@@ -37,7 +37,7 @@ pub fn tools_to_specs(tools: Vec<Value>) -> Vec<ToolSpec> {
         .collect()
 }
 
-/// `tools/call` 的 result → ToolResult（`{ content: [...], isError: bool }`）。
+/// `tools/call` result → ToolResult (`{ content: [...], isError: bool }`).
 pub fn parse_call_tool_result(result: &Value) -> ToolResult {
     let content_val = result
         .get("content")
@@ -57,7 +57,7 @@ pub fn parse_call_tool_result(result: &Value) -> ToolResult {
     ToolResult { content, is_error }
 }
 
-/// `resources/list` 的 resources 数组 → McpResource 列表（解析失败条目跳过）。
+/// `resources/list` resources array → McpResource list (entries that fail to parse are skipped).
 pub fn parse_resources(resources: Vec<Value>) -> Vec<McpResource> {
     resources
         .into_iter()
@@ -65,7 +65,7 @@ pub fn parse_resources(resources: Vec<Value>) -> Vec<McpResource> {
         .collect()
 }
 
-/// `prompts/list` 的 prompts 数组 → McpPrompt 列表（解析失败条目跳过）。
+/// `prompts/list` prompts array → McpPrompt list (entries that fail to parse are skipped).
 pub fn parse_prompts(prompts: Vec<Value>) -> Vec<McpPrompt> {
     prompts
         .into_iter()
@@ -83,7 +83,7 @@ mod tests {
         let specs = tools_to_specs(vec![
             json!({"name": "read", "description": "读文件", "inputSchema": {"type": "object"}}),
             json!({"description": "缺少 name，应跳过"}),
-            json!({"name": "write"}), // 缺 description，跳过
+            json!({"name": "write"}), // missing description, skipped
         ]);
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].function.name, "read");
@@ -99,7 +99,7 @@ mod tests {
         }));
         assert!(r.is_error);
         assert_eq!(r.content.len(), 1);
-        // 缺字段时的默认值
+        // Defaults when fields are missing
         let empty = parse_call_tool_result(&json!({}));
         assert!(!empty.is_error);
         assert!(empty.content.is_empty());

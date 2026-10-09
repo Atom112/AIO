@@ -1,15 +1,15 @@
 /**
- * 子智能体独立对话视图。
+ * Standalone conversation view for a subagent.
  *
- * 从状态条右侧上拉菜单（或主代理时间线的紧凑卡片）进入，替换整个对话栏。
- * 消息流完全复用主话题的界面样式：
- * - 主代理下发的任务 → 右侧用户气泡（primary 底色，与主话题用户消息一致）
- * - 子代理每轮叙述 + 该轮工具执行 → 左侧助手气泡（头像 + text 底色，与主话题助手消息一致）
- * - 完成后的最终报告 → 最后一条左侧助手气泡（完整 Markdown）
- * - Header：左上角返回按钮 + 子智能体身份与状态 + 停止按钮
+ * Entered from the pull-up menu at the right of the status bar (or the compact card in the main agent timeline); replaces the whole conversation column.
+ * The message stream reuses the main topic's UI styles:
+ * - Task issued by the main agent -> right user bubble (primary background, same as main topic user messages)
+ * - Each subagent turn narration + its tool executions -> left assistant bubble (avatar + text background, same as main topic assistant messages)
+ * - Final report after completion -> last left assistant bubble (full Markdown)
+ * - Header: back button top-left + subagent identity and status + stop button
  *
- * 数据来源：父话题 assistant 消息 agentSteps 中的 type='subagent' 步骤
- * （subagentSteps / subagentResult 随消息持久化，重启后仍可回看）。
+ * Data source: type='subagent' steps in agentSteps of the parent topic's assistant messages
+ * (subagentSteps / subagentResult persist with the message and remain viewable after restart).
  */
 import {
   Component,
@@ -34,7 +34,7 @@ import {
 import { stopSubagent } from '../../../core/api/chat';
 import { btnGhost, btnIcon } from '../../../shared/components/buttonStyles';
 
-// ---- Profile 配置（自原 SubagentBlock 迁移；供紧凑卡片/菜单复用） ----
+// ---- Profile configuration (shared by the compact card and the pull-up menu) ----
 export interface SubagentProfileStyle {
   icon: IconName;
   color: string;
@@ -76,7 +76,7 @@ const DEFAULT_PROFILE: SubagentProfileStyle = {
   borderColor: 'rgba(156,163,175,0.2)',
 };
 
-/** profile id → 展示名（i18n） */
+/** profile id -> display name (i18n) */
 export function subagentProfileLabel(profileId?: string): string {
   switch (profileId) {
     case 'explorer':
@@ -92,12 +92,12 @@ export function subagentProfileLabel(profileId?: string): string {
   }
 }
 
-/** profile id → 颜色/图标样式 */
+/** profile id -> color/icon style */
 export function getSubagentProfileStyle(profileId?: string): SubagentProfileStyle {
   return PROFILE_STYLES[profileId || ''] || DEFAULT_PROFILE;
 }
 
-/** 毫秒 → 耗时文案 */
+/** milliseconds -> duration text */
 export function formatSubagentDuration(ms: number): string {
   if (ms < 50) return '0.1s';
   const seconds = ms / 1000;
@@ -107,7 +107,7 @@ export function formatSubagentDuration(ms: number): string {
   return t('agent.step.duration', { mins, secs });
 }
 
-// ---- 气泡内工具执行行（观感对齐主话题 AgentProcessBlock 的工具卡片） ----
+// ---- Tool execution row inside bubbles (visually matches the tool cards of the main topic's AgentProcessBlock) ----
 const ToolRow: Component<{ step: SubagentStep }> = (props) => (
   <div
     class="flex items-start gap-1.5 px-2 py-1 rounded-md text-[11px]"
@@ -128,21 +128,21 @@ const ToolRow: Component<{ step: SubagentStep }> = (props) => (
   </div>
 );
 
-/** 一个对话气泡：子代理某轮的叙述文本 + 该轮内执行的工具 */
+/** One conversation bubble: a subagent turn's narration text + tools executed within that turn */
 interface SubagentTurn {
   text: string;
   tools: SubagentStep[];
 }
 
 interface SubagentConversationViewProps {
-  /** 主代理当前话题（子代理步骤挂在其 assistant 消息的 agentSteps 上） */
+  /** The main agent's current topic (subagent steps live in agentSteps of its assistant messages) */
   topic: Topic | null;
 }
 
 const SubagentConversationView: Component<SubagentConversationViewProps> = (props) => {
   const step = createMemo(() => findSubagentStep(props.topic, activeSubagentView()));
 
-  // 兜底：消息被删除 / 话题数据消失时自动返回主对话
+  // Fallback: auto-return to the main conversation when the message is deleted or topic data disappears
   createEffect(() => {
     if (activeSubagentView() && !step()) setActiveSubagentView(null);
   });
@@ -155,7 +155,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
   const isError = () => step()?.status === 'error';
   const isComplete = () => step()?.status === 'complete';
 
-  // 实时计时器（工作中计时，完成后冻结为 duration）
+  // Live timer (ticks while running; freezes to duration when complete)
   const [elapsedMs, setElapsedMs] = createSignal(0);
   createEffect(() => {
     const s = step();
@@ -173,10 +173,10 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     }
   });
 
-  // 消息流分组：无 toolName 的 tool_call 步骤 = 子代理该轮的叙述文本（开启新气泡）；
-  // tool_result 步骤挂到当前气泡内；content 步骤与最终结果重复（由结果气泡展示），
-  // streaming 心跳与 thinking 步骤不渲染。
-  // 后端对空文本轮次发 "[工具调用]" 占位，按无文本处理（该轮气泡仅含工具行）。
+  // Message-stream grouping: a tool_call step without toolName is the subagent's narration for that turn (opens a new bubble);
+  // tool_result steps attach to the current bubble; content steps duplicate the final result (shown by the result bubble);
+  // streaming heartbeats and thinking steps are not rendered.
+  // The backend emits a bracketed "tool call" placeholder for empty-text turns; treat it as no text (that turn's bubble holds only tool rows).
   const turns = createMemo<SubagentTurn[]>(() => {
     const steps = step()?.subagentSteps || [];
     const out: SubagentTurn[] = [];
@@ -200,8 +200,8 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     return out;
   });
 
-  // 单独停止后台子智能体（仅 fire-and-forget 启动的在注册表中可查；
-  // 等待型子代理随整轮停止，此处点击为幂等 no-op）
+  // Stop a background subagent individually (only fire-and-forget ones are findable in the registry;
+  // awaited subagents stop together with the whole turn, so clicking here is an idempotent no-op)
   const [stopping, setStopping] = createSignal(false);
   const handleStop = async () => {
     const id = step()?.subagentId;
@@ -214,10 +214,10 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     }
   };
 
-  // ---- 自动滚动（复用主对话模式） ----
+  // ---- Auto-scroll (reuses the main conversation pattern) ----
   let bodyRef: HTMLDivElement | undefined;
-  // 内容包装层：流式跟底 ResizeObserver 的观察对象（bodyRef 是 flex-1 固定高度
-  // 滚动盒，观察它时内容增长不触发 RO；包装层高度随气泡内容真实增长）。
+  // Content wrapper layer: the element the stream-following ResizeObserver observes (bodyRef is a flex-1 fixed-height
+  // scroll box; observing it fires no RO on content growth, while the wrapper's height truly grows with the bubble content).
   let contentRef: HTMLDivElement | undefined;
   const [autoScroll, setAutoScroll] = createSignal(true);
   let userScrolledUp = false;
@@ -233,8 +233,8 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     if (!bodyRef) return;
     const el = bodyRef;
     const target = Math.max(0, el.scrollHeight - el.clientHeight);
-    // 仅在实际改变位置时压制回显事件：已在底部时（流式跟底的常见情形）
-    // 无事件产生，若仍置位 suppressScroll 会吃掉用户的下一个滚动事件
+    // Only suppress the echoed scroll event when the position actually changes: when already at the bottom (the common
+    // stream-following case) no event fires, and leaving suppressScroll set would swallow the user's next scroll event
     if (el.scrollTop < target) {
       suppressScroll = true;
       el.scrollTop = target;
@@ -270,7 +270,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     }
   });
 
-  // 进入视图时贴底
+  // Snap to bottom when entering the view
   createEffect(() => {
     if (step() && bodyRef) {
       queueMicrotask(() => {
@@ -279,7 +279,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     }
   });
 
-  // ---- 气泡渲染辅助（复用主话题 assistant 消息的样式） ----
+  // ---- Bubble rendering helpers (reuse the main topic assistant message styles) ----
   const avatar = () => {
     const ps = profileStyle();
     return (
@@ -296,7 +296,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     );
   };
 
-  /** 左侧助手气泡行（头像 + text 底色气泡，与主话题 assistant 消息同款） */
+  /** Left assistant bubble row (avatar + text-background bubble, same style as main topic assistant messages) */
   const agentRow = (children: JSX.Element) => (
     <div class="flex items-start gap-2 mb-3">
       {avatar()}
@@ -317,7 +317,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
 
   return (
     <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full">
-      {/* Header：左上角返回按钮 + 子智能体身份 + 停止 */}
+      {/* Header: back button top-left + subagent identity + stop */}
       <div
         class="flex items-center gap-2 px-3 h-10 shrink-0 border-b"
         style={{ 'border-color': 'var(--border-dim)' }}
@@ -390,7 +390,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
         </Show>
       </div>
 
-      {/* 消息流：与主话题同款（右用户气泡 + 左助手气泡） */}
+      {/* Message stream: same layout as the main topic (right user bubbles + left assistant bubbles) */}
       <div
         ref={bodyRef}
         class="flex-1 overflow-y-auto min-h-0"
@@ -399,7 +399,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
       >
         <div ref={contentRef} class="pt-3 pb-[15px]">
           <Show when={step()}>
-            {/* 主代理下发的任务：右侧用户气泡 */}
+            {/* Task issued by the main agent: right user bubble */}
             <Show when={taskText()}>
               <div class="flex items-start gap-2 mb-3 justify-end pr-[10px]">
                 <div class="flex flex-col items-end max-w-[75%]">
@@ -419,7 +419,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
               </div>
             </Show>
 
-            {/* 子代理各轮叙述 + 工具执行：左侧助手气泡 */}
+            {/* Subagent per-turn narration + tool executions: left assistant bubble */}
             <For each={turns()}>
               {(turn) =>
                 agentRow(
@@ -449,7 +449,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
               }
             </For>
 
-            {/* 工作中：尾随气泡（正在执行工具 / 等待下一轮输出） */}
+            {/* Working: trailing bubble (executing tools / waiting for the next turn's output) */}
             <Show when={isRunning()}>
               {agentRow(
                 <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
@@ -459,7 +459,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
               )}
             </Show>
 
-            {/* 出错：红色文本助手气泡 */}
+            {/* Error: red-text assistant bubble */}
             <Show when={isError()}>
               {agentRow(
                 <div
@@ -471,7 +471,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
               )}
             </Show>
 
-            {/* 完成后的最终报告：最后一条助手气泡（完整 Markdown） */}
+            {/* Final report after completion: last assistant bubble (full Markdown) */}
             <Show when={isComplete() && resultText()}>
               {agentRow(
                 <div class="mt-1 text-[13px] text-white/85">

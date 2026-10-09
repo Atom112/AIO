@@ -1,15 +1,14 @@
-//! 文本截断辅助 —— 全仓唯一来源。
+//! Text truncation helpers — single source of truth repo-wide.
 //!
-//! 历史上同名 "truncate" 有 6 份实现、3 种互不相同的语义（按字节 / 按字符 /
-//! 头尾保留），调用方极易选错。此处把语义写进函数名，并提供两种长度单位：
-//! - `chars`：按 Unicode 字符数（面向展示/提示文本）
-//! - `bytes`：按字节上限并落在字符边界（面向工具返回/命令输出，控制 token 与传输量）
+//! Semantics are baked into the function names, with two length units:
+//! - `chars`: by Unicode character count (for display/prompt text)
+//! - `bytes`: byte cap landing on a char boundary (for tool results/command output, controlling token and transfer size)
 
-/// 工具返回内容的最大字节数（20k 字符 ≈ 5-10k tokens）。
+/// Maximum bytes for tool result content (20k chars ≈ 5-10k tokens).
 pub const TOOL_RESULT_MAX_BYTES: usize = 20_000;
 
-/// 头部截断（按字符）：保留前 `max_chars` 个字符，超限追加 "…"。
-/// 适用于 UI 展示用的短摘要。
+/// Head truncation (by chars): keep the first `max_chars` characters, append "…" when over.
+/// Suitable for short UI-display summaries.
 pub fn truncate_chars_head(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         s.to_string()
@@ -18,7 +17,7 @@ pub fn truncate_chars_head(s: &str, max_chars: usize) -> String {
     }
 }
 
-/// 头部截断（按字节，自动落在字符边界）：超限追加 "[!] 已截断" 提示。
+/// Head truncation (by bytes, auto-landing on a char boundary): appends a "[!]" truncation notice when over.
 pub fn truncate_bytes_head(s: &str, limit: usize) -> String {
     if s.len() <= limit {
         return s.to_string();
@@ -31,8 +30,8 @@ pub fn truncate_bytes_head(s: &str, limit: usize) -> String {
     )
 }
 
-/// 头尾截断（按字符）：保留前 60% 与后 40%，中间以省略标记连接。
-/// 用于工作流步骤上下文等"需要保留首尾关键信息"的拼接场景。
+/// Head-tail truncation (by chars): keep the first 60% and last 40%, joined by an ellipsis marker.
+/// For assembled contexts (e.g. workflow step context) where both ends carry key information.
 pub fn truncate_chars_head_tail(s: &str, max_chars: usize) -> String {
     let total = s.chars().count();
     if total <= max_chars {
@@ -50,12 +49,12 @@ pub fn truncate_chars_head_tail(s: &str, max_chars: usize) -> String {
     )
 }
 
-/// 头尾截断（按字节，前 60% + 后 40%）—— 工具返回内容的默认截断策略。
+/// Head-tail truncation (by bytes, front 60% + back 40%) — default truncation strategy for tool results.
 ///
-/// 头尾保留而非只留头部：`read_file` 已保留文件首尾，若这里只留头部会把
-/// 尾部信息二次砍掉，导致模型探索时看不到关键内容。
+/// Keep both ends instead of head-only: `read_file` already preserves a file's head and tail;
+/// truncating to head-only here would cut the tail a second time, hiding key content from the model.
 pub fn truncate_tool_result(s: &str) -> String {
-    // 空结果统一替换为极短占位，避免垃圾进上下文
+    // Replace empty results with a very short placeholder to keep junk out of the context
     if s.trim().is_empty() {
         return "[无结果]".to_string();
     }
@@ -79,7 +78,7 @@ pub fn truncate_tool_result(s: &str) -> String {
     }
 }
 
-/// 命令/子进程输出截断（&[u8] → lossy String）：超限追加字节数说明。
+/// Command/subprocess output truncation (&[u8] → lossy String): appends byte-count info when over the limit.
 pub fn truncate_bytes_lossy(output: &[u8], limit: usize) -> String {
     if output.len() <= limit {
         String::from_utf8_lossy(output).into_owned()
@@ -101,14 +100,14 @@ mod tests {
     fn chars_head_keeps_head_only() {
         assert_eq!(truncate_chars_head("abcdef", 3), "abc…");
         assert_eq!(truncate_chars_head("abc", 3), "abc");
-        // 多字节字符不 panic、不切坏
+        // Multi-byte characters: no panic, no mid-character cut
         assert_eq!(truncate_chars_head("中文测试", 2), "中文…");
     }
 
     #[test]
     fn bytes_head_stays_on_char_boundary() {
         let s = "中文测试";
-        let out = truncate_bytes_head(s, 5); // 5 不是字符边界
+        let out = truncate_bytes_head(s, 5); // 5 is not a char boundary
         assert!(out.starts_with("中"), "输出: {out}");
         assert!(out.contains("[!]"));
     }

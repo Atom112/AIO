@@ -1,21 +1,21 @@
-//! P3-3 轻量知识图谱（Graphiti-lite）：LLM 从事实文本抽取实体-关系三元组，
-//! 写入 `facts_relations`（先删后插，幂等）。检索侧在 `retrieve::apply_graph_boost`
-//! 中以实体命中给结果加分（轻量字符串匹配，不做多跳图查询）。
+//! Lightweight knowledge graph (Graphiti-lite): the LLM extracts entity-relation triples from
+//! fact text and writes them to `facts_relations` (delete-then-insert, idempotent). The retrieval
+//! side boosts results on entity hits in `retrieve::apply_graph_boost` (light string matching, no multi-hop queries).
 
 use crate::services::memory::llm::{chat_json, llm_config};
 use crate::services::memory::store::MemoryStore;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-/// 图谱抽取报告（memory_graph_extract 命令返回）。
+/// Graph extraction report (returned by the memory_graph_extract command).
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphExtractReport {
-    /// 本次处理（抽取/尝试）的事实数
+    /// Number of facts processed (extraction attempts) this run
     pub facts_processed: usize,
-    /// 新增/覆写的关系三元组数
+    /// Number of relation triples inserted or overwritten
     pub relations: usize,
-    /// LLM 抽取失败的事实数
+    /// Number of facts whose LLM extraction failed
     pub failed: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -31,7 +31,7 @@ struct RelationItem {
     entity2: String,
 }
 
-/// 抽取单条事实的关系三元组（LLM 失败返回空）。
+/// Extract relation triples from a single fact (returns empty on LLM failure).
 async fn extract_from_fact(app: &AppHandle, content: &str) -> Vec<(String, String, String)> {
     let cfg = match llm_config(app) {
         Ok(c) => c,
@@ -66,7 +66,7 @@ fn score(importance: f32, access: i64) -> f32 {
     importance * (1.0 + 0.1 * (access.min(20)) as f32)
 }
 
-/// 批量抽取：按 importance × 访问加权分降序取前 limit 条尚无关系的 active 事实。
+/// Batch extraction: take the top limit active facts with no relations yet, sorted by importance x access-weighted score descending.
 pub async fn extract_relations(
     app: &AppHandle,
     store: &MemoryStore,
@@ -87,14 +87,14 @@ pub async fn extract_relations(
     let limit = (limit as usize).min(facts.len());
     for fact in facts.into_iter().take(limit) {
         let (id, content, _, _, _) = fact;
-        // 幂等：已有关系则跳过（用户可重跑以增量补充）
+        // Idempotent: skip facts that already have relations (re-running adds more incrementally)
         if !store.relations_for(&id)?.is_empty() {
             continue;
         }
         report.facts_processed += 1;
         let rels = extract_from_fact(app, &content).await;
         if rels.is_empty() {
-            // LLM 无可抽取关系或调用失败——两者都计数为 failed（可审计）
+            // Either the LLM found no extractable relations or the call failed — both count as failed (auditable)
             report.failed += 1;
             continue;
         }
@@ -109,10 +109,10 @@ mod tests {
     use super::*;
 
     fn score_test() {
-        // 加权分单调：importance 与访问次数越高分越高
+        // Weighted score is monotonic: higher importance or access count yields a higher score
         assert!(score(0.8, 5) > score(0.5, 0));
         assert!(score(0.5, 30) > score(0.5, 0));
-        // 访问次数封顶 20
+        // Access count is capped at 20
         assert!((score(0.5, 20) - score(0.5, 100)).abs() < 1e-6);
     }
 

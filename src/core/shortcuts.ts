@@ -1,41 +1,41 @@
 /**
  * @file shortcuts.ts
- * @description 快捷键系统核心模块：命令注册表、快捷键绑定管理、键盘事件标准化
+ * @description Core module of the shortcut system: command registry, shortcut binding management, and keyboard event normalization.
  *
- * 架构说明：
- * - commandRegistry: 所有已注册命令的声明式列表（由各组件在 onMount 中注册）
- * - shortcutBindings: 用户自定义的快捷键映射（actionId → keys），持久化到 localStorage
- * - commandPaletteOpen: 命令面板开关状态信号（全局可访问）
- * - normalizeKeyCombo: 将 KeyboardEvent 标准化为 "Ctrl+K" 等规范格式
+ * Architecture:
+ * - commandRegistry: declarative list of all registered commands (registered by components in onMount)
+ * - shortcutBindings: user-defined shortcut map (actionId → keys), persisted to localStorage
+ * - commandPaletteOpen: globally accessible signal for the command palette open state
+ * - normalizeKeyCombo: normalizes a KeyboardEvent into a canonical form such as "Ctrl+K"
  */
 
 import { createSignal } from 'solid-js';
 import { t, type TranslationKey } from './i18n';
 
-// ---- 类型定义 ----
+// ---- Type definitions ----
 
-/** 命令类别 */
+/** Command category */
 export type CommandCategory = 'navigation' | 'chat' | 'sidebar' | 'global';
 
-/** 单个可注册命令 */
+/** A single registrable command */
 export interface CommandAction {
   id: string;
   label: string;
   description: string;
   category: CommandCategory;
-  defaultKeys: string; // 默认快捷键，如 "Ctrl+K"
-  // Action 型斜杠命令可接收参数文本（如 `/compact 10000`）；
-  // 返回 string 时作为该命令的用户反馈文案（由 ChatPage 的反馈消息展示）
+  defaultKeys: string; // default shortcut, e.g. "Ctrl+K"
+  // Action-style slash commands may receive argument text (e.g. `/compact 10000`);
+  // a returned string is shown to the user as that command's feedback message (rendered by ChatPage)
   handler: (args?: string) => void | string | Promise<void | string>;
-  /** 斜杠命令：注入到聊天消息的提示词正文（含 $ARGUMENTS 占位符） */
+  /** Slash command: prompt body injected into the chat message (contains the $ARGUMENTS placeholder) */
   promptBody?: string;
-  /** 斜杠命令：参数占位符提示文本，如 "[file path]" */
+  /** Slash command: argument placeholder hint text, e.g. "[file path]" */
   argumentHint?: string;
-  /** 标记为斜杠命令，出现在输入框 / 菜单中 */
+  /** Marks a slash command; appears in the input box / menu */
   isSlashCommand?: boolean;
 }
 
-// ---- 命令注册表 ----
+// ---- Command registry ----
 
 const commandMap = new Map<string, CommandAction>();
 
@@ -165,19 +165,19 @@ function getCommandPromptBody(command: CommandAction): string | undefined {
   return key ? t(key) : command.promptBody;
 }
 
-/** 命令注册表版本号信号 — 每次 register/unregister 自增，驱动 createMemo 重新计算 */
+/** Command registry version signal - incremented on every register/unregister to drive createMemo recomputation */
 const [commandVersion, setCommandVersion] = createSignal(0);
 
-/** no-op 占位处理器 */
+/** no-op placeholder handler */
 const NOOP_HANDLER = () => {};
 
-/** 注册一个命令（组件在 onMount 中调用以覆盖处理器） */
+/** Register a command (components call this in onMount to override the handler) */
 export function registerCommand(
   action: CommandAction | Pick<CommandAction, 'id' | 'handler'>,
 ): string {
   const id = action.id;
   if (commandMap.has(id)) {
-    // 已存在 → 仅更新处理器（保留元数据）
+    // already exists → update the handler only (keep metadata)
     const existing = commandMap.get(id)!;
     existing.handler = action.handler;
   } else {
@@ -187,7 +187,7 @@ export function registerCommand(
   return id;
 }
 
-/** 注销命令的处理器（重置为 no-op），保留元数据供设置页显示 */
+/** Unregister a command's handler (reset to no-op); metadata is kept for the settings page */
 export function unregisterCommand(id: string): void {
   const existing = commandMap.get(id);
   if (existing) {
@@ -196,31 +196,31 @@ export function unregisterCommand(id: string): void {
   }
 }
 
-/** 获取所有已注册命令的只读列表（响应式：依赖 commandVersion） */
+/** Get a read-only list of all registered commands (reactive: depends on commandVersion) */
 export function getRegisteredCommands(): CommandAction[] {
-  commandVersion(); // 追踪版本号，确保 createMemo 在注册/注销时重新计算
+  commandVersion(); // track the version so createMemo recomputes on register/unregister
   return Array.from(commandMap.values());
 }
 
-/** 获取所有斜杠命令（isSlashCommand === true），用于输入框 / 菜单 */
+/** Get all slash commands (isSlashCommand === true) for the input box / menu */
 export function getSlashCommands(): CommandAction[] {
   commandVersion();
   return Array.from(commandMap.values()).filter((c) => c.isSlashCommand === true);
 }
 
-/** 斜杠命令解析结果 */
+/** Slash command resolution result */
 export interface ResolvedSlashCommand {
-  /** 匹配到的命令 */
+  /** The matched command */
   command: CommandAction;
-  /** 命令名之后的参数文本（/review src/main.rs → "src/main.rs"） */
+  /** Argument text after the command name (/review src/main.rs → "src/main.rs") */
   args: string;
-  /** promptBody 中 $ARGUMENTS 替换后的文本，仅当 promptBody 非空时有值 */
+  /** Text with $ARGUMENTS replaced in promptBody; set only when promptBody is non-empty */
   resolvedBody?: string;
 }
 
 /**
- * 解析用户输入中的斜杠命令
- * @returns 匹配结果；若非 / 开头或无匹配命令返回 null
+ * Resolve a slash command from user input
+ * @returns the match, or null if the input does not start with / or no command matches
  */
 export function resolveSlashCommand(input: string): ResolvedSlashCommand | null {
   const trimmed = input.trim();
@@ -242,11 +242,11 @@ export function resolveSlashCommand(input: string): ResolvedSlashCommand | null 
   return result;
 }
 
-// ---- 快捷键绑定管理 ----
+// ---- Shortcut binding management ----
 
 const STORAGE_KEY = 'aio-shortcut-bindings';
 
-/** 从 localStorage 加载自定义快捷键绑定 */
+/** Load custom shortcut bindings from localStorage */
 function loadBindings(): Record<string, string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -257,7 +257,7 @@ function loadBindings(): Record<string, string> {
   return {};
 }
 
-/** 持久化快捷键绑定到 localStorage */
+/** Persist shortcut bindings to localStorage */
 function saveBindings(bindings: Record<string, string>): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(bindings));
@@ -266,10 +266,10 @@ function saveBindings(bindings: Record<string, string>): void {
   }
 }
 
-// 响应式绑定信号
+// reactive bindings signal
 const [bindings, setBindings] = createSignal<Record<string, string>>(loadBindings());
 
-/** 获取某个命令的当前快捷键（用户自定义优先，否则默认） */
+/** Get the current shortcut of a command (user-defined first, otherwise the default) */
 export function getShortcutKeys(actionId: string): string {
   const custom = bindings()[actionId];
   if (custom) return custom;
@@ -277,7 +277,7 @@ export function getShortcutKeys(actionId: string): string {
   return cmd?.defaultKeys ?? '';
 }
 
-/** 修改快捷键绑定并持久化 */
+/** Modify a shortcut binding and persist it */
 export function setShortcutBinding(actionId: string, keys: string): void {
   setBindings((prev) => {
     const next = { ...prev };
@@ -291,10 +291,10 @@ export function setShortcutBinding(actionId: string, keys: string): void {
   });
 }
 
-/** 重置某个命令的快捷键为默认值 */
+/** Reset a command's shortcut to its default */
 export function resetShortcutBinding(actionId: string): void {
   setBindings((prev) => {
-    if (!(actionId in prev)) return prev; // 已经是默认值
+    if (!(actionId in prev)) return prev; // already the default
     const next = { ...prev };
     delete next[actionId];
     saveBindings(next);
@@ -302,34 +302,34 @@ export function resetShortcutBinding(actionId: string): void {
   });
 }
 
-/** 重置所有快捷键为默认值 */
+/** Reset all shortcuts to their defaults */
 export function resetAllShortcutBindings(): void {
   setBindings({});
   saveBindings({});
 }
 
-/** 检查某个命令的快捷键是否已被用户修改 */
+/** Check whether a command's shortcut has been user-modified */
 export function isShortcutModified(actionId: string): boolean {
   return actionId in bindings();
 }
 
-/** 反向查找：根据快捷键字符串找到对应的命令 ID（用于冲突检测） */
+/** Reverse lookup: find the command ID for a shortcut string (used for conflict detection) */
 export function getActionByKeys(keys: string): string | null {
-  // 先查用户自定义绑定
+  // check user-defined bindings first
   for (const [id, k] of Object.entries(bindings())) {
     if (k === keys) return id;
   }
-  // 再查默认绑定（排除已被自定义覆盖的）
+  // then default bindings (skipping ones overridden by a custom binding)
   for (const [id, cmd] of commandMap) {
-    if (id in bindings()) continue; // 已被自定义覆盖，跳过
+    if (id in bindings()) continue; // overridden by a custom binding, skip
     if (cmd.defaultKeys === keys) return id;
   }
   return null;
 }
 
-// ---- 命令执行 ----
+// ---- Command execution ----
 
-/** 执行命令（按 ID 查找并调用 handler） */
+/** Execute a command (look up by ID and call its handler) */
 export function executeCommand(actionId: string): boolean {
   const cmd = commandMap.get(actionId);
   if (cmd) {
@@ -343,28 +343,28 @@ export function executeCommand(actionId: string): boolean {
   return false;
 }
 
-// ---- 命令面板状态 ----
+// ---- Command palette state ----
 
 export const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
 
-// ---- 键盘事件标准化 ----
+// ---- Keyboard event normalization ----
 
-/** 修饰键名称列表 */
+/** Modifier key names */
 const MODIFIER_KEYS = ['Control', 'Alt', 'Shift', 'Meta'];
 
 /**
- * 将 KeyboardEvent 标准化为快捷键字符串
- * @returns 如 "Ctrl+K", "Ctrl+Shift+N", "Escape", "F2"；如果不是有效快捷键则返回 null
+ * Normalize a KeyboardEvent into a shortcut string
+ * @returns e.g. "Ctrl+K", "Ctrl+Shift+N", "Escape", "F2"; null if not a valid shortcut
  */
 export function normalizeKeyCombo(event: KeyboardEvent): string | null {
-  // 忽略纯修饰键按下（只有 Ctrl/Alt/Shift/Meta 没有其他键）
+  // ignore bare modifier presses (Ctrl/Alt/Shift/Meta with no other key)
   if (MODIFIER_KEYS.includes(event.key)) return null;
 
-  // 忽略数字锁定、大小写锁定等
+  // ignore NumLock, CapsLock, and similar lock keys
   if (event.key === 'NumLock' || event.key === 'CapsLock' || event.key === 'ScrollLock')
     return null;
 
-  // 忽略 IME 组合输入
+  // ignore IME composition input
   if (event.isComposing) return null;
 
   const parts: string[] = [];
@@ -374,28 +374,28 @@ export function normalizeKeyCombo(event: KeyboardEvent): string | null {
   if (event.shiftKey) parts.push('Shift');
   if (event.metaKey) parts.push('Meta');
 
-  // 获取主键名
+  // main key name
   let mainKey = event.key;
 
-  // 规范化特殊键名
+  // normalize special key names
   if (mainKey === ' ') {
     mainKey = 'Space';
   } else if (mainKey.length === 1) {
-    // 单字符键：字母大写，数字/符号保持原样
+    // single-character keys: uppercase letters; digits/symbols stay as-is
     if (mainKey >= 'a' && mainKey <= 'z') {
       mainKey = mainKey.toUpperCase();
     }
   }
-  // 其他键（ArrowUp, Enter, Escape, F1-F12 等）保持原样
+  // other keys (ArrowUp, Enter, Escape, F1-F12, etc.) stay as-is
 
   parts.push(mainKey);
   return parts.join('+');
 }
 
 /**
- * 将快捷键字符串转换为平台可读形式（用于 UI 显示）
- * - macOS：将 Ctrl/Alt/Shift/Meta 替换为 ⌃⌥⇧⌘ 符号
- * - Windows/Linux：将 Meta 替换为 Win，其余保持原样
+ * Convert a shortcut string into a platform-readable form (for UI display)
+ * - macOS: Ctrl/Alt/Shift/Meta are replaced with the ⌃⌥⇧⌘ symbols
+ * - Windows/Linux: Meta is replaced with Win, everything else stays as-is
  */
 export function formatShortcutForDisplay(keys: string): string {
   if (!keys) return keys;
@@ -410,11 +410,11 @@ export function formatShortcutForDisplay(keys: string): string {
   return keys.replace(/\bMeta\b/g, 'Win');
 }
 
-// ---- 条件判断工具 ----
+// ---- Predicate helpers ----
 
 /**
- * 判断当前焦点是否在可编辑元素中（input/textarea/contenteditable）
- * 用于决定是否触发全局快捷键
+ * Check whether focus is currently in an editable element (input/textarea/contenteditable)
+ * Used to decide whether global shortcuts fire
  */
 export function isEditableTarget(target: EventTarget | null): boolean {
   if (!target || !(target instanceof HTMLElement)) return false;
@@ -425,17 +425,17 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * 判断该快捷键在输入框聚焦时是否仍然可以触发
- * 仅 Escape（停止生成/关闭弹窗）和 Enter（发送消息）允许在输入时触发
+ * Check whether a shortcut can still fire while an input box is focused
+ * Only Escape (stop generation/close dialogs) and Enter (send message) may fire while typing
  */
 export function isInputPassthrough(keys: string): boolean {
   return keys === 'Escape' || keys === 'Enter';
 }
 
-// ---- 模块级预注册：命令元数据（含 no-op 处理器） ----
-// 这些调用确保所有命令的元数据在任何页面都可见（如设置页）。
-// 各组件在 onMount 中通过 registerCommand 覆盖真实处理器，
-// 在 onCleanup 中通过 unregisterCommand 重置为 no-op。
+// ---- Module-level pre-registration: command metadata (with no-op handlers) ----
+// These calls make every command's metadata visible on any page (e.g. the settings page).
+// Components override the real handler via registerCommand in onMount
+// and reset it to no-op via unregisterCommand in onCleanup.
 
 registerCommand({
   id: 'command-palette',
@@ -485,10 +485,10 @@ registerCommand({
   defaultKeys: 'Ctrl+N',
   handler: NOOP_HANDLER,
 });
-// new-project：ChatPage 经 registerCommand({id, handler}) 只覆盖处理器，
-// 此前缺这条内置元数据注册 → 命令表存入无 category 的对象 →
-// CommandPalette 分组时 t(undefined) 崩溃整个渲染树（项目设置弹窗打不开、
-// 导航高亮失效）。元数据必须在此预注册（同其他命令）。
+// new-project: ChatPage only overrides the handler via registerCommand({id, handler}).
+// Its metadata must be pre-registered here like every other command: without a category,
+// the command map stores an object that crashes CommandPalette grouping on t(undefined),
+// taking down the whole render tree.
 registerCommand({
   id: 'new-project',
   label: t('command.newProject.label'),
@@ -586,7 +586,7 @@ registerCommand({
   handler: NOOP_HANDLER,
 });
 
-// ---- 模块级预注册：斜杠命令（注入提示词到对话） ----
+// ---- Module-level pre-registration: slash commands (inject prompts into the conversation) ----
 
 registerCommand({
   id: 'slash-clear',

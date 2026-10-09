@@ -1,6 +1,6 @@
-// 后端记忆模块的类型镜像（src-tauri/src/services/memory + commands/memory.rs + commands/embedding.rs）
+// Frontend mirror types for the backend memory module (src-tauri/src/services/memory + commands/memory.rs + commands/embedding.rs)
 
-/** 记忆事实 */
+/** Memory fact */
 export interface MemoryFact {
   id: string;
   key?: string;
@@ -32,7 +32,7 @@ export interface CodeChunkHit {
   filePath: string;
   startLine: number;
   endLine: number;
-  /** 所在符号名（符号感知分块；行窗口分块为空） */
+  /** Enclosing symbol name (symbol-aware chunking; empty for line-window chunks) */
   symbol?: string;
   content: string;
   score: number;
@@ -55,7 +55,7 @@ export interface FactVersion {
   createdAt: string;
 }
 
-/** 检索命中的事实 */
+/** Fact hit by retrieval */
 export interface ScoredFact {
   id: string;
   content: string;
@@ -65,7 +65,7 @@ export interface ScoredFact {
   updatedAt?: string;
 }
 
-/** 记忆库统计 */
+/** Memory store statistics */
 export interface MemoryStats {
   totalFacts: number;
   activeFacts: number;
@@ -74,19 +74,19 @@ export interface MemoryStats {
   embeddedFacts: number;
   dbSizeBytes: number;
   lastReindexAt?: string;
-  /** 近 7 天：检索查询次数 */
+  /** Last 7 days: retrieval query count */
   retrievalQueries7d: number;
-  /** 近 7 天：检索命中条数 */
+  /** Last 7 days: retrieval hit count */
   retrievalHits7d: number;
-  /** 近 7 天：判重触发次数 */
+  /** Last 7 days: dedup trigger count */
   dedupTriggers7d: number;
-  /** 近 7 天：自动提取沉淀事实数 */
+  /** Last 7 days: facts persisted by auto-extraction */
   extracted7d: number;
-  /** 近 7 天：LLM 仲裁动作分布（merge/update/supersede/keep_separate） */
+  /** Last 7 days: LLM arbitration action distribution (merge/update/supersede/keep_separate) */
   judgeDistribution7d: Record<string, number>;
 }
 
-/** 合并整理结果（sleep-time consolidation） */
+/** Consolidation report (sleep-time consolidation) */
 export interface ConsolidationReport {
   clusters: number;
   arbitrated: number;
@@ -98,7 +98,7 @@ export interface ConsolidationReport {
   error?: string;
 }
 
-/** 图谱抽取结果（P3-3 轻量知识图谱） */
+/** Graph extraction report (lightweight knowledge graph) */
 export interface GraphExtractReport {
   factsProcessed: number;
   relations: number;
@@ -106,7 +106,7 @@ export interface GraphExtractReport {
   error?: string;
 }
 
-/** 嵌入器就绪状态 */
+/** Embedder readiness status */
 export interface EmbedderStatus {
   provider: string;
   model: string;
@@ -115,39 +115,39 @@ export interface EmbedderStatus {
   dimensions: number;
 }
 
-/** 项目记忆状态 */
+/** Project memory status */
 export interface MemoryStatus {
   enabled: boolean;
   storePath: string;
   stats: MemoryStats;
   embedder: EmbedderStatus;
-  /** 本项目当前嵌入配置（项目级，存于记忆库 meta） */
+  /** Current embedding config for this project (project-level, stored in memory store meta) */
   embedding: MemoryEmbeddingConfig;
-  /** 项目当前重排配置（项目级；仅 enabled/provider/model 三个字段） */
+  /** Current rerank config for the project (project-level; only the enabled/provider/model fields) */
   rerank: MemoryRerankConfig;
 }
 
-/** 记忆列表分页 */
+/** Memory list page */
 export interface MemoryListPage {
   facts: MemoryFact[];
   total: number;
 }
 
-/** 嵌入配置（与后端 MemoryEmbeddingConfig 对应；v0.8 起仅支持本地模型，provider 恒为 local） */
+/** Embedding config (mirrors backend MemoryEmbeddingConfig; since v0.8 only local models are supported, provider is always local) */
 export interface MemoryEmbeddingConfig {
-  /** 本地嵌入模型（唯一受支持的 provider；旧配置中的 online 会在后端自动归一化） */
+  /** Local embedding model provider (the only supported one; legacy online values are auto-normalized on the backend) */
   provider: 'local' | 'online';
-  /** 本地嵌入模型 id（manifest 条目 id，如 bge-small-en-v1.5 / all-MiniLM-L6-v2） */
+  /** Local embedding model id (manifest entry id, e.g. bge-small-en-v1.5 / all-MiniLM-L6-v2) */
   model: string;
-  /** 已废弃（在线服务地址），恒为空，保留仅为旧配置兼容 */
+  /** Deprecated (online service URL); always empty, kept only for legacy config compatibility */
   apiUrl: string;
-  /** 目标维度（0=模型默认全维；对 bge-m3 等 Matryoshka 模型可裁剪） */
+  /** Target dimensions (0 = model default full dims; truncatable for Matryoshka models like bge-m3) */
   dimensions: number;
   enabled: boolean;
   apiKey?: string;
 }
 
-/** 嵌入连接测试结果 */
+/** Embedding connection test result */
 export interface EmbeddingTestResult {
   ok: boolean;
   provider: string;
@@ -157,16 +157,16 @@ export interface EmbeddingTestResult {
   error?: string;
 }
 
-/** 重排配置（与后端 MemoryRerankConfig 对应；自 v0.8.1 起仅支持本地模型，provider 恒为 local） */
+/** Rerank config (mirrors backend MemoryRerankConfig; since v0.8.1 only local models are supported, provider is always local) */
 export interface MemoryRerankConfig {
   enabled: boolean;
-  /** 恒为 local（旧配置中的 online 在后端自动归一化） */
+  /** Always local (legacy online values are auto-normalized on the backend) */
   provider: 'local' | 'online';
-  /** 本地重排模型 id（manifest 条目 id，如 bge-reranker-base / bge-reranker-v2-m3） */
+  /** Local rerank model id (manifest entry id, e.g. bge-reranker-base / bge-reranker-v2-m3) */
   model: string;
 }
 
-/** 重排连接测试结果 */
+/** Rerank connection test result */
 export interface RerankTestResult {
   ok: boolean;
   provider: string;
@@ -175,27 +175,27 @@ export interface RerankTestResult {
   error?: string;
 }
 
-/** 可下载/已安装模型信息（本地重排/嵌入模型） */
+/** Downloadable/installed model info (local rerank/embedding models) */
 export interface EmbeddingModelInfo {
   id: string;
   /** embed | rerank */
   kind: string;
   label: string;
-  /** 向量维度（rerank 为 0） */
+  /** Vector dimensions (0 for rerank models) */
   dims: number;
   /** mean | cls | none */
   pooled: string;
-  /** 内置模型（随应用打包，无需下载，不可删除） */
+  /** Bundled model (shipped with the app, no download needed, cannot be deleted) */
   bundled: boolean;
-  /** 全局启用状态（嵌入与重排模型均可全局启停） */
+  /** Global enablement state (both embedding and rerank models can be toggled globally) */
   enabled: boolean;
   files: { name: string; downloaded: boolean }[];
   downloaded: boolean;
-  /** 已下载文件占用空间（字节） */
+  /** Disk space used by downloaded files (bytes) */
   sizeBytes: number;
 }
 
-/** 模型下载结果（status: ok=完成 | paused=已暂停保留断点 | cancelled=已取消断点已删） */
+/** Model download outcome (status: ok = finished | paused = paused with checkpoint kept | cancelled = cancelled and checkpoint deleted) */
 export interface ModelDownloadOutcome {
   status: 'ok' | 'paused' | 'cancelled';
   info: EmbeddingModelInfo;

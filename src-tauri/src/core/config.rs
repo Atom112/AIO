@@ -1,15 +1,15 @@
-//! 应用配置持久化 —— AppConfigDisk（磁盘 schema）与 load/save 的权威实现。
+//! App config persistence - authoritative implementation of AppConfigDisk (disk schema) and load/save.
 //!
-//! 从 commands/config.rs 下沉：services/plugins 只应依赖 core，不应反向依赖命令层。
+//! Moved down from commands/config.rs so services/plugins depend on core only, never on the command layer.
 //!
-//! 兼容面：config.json 的磁盘字段名（snake/camel 混合）与旧 schema 明文 key 的
-//! 惰性迁移语义保持不变；Tauri 命令 save_app_config/load_app_config 为薄包装。
+//! Compatibility surface: config.json disk field names (mixed snake/camel) and the lazy
+//! migration semantics of the legacy plaintext key stay unchanged; the Tauri commands save_app_config/load_app_config are thin wrappers.
 
 use crate::core::models::*;
 use crate::core::secure_store;
 use std::fs;
 use tauri::AppHandle;
-/// 应用配置文件持久化结构：api_key 不入库，统一存到系统钥匙串
+/// Persisted app config file schema: api_key is never written to disk, it always goes to the OS keychain
 #[derive(serde::Serialize, serde::Deserialize)]
 struct AppConfigDisk {
     api_url: String,
@@ -24,43 +24,43 @@ struct AppConfigDisk {
         rename = "maxConcurrentSubagents"
     )]
     max_concurrent_subagents: u32,
-    /// 工作流步骤权限模式（"inherit" 默认 / "auto" 旧行为）
+    /// Workflow step permission mode ("inherit" default / "auto" legacy behavior)
     #[serde(
         default = "crate::core::models::default_workflow_step_mode",
         rename = "workflowStepMode"
     )]
     workflow_step_mode: String,
-    /// 同一响应块内的只读工具是否并发执行
+    /// Whether read-only tools within the same response block run concurrently
     #[serde(
         default = "crate::core::models::default_true",
         rename = "parallelToolExecution"
     )]
     parallel_tool_execution: bool,
-    /// 主 Agent 内置工具集（hybrid 默认 / orchestrator / full）
+    /// Main agent built-in tool set (hybrid default / orchestrator / full)
     #[serde(
         default = "crate::core::models::default_main_agent_tool_access",
         rename = "mainAgentToolAccess"
     )]
     main_agent_tool_access: String,
-    /// 主模型调用前置阶段重试次数
+    /// Retry count for the pre-flight stage of the main model call
     #[serde(
         default = "crate::core::models::default_model_call_retries",
         rename = "modelCallRetries"
     )]
     model_call_retries: u32,
-    /// 沙箱不可用时是否拒绝自主模式执行命令（fail-closed）
+    /// Whether autonomous-mode command execution is refused when the sandbox is unavailable (fail-closed)
     #[serde(
         default = "crate::core::models::default_true",
         rename = "sandboxRequired"
     )]
     sandbox_required: bool,
-    /// Windows 命令沙箱模式（appcontainer 默认 / off）
+    /// Windows command sandbox mode (appcontainer default / off)
     #[serde(
         default = "crate::core::models::default_sandbox_windows",
         rename = "sandboxWindows"
     )]
     sandbox_windows: String,
-    /// Windows AppContainer 工具链 R+X 目录
+    /// Windows AppContainer toolchain R+X directories
     #[serde(default, rename = "sandboxWindowsToolchainDirs")]
     sandbox_windows_toolchain_dirs: Vec<String>,
     #[serde(default, rename = "memoryEnabled")]
@@ -110,7 +110,7 @@ struct AppConfigDisk {
         rename = "memoryConsolidateBudget"
     )]
     memory_consolidate_budget: u32,
-    /// 工具调用失败时是否自动重试（修复：此前落盘不含此字段，每次加载被常量重置）
+    /// Whether failed tool calls are retried automatically (persisted so it survives the save/load round-trip)
     #[serde(
         default = "crate::core::models::default_auto_retry_enabled",
         rename = "autoRetryEnabled"
@@ -129,9 +129,9 @@ struct AppConfigDisk {
 }
 
 impl AppConfigDisk {
-    /// 从运行期配置构造落盘结构。
-    /// api_key 不入盘（全局 key 走 keyring）；嵌入/重排配置里内联的 api_key 同样清空
-    /// （它们由 commands/embedding.rs 与 commands/rerank.rs 单独入 keyring）。
+    /// Build the on-disk struct from the runtime config.
+    /// api_key is never written to disk (the global key goes to the keyring); inline api_keys inside the
+    /// embed/rerank configs are cleared as well (commands/embedding.rs and commands/rerank.rs store them in the keyring separately).
     fn from_config(cfg: &AppConfig) -> Self {
         Self {
             api_url: cfg.api_url.clone(),
@@ -172,7 +172,7 @@ impl AppConfigDisk {
         }
     }
 
-    /// 还原为运行期配置（api_key 由调用方从 keyring 注入）。
+    /// Restore the runtime config (the caller injects api_key from the keyring).
     fn into_config(self, api_key: String) -> AppConfig {
         AppConfig {
             api_url: self.api_url,
@@ -253,9 +253,9 @@ fn default_max_concurrent_subagents() -> u32 {
     5
 }
 
-/// 保存应用程序通用配置（api_key 走系统钥匙串，落盘仅写其他字段；原子写入）。
+/// Save the general app config (api_key goes to the OS keychain, only the other fields are written to disk; atomic write).
 pub fn save_app_config(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
-    // api_key 走系统钥匙串（keyring），落盘仅写其他字段
+    // api_key goes to the OS keychain (keyring); only the other fields are written to disk
     if !config.api_key.is_empty() {
         secure_store::set(app, secure_store::accounts::APP_API_KEY, &config.api_key)
             .map_err(|e| e.to_string())?;
@@ -263,13 +263,13 @@ pub fn save_app_config(app: &AppHandle, config: &AppConfig) -> Result<(), String
         let _ = secure_store::delete(app, secure_store::accounts::APP_API_KEY);
     }
 
-    // 配置目录与文件名统一由 core::paths 提供（含目录创建）
+    // Config directory and file name come from core::paths (directory creation included)
     let path = crate::core::paths::app_config_file("config.json")?;
 
-    // 字段映射集中在 AppConfigDisk::from_config（含 api_key 剥离与 auto_retry 字段）
+    // Field mapping is centralized in AppConfigDisk::from_config (including api_key stripping and the auto_retry fields)
     let disk = AppConfigDisk::from_config(config);
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
-    // 原子写入
+    // Atomic write
     let tmp_path = path.with_extension("tmp");
     use std::io::Write;
     let mut f = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
@@ -279,23 +279,23 @@ pub fn save_app_config(app: &AppHandle, config: &AppConfig) -> Result<(), String
     Ok(())
 }
 
-/// 读取应用程序通用配置（含旧 schema 明文 api_key 的惰性迁移；无文件时返回默认值）。
+/// Load the general app config (lazily migrates the legacy-schema plaintext api_key; returns defaults when no file exists).
 pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
     let path = crate::core::paths::app_config_dir()?.join("config.json");
 
-    // 优先尝试 v2 schema（不含 api_key 字段）
+    // Try the v2 schema first (no api_key field)
     if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(disk) = serde_json::from_str::<AppConfigDisk>(&content) {
                 let api_key = secure_store::get(app, secure_store::accounts::APP_API_KEY)
                     .map_err(|e| e.to_string())?
                     .unwrap_or_default();
-                // 字段映射集中在 AppConfigDisk::into_config（auto_retry_* 从此可读回）
+                // Field mapping is centralized in AppConfigDisk::into_config (auto_retry_* reads back from here)
                 return Ok(disk.into_config(api_key));
             }
-            // 兼容旧 schema（含明文 api_key）：读出后迁出到安全存储。
-            // 仅当密钥迁移成功时才改写磁盘文件去除明文；失败则保留原文件
-            // （下次启动会重试迁移），绝不静默丢失密钥。
+            // Legacy schema compat (with plaintext api_key): migrate it to secure storage after reading.
+            // The disk file is rewritten to strip the plaintext only when the key migration succeeded; on failure the original file is kept
+            // (migration retries on next startup), so the key is never silently lost.
             if let Ok(legacy) = serde_json::from_str::<AppConfig>(&content) {
                 let key_migrated = if !legacy.api_key.is_empty() {
                     secure_store::set_reported(
@@ -320,13 +320,13 @@ pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
                         tracing::error!("迁移写回 config.json 失败: {e}");
                     }
                 }
-                // 字段映射集中在 AppConfigDisk::into_config（auto_retry_* 从此可读回）
+                // Field mapping is centralized in AppConfigDisk::into_config (auto_retry_* reads back from here)
                 return Ok(disk.into_config(legacy.api_key));
             }
         }
     }
 
-    // 无配置文件：直接返回默认配置（默认值唯一定义在 AppConfig::default()）
+    // No config file: return the default config directly (defaults are defined solely in AppConfig::default())
     Ok(AppConfig::default())
 }
 
@@ -334,8 +334,7 @@ pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
 mod tests {
     use super::*;
 
-    /// 回归：auto_retry_* 配置必须在 落盘 → 读取 往返中保持
-    /// （历史 bug：落盘结构无此字段，load 硬编码回常量，用户设置被静默重置）。
+    /// Regression: auto_retry_* settings must survive the save -> load round-trip.
     #[test]
     fn app_config_disk_roundtrip_preserves_auto_retry() {
         let cfg = AppConfig {
@@ -352,8 +351,8 @@ mod tests {
         assert_eq!(back.auto_retry_delay_ms, 1234);
     }
 
-    /// 落盘结构不得包含明文 api_key（全局 key 与嵌入内联 key 都不入盘；
-    /// 重排配置自 v0.8.1 起仅含 enabled/provider/model，无任何 key 字段）。
+    /// The on-disk struct must never contain a plaintext api_key (neither the global key nor the embed inline key is persisted;
+    /// the rerank config has contained only enabled/provider/model since v0.8.1, with no key field at all).
     #[test]
     fn app_config_disk_never_contains_api_keys() {
         let cfg = AppConfig {
@@ -371,11 +370,11 @@ mod tests {
         assert!(!json.contains("apiKey"), "不应序列化 api_key 字段");
     }
 
-    /// 旧格式 config.json（无 auto_retry 字段）反序列化应落到默认值。
+    /// Old-format config.json (without auto_retry fields) must deserialize to the defaults.
     #[test]
     fn app_config_disk_defaults_when_fields_missing() {
-        // 注意：磁盘格式是混合命名（api_url 等字段无 rename 保持 snake_case，
-        // memoryEnabled 等带 rename 是 camelCase）——兼容既有文件，勿统一改名
+        // Note: the disk format uses mixed naming (fields like api_url keep snake_case without rename,
+        // renamed fields like memoryEnabled are camelCase) - existing-file compatibility, do not unify
         let json = r#"{"api_url":"http://x","default_model":"m","local_model_path":""}"#;
         let disk: AppConfigDisk = serde_json::from_str(json).unwrap();
         let back = disk.into_config(String::new());

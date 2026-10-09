@@ -190,9 +190,9 @@ const SubagentModelSettings: Component = () => {
   ]);
 
   const isBuiltin = (id: string) => BUILTIN_PROFILE_IDS.has(id);
-  // NOTE: 此函数与 ProjectSettingsModal.tsx 中的 getProviderIdFor 存在分支副本；
-  // 两者行为略有差异（此版本含 .trim() 和 deepseek.ai 检查），
-  // 合并前需确认行为差异是否有意。另见 core/utils/models.ts 中的 detectProviderByUrl。
+  // NOTE: this function is a diverged copy of getProviderIdFor in ProjectSettingsModal.tsx;
+  // their behavior differs slightly (this version has .trim() and a deepseek.ai check).
+  // Confirm the difference is intentional before merging them. See also detectProviderByUrl in core/utils/models.ts.
   const getProviderIdFor = (model: ActivatedModel): string => {
     if ((model as any).provider_id) return (model as any).provider_id;
 

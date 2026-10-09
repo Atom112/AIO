@@ -1,12 +1,12 @@
 /**
- * EmbeddingModelSettings — 「Embedding 模型管理」设置子页面。
+ * EmbeddingModelSettings - "Embedding models" settings sub-page.
  *
- * 全局管理本地嵌入与重排模型（与供应商设置类似）：
- * - 嵌入模型：安装目录可自定义（默认 <app_data_dir>/models/embed）；主流开源 ONNX 嵌入模型的下载安装 / 删除 / 启用停用
- * - 重排模型：本地交叉编码器（bge-reranker 系列 / mxbai），下载目录固定 <app_data_dir>/models/rerank
- * - 内置嵌入模型（all-MiniLM-L6-v2）随应用打包，开箱即用、不可删除
+ * Global management of local embedding and rerank models (similar to provider settings):
+ * - Embedding models: customizable install directory (default <app_data_dir>/models/embed); download/install, delete, enable/disable for popular open-source ONNX embedding models
+ * - Rerank models: local cross-encoders (bge-reranker family / mxbai), download directory fixed at <app_data_dir>/models/rerank
+ * - Bundled embedding model (all-MiniLM-L6-v2) ships with the app: ready out of the box, cannot be deleted
  *
- * 项目级 RAG 记忆设置（模型选择）仍在「项目记忆面板」中，本页只管全局模型。
+ * Project-level RAG memory settings (model selection) stay in the project memory panel; this page only manages global models.
  */
 import { Component, createMemo, createSignal, For, Show, onMount } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
@@ -34,12 +34,12 @@ const EmbeddingModelSettings: Component = () => {
   const [dirInput, setDirInput] = createSignal('');
   const [savingDir, setSavingDir] = createSignal(false);
   const [notice, setNotice] = createSignal('');
-  // 下载进度（model-download-progress 事件驱动；按模型 id 记录）
+  // Download progress (driven by model-download-progress events; keyed by model id)
   const [progress, setProgress] = createSignal<
     Record<string, { file: string; downloaded: number; total: number }>
   >({});
   const [downloading, setDownloading] = createSignal<Record<string, boolean>>({});
-  // 暂停中的模型（保留 .part 断点，显示「继续下载」）
+  // Paused models (keep the .part resume data; show a "resume download" button)
   const [pausedIds, setPausedIds] = createSignal<Record<string, boolean>>({});
 
   const embedModels = createMemo(() => models().filter((m) => m.kind === 'embed'));
@@ -160,8 +160,8 @@ const EmbeddingModelSettings: Component = () => {
     } catch {
       /* ignore */
     }
-    // 无进行中的下载（已暂停）：命令已直接清理断点文件，本地重置暂停态；
-    // 进行中：download() 的 promise 会以 cancelled 结局返回，由其统一收尾
+    // No active download (paused): the command already removed the partial file, so reset the paused state locally;
+    // if a download is in progress, download()'s promise resolves as cancelled and handles cleanup itself
     if (!wasActive) {
       setPausedIds((prev) => ({ ...prev, [m.id]: false }));
       setNotice(t('settings.embeddingModels.downloadCancelled', { name: m.id }));
@@ -195,7 +195,7 @@ const EmbeddingModelSettings: Component = () => {
     });
   };
 
-  /** 模型行渲染（嵌入/重排模型共用）：下载/暂停/取消/删除/启停开关 + 进度条 */
+  /** Model row renderer (shared by embedding/rerank models): download/pause/cancel/delete, enable toggle + progress bar */
   const renderModelRow = (m: EmbeddingModelInfo, index: () => number) => {
     const dlProgress = () => progress()[m.id];
     const isDownloading = () => downloading()[m.id];
@@ -343,7 +343,7 @@ const EmbeddingModelSettings: Component = () => {
     );
   };
 
-  /** 行渲染组件：把 For 的 index 访问器以 JSX 属性传递（solid/reactivity 要求 JSX 内使用） */
+  /** Row renderer component: passes For's index accessor as a JSX prop (solid/reactivity requires it to be used in JSX) */
   const ModelRowItem: Component<{ m: EmbeddingModelInfo; index: () => number }> = (p) =>
     renderModelRow(p.m, p.index);
 
@@ -360,7 +360,7 @@ const EmbeddingModelSettings: Component = () => {
         </div>
       </div>
 
-      {/* 安装目录 */}
+      {/* Install directory */}
       <div
         class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
         style={{ 'animation-delay': '30ms' }}
@@ -406,7 +406,7 @@ const EmbeddingModelSettings: Component = () => {
         </div>
       </div>
 
-      {/* 嵌入模型列表 */}
+      {/* Embedding model list */}
       <div
         class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
         style={{ 'animation-delay': '60ms' }}
@@ -427,7 +427,7 @@ const EmbeddingModelSettings: Component = () => {
         </div>
       </div>
 
-      {/* 重排模型列表 */}
+      {/* Rerank model list */}
       <div
         class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
         style={{ 'animation-delay': '90ms' }}

@@ -1,6 +1,6 @@
-//! 向量编解码与余弦相似度（P1 用 Rust 暴力打分，P3 可替换为 sqlite-vec）。
+//! Vector encoding/decoding and cosine similarity (brute-force scoring in Rust; replaceable by sqlite-vec).
 
-/// 将 f32 向量编码为小端 float32 字节序列（SQLite BLOB 存储格式）。
+/// Encode an f32 vector as a little-endian float32 byte sequence (SQLite BLOB storage format).
 pub fn f32_to_bytes(v: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 4);
     for x in v {
@@ -9,14 +9,14 @@ pub fn f32_to_bytes(v: &[f32]) -> Vec<u8> {
     out
 }
 
-/// 将 SQLite BLOB 解码为 f32 向量；尾部不足 4 字节的残段忽略。
+/// Decode a SQLite BLOB into an f32 vector; a trailing partial chunk under 4 bytes is ignored.
 pub fn bytes_to_f32(b: &[u8]) -> Vec<f32> {
     b.chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
 }
 
-/// 余弦相似度：维度不一致或为空时返回 0（不可比）。
+/// Cosine similarity: returns 0 on dimension mismatch or empty input (not comparable).
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -35,7 +35,7 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     (dot / (na.sqrt() * nb.sqrt())) as f32
 }
 
-/// 暴力余弦 top-k：对 (id, 向量) 列表打分，返回按分数降序的前 k 个 (id, score)。
+/// Brute-force cosine top-k: scores a list of (id, vector) pairs and returns the top k (id, score) in descending score order.
 pub fn brute_force_topk(
     rows: &[(String, Vec<f32>)],
     query: &[f32],

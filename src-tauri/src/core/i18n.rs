@@ -1,16 +1,16 @@
-//! 后端用户可见文案的 locale 支持。
+//! Locale support for backend user-facing messages.
 //!
-//! 此前 Tauri 命令返回的错误与 Agent 工具错误全部硬编码中文。
-//! 本模块提供：
-//! - 全局 locale（前端启动/切换语言时经 `set_locale` 命令同步；缺省 zh-CN）；
-//! - [`ierr!`] 宏：就地双语模板，按当前 locale 选择其一。
+//! Previously, Tauri command errors and agent tool errors were all hardcoded Chinese.
+//! This module provides:
+//! - a global locale (synced by the frontend via the `set_locale` command on startup / language switch; defaults to zh-CN);
+//! - the [`ierr!`] macro: in-place bilingual templates, picks one per the current locale.
 //!
-//! 迁移约定：
-//! - 仅迁移**用户可见**的错误（命令层 `Result<_, String>` / 工具错误 / 事件错误载荷）；
-//! - tracing 日志、内部错误链上未冒泡到用户面的中间层保持原样；
-//! - `map_err(|e| format!("中文: {e}"))` → `map_err(|e| ierr!("中文: {}", "English: {}", e))`
-//!   （占位符必须用位置 `{}`，禁用内联捕获 `{e}`——与显式参数混用会触发 redundant-argument 警告；
-//!   底层库错误原文作为参数插入，保持技术细节可诊断）。
+//! Migration conventions:
+//! - migrate only **user-visible** errors (command-layer `Result<_, String>` / tool errors / event error payloads);
+//! - tracing logs and intermediate layers whose errors never bubble up to users stay as-is;
+//! - `map_err(|e| format!("<Chinese message>: {e}"))` -> `map_err(|e| ierr!("<Chinese message>: {}", "<English message>: {}", e))`
+//!   (placeholders must be positional `{}`; inline captures `{e}` are forbidden - mixing them with explicit
+//!   arguments triggers a redundant-argument warning; the raw underlying error is passed as an argument so details stay diagnosable).
 
 use std::sync::{OnceLock, RwLock};
 
@@ -20,7 +20,7 @@ fn locale_cell() -> &'static RwLock<String> {
     LOCALE.get_or_init(|| RwLock::new("zh-CN".to_string()))
 }
 
-/// 当前 locale（"zh-CN" / "en-US"；未知值按中文处理）。
+/// Current locale ("zh-CN" / "en-US"; unknown values are treated as Chinese).
 pub(crate) fn current_locale() -> String {
     locale_cell()
         .read()
@@ -28,7 +28,7 @@ pub(crate) fn current_locale() -> String {
         .unwrap_or_else(|_| "zh-CN".to_string())
 }
 
-/// 设置全局 locale（`set_locale` 命令调用）。
+/// Set the global locale (called by the `set_locale` command).
 pub(crate) fn set_locale(locale: String) {
     let normalized = match locale.as_str() {
         "en-US" => "en-US".to_string(),
@@ -37,12 +37,12 @@ pub(crate) fn set_locale(locale: String) {
     let _ = locale_cell().write().map(|mut g| *g = normalized);
 }
 
-/// 当前是否英文（en-US）。
+/// Whether the current locale is English (en-US).
 pub(crate) fn is_en() -> bool {
     current_locale() == "en-US"
 }
 
-/// 在中文/英文模板间选择（无参数场景，返回 String）。
+/// Pick between the Chinese/English templates (no-argument case, returns String).
 pub(crate) fn pick(zh: &str, en: &str) -> String {
     if is_en() {
         en.to_string()
@@ -51,13 +51,13 @@ pub(crate) fn pick(zh: &str, en: &str) -> String {
     }
 }
 
-/// 就地双语错误消息宏：按当前 locale 选择模板。
+/// In-place bilingual error-message macro: picks the template by current locale.
 ///
-/// 两种形态：
-/// - `ierr!("中文", "English")` —— 静态文案，返回 `String`；
-/// - `ierr!("中文 {e}", "English {e}", e)` —— `format!` 参数（支持内联捕获 `{e}`）。
+/// Two forms:
+/// - `ierr!("<Chinese message>", "<English message>")` - static text, returns a `String`;
+/// - `ierr!("<Chinese message> {e}", "<English message> {e}", e)` - `format!` arguments (inline captures `{e}` supported).
 ///
-/// 示例：
+/// Examples:
 /// ```ignore
 /// return Err(ierr!("项目名称不能为空", "Project name must not be empty"));
 /// .map_err(|e| ierr!("读取配置失败: {e}", "Failed to read config: {e}", e))?;
@@ -92,7 +92,7 @@ mod tests {
         assert_eq!(current_locale(), "zh-CN");
         set_locale("en-US".to_string());
         assert_eq!(current_locale(), "en-US");
-        // 恢复默认，避免影响其他测试
+        // Restore the default so other tests are unaffected
         set_locale("zh-CN".to_string());
     }
 

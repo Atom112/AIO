@@ -1,7 +1,7 @@
-//! 记忆工具（remember / recall / search_memory / update_memory / forget_memory / search_code）：
-//! 模型可见的工具规格与执行实现。
+//! Memory tools (remember / recall / search_memory / update_memory / forget_memory / search_code):
+//! model-visible tool specs and their execution implementations.
 //!
-//! 项目记忆未启用时，工具执行返回错误提示（旧版 knowledge.json 回退路径已随 RAG 移除）。
+//! When project memory is disabled, tool execution returns an error hint (the legacy knowledge.json fallback was removed along with RAG).
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::ierr;
@@ -12,9 +12,9 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-/// 记忆工具名清单 —— 工具规格与 Agent 派发的唯一真相来源。
-/// 新增记忆工具时务必同时注册到这里，否则会出现"模型拿到规格但派发路由不到"
-/// （history: search_code 曾缺失于派发清单而永久落到文件工具兜底，见 memory_dispatch_parity 测试）。
+/// Memory tool name list - the single source of truth for both tool specs and agent dispatch.
+/// New memory tools must be registered here too, otherwise the model gets a spec that dispatch
+/// cannot route (guarded by the memory_dispatch_parity test).
 pub const MEMORY_TOOL_NAMES: &[&str] = &[
     "remember",
     "recall",
@@ -24,7 +24,7 @@ pub const MEMORY_TOOL_NAMES: &[&str] = &[
     "search_code",
 ];
 
-/// 返回记忆工具的 ToolSpec（数量由 MEMORY_TOOL_NAMES 约束，memory_dispatch_parity 测试保证一致）。
+/// Return the memory tool ToolSpecs (count constrained by MEMORY_TOOL_NAMES; consistency guarded by the memory_dispatch_parity test).
 pub fn get_memory_tool_specs() -> Vec<ToolSpec> {
     vec![
         remember_spec(),
@@ -36,7 +36,7 @@ pub fn get_memory_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-// tool_ok 统一由 utils::tool_result 提供（消除全仓副本）
+// tool_ok is provided by utils::tool_result (single source of truth repo-wide)
 use crate::utils::tool_result::tool_ok;
 
 fn remember_spec() -> ToolSpec {
@@ -159,12 +159,12 @@ fn search_code_spec() -> ToolSpec {
     }
 }
 
-/// 只读记忆工具（供子智能体使用：recall + search_code）。
+/// Read-only memory tools (for subagents: recall + search_code).
 pub fn get_readonly_memory_specs() -> Vec<ToolSpec> {
     vec![recall_spec(), search_code_spec()]
 }
 
-/// 解析项目记忆是否启用（每项目覆盖优先，其次全局默认）。
+/// Resolve whether project memory is enabled (per-project override first, then the global default).
 pub fn memory_effective(app: &AppHandle, project_root: &str) -> bool {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     let override_enabled = app
@@ -176,7 +176,7 @@ pub fn memory_effective(app: &AppHandle, project_root: &str) -> bool {
     override_enabled.unwrap_or(cfg.memory_enabled)
 }
 
-/// 执行记忆工具（项目记忆未启用时返回错误提示）。
+/// Execute a memory tool (returns an error hint when project memory is disabled).
 pub async fn execute_memory_tool(
     app: &AppHandle,
     tool_name: &str,
@@ -259,8 +259,8 @@ async fn execute_search_code(
     Ok(tool_ok(out))
 }
 
-/// 嵌入单条文本（按项目级嵌入配置；失败返回 None 降级为关键词）。
-/// 维度与库中已有向量不一致时返回 None 并告警（避免写入/检索错维向量）。
+/// Embed a single text (per the project-level embedding config; None on failure degrades to keyword search).
+/// Returns None with a warning when the dimension mismatches existing store vectors (avoids writing/searching mismatched-dimension vectors).
 async fn embed_one(
     app: &AppHandle,
     store: &MemoryStore,
@@ -306,8 +306,8 @@ async fn execute_remember(
         .map(|s| s.to_string());
     let embedding = embed_one(app, store, content).await;
 
-    // 判重/仲裁：纯向量余弦近邻 >= 阈值时由 LLM 判定 merge/update/supersede/keep_separate。
-    // 注意阈值比较的是**余弦相似度**（见 store::search_similar），不是 RRF 融合分。
+    // Dedup/arbitration: at cosine-NN >= threshold the LLM decides merge/update/supersede/keep_separate.
+    // Note the threshold compares **cosine similarity** (see store::search_similar), not the RRF fusion score.
     let dedup_threshold = crate::core::config::load_app_config(app)
         .map(|c| c.memory_dedup_threshold)
         .unwrap_or(0.92)
@@ -353,7 +353,7 @@ async fn execute_remember(
                                     merged
                                 };
                                 store.update_content(&existing.id, &merged_content, "merge")?;
-                                // 合并后的内容重新向量化（失败不阻塞）
+                                // Re-embed the merged content (failure does not block)
                                 if let Some((model, dim, vec)) =
                                     embed_one(app, store, &merged_content).await
                                 {
@@ -488,7 +488,7 @@ async fn run_search(
     if opts.category.as_deref() == Some("") {
         opts.category = None;
     }
-    // 查询改写（可选，默认关）：LLM 生成 1-2 个变体 → 多查询 RRF 融合 + 项目级重排
+    // Query rewrite (optional, off by default): the LLM generates 1-2 variants -> multi-query RRF fusion + project-level rerank
     let rewrite_enabled = crate::core::config::load_app_config(app)
         .map(|c| c.memory_query_rewrite)
         .unwrap_or(false);
@@ -496,7 +496,7 @@ async fn run_search(
     if rewrite_enabled {
         queries.extend(crate::services::memory::retrieve::rewrite_query(app, query).await);
     }
-    // P3-1 迭代检索（可选）：首轮结果摘要作为扩展查询再检索一轮后融合
+    // Iterative retrieval (optional): first-round summaries serve as an expanded query for a second round, then both rounds fuse
     let results = if expand {
         crate::services::memory::retrieve::iterative_search(app, store, query, &opts).await?
     } else {
@@ -504,7 +504,7 @@ async fn run_search(
     };
     let ids: Vec<String> = results.iter().map(|f| f.id.clone()).collect();
     store.bump_access(&ids);
-    // 质量探针：检索次数与命中条数（近 7 天滚动）
+    // Quality probes: query count and hit count (7-day rolling window)
     store.rolling_bump(crate::services::memory::store::STAT_QUERIES, 1);
     store.rolling_bump(
         crate::services::memory::store::STAT_HITS,
@@ -561,9 +561,9 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    /// 规格清单、派发清单（MEMORY_TOOL_NAMES）与 execute_memory_tool 的 match 分支
-    /// 必须三者一致：防止"给了模型工具规格但派发路由不到"（search_code 曾因此
-    /// 永久落到文件工具兜底返回"未知工具"）。
+    /// The spec list, the dispatch list (MEMORY_TOOL_NAMES), and execute_memory_tool's match arms
+    /// must stay consistent: prevents handing the model a tool spec that dispatch cannot route
+    /// (which would fall through to the file-tool fallback and return "unknown tool").
     #[test]
     fn memory_dispatch_parity() {
         let spec_names: HashSet<String> = get_memory_tool_specs()
@@ -576,7 +576,7 @@ mod tests {
             spec_names, const_names,
             "工具规格与 MEMORY_TOOL_NAMES 不一致"
         );
-        // 只读规格必须全部可派发
+        // All read-only specs must be dispatchable
         for s in get_readonly_memory_specs() {
             assert!(
                 const_names.contains(&s.function.name),

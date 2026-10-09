@@ -1,7 +1,7 @@
 /**
- * 单行模型展示 (仿 LobeHub v2 风格, 亚克力主题)
- * 数据源: catalog `ModelMeta` (含 displayName, releaseDate, contextWindow, capabilities, pricing, status)
- * 启用状态: 由调用方通过 `enabled` prop 传入
+ * Single-row model display (LobeHub v2 style, acrylic theme)
+ * Data source: catalog `ModelMeta` (displayName, releaseDate, contextWindow, capabilities, pricing, status)
+ * Enabled state: passed in by the caller via the `enabled` prop
  */
 import { Component, Show } from 'solid-js';
 import type { ModelMeta } from '@aio/models-data';
@@ -13,7 +13,7 @@ const ModelRow: Component<{
   meta: ModelMeta;
   enabled: boolean;
   onToggle: () => void;
-  /** 隐藏价格（详情页默认显示，列表/孤儿行可隐藏） */
+  /** Hide pricing (shown by default on detail pages; list/orphan rows may hide it) */
   showPricing?: boolean;
 }> = (props) => {
   const m = () => props.meta;

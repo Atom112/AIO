@@ -1,7 +1,7 @@
-//! sqlite-vec（vec0 虚拟表）接入：P3 的 SQLite 内向量检索加速。
+//! sqlite-vec (vec0 virtual table) integration: in-SQLite vector search acceleration.
 //!
-//! 通过 sqlite3_auto_extension 把 vec0 注册到所有新建连接；不可用（编译/平台限制）时
-//! 自动回退到 vector.rs 的暴力余弦，功能等价、仅性能差异。
+//! Registers vec0 on all new connections via sqlite3_auto_extension; when unavailable
+//! (build/platform limits) it falls back to vector.rs brute-force cosine (equivalent behavior, slower).
 
 use rusqlite::Connection;
 
@@ -12,16 +12,16 @@ use crate::services::memory::CollectRowsWarn;
 static VEC0_ONCE: std::sync::Once = std::sync::Once::new();
 static VEC0_OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// 尝试注册 sqlite-vec 扩展（进程级一次），返回是否可用。
-/// 必须在创建任何 SQLite 连接之前调用，否则自动扩展不会注册到已存在的连接。
-#[allow(clippy::missing_transmute_annotations)] // 与 sqlite-vec crate 自带测试一致的用法
+/// Try to register the sqlite-vec extension (once per process); returns whether it is available.
+/// Must be called before any SQLite connection is created, or the auto extension will not reach existing connections.
+#[allow(clippy::missing_transmute_annotations)] // usage matching the sqlite-vec crate's own tests
 pub fn vec0_available() -> bool {
     VEC0_ONCE.call_once(|| {
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         {
             let ok = unsafe {
-                // sqlite-vec 的 init 是 3 参 C 入口（loadable 规范）；
-                // auto_extension 需要 1 参入口，与 crate 自带测试一致的 transmute 用法。
+                // sqlite-vec's init is a 3-arg C entry point (loadable extension spec);
+                // auto_extension needs a 1-arg entry, hence the transmute, matching the crate's own tests.
                 rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
                     sqlite_vec::sqlite3_vec_init as *const (),
                 ))) == rusqlite::ffi::SQLITE_OK
@@ -34,7 +34,7 @@ pub fn vec0_available() -> bool {
     VEC0_OK.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// 按维度创建 vec0 表（维度变化时先删后建；旧向量由调用方决定是否重索引）。
+/// Create the vec0 table for a given dimension (drop and recreate on dimension change; re-indexing old vectors is up to the caller).
 pub fn ensure_vec_table(conn: &Connection, dim: usize) -> Result<(), String> {
     let dim = dim.clamp(1, 8192);
     let sql = format!(
@@ -44,7 +44,7 @@ pub fn ensure_vec_table(conn: &Connection, dim: usize) -> Result<(), String> {
         .map_err(|e| ierr!("创建 vec0 表失败: {}", "Failed to create vec0 table: {}", e))
 }
 
-/// vec0 kNN 检索：返回 (fact_id, cosine_similarity) 按相似度降序。
+/// vec0 kNN search: returns (fact_id, cosine_similarity) sorted by similarity descending.
 pub fn vec0_search(
     conn: &Connection,
     query: &[f32],
@@ -60,7 +60,7 @@ pub fn vec0_search(
     Ok(rows.collect_rows("vec0"))
 }
 
-/// vec0 写入（按 fact_id 先删后插）。
+/// vec0 upsert (delete-then-insert by fact_id).
 pub fn vec0_upsert(conn: &Connection, fact_id: &str, vec: &[f32]) -> Result<(), String> {
     conn.execute("DELETE FROM vec_facts WHERE fact_id = ?1", [fact_id])
         .map_err(|e| e.to_string())?;
@@ -72,21 +72,21 @@ pub fn vec0_upsert(conn: &Connection, fact_id: &str, vec: &[f32]) -> Result<(), 
     Ok(())
 }
 
-/// vec0 删除（按 fact_id）。
+/// vec0 delete by fact_id.
 pub fn vec0_delete(conn: &Connection, fact_id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM vec_facts WHERE fact_id = ?1", [fact_id])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 清空 vec0 表（重索引前调用）。
+/// Clear the vec0 table (called before re-indexing).
 pub fn vec0_clear(conn: &Connection) -> Result<(), String> {
     conn.execute("DELETE FROM vec_facts", [])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 读取 vec0 表当前维度（不存在时返回 None）。
+/// Read the current dimension of the vec0 table (returns None if it does not exist).
 pub fn vec0_dim(conn: &Connection) -> Option<usize> {
     let sql = "SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2";
     let row: Option<String> = conn
@@ -99,7 +99,7 @@ pub fn vec0_dim(conn: &Connection) -> Option<usize> {
     rest[..end].parse::<usize>().ok()
 }
 
-/// vec_code 写入（按 chunk_id 先删后插）。
+/// vec_code upsert (delete-then-insert by chunk_id).
 pub fn vec0_upsert_code(conn: &Connection, chunk_id: &str, vec: &[f32]) -> Result<(), String> {
     conn.execute("DELETE FROM vec_code WHERE chunk_id = ?1", [chunk_id])
         .map_err(|e| e.to_string())?;
@@ -111,7 +111,7 @@ pub fn vec0_upsert_code(conn: &Connection, chunk_id: &str, vec: &[f32]) -> Resul
     Ok(())
 }
 
-/// vec_code kNN 检索：返回 (chunk_id, cosine_similarity)。
+/// vec_code kNN search: returns (chunk_id, cosine_similarity).
 pub fn vec0_search_code(
     conn: &Connection,
     query: &[f32],

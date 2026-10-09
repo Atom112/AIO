@@ -1,6 +1,6 @@
-//! 项目记忆命令（memory_*）。
+//! Project memory commands (memory_*).
 //!
-//! 提供事实 CRUD、混合检索、状态与统计，供前端项目设置与记忆面板调用。
+//! Fact CRUD, hybrid retrieval, status and stats for the frontend project settings and memory panel.
 
 use crate::core::events as ev;
 use crate::core::models::{AppConfig, MemoryEmbeddingConfig, MemoryRerankConfig};
@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::ierr;
 
-/// 嵌入器就绪状态（memory_get_status 返回）。
+/// Embedder readiness status (returned by memory_get_status).
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbedderStatus {
@@ -24,7 +24,7 @@ pub struct EmbedderStatus {
     pub dimensions: usize,
 }
 
-/// 项目记忆状态（memory_get_status 返回）。
+/// Project memory status (returned by memory_get_status).
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryStatus {
@@ -33,11 +33,11 @@ pub struct MemoryStatus {
     pub stats: MemoryStats,
     pub embedder: EmbedderStatus,
     pub embedding: MemoryEmbeddingConfig,
-    /// 项目级重排配置（apiKey 恒为空；在线 Key 存 secure_store）
+    /// Project-level rerank config (apiKey is always empty; online keys live in secure_store)
     pub rerank: MemoryRerankConfig,
 }
 
-/// 记忆列表分页结果。
+/// Paginated memory list result.
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryListPage {
@@ -45,17 +45,17 @@ pub struct MemoryListPage {
     pub total: i64,
 }
 
-/// 加载应用配置（失败时使用默认值）。
+/// Load app config (falls back to defaults on failure).
 fn load_cfg(app: &AppHandle) -> AppConfig {
     crate::core::config::load_app_config(app).unwrap_or_default()
 }
 
-/// 由 project_id 解析项目根路径。
+/// Resolve the project root path from project_id.
 fn resolve_root(app: &AppHandle, project_id: &str) -> Result<String, String> {
     file_tools::resolve_project_root(app, Some(project_id))
 }
 
-/// 嵌入单条文本；失败返回 None（检索/写入降级为关键词模式）。
+/// Embed a single text; returns None on failure (retrieval/write falls back to keyword mode).
 async fn embed_one(
     app: &AppHandle,
     cfg: &MemoryEmbeddingConfig,
@@ -71,8 +71,8 @@ async fn embed_one(
     Some((embedder.model_key(), v.len(), v))
 }
 
-/// 计算嵌入器就绪状态（优先回显实际解析到的嵌入器，而非原始配置：
-/// 配置里的 provider/model/dimensions 可能来自旧版全局配置快照，与实际使用的不一致）。
+/// Compute embedder readiness (prefers the actually resolved embedder over the raw config:
+/// provider/model/dimensions in the config may come from a legacy global config snapshot and not match actual usage).
 fn embedder_status(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> EmbedderStatus {
     let (provider, model, dims, configured, available) =
         match crate::plugins::embed::resolve(app, cfg) {
@@ -100,18 +100,18 @@ fn embedder_status(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> EmbedderStat
     }
 }
 
-/// 读取项目记忆状态（含统计与嵌入器就绪情况）。
+/// Read project memory status (including stats and embedder readiness).
 #[tauri::command]
 pub fn memory_get_status(app: AppHandle, project_id: String) -> Result<MemoryStatus, String> {
     let cfg = load_cfg(&app);
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
     let stats = store.stats()?;
-    // 惰性迁移：旧 knowledge.json 首次打开时并入事实库（幂等）
+    // Lazy migration: the legacy knowledge.json is merged into the fact store on first open (idempotent)
     let _ = store.migrate_from_knowledge_json();
     let project_override = store.project_enabled()?;
-    // 显式迁移步骤（命名、可审计）：嵌入/重排配置的项目级快照与在线归一化。
-    // 随后的 resolve_* 均为纯读取（resolve_project_rerank 内部归一化 provider/model）。
+    // Explicit, named, auditable migration steps: project-level snapshots and online normalization of embedding/rerank config.
+    // The resolve_* calls below are pure reads (resolve_project_rerank normalizes provider/model internally).
     crate::services::memory::migrate_project_embedding(&app, &store);
     crate::services::memory::retrieve::migrate_project_rerank(&app, &store);
     let embedding = crate::services::memory::resolve_project_embedding(&app, &store);
@@ -126,7 +126,7 @@ pub fn memory_get_status(app: AppHandle, project_id: String) -> Result<MemorySta
     })
 }
 
-/// 混合检索：向量（可用时）+ 关键词（FTS5）融合。
+/// Hybrid retrieval: vector (when available) + keyword (FTS5) fusion.
 #[tauri::command]
 pub async fn memory_search(
     app: AppHandle,
@@ -146,7 +146,7 @@ pub async fn memory_search(
     if opts.category.as_deref() == Some("") {
         opts.category = None;
     }
-    // 查询改写（可选）+ 多查询 RRF 融合 + 项目级重排 + 图谱加分；expand=true 走迭代检索（P3-1）
+    // Query rewrite (optional) + multi-query RRF fusion + project-level rerank + graph boost; expand=true uses iterative retrieval
     let rewrite_enabled = load_cfg(&app).memory_query_rewrite;
     let mut queries = vec![query.clone()];
     if rewrite_enabled {
@@ -159,7 +159,7 @@ pub async fn memory_search(
     };
     let ids: Vec<String> = results.iter().map(|f| f.id.clone()).collect();
     store.bump_access(&ids);
-    // 质量探针：检索次数与命中条数（近 7 天滚动）
+    // Quality probes: query count and hit count (7-day rolling window)
     store.rolling_bump(crate::services::memory::store::STAT_QUERIES, 1);
     store.rolling_bump(
         crate::services::memory::store::STAT_HITS,
@@ -168,7 +168,7 @@ pub async fn memory_search(
     Ok(results)
 }
 
-/// 新增一条事实（key 存在则更新；写入前尝试向量化）。
+/// Add a fact (updates when the key exists; attempts vectorization before write).
 #[tauri::command]
 pub async fn memory_add(
     app: AppHandle,
@@ -194,7 +194,7 @@ pub async fn memory_add(
     store.upsert_fact(&fact, embedding)
 }
 
-/// 按 id 订正事实（内容/类别；重新向量化）。
+/// Amend a fact by id (content/category; re-vectorizes).
 #[tauri::command]
 pub async fn memory_update(
     app: AppHandle,
@@ -208,7 +208,7 @@ pub async fn memory_update(
     let embedding_cfg = crate::services::memory::resolve_project_embedding(&app, &store);
     let existing = store.get_fact(&id)?;
     let new_content = content.unwrap_or(existing.content.clone());
-    // key 存在时走 upsert（同 key 原地更新 + 版本审计）；无 key 时直接订正内容
+    // With a key, go through upsert (in-place update for the same key + version audit); without a key, amend the content directly
     let saved = if existing.key.is_some() {
         let fact = NewFact {
             key: existing.key.clone(),
@@ -222,12 +222,12 @@ pub async fn memory_update(
         let embedding = embed_one(&app, &embedding_cfg, &new_content).await;
         store.upsert_fact(&fact, embedding)?
     } else {
-        // 无 key 事实：内容就地订正；向量原地重写（set_embedding）。
-        // 禁止用 upsert_fact(key: None) 重写向量 —— key 为 None 时 upsert 会跳过
-        // 查重直接 INSERT，导致每次编辑都插入一条重复事实。
+        // Keyless fact: amend the content in place; rewrite the vector in place (set_embedding).
+        // Never rewrite the vector via upsert_fact(key: None) — with key=None, upsert skips
+        // dedup and INSERTs directly, inserting a duplicate fact on every edit.
         let mut updated = store.update_content(&id, &new_content, "update")?;
         if let Some(cat) = &category {
-            // keyless 分支此前会静默丢弃 category 参数；现经由 set_category 生效
+            // The category param takes effect via set_category in the keyless branch
             updated = store.set_category(&id, cat)?;
         }
         if let Some(embedding) = embed_one(&app, &embedding_cfg, &new_content).await {
@@ -240,7 +240,7 @@ pub async fn memory_update(
     Ok(saved)
 }
 
-/// 删除一条事实。
+/// Delete a fact.
 #[tauri::command]
 pub fn memory_delete(app: AppHandle, project_id: String, id: String) -> Result<(), String> {
     let root = resolve_root(&app, &project_id)?;
@@ -249,14 +249,14 @@ pub fn memory_delete(app: AppHandle, project_id: String, id: String) -> Result<(
         .delete_fact(&id)
 }
 
-/// 按 id 读取单条事实。
+/// Read a single fact by id.
 #[tauri::command]
 pub fn memory_get(app: AppHandle, project_id: String, id: String) -> Result<MemoryFact, String> {
     let root = resolve_root(&app, &project_id)?;
     app.state::<MemoryStoreManager>().open(&root)?.get_fact(&id)
 }
 
-/// 设置本项目记忆开关（写入项目 memory.sqlite 的 meta 覆盖；跟随全局默认请用 memory_reset_enabled）。
+/// Set this project's memory toggle (writes a meta override into the project's memory.sqlite; use memory_reset_enabled to follow the global default).
 #[tauri::command]
 pub fn memory_set_enabled(app: AppHandle, project_id: String, enabled: bool) -> Result<(), String> {
     let root = resolve_root(&app, &project_id)?;
@@ -265,7 +265,7 @@ pub fn memory_set_enabled(app: AppHandle, project_id: String, enabled: bool) -> 
         .set_project_enabled(Some(enabled))
 }
 
-/// 清除项目记忆开关覆盖（跟随全局默认）。
+/// Clear the project memory toggle override (follows the global default).
 #[tauri::command]
 pub fn memory_reset_enabled(app: AppHandle, project_id: String) -> Result<(), String> {
     let root = resolve_root(&app, &project_id)?;
@@ -274,7 +274,7 @@ pub fn memory_reset_enabled(app: AppHandle, project_id: String) -> Result<(), St
         .set_project_enabled(None)
 }
 
-/// 读取事实的版本审计链。
+/// Read a fact's version audit chain.
 #[tauri::command]
 pub fn memory_get_versions(
     app: AppHandle,
@@ -287,7 +287,7 @@ pub fn memory_get_versions(
         .get_versions(&id)
 }
 
-/// 手工合并两条事实（target 保留，source 标记 superseded）。
+/// Manually merge two facts (target is kept, source is marked superseded).
 #[tauri::command]
 pub fn memory_merge_facts(
     app: AppHandle,
@@ -304,7 +304,7 @@ pub fn memory_merge_facts(
     )
 }
 
-/// 归档（软删除）一条事实。
+/// Archive (soft-delete) a fact.
 #[tauri::command]
 pub fn memory_archive(
     app: AppHandle,
@@ -319,7 +319,7 @@ pub fn memory_archive(
     )
 }
 
-/// 钉住 / 取消钉住一条事实。
+/// Pin / unpin a fact.
 #[tauri::command]
 pub fn memory_set_pinned(
     app: AppHandle,
@@ -333,7 +333,7 @@ pub fn memory_set_pinned(
         .set_pinned(&id, pinned)
 }
 
-/// 容量治理：超出上限时归档最低分非 pinned 事实，返回归档数。
+/// Capacity governance: when over the limit, archive the lowest-scoring non-pinned facts; returns the number archived.
 #[tauri::command]
 pub fn memory_prune(app: AppHandle, project_id: String) -> Result<usize, String> {
     let cfg = load_cfg(&app);
@@ -343,8 +343,8 @@ pub fn memory_prune(app: AppHandle, project_id: String) -> Result<usize, String>
         .prune_to_capacity(cfg.memory_max_facts.max(100))
 }
 
-/// 导出全部记忆事实为 JSON 文件（不含向量），写入用户指定的文件系统路径。
-/// `path`：目标文件绝对路径（前端经 dialog save 选取）。
+/// Export all memory facts as a JSON file (vectors excluded) to a user-chosen filesystem path.
+/// `path`: absolute target file path (picked via the frontend dialog save).
 #[tauri::command]
 pub fn memory_export_file(app: AppHandle, project_id: String, path: String) -> Result<(), String> {
     let root = resolve_root(&app, &project_id)?;
@@ -356,8 +356,8 @@ pub fn memory_export_file(app: AppHandle, project_id: String, path: String) -> R
         .map_err(|e| ierr!("写入导出文件失败: {}", "Failed to write export file: {}", e))
 }
 
-/// 从用户指定路径的 JSON 文件导入记忆事实（按 key 去重；向量需重建）。
-/// `path`：源文件绝对路径（前端经 dialog open 选取）。
+/// Import memory facts from a user-chosen JSON file (dedup by key; vectors must be rebuilt).
+/// `path`: absolute source file path (picked via the frontend dialog open).
 #[tauri::command]
 pub fn memory_import_file(
     app: AppHandle,
@@ -372,7 +372,7 @@ pub fn memory_import_file(
         .import_facts(&json)
 }
 
-/// 索引项目代码（P4 代码级 RAG；增量跳过未变化文件）。
+/// Index project code for code-level RAG; incremental runs skip unchanged files.
 #[tauri::command]
 pub async fn memory_code_index(
     window: tauri::Window,
@@ -395,7 +395,7 @@ pub async fn memory_code_index(
     .await
 }
 
-/// 代码语义检索（search_code 工具的后端；path/symbol 过滤可选）。
+/// Semantic code search (backend for the search_code tool; optional path/symbol filters).
 #[tauri::command]
 pub async fn memory_code_search(
     app: AppHandle,
@@ -417,7 +417,7 @@ pub async fn memory_code_search(
     .await
 }
 
-/// 代码索引状态。
+/// Code index status.
 #[tauri::command]
 pub fn memory_code_status(
     app: AppHandle,
@@ -427,21 +427,21 @@ pub fn memory_code_status(
     crate::services::memory::code::code_status(&app, &root)
 }
 
-/// 清空项目记忆。
+/// Clear project memory.
 #[tauri::command]
 pub fn memory_clear(app: AppHandle, project_id: String) -> Result<(), String> {
     let root = resolve_root(&app, &project_id)?;
     app.state::<MemoryStoreManager>().open(&root)?.clear()
 }
 
-/// 记忆统计。
+/// Memory stats.
 #[tauri::command]
 pub fn memory_stats(app: AppHandle, project_id: String) -> Result<MemoryStats, String> {
     let root = resolve_root(&app, &project_id)?;
     app.state::<MemoryStoreManager>().open(&root)?.stats()
 }
 
-/// 列出事实（可选 status/category 过滤，分页）。
+/// List facts (optional status/category filters, paginated).
 #[tauri::command]
 pub fn memory_list(
     app: AppHandle,
@@ -462,7 +462,7 @@ pub fn memory_list(
     Ok(MemoryListPage { facts, total })
 }
 
-/// 重建/补建向量索引（为无 embedding 的 active 事实生成向量；经 reindex-progress 事件回报进度）。
+/// Rebuild/backfill the vector index (generates vectors for active facts without an embedding; progress is reported via the reindex-progress event).
 #[tauri::command]
 pub async fn memory_reindex(
     window: tauri::Window,
@@ -497,8 +497,8 @@ pub async fn memory_reindex(
         .await
 }
 
-/// 切换项目嵌入模型：校验 → 用所选模型探测实际维度 → 固化到项目 meta →
-/// 清空该项目全部向量（事实文本保留，含代码向量）→ 自动重建索引（reindex-progress 事件回报）。
+/// Switch the project embedding model: validate → probe actual dimensions with the selected model → persist to project meta →
+/// clear all project vectors (fact text is kept, including code vectors) → rebuild the index automatically (progress via the reindex-progress event).
 #[tauri::command]
 pub async fn memory_update_embedding(
     window: tauri::Window,
@@ -506,7 +506,7 @@ pub async fn memory_update_embedding(
     project_id: String,
     config: MemoryEmbeddingConfig,
 ) -> Result<MemoryStatus, String> {
-    // 仅支持本地嵌入模型；旧配置中的 online/openai_compat 归一化为 local
+    // Only local embedding models are supported; legacy online/openai_compat in the config is normalized to local
     let mut config = config;
     config.provider = "local".into();
     config.api_url.clear();
@@ -522,17 +522,17 @@ pub async fn memory_update_embedding(
     }
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
-    // 显式迁移（幂等）：先补齐项目级 meta，再做"是否变化"的判定，避免误判为首次切换
+    // Explicit idempotent migration: backfill project-level meta first, then decide "changed or not" to avoid a false first-time switch
     crate::services::memory::migrate_project_embedding(&app, &store);
     let (current, _) = store.embedding_cfg();
     if current.provider == config.provider
         && current.model == config.model
         && current.dimensions == config.dimensions
     {
-        // 配置未变化：直接返回当前状态，不做任何破坏性操作
+        // Config unchanged: return the current status directly, no destructive operations
         return memory_get_status(app, project_id);
     }
-    // 1) 用所选模型探测实际维度与模型标识（比配置里手填的 dimensions/model 更可靠）
+    // 1) Probe actual dimensions and model key with the selected model (more reliable than hand-filled dimensions/model in the config)
     let (model_key, dims, _) = embed_one(&app, &config, "embedding probe")
         .await
         .ok_or_else(|| {
@@ -541,15 +541,15 @@ pub async fn memory_update_embedding(
                 "Unable to use the selected embedding model (download and enable it first)"
             )
         })?;
-    // 2) 固化到项目 meta（model/维度按实测值；apiKey 不落盘）
+    // 2) Persist to project meta (model/dimensions use measured values; apiKey is never written to disk)
     let mut resolved = config.clone();
     resolved.model = model_key;
     resolved.dimensions = dims;
     resolved.api_key.clear();
     store.set_embedding_cfg(&resolved)?;
-    // 3) 清空全部向量（事实与代码块文本保留，仅弃用向量）
+    // 3) Clear all vectors (fact and code chunk text is kept; only vectors are discarded)
     store.reset_vectors()?;
-    // 4) 自动重建事实索引（按新模型重新嵌入）
+    // 4) Rebuild the fact index automatically (re-embed with the new model)
     let embedder = crate::plugins::embed::resolve(&app, &resolved)?;
     let (done, failed) = store
         .reindex(
@@ -577,8 +577,8 @@ pub async fn memory_update_embedding(
     memory_get_status(app, project_id)
 }
 
-/// 抽取事实间关系（P3-3 轻量知识图谱）：对按加权分排序的前 limit 条 active 事实，
-/// 逐条调用 LLM 抽取实体-关系三元组并写 facts_relations（先删后插，幂等）。
+/// Extract relations between facts (lightweight knowledge graph): for the top `limit` active facts by weighted score,
+/// call the LLM per fact to extract entity-relation triples and write them to facts_relations (delete-then-insert, idempotent).
 #[tauri::command]
 pub async fn memory_graph_extract(
     app: AppHandle,
@@ -590,7 +590,7 @@ pub async fn memory_graph_extract(
     crate::services::memory::graph::extract_relations(&app, &store, limit.unwrap_or(50)).await
 }
 
-/// 设置项目级重排配置（仅本地模型；rerank 不涉及向量，不触发重建）。
+/// Set the project-level rerank config (local models only; rerank involves no vectors, so no rebuild is triggered).
 #[tauri::command]
 pub fn memory_update_rerank(
     app: AppHandle,
@@ -598,7 +598,7 @@ pub fn memory_update_rerank(
     config: MemoryRerankConfig,
 ) -> Result<MemoryStatus, String> {
     let mut config = config;
-    // 自 v0.8.1 起仅支持本地重排：旧 provider（online/openai_compat）归一化为 local
+    // Since v0.8.1 only local rerank is supported: legacy providers (online/openai_compat) are normalized to local
     config.provider = "local".into();
     let model = config.model.trim().to_string();
     if model.is_empty() {
@@ -615,8 +615,8 @@ pub fn memory_update_rerank(
     memory_get_status(app, project_id)
 }
 
-/// 手动触发一次合并整理（sleep-time consolidation；预算默认取全局配置，可显式覆盖）。
-/// 与每日后台调度共用 per-project 锁与预算口径。
+/// Manually trigger one consolidation pass (sleep-time consolidation; budget defaults to the global config and can be overridden).
+/// Shares the per-project lock and budget semantics with the daily background scheduler.
 #[tauri::command]
 pub async fn memory_consolidate(
     app: AppHandle,

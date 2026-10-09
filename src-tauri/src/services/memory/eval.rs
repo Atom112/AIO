@@ -1,14 +1,14 @@
-//! P3-5 RAG 检索质量评测基准（CI 可选执行）：
+//! RAG retrieval quality benchmark (optional in CI):
 //!
 //! ```text
 //! cargo test --lib eval_rag -- --ignored --nocapture
 //! ```
 //!
-//! 读取 `tests/rag_eval/dataset.json`（40 条事实 + 12 条标注查询，zh/EN 混合），
-//! 在临时记忆库上用内置局部嵌入模型建库，对比三条检索路线：
-//!   纯向量 / FTS（稀疏腿）/ 混合（RRF + 时新度）
-//! 输出 NDCG@10、MRR、P@5 对比表（四路"混合+Rerank"需本地重排模型已下载时另行评估）。
-//! 结果为报告性质，不设硬性断言，避免脆断 CI。
+//! Reads `tests/rag_eval/dataset.json` (40 facts + 12 labeled queries, mixed zh/EN),
+//! builds a temporary memory store with the built-in local embedding model, and compares three retrieval routes:
+//!   vector-only / FTS (sparse leg) / hybrid (RRF + recency)
+//! Prints an NDCG@10 / MRR / P@5 comparison table (a fourth "hybrid+rerank" route is evaluated separately once the local rerank model has been downloaded).
+//! Results are informational only: no hard assertions, avoiding brittle CI failures.
 
 use crate::plugins::embed::Embedder;
 use crate::services::memory::store::{MemoryStore, SearchOptions};
@@ -162,7 +162,7 @@ async fn eval_rag_quality_benchmark() {
             .ok()
             .and_then(|v| v.into_iter().next());
 
-        // 路由 1：纯向量（余弦 top-10）
+        // Route 1: vector-only (cosine top-10)
         let vec_ids: Vec<String> = match &qv {
             Some(v) => store
                 .search_similar(v, 10)
@@ -172,7 +172,7 @@ async fn eval_rag_quality_benchmark() {
                 .collect(),
             None => Vec::new(),
         };
-        // 路由 2：FTS-only
+        // Route 2: FTS-only
         let fts_ids: Vec<String> = store
             .search_fts_only(
                 &q.query,
@@ -186,7 +186,7 @@ async fn eval_rag_quality_benchmark() {
             .into_iter()
             .map(|f| f.id)
             .collect();
-        // 路由 3：混合（向量 + FTS，RRF）
+        // Route 3: hybrid (vector + FTS, RRF)
         let hybrid_ids: Vec<String> = store
             .search_hybrid(
                 &q.query,
@@ -249,7 +249,7 @@ async fn eval_rag_quality_benchmark() {
         avg(&routes[2].ndcg) - avg(&routes[1].ndcg)
     );
     println!("注：『混合+Rerank』需先下载本地重排模型（bge-reranker-base）后另行评测；当前内置嵌入为英语向 all-MiniLM-L6-v2，中文查询预期由 FTS/混合腿补足。");
-    // 断言的唯一护栏：混合不应显著劣于单腿（>0.15 NDCG 降幅视为退化）
+    // The only assertion guardrail: hybrid must not be significantly worse than a single leg (a >0.15 NDCG drop counts as regression)
     assert!(
         avg(&routes[2].ndcg) + 0.15 >= avg(&routes[0].ndcg),
         "混合检索不应明显退化于纯向量"

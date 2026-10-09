@@ -1,4 +1,4 @@
-//! 消息域：Message 到 API JSON 的转换与话题消息的追加/删除命令。
+//! Message domain: Message-to-API-JSON conversion plus topic-message append/delete commands.
 
 use crate::commands::llm::*;
 use crate::core::state::DbState;
@@ -90,7 +90,7 @@ pub(crate) fn message_for_api(
         }
     }
 
-    // 模型生成图像：剥离 aio-image 标记并把 images 元数据展开回 image_url 块（历史回放）
+    // Model-generated images: strip aio-image tokens and expand images metadata back into image_url blocks (history replay)
     if let Some(images) = &message.images {
         if !images.is_empty() {
             let base_text = match &content {
@@ -135,15 +135,15 @@ pub(crate) fn message_for_api(
     Ok(serde_json::Value::Object(object))
 }
 
-/// 向话题追加一条消息（落库的权威写入路径）。
+/// Append one message to a topic (the authoritative write path into storage).
 ///
-/// # 参数
-/// - `topic_id` — 目标话题 ID
-/// - `message` — 消息体；`id` 缺省时自动生成 UUID，`display_files` / `tool_calls`
-///   以 JSON 文本列存储
+/// # Parameters
+/// - `topic_id` — target topic ID
+/// - `message` — message body; `id` defaults to a generated UUID when absent; `display_files` / `tool_calls`
+///   are stored as JSON text columns
 ///
-/// # 行为
-/// 单条 INSERT（不会覆盖既有消息）；写入失败返回错误串。
+/// # Behavior
+/// Single INSERT (never overwrites existing messages); returns an error string on write failure.
 #[tauri::command]
 pub(crate) async fn append_message(
     state: tauri::State<'_, DbState>,
@@ -194,13 +194,13 @@ pub(crate) async fn append_message(
     Ok(())
 }
 
-/// 删除话题内的一条消息。
+/// Delete one message within a topic.
 ///
-/// # 参数
-/// - `topic_id` / `message_id` — 两者必须匹配（WHERE 同时限定），避免跨话题误删
+/// # Parameters
+/// - `topic_id` / `message_id` — both must match (the WHERE constrains both), preventing cross-topic deletion
 ///
-/// # 行为
-/// 直接 DELETE；目标不存在时静默成功（幂等）。
+/// # Behavior
+/// Plain DELETE; silently succeeds when the target is missing (idempotent).
 #[tauri::command]
 pub(crate) async fn delete_topic_message(
     state: tauri::State<'_, DbState>,
@@ -216,7 +216,7 @@ pub(crate) async fn delete_topic_message(
     Ok(())
 }
 
-/// 从消息内容中提取纯文本，多模态数组（OpenAI vision 格式）只保留 text 部分。
+/// Extract plain text from message content; multimodal arrays (OpenAI vision format) keep only the text parts.
 pub(crate) fn extract_text_content(content: &serde_json::Value) -> String {
     match content {
         serde_json::Value::String(s) => s.clone(),

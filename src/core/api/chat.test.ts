@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// llmCreds 是纯辅助，但 chat.ts 依赖 @tauri-apps 与 store——Node 环境下 mock 掉，
-// 只验证 llmCreds 的字段映射逻辑。
+// llmCreds is a pure helper, but chat.ts depends on @tauri-apps and the store, so mock them in Node
+// and test only the llmCreds field-mapping logic.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 vi.mock('../store/profiles', () => ({}));

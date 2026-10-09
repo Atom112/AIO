@@ -1,26 +1,26 @@
-//! Agent 域模型：Agent 模式枚举、工作流与自定义子智能体 profile。
+//! Agent domain models: Agent mode enum, workflows, and custom subagent profiles.
 
 use serde::{Deserialize, Serialize};
 
-/// Agent 执行模式。
+/// Agent execution mode.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum AgentMode {
-    /// 对话模式（不使用 Agent 功能）
+    /// Chat mode (no agent features)
     #[default]
     Off,
-    /// 普通模式：文件写入/删除需要用户确认
+    /// Normal mode: file write/delete requires user confirmation
     Normal,
-    /// 自动模式：跳过确认，自主执行
+    /// Auto mode: skips confirmation, executes autonomously
     Auto,
-    /// 计划模式：先列出计划，用户确认后再执行
+    /// Plan mode: presents a plan first, executes after user confirmation
     Plan,
-    /// 工作流模式：强制拆解任务为工作流并自动执行
+    /// Workflow mode: forces task decomposition into a workflow and auto-executes it
     Workflow,
 }
 
-/// 工作流步骤状态
+/// Workflow step status
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum WorkflowStepStatus {
@@ -30,67 +30,67 @@ pub enum WorkflowStepStatus {
     Failed,
 }
 
-/// 工作流中的一个步骤
+/// One step of a workflow
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowStep {
-    /// 步骤标识（"step-1", "step-2", ...）
+    /// Step identifier ("step-1", "step-2", ...)
     pub step_id: String,
-    /// 子 Agent profile ID
+    /// Subagent profile ID
     pub profile_id: String,
-    /// 步骤显示名称
+    /// Step display name
     pub name: String,
-    /// 任务描述（给子 Agent 的输入）
+    /// Task description (input to the subagent)
     pub task_description: String,
-    /// 当前状态
+    /// Current status
     pub status: WorkflowStepStatus,
-    /// 步骤执行结果
+    /// Step execution result
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
-    /// 开始时间戳（ms）
+    /// Start timestamp (ms)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<u64>,
-    /// 耗时（ms）
+    /// Duration (ms)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<u64>,
 }
 
-/// 完整工作流定义
+/// Complete workflow definition
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Workflow {
     /// UUID
     pub workflow_id: String,
-    /// 工作流标题
+    /// Workflow title
     pub title: String,
-    /// 步骤列表（线性顺序）
+    /// Step list (linear order)
     pub steps: Vec<WorkflowStep>,
 }
 
 // ====== Custom Subagent Profiles ======
 
-/// 用户自定义的子智能体配置文件（存储在 custom-subagent-profiles.json）
+/// User-defined subagent profile (stored in custom-subagent-profiles.json)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomSubagentProfile {
-    /// 用户指定的唯一标识（字母数字短横线）
+    /// User-chosen unique identifier (alphanumeric plus hyphens)
     pub id: String,
-    /// 显示名称
+    /// Display name
     pub name: String,
-    /// 用途说明
+    /// Purpose description
     pub description: String,
-    /// 允许的工具列表（glob 模式），空 = 全部
+    /// Allowed tool list (glob patterns); empty = all
     pub allowed_tools: Vec<String>,
-    /// 禁止的工具列表（glob 模式），空 = 无
+    /// Denied tool list (glob patterns); empty = none
     pub denied_tools: Vec<String>,
-    /// 附加的系统提示词（追加到子 Agent 基础系统提示词之后）
+    /// Extra system prompt (appended after the subagent base system prompt)
     pub system_prompt_extension: String,
-    /// 是否注入 MCP 工具（主 Agent 勾选的 server）。默认关闭。
+    /// Whether MCP tools are injected (servers selected by the main agent). Default off.
     #[serde(default)]
     pub allow_mcp_tools: bool,
 }
 
-/// custom-subagent-profiles.json 的磁盘格式
+/// On-disk format of custom-subagent-profiles.json
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomSubagentProfilesFile {

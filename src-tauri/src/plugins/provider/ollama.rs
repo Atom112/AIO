@@ -1,13 +1,13 @@
-//! Ollama provider plugin (本地推理)
+//! Ollama provider plugin (local inference)
 //!
-//! 端点规范:
+//! Endpoint spec:
 //! - URL: `${base}/api/tags`
-//! - Auth: 无 (本地服务)
-//! - Response: `{models: [{name, ...}]}` —— 字段名是 `name`，外层是 `models`
+//! - Auth: none (local service)
+//! - Response: `{models: [{name, ...}]}` - the field is `name`, the outer key is `models`
 //!
-//! 匹配规则: URL 含 `11434` 端口 / `localhost` / `127.0.0.1` / `ollama` 关键字
+//! Match rule: URL contains port `11434` or the `ollama` keyword
 //!
-//! 参考 LobeHub `packages/model-runtime/src/providers/ollama/index.ts:80-95`
+//! Reference: LobeHub `packages/model-runtime/src/providers/ollama/index.ts:80-95`
 
 use reqwest::RequestBuilder;
 
@@ -22,10 +22,10 @@ impl ProviderPlugin for OllamaProvider {
     }
 
     fn matches(&self, api_url: &str) -> bool {
-        // 仅认领明确的 Ollama 特征：默认端口 11434 或 host/id 中出现 "ollama"。
-        // 不再吞掉任意 localhost/127.0.0.1 —— 那会把 LM Studio、llama.cpp server、
-        // text-generation-webui 等本地 OpenAI 兼容端点误判为 Ollama，
-        // 导致 /api/tags 请求打错端点（本地引擎另有 engine_type 直通路径）。
+        // Only claims unambiguous Ollama signatures: default port 11434 or "ollama" in the host/id.
+        // Claiming any localhost/127.0.0.1 would misclassify local OpenAI-compatible
+        // endpoints (LM Studio, llama.cpp server, text-generation-webui) as Ollama
+        // and send /api/tags to the wrong endpoint (local engines use the engine_type direct path).
         let u = api_url.to_lowercase();
         u.contains("11434") || u.contains("ollama")
     }
@@ -35,13 +35,13 @@ impl ProviderPlugin for OllamaProvider {
     }
 
     fn apply_auth(&self, req: RequestBuilder, _api_key: &str) -> RequestBuilder {
-        // Ollama 无认证
+        // Ollama has no auth
         req
     }
 
     fn chat_completions_url(&self, api_url: &str) -> String {
         let base = api_url.trim_end_matches('/');
-        // Ollama 的 OpenAI 兼容端点在 /v1 路径下
+        // Ollama's OpenAI-compatible endpoint lives under the /v1 path
         if base.ends_with("/v1") {
             format!("{}/chat/completions", base)
         } else {

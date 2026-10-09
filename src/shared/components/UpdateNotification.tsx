@@ -21,24 +21,24 @@ import { formatNumber, t } from '../../core/i18n';
 import { btnPrimary, btnSecondary } from '../components/buttonStyles';
 
 /**
- * 左下角应用更新提示 Toast
+ * App update toast pinned to the bottom-left corner
  *
- * 显示条件：
- * 1. 启动时或手动检查发现新版本 (appUpdateAvailable() = true)
- * 2. 用户在本会话中尚未手动关闭 (appUpdateDismissed() = false)
- * 3. 未处于"已是最新"的隐藏态
+ * Shown when:
+ * 1. A new version is found at startup or via manual check (appUpdateAvailable() = true)
+ * 2. The user has not dismissed it this session (appUpdateDismissed() = false)
+ * 3. Not hidden by the "already up to date" state
  *
- * 操作：
- * - 立即更新 → 调用后端 `install_app_update`，期间显示进度条
- * - 稍后     → 记录到 localStorage 并关闭浮层
- * - 重启应用 → 下载完成后调用 `restart_app`
+ * Actions:
+ * - Install now  -> calls backend `install_app_update`, shows a progress bar meanwhile
+ * - Later        -> stores the version in localStorage and closes the toast
+ * - Restart app  -> calls `restart_app` once the download completes
  */
 const UpdateNotification: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
   let unlistenProgress: (() => void) | null = null;
 
   /**
-   * 处理"立即更新"：流式下载并安装，期间显示进度
+   * Handles "Install now": streams the download and install, showing progress
    */
   const handleUpdate = async () => {
     const info = appUpdateInfo();
@@ -62,7 +62,7 @@ const UpdateNotification: Component = () => {
   };
 
   /**
-   * 处理"稍后"：把版本号写入 localStorage 并关闭浮层
+   * Handles "Later": stores the version in localStorage and closes the toast
    */
   const handleDismiss = () => {
     const info = appUpdateInfo();
@@ -73,7 +73,7 @@ const UpdateNotification: Component = () => {
   };
 
   /**
-   * 处理"重启应用"：调用后端 `restart_app` 触发更新安装
+   * Handles "Restart app": calls backend `restart_app` to apply the update
    */
   const handleRestart = async () => {
     try {
@@ -85,7 +85,7 @@ const UpdateNotification: Component = () => {
   };
 
   onMount(async () => {
-    // 监听后端推送的下载进度事件 (0.0 ~ 1.0)
+    // Listen for backend download progress events (0.0 ~ 1.0)
     try {
       unlistenProgress = await listen<number>(EVENTS.appUpdateProgress, (event) => {
         const pct = typeof event.payload === 'number' ? event.payload : 0;
@@ -113,7 +113,7 @@ const UpdateNotification: Component = () => {
           }}
         >
           <div class="p-4 flex flex-col gap-3">
-            {/* 标题行 */}
+            {/* Title row */}
             <div class="flex items-center gap-2.5">
               <div
                 class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
@@ -134,7 +134,7 @@ const UpdateNotification: Component = () => {
               </div>
             </div>
 
-            {/* Release notes 摘要（仅当有内容时显示） */}
+            {/* Release notes summary (shown only when non-empty) */}
             <Show when={appUpdateInfo()!.notes}>
               <div
                 class="text-[12px] text-[rgba(var(--text-base-rgb),0.73)] leading-relaxed rounded-lg p-2.5 max-h-[88px] overflow-y-auto"
@@ -151,7 +151,7 @@ const UpdateNotification: Component = () => {
               </div>
             </Show>
 
-            {/* 错误信息 */}
+            {/* Error message */}
             <Show when={error()}>
               <div
                 class="text-[12px] rounded-lg px-3 py-2"
@@ -165,7 +165,7 @@ const UpdateNotification: Component = () => {
               </div>
             </Show>
 
-            {/* 进度条：仅在下载中或等待重启时显示 */}
+            {/* Progress bar: shown only while downloading or awaiting restart */}
             <Show when={appUpdateDownloading() || appUpdateReady()}>
               <div class="flex flex-col gap-1.5">
                 <div class="flex justify-between text-[11px] text-[rgba(var(--text-base-rgb),0.55)]">
@@ -190,7 +190,7 @@ const UpdateNotification: Component = () => {
               </div>
             </Show>
 
-            {/* 操作按钮 */}
+            {/* Action buttons */}
             <div class="flex gap-2 mt-1">
               <Show
                 when={!appUpdateReady()}

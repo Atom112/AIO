@@ -1,12 +1,12 @@
-// 架构与样式门禁（governance gates）—— 代码审查 M6 阶段产出。
-// 目标：防止本次清理过的反模式回潮。每条门禁失败都会列出具体位置。
-// 门禁清单：
-//   1. 裸中文 JSX 泄漏（面向用户文案必须走 i18n）
-//   2. 硬编码颜色禁令（新颜色必须走 CSS 变量；白名单允许内置默认与独立导出模板）
-//   3. `any` 闸门（只允许既有存量，新增 any 会让计数上涨并失败）
-//   4. 前端/后端分层断言（features/ 不得裸 invoke；services/plugins/core/utils 不得依赖 commands）
-//   5. 文件规模上限（组件/模块文件行数）
-//   6. 后端命令注册一致性（每个 #[tauri::command] 必须在 lib.rs 注册）
+// Architecture and style governance gates: keep anti-patterns cleaned up in past
+// reviews from creeping back; each failing gate lists the exact offending locations.
+// Gate list:
+//   1. Raw Chinese JSX leaks (user-facing copy must go through i18n)
+//   2. Hardcoded color ban (new colors must use CSS variables; allowlist covers built-in defaults and the standalone export template)
+//   3. `any` ratchet (only the existing baseline is allowed; new `any` raises the count and fails)
+//   4. Frontend/backend layering (features/ must not call raw invoke; services/plugins/core/utils must not depend on commands)
+//   5. File-size caps (component/module line counts)
+//   6. Backend command registration consistency (every #[tauri::command] must be registered in lib.rs)
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -36,14 +36,14 @@ async function* walk(dir, ext) {
 const rel = (p) => path.relative(root, p).replaceAll('\\', '/');
 const read = async (p) => readFile(p, 'utf8');
 
-// ---------- 门禁 1：裸中文 JSX ----------
+// ---------- Gate 1: raw Chinese JSX ----------
 const JSX_CHINESE = /^[^<>{}/*"'`=()]*[\u4e00-\u9fff]/;
 for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
   const lines = (await read(p)).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const t = lines[i].trim();
     if (t && JSX_CHINESE.test(t) && !t.startsWith('{') && !t.includes('t(')) {
-      // 纯文本 JSX 节点（不在 {} 表达式中）且含中文 → 泄漏
+      // Plain-text JSX node (not inside a {} expression) containing Chinese -> leak
       if (/^[\u4e00-\u9fff]/.test(t) || /^[^<>{}]*[\u4e00-\u9fff][^<>{}]*$/.test(t)) {
         if (!t.includes('t(') && !t.includes('{') && !t.includes('//')) {
           push('i18n-jsx', rel(p), `L${i + 1} 裸中文 JSX: ${t.slice(0, 40)}`);
@@ -53,8 +53,8 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
   }
 }
 
-// ---------- 门禁 2：硬编码颜色 ----------
-// 允许：index.css（令牌定义处）、导出模板（独立 HTML，var() 不可解析）、ui-prefs 的 themeColor 默认值
+// ---------- Gate 2: hardcoded colors ----------
+// Allowed: index.css (token definitions), the export template (standalone HTML where var() is unresolvable), ui-prefs themeColor default
 const COLOR_ALLOWLIST = new Set([
   'src/index.css',
   'src/core/utils/exportConversation.ts',
@@ -67,8 +67,8 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
   const lines = (await read(p)).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // 内联豁免：同行或前一行/前两行含 gate-allow: color <原因>
-    //（JSX 元素的 class 行在开标签后一行，故豁免需覆盖前 2 行）
+    // Inline exemption: gate-allow: color <reason> on the same line or one/two lines above
+    // (a JSX element's class line sits one line after the opening tag, so the exemption must cover the previous 2 lines)
     if (line.includes('gate-allow: color')) continue;
     if (i > 0 && lines[i - 1].includes('gate-allow: color')) continue;
     if (i > 1 && lines[i - 2].includes('gate-allow: color')) continue;
@@ -78,10 +78,10 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
   }
 }
 
-// ---------- 门禁 3：any 闸门（存量封顶，只降不升）----------
-// 基准：拆分后首次绿时的 any 计数。新代码不得新增 any；存量随清理逐步下调本基准。
-// 拆分后首次绿时的实测基准（随清理逐步下调；只降不升）。
-// 已知大头：chatEventListeners.ts / ChatPage.tsx（listen<any> 载荷待类型化）。
+// ---------- Gate 3: `any` ratchet (baseline cap, may only go down) ----------
+// Baseline: the `any` count recorded when this gate first went green after the split.
+// New code must not add `any`; lower the baseline as the backlog is cleaned up.
+// Known hotspots: chatEventListeners.ts / ChatPage.tsx (listen<any> payloads pending typing).
 const ANY_BASELINE = 163;
 let anyCount = 0;
 const anyFiles = [];
@@ -101,15 +101,15 @@ if (anyCount > ANY_BASELINE) {
   );
 }
 
-// ---------- 门禁 4：分层断言 ----------
-// 前端：features/ 组件不得直接调用 @tauri-apps/api/core 的 invoke（必须走 core/api）
+// ---------- Gate 4: layering ----------
+// Frontend: features/ components must not call @tauri-apps/api/core invoke directly (must go through core/api)
 for await (const p of walk(path.join(root, 'src/features'), ['.tsx', '.ts'])) {
   const c = await read(p);
   if (/\binvoke[<(]/.test(c)) {
     push('layering-fe', rel(p), '组件层裸 invoke—— 必须经 core/api/ 域封装');
   }
 }
-// 后端：低层不得反向依赖命令层
+// Backend: lower layers must not depend back on the commands layer
 for await (const p of walk(path.join(root, 'src-tauri/src'), ['.rs'])) {
   const r = rel(p);
   if (/[\\/](?:services|plugins|core|utils)[\\/]/.test(r) && !/[\\/]commands[\\/]/.test(r)) {
@@ -120,10 +120,10 @@ for await (const p of walk(path.join(root, 'src-tauri/src'), ['.rs'])) {
   }
 }
 
-// ---------- 门禁 5：文件规模上限 ----------
-// 规模上限为"防增长闸门"（封顶现状，随 M5e2 组件拆分下调）：
-//   .tsx 当前最大 ChatPage 2016 → 封 2050（拆分目标 <900）
-//   .rs  当前最大 llm/mod.rs 2518 → 封 2550（目标 <1100）
+// ---------- Gate 5: file-size caps ----------
+// Size caps are growth gates (they pin the current state and ratchet down as components get split):
+//   .tsx current max ChatPage 2016 -> cap 2050 (split target <900)
+//   .rs  current max llm/mod.rs 2518 -> cap 2550 (target <1100)
 const SIZE_LIMITS = [
   { dir: 'src/features', ext: ['.tsx'], max: 2050 },
   { dir: 'src/core', ext: ['.ts'], max: 900 },
@@ -137,15 +137,15 @@ for (const { dir, ext, max } of SIZE_LIMITS) {
   }
 }
 
-// ---------- 门禁 6：后端命令注册一致性 ----------
+// ---------- Gate 6: backend command registration ----------
 {
   const lib = await read(path.join(root, 'src-tauri/src/lib.rs'));
-  // 收集注册的命令完整路径（commands:: 之后的 2~3 段：config::save_assistant 或 llm::btw::ask_btw_question）
+  // Collect full registered command paths (2-3 segments after commands::, e.g. config::save_assistant or llm::btw::ask_btw_question)
   const registered = new Set([...lib.matchAll(/commands::(\w+(?:::\w+)+)/g)].map((m) => m[1]));
   const missing = [];
   for await (const p of walk(path.join(root, 'src-tauri/src/commands'), ['.rs'])) {
     const c = await read(p);
-    // 由文件相对路径推导模块路径（commands/llm/btw.rs -> llm::btw）
+    // Derive the module path from the file's relative path (commands/llm/btw.rs -> llm::btw)
     const relPath = path
       .relative(path.join(root, 'src-tauri/src/commands'), p)
       .replace(/\.rs$/, '')
@@ -160,7 +160,7 @@ for (const { dir, ext, max } of SIZE_LIMITS) {
     push('cmd-dispatch', 'src-tauri/src/lib.rs', '未注册的命令: ' + missing.join(', '));
 }
 
-// ---------- 输出 ----------
+// ---------- Output ----------
 if (errors.length) {
   console.error('架构门禁失败（' + errors.length + ' 项）:');
   for (const e of errors) console.error('  ' + e);

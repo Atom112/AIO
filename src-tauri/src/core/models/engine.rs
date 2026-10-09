@@ -1,8 +1,8 @@
-//! 本地引擎域模型：安装检测结果。
+//! Local engine domain models: installation detection results.
 
 use serde::{Deserialize, Serialize};
 
-/// 引擎安装检测结果：是否已安装在系统上及版本号。
+/// Engine installation detection result: whether the engine is installed on the system, plus its version.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineInstallInfo {

@@ -1,4 +1,4 @@
-// 聊天域共享常量 —— ChatPage 与其事件监听器 hook 共用（避免组件 ↔ hook 循环导入）。
+// Chat domain shared constants - used by both ChatPage and its event listener hook (avoids a circular import between component and hook).
 
-/** 中断/取消导致的工具调用占位结果文本（标记给模型看，保证上下文可理解） */
+/** Placeholder tool-call result text for interrupted/cancelled calls (marked for the model so the context stays understandable) */
 export const TOOL_INTERRUPTED = '[Interrupted by user]';

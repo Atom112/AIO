@@ -1,9 +1,9 @@
-//! 关系域：事实间实体关系写入与查询（从 store.rs 拆出）。
+//! Relations domain: entity-relation write and query between facts.
 use super::*;
 use crate::services::memory::CollectRowsWarn;
 
 impl MemoryStore {
-    /// 覆写某事实的关系三元组（先删后插，幂等）。
+    /// Overwrites the relation triples of a fact (delete-then-insert, idempotent).
     pub fn set_relations(
         &self,
         fact_id: &str,
@@ -27,7 +27,7 @@ impl MemoryStore {
         tx.commit().map_err(|e| e.to_string())
     }
 
-    /// 读取某事实的全部关系三元组。
+    /// Reads all relation triples of a fact.
     pub fn relations_for(&self, fact_id: &str) -> Result<Vec<(String, String, String)>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -45,9 +45,9 @@ impl MemoryStore {
         Ok(rows.collect_rows("graph"))
     }
 
-    /// 查询词与实体文本互相包含计数（轻量实体命中；供检索加分）。
+    /// Counts mutual containment between query terms and entity text (lightweight entity hits; used for retrieval score boosting).
     ///
-    /// 返回 (fact_id → 命中关系数)。匹配规则：查询包含实体或实体包含查询（实体长度 >= 2）。
+    /// Returns (fact_id -> matched relation count). Match rule: query contains entity or entity contains query (entity length >= 2).
     pub fn relation_entity_hits(
         &self,
         query: &str,

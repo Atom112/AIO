@@ -1,13 +1,13 @@
-// 应用更新状态 —— 从 store.ts 拆出（自包含域：仅信号 + localStorage 忽略版本）。
+// App update state (self-contained domain: signals + localStorage ignored-version record).
 
 import { createSignal } from 'solid-js';
 
-// ====== 应用更新状态 ======
+// ====== App update state ======
 
-/** 是否有可用的应用更新 */
+/** Whether an app update is available. */
 export const [appUpdateAvailable, setAppUpdateAvailable] = createSignal(false);
 
-/** 最新版本元信息（版本号、Release notes、发布时间） */
+/** Latest release metadata (version, release notes, publish date). */
 export interface AppUpdateInfoData {
   version: string;
   currentVersion?: string;
@@ -15,24 +15,24 @@ export interface AppUpdateInfoData {
   pubDate?: string;
 }
 
-/** 最新版本元信息 */
+/** Latest release metadata. */
 export const [appUpdateInfo, setAppUpdateInfo] = createSignal<AppUpdateInfoData | null>(null);
 
-/** 用户在当前会话中是否已经手动关闭过更新提示（避免短暂显示后又跳出来） */
+/** Whether the user already dismissed the update notice this session (prevents it from reappearing after a brief flash). */
 export const [appUpdateDismissed, setAppUpdateDismissed] = createSignal(false);
 
-/** 是否正在下载/安装更新 */
+/** Whether an update is downloading/installing. */
 export const [appUpdateDownloading, setAppUpdateDownloading] = createSignal(false);
-/** 下载进度 (0.0 ~ 1.0) */
+/** Download progress (0.0 ~ 1.0). */
 export const [appUpdateProgress, setAppUpdateProgress] = createSignal(0);
-/** 更新已下载完毕，等待用户重启 */
+/** Update fully downloaded, waiting for the user to restart. */
 export const [appUpdateReady, setAppUpdateReady] = createSignal(false);
 
 const IGNORED_UPDATE_VERSION_KEY = 'aio_ignored_update_version';
 
 /**
- * 读取用户"忽略此版本"的记录
- * @returns 被忽略的最新版本号（带 v 前缀已剥离），没有则返回 null
+ * Read the user's "ignore this version" record.
+ * @returns The ignored version (v prefix stripped), or null if none.
  */
 export const getIgnoredUpdateVersion = (): string | null => {
   try {
@@ -43,8 +43,8 @@ export const getIgnoredUpdateVersion = (): string | null => {
 };
 
 /**
- * 记录用户"忽略此版本"或清除记录
- * @param version - 要忽略的版本号；传 null 则清除
+ * Record the user's "ignore this version" choice, or clear it.
+ * @param version - The version to ignore; pass null to clear.
  */
 export const setIgnoredUpdateVersion = (version: string | null): void => {
   try {

@@ -1,8 +1,8 @@
-//! 后台自动事实提取：把一轮对话（user + assistant + 工具结果）提炼为项目事实。
+//! Background automatic fact extraction: distills a conversation turn (user + assistant + tool results) into project facts.
 //!
-//! 提取为 sleep-time compute：主 Agent 循环结束后异步执行，去抖，绝不阻塞交互。
-//! 写入前与既有事实做向量查重，高相似时走 LLM 仲裁（merge/update/supersede/keep_separate），
-//! 与显式 remember 同一判重链路（自进化闭环的自动侧）。
+//! Extraction is sleep-time compute: runs asynchronously after the main agent loop ends, debounced, never blocking interaction.
+//! Before writing, vector-deduplicates against existing facts; high similarity goes through LLM arbitration (merge/update/supersede/keep_separate),
+//! the same dedup chain as explicit remember (the automatic side of the self-improving loop).
 
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::llm::{chat_json, llm_config, LlmConfig};
@@ -11,19 +11,19 @@ use crate::services::memory::store::{MemoryStore, NewFact};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// 单次提取产出的一条事实。
+/// One fact produced by a single extraction.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractedFact {
     pub content: String,
     pub category: String,
     pub importance: f32,
-    /// 证据：对话记录中的消息序号（形如 [user#0]/[assistant#1] 的 # 后数字），可为空
+    /// Evidence: message indices in the transcript (the number after # in [user#0]/[assistant#1]); may be empty
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<usize>,
 }
 
-/// 提取执行结果（供事件与日志）。
+/// Extraction run result (for events and logs).
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractionReport {
@@ -31,16 +31,16 @@ pub struct ExtractionReport {
     pub skipped: usize,
     pub embedded: usize,
     pub archived_over_cap: usize,
-    /// 判重命中但 LLM 仲裁不可用时的保守跳过条数（fail-safe：宁可少进，不误并误删）
+    /// Conservative skips when a dedup hit occurs but LLM arbitration is unavailable (fail-safe: fewer inserts over wrong merges/deletes)
     #[serde(default, skip_serializing_if = "is_zero")]
     pub deduped: usize,
-    /// 仲裁动作：订正既有事实（update）
+    /// Arbitration action: correct an existing fact (update)
     #[serde(default, skip_serializing_if = "is_zero")]
     pub updated: usize,
-    /// 仲裁动作：合并入既有事实（merge）
+    /// Arbitration action: merge into an existing fact (merge)
     #[serde(default, skip_serializing_if = "is_zero")]
     pub merged: usize,
-    /// 仲裁动作：新事实取代旧事实（supersede），新事实照常入库
+    /// Arbitration action: the new fact supersedes the old one (supersede); the new fact is stored as usual
     #[serde(default, skip_serializing_if = "is_zero")]
     pub superseded: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +55,7 @@ const MAX_PER_RUN: usize = 5;
 const MIN_IMPORTANCE: f32 = 0.6;
 const META_LAST_EXTRACT: &str = "last_extract_at";
 
-/// 提取管线入口：校验开关/去抖 → 提取 → 判重 + LLM 仲裁 → 写入（向量化 + 容量治理）。
+/// Extraction pipeline entry: check switches/debounce -> extract -> dedup + LLM arbitration -> write (vectorize + capacity governance).
 pub async fn extract_and_store(
     app: &AppHandle,
     project_root: &str,
@@ -77,12 +77,12 @@ pub async fn extract_and_store(
         return Ok(empty);
     }
     let store = app.state::<MemoryStoreManager>().open(project_root)?;
-    // 每项目开关（覆盖优先）
+    // Per-project switch (override takes precedence)
     let project_override = store.project_enabled()?;
     if !project_override.unwrap_or(cfg.memory_enabled) || !cfg.memory_auto_extract {
         return Ok(empty);
     }
-    // 去抖：距上次提取不足 debounce 秒则跳过
+    // Debounce: skip if less than debounce seconds since the last extraction
     let debounce = cfg.memory_extract_debounce_secs.max(1);
     if let Some(last) = store.meta_get(META_LAST_EXTRACT)? {
         if let Some(secs) = crate::services::memory::store::iso_to_secs_pub(&last) {
@@ -95,7 +95,7 @@ pub async fn extract_and_store(
             }
         }
     }
-    // 提取
+    // Extract
     let lcfg = match llm_config(app) {
         Ok(c) => c,
         Err(e) => {
@@ -111,14 +111,14 @@ pub async fn extract_and_store(
     };
     let facts = extract_facts(&lcfg, transcript).await;
     let mut report = empty;
-    // 判重阈值与写入侧（remember）一致
+    // Dedup threshold matches the write side (remember)
     let dedup_threshold = cfg.memory_dedup_threshold.clamp(0.0, 1.0);
     for f in facts {
         if f.content.trim().is_empty() || f.importance < MIN_IMPORTANCE {
             report.skipped += 1;
             continue;
         }
-        // 证据链：消息序号写入 source_refs（JSON），可追溯、可审计
+        // Evidence chain: message indices go into source_refs (JSON), traceable and auditable
         let source_refs = if f.evidence.is_empty() {
             None
         } else {
@@ -134,8 +134,8 @@ pub async fn extract_and_store(
             pinned: false,
         };
         let embedding = embed_one(app, &store, &fact.content).await;
-        // 写入前向量查重 + LLM 仲裁（与 remember 同一判重链路）
-        let mut resolved: Option<String> = None; // Some(既有事实 id) = 已订正/合并，不再新增
+        // Pre-write vector dedup + LLM arbitration (same dedup chain as remember)
+        let mut resolved: Option<String> = None; // Some(existing fact id) = already corrected/merged, no new insert
         if let Some((_, _, vec)) = &embedding {
             if let Ok(dups) = store.search_similar(vec, 3) {
                 if let Some((dup_id, _)) = dups.iter().find(|(_, c)| *c >= dedup_threshold).cloned()
@@ -194,7 +194,7 @@ pub async fn extract_and_store(
                                     }
                                 }
                             }
-                            // fail-safe：仲裁不可用时保守跳过（宁缺毋滥）
+                            // fail-safe: skip conservatively when arbitration is unavailable (quality over quantity)
                             Err(_) => {
                                 report.deduped += 1;
                                 resolved = Some(existing.id);
@@ -208,7 +208,7 @@ pub async fn extract_and_store(
             }
         }
         if resolved.is_some() {
-            // 已订正/合并/跳过，无需新增
+            // Already corrected/merged/skipped; no insert needed
             continue;
         }
         if embedding.is_some() {
@@ -242,7 +242,7 @@ pub async fn extract_and_store(
     Ok(report)
 }
 
-/// 调用 LLM 提取事实（模型输出 JSON 数组；解析失败返回空）。
+/// Call the LLM to extract facts (the model outputs a JSON array; returns empty on parse failure).
 pub async fn extract_facts(cfg: &LlmConfig, transcript: &str) -> Vec<ExtractedFact> {
     let system = concat!(
         "你是项目记忆提取器。从对话中提取值得长期记住的项目事实（架构决策、代码约定、依赖变更、关键路径、重要发现）。\n",
@@ -258,7 +258,7 @@ pub async fn extract_facts(cfg: &LlmConfig, transcript: &str) -> Vec<ExtractedFa
     }
 }
 
-/// 解析提取结果：接受数组或 {facts: [...]}；evidence 缺失/越界时置空。
+/// Parse extraction results: accepts an array or {facts: [...]}; missing/out-of-range evidence is emptied.
 pub fn parse_extracted(v: &serde_json::Value) -> Vec<ExtractedFact> {
     let arr: &Vec<serde_json::Value> = match v {
         serde_json::Value::Array(a) => a,
@@ -275,7 +275,7 @@ pub fn parse_extracted(v: &serde_json::Value) -> Vec<ExtractedFact> {
                 continue;
             }
             let importance = f.importance.clamp(0.0, 1.0);
-            // 证据序号消毒：仅保留 < 64 的合理序号（转录消息数上限 12）
+            // Sanitize evidence indices: keep only plausible indices < 64 (transcripts hold at most 12 messages)
             let evidence: Vec<usize> = f.evidence.into_iter().filter(|i| *i < 64).collect();
             out.push(ExtractedFact {
                 content: f.content,

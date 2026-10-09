@@ -1,10 +1,10 @@
-// 工作流可视化状态 —— 从 store.ts 拆出（自包含域）。
+// Workflow visualization state (self-contained domain).
 
 import { createSignal } from 'solid-js';
 
-// ====== 工作流状态（Workflow Visualization） ======
+// ====== Workflow state (Workflow Visualization) ======
 
-/** 工作流步骤状态 */
+/** Workflow step state. */
 export interface WorkflowStepState {
   stepId: string;
   profileId: string;
@@ -14,7 +14,7 @@ export interface WorkflowStepState {
   duration?: number;
 }
 
-/** 工作流整体状态 */
+/** Overall workflow state. */
 export interface WorkflowState {
   workflowId: string;
   title: string;
@@ -22,5 +22,5 @@ export interface WorkflowState {
   active: boolean;
 }
 
-/** 当前活跃的工作流状态，null 表示无活跃工作流 */
+/** Currently active workflow state; null means no active workflow. */
 export const [workflowState, setWorkflowState] = createSignal<WorkflowState | null>(null);

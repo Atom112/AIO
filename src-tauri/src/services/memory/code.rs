@@ -1,7 +1,7 @@
-//! 代码级 RAG（P4）：把项目关键文件分块向量化，支撑 search_code 工具与代码语义检索。
+//! Code-level RAG: chunks and vectorizes key project files to back the search_code tool and semantic code retrieval.
 //!
-//! 与事实库（facts）并存于同一 memory.sqlite：code_chunks + fts_code + vec_code。
-//! 索引按需触发（memory_code_index / 记忆面板按钮），增量基于文件 mtime/size。
+//! Coexists with the facts store in the same memory.sqlite: code_chunks + fts_code + vec_code.
+//! Indexing is on-demand (memory_code_index / memory panel button) and incremental via file mtime/size.
 
 use crate::core::events as ev;
 use crate::core::models::MemoryEmbeddingConfig;
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
-/// 索引结果统计。
+/// Index result statistics.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeIndexResult {
@@ -27,7 +27,7 @@ pub struct CodeIndexResult {
     pub error: Option<String>,
 }
 
-/// 检索命中的代码块。
+/// A code chunk hit from retrieval.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeChunkHit {
@@ -35,14 +35,14 @@ pub struct CodeChunkHit {
     pub file_path: String,
     pub start_line: i64,
     pub end_line: i64,
-    /// 所在符号名（符号感知分块；行窗口分块为 None）
+    /// Containing symbol name (symbol-aware chunking; None for line-window chunks)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
     pub content: String,
     pub score: f32,
 }
 
-/// 索引状态。
+/// Index status.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeIndexStatus {
@@ -82,7 +82,7 @@ fn open_conn(project_root: &str) -> Result<Connection, String> {
     crate::services::memory::store::MemoryStore::open_connection(project_root)
 }
 
-/// 解析项目级嵌入配置（与记忆命令一致；首次使用从旧全局配置迁移，幂等）。
+/// Resolve the project-level embedding config (same as memory commands; first use migrates from the legacy global config, idempotent).
 fn project_embedding_cfg(app: &AppHandle, project_root: &str) -> MemoryEmbeddingConfig {
     match app
         .state::<crate::services::memory::MemoryStoreManager>()
@@ -97,7 +97,7 @@ fn project_embedding_cfg(app: &AppHandle, project_root: &str) -> MemoryEmbedding
     }
 }
 
-/// 索引项目代码（增量：mtime/size 未变化且非 force 时跳过）。
+/// Index project code (incremental: skipped when mtime/size are unchanged and force is false).
 pub async fn index_code(
     app: &AppHandle,
     project_root: &str,
@@ -168,14 +168,14 @@ pub async fn index_code(
             [f.to_string_lossy()],
         )
         .map_err(|e| e.to_string())?;
-        // 上下文补全：嵌入文本附带相对路径（Contextual Retrieval），提升代码块语义定位；
-        // 展示与 FTS 仍用原始代码内容
+        // Contextual retrieval: the embedded text carries the relative path to improve semantic
+        // chunk localization; display and FTS still use the raw code content
         let rel_path = std::path::Path::new(f)
             .strip_prefix(project_root)
             .unwrap_or_else(|_| std::path::Path::new(f))
             .display()
             .to_string();
-        // P3-4 符号感知分块：LSP 可用时按函数/类边界切块（chunk 附带符号名），否则回退行窗口
+        // Symbol-aware chunking: when LSP is available, split at function/class boundaries (chunks carry the symbol name); otherwise fall back to line windows
         let chunks = match crate::utils::lsp_agent_tools::fetch_document_symbol_ranges(
             app,
             project_root,
@@ -242,11 +242,11 @@ pub async fn index_code(
     Ok(result)
 }
 
-/// 代码语义检索：向量 + FTS5 RRF 融合。
+/// Semantic code retrieval: vector + FTS5 RRF fusion.
 ///
-/// 本函数为 async：查询向量的嵌入计算需要 await（严禁在 async 上下文里用
-/// `Handle::block_on`，tokio 会直接 panic）；DB 检索段经 `spawn_blocking`
-/// 移入阻塞线程池，避免占用 async worker。
+/// This function is async: embedding the query vector requires await (never use
+/// `Handle::block_on` in an async context; tokio panics outright); the DB retrieval
+/// section moves to the blocking pool via `spawn_blocking` to avoid tying up async workers.
 pub async fn search_code(
     app: &AppHandle,
     project_root: &str,
@@ -257,7 +257,7 @@ pub async fn search_code(
 ) -> Result<Vec<CodeChunkHit>, String> {
     let k = k.clamp(1, 30);
     let ecfg = project_embedding_cfg(app, project_root);
-    // 查询向量：嵌入器不可用时为 None，退化为纯 FTS 关键词检索
+    // Query vector: None when the embedder is unavailable, degrading to pure FTS keyword retrieval
     let qv: Option<Vec<f32>> = if let Ok(embedder) = crate::plugins::embed::resolve(app, &ecfg) {
         let q = query.to_string();
         embedder
@@ -285,7 +285,7 @@ pub async fn search_code(
     })?
 }
 
-/// `search_code` 的同步检索主体（向量/FTS/RRF 融合），运行在阻塞线程上。
+/// Synchronous retrieval body of `search_code` (vector/FTS/RRF fusion), runs on a blocking thread.
 fn search_code_db(
     project_root: &str,
     query: &str,
@@ -297,7 +297,7 @@ fn search_code_db(
     let conn = open_conn(project_root)?;
     let mut vec_ranks: HashMap<String, usize> = HashMap::new();
     if let Some(qv) = qv {
-        // vec0 优先；不可用/维度不匹配/空结果时回退暴力余弦（与事实库 vector_search 同策略）
+        // Prefer vec0; fall back to brute-force cosine when unavailable/dimension-mismatched/empty (same strategy as the facts-store vector_search)
         let mut used_vec0 = false;
         if crate::services::memory::vec0::vec0_available() {
             if let Ok(rows) = crate::services::memory::vec0::vec0_search_code(&conn, qv, k * 2) {
@@ -360,7 +360,7 @@ fn search_code_db(
             .optional()
             .map_err(|e| e.to_string())?;
         if let Some((file_path, start_line, end_line, content, symbol)) = row {
-            // P3-4 过滤：路径子串 + 符号名匹配（模型可按需定位到文件/符号）
+            // Filtering: path substring + symbol name match (the model can narrow to a file/symbol on demand)
             if let Some(fp) = file_filter {
                 if !fp.is_empty() && !file_path.contains(fp) {
                     continue;
@@ -396,7 +396,7 @@ fn search_code_db(
     Ok(out)
 }
 
-/// 代码索引状态。
+/// Code index status.
 pub fn code_status(_app: &AppHandle, project_root: &str) -> Result<CodeIndexStatus, String> {
     let conn = open_conn(project_root)?;
     let chunks: i64 = conn
@@ -432,11 +432,11 @@ struct RawChunk {
     start_line: usize,
     end_line: usize,
     content: String,
-    /// 所在符号名（符号感知分块时填充；行窗口分块为 None）。
+    /// Containing symbol name (set for symbol-aware chunks; None for line-window chunks).
     symbol: Option<String>,
 }
 
-/// 按行分块（60 行一块，10 行重叠）。
+/// Line-window chunking (60 lines per chunk, 10-line overlap).
 fn chunk_content(content: &str) -> Vec<RawChunk> {
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() {
@@ -469,8 +469,8 @@ fn chunk_content(content: &str) -> Vec<RawChunk> {
     out
 }
 
-/// 符号感知分块（P3-4）：优先按 LSP 符号范围（函数/类体）切分，符号间隙回退行窗口。
-/// symbols 为 (符号名, start_line, end_line)，LSP 行号从 0 起，按文件 1 基行号换算。
+/// Symbol-aware chunking: split at LSP symbol ranges (function/class bodies) first; symbol gaps fall back to line windows.
+/// symbols is (name, start_line, end_line); LSP lines are 0-based and converted to the file's 1-based line numbers.
 fn chunk_content_symbol_aware(content: &str, symbols: &[(String, i64, i64)]) -> Vec<RawChunk> {
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() {
@@ -478,7 +478,7 @@ fn chunk_content_symbol_aware(content: &str, symbols: &[(String, i64, i64)]) -> 
     }
     let mut covered = vec![false; lines.len()];
     let mut out: Vec<RawChunk> = Vec::new();
-    // 1) 符号边界切块（嵌套符号都保留：细粒度函数块 + 粗粒度类块；覆盖标记只阻止间隙补块）
+    // 1) Chunk at symbol boundaries (nested symbols are all kept: fine-grained function blocks + coarse class blocks; coverage flags only block gap-filling)
     for (name, s0, e0) in symbols {
         let s = ((*s0).max(0) as usize).min(lines.len());
         let e = (((*e0).max(0) as usize) + 1).min(lines.len());
@@ -495,7 +495,7 @@ fn chunk_content_symbol_aware(content: &str, symbols: &[(String, i64, i64)]) -> 
             symbol: Some(name.clone()),
         });
     }
-    // 2) 未被任何符号覆盖的行区间按行窗口补充分块（符号间隙/文件头尾）
+    // 2) Line ranges covered by no symbol are filled in with line-window chunks (symbol gaps / file head and tail)
     let mut i = 0usize;
     while i < lines.len() {
         if covered[i] {
@@ -506,7 +506,7 @@ fn chunk_content_symbol_aware(content: &str, symbols: &[(String, i64, i64)]) -> 
         while i < lines.len() && !covered[i] {
             i += 1;
         }
-        let run_end = i; // 独占
+        let run_end = i; // exclusive
         let run = &lines[run_start..run_end];
         let step = CHUNK_LINES - CHUNK_OVERLAP;
         let mut start = 0usize;
@@ -528,7 +528,7 @@ fn chunk_content_symbol_aware(content: &str, symbols: &[(String, i64, i64)]) -> 
     out
 }
 
-/// 收集可索引文件（递归，跳过黑名单目录与超大文件）。
+/// Collect indexable files (recursive; skips blacklisted directories and oversized files).
 fn collect_files(root: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![PathBuf::from(root)];
@@ -566,7 +566,7 @@ fn collect_files(root: &str) -> Vec<PathBuf> {
     out
 }
 
-/// 批量嵌入（失败项为 None）；返回 (嵌入模型名, 每 chunk 向量)。
+/// Batch embed (failed items are None); returns (embedding model name, per-chunk vector).
 async fn embed_batch(
     app: &AppHandle,
     project_root: &str,
@@ -595,7 +595,7 @@ async fn embed_batch(
     (Some(model), out)
 }
 
-/// 确保代码 vec0 表存在（按配置维度）。
+/// Ensure the code vec0 table exists (at the configured dimension).
 fn ensure_code_vec_table(
     app: &AppHandle,
     project_root: &str,
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn test_chunk_content_symbol_aware() {
-        // 200 行：fn_a 覆盖 1..80，fn_b 覆盖 100..140；间隙与尾部回退行窗口
+        // 200 lines: fn_a covers 1..80, fn_b covers 100..140; gaps and tail fall back to line windows
         let c = (1..=200)
             .map(|i| format!("line {i}"))
             .collect::<Vec<_>>()
@@ -669,10 +669,10 @@ mod tests {
             .expect("应有 fn_b 符号块");
         assert_eq!(b.start_line, 100);
         assert_eq!(b.end_line, 140);
-        // 符号间隙（80..99）与文件尾（140..200）以行窗口补充分块
+        // Symbol gap (80..99) and file tail (140..200) are chunked as line windows
         let windows = chunks.iter().filter(|c| c.symbol.is_none()).count();
         assert!(windows >= 2, "间隙与尾部分块应存在: {}", windows);
-        // 总块数有序且不重叠跳序
+        // Overall chunks are ordered (non-decreasing start lines)
         assert!(chunks
             .windows(2)
             .all(|w| w[0].start_line <= w[1].start_line));

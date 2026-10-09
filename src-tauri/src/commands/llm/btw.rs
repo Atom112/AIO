@@ -8,10 +8,10 @@ use futures_util::StreamExt;
 use serde_json::json;
 use tauri::{Emitter, Window};
 
-/// `/btw` 侧问命令：基于当前对话上下文回答一个简短问题（无工具、流式、不修改对话历史）。
+/// `/btw` side-question command: answers a short question from the current conversation context (no tools, streaming, leaves conversation history untouched).
 ///
-/// 接收前端构建好的消息列表（含对话历史 + btw 问题），
-/// 通过 SSE 流式调用 LLM，逐 chunk 通过 `btw-chunk` 事件推送到前端指定 overlay。
+/// Takes a message list built by the frontend (conversation history + the btw question),
+/// calls the LLM over SSE streaming, and pushes each chunk to the target frontend overlay via the `btw-chunk` event.
 #[tauri::command]
 pub async fn ask_btw_question(
     window: Window,
@@ -35,13 +35,13 @@ pub async fn ask_btw_question(
                 obj.insert("tool_calls".to_string(), v);
             }
         }
-        // 剥离 aio-image 生成图片标记，防止 token 泄漏到 LLM
+        // Strip aio-image generated-image tokens so they do not leak to the LLM
         if let Some(serde_json::Value::String(s)) = msg.get_mut("content") {
             *s = crate::utils::generated_images::strip_generated_image_tokens(s);
         }
     }
 
-    // SSRF 防护
+    // SSRF protection
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
@@ -150,8 +150,8 @@ pub async fn ask_btw_question(
                         return Err(msg.to_string());
                     }
                     if is_anthropic {
-                        // Anthropic 流式解析复用 provider 插件的公共辅助
-                        // （此前此处手撸 SSE 解码，与 handle_anthropic_stream_event 双实现易漂移）
+                        // Anthropic stream parsing reuses the provider plugin's shared helpers
+                        // (single implementation shared with handle_anthropic_stream_event, avoiding drift)
                         use crate::plugins::provider::anthropic as anth;
                         if let Some(content) = anth::anthropic_sse_text_delta(&val) {
                             let _ = window.emit(

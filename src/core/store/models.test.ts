@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// models 域为叶域（仅依赖 types/utils），其两个纯辅助 modelKey / isLocalModel
-// 是助手模型绑定解析的基础，值得独立回归覆盖。
+// The models domain is a leaf (depends only on types/utils); its two pure helpers modelKey /
+// isLocalModel underpin assistant model binding resolution and deserve dedicated regression coverage.
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
-// models 域间接依赖 i18n（其模块初始化读 navigator/localStorage）与 models-data 包 —— Node 下 mock 掉
+// The models domain indirectly depends on i18n (module init reads navigator/localStorage) and the models-data package — mocked out under Node.
 vi.mock('../i18n', () => ({ t: (k: string) => k, locale: () => 'zh-CN' }));
 vi.mock('@aio/models-data', () => ({}));
 
 const { isLocalModel, modelKey } = await import('./models');
 
-// isLocalModel 语义：local_path 或 engine_type 其一即本地（api_url 不参与判定）。
+// isLocalModel semantics: local_path or engine_type alone marks a model as local (api_url is not considered).
 describe('isLocalModel', () => {
   it('有 local_path 判定为本地模型', () => {
     expect(isLocalModel({ local_path: '/models/x.gguf' } as never)).toBe(true);

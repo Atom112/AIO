@@ -1,4 +1,4 @@
-// 对话核心域：datas（助手/话题/消息）+ 应用配置 + MCP 状态 + Skills + 标题重命名 —— 从 store.ts 拆出。
+// Chat core domain: datas (assistants/topics/messages) + app config + MCP state + skills + title renaming — split out of store.ts.
 
 import { createStore } from 'solid-js/store';
 import { createEffect, createSignal } from 'solid-js';
@@ -28,9 +28,9 @@ import {
 import { currentProjectId, projects } from './project';
 import { isDarkMode, themeColor } from './ui-prefs';
 export interface DatasState {
-  /** 所有助手（含其话题与消息树） */
+  /** All assistants, including their topics and message trees */
   assistants: Assistant[];
-  /** 当前激活的模型列表，用于模型选择器 */
+  /** Currently activated models, used by the model selector */
   activatedModels: ActivatedModel[];
 }
 
@@ -39,32 +39,32 @@ export const [datas, setDatas] = createStore<DatasState>({
   activatedModels: [],
 });
 
-// ====== MCP 状态 ======
+// ====== MCP state ======
 
-/** MCP 服务器配置表（id → config） */
+/** MCP server config map (id → config) */
 export const [mcpServers, setMcpServers] = createSignal<Record<string, McpServerConfig>>({});
-/** MCP 服务器运行时状态（id → status） */
+/** MCP server runtime status map (id → status) */
 export const [mcpServerStatus, setMcpServerStatus] = createSignal<
   Record<string, McpServerStatusInfo>
 >({});
-/** 当前对话可用的工具列表（合并所有已连接 server 的工具，供全局状态展示） */
+/** Tools available in the current conversation (merged from all connected servers, for global status display) */
 export const [mcpToolsCache, setMcpToolsCache] = createSignal<ToolSpec[]>([]);
-/** 全局 Skill 配置表（id → config）。 */
+/** Global skill config map (id → config). */
 export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({});
 
-/** LLM 工具调用事件总线（ChatPage 监听） */
+/** LLM tool call event bus (listened to by ChatPage) */
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
 
 /**
- * 一次性安装 MCP 后台事件监听器（mcp-server-status / mcp-server-stderr）。
- * 监听器进程级唯一：`initMcpServers` 被多处并发调用时不会重复注册，
- * 避免旧实现里 `listen()` 未 await、监听器堆叠、事件丢失等竞态。
+ * Install the MCP background event listeners (mcp-server-status / mcp-server-stderr) once.
+ * The listeners are process-level singletons: concurrent `initMcpServers` calls never double-register,
+ * which prevents listener stacking and lost events.
  */
 let mcpListenersInstalled = false;
 const installMcpListeners = async () => {
   if (mcpListenersInstalled) return;
   mcpListenersInstalled = true;
-  // 监听器进程级唯一、随应用生命周期存活，无需显式 unlisten。
+  // The listeners are process-level singletons living for the whole app lifetime; no explicit unlisten needed.
   await listen<McpServerStatusInfo>(EVENTS.mcpServerStatus, (event) => {
     const info = event.payload;
     setMcpServerStatus((prev) => ({ ...prev, [info.id]: info }));
@@ -75,7 +75,7 @@ const installMcpListeners = async () => {
       console.debug(`[mcp:${id}] ${line}`);
     }
   });
-  // 工具列表变化（notifications/tools/list_changed）：刷新状态与工具缓存
+  // Tool list changed (notifications/tools/list_changed): refresh status and tool cache
   await listen<{ id: string }>(EVENTS.mcpToolsChanged, async (event) => {
     const { id } = event.payload;
     try {
@@ -86,13 +86,13 @@ const installMcpListeners = async () => {
         console.debug(`[mcp:${id}] tools/list_changed → 已刷新工具缓存`);
       }
     } catch {
-      // 刷新失败不致命：下次打开设置页会重新拉取
+      // Refresh failure is non-fatal: the settings page re-fetches on next open
     }
   });
 };
 
 /**
- * 加载并初始化 MCP 服务器列表 + 同步后端已连接状态 + 自动启动标记为 autoStart 的 server
+ * Load and initialize the MCP server list, sync backend connection status, and auto-start servers marked autoStart
  */
 export const initMcpServers = async (projectId?: string | null) => {
   try {
@@ -104,11 +104,11 @@ export const initMcpServers = async (projectId?: string | null) => {
     const statusMap = await listMcpServerStatuses();
     setMcpServerStatus((prev) => ({ ...prev, ...statusMap }));
 
-    // 先安装进程级唯一的后台事件监听器（await 成功后再触发 autoStart，避免事件丢失）
+    // Install the process-level background listeners first (await them before autoStart to avoid lost events)
     await installMcpListeners();
 
-    // 自动启动标记为 autoStart 的 server（跳过已连接的，避免重复启动）
-    // （是否被某助手使用由 Assistant.mcpServerIds 在 list_mcp_tools_for_assistant 时过滤）
+    // Auto-start servers marked autoStart (skip connected ones to avoid duplicate starts)
+    // (Whether an assistant uses a server is filtered by Assistant.mcpServerIds in list_mcp_tools_for_assistant)
     const autoStartIds = Object.values(map)
       .filter((cfg) => cfg.autoStart && statusMap[cfg.id]?.status !== 'connected')
       .map((cfg) => cfg.id);
@@ -122,7 +122,7 @@ export const initMcpServers = async (projectId?: string | null) => {
 };
 
 /**
- * 启动一个 MCP server 并刷新工具缓存
+ * Start an MCP server and refresh the tool cache
  */
 export const startMcpServerAndRefresh = async (
   id: string,
@@ -156,7 +156,7 @@ export const startMcpServerAndRefresh = async (
   }
 };
 
-/** 重新拉取所有已连接 server 的工具，更新 mcpToolsCache（全局状态展示用） */
+/** Re-fetch tools from all connected servers and update mcpToolsCache (for global status display) */
 export const refreshMcpToolsCache = async () => {
   try {
     const tools = await listMcpTools(currentProjectId());
@@ -166,12 +166,12 @@ export const refreshMcpToolsCache = async () => {
   }
 };
 
-// 配置初始化与管理
-// H5 加固：API Key 改存 Rust 侧 keyring；前端 localStorage 仅保留非敏感字段
+// Config initialization and management
+// H5 hardening: API keys are stored in the Rust-side keyring; frontend localStorage keeps only non-sensitive fields
 
 /**
- * 前端配置的默认骨架（与后端 AppConfig::default() 对齐）。
- * 仅用于启动前的本地快照；权威值以 load_app_config 返回为准。
+ * Default skeleton of the frontend config (aligned with backend AppConfig::default()).
+ * Only a pre-startup local snapshot; the authoritative value is what load_app_config returns.
  */
 const defaultAppConfig = (): AppConfig => ({
   apiUrl: '',
@@ -210,7 +210,7 @@ const initialConfig: AppConfig = (() => {
     const raw = localStorage.getItem('app_config');
     if (!raw) return defaultAppConfig();
     const parsed = JSON.parse(raw);
-    // 兼容旧数据：保留非敏感字段，清空 apiKey（由 Rust 重新加载）
+    // Old-data compat: keep non-sensitive fields, clear apiKey (reloaded by Rust)
     return {
       ...defaultAppConfig(),
       apiUrl: parsed.apiUrl || '',
@@ -222,32 +222,32 @@ const initialConfig: AppConfig = (() => {
   }
 })();
 
-/** 应用配置信号，存储 API URL 和 Key 等全局设置 */
+/** App config signal holding global settings such as API URL and key */
 export const [config, setConfig] = createSignal<AppConfig>(initialConfig);
 
-// 后端持久化逻辑
+// Backend persistence
 /**
- * 将指定助手数据持久化保存到后端
- * @param id - 要保存的助手唯一标识符
+ * Persist the given assistant's data to the backend
+ * @param id - unique identifier of the assistant to save
  */
 export const saveSingleAssistantToBackend = async (id: string) => {
   const asst = datas.assistants.find((a) => a.id === id);
   if (!asst) return;
 
   try {
-    // 深度克隆对象以解除 SolidJS 响应式代理，确保可序列化
+    // Deep-clone to strip the SolidJS reactive proxy so the value is serializable
     await saveAssistantApi(JSON.parse(JSON.stringify(asst)));
   } catch (err) {
     console.error('保存助手失败:', err);
   }
 };
 
-// ====== 话题标题自动重命名 ======
+// ====== Topic title auto-rename ======
 
 /**
- * 待处理的重命名请求信号。
- * ChatPage 组件通过 createEffect 监听此信号，触发实际的 LLM 调用。
- * 消费后立即清空，避免重复触发。
+ * Signal for a pending rename request.
+ * ChatPage watches it via createEffect and performs the actual LLM call.
+ * Cleared right after consumption to avoid duplicate triggers.
  */
 export const [pendingRenameRequest, setPendingRenameRequest] = createSignal<{
   asstId: string;
@@ -255,23 +255,23 @@ export const [pendingRenameRequest, setPendingRenameRequest] = createSignal<{
 } | null>(null);
 
 /**
- * 触发话题标题的重新生成（手动入口）。
- * 用于右键菜单的"重新生成标题"按钮。
- * 行为：
- *   1. 校验话题存在且不是默认话题（默认话题永远不重命名）
- *   2. 重置 `renamed = false`，让后续的 checkAndRename 能正常工作
- *   3. 持久化到后端
- *   4. 通过 pendingRenameRequest 信号通知 ChatPage 执行实际的 LLM 调用
- * @returns 是否成功发起请求（默认话题 / 不存在则返回 false）
+ * Trigger regeneration of a topic title (manual entry point).
+ * Used by the "Regenerate title" context-menu button.
+ * Behavior:
+ *   1. Validate the topic exists and is not the default topic (default topics are never renamed)
+ *   2. Reset `renamed = false` so a later checkAndRename can proceed
+ *   3. Persist to the backend
+ *   4. Notify ChatPage via the pendingRenameRequest signal to perform the actual LLM call
+ * @returns Whether the request was issued (false for the default or a missing topic)
  */
 export const requestRenameTopic = (asstId: string, topicId: string): boolean => {
   const asst = datas.assistants.find((a: any) => a.id === asstId);
   const topic = asst?.topics.find((t: Topic) => t.id === topicId);
   if (!asst || !topic) return false;
-  // 默认话题（每个助手的话题列表第一项）永远不参与自动重命名
+  // The default topic (first entry in each assistant's topic list) never takes part in auto-rename
   if (asst.topics[0]?.id === topic.id) return false;
 
-  // 重置标志位，使 checkAndRename 能继续工作
+  // Reset the flag so checkAndRename can proceed
   setDatas(
     'assistants',
     (a: any) => a.id === asstId,
@@ -280,17 +280,17 @@ export const requestRenameTopic = (asstId: string, topicId: string): boolean => 
     'renamed',
     false,
   );
-  // 异步持久化（不阻塞 UI）
+  // Persist asynchronously (does not block the UI)
   void saveSingleAssistantToBackend(asstId);
 
-  // 通过信号通知 ChatPage
+  // Notify ChatPage via the signal
   setPendingRenameRequest({ asstId, topicId });
   return true;
 };
 
 /**
- * 从后端物理删除助手配置文件
- * @param id - 要删除的助手唯一标识符
+ * Physically delete an assistant config file from the backend
+ * @param id - unique identifier of the assistant to delete
  */
 export const deleteAssistantFile = async (id: string) => {
   try {
@@ -300,13 +300,13 @@ export const deleteAssistantFile = async (id: string) => {
   }
 };
 
-// 监听主题颜色变化并同步到 CSS 变量和本地存储
+// Watch theme color changes and sync them to CSS variables and localStorage
 createEffect(() => {
   const color = themeColor();
-  // 打标记全局禁用过渡, 确保主题色切换即时无动画
+  // Set a flag to globally disable transitions so the theme color switch is instant, without animation
   document.documentElement.setAttribute('data-theme-changing', '');
   document.documentElement.style.setProperty('--primary-color', color);
-  // 同步 RGB 分量供 rgba(var(--primary-rgb), 0.xx) 使用
+  // Sync RGB components for use by rgba(var(--primary-rgb), 0.xx)
   const r = parseInt(color.slice(1, 3), 16);
   const g = parseInt(color.slice(3, 5), 16);
   const b = parseInt(color.slice(5, 7), 16);
@@ -314,7 +314,7 @@ createEffect(() => {
     document.documentElement.style.setProperty('--primary-rgb', `${r}, ${g}, ${b}`);
   }
   localStorage.setItem('theme-color', color);
-  // 下一帧移除标记, 恢复正常的交互过渡动画
+  // Remove the flag on the next frame to restore normal transition animations
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       document.documentElement.removeAttribute('data-theme-changing');
@@ -322,14 +322,14 @@ createEffect(() => {
   });
 });
 
-// 同步深色模式到 HTML data-theme 属性，并注入边框亮度修复
+// Sync dark mode to the HTML data-theme attribute and inject the border brightness fix
 createEffect(() => {
   const dark = isDarkMode();
   document.documentElement.setAttribute('data-theme-changing', '');
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
   localStorage.setItem('dark-mode', String(dark));
 
-  // 动态注入/移除暗色模式边框亮度样式（运行时注入，确保优先级最高）
+  // Dynamically inject/remove the dark-mode border brightness styles (injected at runtime for highest priority)
   const STYLE_ID = 'aio-dark-border-fix';
   if (dark) {
     if (!document.getElementById(STYLE_ID)) {
@@ -360,7 +360,7 @@ createEffect(() => {
   });
 });
 
-/** 从后端加载 Skill 配置（支持项目级合并）。 */
+/** Load skill configs from the backend (supports project-level merge). */
 export const initSkills = async (projectId?: string | null) => {
   try {
     const list = await listSkills(projectId);
@@ -370,7 +370,7 @@ export const initSkills = async (projectId?: string | null) => {
   }
 };
 
-/** 返回某个助手启用且仍存在的 Skill，顺序与助手配置一致。 */
+/** Return an assistant's enabled skills that still exist, in the assistant's configured order. */
 export const resolveAssistantSkills = (assistant: Assistant | undefined | null): SkillConfig[] => {
   if (!assistant) return [];
   const skillMap = skills();
@@ -380,9 +380,9 @@ export const resolveAssistantSkills = (assistant: Assistant | undefined | null):
 };
 
 /**
- * 当前可用的全部模型列表（云端 + 本地合并）。
- * 云端模型来自 providerConfigs，本地引擎模型通过 providerConfigs 的 localModelPaths 注入。
- * 供助手设置弹窗的模型选择器与 resolveAssistantModel 解析使用。
+ * All currently available models (cloud + local merged).
+ * Cloud models come from providerConfigs; local engine models are injected via localModelPaths on providerConfigs.
+ * Used by the model selector in the assistant settings dialog and by resolveAssistantModel.
  */
 export const allAvailableModels = (): ActivatedModel[] => {
   const cloud = activeProviderModels().map(
@@ -397,7 +397,7 @@ export const allAvailableModels = (): ActivatedModel[] => {
           : {}),
       }) as ActivatedModel & { provider_id: string },
   );
-  // 旧版本地模型：仅保留与 providerConfigs 不重叠的（向后兼容）
+  // Legacy local models: keep only those not overlapping providerConfigs (backward compat)
   const providerModelIds = new Set(cloud.map((m) => m.model_id + '@' + m.api_url));
   const local = datas.activatedModels.filter(
     (m) => isLocalModel(m) && !providerModelIds.has(m.model_id + '@' + (m.api_url ?? '')),
@@ -406,11 +406,11 @@ export const allAvailableModels = (): ActivatedModel[] => {
 };
 
 /**
- * 解析某助手实际应使用的模型。
- * 优先按复合键 modelKey 匹配助手绑定的 modelId；若绑定的是旧式纯 model_id（无 @），
- * 则退化为按 model_id 匹配首个命中项，保证向后兼容。
- * 未绑定或匹配不到时回退到当前全局 selectedModel，再不行则取首个可用模型。
- * 返回 null 表示当前没有任何可用模型。
+ * Resolve which model an assistant should actually use.
+ * First match the assistant's bound modelId by the composite modelKey; if it is a legacy plain
+ * model_id (no @), fall back to the first match by model_id for backward compatibility.
+ * If unbound or unmatched, fall back to the current global selectedModel, then to the first available model.
+ * Returns null when no model is currently available.
  */
 export const resolveAssistantModel = (
   asst: Assistant | undefined | null,
@@ -418,10 +418,10 @@ export const resolveAssistantModel = (
   if (!asst) return null;
   const all = allAvailableModels();
   if (asst.modelId) {
-    // 1. 优先按复合键精确匹配
+    // 1. Prefer an exact match on the composite key
     const exact = all.find((m) => modelKey(m) === asst.modelId);
     if (exact) return exact;
-    // 2. 兼容旧数据：绑定的 modelId 不含 @ 时，按 model_id 兜底匹配
+    // 2. Old-data compat: when the bound modelId has no @, fall back to matching by model_id
     if (!asst.modelId.includes('@')) {
       const legacy = all.find((m) => m.model_id === asst.modelId);
       if (legacy) return legacy;
@@ -432,13 +432,13 @@ export const resolveAssistantModel = (
   return all[0] ?? null;
 };
 
-/** 判断当前是否是聊天模式（纯对话，无工具调用） */
+/** Whether the current mode is chat mode (plain conversation, no tool calls) */
 export const isChatMode = (): boolean => {
   const asst = datas.assistants.find((a) => a.id === currentAssistantId());
   return asst?.agentMode === 'off' && !asst?.projectId;
 };
 
-/** 获取或创建项目对应的助理 ID */
+/** Get or create the assistant ID for a project */
 export const ensureProjectAssistant = async (projectId: string): Promise<string> => {
   let asst = datas.assistants.find((a) => a.projectId === projectId);
   if (!asst) {

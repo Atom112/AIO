@@ -20,19 +20,19 @@ import {
 import { t } from '../../core/i18n';
 
 /**
- * 初始化窗口实例
+ * Initialize the app window instance
  */
 const appWindow = new Window('main');
 
 /**
- * 导航栏组件
- * @returns {JSX.Element} 导航栏 JSX 元素
+ * Navigation bar component
+ * @returns {JSX.Element} The navigation bar JSX element
  */
 const NavBar: Component = () => {
   const [isMaximized, setIsMaximized] = createSignal<boolean>(false);
 
   /**
-   * 启动时拉起本地推理引擎（若默认/当前模型为本地模型）。
+   * Start the local inference engine at launch (when the default/current model is local).
    */
   const startLocalModel = async (model: ActivatedModel) => {
     if (!model.local_path) return;
@@ -65,7 +65,7 @@ const NavBar: Component = () => {
   const handleClose = async () => await appWindow.close();
 
   /**
-   * 组件挂载时初始化：模型加载、窗口监听
+   * On mount: load models and set up window listeners
    */
   onMount(async () => {
     const unlistenProgress = await listen(EVENTS.llamaProgress, (event) => {
@@ -75,7 +75,7 @@ const NavBar: Component = () => {
       setLocalModelStartProgress((event.payload as number) * 100);
     });
 
-    // 加载模型和配置
+    // Load models and config
     try {
       const [models, config] = await Promise.all([loadActivatedModels(), loadAppConfig()]);
       setDatas('activatedModels', models);
@@ -132,7 +132,7 @@ const NavBar: Component = () => {
           <Icon src="/icons/app-logo/chat.svg" class="w-6 h-6" />
         </A>
 
-        {/* 图标间浅竖线分隔 */}
+        {/* Light vertical divider between icons */}
         <span
           aria-hidden="true"
           class="w-px h-[16px] shrink-0 pointer-events-none"

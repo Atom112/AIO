@@ -1,9 +1,9 @@
 /**
- * Agent 模式快速选择器
+ * Agent mode quick selector
  *
- * 位于聊天输入框模型选择器与推理按钮之间，点击弹出上拉菜单选择工作模式。
- * 四种模式：对话（关闭工具调用）、普通（写入确认）、自动（自主执行）、计划（先列计划）。
- * 切换到 Agent 模式时自动恢复上次的工作目录，若无则显示"选择目录"按钮供用户自行选择或新建。
+ * Sits between the model selector and the reasoning button in the chat input; opens a pull-up menu to choose the working mode.
+ * Modes: chat (tool calls off), normal (write confirmation), auto (autonomous execution), plan (plan first).
+ * Switching to an Agent mode auto-restores the last working directory; if none exists, a "choose directory" button lets the user pick or create one.
  */
 import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import {
@@ -77,15 +77,15 @@ const AgentModeSelector: Component = () => {
   const [open, setOpen] = createSignal(false);
   const [showAutoWarning, setShowAutoWarning] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
-  let autoModeConfirmed = false; // 会话内记住，确认一次后不再弹窗
-  let pendingMode: AgentMode = 'auto'; // 当前正在确认的模式
+  let autoModeConfirmed = false; // remembered for the session; after one confirmation the dialog no longer shows
+  let pendingMode: AgentMode = 'auto'; // mode currently awaiting confirmation
 
   const asst = () => datas.assistants.find((a) => a.id === currentAssistantId()) as any;
   const currentMode = (): AgentMode => asst()?.agentMode || 'off';
 
   const activeOption = () => MODES.find((m) => m.value === currentMode()) || MODES[0];
 
-  /** 点击外部关闭 */
+  /** Close on outside click */
   const onDocClick = (e: MouseEvent) => {
     if (!containerRef) return;
     if (!containerRef.contains(e.target as Node)) {
@@ -96,7 +96,7 @@ const AgentModeSelector: Component = () => {
   onMount(() => document.addEventListener('mousedown', onDocClick));
   onCleanup(() => document.removeEventListener('mousedown', onDocClick));
   const choose = async (mode: AgentMode) => {
-    // 切换到自动模式或工作流模式时，先展示风险提醒弹窗
+    // When switching to auto or workflow mode, show the risk warning dialog first
     if ((mode === 'auto' || mode === 'workflow') && !autoModeConfirmed) {
       pendingMode = mode;
       setOpen(false);
@@ -110,23 +110,23 @@ const AgentModeSelector: Component = () => {
     await saveSingleAssistantToBackend(id);
     setOpen(false);
 
-    // 切换到 Agent 模式时自动恢复上次的工作目录
+    // Auto-restore the last working directory when switching to an Agent mode
     if (mode !== 'off' && !currentProjectId()) {
       await initProjects();
       const lastId = getLastAgentProjectId();
       if (lastId && projects().find((p) => p.id === lastId)) {
-        // 有上次的工作目录且仍有效 → 直接恢复
+        // A last working directory exists and is still valid -> restore it directly
         setCurrentProjectId(lastId);
         saveLastAgentProjectId(lastId);
         await Promise.all([initSkills(lastId), initMcpServers(lastId)]);
       }
-      // 没有上次的工作目录 → 什么也不做（项目面板在左侧栏 ProjectSidebar 中，供用户自行选择或新建）
+      // No last working directory -> do nothing (the project panel lives in ProjectSidebar on the left for the user to pick or create one)
     } else if (mode !== 'off' && currentProjectId()) {
-      // 已有工作目录，刷新保存为 lastAgentProjectId
+      // A working directory already exists; refresh and save it as lastAgentProjectId
       saveLastAgentProjectId(currentProjectId());
     }
 
-    // 切换到对话模式时清除 lastAgentProjectId（下次切回 Agent 时不自动恢复）
+    // Clear lastAgentProjectId when switching to chat mode (so switching back to Agent does not auto-restore)
     if (mode === 'off') {
       saveLastAgentProjectId(null);
     }
@@ -160,7 +160,7 @@ const AgentModeSelector: Component = () => {
         <span class="leading-none">{t(activeOption().labelKey)}</span>
       </button>
 
-      {/* 下拉面板 */}
+      {/* Dropdown panel */}
       <div
         class="absolute bottom-full left-0 mb-2 z-[41] w-[260px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
         style={{
@@ -231,7 +231,7 @@ const AgentModeSelector: Component = () => {
         </div>
       </div>
 
-      {/* 自动模式风险提醒弹窗 */}
+      {/* Auto mode risk warning dialog */}
       <Show when={showAutoWarning()}>
         <div
           class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-[12px]"
@@ -291,7 +291,7 @@ const AgentModeSelector: Component = () => {
                 onClick={async () => {
                   autoModeConfirmed = true;
                   setShowAutoWarning(false);
-                  // 执行实际的模式切换
+                  // Perform the actual mode switch
                   await choose(pendingMode);
                 }}
               >

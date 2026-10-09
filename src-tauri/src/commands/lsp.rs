@@ -1,6 +1,6 @@
-//! LSP 相关 Tauri 命令
+//! LSP-related Tauri commands
 //!
-//! 提供语言服务器的启动、停止、诊断查询和自动检测功能。
+//! Provides language server start, stop, diagnostics query, and auto-detection.
 
 use crate::plugins::lsp::{LspClient, LspManager};
 use serde_json::Value;
@@ -9,9 +9,9 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::ierr;
 
-/// 启动语言服务器
+/// Start a language server
 ///
-/// 为指定项目的指定语言启动语言服务器进程，完成 LSP 握手。
+/// Starts a language server process for the given project and language, completing the LSP handshake.
 #[tauri::command]
 pub async fn start_lsp_server(
     app: AppHandle,
@@ -21,7 +21,7 @@ pub async fn start_lsp_server(
     let lsp_mgr = app.state::<LspManager>();
     let project_root = PathBuf::from(&project_path);
 
-    // 检查是否已启动
+    // Check whether it is already running
     if lsp_mgr.get_client(&project_root, &language_id).is_some() {
         return Ok(serde_json::json!({
             "status": "already_running",
@@ -29,7 +29,7 @@ pub async fn start_lsp_server(
         }));
     }
 
-    // 查找语言配置
+    // Look up the language configuration
     let lang_config = lsp_mgr
         .languages
         .iter()
@@ -37,7 +37,7 @@ pub async fn start_lsp_server(
         .cloned()
         .ok_or_else(|| ierr!("不支持的语言: {}", "Unsupported language: {}", language_id))?;
 
-    // 启动语言服务器
+    // Start the language server
     let client = LspClient::start(
         language_id.clone(),
         project_root.clone(),
@@ -54,10 +54,10 @@ pub async fn start_lsp_server(
         )
     })?;
 
-    // 注册到管理器
+    // Register with the manager
     lsp_mgr.register_client(&project_root, &language_id, client);
 
-    // 通知前端
+    // Notify the frontend
     let _ = app.emit(
         "lsp-server-status",
         serde_json::json!({
@@ -73,7 +73,7 @@ pub async fn start_lsp_server(
     }))
 }
 
-/// 停止语言服务器
+/// Stop a language server
 #[tauri::command]
 pub async fn stop_lsp_server(
     app: AppHandle,
@@ -109,10 +109,10 @@ pub async fn stop_lsp_server(
     }))
 }
 
-/// 获取诊断信息
+/// Get diagnostics
 ///
-/// - `file_path`: 可选，指定则只返回该文件的诊断，否则返回所有文件
-/// - `severity`: 可选，过滤 "error" / "warning" / "info" / "hint" / "all"
+/// - `file_path`: optional; if given, only that file's diagnostics are returned, otherwise all files
+/// - `severity`: optional; filters "error" / "warning" / "info" / "hint" / "all"
 #[tauri::command]
 pub async fn get_diagnostics(
     app: AppHandle,
@@ -125,7 +125,7 @@ pub async fn get_diagnostics(
 
     let diags_map = lsp_mgr.get_all_diagnostics(&project_root, file_path.as_deref());
 
-    // 过滤 severity
+    // Filter by severity
     let severity_filter = severity.unwrap_or_else(|| "all".to_string());
 
     let mut result_files = Vec::new();
@@ -148,7 +148,7 @@ pub async fn get_diagnostics(
             continue;
         }
 
-        // 统计
+        // Accumulate totals
         for d in &filtered {
             if d.severity == Some(lsp_types::DiagnosticSeverity::ERROR) || d.severity.is_none() {
                 total_errors += 1;
@@ -157,7 +157,7 @@ pub async fn get_diagnostics(
             }
         }
 
-        // 转换为可序列化的格式
+        // Convert to a serializable format
         let items: Vec<Value> = filtered
             .iter()
             .map(|d| {
@@ -183,7 +183,7 @@ pub async fn get_diagnostics(
             })
             .collect();
 
-        // 将 URI 转为相对路径
+        // Convert the URI to a relative path
         let file_path_str = uri_to_relative(&project_root, uri);
 
         result_files.push(serde_json::json!({
@@ -200,7 +200,7 @@ pub async fn get_diagnostics(
     }))
 }
 
-/// 自动检测项目应启动的语言服务器
+/// Auto-detect which language servers to start for a project
 #[tauri::command]
 pub async fn auto_detect_ls(app: AppHandle, project_path: String) -> Result<Value, String> {
     let lsp_mgr = app.state::<LspManager>();
@@ -225,7 +225,7 @@ pub async fn auto_detect_ls(app: AppHandle, project_path: String) -> Result<Valu
     Ok(serde_json::json!({ "languages": configs }))
 }
 
-/// 获取支持的语言列表
+/// Get the list of supported languages
 #[tauri::command]
 pub async fn list_supported_languages(app: AppHandle) -> Result<Value, String> {
     let lsp_mgr = app.state::<LspManager>();
@@ -248,14 +248,14 @@ pub async fn list_supported_languages(app: AppHandle) -> Result<Value, String> {
     Ok(serde_json::json!({ "languages": configs }))
 }
 
-/// 关闭指定项目的所有语言服务器
+/// Stop all language servers for the given project
 #[tauri::command]
 pub async fn stop_all_lsp_servers(app: AppHandle, project_path: String) -> Result<Value, String> {
     let lsp_mgr = app.state::<LspManager>();
     let project_root = PathBuf::from(&project_path);
     let project_prefix = project_root.to_string_lossy().to_string();
 
-    // 收集需要关闭的服务器
+    // Collect the servers to stop
     let to_remove: Vec<String> = lsp_mgr
         .clients
         .iter()
@@ -275,7 +275,7 @@ pub async fn stop_all_lsp_servers(app: AppHandle, project_path: String) -> Resul
     }))
 }
 
-/// 将 file:// URI 转为相对于项目根目录的路径
+/// Convert a file:// URI to a path relative to the project root
 fn uri_to_relative(project_root: &PathBuf, uri: &str) -> String {
     let path = if let Ok(url) = url::Url::parse(uri) {
         url.to_file_path().ok()

@@ -1,58 +1,58 @@
-//! 子智能体（Sub-agent）配置文件与工具定义。
+//! Sub-agent profiles and tool definitions.
 //!
-//! 提供九种内置子智能体配置文件，每种限定不同的工具集和行为模式：
-//! - `explorer`：只读代码探索者，用于大规模文件检索和架构分析
-//! - `coder`：代码实现者，专注文件编写和修改
-//! - `general`：通用子智能体，拥有全部工具能力
-//! - `architect`：架构设计师，只读分析依赖与设计决策
-//! - `debugger`：问题诊断师，可运行命令查找根因但不能修改文件
-//! - `reviewer`：代码审查员，只读安全审计和代码质量评估
-//! - `writer`：文档撰写员，可读写文件产出文档
-//! - `tester`：测试工程师，可运行测试并编写测试文件
-//! - `requirements`：需求分析员，只读分析用户请求并拆解为结构化工作流方案
+//! Provides nine built-in sub-agent profiles, each restricting a different toolset and behavior:
+//! - `explorer`: read-only code explorer for large-scale file retrieval and architecture analysis
+//! - `coder`: code implementer focused on writing and modifying files
+//! - `general`: general-purpose sub-agent with the full toolset
+//! - `architect`: architecture designer, read-only analysis of dependencies and design decisions
+//! - `debugger`: problem diagnostician, can run commands to find root causes but cannot modify files
+//! - `reviewer`: code reviewer, read-only security audit and code quality assessment
+//! - `writer`: documentation writer, can read and write files to produce documentation
+//! - `tester`: test engineer, can run tests and write test files
+//! - `requirements`: requirements analyst, read-only analysis that decomposes user requests into structured workflow plans
 //!
-//! 子智能体通过主 Agent 的 `delegate_task` 工具调用创建，每个子智能体
-//! 拥有独立的 LLM 上下文窗口，通过 Tauri 事件向前端报告进度。
+//! Sub-agents are created via the main agent's `delegate_task` tool; each sub-agent
+//! has its own LLM context window and reports progress to the frontend via Tauri events.
 
 use serde::{Deserialize, Serialize};
 
 use super::models::ToolSpec;
-/// 子智能体配置文件
+/// Sub-agent profile.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentProfile {
-    /// 配置文件唯一标识（"explorer" | "coder" | "general" | "architect" | "debugger" | "reviewer" | "writer" | "tester"）
+    /// Unique profile identifier ("explorer" | "coder" | "general" | "architect" | "debugger" | "reviewer" | "writer" | "tester")
     pub id: String,
-    /// 显示名称
+    /// Display name
     pub name: String,
-    /// 用途说明
+    /// Purpose description
     pub description: String,
-    /// 允许的工具列表（glob 模式），空数组 = 全部允许
+    /// Allowed tools (glob patterns); empty array = allow all
     pub allowed_tools: Vec<String>,
-    /// 禁止的工具列表（glob 模式），空数组 = 无额外禁止
+    /// Denied tools (glob patterns); empty array = nothing extra denied
     pub denied_tools: Vec<String>,
-    /// 附加的系统提示词（追加到子 Agent 基础系统提示词之后）
+    /// Extra system prompt appended after the sub-agent base system prompt
     pub system_prompt_extension: String,
-    /// 可选的模型覆盖（使用更便宜的模型执行子任务），None = 跟随主 Agent 模型
+    /// Optional model override (run the subtask on a cheaper model); None = follow the main agent's model
     pub model_override: Option<String>,
-    /// 是否注入 MCP 工具（主 Agent 勾选的 server）。仅 general（全能力）默认开启；
-    /// 其余内置角色保持最小权限。自定义 profile 由用户配置。
+    /// Whether MCP tools (servers enabled by the main agent) are injected. Only `general` (full
+    /// capability) enables it by default; other built-ins stay least-privileged. Custom profiles are user-configured.
     #[serde(default)]
     pub allow_mcp_tools: bool,
 }
 
 impl SubagentProfile {
-    /// 检查指定工具是否被 denied_tools 显式排除（不涉及 allowed 列表）。
-    /// 用于 MCP 工具：其门控是 allow_mcp_tools 标志，但显式排除仍然生效。
+    /// Check whether a tool is explicitly excluded by denied_tools (allowed list not consulted).
+    /// Used for MCP tools: their gate is the allow_mcp_tools flag, but explicit exclusion still applies.
     pub fn is_tool_denied(&self, tool_name: &str) -> bool {
         self.denied_tools
             .iter()
             .any(|pattern| simple_glob_match(pattern, tool_name))
     }
 
-    /// 检查指定工具是否被该配置文件允许
+    /// Check whether a tool is allowed by this profile
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
-        // denied 优先
+        // denied takes precedence
         if self
             .denied_tools
             .iter()
@@ -60,7 +60,7 @@ impl SubagentProfile {
         {
             return false;
         }
-        // allowed 为空 = 全部允许
+        // empty allowed = allow all
         if self.allowed_tools.is_empty() {
             return true;
         }
@@ -70,7 +70,7 @@ impl SubagentProfile {
     }
 }
 
-/// 简易 glob 匹配（支持 `*` 后缀通配，如 `git_*` 匹配所有 git 工具）
+/// Simple glob matching (supports a `*` suffix wildcard, e.g. `git_*` matches all git tools)
 fn simple_glob_match(pattern: &str, target: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -81,7 +81,7 @@ fn simple_glob_match(pattern: &str, target: &str) -> bool {
     pattern == target
 }
 
-/// 返回所有内置子智能体配置文件
+/// Return all built-in sub-agent profiles
 pub fn builtin_profiles() -> Vec<SubagentProfile> {
     vec![
         SubagentProfile {
@@ -123,7 +123,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             allow_mcp_tools: false,
             name: "代码实现者".into(),
             description: "代码编写和修改，用于实现具体功能模块。禁止执行 shell 命令。".into(),
-            allowed_tools: vec![], // 空 = 全部允许
+            allowed_tools: vec![], // empty = allow all
             denied_tools: vec!["execute_command".into(), "delegate_task".into()],
             system_prompt_extension: concat!(
                 "你是代码实现者，专注编写和修改代码文件。\n",
@@ -140,7 +140,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "通用子智能体".into(),
             description: "全能力子智能体，拥有和主 Agent 完全相同的工具集。".into(),
             allowed_tools: vec![],
-            denied_tools: vec!["delegate_task".into()], // 禁止递归创建子智能体
+            denied_tools: vec!["delegate_task".into()], // forbid recursive sub-agent creation
             system_prompt_extension: concat!(
                 "你是通用子智能体，可以执行任意任务。\n",
                 "充分利用所有可用工具来完成目标。\n",
@@ -254,7 +254,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             allow_mcp_tools: false,
             name: "文档撰写员".into(),
             description: "编写文档、注释、README、变更日志与技术规范。可读写文件。".into(),
-            allowed_tools: vec![], // 空 = 全部允许
+            allowed_tools: vec![], // empty = allow all
             denied_tools: vec![
                 "delete_file".into(),
                 "make_directory".into(),
@@ -276,7 +276,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             allow_mcp_tools: false,
             name: "测试工程师".into(),
             description: "测试用例生成、覆盖率分析与测试执行。可运行测试并编写测试文件。".into(),
-            allowed_tools: vec![], // 空 = 全部允许
+            allowed_tools: vec![], // empty = allow all
             denied_tools: vec![
                 "delete_file".into(),
                 "make_directory".into(),
@@ -333,16 +333,16 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
     ]
 }
 
-/// 按 ID 查找配置文件（先查内置，再查自定义）
+/// Look up a profile by ID (built-ins first, then custom profiles)
 pub fn find_profile(
     profile_id: &str,
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
 ) -> Option<SubagentProfile> {
-    // 先查内置
+    // Check built-ins first
     if let Some(p) = builtin_profiles().into_iter().find(|p| p.id == profile_id) {
         return Some(p);
     }
-    // 再查自定义
+    // Then custom profiles
     for cp in custom_profiles {
         if cp.id == profile_id {
             return Some(SubagentProfile {
@@ -360,7 +360,7 @@ pub fn find_profile(
     None
 }
 
-/// 构造 `delegate_task` 工具的 ToolSpec
+/// Build the ToolSpec for the `delegate_task` tool.
 pub fn delegate_task_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
@@ -390,7 +390,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                     },
                     "wait": {
                         "type": "boolean",
-                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续。"
+                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续；其完成后结果会以系统通知自动注入对话，也可随时用 get_subagent_result 工具按 subagent_id 主动查询或等待结果。"
                     }
                 },
                 "required": ["profile", "task"]
@@ -399,11 +399,11 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
     }
 }
 
-/// 构造 `delegate_tasks` 批量工具的 ToolSpec。
+/// Build the ToolSpec for the `delegate_tasks` batch tool.
 ///
-/// 此工具允许主 Agent 在单次调用中并行创建多个子智能体。
-/// 与 `delegate_task` 不同，所有子任务同时启动、并发执行。
-/// 共享 context 参数注入到每个子智能体的系统提示词中。
+/// Lets the main agent create multiple sub-agents in parallel within a single call.
+/// Unlike `delegate_task`, all subtasks start at once and run concurrently.
+/// The shared context parameter is injected into every sub-agent's system prompt.
 pub fn delegate_tasks_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
@@ -454,9 +454,47 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
     }
 }
 
-/// 构造 `create_workflow` 工具的 ToolSpec。
-/// 此工具允许 LLM 创建一个按顺序执行的子智能体工作流。
-/// 适用场景：复杂任务需要多个子智能体分工协作、按序完成。
+/// Build the ToolSpec for the `get_subagent_result` tool.
+///
+/// Lets the main agent query / await the outcome of a background (fire-and-forget)
+/// subagent launched via `delegate_task(wait=false)`.
+pub fn get_subagent_result_tool_spec() -> ToolSpec {
+    ToolSpec {
+        kind: "function".into(),
+        function: super::models::ToolFunctionSpec {
+            name: "get_subagent_result".into(),
+            description: concat!(
+                "查询/等待后台子智能体的结果（配合 delegate_task(wait=false) 使用）。",
+                "wait=true（默认）时阻塞等待其完成并返回结果（超时返回当前状态，可再次调用）；",
+                "wait=false 立即返回当前状态。结果在缓存中保留，可多次查询。",
+                "注意：后台子智能体完成后其结果也会以系统通知自动注入对话；本工具用于主动等待或在通知被截断时获取完整结果。"
+            )
+            .into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "subagent_id": {
+                        "type": "string",
+                        "description": "后台子智能体 ID（delegate_task(wait=false) 返回的 ID）"
+                    },
+                    "wait": {
+                        "type": "boolean",
+                        "description": "是否阻塞等待完成（默认 true）"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "等待超时秒数（默认 120，最大 300）"
+                    }
+                },
+                "required": ["subagent_id"]
+            }),
+        },
+    }
+}
+
+/// Build the ToolSpec for the `create_workflow` tool.
+/// Lets the LLM create a sub-agent workflow that executes sequentially.
+/// Use case: complex tasks requiring multiple sub-agents to cooperate in order.
 pub fn create_workflow_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),

@@ -1,12 +1,13 @@
-//! LspClient — 管理单个语言服务器的连接
+//! LspClient - manages the connection to a single language server
 //!
-//! 封装 LSP 协议的生命周期：initialize / shutdown，文档同步，
-//! 以及诊断通知的处理。
+//! Encapsulates the LSP protocol lifecycle: initialize / shutdown, document
+//! synchronization, and diagnostics notification handling.
 //!
-//! 参考 `plugins/mcp/connection.rs` 的 `McpConnection` 设计模式。
+//! Design modeled on `McpConnection` in `plugins/mcp/connection.rs`.
 
 use super::error::LspResult;
 use super::transport::{encode_message, read_frame};
+use crate::ierr;
 use crate::utils::jsonrpc::{PendingMap, WaitError};
 use dashmap::DashMap;
 use lsp_types::PublishDiagnosticsParams;
@@ -24,29 +25,29 @@ use std::os::windows::process::CommandExt;
 
 // ====== LspClient ======
 
-/// 单个语言服务器的连接抽象
+/// Connection abstraction for a single language server
 #[derive(Clone)]
 pub struct LspClient {
-    /// 语言标识符（如 "typescript", "rust"）
+    /// Language identifier (e.g. "typescript", "rust")
     pub language_id: String,
-    /// 项目根路径
+    /// Project root path
     pub project_root: PathBuf,
     pub(crate) inner: std::sync::Arc<LspClientInner>,
 }
 
 pub(crate) struct LspClientInner {
-    /// JSON-RPC 待响应请求表（与 MCP 客户端共用的 utils::jsonrpc::PendingMap）
+    /// JSON-RPC pending request table (utils::jsonrpc::PendingMap shared with the MCP client)
     pub pending: PendingMap<Value>,
-    /// 子进程句柄
+    /// Child process handle
     pub child: Mutex<Option<Child>>,
-    /// stdin 写入端
+    /// stdin writer
     pub stdin: Mutex<Option<ChildStdin>>,
-    /// 当前累积的诊断：uri → diagnostics
+    /// Currently accumulated diagnostics: uri -> diagnostics
     pub diagnostics: DashMap<String, Vec<lsp_types::Diagnostic>>,
 }
 
 impl LspClient {
-    /// 启动语言服务器子进程，发送 initialize 握手
+    /// Spawn the language server child process and send the initialize handshake
     pub async fn start(
         language_id: impl Into<String>,
         project_root: PathBuf,
@@ -57,7 +58,7 @@ impl LspClient {
         let language_id = language_id.into();
         let root_uri = path_to_uri(&project_root)?;
 
-        // Windows: 解析命令路径（参考 MCP stdio 的 resolve_command_on_path）
+        // Windows: resolve the command on PATH (mirrors resolve_command_on_path in MCP stdio)
         #[cfg(windows)]
         let program = resolve_lsp_command(command).unwrap_or_else(|| command.to_string());
         #[cfg(not(windows))]
@@ -70,7 +71,7 @@ impl LspClient {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
 
-        // Windows: 隐藏控制台窗口
+        // Windows: hide the console window
         #[cfg(windows)]
         {
             const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -78,17 +79,25 @@ impl LspClient {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            super::error::LspError::TransportStartup(format!(
+            super::error::LspError::TransportStartup(ierr!(
                 "启动语言服务器 {} 失败: {}",
-                command, e
+                "Failed to start language server {}: {}",
+                command,
+                e
             ))
         })?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
-            super::error::LspError::TransportStartup("无法获取子进程 stdin".into())
+            super::error::LspError::TransportStartup(ierr!(
+                "无法获取子进程 stdin",
+                "Failed to acquire the child process stdin"
+            ))
         })?;
         let stdout = child.stdout.take().ok_or_else(|| {
-            super::error::LspError::TransportStartup("无法获取子进程 stdout".into())
+            super::error::LspError::TransportStartup(ierr!(
+                "无法获取子进程 stdout",
+                "Failed to acquire the child process stdout"
+            ))
         })?;
         let stderr = child.stderr.take();
 
@@ -103,7 +112,7 @@ impl LspClient {
             }),
         };
 
-        // 启动 stdout 读取循环
+        // Start the stdout reader loop
         spawn_stdout_reader(
             client.clone(),
             BufReader::new(stdout),
@@ -111,7 +120,7 @@ impl LspClient {
             language_id.clone(),
         );
 
-        // stderr → 日志事件
+        // stderr -> log events
         if let Some(stderr) = stderr {
             let app2 = app.clone();
             let lid = language_id.clone();
@@ -127,13 +136,13 @@ impl LspClient {
             });
         }
 
-        // 发送 initialize 请求
+        // Send the initialize request
         client.initialize(&root_uri).await?;
 
         Ok(client)
     }
 
-    /// 发送 initialize 请求 + initialized 通知
+    /// Send the initialize request + initialized notification
     async fn initialize(&self, root_uri: &str) -> LspResult<()> {
         let params = serde_json::json!({
             "processId": std::process::id(),
@@ -159,21 +168,21 @@ impl LspClient {
             .request("initialize", Some(params), Duration::from_secs(30))
             .await?;
 
-        // 发送 initialized 通知
+        // Send the initialized notification
         self.notify("initialized", Some(serde_json::json!({})))
             .await?;
 
         Ok(())
     }
 
-    /// 发送 shutdown 请求并等待退出
+    /// Send the shutdown request and wait for exit
     pub async fn shutdown(&self) -> LspResult<()> {
-        // 发送 shutdown 请求
+        // Send the shutdown request
         let _ = self.request("shutdown", None, Duration::from_secs(5)).await;
-        // 发送 exit 通知
+        // Send the exit notification
         let _ = self.notify("exit", None).await;
 
-        // 等待子进程退出
+        // Wait for the child process to exit
         let mut child_guard = self.inner.child.lock().await;
         if let Some(mut child) = child_guard.take() {
             let _ = child.kill().await;
@@ -183,7 +192,7 @@ impl LspClient {
         Ok(())
     }
 
-    /// 获取指定文件的诊断
+    /// Get diagnostics for a given file
     pub fn get_diagnostics(
         &self,
         file_path: Option<&str>,
@@ -205,7 +214,7 @@ impl LspClient {
         result
     }
 
-    /// 清除指定文件或所有文件的诊断
+    /// Clear diagnostics for a given file or for all files
     #[allow(dead_code)]
     pub fn clear_diagnostics(&self, file_path: Option<&str>) {
         if let Some(fp) = file_path {
@@ -217,7 +226,7 @@ impl LspClient {
         }
     }
 
-    /// 发送 JSON-RPC request 并等待响应
+    /// Send a JSON-RPC request and wait for the response
     pub(crate) async fn request(
         &self,
         method: &str,
@@ -235,7 +244,7 @@ impl LspClient {
         let payload = serde_json::to_string(&req)?;
         let frame = encode_message(&payload);
 
-        // 发送
+        // Send
         {
             let mut stdin_guard = self.inner.stdin.lock().await;
             if let Some(ref mut stdin) = *stdin_guard {
@@ -251,7 +260,7 @@ impl LspClient {
             }
         }
 
-        // 等待响应
+        // Wait for the response
         let resp = match self.inner.pending.wait(id, rx, timeout_dur).await {
             Ok(v) => v,
             Err(WaitError::Canceled) => {
@@ -264,7 +273,7 @@ impl LspClient {
             }
         };
 
-        // 检查错误
+        // Check for errors
         if let Some(err) = resp.get("error") {
             let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
             let message = err
@@ -281,7 +290,7 @@ impl LspClient {
         Ok(resp.get("result").cloned().unwrap_or(Value::Null))
     }
 
-    /// 发送 JSON-RPC notification（无 id，不等响应）
+    /// Send a JSON-RPC notification (no id, no response awaited)
     pub(crate) async fn notify(&self, method: &str, params: Option<Value>) -> LspResult<()> {
         let n = serde_json::json!({
             "jsonrpc": "2.0",
@@ -305,14 +314,14 @@ impl LspClient {
         Ok(())
     }
 
-    /// 处理从 stdout 读取到的单条消息
+    /// Handle a single message read from stdout
     pub(crate) fn dispatch_message(&self, line: &str) {
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => return,
         };
 
-        // 如果有 id 且没有 method → 是 response
+        // Has id but no method -> it is a response
         if v.get("id").is_some() && v.get("method").is_none() {
             if let Some(id) = v.get("id").and_then(|i| i.as_u64()) {
                 if let Some(tx) = self.inner.pending.take(id) {
@@ -322,7 +331,7 @@ impl LspClient {
             return;
         }
 
-        // 处理 notification
+        // Handle the notification
         if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
             if method == "textDocument/publishDiagnostics" {
                 if let Some(params) = v.get("params") {
@@ -342,9 +351,9 @@ impl LspClient {
     }
 }
 
-// ====== 辅助函数 ======
+// ====== Helper functions ======
 
-/// 文件系统路径 → file:// URI
+/// Filesystem path -> file:// URI
 fn path_to_uri(path: &Path) -> LspResult<String> {
     let canonical = std::fs::canonicalize(path)
         .map_err(|e| super::error::LspError::Protocol(format!("canonicalize 路径失败: {}", e)))?;
@@ -354,13 +363,13 @@ fn path_to_uri(path: &Path) -> LspResult<String> {
     Ok(url.to_string())
 }
 
-/// 相对文件路径 → file:// URI
+/// Relative file path -> file:// URI
 fn file_path_to_uri(project_root: &Path, file_path: &str) -> LspResult<String> {
     let full = project_root.join(file_path);
     path_to_uri(&full)
 }
 
-/// 在后台持续读取 stdout，每解析到一帧 LSP 消息就分发到 LspClient
+/// Continuously read stdout in the background, dispatching each parsed LSP frame to the LspClient
 fn spawn_stdout_reader(
     client: LspClient,
     mut reader: BufReader<ChildStdout>,
@@ -373,7 +382,7 @@ fn spawn_stdout_reader(
             match read_frame(&mut reader).await {
                 Ok(Some(body)) => {
                     client.dispatch_message(&body);
-                    // 检查是否是诊断发布通知，转发到前端事件
+                    // Check for a publishDiagnostics notification and forward it to the frontend event
                     if let Ok(v) = serde_json::from_str::<Value>(&body) {
                         if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
                             if method == "textDocument/publishDiagnostics" {
@@ -418,7 +427,7 @@ fn spawn_stdout_reader(
     });
 }
 
-// ====== Windows 命令解析 ======
+// ====== Windows command resolution ======
 
 #[cfg(windows)]
 fn resolve_lsp_command(command: &str) -> Option<String> {

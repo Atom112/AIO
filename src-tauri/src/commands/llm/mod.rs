@@ -19,13 +19,13 @@ use crate::utils::truncate::{truncate_chars_head, truncate_chars_head_tail, trun
 use crate::utils::web_tools;
 use base64::engine::Engine as _;
 use futures_util::stream::FuturesUnordered;
-use futures_util::StreamExt; // 用于处理流式数据
+use futures_util::StreamExt; // for handling streaming data
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter 用于从后端向前端推送事件
+use tauri::{AppHandle, Emitter, Manager, Window}; // Emitter pushes backend->frontend events
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
@@ -52,29 +52,29 @@ pub(crate) use titles::*;
 pub(crate) use tool_dispatch::*;
 pub(crate) use tool_specs::*;
 pub(crate) use usage::*;
-/// Agent 循环的轮数与上下文预算（主循环按模型窗口推导；子 Agent 用保守常量，
-/// 但轮数上限尊重用户显式配置）。
+/// Round and context budgets for the agent loop (main loop derives from model window;
+/// subagents use conservative constants but honor explicit user config for rounds).
 ///
-/// 历史问题：主循环与子 Agent 循环各自内联预算，子 Agent 硬编码 100 轮/45k token
-/// 且完全忽略 `AppConfig.max_tool_rounds`——两套循环行为漂移。
+/// Both main and subagent loops derive budgets here so behavior stays aligned; the
+/// subagent default is 100 rounds / 45k tokens, overridable by `AppConfig.max_tool_rounds`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AgentLimits {
-    /// 单次运行的模型调用轮数上限（防失控；命中后优雅收尾并输出进度摘要）
+    /// Max model-call rounds per run (runaway guard; on hit, finish gracefully with a progress summary)
     pub max_rounds: u32,
-    /// 上下文 token 预算：超过则触发压缩
+    /// Context token budget: exceeding it triggers compression
     pub context_budget: usize,
-    /// 压缩后保留区 token 预算
+    /// Token budget for the retained recent region after compression
     pub keep_recent_tokens: usize,
 }
 
 impl AgentLimits {
-    /// 子 Agent 的预算：默认 100 轮失控保护（对齐"不设低轮数上限、靠上下文管理兜底"）；
-    /// 用户在设置中显式指定 max_tool_rounds 时以其为准。
-    /// 上下文安全阀取保守常量（无需模型窗口信息，对 ≥64k 窗口的模型均安全）。
+    /// Subagent budget: default 100-round runaway guard (no low round cap; context
+    /// management is the backstop); explicit user max_tool_rounds takes precedence.
+    /// Context safety valve is a conservative constant (no model window info needed; safe for >=64k windows).
     pub(crate) fn for_subagent(cfg: &AppConfig) -> Self {
-        /// 失控保护轮数（子 Agent 默认上限）
+        /// Runaway-guard round count (subagent default cap)
         const GUARD_ROUNDS: u32 = 100;
-        /// 保守上下文预算（token）
+        /// Conservative context budget (tokens)
         const CONTEXT_BUDGET: usize = 45_000;
         Self {
             max_rounds: cfg.max_tool_rounds.unwrap_or(GUARD_ROUNDS),
@@ -84,30 +84,30 @@ impl AgentLimits {
     }
 }
 
-/// 单轮流式调用后的累积结果。
+/// Accumulated result of one streaming round.
 pub(crate) struct RoundResult {
-    /// 本轮 assistant 文本内容（含重写后的 aio-image 标记）
+    /// Assistant text content for this round (with rewritten aio-image markers)
     content: String,
-    /// 本轮思维链内容（实时已通过 llm-reasoning 事件下发，此处仅留档供调试）
+    /// Chain-of-thought for this round (already streamed live via llm-reasoning events; kept only for debugging)
     #[allow(dead_code)]
     reasoning: String,
-    /// 本轮模型发起的工具调用（按 index 升序）
+    /// Tool calls issued by the model this round (ascending by index)
     tool_calls: Vec<ToolCallAccum>,
-    /// 服务端返回的 prompt tokens（输入用量）
+    /// Server-reported prompt tokens (input usage)
     input_tokens: u32,
-    /// 服务端返回的 completion tokens（输出用量）
+    /// Server-reported completion tokens (output usage)
     output_tokens: u32,
-    /// 缓存命中的输入 tokens（OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens）
+    /// Cache-hit input tokens (OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens)
     cached_input_tokens: u32,
-    /// 本轮生成/落盘的图像元数据
+    /// Metadata of images generated/saved this round
     images: Vec<GeneratedImage>,
-    /// 回送 API / 持久化的原始载荷形态（未重写 token 的数组或字符串），用于下一轮请求
+    /// Raw payload shape resent to the API / persisted (unrewritten-token array or string), used for the next round
     api_content: serde_json::Value,
-    /// 服务端返回的 finish_reason（如 "stop" / "tool_calls" / "length"），用于截断恢复
+    /// Server-reported finish_reason (e.g. "stop" / "tool_calls" / "length"), used for truncation recovery
     finish_reason: Option<String>,
 }
 
-/// 累积完成的单个工具调用。
+/// A single fully-accumulated tool call.
 #[derive(Clone)]
 pub(crate) struct ToolCallAccum {
     id: String,
@@ -115,14 +115,14 @@ pub(crate) struct ToolCallAccum {
     arguments: String,
 }
 
-// ToolCallPayload 已下沉到 core::models（chat 域）——plugins/provider 需要它；
-// 此处再导出以保持 crate::commands::llm::ToolCallPayload 路径不变。
+// ToolCallPayload now lives in core::models (chat domain; plugins/provider needs it);
+// re-exported here to keep the crate::commands::llm::ToolCallPayload path stable.
 pub use crate::core::models::ToolCallPayload;
 
-/// 防御性校验：扫描 messages 中的 assistant(tool_calls) 与 role:tool 的匹配情况，
-/// 发现缺失或不匹配时输出 warning 日志以便调试。
+/// Defensive check: scans messages for assistant(tool_calls) vs role:tool pairing,
+/// logging a warning on missing or mismatched entries to aid debugging.
 fn verify_tool_messages(messages: &[serde_json::Value]) {
-    // 从前往后扫描，追踪每个 assistant 消息中声明的 tool_call_id
+    // Scan forward, tracking tool_call_ids declared by each assistant message
     let mut pending_ids: Vec<String> = Vec::new();
     let mut assistant_idx: Option<usize> = None;
 
@@ -131,7 +131,7 @@ fn verify_tool_messages(messages: &[serde_json::Value]) {
         if role == "assistant" {
             if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
                 if !tcs.is_empty() {
-                    // 新的 assistant(tool_calls) 开始，之前的 pending_ids 尚未匹配 → 缺失
+                    // New assistant(tool_calls) starts while earlier pending_ids are still unmatched -> missing responses
                     if !pending_ids.is_empty() {
                         tracing::warn!(
                             "[verify_tool_messages] assistant[{}] 的 tool_calls {:?} 缺少对应 tool 响应",
@@ -161,7 +161,7 @@ fn verify_tool_messages(messages: &[serde_json::Value]) {
         }
     }
 
-    // 扫描结束，仍有未匹配的 tool_call_id
+    // Scan finished with tool_call_ids still unmatched
     if !pending_ids.is_empty() {
         tracing::warn!(
             "[verify_tool_messages] 扫描结束: assistant[{}] 的 tool_calls {:?} 缺少对应 tool 响应",
@@ -171,16 +171,16 @@ fn verify_tool_messages(messages: &[serde_json::Value]) {
     }
 }
 
-/// 单轮流式请求：构造 body → POST → 解析 SSE → 累积 content/reasoning/tool_calls → emit 增量事件。
+/// One streaming round: build body -> POST -> parse SSE -> accumulate content/reasoning/tool_calls -> emit delta events.
 ///
-/// 与旧 `call_llm_stream` 的差异：
-/// - 累积器用 `BTreeMap`（按 index 升序），避免多工具乱序；
-/// - 用 `tokio::select!` 监听 `token.cancelled()`，取消时立即返回 `Err("cancelled")`，
-///   保证调用方能继续执行 epilogue；
-/// - **不** emit terminal `llm-chunk(done)`，由调用方（`run_agent_turn`）统一收尾；
-/// - tool_call 仅 emit `llm-tool-call`（通知前端展示"调用中"气泡），执行由循环主体负责。
+/// Differences from the legacy `call_llm_stream`:
+/// - accumulators use `BTreeMap` (ordered by index) to avoid multi-tool reordering;
+/// - `tokio::select!` watches `token.cancelled()`, returning `Err("cancelled")` immediately
+///   so the caller can still run its epilogue;
+/// - does **not** emit terminal `llm-chunk(done)`; the caller (`run_agent_turn`) owns the epilogue;
+/// - tool_call only emits `llm-tool-call` (frontend "running" bubble); the loop body executes them.
 ///
-/// 返回 `RoundResult`；若被取消返回 `Err("cancelled")`，其它错误原样上抛。
+/// Returns `RoundResult`; `Err("cancelled")` on cancellation; other errors propagate unchanged.
 #[allow(
     clippy::too_many_arguments,
     reason = "stream orchestration keeps request and event context explicit"
@@ -212,15 +212,15 @@ pub(crate) async fn stream_one_round(
             body_map.insert("tool_choice".into(), json!("auto"));
         }
     }
-    // 可选的输出长度上限：防止单轮输出无界膨胀（推理类模型 o1/o3/gpt-5 系列需用
-    // max_completion_tokens，这里由调用方负责按模型类型决定是否传入）
+    // Optional output length cap: prevents unbounded single-round output (reasoning
+    // models like o1/o3/gpt-5 need max_completion_tokens; the caller decides per model)
     if let Some(mt) = max_output_tokens {
         body_map.insert("max_tokens".into(), json!(mt));
     }
     let body = serde_json::Value::Object(body_map);
 
-    // 统一请求入口（P2.4 带前置阶段重试）：Anthropic 原生协议自动适配；
-    // 传输错误与 429/5xx 在未发射任何内容前按退避重试，流中段错误不重试
+    // Unified request entry with pre-stream retries: adapts to the Anthropic native protocol;
+    // transport errors and 429/5xx retry with backoff only before any content is emitted; mid-stream errors are not retried
     let (response, is_anthropic_request) = crate::plugins::llm::post_chat_completion_with_retry(
         client,
         &api_url,
@@ -232,24 +232,24 @@ pub(crate) async fn stream_one_round(
 
     let mut stream = response.bytes_stream();
     let mut line_buffer = String::new();
-    // tool_call 累积：index → (id, name, arguments)，用 BTreeMap 保证按 index 升序 flush
+    // tool_call accumulator: index -> (id, name, arguments); BTreeMap keeps flush ordered by index
     let mut tc_accum: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
 
     let mut content_buf = String::new();
     let mut reasoning_buf = String::new();
-    // 服务端返回的 finish_reason（"stop" / "tool_calls" / "length"），供调用方做截断恢复
+    // Server-reported finish_reason ("stop" / "tool_calls" / "length"), for caller-side truncation recovery
     let mut finish_reason: Option<String> = None;
-    // 流式数组 delta 里解析出的 image_url 与原始 API 载荷（回送下一轮时用未重写形态，防 token 泄漏）
+    // image_urls parsed from array deltas plus raw API payload parts (resent unrewritten next round to avoid token leakage)
     let mut image_urls: Vec<String> = Vec::new();
     let mut round_api_parts: Vec<serde_json::Value> = Vec::new();
     let mut saw_done = false;
-    // 从 SSE 流末尾提取 token 用量（服务端返回）
+    // Token usage extracted from the SSE stream tail (server-reported)
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
     let mut cached_input_tokens: u32 = 0;
 
     loop {
-        // 三重竞争：取消信号 / stream chunk / 120s inactivity 超时
+        // Three-way race: cancel signal / stream chunk / 120s inactivity timeout
         let next = tokio::select! {
             _ = token.cancelled() => return Err("cancelled".to_string()),
             item = stream.next() => item,
@@ -264,7 +264,7 @@ pub(crate) async fn stream_one_round(
         let chunk = match next {
             Some(Ok(c)) => c,
             Some(Err(e)) => return Err(e.to_string()),
-            None => break, // 流自然结束
+            None => break, // stream ended naturally
         };
         line_buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -284,7 +284,7 @@ pub(crate) async fn stream_one_round(
             if let Some(json_str) = line.strip_prefix("data: ") {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if is_anthropic_request {
-                        // Anthropic Messages 流式事件：内容/思考/工具调用/用量统一累积
+                        // Anthropic Messages stream events: content/thinking/tool calls/usage accumulated uniformly
                         crate::plugins::provider::anthropic::handle_anthropic_stream_event(
                             &val,
                             window,
@@ -322,8 +322,8 @@ pub(crate) async fn stream_one_round(
                             );
                         }
                     } else if let Some(parts) = val["choices"][0]["delta"]["content"].as_array() {
-                        // 图像类模型（vLLM Qwen-Image、OpenAI gpt-image-1 chat 模式等）以数组
-                        // 交付文本与图片块。文本逐块推送；图片块收集 URL，待流结束后落盘重写。
+                        // Image-capable models (vLLM Qwen-Image, OpenAI gpt-image-1 chat mode, etc.)
+                        // deliver text and image blocks as an array: text streams per block; image URLs are collected and saved/rewritten after the stream.
                         for part in parts {
                             match part.get("type").and_then(|v| v.as_str()) {
                                 Some("text") => {
@@ -392,7 +392,7 @@ pub(crate) async fn stream_one_round(
                             }
                         }
                     }
-                    // tool_calls 累积
+                    // Accumulate tool_calls
                     if let Some(tcs) = val["choices"][0]["delta"]["tool_calls"].as_array() {
                         for tc in tcs {
                             let index =
@@ -419,8 +419,8 @@ pub(crate) async fn stream_one_round(
                             }
                         }
                     }
-                    // finish_reason="tool_calls" 时不必立即 flush（累积器已存好），
-                    // 统一在末尾按 index 升序构造。这里仅触发提前 flush 事件通知前端。
+                    // On finish_reason="tool_calls" no immediate flush is needed (the accumulator holds state);
+                    // calls are built at the end in index order; this only emits an early flush event to notify the frontend.
                     let finish = val["choices"][0]["finish_reason"].as_str().unwrap_or("");
                     if !finish.is_empty() {
                         finish_reason = Some(finish.to_string());
@@ -441,7 +441,7 @@ pub(crate) async fn stream_one_round(
                             }
                         }
                     }
-                    // 提取服务端返回的 token 用量（OpenAI 兼容 API 在最后一个 chunk 中附带 usage）
+                    // Extract server-reported token usage (OpenAI-compatible APIs attach usage to the final chunk)
                     if let Some(usage) = val.get("usage") {
                         if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
                             input_tokens = pt as u32;
@@ -449,7 +449,7 @@ pub(crate) async fn stream_one_round(
                         if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                             output_tokens = ct as u32;
                         }
-                        // 缓存命中统计：OpenAI 在 prompt_tokens_details.cached_tokens，DeepSeek 在 prompt_cache_hit_tokens
+                        // Cache-hit stats: OpenAI uses prompt_tokens_details.cached_tokens, DeepSeek uses prompt_cache_hit_tokens
                         if let Some(cached) = usage
                             .get("prompt_tokens_details")
                             .and_then(|d| d.get("cached_tokens"))
@@ -463,7 +463,7 @@ pub(crate) async fn stream_one_round(
                             cached_input_tokens = cached as u32;
                         }
                     }
-                } // else 分支结束（OpenAI 兼容解析）
+                } // end of else branch (OpenAI-compatible parsing)
             }
         }
         if saw_done {
@@ -471,9 +471,9 @@ pub(crate) async fn stream_one_round(
         }
     }
 
-    // 按 index 升序构造工具调用列表（若 finish_reason="tool_calls" 已 emit 过通知，这里不再重复 emit）
+    // Build the tool call list in index order (if finish_reason="tool_calls" already emitted notices, do not re-emit)
     let mut tool_calls = Vec::new();
-    let need_emit = !saw_done; // 若未到 [DONE]，则此前可能未 emit tool-call 通知
+    let need_emit = !saw_done; // if [DONE] never arrived, tool-call notices may not have been emitted yet
     for (id, name, args) in tc_accum.values() {
         if !id.is_empty() && !name.is_empty() {
             tool_calls.push(ToolCallAccum {
@@ -483,8 +483,8 @@ pub(crate) async fn stream_one_round(
             });
         }
     }
-    // 若 finish_reason="tool_calls" 路径未触发（某些 provider 只在末尾给 tool_calls delta），
-    // 这里补发 llm-tool-call 通知，确保前端展示。
+    // If the finish_reason="tool_calls" path never fired (some providers only send a
+    // tool_calls delta at the end), emit llm-tool-call notices here so the frontend shows them.
     if need_emit && !suppress_events {
         for tc in &tool_calls {
             let _ = window.emit(
@@ -500,7 +500,7 @@ pub(crate) async fn stream_one_round(
         }
     }
 
-    // 回送 API 的载荷形态：有数组块时用原始数组（未重写 token），否则退回纯文本字符串。
+    // Payload shape resent to the API: raw array when array parts exist (unrewritten tokens), else plain text string.
     let api_content = if round_api_parts.is_empty() {
         json!(content_buf)
     } else {
@@ -538,30 +538,30 @@ pub(crate) async fn stream_one_round(
     })
 }
 
-/// 核心函数：调用 LLM 并分块回传结果（流式输出）。
+/// Core function: calls the LLM and streams the result back in chunks.
 ///
-/// 注意：此命令保留用于命令稳定性，但前端新流程改用 [`run_agent_turn`]
-/// （后端单任务自驱循环）。本命令现在仅做单轮流式 + 终止 done，
-/// 不再做工具执行/递归——工具调用的通知事件仍会 emit（供调试/兼容）。
+/// Note: this command is kept for command stability; the new frontend flow uses [`run_agent_turn`]
+/// (the backend single-task autonomous loop). It now only does single-round streaming + a terminal
+/// done, with no tool execution/recursion -- tool-call notification events are still emitted (for debugging/compatibility).
 #[tauri::command]
 #[allow(
     clippy::too_many_arguments,
     reason = "Tauri IPC compatibility requires the existing flat command parameters"
 )]
 pub async fn call_llm_stream(
-    window: Window,                         // Tauri 窗口句柄，用于发送事件
-    state: tauri::State<'_, StreamManager>, // 全局状态，用于管理正在进行的流任务
+    window: Window,                         // Tauri window handle, used to emit events
+    state: tauri::State<'_, StreamManager>, // Global state, manages in-flight stream tasks
     db_state: tauri::State<'_, DbState>,
-    api_url: String,              // API 地址
-    api_key: String,              // API 密钥
-    model: String,                // 模型名称（如 gpt-3.5-turbo）
-    assistant_id: String,         // 助手 ID（用于前端匹配消息）
-    topic_id: String,             // 话题/会话 ID
-    messages: Vec<Message>,       // 历史上下文消息列表
-    tools: Option<Vec<ToolSpec>>, // 工具定义（MCP 工具，None 或空数组则不发送）
+    api_url: String,              // API endpoint URL
+    api_key: String,              // API key
+    model: String,                // Model name (e.g. gpt-3.5-turbo)
+    assistant_id: String,         // Assistant ID (frontend matches messages by it)
+    topic_id: String,             // Topic/session ID
+    messages: Vec<Message>,       // History context messages
+    tools: Option<Vec<ToolSpec>>, // Tool definitions (MCP tools; None or empty array means not sent)
 ) -> Result<(), String> {
-    // 诊断日志（仅 debug）：打印 messages 每个元素的 role 和关键字段是否存在。
-    // 注意保持 debug 级别——生产默认 warn，此处对话内容相关日志不应进入生产日志。
+    // Diagnostic logging (debug only): prints each message's role and which key fields are present.
+    // Must stay at debug level -- production defaults to warn; conversation-content logs must not reach production logs.
     for (i, m) in messages.iter().enumerate() {
         tracing::debug!(
             "[call_llm_stream] messages[{}] role={} has_toolCallId={} has_toolCalls={} has_name={}",
@@ -572,20 +572,20 @@ pub async fn call_llm_stream(
             m.name.is_some()
         );
     }
-    // SSRF 防护
+    // SSRF protection
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
-    // 1. 生成任务 Key（结构化元组，避免 "-" 拼接歧义）
+    // 1. Build the task key (structured tuple, avoids "-" concatenation ambiguity)
     let task_key = (assistant_id.clone(), topic_id.clone());
 
-    // 2. 如果当前 Key 已有任务在运行，先取消旧任务（cancel 而非 abort，保证 epilogue）
+    // 2. If a task is already running for this key, cancel it first (cancel, not abort, so the epilogue still runs)
     if let Some((_, (_, old_token))) = state.0.remove(&task_key) {
         old_token.cancel();
     }
 
-    // 3. 克隆变量以便进入异步线程（move 闭包）
+    // 3. Clone variables for the async task (move closure)
     let state_inner = state.0.clone();
     let task_key_inner = task_key.clone();
     let assistant_id_c = assistant_id.clone();
@@ -597,10 +597,10 @@ pub async fn call_llm_stream(
             .map(|message| message_for_api(&conn, message))
             .collect::<Result<Vec<_>, _>>()?
     };
-    let tools_slice = tools; // 用于 as_slice()
+    let tools_slice = tools; // kept for as_slice()
 
-    // 防御性校验（仅调试构建）：检查 tool_calls 与 tool 响应是否匹配。
-    // 该扫描对每条消息做 JSON 检查仅为打日志用，发布构建不付出此开销。
+    // Defensive validation (debug builds only): checks tool_calls match tool responses.
+    // The per-message JSON scan exists only for logging; release builds skip the cost.
     #[cfg(debug_assertions)]
     verify_tool_messages(&messages_for_api);
 
@@ -609,7 +609,7 @@ pub async fn call_llm_stream(
     let app_handle = window.app_handle().clone();
     let model_c = model.clone();
 
-    // 4. 创建异步任务执行请求
+    // 4. Spawn the async task that performs the request
     let handle = tokio::spawn(async move {
         let client = streaming_http_client();
         let tools_ref: Option<&[ToolSpec]> = tools_slice.as_deref();
@@ -632,10 +632,10 @@ pub async fn call_llm_stream(
         )
         .await;
 
-        // 收尾：无论成功/取消/错误都 emit terminal done，保证前端 isThinking 必复位
+        // Epilogue: emit a terminal done on success/cancel/error alike so the frontend always resets isThinking
         match result {
             Ok(round) => {
-                // 持久化本轮 token 用量到 usage_log
+                // Persist this round's token usage to usage_log
                 insert_usage_log(
                     &app_handle,
                     &assistant_id_c,
@@ -695,24 +695,24 @@ pub async fn call_llm_stream(
             }
         }
 
-        // 任务完成后，从全局状态中移除
+        // Remove the task from global state once it finishes
         state_inner.remove(&task_key_inner);
     });
 
-    // 5. 将当前正在执行的任务句柄与取消令牌存入全局状态
+    // 5. Store the running task handle and cancellation token in global state
     state.0.insert(task_key, (handle, token));
     Ok(())
 }
 
-/// 辅助函数：从服务商获取可用的模型列表
+/// Helper: fetches the list of available models from the provider
 #[tauri::command]
 pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelInfo>, String> {
-    // SSRF 防护
+    // SSRF protection
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
-    // 构造模型获取地址，通常是基础 URL 后接 /models
+    // Build the model-list URL, usually the base URL plus /models
     let mut base_url = api_url.trim_end_matches('/').to_string();
     if base_url.ends_with("/chat/completions") {
         base_url = base_url.replace("/chat/completions", "");
@@ -731,16 +731,16 @@ pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelI
     .map_err(|_| "获取模型列表超时（45s）".to_string())?
     .map_err(|e| e.to_string())?;
 
-    // 解析返回的模型 JSON 数据
+    // Parse the returned model JSON
     let res_data: ModelsResponse = response.json().await.map_err(|e| e.to_string())?;
     Ok(res_data.data)
 }
 
-/// 停止函数：用户点击“停止生成”时调用。
+/// Stop function: called when the user clicks "Stop generating".
 ///
-/// 通过 `CancellationToken::cancel()` 通知任务优雅退出（而非 `abort()`），
-/// 任务在 `select!` 分支返回后仍能执行 epilogue（emit done + 移除自身），
-/// 保证前端的 `isThinking` 状态必然被复位。
+/// Notifies the task to exit gracefully via `CancellationToken::cancel()` (not `abort()`),
+/// so after the `select!` branch returns the task still runs its epilogue
+/// (emit done + remove itself), guaranteeing the frontend `isThinking` state is reset.
 #[tauri::command]
 pub async fn stop_llm_stream(
     state: tauri::State<'_, StreamManager>,
@@ -749,18 +749,18 @@ pub async fn stop_llm_stream(
 ) -> Result<(), String> {
     let task_key = (assistant_id.clone(), topic_id.clone());
 
-    // 取出取消令牌并触发 cancel；任务自身负责 emit done 与从状态中移除。
-    // 注意：这里只 cancel，不 abort，保证 epilogue 必达。
+    // Take the cancellation token and cancel; the task itself emits done and removes itself from state.
+    // Note: cancel only, never abort, so the epilogue is guaranteed.
     if let Some(entry) = state.0.get(&task_key) {
         entry.1.cancel();
     }
     Ok(())
 }
 
-/// 执行内置工具（in-process 直接调用，含权限检查和审批）。
+/// Executes a built-in tool (direct in-process call, with permission checks and approval).
 ///
-/// 覆盖文件工具（file_tools）和命令执行工具（shell_tools），跳过 MCP 通道。
-/// 权限模型与 `execute_tool_call` 保持一致。
+/// Covers file tools (file_tools) and command execution tools (shell_tools), bypassing the MCP channel.
+/// The permission model matches `execute_tool_call`.
 pub(crate) async fn execute_builtin_tool(
     app: &AppHandle,
     tool_name: &str,
@@ -771,9 +771,9 @@ pub(crate) async fn execute_builtin_tool(
 ) -> Result<ToolResult, String> {
     let project_root = file_tools::resolve_project_root(app, project_id)?;
 
-    // P3.2 fail-closed：沙箱不可用（无 bwrap/sandbox-exec）时，自主模式按配置
-    // 直接拒绝执行命令——此前为 fail-open 裸跑。Normal/Plan 模式继续走权限审批
-    //（Ask），审批原因中会附带沙箱不可用警示（见下方 Ask 分支）。
+    // Fail-closed: when the sandbox is unavailable (no bwrap/sandbox-exec), autonomous modes
+    // refuse command execution per config. Normal/Plan modes still go through permission
+    // approval (Ask), whose reason carries a sandbox-unavailable warning (see the Ask branch below).
     if tool_name == "execute_command"
         && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
         && !crate::utils::sandbox::sandbox_available()
@@ -787,7 +787,7 @@ pub(crate) async fn execute_builtin_tool(
         ));
     }
 
-    // 权限检查（与 execute_tool_call 保持一致，server_id 沿用 crate::core::ids::BUILTIN_FS_SERVER_ID 以兼容已有规则）
+    // Permission check (matches execute_tool_call; server_id keeps crate::core::ids::BUILTIN_FS_SERVER_ID for compatibility with existing rules)
     if *agent_mode != AgentMode::Off {
         let custom_rules = permission::load_permissions(Some(&project_root)).rules;
         let action = permission::check_permission(
@@ -800,15 +800,20 @@ pub(crate) async fn execute_builtin_tool(
 
         match action {
             PermissionAction::Deny => {
-                return Err(format!(
+                return Err(ierr!(
                     "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
+                    "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo allow it, switch to auto mode or add an allow rule in project permission settings.",
                     tool_name
                 ));
             }
             PermissionAction::Ask => {
                 let pending = app.state::<PendingApprovals>();
-                let mut reason = format!("工具 '{}' 需要您的确认才能执行", tool_name);
-                // 命令执行：危险命令标注
+                let mut reason = ierr!(
+                    "工具 '{}' 需要您的确认才能执行",
+                    "Tool '{}' needs your confirmation to execute",
+                    tool_name
+                );
+                // Command execution: dangerous-command annotation
                 if tool_name == "execute_command" {
                     if let Some(cmd) = arguments["command"].as_str() {
                         if let Some(danger) = shell_tools::check_dangerous_command(cmd) {
@@ -817,27 +822,39 @@ pub(crate) async fn execute_builtin_tool(
                                 shell_tools::DangerCategory::High => "⚠️ 高风险",
                                 shell_tools::DangerCategory::Medium => "⚡ 中等风险",
                             };
-                            reason = format!(
-                                "{prefix}\n\n{danger_desc}\n\n命令: {cmd}\n\n确认执行？",
-                                prefix = prefix,
-                                danger_desc = danger.risk,
+                            reason = ierr!(
+                                "{}\n\n{}\n\n命令: {}\n\n确认执行？",
+                                "{}\n\n{}\n\nCommand: {}\n\nConfirm execution?",
+                                prefix,
+                                danger.risk,
+                                cmd
                             );
                         } else {
-                            reason =
-                                format!("命令: {cmd}\n\n工具 '{}' 需要您的确认才能执行", tool_name);
+                            reason = ierr!(
+                                "命令: {}\n\n工具 '{}' 需要您的确认才能执行",
+                                "Command: {}\n\nTool '{}' needs your confirmation to execute",
+                                cmd,
+                                tool_name
+                            );
                         }
                     }
                 }
-                // 网络声明与沙箱可用性标注（P3.1/P3.2）：审批信息完整呈现风险面
+                // Network declaration and sandbox availability annotations: the approval info presents the full risk surface
                 if tool_name == "execute_command" {
                     if arguments["network"].as_bool().unwrap_or(false) {
-                        reason.push_str("\n\n⚠ 此命令声明需要网络访问");
+                        reason.push_str(&ierr!(
+                            "\n\n⚠ 此命令声明需要网络访问",
+                            "\n\n⚠ This command declares network access"
+                        ));
                     }
                     if !crate::utils::sandbox::sandbox_available() {
-                        reason.push_str("\n\n⚠ 沙箱不可用：此命令将在无 OS 级沙箱的环境执行");
+                        reason.push_str(&ierr!(
+                            "\n\n⚠ 沙箱不可用：此命令将在无 OS 级沙箱的环境执行",
+                            "\n\n⚠ Sandbox unavailable: this command will run without an OS-level sandbox"
+                        ));
                     }
                 }
-                // 文件修改工具：预计算 diff 预览
+                // File-modifying tools: precompute a diff preview
                 let (preview_diff, file_path) =
                     compute_diff_preview(tool_name, arguments, &project_root);
                 let approval_fut = crate::commands::mcp::request_tool_approval(
@@ -859,13 +876,13 @@ pub(crate) async fn execute_builtin_tool(
         }
     }
 
-    // 分发执行
+    // Dispatch and execute
     if tool_name == "execute_command" {
         let command = arguments["command"].as_str().unwrap_or("").to_string();
         let timeout = arguments["timeout"].as_u64();
-        // 网络出口管控（P3.1）：模型显式声明，默认 false = 沙箱内无网络
+        // Network egress control: declared explicitly by the model; default false = no network inside the sandbox
         let allow_network = arguments["network"].as_bool().unwrap_or(false);
-        // P3.3 Windows AppContainer：配置开启时传入工具链 R+X 目录走 OS 级沙箱
+        // Windows AppContainer: when enabled in config, pass toolchain R+X dirs to run under the OS-level sandbox
         #[cfg(windows)]
         let ac_dirs: Option<Vec<String>> = {
             let ac_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
@@ -902,8 +919,8 @@ pub(crate) async fn execute_builtin_tool(
     } else if tool_name == "lsp_symbols" {
         lsp_agent_tools::execute_lsp_symbols(app, &project_root, arguments).await
     } else if crate::services::memory::tools::MEMORY_TOOL_NAMES.contains(&tool_name) {
-        // 记忆工具名清单由 services/memory/tools.rs 统一维护（含 search_code）；
-        // 禁止在此再写字面值清单，防止派发与规格漂移（history: search_code 曾因此不可用）。
+        // The memory tool name list is maintained centrally in services/memory/tools.rs
+        // (including search_code); never hardcode a literal list here to avoid dispatch/spec drift.
         let tool_name_c = tool_name.to_string();
         let arguments_c = arguments.clone();
         let root_c = project_root.clone();
@@ -948,9 +965,13 @@ pub(crate) async fn execute_builtin_tool(
         .await
         .unwrap_or_else(|_| file_tools::tool_err("文件工具执行线程 panic")))
     } else {
-        // 未知工具必须显式报错。历史上最后的 else 会把任何未匹配的工具名交给
-        // file_tools 兜底，使模型收到语义模糊的结果（search_code 曾因此不可用）。
-        Ok(file_tools::tool_err(&format!("未知工具: {tool_name}")))
+        // Unknown tools must error out explicitly. Never route unmatched tool names to a
+        // file_tools fallback, which would give the model a semantically ambiguous result.
+        Ok(file_tools::tool_err(&ierr!(
+            "未知工具: {}",
+            "Unknown tool: {}",
+            tool_name
+        )))
     }
 }
 
@@ -959,7 +980,7 @@ fn is_git_repo(dir: &str) -> bool {
     std::path::Path::new(dir).join(".git").exists()
 }
 
-/// 带自动重试的工具执行包装器（仅对 MCP 网络调用使用）。
+/// Tool execution wrapper with automatic retry (used only for MCP network calls).
 pub(crate) async fn execute_tool_with_retry<F, Fut>(
     execute: F,
     config: &crate::core::models::AppConfig,
@@ -1011,10 +1032,10 @@ where
     Err(last_error.unwrap_or_else(|| "auto-retry exhausted".into()))
 }
 
-/// 主 Agent 一轮自驱循环的运行上下文（收敛原 15 个扁平业务参数）。
+/// Run context for one autonomous turn of the main agent loop (consolidates the former 15 flat parameters).
 ///
-/// IPC 兼容面：Tauri 命令仍保留扁平参数（旧前端调用不动），命令体仅为薄包装，
-/// 立即构造 TurnContext 交给实现函数。
+/// IPC compatibility: the Tauri command keeps the flat parameters (old frontend calls unchanged);
+/// the command body is a thin wrapper that builds a TurnContext and passes it to the implementation.
 pub(crate) struct TurnContext {
     pub api_url: String,
     pub api_key: String,
@@ -1030,31 +1051,31 @@ pub(crate) struct TurnContext {
     pub locale: Option<String>,
     pub context_window: Option<u32>,
     pub skills: Option<Vec<SkillConfig>>,
-    /// 助手勾选的 MCP server id 列表（opt-in，空 = 无 MCP 工具）
+    /// MCP server ids opted in by the assistant (opt-in; empty = no MCP tools)
     pub mcp_server_ids: Vec<String>,
-    /// P4.4：恢复指定回合的检查点（崩溃后续跑）；None = 正常新回合
+    /// Checkpoint of the turn to resume (continue after a crash); None = a normal new turn
     pub resume_turn_id: Option<String>,
 }
 
-/// Agent 自驱循环命令（前端新流程主入口）。
+/// Autonomous agent-loop command (the main entry point of the new frontend flow).
 ///
-/// 在单个 tokio 任务内完成「流式 → 检测工具 → 权限/审批 → 执行 MCP → 回填结果 → 递归」，
-/// 直到模型不再发起工具调用或达到轮数上限。前端只需监听事件做纯渲染：
-/// - `llm-round-start`：push 空 assistant 占位消息
-/// - `llm-chunk`：追加文本 / `done:true` 表示整轮真正结束
-/// - `llm-reasoning`：追加思维链
-/// - `llm-tool-call`：展示"调用中"气泡（仅通知，执行由本命令完成）
-/// - `llm-tool-result`：更新气泡状态 + 追加 role:tool 消息
-/// - `tool-approval-requested`：审批请求
+/// Runs one tokio task through stream -> detect tools -> permission/approval -> execute MCP -> feed results back -> recurse,
+/// until the model stops issuing tool calls or the round limit is hit. The frontend only listens to events and renders:
+/// - `llm-round-start`: push an empty assistant placeholder message
+/// - `llm-chunk`: append text / `done:true` marks the real end of the whole turn
+/// - `llm-reasoning`: append chain-of-thought
+/// - `llm-tool-call`: show a "running" bubble (notification only; this command performs the execution)
+/// - `llm-tool-result`: update bubble status + append the role:tool message
+/// - `tool-approval-requested`: approval request
 ///
-/// # 参数
-/// - `messages`：初始消息列表（含本轮 user 消息），由前端构造好 system/历史/user
-/// - `mcp_server_ids`：助手勾选的 MCP server id（opt-in）。Agent 模式下注入已连接
-///   server 的工具；工具名冲突时重命名为 mcp__<server>__<tool>；未信任 server 的
-///   工具在 Auto/Workflow 模式下仍逐次审批（见 mcp::execute_tool_call）
-/// - `agent_mode`：Agent 执行模式，影响权限规则与工具注入（Plan: 研究工具 / Normal/Auto/Workflow: 编排工具 / Off: 无工具）
-/// - `project_id`：项目 id（用于解析项目级权限规则）
-/// - `locale`：可选界面语言；旧调用缺失时兼容回退到 `zh-CN`
+/// # Parameters
+/// - `messages`: initial message list (including this turn's user message); the frontend prebuilds system/history/user
+/// - `mcp_server_ids`: MCP server ids opted in by the assistant. In Agent mode, tools of connected
+///   servers are injected; conflicting tool names are renamed to mcp__<server>__<tool>; tools from
+///   untrusted servers still require per-call approval in Auto/Workflow mode (see mcp::execute_tool_call)
+/// - `agent_mode`: agent execution mode; affects permission rules and tool injection (Plan: research tools / Normal/Auto/Workflow: orchestration tools / Off: no tools)
+/// - `project_id`: project id (used to resolve project-level permission rules)
+/// - `locale`: optional UI language; falls back to `zh-CN` when missing on legacy calls
 #[tauri::command]
 #[allow(
     clippy::too_many_arguments,
@@ -1103,17 +1124,17 @@ pub async fn run_agent_turn(
     run_agent_turn_inner(app, window, db_state, stream_mgr, ctx).await
 }
 
-/// 停止指定的后台子智能体（delegate_task wait=false 启动的 fire-and-forget 子智能体）。
+/// Stop a given background subagent (fire-and-forget subagents started by delegate_task with wait=false).
 ///
-/// # 参数
-/// - `subagent_id`：后台子智能体 ID（启动确认结果中返回）
+/// # Parameters
+/// - `subagent_id`: background subagent id (returned in the start confirmation result)
 ///
-/// # 返回
-/// true = 已发出取消信号；false = 未找到（已完成或不存在，幂等成功）。
+/// # Returns
+/// true = cancel signal sent; false = not found (already finished or nonexistent; idempotent success).
 #[tauri::command]
 pub fn stop_subagent(app: AppHandle, subagent_id: String) -> Result<bool, String> {
     let handles = app.state::<crate::core::state::SubagentHandles>();
-    // Ref 守卫必须在本语句内释放（match 作为尾表达式会把临时值活到块尾，触发 E0597）
+    // The Ref guard must be released within this statement (a tail-expression match keeps temporaries alive to the block end, triggering E0597)
     let found = match handles.0.get(&subagent_id) {
         Some(entry) => {
             entry.1.cancel();
@@ -1125,7 +1146,7 @@ pub fn stop_subagent(app: AppHandle, subagent_id: String) -> Result<bool, String
     Ok(found)
 }
 
-/// 主 Agent 一轮自驱循环的实现（参数已收敛为 TurnContext）。
+/// Implementation of the main agent's one-turn autonomous loop (parameters packed into TurnContext).
 pub(crate) async fn run_agent_turn_inner(
     app: AppHandle,
     window: Window,
@@ -1151,8 +1172,8 @@ pub(crate) async fn run_agent_turn_inner(
         mcp_server_ids,
         resume_turn_id,
     } = ctx;
-    // 诊断日志（仅 debug）：打印 messages 每个元素的 role 和关键字段是否存在。
-    // 注意保持 debug 级别——生产默认 warn，此处对话内容相关日志不应进入生产日志。
+    // Diagnostic log (debug only): print each message's role and whether key fields are present.
+    // Keep this at debug level: production defaults to warn, and conversation-content logs must not land in production logs.
     for (i, m) in messages.iter().enumerate() {
         tracing::debug!(
             "[run_agent_turn] messages[{}] role={} has_toolCallId={} has_toolCalls={} has_name={}",
@@ -1163,22 +1184,22 @@ pub(crate) async fn run_agent_turn_inner(
             m.name.is_some()
         );
     }
-    // SSRF 防护
+    // SSRF protection
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
     let task_key = (assistant_id.clone(), topic_id.clone());
 
-    // 取消同 topic 的旧任务（cancel 而非 abort）。
-    // 必须 await 旧 handle 完成 epilogue，否则旧任务的 state_inner.remove
-    // 可能在新的 insert 之后执行，误删新任务的条目导致新任务变成孤儿。
+    // Cancel the old task for the same topic (cancel, not abort).
+    // The old handle must be awaited to finish its epilogue; otherwise the old task's state_inner.remove
+    // could run after the new insert and wrongly delete the new task's entry, leaving the new task orphaned.
     if let Some((_, (old_handle, old_token))) = stream_mgr.0.remove(&task_key) {
         old_token.cancel();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), old_handle).await;
     }
 
-    // 预先把 messages 转为 API 格式（含附件 image 展开等），在持锁期间完成同步 I/O
+    // Convert messages to API format up front (incl. attachment image expansion) so synchronous I/O finishes while the lock is held
     let mut messages_for_api: Vec<serde_json::Value> = {
         let conn = db_state.0.lock();
         messages
@@ -1186,8 +1207,8 @@ pub(crate) async fn run_agent_turn_inner(
             .map(|m| message_for_api(&conn, m))
             .collect::<Result<Vec<_>, _>>()?
     };
-    // P4.4 检查点恢复：替换为崩溃前最后一轮的完整上下文快照（继续跑而不是从头跑）。
-    // turn_id 贯穿本回合：恢复时沿用原 turn_id（快照续写），新回合生成新 id。
+    // Checkpoint resume: replace with the full context snapshot of the last round before the crash (continue instead of restarting from scratch).
+    // turn_id persists across this turn: resume reuses the original turn_id (snapshot continuation); a new turn generates a new id.
     let turn_id = resume_turn_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -1206,7 +1227,7 @@ pub(crate) async fn run_agent_turn_inner(
             }
         }
     }
-    // 防御性校验（仅调试构建）：发布构建不付出全量消息扫描的日志开销
+    // Defensive validation (debug builds only): release builds skip the logging cost of a full message scan
     #[cfg(debug_assertions)]
     verify_tool_messages(&messages_for_api);
     let locale_c = if locale.as_deref() == Some("en-US") {
@@ -1226,16 +1247,16 @@ pub(crate) async fn run_agent_turn_inner(
         }),
     );
 
-    // ===== Token 效率：模型感知的上下文预算 =====
-    // 基于模型上下文窗口（前端从模型目录传入，缺省 128k）推导压缩触发阈值，
-    // 参考 oh-my-pi 的 reserve 策略：reserve = max(16384, 15% 窗口)。
+    // ===== Token efficiency: model-aware context budget =====
+    // Compression trigger thresholds are derived from the model context window (passed by the frontend
+    // from the model catalog, default 128k), following oh-my-pi's reserve policy: reserve = max(16384, 15% of window).
     let context_window_n = context_window.unwrap_or(128_000).max(16_000) as usize;
     let context_reserve = 16_384usize.max(context_window_n / 100 * 15);
-    let context_budget = context_window_n.saturating_sub(context_reserve); // 触发压缩的 token 阈值
-    let keep_recent_tokens = (context_budget / 2).clamp(4_000, 20_000); // 压缩时保留的最近 token 预算
+    let context_budget = context_window_n.saturating_sub(context_reserve); // token threshold that triggers compression
+    let keep_recent_tokens = (context_budget / 2).clamp(4_000, 20_000); // recent-token budget kept when compressing
 
-    // 推理类模型（OpenAI o1/o3/o4、gpt-5 系列）不接受 max_tokens 字段（需 max_completion_tokens），
-    // 对其不注入输出上限避免 API 报错；其余模型注入窗口一半的输出预算。
+    // Reasoning models (OpenAI o1/o3/o4, gpt-5 series) reject the max_tokens field (they need max_completion_tokens),
+    // so no output cap is injected for them to avoid API errors; other models get half the window as output budget.
     let model_lower = model.to_lowercase();
     let is_reasoning_model = ["o1", "o3", "o4", "gpt-5"]
         .iter()
@@ -1259,26 +1280,26 @@ pub(crate) async fn run_agent_turn_inner(
     let mcp_server_ids_c = mcp_server_ids.clone();
 
     let handle = tokio::spawn(async move {
-        // 解包 Skills（前端仅在 Agent 模式下传递；聊天模式为空）
+        // Unwrap Skills (the frontend passes them only in Agent mode; empty in chat mode)
         let skills = skills.unwrap_or_default();
-        // 加载应用配置（含自动重试设置）
-        // 应用配置（含自动重试/并发上限/记忆开关）；读取失败回退默认值
+        // Load the app config (incl. auto-retry, subagent concurrency cap, memory toggle);
+        // reads fall back to defaults on failure
         let app_config = crate::core::config::load_app_config(&app_c).unwrap_or_default();
 
-        // 子 Agent 并发上限控制
+        // Subagent concurrency cap
         let max_concurrent = app_config.max_concurrent_subagents.unwrap_or(5).max(1) as usize;
         let subagent_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         let client = streaming_http_client();
 
-        // 工具选择：根据 Agent 模式注入不同工具集
-        // - Plan: 仅研究工具（think + project_map + web）
-        // - Normal/Auto/Workflow: 仅编排工具（delegate_task + create_workflow + think + web + project_map）
-        // - 对话 + 联网: 仅 web 工具
-        // - 纯对话: 无工具
-        // MCP 工具回接（P2.2）：Agent 模式下注入助手勾选 server 的已连接工具。
-        // 仅拉取已连接 server（未连接的跳过并沿用既有警告语义）；工具名冲突
-        // （内置工具或其他 server 占用）在合并时重命名，见 build_main_tool_set。
+        // Tool selection: inject a different tool set per agent mode
+        // - Plan: research tools only (think + project_map + web)
+        // - Normal/Auto/Workflow: orchestration tools only (delegate_task + create_workflow + think + web + project_map)
+        // - Chat + web search: web tools only
+        // - Pure chat: no tools
+        // MCP tool pass-through: in Agent mode, inject connected tools from the assistant's selected servers.
+        // Only connected servers are pulled (unconnected ones are skipped with the existing warning semantics);
+        // tool name conflicts (built-in tools or another server) are renamed at merge time, see build_main_tool_set.
         let mcp_tools: Option<crate::core::models::AssistantTools> =
             if agent_mode != AgentMode::Off && !mcp_server_ids_c.is_empty() {
                 let mgr = app_c.state::<crate::plugins::mcp::McpServerManager>();
@@ -1296,7 +1317,7 @@ pub(crate) async fn run_agent_turn_inner(
                 None
             };
 
-        // 工具集装配（模式矩阵 + MCP/记忆/Skill/归档注入）——已抽取为 build_main_tool_set
+        // Tool set assembly (mode matrix + MCP/memory/skill/archive injection), see build_main_tool_set
         let tool_set = build_main_tool_set(
             &app_c,
             &agent_mode,
@@ -1315,24 +1336,24 @@ pub(crate) async fn run_agent_turn_inner(
         let mut round: u32 = 0;
         let mut final_error: Option<String> = None;
         let mut was_cancelled = false;
-        // Workflow 模式：标记是否已调用 create_workflow
+        // Workflow mode: flag whether create_workflow has been called
         let mut workflow_called = false;
-        // 跨轮累计 token 用量（用于成本统计）
+        // Token usage accumulated across rounds (for cost stats)
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
         let mut total_cached_tokens: u32 = 0;
-        // 前缀稳定性回归验证：标记本轮刚发生压缩，用于记录压缩后首轮的缓存命中情况
+        // Prefix-stability regression check: flag that compression just happened, to record cache hits on the first post-compression round
         let mut compressed_this_run: bool = false;
-        // 未完成任务跟踪（handoff 交接文档）：强制停止（轮数上限/工作流未调用）或错误
+        // Unfinished-task tracking (handoff doc): forced stop (round limit / workflow not called) or error
         let mut incomplete_stop: bool = false;
         let mut last_finish_reason: Option<String> = None;
-        // 上下文峰值 tokens：最后一轮 API 调用的 input_tokens（用于上下文窗口展示）
+        // Peak context tokens: input_tokens of the last API call (for the context-window display)
         let mut context_input_tokens: u32 = 0;
-        // 跨轮累计的最终文本与生成图像（用于 done 时一次性回传，幂等替换前端 chunk 累积）
+        // Final text and generated images accumulated across rounds (sent once at done; idempotently replaces frontend chunk accumulation)
         let mut accumulated_content = String::new();
         let mut all_images: Vec<GeneratedImage> = Vec::new();
 
-        // Workflow 模式：在 LLM 循环前注入强制系统消息（置于稳定前缀内，利于 prompt cache 与压缩保护）
+        // Workflow mode: inject the mandatory system message before the LLM loop (inside the stable prefix to favor prompt cache and compression protection)
         if agent_mode == AgentMode::Workflow {
             messages_for_api.insert(
                 2.min(messages_for_api.len()),
@@ -1348,7 +1369,7 @@ pub(crate) async fn run_agent_turn_inner(
             );
         }
 
-        // 项目记忆自动注入（P1）：基于首条 user 消息检索一次，插入稳定前缀位（index=1）
+        // Project memory auto-injection: retrieve once from the first user message and insert at the stable prefix slot (index=1)
         if memory_effective && app_config.memory_auto_inject {
             if let Some(pid) = &project_id_c {
                 if let Ok(project_root) = file_tools::resolve_project_root(&app_c, Some(pid)) {
@@ -1364,7 +1385,7 @@ pub(crate) async fn run_agent_turn_inner(
                             .to_string();
                         let budget = app_config.memory_injection_budget_tokens as usize;
                         if !query.is_empty() && budget > 0 {
-                            // 项目级嵌入配置（与写入侧一致）+ 维度守卫；随后混合检索 → 项目级重排 → 预算裁剪
+                            // Project-level embedding config (same as the write side) + dimension guard; then hybrid retrieval -> project-level rerank -> budget trim
                             let query_vec = crate::services::memory::retrieve::embed_query(
                                 &app_c, &store, &query,
                             )
@@ -1387,11 +1408,11 @@ pub(crate) async fn run_agent_turn_inner(
                 }
             }
         }
-        // 上回合交接回注（P1.6）：若上一回合未完成（轮数上限/错误/截断），
-        // 消费其 handoff 文档注入系统消息——新回合直接拿到已完成内容与涉及
-        // 文件，而非只靠用户转述。consume-once：读取后删除，不重复注入。
+        // Previous-turn handoff re-injection: if the last turn ended unfinished (round limit / error / truncation),
+        // consume its handoff doc and inject it as a system message so the new turn directly gets the completed work
+        // and touched files instead of relying on the user's retelling. Consume-once: deleted after read, never injected twice.
         if let Some(handoff) = consume_handoff_doc(&app_c, &assistant_id_c, &topic_id_c) {
-            // 插入点不得超过最后一条消息（user 消息必须保持在末尾）
+            // The insert point must not go past the last message (the user message must stay at the end)
             let insert_at = 2.min(messages_for_api.len().saturating_sub(1));
             messages_for_api.insert(
                 insert_at,
@@ -1406,19 +1427,37 @@ pub(crate) async fn run_agent_turn_inner(
                 handoff.chars().count()
             );
         }
-        // 上下文预算追踪：token 级、模型感知（阈值/保留预算在任务启动前按窗口推导）
-        // 可配置的单次最大工具调用轮数（默认 25，最低 1）
+        // 后台子智能体完成通知（push 通道）：本回合开始前已到达终态的后台任务，
+        // consume-once 注入单条合并 system 消息（覆盖"主 Agent 空闲期间后台完成"的场景）。
+        if let Some(notice) =
+            drain_pending_subagent_notices(&app_c, &assistant_id_c, &topic_id_c, &locale_c)
+        {
+            let insert_at = 2.min(messages_for_api.len().saturating_sub(1));
+            messages_for_api.insert(
+                insert_at,
+                serde_json::json!({
+                    "role": "system",
+                    "content": notice,
+                }),
+            );
+            tracing::info!(
+                "[subagent-notice] 回合开始注入后台子智能体通知 ({} 字符)",
+                notice.chars().count()
+            );
+        }
+        // Context budget tracking: token-level and model-aware (threshold/reserve budgets derived from the window before task start)
+        // Configurable max tool-call rounds per turn (default 25, min 1)
         let max_rounds = app_config
             .max_tool_rounds
             .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS)
             .max(1);
-        // Workflow 模式下提醒调用 create_workflow 的最大次数（有限次，避免无限循环）
+        // Max reminders to call create_workflow in Workflow mode (bounded, avoids infinite loops)
         let max_workflow_reminders: u32 = 2;
         let mut workflow_reminders: u32 = 0;
-        // 输出截断（finish_reason="length"）时的最大续写重试次数
+        // Max continuation retries when output is truncated (finish_reason="length")
         const MAX_LENGTH_RETRIES: u32 = 2;
         let mut length_retries: u32 = 0;
-        // 上下文溢出（context overflow）自动恢复次数：压缩后重试
+        // Context overflow auto-recovery attempts: compress then retry
         const MAX_OVERFLOW_RETRIES: u32 = 1;
         let mut overflow_retries: u32 = 0;
 
@@ -1429,7 +1468,7 @@ pub(crate) async fn run_agent_turn_inner(
                 break;
             }
 
-            // 达到最大工具调用轮数 → 优雅收尾（不 abort，产出提示后自然结束）
+            // Max tool-call rounds reached -> graceful stop (no abort; emit a note and end)
             if round > max_rounds {
                 incomplete_stop = true;
                 let note = "\n\n⚠️ 已达本轮最大工具调用轮数，任务未完成。如需继续，请再次发送。";
@@ -1452,7 +1491,7 @@ pub(crate) async fn run_agent_turn_inner(
                 break 'outer;
             }
 
-            // 通知前端：新一轮开始，push 空 assistant 占位
+            // Notify frontend: a new round starts; it pushes an empty assistant placeholder
             let _ = window.emit(
                 ev::LLM_ROUND_START,
                 RoundStartPayload {
@@ -1462,8 +1501,24 @@ pub(crate) async fn run_agent_turn_inner(
                 },
             );
 
-            // 不设轮数硬上限：复杂任务可能需要多轮工具调用，循环仅在模型不再发起工具调用
-            // （任务完成）或用户点停止（token 取消）时自然结束。
+            // 后台子智能体完成通知（push 通道，轮内）：本回合运行期间到达终态的后台任务，
+            // consume-once 注入为尾部 system 消息（本轮 role:tool 已回填、下轮 LLM 调用前，
+            // 位置安全；system 消息可出现在消息流任意位置）。
+            if let Some(notice) =
+                drain_pending_subagent_notices(&app_c, &assistant_id_c, &topic_id_c, &locale_c)
+            {
+                messages_for_api.push(serde_json::json!({
+                    "role": "system",
+                    "content": notice,
+                }));
+                tracing::info!(
+                    "[subagent-notice] 轮内注入后台子智能体通知 ({} 字符)",
+                    notice.chars().count()
+                );
+            }
+
+            // No hard round limit below the cap above: complex tasks may need many rounds of tool
+            // calls; the loop ends only when the model stops issuing tool calls (task done) or the user stops it.
             let (round_msgs, round_tools) = (messages_for_api.as_slice(), tools_slice);
 
             let round_result = stream_one_round(
@@ -1492,7 +1547,7 @@ pub(crate) async fn run_agent_turn_inner(
                         was_cancelled = true;
                         break 'outer;
                     }
-                    // 上下文溢出自动恢复：压缩早期消息后重试一次，避免长会话直接失败
+                    // Context overflow auto-recovery: compress earlier messages and retry once so long sessions don't fail outright
                     if overflow_retries < MAX_OVERFLOW_RETRIES
                         && is_context_overflow_error(&e)
                         && messages_for_api.len() > 4
@@ -1526,13 +1581,13 @@ pub(crate) async fn run_agent_turn_inner(
                 }
             };
 
-            // 累计 token 用量
+            // Accumulate token usage
             total_input_tokens += round_result.input_tokens;
             total_output_tokens += round_result.output_tokens;
             total_cached_tokens += round_result.cached_input_tokens;
             last_finish_reason = round_result.finish_reason.clone();
 
-            // 前缀稳定性回归验证：压缩后首轮的缓存命中率（稳定前缀块应继续命中）
+            // Prefix-stability regression check: cache hit rate on the first round after compression (stable prefix blocks should still hit)
             if compressed_this_run {
                 compressed_this_run = false;
                 let hit_pct = if round_result.input_tokens > 0 {
@@ -1548,13 +1603,13 @@ pub(crate) async fn run_agent_turn_inner(
                     hit_pct
                 );
             }
-            // 记录峰值上下文（最后一轮的 input_tokens）
+            // Record peak context (input_tokens of the last round)
             context_input_tokens = round_result.input_tokens;
-            // 累计最终文本与生成图像（含 aio-image 标记，供 done 回传）
+            // Accumulate final text and generated images (incl. aio-image markers, returned with done)
             accumulated_content.push_str(&round_result.content);
             all_images.extend(round_result.images.clone());
 
-            // 持久化本轮 token 用量到 usage_log
+            // Persist this round's token usage to usage_log
             insert_usage_log(
                 &app_c,
                 &assistant_id_c,
@@ -1566,7 +1621,7 @@ pub(crate) async fn run_agent_turn_inner(
                 round_result.cached_input_tokens,
             );
 
-            // 把本轮 assistant 消息（含 tool_calls）append 到上下文
+            // Append this round's assistant message (incl. tool_calls) to the context
             let mut asst_obj = serde_json::Map::new();
             asst_obj.insert("role".into(), json!("assistant"));
             asst_obj.insert(
@@ -1592,8 +1647,8 @@ pub(crate) async fn run_agent_turn_inner(
             }
             messages_for_api.push(serde_json::Value::Object(asst_obj));
 
-            // 输出被截断（finish_reason="length"）且无工具调用：追加续写指令后重试（有限次），
-            // 避免半截回复直接结束导致用户重发整条消息浪费 token。
+            // Output truncated (finish_reason="length") with no tool calls: append a continuation
+            // instruction and retry (bounded) instead of ending mid-reply.
             if round_result.finish_reason.as_deref() == Some("length")
                 && round_result.tool_calls.is_empty()
                 && length_retries < MAX_LENGTH_RETRIES
@@ -1606,10 +1661,10 @@ pub(crate) async fn run_agent_turn_inner(
                 continue;
             }
 
-            // 无工具调用 → 任务完成，整轮结束
+            // No tool calls -> task complete, end the whole turn
             if round_result.tool_calls.is_empty() {
                 if agent_mode == AgentMode::Workflow && !workflow_called {
-                    // Workflow 模式：提醒次数有限（max_workflow_reminders），避免无限续环
+                    // Workflow mode: reminders are bounded (max_workflow_reminders) to avoid an infinite loop
                     if workflow_reminders < max_workflow_reminders {
                         workflow_reminders += 1;
                         messages_for_api.push(serde_json::json!({
@@ -1618,7 +1673,7 @@ pub(crate) async fn run_agent_turn_inner(
                         }));
                         continue;
                     }
-                    // 有限次提醒后模型仍拒绝 → 尊重退出信号，优雅收尾
+                    // Model still refuses after bounded reminders -> respect the exit signal and stop gracefully
                     incomplete_stop = true;
                     let note = "\n\n⚠️ 模型未按工作流模式调用 create_workflow，已停止。您可以切回普通/自动模式继续。";
                     accumulated_content.push_str(note);
@@ -1642,14 +1697,14 @@ pub(crate) async fn run_agent_turn_inner(
                 break 'outer;
             }
 
-            // 执行工具调用：三阶段
-            // 阶段 1 — 收集并发 future（delegate_task(s) 委派 + 只读内置工具），
-            //          变更类工具（文件写/命令/Git 写/MCP——副作用未知）按原始顺序串行执行
-            // 阶段 2 — FuturesUnordered 并发等待全部 future，完成即发射结果
-            // 阶段 3 — 按原始 index 顺序发射串行结果 + 回填全部 role:tool 消息
-            //（对齐 Claude Code / Codex CLI 的并行工具调用语义；回填顺序保持索引序，API 语义不变）
+            // Tool-call execution: three phases
+            // Phase 1 - collect concurrent futures (delegate_task(s) delegation + read-only built-in tools);
+            //           mutating tools (file writes / commands / git writes / MCP - side effects unknown) run serially in original order
+            // Phase 2 - await all futures concurrently via FuturesUnordered, emitting each result on completion
+            // Phase 3 - emit serial results in original index order + backfill all role:tool messages
+            // (semantics follow Claude Code / Codex CLI parallel tool calling; backfill keeps index order, API semantics unchanged)
 
-            // 用于记录每个工具的结果（按原始 index 排序）
+            // Records each tool's result (ordered by original index)
             #[derive(Default, Clone)]
             struct ToolExecResult {
                 content_text: String,
@@ -1659,7 +1714,7 @@ pub(crate) async fn run_agent_turn_inner(
             let mut exec_results: Vec<Option<ToolExecResult>> =
                 vec![None; round_result.tool_calls.len()];
 
-            // 收集可并发执行的 future（子 Agent 委派 + 只读内置工具）及对应 index
+            // Collect concurrently executable futures (subagent delegation + read-only built-in tools) with their indices
             let mut parallel_futures: Vec<(
                 usize,
                 futures_util::future::BoxFuture<'static, Result<ToolResult, String>>,
@@ -1677,13 +1732,15 @@ pub(crate) async fn run_agent_turn_inner(
                 if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == "delegate_task"
                 {
-                    // 检查 wait 参数：false = 后台执行（fire-and-forget）
+                    // Check the wait argument: false = run in the background (fire-and-forget)
                     let wait_for_result = args_val
                         .get("wait")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
                     if !wait_for_result {
-                        // Fire-and-forget: 子智能体在后台运行，主 Agent 立即继续
+                        // Fire-and-forget: the subagent runs in the background, the main agent continues immediately.
+                        // Dual channel: outcome cached for get_subagent_result (pull) + completion notice
+                        // queued for system-message injection (push).
                         let window_clone = window.clone();
                         let app_clone = app_c.clone();
                         let client_clone = client.clone();
@@ -1697,7 +1754,7 @@ pub(crate) async fn run_agent_turn_inner(
                         let agent_mode_clone = agent_mode.clone();
                         let profile_overrides_clone = profile_overrides_c.clone();
                         let custom_profiles_clone = custom_profiles_c.clone();
-                        // 子令牌：父取消级联取消；stop_subagent 可按 ID 单独取消此后台子智能体
+                        // Child token: parent cancellation cascades; stop_subagent can cancel this background subagent by ID
                         let token_clone = token_inner.child_token();
                         let token_for_registry = token_clone.clone();
                         let locale_clone = locale_c.clone();
@@ -1706,6 +1763,14 @@ pub(crate) async fn run_agent_turn_inner(
                         let subagent_id = uuid::Uuid::new_v4().to_string();
                         let sid = subagent_id.clone();
                         let app_c2 = app_c.clone();
+                        // 登记 Running 状态（get_subagent_result 可立即查询）
+                        let bg_profile = args_val_clone["profile"]
+                            .as_str()
+                            .unwrap_or("general")
+                            .to_string();
+                        let bg_task =
+                            truncate_chars_head(args_val_clone["task"].as_str().unwrap_or(""), 100);
+                        register_running_subagent(&app_c, &subagent_id, bg_profile, bg_task);
                         let jh = tokio::spawn(async move {
                             let result = handle_delegate_task(
                                 &window_clone,
@@ -1733,14 +1798,32 @@ pub(crate) async fn run_agent_turn_inner(
                             {
                                 handles.0.remove(&sid);
                             }
-                            // 后台子智能体的结果不回传主 Agent（fire-and-forget），
-                            // 但错误必须可见（此前静默丢弃，失败无从排查）。
+                            // 双通道收尾：终态唯一写入点（Done/Failed/Cancelled）+ 通知入队
+                            // + 唤醒 get_subagent_result 等待者；错误同时保留 tracing 可见性。
+                            let (profile_name, task_summary) = {
+                                let completions =
+                                    app_c2.state::<crate::core::state::SubagentCompletions>();
+                                completions
+                                    .outcomes
+                                    .get(&sid)
+                                    .map(|e| (e.profile_name.clone(), e.task_summary.clone()))
+                                    .unwrap_or_default()
+                            };
+                            record_subagent_outcome(
+                                &app_c2,
+                                &assistant_id_clone,
+                                &topic_id_clone,
+                                &sid,
+                                &profile_name,
+                                &task_summary,
+                                &locale_clone,
+                                &result,
+                            );
                             if let Err(e) = &result {
                                 tracing::error!("[subagent:{sid}] 后台子智能体失败: {e}");
                             }
                         });
-                        // 登记句柄与令牌：stop_subagent 可按 ID 单独取消。
-                        // （此前为死注册表：句柄从不插入，完成时只删除不存在的键）
+                        // Register the handle and token so stop_subagent can cancel this subagent by ID.
                         if let Some(handles) =
                             app_c.try_state::<crate::core::state::SubagentHandles>()
                         {
@@ -1749,14 +1832,17 @@ pub(crate) async fn run_agent_turn_inner(
                                 .insert(subagent_id.clone(), (jh, token_for_registry));
                         }
                         // Immediate result: acknowledge the fire-and-forget
-                        let content_text = format!("子智能体已在后台启动 (ID: {})", subagent_id);
+                        let content_text = format!(
+                            "子智能体已在后台启动 (ID: {})，完成后将自动通知；可随时用 get_subagent_result 查询",
+                            subagent_id
+                        );
                         exec_results[i] = Some(ToolExecResult {
                             content_text: content_text.clone(),
                             result_value: json!({"status": "started", "subagent_id": subagent_id}),
                             is_error: false,
                         });
                     } else {
-                        // 子智能体委托：收集 future，稍后并行执行
+                        // Subagent delegation: collect the future, run it in parallel later
                         let window_clone = window.clone();
                         let app_clone = app_c.clone();
                         let client_clone = client.clone();
@@ -1802,7 +1888,7 @@ pub(crate) async fn run_agent_turn_inner(
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == "delegate_tasks"
                 {
-                    // 批量并行：收集一个 future，放入 parallel_futures
+                    // Batch parallel: collect one future into parallel_futures
                     let window_clone = window.clone();
                     let app_clone = app_c.clone();
                     let client_clone = client.clone();
@@ -1845,9 +1931,21 @@ pub(crate) async fn run_agent_turn_inner(
                     });
                     parallel_futures.push((i, fut));
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
+                    && tc.name == "get_subagent_result"
+                {
+                    // Pull 通道：查询/等待后台子智能体结果。与 delegate 系一致进阶段 2
+                    // 并行池（同轮可并行等待多个后台任务；自身无副作用）。
+                    let app_clone = app_c.clone();
+                    let args_val_clone = args_val.clone();
+                    let token_clone = token_inner.clone();
+                    let fut = Box::pin(async move {
+                        execute_get_subagent_result(&app_clone, &args_val_clone, &token_clone).await
+                    });
+                    parallel_futures.push((i, fut));
+                } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == "create_workflow"
                 {
-                    // 工作流创建：解析参数并顺序执行所有步骤
+                    // Workflow creation: parse arguments and run all steps sequentially
                     workflow_called = true;
                     let title = args_val["title"].as_str().unwrap_or("Workflow").to_string();
                     let steps_raw = args_val["steps"].as_array();
@@ -1946,8 +2044,8 @@ pub(crate) async fn run_agent_turn_inner(
                         is_error,
                     });
                 } else {
-                    // 非 delegate 工具：立即顺序执行
-                    // 在工具执行前提取文件路径（args_val 可能被 move 到 MCP 调用中）
+                    // Non-delegate tool: execute immediately in order
+                    // Extract the file path before tool execution (args_val may be moved into the MCP call)
                     let file_path_for_diff: Option<String> =
                         if ["write_file", "replace_in_file", "delete_file"]
                             .contains(&tc.name.as_str())
@@ -1972,10 +2070,10 @@ pub(crate) async fn run_agent_turn_inner(
                         && app_config.parallel_tool_execution
                         && is_parallel_safe(&tc.name)
                     {
-                        // 只读内置工具：并发执行（对齐 Claude Code / Codex 的并行工具
-                        // 调用语义）。收集为 future 与子 Agent 委派共用阶段 2 的
-                        // FuturesUnordered，完成即发射；变更类工具不受影响（仍按原始
-                        // 顺序串行），role:tool 回填保持索引序，API 语义不变。
+                        // Read-only built-in tool: execute concurrently (semantics follow Claude Code /
+                        // Codex CLI parallel tool calling). Collected as a future that shares the phase-2
+                        // FuturesUnordered with subagent delegations, emitting on completion; mutating tools
+                        // are unaffected (still serial in original order), role:tool backfill keeps index order.
                         let app_c2 = app_c.clone();
                         let tn = tc.name.clone();
                         let args_val_c = args_val.clone();
@@ -2006,7 +2104,7 @@ pub(crate) async fn run_agent_turn_inner(
                         )
                         .await
                     } else {
-                        // MCP 工具走自动重试包装器（网络错误可重试，权限/参数错误不重试）
+                        // MCP tools go through the auto-retry wrapper (network errors are retried, permission/argument errors are not)
                         let tc_name = tc.name.clone();
                         let sid_opt = server_id.clone();
                         let app_c2 = app_c.clone();
@@ -2062,7 +2160,7 @@ pub(crate) async fn run_agent_turn_inner(
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
                     };
-                    // 对于文件修改工具，捕获 diff 供前端展示
+                    // For file-modifying tools, capture the diff for frontend display
                     let file_changes = file_path_for_diff
                         .and_then(|path| {
                             file_tools::resolve_project_root(&app_c, project_id_c.as_deref())
@@ -2070,7 +2168,7 @@ pub(crate) async fn run_agent_turn_inner(
                                 .and_then(|root| git_tools::capture_file_diff(&root, &path))
                         })
                         .map(|fc| vec![fc]);
-                    // 立即发射结果（不等待其他工具）
+                    // Emit the result immediately (without waiting for other tools)
                     let _ = window.emit(
                         ev::LLM_TOOL_RESULT,
                         ToolResultPayload {
@@ -2086,7 +2184,7 @@ pub(crate) async fn run_agent_turn_inner(
                         },
                     );
 
-                    // 立即回填 role:tool 消息
+                    // Backfill the role:tool message immediately
                     let mut tool_msg = serde_json::Map::new();
                     tool_msg.insert("role".into(), json!("tool"));
                     tool_msg.insert("content".into(), json!(truncate_tool_result(&content_text)));
@@ -2096,7 +2194,7 @@ pub(crate) async fn run_agent_turn_inner(
                 }
             }
 
-            // 阶段 2 — 并发执行子 Agent 委派与只读内置工具（FuturesUnordered）
+            // Phase 2 - run subagent delegations and read-only built-in tools concurrently (FuturesUnordered)
             if !parallel_futures.is_empty() {
                 let mut unordered = FuturesUnordered::new();
                 for (i, fut) in parallel_futures {
@@ -2125,7 +2223,7 @@ pub(crate) async fn run_agent_turn_inner(
                         }
                         Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
                     };
-                    // 立即发射该 delegate 结果
+                    // Emit this delegate result immediately
                     let tc = &round_result.tool_calls[i];
                     let _ = window.emit(
                         ev::LLM_TOOL_RESULT,
@@ -2142,7 +2240,7 @@ pub(crate) async fn run_agent_turn_inner(
                         },
                     );
 
-                    // 立即回填 role:tool 消息
+                    // Backfill the role:tool message immediately
                     let mut tool_msg = serde_json::Map::new();
                     tool_msg.insert("role".into(), json!("tool"));
                     tool_msg.insert("content".into(), json!(truncate_tool_result(&content_text)));
@@ -2152,7 +2250,7 @@ pub(crate) async fn run_agent_turn_inner(
                 }
             }
 
-            // 按原始 index 顺序发射结果 + 回填 role:tool 消息
+            // Emit results in original index order + backfill role:tool messages
             for (i, tc) in round_result.tool_calls.iter().enumerate() {
                 if token_inner.is_cancelled() {
                     was_cancelled = true;
@@ -2186,7 +2284,7 @@ pub(crate) async fn run_agent_turn_inner(
                 }
             }
 
-            // 上下文预算检查（token 级、模型感知）：估算当前上下文，超阈值则压缩
+            // Context budget check (token-level, model-aware): estimate the context, compress past the threshold
             let estimated_tokens: usize =
                 estimate_context_tokens(&model, &messages_for_api, context_budget);
             if estimated_tokens > context_budget && messages_for_api.len() > 4 {
@@ -2235,9 +2333,9 @@ pub(crate) async fn run_agent_turn_inner(
             }
         }
 
-        // P4.4 检查点：本轮上下文已定（工具回填 + 压缩判定后），持久化快照。
-        // 崩溃后 run_agent_turn(resume_turn_id) 从最新 active 快照续跑；
-        // epilogue 把本 turn 标记终态——active 残留即"可恢复"信号。
+        // Checkpoint: the turn's context is settled (after tool backfill + compression decision), persist a snapshot.
+        // After a crash, run_agent_turn(resume_turn_id) resumes from the latest active snapshot;
+        // the epilogue marks this turn terminal - a leftover active checkpoint is the "recoverable" signal.
         {
             let conn = app_c.state::<crate::core::state::DbState>();
             save_checkpoint(
@@ -2249,8 +2347,8 @@ pub(crate) async fn run_agent_turn_inner(
             );
         }
 
-        // ===== 未完成任务 → 工作交接文档（handoff）=====
-        // 触发条件：强制停止（轮数上限/工作流未调用）、错误、或最后一次响应被截断（length）
+        // ===== Incomplete task -> handoff document =====
+        // Triggered by: forced stop (round limit / workflow not called), error, or a truncated final response (length)
         let ended_incomplete = !was_cancelled
             && (incomplete_stop
                 || final_error.is_some()
@@ -2304,7 +2402,7 @@ pub(crate) async fn run_agent_turn_inner(
             }
         }
 
-        // P2：后台自动事实提取（sleep-time compute）——不阻塞主流程
+        // Background automatic fact extraction (sleep-time compute) - does not block the main flow
         if memory_effective && app_config.memory_auto_extract {
             if let Some(pid) = &project_id_c {
                 if let Ok(project_root) = file_tools::resolve_project_root(&app_c, Some(pid)) {
@@ -2326,9 +2424,9 @@ pub(crate) async fn run_agent_turn_inner(
             }
         }
 
-        // ===== Epilogue（必达）：无论正常/取消/出错都 emit terminal done =====
-        // P4.4：回合到达 epilogue = 非崩溃终止 → 检查点标记终态；
-        // 崩溃残留（status 仍为 active）才是"可恢复"信号。
+        // ===== Epilogue (guaranteed): always emit terminal done on normal stop, cancel, or error =====
+        // Reaching the epilogue = non-crash termination -> checkpoints get marked terminal;
+        // only crash leftovers (status still active) are the "recoverable" signal.
         {
             let status = if was_cancelled {
                 "cancelled"
@@ -2385,7 +2483,7 @@ pub(crate) async fn run_agent_turn_inner(
             },
         );
 
-        // 从全局状态移除自身
+        // Remove self from global state
         state_inner.remove(&task_key_inner);
     });
 

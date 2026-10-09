@@ -1,4 +1,4 @@
-/// 全局 Tauri 状态定义
+/// Global Tauri state definitions
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -6,26 +6,27 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// 管理活跃的 LLM 流式任务。
-/// 键为 (assistant_id, topic_id) 元组——历史上用 "-" 拼接字符串，但 UUID 含
-/// "-"，存在 "a-b"+"c" == "a"+"b-c" 的歧义风险，故改为结构化键。
-/// 每个任务携带一个 CancellationToken：停止时调用 cancel()（而非 abort()），
-/// 保证任务能在 select! 分支优雅退出并执行 epilogue（emit done + 移除自身）。
-/// 任务键：(assistant_id, topic_id)。
+/// Manages active LLM streaming tasks.
+/// Key is an (assistant_id, topic_id) tuple — a structured key avoids the string-concat
+/// ambiguity of "a-b"+"c" == "a"+"b-c" (UUIDs contain "-").
+/// Each task carries a CancellationToken: stopping calls cancel() (not abort()),
+/// so the task can exit gracefully in its select! branch and run its epilogue
+/// (emit done + remove itself).
+/// Task key: (assistant_id, topic_id).
 pub type StreamTaskKey = (String, String);
-/// 一个活跃的 LLM 流式任务句柄（JoinHandle + 取消令牌）。
+/// One active LLM streaming task entry (JoinHandle + cancellation token).
 pub type StreamTaskEntry = (JoinHandle<()>, CancellationToken);
 
-/// 管理活跃的 LLM 流式任务的并发表。
+/// Concurrent map of active LLM streaming tasks.
 pub struct StreamManager(pub Arc<DashMap<StreamTaskKey, StreamTaskEntry>>);
 
-/// 包装 SQLite 数据库连接
+/// Wraps the SQLite database connection
 pub struct DbState(pub parking_lot::Mutex<rusqlite::Connection>);
 
-/// 本地引擎进程内部状态
+/// Internal state of a local engine process
 #[derive(Default)]
 pub struct LocalEngineInner {
-    /// 子进程句柄
+    /// Child process handle
     pub child_process: Option<std::process::Child>,
 }
 
@@ -38,7 +39,7 @@ impl Drop for LocalEngineInner {
     }
 }
 
-/// 当前运行的本地推理引擎进程状态（支持多引擎并发）。
+/// Currently running local inference engine processes (multiple engines may run concurrently).
 /// key = engine_type (e.g. "llama_cpp", "vllm")
 pub struct LocalEngineState(pub Mutex<HashMap<String, LocalEngineInner>>);
 
@@ -52,15 +53,67 @@ impl LocalEngineState {
     }
 }
 
-/// 后台子智能体句柄条目：任务句柄 + 独立取消令牌（父令牌的 child，可单独取消）。
+/// Background subagent entry: task handle + standalone cancellation token (child of the parent token, cancellable independently).
 pub type SubagentEntry = (tokio::task::JoinHandle<()>, CancellationToken);
 
-/// 后台运行的子智能体句柄：subagent_id → (JoinHandle, CancellationToken)。
-/// 用于 fire-and-forget 子智能体的生命周期管理与单独停止（stop_subagent 命令）。
+/// Handles of background subagents: subagent_id → (JoinHandle, CancellationToken).
+/// Used to manage fire-and-forget subagent lifecycles and stop them individually (stop_subagent command).
 pub struct SubagentHandles(pub DashMap<String, SubagentEntry>);
 
 impl SubagentHandles {
     pub fn new() -> Self {
         Self(DashMap::new())
+    }
+}
+
+/// 后台子智能体的运行终态（pull 通道读取；终态只在 fire-and-forget 闭包收尾处写入，
+/// stop_subagent 仅取消令牌、由闭包统一收尾，避免双写竞态）。
+#[derive(Clone)]
+pub enum SubagentRunStatus {
+    Running,
+    Done(String),
+    Failed(String),
+    Cancelled,
+}
+
+/// 单个后台子智能体的状态/结果条目。
+#[derive(Clone)]
+pub struct SubagentOutcomeEntry {
+    pub profile_name: String,
+    /// 任务摘要（前 100 字符，供通知与查询结果展示）
+    pub task_summary: String,
+    pub status: SubagentRunStatus,
+}
+
+/// 待注入主会话的完成通知（push 队列载荷；outcome_text 已按终态渲染）。
+#[derive(Clone)]
+pub struct SubagentNotice {
+    pub subagent_id: String,
+    pub profile_name: String,
+    pub task_summary: String,
+    pub outcome_text: String,
+}
+
+/// 后台子智能体完成登记：
+/// - `outcomes`：结果缓存（get_subagent_result 读取，不消费）；
+/// - `pending`：待注入通知队列（主循环回合开始/每轮 drain，consume-once），
+///   key = (assistant_id, topic_id)；
+/// - `notify`：任一后台子智能体到达终态时 notify_waiters，唤醒阻塞等待的
+///   get_subagent_result（粗粒度惊群 + 短轮询兜底，醒来各自重查 outcomes）。
+///
+/// 内存语义：后台子智能体随 app 退出而死，队列不持久化（与 handoff 文档一致）。
+pub struct SubagentCompletions {
+    pub outcomes: DashMap<String, SubagentOutcomeEntry>,
+    pub pending: DashMap<(String, String), std::collections::VecDeque<SubagentNotice>>,
+    pub notify: tokio::sync::Notify,
+}
+
+impl SubagentCompletions {
+    pub fn new() -> Self {
+        Self {
+            outcomes: DashMap::new(),
+            pending: DashMap::new(),
+            notify: tokio::sync::Notify::new(),
+        }
     }
 }

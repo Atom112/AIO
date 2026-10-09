@@ -1,9 +1,9 @@
-//! # 核心库模块
+//! # Core library
 //!
-//! 本模块是整个 Tauri 应用程序后端的入口点。主要负责：
-//! 1. 初始化并管理全局共享状态（如流式会话和本地引擎进程）。
-//! 2. 注册暴露给前端调用的 Rust 命令（Commands）。
-//! 3. 监听程序窗口事件以执行清理任务（如关闭本地引擎进程）。
+//! Entry point of the whole Tauri app backend. Main responsibilities:
+//! 1. Initialize and manage global shared state (e.g. streaming sessions and local engine processes).
+//! 2. Register the Rust commands exposed to the frontend.
+//! 3. Listen for window events to run cleanup tasks (e.g. shutting down local engine processes).
 
 mod commands;
 mod core;
@@ -12,7 +12,9 @@ mod plugins;
 mod services;
 mod utils;
 
-use crate::core::state::{DbState, LocalEngineState, StreamManager, SubagentHandles};
+use crate::core::state::{
+    DbState, LocalEngineState, StreamManager, SubagentCompletions, SubagentHandles,
+};
 use crate::plugins::engine::EngineManager;
 use crate::plugins::lsp::LspManager;
 use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
@@ -21,10 +23,10 @@ use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
-/// 初始化 tracing（生产默认 warn，调试可通过 RUST_LOG=info 开启）。
+/// Initialize tracing (warn by default in production; enable debug output via RUST_LOG=info).
 ///
-/// 注意：不要写成 "warn,info"——EnvFilter 中后者会覆盖同粒度的全局指令，
-/// 实际生效级别是 INFO（热路径上的 per-message 日志会随之进入生产日志）。
+/// Note: do not write "warn,info" - in EnvFilter the later directive overrides the global
+/// directive at the same granularity, so the effective level becomes INFO and hot-path per-message logs land in production logs.
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = tracing_subscriber::fmt()
@@ -33,14 +35,14 @@ fn init_tracing() {
         .try_init();
 }
 
-/// 应用程序启动入口
+/// Application startup entry point
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
     tauri::Builder::default()
         .setup(|app| {
-            // 主窗口改为代码创建：仅 Windows/macOS 开启透明（圆角面板四角透出桌面）；
-            // Linux/WebKitGTK 下透明窗口需整窗 ARGB 合成、性能开销大（Linux 性能考虑），保持不透明直角窗口。
+            // The main window is created in code: transparent only on Windows/macOS (rounded panel corners show the desktop);
+            // on Linux/WebKitGTK transparency requires whole-window ARGB compositing with a heavy cost, so keep an opaque square-cornered window.
             #[cfg(not(target_os = "linux"))]
             let transparent = true;
             #[cfg(target_os = "linux")]
@@ -57,19 +59,19 @@ pub fn run() {
             .transparent(transparent)
             .shadow(false)
             .build()?;
-            // 网页基色：非 Linux 用透明（圆角外透出桌面）；Linux 不透明，避免透明合成开销
+            // Webview base color: transparent on non-Linux (desktop shows through outside the rounded corners); opaque on Linux to avoid compositing overhead
             #[cfg(not(target_os = "linux"))]
             let _ = window.set_background_color(Some(tauri::webview::Color(0, 0, 0, 0)));
             #[cfg(target_os = "linux")]
             let _ = window.set_background_color(Some(tauri::webview::Color(10, 14, 26, 255)));
             let conn = core::db::init_db(app.handle())?;
             app.manage(DbState(parking_lot::Mutex::new(conn)));
-            // 本地模型下载/加载需要应用数据目录（进程级注入，供无 AppHandle 的静态加载路径使用）
+            // Local model download/load needs the app data dir (injected process-wide for static load paths without an AppHandle)
             if let Ok(dir) = app.path().app_data_dir() {
                 crate::plugins::rerank::local_onnx::init_app_data_dir(dir);
             }
-            // 每日后台合并整理（sleep-time consolidation）：启动 2 分钟后首跑，此后每 24h；
-            // 逐项目执行，全程后台异步，绝不阻塞主交互
+            // Daily background consolidation (sleep-time consolidation): first run 2 minutes after startup, then every 24h;
+            // per project, fully async in the background, never blocking the main interaction
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -96,6 +98,7 @@ pub fn run() {
         .manage(McpRequestManager::new())
         .manage(PendingApprovals::new())
         .manage(SubagentHandles::new())
+        .manage(SubagentCompletions::new())
         .manage(MemoryStoreManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
@@ -148,7 +151,7 @@ pub fn run() {
             commands::provider_config::fetch_provider_models,
             commands::provider_config::read_provider_api_key,
             commands::provider_config::delete_provider_api_key,
-            // 项目管理
+            // Project management
             commands::project::create_project,
             commands::project::list_projects,
             commands::project::update_project,
@@ -161,7 +164,7 @@ pub fn run() {
             commands::git::switch_git_branch,
             commands::git::revert_file_change,
             commands::git::revert_file_changes_batch,
-            // Skill 管理
+            // Skill management
             commands::skill::list_skills,
             commands::skill::save_skill,
             commands::skill::delete_skill,
@@ -170,7 +173,7 @@ pub fn run() {
             commands::skill::discover_npx_skills,
             commands::skill::import_npx_skill,
             commands::skill::refresh_npx_skill,
-            // MCP 服务器管理
+            // MCP server management
             commands::mcp::list_mcp_servers,
             commands::mcp::add_mcp_server,
             commands::mcp::save_mcp_server_secret,
@@ -192,28 +195,28 @@ pub fn run() {
             commands::mcp_catalog::list_mcp_catalog,
             commands::mcp_catalog::check_mcp_catalog_runtime,
             commands::mcp_catalog::install_mcp_catalog_server,
-            // LSP 语言服务器管理
+            // LSP language server management
             commands::lsp::start_lsp_server,
             commands::lsp::stop_lsp_server,
             commands::lsp::get_diagnostics,
             commands::lsp::auto_detect_ls,
             commands::lsp::list_supported_languages,
             commands::lsp::stop_all_lsp_servers,
-            // Per-Profile 模型覆盖
+            // Per-profile model overrides
             commands::config::load_profile_model_overrides,
             commands::config::save_profile_model_overrides,
             commands::config::list_custom_subagent_profiles,
             commands::config::save_custom_subagent_profile,
-            // 自定义子智能体配置文件
+            // Custom subagent profiles
             commands::config::delete_custom_subagent_profile,
-            // 系统自启
+            // System auto-start
             commands::config::set_auto_start,
             commands::config::is_auto_start_enabled,
-            // 会话分支
+            // Topic branching
             commands::config::branch_topic,
-            // Token 计数
+            // Token counting
             commands::llm::count_tokens_cmd,
-            // 项目记忆（RAG）
+            // Project memory (RAG)
             commands::memory::memory_get_status,
             commands::memory::memory_get_versions,
             commands::memory::memory_merge_facts,
@@ -254,7 +257,7 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                // 清理本地引擎子进程（所有引擎）
+                // Clean up local engine child processes (all engines)
                 let state = window.state::<LocalEngineState>();
                 {
                     let mut engines = state.lock();
@@ -264,13 +267,13 @@ pub fn run() {
                         }
                     }
                 }
-                // 清理活跃 LLM 流任务：cancel 所有 token（任务自身负责 emit done + 移除）
+                // Clean up active LLM stream tasks: cancel all tokens (each task emits its own done event and removes itself)
                 let stream_mgr = window.state::<StreamManager>();
                 for entry in stream_mgr.0.iter() {
                     entry.value().1.cancel();
                 }
                 stream_mgr.0.clear();
-                // 清理 MCP 状态（在途调用 abort + 连接池清空）
+                // Clean up MCP state (abort in-flight calls + clear the connection pool)
                 let req_mgr = window.state::<McpRequestManager>();
                 req_mgr.abort_all();
                 let mcp_state = window.state::<McpServerState>();

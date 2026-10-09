@@ -247,12 +247,23 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     }
   };
 
+  /** 短哈希（FNV-1a 32-bit → 8 位十六进制）：用于导出文件名标注项目身份。
+   *  同一项目的多次导出文件名稳定一致，跨项目不冲突。 */
+  const projectHash8 = (id: string): string => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < id.length; i++) {
+      h ^= id.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16).padStart(8, '0');
+  };
+
   const doExport = async () => {
     // 用户经系统保存对话框指定导出路径（后端写盘，fs 权限无需放宽）
     let path: string | null = null;
     try {
       path = await saveDialog({
-        defaultPath: 'aio-memory.json',
+        defaultPath: `aio-memory-${projectHash8(props.projectId)}.json`,
         filters: [{ name: 'JSON', extensions: ['json'] }],
       });
     } catch {

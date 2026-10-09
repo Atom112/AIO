@@ -171,56 +171,62 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
           </Show>
         </div>
         <Show when={editingRerank()}>
-          <div class="flex flex-col gap-2 rounded-lg border border-dark-100 p-2.5">
-            <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
-              {t('project.memoryPanel.rerankPick')}
-            </div>
+          {/* 预留高度与有模型时一致，空态不塌缩 */}
+          <div class="flex flex-col rounded-lg border border-dark-100 p-2.5 min-h-[110px]">
             <Show
               when={rerankModels().length > 0}
               fallback={
-                <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}>
+                <div
+                  class="flex-1 flex items-center justify-center text-[11px] text-center"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
+                >
                   {t('project.memoryPanel.rerankNeedModelFirst')}
                 </div>
               }
             >
-              <Dropdown
-                class="w-full"
-                triggerClass="h-7"
-                value={rrModel()}
-                onChange={setRrModel}
-                options={rerankModels().map((m) => ({ value: m.id, label: m.id }))}
-              />
-              <Show when={rrTestResult()}>
-                <div
-                  class="text-[11px]"
-                  style={{
-                    color: rrTestResult()!.ok ? 'var(--color-success)' : 'var(--color-danger)',
-                  }}
-                >
-                  {rrTestResult()!.ok
-                    ? t('project.memoryPanel.rerankTestOk', {
-                        ms: String(rrTestResult()!.latencyMs),
-                      })
-                    : t('project.memoryPanel.rerankTestFail', {
-                        error: rrTestResult()!.error ?? '',
-                      })}
+              <div class="flex flex-col gap-2">
+                <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
+                  {t('project.memoryPanel.rerankPick')}
                 </div>
-              </Show>
-              <div class="flex items-center justify-end gap-2">
-                <button
-                  class={btnSecondarySm}
-                  disabled={rrTesting()}
-                  onClick={() => void testRerank()}
-                >
-                  {rrTesting() ? '...' : t('project.memoryPanel.rerankTest')}
-                </button>
-                <button
-                  class={btnSecondarySm}
-                  disabled={rrSaving()}
-                  onClick={() => void saveRerank()}
-                >
-                  {rrSaving() ? '...' : t('app.memory.save')}
-                </button>
+                <Dropdown
+                  class="w-full"
+                  triggerClass="h-7"
+                  value={rrModel()}
+                  onChange={setRrModel}
+                  options={rerankModels().map((m) => ({ value: m.id, label: m.id }))}
+                />
+                <Show when={rrTestResult()}>
+                  <div
+                    class="text-[11px]"
+                    style={{
+                      color: rrTestResult()!.ok ? 'var(--color-success)' : 'var(--color-danger)',
+                    }}
+                  >
+                    {rrTestResult()!.ok
+                      ? t('project.memoryPanel.rerankTestOk', {
+                          ms: String(rrTestResult()!.latencyMs),
+                        })
+                      : t('project.memoryPanel.rerankTestFail', {
+                          error: rrTestResult()!.error ?? '',
+                        })}
+                  </div>
+                </Show>
+                <div class="flex items-center justify-end gap-2">
+                  <button
+                    class={btnSecondarySm}
+                    disabled={rrTesting()}
+                    onClick={() => void testRerank()}
+                  >
+                    {rrTesting() ? '...' : t('project.memoryPanel.rerankTest')}
+                  </button>
+                  <button
+                    class={btnSecondarySm}
+                    disabled={rrSaving()}
+                    onClick={() => void saveRerank()}
+                  >
+                    {rrSaving() ? '...' : t('app.memory.save')}
+                  </button>
+                </div>
               </div>
             </Show>
           </div>

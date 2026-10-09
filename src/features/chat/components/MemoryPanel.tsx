@@ -400,10 +400,12 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
       dimensions: 384,
       enabled: true,
     };
-    setEbModel(
-      embedModels().find((m) => m.id === cur.model) ? cur.model : (embedModels()[0]?.id ?? ''),
-    );
-    setEbDims(cur.dimensions && cur.dimensions !== 384 ? cur.dimensions : 0);
+    const sel = embedModels().find((m) => m.id === cur.model)
+      ? cur.model
+      : (embedModels()[0]?.id ?? '');
+    setEbModel(sel);
+    // 维度预填仅在选中模型与当前一致时有意义；换选模型后旧维度无参考价值，留空 = 模型默认
+    setEbDims(sel === cur.model && cur.dimensions && cur.dimensions !== 384 ? cur.dimensions : 0);
     setEbTestResult(null);
     setEditingEmbedding(true);
   };
@@ -427,13 +429,30 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     }
   };
 
+  /** 编辑器当前选择的有效维度（输入留空 = 所选模型的默认全维） */
+  const ebEffectiveDims = () => {
+    if (ebDims() > 0) return ebDims();
+    return embedModels().find((m) => m.id === ebModel().trim())?.dims ?? 0;
+  };
+
+  /** 是否为会触发向量清空重建的真实切换（模型或有效维度变化） */
+  const ebConfigChanged = () => {
+    const cur = embedding();
+    // 无当前配置（状态加载失败）时按变化处理，交给确认弹窗保护
+    if (!cur) return true;
+    return cur.model !== ebModel().trim() || cur.dimensions !== ebEffectiveDims();
+  };
+
   const saveEmbedding = async () => {
     if (!ebModel().trim()) {
       setNotice(t('project.memoryPanel.embeddingNeedModel'));
       return;
     }
-    // 切换会清空本项目全部向量并重新嵌入（事实文本保留），再次确认
-    if (!window.confirm(t('project.memoryPanel.embeddingSwitchConfirm'))) return;
+    // 仅在「真实切换」且「库中已有嵌入内容」时确认：空库首次配置与原样重存
+    // 都不触发破坏性提醒（原样重存时后端对无变化配置也会直接早退，不做任何操作）
+    if (ebConfigChanged() && (stats()?.embeddedFacts ?? 0) > 0) {
+      if (!window.confirm(t('project.memoryPanel.embeddingSwitchConfirm'))) return;
+    }
     setEbSaving(true);
     let unlisten: (() => void) | undefined;
     try {
@@ -445,7 +464,9 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
         provider: 'local',
         model: ebModel(),
         apiUrl: '',
-        dimensions: ebDims(),
+        // 发送有效维度（而非原始输入 0）：让后端「无变化早退」判定真正生效，
+        // 避免 dims 留空时被误判为切换而无谓清空重建全部向量
+        dimensions: ebEffectiveDims(),
         enabled: true,
       });
       setEmbedding(st.embedding);

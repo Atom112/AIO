@@ -599,7 +599,7 @@
   "project.memoryPanel.embeddingTitle": "嵌入模型",
   "project.memoryPanel.embeddingCurrent": "{{kind}} · {{model}} · {{dims}} 维",
   "project.memoryPanel.embeddingSwitch": "切换模型",
-  "project.memoryPanel.embeddingSwitchConfirm": "切换嵌入模型将清空本项目已存储的全部向量并重新嵌入（事实文本保留）。确定切换？",
+  "project.memoryPanel.embeddingSwitchConfirm": "切换嵌入模型将清空本项目已存储的全部向量：事实会自动重新嵌入（文本保留），代码索引需稍后在面板中手动重新构建。确定切换？",
   "project.memoryPanel.embeddingSaving": "切换中…",
   "project.memoryPanel.embeddingSaved": "嵌入模型已切换，向量已重建",
   "project.memoryPanel.embeddingSaveFail": "嵌入模型切换失败",

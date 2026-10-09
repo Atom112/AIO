@@ -599,7 +599,7 @@
   "project.memoryPanel.embeddingTitle": "Embedding model",
   "project.memoryPanel.embeddingCurrent": "{{kind}} · {{model}} · {{dims}} dims",
   "project.memoryPanel.embeddingSwitch": "Switch model",
-  "project.memoryPanel.embeddingSwitchConfirm": "Switching the embedding model will clear all vectors stored in this project and re-embed them (fact text is kept). Continue?",
+  "project.memoryPanel.embeddingSwitchConfirm": "Switching the embedding model clears all vectors stored in this project: facts are re-embedded automatically (text is kept); the code index must be rebuilt manually from the panel. Continue?",
   "project.memoryPanel.embeddingSaving": "Switching...",
   "project.memoryPanel.embeddingSaved": "Embedding switched, vectors rebuilt",
   "project.memoryPanel.embeddingSaveFail": "Failed to switch embedding model",

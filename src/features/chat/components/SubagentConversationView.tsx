@@ -320,10 +320,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
       {/* Header：左上角返回按钮 + 子智能体身份 + 停止 */}
       <div
         class="flex items-center gap-2 px-3 h-10 shrink-0 border-b"
-        style={{
-          'border-color': 'var(--border-dim)',
-          background: 'rgba(var(--text-base-rgb),0.02)',
-        }}
+        style={{ 'border-color': 'var(--border-dim)' }}
       >
         <button
           type="button"
@@ -400,7 +397,7 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
         onScroll={handleScroll}
         onWheel={handleWheel}
       >
-        <div ref={contentRef} class="pb-[15px]">
+        <div ref={contentRef} class="pt-3 pb-[15px]">
           <Show when={step()}>
             {/* 主代理下发的任务：右侧用户气泡 */}
             <Show when={taskText()}>

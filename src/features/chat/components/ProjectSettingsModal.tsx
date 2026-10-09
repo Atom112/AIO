@@ -23,7 +23,7 @@ import { memoryGetStatus, memorySetEnabled } from '../../../core/utils/memory';
 import type { MemoryStatus } from '../../../core/types/memory';
 import MemoryPanel from './MemoryPanel';
 import Icon from '../../../shared/components/Icon';
-import { btnClose, btnPrimarySm, btnSecondary } from '../../../shared/components/buttonStyles';
+import { btnClose, btnSecondary, btnSecondarySm } from '../../../shared/components/buttonStyles';
 import Switch from '../../../shared/components/Switch';
 import { t } from '../../../core/i18n';
 
@@ -518,7 +518,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                 </div>
                 <div class="flex justify-end">
                   <button
-                    class={btnPrimarySm}
+                    class={btnSecondarySm}
                     onClick={() => {
                       // 先退出项目设置弹窗，再打开记忆面板（避免面板被设置弹窗遮住）
                       setShowPanel(true);

@@ -47,9 +47,7 @@ import {
   btnBadge,
   btnClose,
   btnGhost,
-  btnPrimarySm,
   btnSecondarySm,
-  btnDangerBadge,
   btnTabXs,
   tabActive,
   tabInactive,
@@ -512,6 +510,11 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
     { key: 'all', label: t('project.memoryPanel.tabAll') },
   ];
 
+  /** 板块分隔线（面板为单列平铺布局，各板块间以细线分隔） */
+  const SectionDivider = () => (
+    <div class="h-px shrink-0" style={{ background: 'var(--border-dim)' }} />
+  );
+
   return (
     <Show when={props.show}>
       <div
@@ -556,20 +559,22 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                   {t('project.memoryPanel.qTitle')}
                 </label>
-                <button
-                  class={btnBadge}
-                  disabled={graphExtracting()}
-                  onClick={() => void extractGraph()}
-                >
-                  {graphExtracting() ? '...' : t('project.memoryPanel.graphExtract')}
-                </button>
-                <button
-                  class={btnBadge}
-                  disabled={consolidating()}
-                  onClick={() => void consolidate()}
-                >
-                  {consolidating() ? '...' : t('project.memoryPanel.consolidate')}
-                </button>
+                <div class="flex items-center gap-1.5">
+                  <button
+                    class={btnBadge}
+                    disabled={graphExtracting()}
+                    onClick={() => void extractGraph()}
+                  >
+                    {graphExtracting() ? '...' : t('project.memoryPanel.graphExtract')}
+                  </button>
+                  <button
+                    class={btnBadge}
+                    disabled={consolidating()}
+                    onClick={() => void consolidate()}
+                  >
+                    {consolidating() ? '...' : t('project.memoryPanel.consolidate')}
+                  </button>
+                </div>
               </div>
               <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
                 {t('project.memoryPanel.qSummary', {
@@ -585,6 +590,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 </Show>
               </div>
             </div>
+            <SectionDivider />
           </Show>
 
           {/* 嵌入模型（项目级；切换会清空本项目全部向量并重新嵌入） */}
@@ -670,7 +676,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                     {ebTesting() ? t('app.memory.testing') : t('app.memory.test')}
                   </button>
                   <button
-                    class={btnPrimarySm}
+                    class={btnSecondarySm}
                     disabled={ebSaving()}
                     onClick={() => void saveEmbedding()}
                   >
@@ -681,6 +687,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </Show>
           </div>
 
+          <SectionDivider />
+
           {/* 重排（项目级；RRF 后二阶段精排）—— 已抽为 MemoryRerankSection 子组件 */}
           <MemoryRerankSection
             projectId={props.projectId}
@@ -689,6 +697,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             onNotice={setNotice}
             onModelsChanged={loadRerankModels}
           />
+
+          <SectionDivider />
 
           {/* 检索 */}
           <div class="flex flex-col gap-1.5">
@@ -705,7 +715,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
                 }}
                 placeholder={t('project.memoryPanel.searchPlaceholder')}
               />
-              <button class={btnPrimarySm} onClick={() => void doSearch()}>
+              <button class={btnSecondarySm} onClick={() => void doSearch()}>
                 {t('project.memoryPanel.search')}
               </button>
             </div>
@@ -810,13 +820,19 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </div>
           </div>
 
+          <SectionDivider />
+
           {/* 代码索引与检索 */}
           <div class="flex flex-col gap-1.5">
             <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
               {t('project.memoryPanel.codeIndex')}
             </label>
             <div class="flex items-center gap-2">
-              <button class={btnPrimarySm} disabled={indexing()} onClick={() => void doCodeIndex()}>
+              <button
+                class={btnSecondarySm}
+                disabled={indexing()}
+                onClick={() => void doCodeIndex()}
+              >
                 {indexing() ? '...' : t('project.memoryPanel.codeIndex')}
               </button>
               <input
@@ -856,6 +872,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             </Show>
           </div>
 
+          <SectionDivider />
+
           {/* 底部操作 */}
           <div class="flex items-center gap-2">
             <Show when={notice()}>
@@ -873,7 +891,7 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
             <button class={btnBadge} onClick={() => void doImport()}>
               {t('project.memoryPanel.import')}
             </button>
-            <button class={btnDangerBadge} onClick={() => void clearAll()}>
+            <button class={btnBadge} onClick={() => void clearAll()}>
               {t('project.memoryPanel.clear')}
             </button>
           </div>

@@ -25,9 +25,7 @@ import type {
 } from '../../../core/types/memory';
 import {
   btnBadge,
-  btnDangerBadge,
   btnGhost,
-  btnPrimarySm,
   btnSecondarySm,
   btnTabMd,
   tabActive,
@@ -345,7 +343,7 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
               </Show>
               <div class="flex items-center justify-end gap-2">
                 <Show when={rerankLocalModel()?.downloaded}>
-                  <button class={btnDangerBadge} onClick={() => void deleteRerankModel()}>
+                  <button class={btnBadge} onClick={() => void deleteRerankModel()}>
                     {t('project.memoryPanel.rerankDelete')}
                   </button>
                 </Show>
@@ -387,7 +385,7 @@ const MemoryRerankSection = (props: MemoryRerankSectionProps) => {
                   {rrTesting() ? '...' : t('app.memory.test')}
                 </button>
                 <button
-                  class={btnPrimarySm}
+                  class={btnSecondarySm}
                   disabled={rrSaving()}
                   onClick={() => void saveRerank()}
                 >

@@ -278,14 +278,6 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
             <div class="flex flex-col gap-1.5">
               <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                 {t('project.bindModel')}
-                <Show when={activeModel()}>
-                  <span
-                    class="ml-2 text-[11px] font-normal"
-                    style={{ color: 'rgba(var(--primary-rgb),0.7)' }}
-                  >
-                    {t('project.currentModel', { model: activeModel()!.model_id })}
-                  </span>
-                </Show>
               </label>
               <div class="flex flex-row h-[240px] rounded-lg overflow-hidden border border-dark-100">
                 {/* 线上模型 */}
@@ -502,12 +494,6 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
             <div class="flex flex-col gap-1.5">
               <label class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold">
                 {t('project.memory.title')}
-                <span
-                  class="ml-2 text-[11px] font-normal"
-                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
-                >
-                  {t('project.memory.description')}
-                </span>
               </label>
               <div class="flex flex-col gap-2 rounded-lg border border-dark-100 p-2.5">
                 <div class="flex items-center justify-between gap-3">
@@ -542,11 +528,6 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
                     {t('project.memory.openPanel')}
                   </button>
                 </div>
-                <Show when={!memoryReady()}>
-                  <div class="text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-                    {t('project.memory.configureHint')}
-                  </div>
-                </Show>
               </div>
             </div>
 

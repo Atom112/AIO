@@ -101,12 +101,6 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
           '-webkit-appearance': 'none',
           '-moz-appearance': 'none',
           'background-color': 'rgba(0, 0, 0, 0.25)',
-          'background-image':
-            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(var(--text-base-rgb),0.5)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>\")",
-          'background-repeat': 'no-repeat',
-          'background-position': 'right 12px center',
-          'background-size': '16px',
-          'padding-right': '34px',
         }}
         onClick={(e) => {
           e.stopPropagation();
@@ -115,18 +109,24 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
         aria-haspopup="listbox"
         aria-expanded={open()}
       >
-        <Show
-          when={current() || props.trigger}
-          fallback={
-            <span class="text-[rgba(var(--text-base-rgb),0.4)]">
-              {props.placeholder ?? t('common.placeholder')}
-            </span>
-          }
-        >
-          <Show when={!props.trigger} fallback={props.trigger!(current())}>
-            <span class="truncate">{current()!.label}</span>
+        <span class="flex-1 min-w-0 text-left">
+          <Show
+            when={current() || props.trigger}
+            fallback={
+              <span class="text-[rgba(var(--text-base-rgb),0.4)]">
+                {props.placeholder ?? t('common.placeholder')}
+              </span>
+            }
+          >
+            <Show when={!props.trigger} fallback={props.trigger!(current())}>
+              <span class="truncate">{current()!.label}</span>
+            </Show>
           </Show>
-        </Show>
+        </span>
+        {/* Chevron: inline Icon (currentColor follows the theme).
+            The old data-URI SVG background never rendered: CSS vars do not
+            resolve inside data-URI images, so the stroke fell back to none. */}
+        <Icon name="chevron-down" size={14} class="shrink-0 opacity-60" />
       </button>
 
       <div

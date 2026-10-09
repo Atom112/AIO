@@ -250,8 +250,8 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           {/* Branch marker for child topics: rounded elbow connector */}
                           {isChild && (
                             <svg
-                              viewBox="0 0 10 28"
-                              width="10"
+                              viewBox="0 0 18 28"
+                              width="18"
                               height="28"
                               class="mr-1 shrink-0 self-start"
                               fill="none"
@@ -261,7 +261,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               aria-hidden="true"
                             >
                               <title>{t('chat.branchTopic')}</title>
-                              <path d="M5 0 V10 Q5 14 9 14 H10" />
+                              <path d="M5 0 V10 Q5 14 9 14 H18" />
                             </svg>
                           )}
                           <Show

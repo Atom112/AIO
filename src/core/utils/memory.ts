@@ -71,10 +71,13 @@ export const memorySetPinned = (projectId: string, id: string, pinned: boolean) 
 
 export const memoryPrune = (projectId: string) => invoke<number>('memory_prune', { projectId });
 
-export const memoryExport = (projectId: string) => invoke<string>('memory_export', { projectId });
+/** 导出全部记忆事实为 JSON 文件（不含向量），写入用户指定路径（dialog save 选取） */
+export const memoryExportFile = (projectId: string, path: string) =>
+  invoke<void>('memory_export_file', { projectId, path });
 
-export const memoryImport = (projectId: string, json: string) =>
-  invoke<number>('memory_import', { projectId, json });
+/** 从用户指定路径的 JSON 文件导入记忆事实（dialog open 选取；按 key 去重，向量待重建） */
+export const memoryImportFile = (projectId: string, path: string) =>
+  invoke<number>('memory_import_file', { projectId, path });
 
 export const memoryCodeIndex = (projectId: string, force?: boolean) =>
   invoke<CodeIndexResult>('memory_code_index', { projectId, force });

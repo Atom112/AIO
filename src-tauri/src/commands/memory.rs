@@ -341,19 +341,28 @@ pub fn memory_prune(app: AppHandle, project_id: String) -> Result<usize, String>
         .prune_to_capacity(cfg.memory_max_facts.max(100))
 }
 
-/// 导出全部记忆事实为 JSON（不含向量）。
+/// 导出全部记忆事实为 JSON 文件（不含向量），写入用户指定的文件系统路径。
+/// `path`：目标文件绝对路径（前端经 dialog save 选取）。
 #[tauri::command]
-pub fn memory_export(app: AppHandle, project_id: String) -> Result<String, String> {
+pub fn memory_export_file(app: AppHandle, project_id: String, path: String) -> Result<(), String> {
     let root = resolve_root(&app, &project_id)?;
-    app.state::<MemoryStoreManager>()
+    let json = app
+        .state::<MemoryStoreManager>()
         .open(&root)?
-        .export_facts()
+        .export_facts()?;
+    std::fs::write(&path, json).map_err(|e| format!("写入导出文件失败: {e}"))
 }
 
-/// 从 JSON 导入记忆事实（按 key 去重；向量需重建）。
+/// 从用户指定路径的 JSON 文件导入记忆事实（按 key 去重；向量需重建）。
+/// `path`：源文件绝对路径（前端经 dialog open 选取）。
 #[tauri::command]
-pub fn memory_import(app: AppHandle, project_id: String, json: String) -> Result<usize, String> {
+pub fn memory_import_file(
+    app: AppHandle,
+    project_id: String,
+    path: String,
+) -> Result<usize, String> {
     let root = resolve_root(&app, &project_id)?;
+    let json = std::fs::read_to_string(&path).map_err(|e| format!("读取导入文件失败: {e}"))?;
     app.state::<MemoryStoreManager>()
         .open(&root)?
         .import_facts(&json)

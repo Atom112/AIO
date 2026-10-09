@@ -1,5 +1,6 @@
 import { Component, createEffect, createSignal, For, Show } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { t } from '../../../core/i18n';
 import Icon from '../../../shared/components/Icon';
 import Dropdown from '../../../shared/components/Dropdown';
@@ -15,10 +16,10 @@ import {
   memoryCodeSearch,
   memoryCodeStatus,
   memoryConsolidate,
-  memoryExport,
+  memoryExportFile,
   memoryGetStatus,
   memoryGraphExtract,
-  memoryImport,
+  memoryImportFile,
   memoryDelete,
   memoryGetVersions,
   memoryList,
@@ -247,25 +248,45 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const doExport = async () => {
+    // 用户经系统保存对话框指定导出路径（后端写盘，fs 权限无需放宽）
+    let path: string | null = null;
     try {
-      const json = await memoryExport(props.projectId);
-      await navigator.clipboard.writeText(json);
-      setNotice(t('project.memoryPanel.exportDone'));
+      path = await saveDialog({
+        defaultPath: 'aio-memory.json',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
     } catch {
-      setNotice(t('project.memoryPanel.exportFail'));
+      /* user cancelled */
+    }
+    if (!path) return;
+    try {
+      await memoryExportFile(props.projectId, path);
+      setNotice(t('project.memoryPanel.exportDone', { path }));
+    } catch (e) {
+      setNotice(t('project.memoryPanel.exportFail', { error: String(e) }));
     }
   };
 
   const doImport = async () => {
-    const text = window.prompt(t('project.memoryPanel.importPrompt'));
-    if (!text) return;
+    // 用户经系统打开对话框选择导入文件（后端读盘）
+    let path: string | null = null;
     try {
-      const n = await memoryImport(props.projectId, text);
+      const picked = await openDialog({
+        multiple: false,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      path = typeof picked === 'string' ? picked : null;
+    } catch {
+      /* user cancelled */
+    }
+    if (!path) return;
+    try {
+      const n = await memoryImportFile(props.projectId, path);
       setNotice(t('project.memoryPanel.importDone', { n: String(n) }));
       await loadList();
       await loadStats();
-    } catch {
-      setNotice(t('project.memoryPanel.importFail'));
+    } catch (e) {
+      setNotice(t('project.memoryPanel.importFail', { error: String(e) }));
     }
   };
 

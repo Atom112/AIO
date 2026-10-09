@@ -109,13 +109,11 @@ pub fn memory_get_status(app: AppHandle, project_id: String) -> Result<MemorySta
     let _ = store.migrate_from_knowledge_json();
     let project_override = store.project_enabled()?;
     // 显式迁移步骤（命名、可审计）：嵌入/重排配置的项目级快照与在线归一化。
-    // 随后的 resolve_* 均为纯读取。
+    // 随后的 resolve_* 均为纯读取（resolve_project_rerank 内部归一化 provider/model）。
     crate::services::memory::migrate_project_embedding(&app, &store);
     crate::services::memory::retrieve::migrate_project_rerank(&app, &store);
     let embedding = crate::services::memory::resolve_project_embedding(&app, &store);
-    // apiKey 不随响应下发（在线 Key 存 secure_store）
-    let mut rerank = crate::services::memory::retrieve::resolve_project_rerank(&app, &store);
-    rerank.api_key.clear();
+    let rerank = crate::services::memory::retrieve::resolve_project_rerank(&app, &store);
     Ok(MemoryStatus {
         enabled: project_override.unwrap_or(cfg.memory_enabled),
         store_path: format!("{root}/.aio/memory/memory.sqlite"),
@@ -570,19 +568,25 @@ pub async fn memory_graph_extract(
     crate::services::memory::graph::extract_relations(&app, &store, limit.unwrap_or(50)).await
 }
 
-/// 设置项目级重排配置（rerank 不涉及向量，不触发重建；在线 Key 走 secure_store）。
+/// 设置项目级重排配置（仅本地模型；rerank 不涉及向量，不触发重建）。
 #[tauri::command]
 pub fn memory_update_rerank(
     app: AppHandle,
     project_id: String,
     config: MemoryRerankConfig,
 ) -> Result<MemoryStatus, String> {
-    if config.provider != "local" && config.provider != "online" {
-        return Err("未知的重排 provider".into());
+    let mut config = config;
+    // 自 v0.8.1 起仅支持本地重排：旧 provider（online/openai_compat）归一化为 local
+    config.provider = "local".into();
+    let model = config.model.trim().to_string();
+    if model.is_empty() {
+        return Err("请选择重排模型".into());
     }
-    if config.provider == "online" && config.api_url.trim().is_empty() {
-        return Err("在线重排需要服务地址".into());
+    match crate::commands::model_download::find_entry(&model) {
+        Some(entry) if entry.kind == "rerank" => {}
+        _ => return Err(format!("未知重排模型: {model}")),
     }
+    config.model = model;
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
     store.set_rerank_cfg(&config)?;

@@ -5,7 +5,7 @@
 //! - kind=embed：主流开源本地嵌入模型（ONNX，来自 HF 的 Xenova / Qdrant / Alibaba-NLP 等
 //!   导出仓库，统一取 `onnx/model_quantized.onnx` 自包含量化权重，CPU 推理快、体积小）；
 //!   安装目录可由用户在设置页自定义（默认 `<app_data_dir>/models/embed/<id>/`）。
-//! - kind=rerank：本地重排模型（bge-reranker-base，目录固定 `<app_data_dir>/models/rerank/<id>/`）。
+//! - kind=rerank：本地重排模型（bge 系列交叉编码器 + mxbai，目录固定 `<app_data_dir>/models/rerank/<id>/`）。
 //!
 //! 内置模型 all-MiniLM-L6-v2（kind=embed，bundled=true）随应用打包（include_bytes），
 //! 无需下载；列表中恒为已安装，删除为 no-op。
@@ -111,11 +111,7 @@ fn model_info(app: &AppHandle, entry: &'static ManifestEntry) -> ModelInfo {
         dims: entry.dims,
         pooled: entry.pooling.to_string(),
         bundled: entry.bundled,
-        enabled: if entry.kind == "embed" {
-            is_embed_model_enabled(app, entry.id)
-        } else {
-            true
-        },
+        enabled: is_model_enabled(app, entry.id),
         downloaded: entry.bundled || files.iter().all(|f| f.downloaded),
         files,
         size_bytes,
@@ -158,7 +154,7 @@ pub fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, S
     Ok(new.to_string_lossy().to_string())
 }
 
-/// 全局启用/停用某个嵌入模型（与供应商设置类似；停用后所有项目不可用该模型）。
+/// 全局启用/停用某个模型（嵌入/重排通用；停用后所有项目不可用该模型）。
 #[tauri::command]
 pub fn embedding_model_set_enabled(
     app: AppHandle,
@@ -166,9 +162,6 @@ pub fn embedding_model_set_enabled(
     enabled: bool,
 ) -> Result<ModelInfo, String> {
     let entry = find_entry(&id).ok_or_else(|| format!("未知模型: {id}"))?;
-    if entry.kind != "embed" {
-        return Err("仅嵌入模型支持全局启停".into());
-    }
     let mut cfg =
         crate::core::config::load_app_config(&app).map_err(|e| format!("读取配置失败: {e}"))?;
     let mut list: Vec<EmbeddingModelSetting> = cfg
@@ -379,6 +372,8 @@ pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> 
     }
     if entry.kind == "embed" {
         crate::plugins::embed::local_onnx::evict_model(&id);
+    } else if entry.kind == "rerank" {
+        crate::plugins::rerank::local_onnx::evict_model(&id);
     }
     let dir = entry_dir(&app, entry);
     if dir.exists() {

@@ -692,10 +692,8 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
           {/* 重排（项目级；RRF 后二阶段精排）—— 已抽为 MemoryRerankSection 子组件 */}
           <MemoryRerankSection
             projectId={props.projectId}
-            embedModels={embedModels}
             rrModels={rrModels}
             onNotice={setNotice}
-            onModelsChanged={loadRerankModels}
           />
 
           <SectionDivider />

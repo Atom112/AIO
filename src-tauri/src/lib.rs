@@ -240,7 +240,6 @@ pub fn run() {
             commands::memory::memory_graph_extract,
             commands::embedding::embedding_test,
             commands::rerank::rerank_test,
-            commands::rerank::rerank_save_api_key,
             commands::model_download::embedding_model_list,
             commands::model_download::embedding_model_status,
             commands::model_download::embedding_model_download,

@@ -123,7 +123,7 @@ export interface MemoryStatus {
   embedder: EmbedderStatus;
   /** 本项目当前嵌入配置（项目级，存于记忆库 meta） */
   embedding: MemoryEmbeddingConfig;
-  /** 本项目当前重排配置（项目级；apiKey 恒为空，在线 Key 存 secure_store） */
+  /** 项目当前重排配置（项目级；仅 enabled/provider/model 三个字段） */
   rerank: MemoryRerankConfig;
 }
 
@@ -157,13 +157,13 @@ export interface EmbeddingTestResult {
   error?: string;
 }
 
-/** 重排配置（与后端 MemoryRerankConfig 对应） */
+/** 重排配置（与后端 MemoryRerankConfig 对应；自 v0.8.1 起仅支持本地模型，provider 恒为 local） */
 export interface MemoryRerankConfig {
   enabled: boolean;
+  /** 恒为 local（旧配置中的 online 在后端自动归一化） */
   provider: 'local' | 'online';
+  /** 本地重排模型 id（manifest 条目 id，如 bge-reranker-base / bge-reranker-v2-m3） */
   model: string;
-  apiUrl: string;
-  apiKey?: string;
 }
 
 /** 重排连接测试结果 */
@@ -187,7 +187,7 @@ export interface EmbeddingModelInfo {
   pooled: string;
   /** 内置模型（随应用打包，无需下载，不可删除） */
   bundled: boolean;
-  /** 全局启用状态（仅 embed kind 有意义） */
+  /** 全局启用状态（嵌入与重排模型均可全局启停） */
   enabled: boolean;
   files: { name: string; downloaded: boolean }[];
   downloaded: boolean;

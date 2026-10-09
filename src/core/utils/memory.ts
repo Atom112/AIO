@@ -3,10 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 
 /** 内置默认本地嵌入模型 id（随应用打包；与后端 core::model_registry::BUNDLED_EMBED_ID 保持一致） */
 export const DEFAULT_EMBED_MODEL_ID = 'all-MiniLM-L6-v2';
-/** 默认本地重排模型 id（与后端 manifest 中的 bge-reranker-base 条目一致） */
-export const DEFAULT_RERANK_MODEL_ID = 'bge-reranker-base';
-/** 在线重排的默认模型 id（Jina API 托管） */
-export const DEFAULT_ONLINE_RERANK_MODEL_ID = 'rerank-multilingual-v3';
 import type {
   CodeChunkHit,
   CodeIndexResult,
@@ -108,12 +104,9 @@ export const memoryConsolidate = (projectId: string) =>
 export const memoryGraphExtract = (projectId: string) =>
   invoke<GraphExtractReport>('memory_graph_extract', { projectId });
 
-/** 重排连接测试（本地需模型已下载；在线发真实请求） */
+/** 重排连接测试（本地模型需已下载且全局启用） */
 export const rerankTest = (config: MemoryRerankConfig) =>
   invoke<RerankTestResult>('rerank_test', { config });
-
-/** 保存在线重排 API Key（secure_store，不落盘；空值删除） */
-export const rerankSaveApiKey = (key: string) => invoke<void>('rerank_save_api_key', { key });
 
 /** 可下载模型清单（本地重排/嵌入模型） */
 export const embeddingModelList = () => invoke<EmbeddingModelInfo[]>('embedding_model_list');

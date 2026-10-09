@@ -79,7 +79,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry {
         id: "bge-reranker-base",
         kind: "rerank",
-        label: "bge-reranker-base（中英双语交叉编码器重排，int8 约 110MB）",
+        label: "bge-reranker-base（中英双语交叉编码器重排，int8 约 280MB）",
         dims: 0,
         pooling: "none",
         bundled: false,
@@ -105,6 +105,33 @@ pub const MANIFEST: &[ManifestEntry] = &[
                 name: "tokenizer_config.json",
             },
         ],
+    },
+    ManifestEntry {
+        id: "bge-reranker-large",
+        kind: "rerank",
+        label: "bge-reranker-large（同家族加大版，精度更高、延迟约 2-4 倍，int8 约 560MB）",
+        dims: 0,
+        pooling: "none",
+        bundled: false,
+        files: hf_files!("Xenova/bge-reranker-large", "onnx/model_int8.onnx"),
+    },
+    ManifestEntry {
+        id: "bge-reranker-v2-m3",
+        kind: "rerank",
+        label: "bge-reranker-v2-m3（BGE-M3 底座多语言旗舰，中文效果最佳，int8 约 570MB）",
+        dims: 0,
+        pooling: "none",
+        bundled: false,
+        files: hf_files!("onnx-community/bge-reranker-v2-m3-ONNX", "onnx/model_int8.onnx"),
+    },
+    ManifestEntry {
+        id: "mxbai-rerank-base-v1",
+        kind: "rerank",
+        label: "mxbai-rerank-base-v1（bge-reranker-base 再训练版，与 base 同级，量化约 240MB）",
+        dims: 0,
+        pooling: "none",
+        bundled: false,
+        files: hf_files!("mixedbread-ai/mxbai-rerank-base-v1", "onnx/model_quantized.onnx"),
     },
     // ---- 本地嵌入模型（安装目录可在设置页自定义，默认 <app_data_dir>/models/embed/<id>/）----
     ManifestEntry {
@@ -263,8 +290,8 @@ pub(crate) fn entry_dir(app: &AppHandle, entry: &ManifestEntry) -> PathBuf {
     }
 }
 
-/// 全局是否启用该嵌入模型（缺省视为启用；只对 kind=embed 有意义）。
-pub fn is_embed_model_enabled(app: &AppHandle, id: &str) -> bool {
+/// 全局是否启用该模型（嵌入与重排通用；缺省视为启用）。
+pub fn is_model_enabled(app: &AppHandle, id: &str) -> bool {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     match cfg.embedding_models.iter().find(|s| s.id == id) {
         Some(s) => s.enabled,

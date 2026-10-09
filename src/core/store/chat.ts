@@ -196,7 +196,7 @@ const defaultAppConfig = (): AppConfig => ({
   },
   embeddingModelsDir: '',
   embeddingModels: [],
-  memoryRerank: { enabled: false, provider: 'local', model: '', apiUrl: '' },
+  memoryRerank: { enabled: false, provider: 'local', model: '' },
   memoryDedupThreshold: 0.92,
   memoryQueryRewrite: false,
   memoryConsolidateBudget: 20,

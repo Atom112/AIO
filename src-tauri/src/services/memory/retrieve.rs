@@ -24,24 +24,23 @@ pub fn migrate_project_rerank(app: &AppHandle, store: &MemoryStore) {
 
 /// 解析项目级重排配置（**纯读取**，不写盘：偏好项目 meta，无则回退全局旧配置）。
 /// 落盘迁移见 [`migrate_project_rerank`]（在命令入口显式执行）。
+/// 归一化：provider 恒 local；model 不在 manifest 的 rerank 条目中（如旧在线
+/// 模型名 rerank-multilingual-v3）时回退默认 bge-reranker-base。
 pub fn resolve_project_rerank(app: &AppHandle, store: &MemoryStore) -> MemoryRerankConfig {
-    let (cfg, set) = store.rerank_cfg();
-    if set {
-        cfg
-    } else {
-        crate::core::config::load_app_config(app)
+    let (mut cfg, set) = store.rerank_cfg();
+    if !set {
+        cfg = crate::core::config::load_app_config(app)
             .unwrap_or_default()
-            .memory_rerank
+            .memory_rerank;
     }
-}
-
-/// 注入 API Key（在线 provider）。
-fn inject_key(app: &AppHandle, cfg: &mut MemoryRerankConfig) {
-    if cfg.provider == "online" && cfg.api_key.is_empty() {
-        if let Ok(Some(key)) = crate::core::secure_store::get(app, "rerank_api_key") {
-            cfg.api_key = key;
-        }
+    cfg.provider = "local".into();
+    let model_valid = crate::core::model_registry::find_entry(cfg.model.trim())
+        .map(|e| e.kind == "rerank")
+        .unwrap_or(false);
+    if !model_valid {
+        cfg.model = crate::plugins::rerank::local_onnx::LOCAL_MODEL_ID.into();
     }
+    cfg
 }
 
 /// 对检索结果应用项目级重排；未启用/解析失败/调用失败时原顺序返回（fail-safe）。
@@ -54,8 +53,7 @@ pub async fn apply_rerank(
     if hits.len() <= 1 {
         return hits;
     }
-    let mut cfg = resolve_project_rerank(app, store);
-    inject_key(app, &mut cfg);
+    let cfg = resolve_project_rerank(app, store);
     let Ok(reranker) = crate::plugins::rerank::resolve(app, &cfg) else {
         return hits;
     };

@@ -87,13 +87,13 @@ impl MemoryStore {
         )
     }
 
-    /// 读取项目级重排配置（未设置时返回 (默认, false)）。
+    /// 读取项目级重排配置（未设置时返回 (默认, false)）。旧 JSON 中的在线字段
+    /// （apiUrl/apiKey）随结构体收敛被 serde 忽略；provider 统一归一化为 local。
     pub fn rerank_cfg(&self) -> (MemoryRerankConfig, bool) {
         match self.meta_get(META_RERANK).ok().flatten() {
             Some(json) => match serde_json::from_str::<MemoryRerankConfig>(&json) {
                 Ok(mut cfg) => {
-                    // api_key 不落盘
-                    cfg.api_key.clear();
+                    cfg.provider = "local".into();
                     (cfg, true)
                 }
                 Err(_) => (MemoryRerankConfig::default(), false),
@@ -102,10 +102,10 @@ impl MemoryStore {
         }
     }
 
-    /// 写入项目级重排配置（JSON 单键；apiKey 不落盘）。
+    /// 写入项目级重排配置（provider/model；写入侧统一归一化 provider 为 local）。
     pub fn set_rerank_cfg(&self, cfg: &MemoryRerankConfig) -> Result<(), String> {
         let mut c = cfg.clone();
-        c.api_key.clear();
+        c.provider = "local".into();
         let json = serde_json::to_string(&c).map_err(|e| e.to_string())?;
         self.meta_put(META_RERANK, &json)
     }

@@ -1,11 +1,10 @@
-//! 记忆重排（二阶段精排）插件层：本地 ONNX 交叉编码器与在线 OpenAI 兼容 rerank 端点。
+//! 记忆重排（二阶段精排）插件层：本地 ONNX 交叉编码器（manifest 中的 kind=rerank 模型）。
 //!
 //! 检索流程：混合检索 RRF 融合 top-k → 重排精排 → token 预算截断注入。
-//! 未启用/解析失败/端点超时时调用方回退 RRF-only（fail-safe，行为同未引入重排前）。
-//! 与 `plugins/embed` 同构：trait + 独立实现 + `resolve` 按配置分发。
+//! 未启用/解析失败/模型未下载时调用方回退 RRF-only（fail-safe，行为同未引入重排前）。
+//! 自 v0.8.1 起移除在线 rerank 端点支持，旧配置中的 online/openai_compat 自动归一化为 local。
 
 pub mod local_onnx;
-pub mod openai_compat;
 
 use crate::core::models::MemoryRerankConfig;
 use std::sync::Arc;
@@ -42,16 +41,28 @@ pub struct RerankTestResult {
     pub error: Option<String>,
 }
 
-/// 按配置解析重排器（不缓存；本地模型加载在插件内部惰性缓存）。
+/// 按配置解析重排器（不缓存；模型加载在插件内部按模型 id 惰性缓存）。
+/// 仅支持本地模型；旧配置中的 online / openai_compat provider 在此归一化为 local。
 pub fn resolve(app: &AppHandle, cfg: &MemoryRerankConfig) -> Result<Arc<dyn Reranker>, String> {
     if !cfg.enabled {
         return Err("重排未启用".into());
     }
-    match cfg.provider.as_str() {
-        "local" => Ok(Arc::new(local_onnx::LocalReranker::new(app, cfg))),
-        "online" | "openai_compat" => Ok(Arc::new(openai_compat::OpenAiCompatReranker::new(cfg)?)),
-        other => Err(format!("不支持的重排 provider: {other}")),
+    let model = cfg.model.trim();
+    if model.is_empty() {
+        return Err("未选择重排模型".into());
     }
+    let entry = crate::core::model_registry::find_entry(model).ok_or_else(|| {
+        format!("未知重排模型: {model}，请在「Embedding 模型管理」中下载支持的模型")
+    })?;
+    if entry.kind != "rerank" {
+        return Err(format!("非重排模型: {model}"));
+    }
+    if !crate::core::model_registry::is_model_enabled(app, model) {
+        return Err(format!(
+            "重排模型 {model} 已全局停用，请在「Embedding 模型管理」中启用"
+        ));
+    }
+    Ok(Arc::new(local_onnx::LocalReranker::new(app, cfg)))
 }
 
 /// 连通性测试（rerank_test 命令用）。

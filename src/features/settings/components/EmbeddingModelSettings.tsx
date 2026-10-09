@@ -1,10 +1,10 @@
 /**
  * EmbeddingModelSettings — 「Embedding 模型管理」设置子页面。
  *
- * 全局管理本地嵌入模型（与供应商设置类似）：
- * - 安装目录可自定义（默认 <app_data_dir>/models/embed）
- * - 主流开源 ONNX 嵌入模型的下载安装 / 删除 / 启用停用
- * - 内置模型（all-MiniLM-L6-v2）随应用打包，开箱即用、不可删除
+ * 全局管理本地嵌入与重排模型（与供应商设置类似）：
+ * - 嵌入模型：安装目录可自定义（默认 <app_data_dir>/models/embed）；主流开源 ONNX 嵌入模型的下载安装 / 删除 / 启用停用
+ * - 重排模型：本地交叉编码器（bge-reranker 系列 / mxbai），下载目录固定 <app_data_dir>/models/rerank
+ * - 内置嵌入模型（all-MiniLM-L6-v2）随应用打包，开箱即用、不可删除
  *
  * 项目级 RAG 记忆设置（模型选择）仍在「项目记忆面板」中，本页只管全局模型。
  */
@@ -43,6 +43,7 @@ const EmbeddingModelSettings: Component = () => {
   const [pausedIds, setPausedIds] = createSignal<Record<string, boolean>>({});
 
   const embedModels = createMemo(() => models().filter((m) => m.kind === 'embed'));
+  const rerankModels = createMemo(() => models().filter((m) => m.kind === 'rerank'));
 
   const load = async () => {
     try {
@@ -194,10 +195,169 @@ const EmbeddingModelSettings: Component = () => {
     });
   };
 
+  /** 模型行渲染（嵌入/重排模型共用）：下载/暂停/取消/删除/启停开关 + 进度条 */
+  const renderModelRow = (m: EmbeddingModelInfo, index: () => number) => {
+    const dlProgress = () => progress()[m.id];
+    const isDownloading = () => downloading()[m.id];
+    const isPaused = () => pausedIds()[m.id];
+    return (
+      <div
+        class="flex items-center gap-3 px-3 py-2.5 rounded-[10px] border border-white/[0.05] bg-white/[0.02] animate-row-in"
+        style={{ 'animation-delay': (index() + 1) * 30 + 'ms' }}
+      >
+        <div
+          class="flex items-center justify-center w-9 h-9 rounded-lg shrink-0"
+          style={{
+            background: m.bundled
+              ? 'rgba(var(--primary-rgb),0.15)'
+              : 'rgba(var(--text-base-rgb),0.06)',
+            color: m.bundled ? 'var(--primary-color)' : 'rgba(var(--text-base-rgb),0.5)',
+          }}
+        >
+          <Icon name={m.bundled ? 'check-circle' : 'model'} size={18} />
+        </div>
+        <div class="grow min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-[13px] text-white/85 font-medium font-mono truncate">{m.id}</span>
+            <Show when={m.bundled}>
+              <span class="px-1 py-0.5 rounded bg-pri-20 text-pri text-[10px] shrink-0">
+                {t('settings.embeddingModels.bundled')}
+              </span>
+            </Show>
+          </div>
+          <div class="text-[10px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+            {m.label}
+            <Show when={m.dims > 0}>
+              <span class="ml-1.5 opacity-70">{m.dims} dims</span>
+            </Show>
+            <Show when={formatSize(m.sizeBytes)}>
+              <span class="ml-1.5 opacity-70">· {formatSize(m.sizeBytes)}</span>
+            </Show>
+          </div>
+          <Show when={dlProgress()}>
+            <div class="flex flex-col gap-1 mt-1.5">
+              <div class="h-1 w-full overflow-hidden rounded bg-white/10">
+                <div
+                  class="h-1 rounded bg-pri transition-[width] duration-200"
+                  style={{ width: pct(m) + '%' }}
+                />
+              </div>
+              <div
+                class="text-right text-[10px]"
+                style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+              >
+                {progressLabel(m)}
+              </div>
+            </div>
+          </Show>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <Show
+            when={m.downloaded}
+            fallback={
+              <div class="flex items-center gap-1.5">
+                <Show
+                  when={!isDownloading()}
+                  fallback={
+                    <>
+                      <button type="button" class={btnSecondarySm} onClick={() => pauseDownload(m)}>
+                        <Icon name="pause" size={12} />
+                        {t('settings.embeddingModels.pause')}
+                      </button>
+                      <button
+                        type="button"
+                        class={btnSecondarySm}
+                        onClick={() => void cancelDownload(m)}
+                      >
+                        <Icon name="x" size={12} />
+                        {t('common.cancel')}
+                      </button>
+                    </>
+                  }
+                >
+                  <>
+                    <button type="button" class={btnSecondarySm} onClick={() => void download(m)}>
+                      <Icon name={isPaused() ? 'play' : 'download'} size={12} />
+                      {isPaused()
+                        ? t('settings.embeddingModels.resume')
+                        : t('settings.embeddingModels.download')}
+                    </button>
+                    <Show when={isPaused()}>
+                      <button
+                        type="button"
+                        class={btnSecondarySm}
+                        onClick={() => void cancelDownload(m)}
+                      >
+                        <Icon name="x" size={12} />
+                        {t('common.cancel')}
+                      </button>
+                    </Show>
+                  </>
+                </Show>
+              </div>
+            }
+          >
+            <span class="text-[11px] text-green-400/70">
+              {t('settings.embeddingModels.installed')}
+            </span>
+            <Show when={!m.bundled}>
+              <button
+                type="button"
+                class={btnDangerBadge}
+                disabled={isDownloading()}
+                onClick={() => void removeModel(m)}
+              >
+                <Icon name="trash" size={11} />
+                {t('settings.embeddingModels.delete')}
+              </button>
+            </Show>
+          </Show>
+          <button
+            type="button"
+            class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none"
+            style={{
+              transition:
+                'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
+              ...(m.enabled
+                ? {
+                    background: 'rgba(var(--primary-rgb), 0.7)',
+                    'border-color': 'rgba(var(--primary-rgb), 0.5)',
+                    'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
+                  }
+                : {}),
+            }}
+            onClick={() => void toggleEnabled(m)}
+            title={
+              m.enabled
+                ? t('settings.embeddingModels.disable')
+                : t('settings.embeddingModels.enable')
+            }
+          >
+            <span
+              class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
+              style={{ transform: m.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
+            />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  /** 行渲染组件：把 For 的 index 访问器以 JSX 属性传递（solid/reactivity 要求 JSX 内使用） */
+  const ModelRowItem: Component<{ m: EmbeddingModelInfo; index: () => number }> = (p) =>
+    renderModelRow(p.m, p.index);
+
   return (
     <div class="space-y-1">
       <div class="pb-3 border-b border-[var(--border-dim)] animate-row-in">
-        <h2 class="text-lg text-white font-semibold m-0">{t('settings.embeddingModels.title')}</h2>
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg text-white font-semibold m-0">
+            {t('settings.embeddingModels.title')}
+          </h2>
+          <Show when={notice()}>
+            <span class="text-[11px] text-pri/80">{notice()}</span>
+          </Show>
+        </div>
       </div>
 
       {/* 安装目录 */}
@@ -246,7 +406,7 @@ const EmbeddingModelSettings: Component = () => {
         </div>
       </div>
 
-      {/* 模型列表 */}
+      {/* 嵌入模型列表 */}
       <div
         class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
         style={{ 'animation-delay': '60ms' }}
@@ -260,171 +420,31 @@ const EmbeddingModelSettings: Component = () => {
               {t('settings.embeddingModels.listDesc')}
             </div>
           </div>
-          <Show when={notice()}>
-            <span class="text-[11px] text-pri/80">{notice()}</span>
-          </Show>
         </div>
 
         <div class="flex flex-col gap-1.5">
-          <For each={embedModels()}>
-            {(m, i) => {
-              const dlProgress = () => progress()[m.id];
-              const isDownloading = () => downloading()[m.id];
-              const isPaused = () => pausedIds()[m.id];
-              return (
-                <div
-                  class="flex items-center gap-3 px-3 py-2.5 rounded-[10px] border border-white/[0.05] bg-white/[0.02] animate-row-in"
-                  style={{ 'animation-delay': (i() + 1) * 30 + 'ms' }}
-                >
-                  <div
-                    class="flex items-center justify-center w-9 h-9 rounded-lg shrink-0"
-                    style={{
-                      background: m.bundled
-                        ? 'rgba(var(--primary-rgb),0.15)'
-                        : 'rgba(var(--text-base-rgb),0.06)',
-                      color: m.bundled ? 'var(--primary-color)' : 'rgba(var(--text-base-rgb),0.5)',
-                    }}
-                  >
-                    <Icon name={m.bundled ? 'check-circle' : 'model'} size={18} />
-                  </div>
-                  <div class="grow min-w-0">
-                    <div class="flex items-center gap-2">
-                      <span class="text-[13px] text-white/85 font-medium font-mono truncate">
-                        {m.id}
-                      </span>
-                      <Show when={m.bundled}>
-                        <span class="px-1 py-0.5 rounded bg-pri-20 text-pri text-[10px] shrink-0">
-                          {t('settings.embeddingModels.bundled')}
-                        </span>
-                      </Show>
-                    </div>
-                    <div
-                      class="text-[10px] mt-0.5"
-                      style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
-                    >
-                      {m.label}
-                      <span class="ml-1.5 opacity-70">{m.dims} dims</span>
-                      <Show when={formatSize(m.sizeBytes)}>
-                        <span class="ml-1.5 opacity-70">· {formatSize(m.sizeBytes)}</span>
-                      </Show>
-                    </div>
-                    <Show when={dlProgress()}>
-                      <div class="flex flex-col gap-1 mt-1.5">
-                        <div class="h-1 w-full overflow-hidden rounded bg-white/10">
-                          <div
-                            class="h-1 rounded bg-pri transition-[width] duration-200"
-                            style={{ width: pct(m) + '%' }}
-                          />
-                        </div>
-                        <div
-                          class="text-right text-[10px]"
-                          style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
-                        >
-                          {progressLabel(m)}
-                        </div>
-                      </div>
-                    </Show>
-                  </div>
-                  <div class="flex items-center gap-1.5 shrink-0">
-                    <Show
-                      when={m.downloaded}
-                      fallback={
-                        <div class="flex items-center gap-1.5">
-                          <Show
-                            when={!isDownloading()}
-                            fallback={
-                              <>
-                                <button
-                                  type="button"
-                                  class={btnSecondarySm}
-                                  onClick={() => pauseDownload(m)}
-                                >
-                                  <Icon name="pause" size={12} />
-                                  {t('settings.embeddingModels.pause')}
-                                </button>
-                                <button
-                                  type="button"
-                                  class={btnSecondarySm}
-                                  onClick={() => void cancelDownload(m)}
-                                >
-                                  <Icon name="x" size={12} />
-                                  {t('common.cancel')}
-                                </button>
-                              </>
-                            }
-                          >
-                            <>
-                              <button
-                                type="button"
-                                class={btnSecondarySm}
-                                onClick={() => void download(m)}
-                              >
-                                <Icon name={isPaused() ? 'play' : 'download'} size={12} />
-                                {isPaused()
-                                  ? t('settings.embeddingModels.resume')
-                                  : t('settings.embeddingModels.download')}
-                              </button>
-                              <Show when={isPaused()}>
-                                <button
-                                  type="button"
-                                  class={btnSecondarySm}
-                                  onClick={() => void cancelDownload(m)}
-                                >
-                                  <Icon name="x" size={12} />
-                                  {t('common.cancel')}
-                                </button>
-                              </Show>
-                            </>
-                          </Show>
-                        </div>
-                      }
-                    >
-                      <span class="text-[11px] text-green-400/70">
-                        {t('settings.embeddingModels.installed')}
-                      </span>
-                      <Show when={!m.bundled}>
-                        <button
-                          type="button"
-                          class={btnDangerBadge}
-                          disabled={isDownloading()}
-                          onClick={() => void removeModel(m)}
-                        >
-                          <Icon name="trash" size={11} />
-                          {t('settings.embeddingModels.delete')}
-                        </button>
-                      </Show>
-                    </Show>
-                    <button
-                      type="button"
-                      class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none"
-                      style={{
-                        transition:
-                          'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-                        ...(m.enabled
-                          ? {
-                              background: 'rgba(var(--primary-rgb), 0.7)',
-                              'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                              'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                            }
-                          : {}),
-                      }}
-                      onClick={() => void toggleEnabled(m)}
-                      title={
-                        m.enabled
-                          ? t('settings.embeddingModels.disable')
-                          : t('settings.embeddingModels.enable')
-                      }
-                    >
-                      <span
-                        class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-                        style={{ transform: m.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-                      />
-                    </button>
-                  </div>
-                </div>
-              );
-            }}
-          </For>
+          <For each={embedModels()}>{(m, i) => <ModelRowItem m={m} index={i} />}</For>
+        </div>
+      </div>
+
+      {/* 重排模型列表 */}
+      <div
+        class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
+        style={{ 'animation-delay': '90ms' }}
+      >
+        <div class="flex items-center justify-between mb-3">
+          <div class="min-w-0">
+            <div class="text-sm text-white font-medium">
+              {t('settings.embeddingModels.rerankTitle')}
+            </div>
+            <div class="text-[11px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+              {t('settings.embeddingModels.rerankDesc')}
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <For each={rerankModels()}>{(m, i) => <ModelRowItem m={m} index={i} />}</For>
         </div>
       </div>
     </div>

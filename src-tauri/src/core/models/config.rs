@@ -58,24 +58,20 @@ impl Default for EmbeddingModelSetting {
 
 /// 记忆重排（rerank）配置：RRF 融合后对候选做二阶段精排。
 ///
-/// 与嵌入配置同构（全局 + 项目级双轨，apiKey 不落盘存 secure_store）：
-/// provider = local（按需下载的本地 ONNX 交叉编码器，默认 bge-reranker-base）
-///           | online（OpenAI 兼容 rerank 端点，如 Cohere /rerank 兼容网关）。
+/// 与嵌入配置同构（全局 + 项目级双轨）：
+/// provider = local（manifest 中 kind=rerank 的本地 ONNX 交叉编码器，默认 bge-reranker-base）。
+/// 自 v0.8.1 起移除在线 rerank 端点支持：旧配置中的 online provider / apiUrl / apiKey
+/// 字段在反序列化时被忽略（serde 忽略未知字段），读取层归一化为 local。
 /// 未启用或解析失败时检索回退为 RRF-only（fail-safe）。
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MemoryRerankConfig {
     /// 是否启用重排（默认关）
     pub enabled: bool,
-    /// provider：local | online
+    /// provider：恒为 local（保留字段仅为旧配置归一化兼容）
     pub provider: String,
-    /// 本地模型 id（manifest 中的条目，如 bge-reranker-base）或在线模型名
+    /// 本地模型 id（manifest 中的 kind=rerank 条目，如 bge-reranker-base / bge-reranker-v2-m3）
     pub model: String,
-    /// 在线服务地址（OpenAI 兼容 /v1 前缀）；local 时忽略
-    pub api_url: String,
-    /// 运行时注入的 API Key（不随配置持久化，存 secure_store）
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub api_key: String,
 }
 
 impl Default for MemoryRerankConfig {
@@ -84,8 +80,6 @@ impl Default for MemoryRerankConfig {
             enabled: false,
             provider: "local".into(),
             model: "bge-reranker-base".into(),
-            api_url: String::new(),
-            api_key: String::new(),
         }
     }
 }

@@ -53,7 +53,7 @@ pub fn resolve(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> Result<Arc<dyn E
     };
     // 全局启用/停用校验（与供应商设置类似）
     if let Some(entry) = crate::core::model_registry::find_entry(id) {
-        if entry.kind == "embed" && !crate::core::model_registry::is_embed_model_enabled(app, id) {
+        if entry.kind == "embed" && !crate::core::model_registry::is_model_enabled(app, id) {
             return Err(format!(
                 "嵌入模型 {id} 已全局停用，请在「Embedding 模型管理」中启用"
             ));

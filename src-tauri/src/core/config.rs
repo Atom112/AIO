@@ -160,11 +160,7 @@ impl AppConfigDisk {
                 e.api_key.clear();
                 e
             },
-            memory_rerank: {
-                let mut r = cfg.memory_rerank.clone();
-                r.api_key.clear();
-                r
-            },
+            memory_rerank: cfg.memory_rerank.clone(),
             embedding_models_dir: cfg.embedding_models_dir.clone(),
             embedding_models: cfg.embedding_models.clone(),
             memory_dedup_threshold: cfg.memory_dedup_threshold,
@@ -356,7 +352,8 @@ mod tests {
         assert_eq!(back.auto_retry_delay_ms, 1234);
     }
 
-    /// 落盘结构不得包含明文 api_key（全局 key 与嵌入/重排内联 key 都不入盘）。
+    /// 落盘结构不得包含明文 api_key（全局 key 与嵌入内联 key 都不入盘；
+    /// 重排配置自 v0.8.1 起仅含 enabled/provider/model，无任何 key 字段）。
     #[test]
     fn app_config_disk_never_contains_api_keys() {
         let cfg = AppConfig {
@@ -365,17 +362,12 @@ mod tests {
                 api_key: "secret-embed".into(),
                 ..MemoryEmbeddingConfig::default()
             },
-            memory_rerank: MemoryRerankConfig {
-                api_key: "secret-rerank".into(),
-                ..MemoryRerankConfig::default()
-            },
             ..AppConfig::default()
         };
 
         let json = serde_json::to_string(&AppConfigDisk::from_config(&cfg)).unwrap();
         assert!(!json.contains("secret-global"));
         assert!(!json.contains("secret-embed"));
-        assert!(!json.contains("secret-rerank"));
         assert!(!json.contains("apiKey"), "不应序列化 api_key 字段");
     }
 

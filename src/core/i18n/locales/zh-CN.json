@@ -136,6 +136,7 @@
   "chat.agentStatus": "Agent · {{mode}} · 项目：{{project}}",
   "chat.attachFile": "添加附件",
   "chat.branch": "分支",
+  "chat.branchPrefix": "分支：",
   "chat.branchFromHere": "从此消息分叉出新话题",
   "chat.branchMessage": "从此处分支",
   "chat.branchSwitchFailed": "切换分支失败，请检查是否有未提交的更改。",

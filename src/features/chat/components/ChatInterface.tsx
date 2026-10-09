@@ -1360,7 +1360,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       {/* 滚动到底部按钮：用户上滚浏览历史后显示，点击回到最新消息 */}
       <Show when={!autoScroll()}>
         <button
-          class="absolute bottom-[130px] right-[30px] z-[50] flex items-center justify-center w-9 h-9 rounded-full cursor-pointer
+          class="absolute bottom-[170px] right-[30px] z-[50] flex items-center justify-center w-9 h-9 rounded-full cursor-pointer
                            animate-fade-in transition-all duration-200 hover:scale-110 active:scale-95"
           style={{
             background: 'rgba(var(--primary-rgb),0.15)',
@@ -1494,13 +1494,19 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           e.currentTarget.style.background = 'rgba(var(--surface-alt-bg),0.5)';
                       }}
                     >
-                      ·{' '}
+                      {t('chat.branchPrefix')}{' '}
                       <Icon
                         name="git-branch"
                         size={12}
                         style={{ display: 'inline', 'vertical-align': 'middle' }}
                       />{' '}
                       {gitBranch()}
+                      <Icon
+                        name="chevron-up"
+                        size={10}
+                        class="ml-0.5"
+                        style={{ display: 'inline', 'vertical-align': 'middle' }}
+                      />
                     </button>
                     <Show when={branchOpen()}>
                       <div
@@ -1640,13 +1646,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         setSubagentMenuOpen(!subagentMenuOpen());
                       }}
                     >
-                      <Show
-                        when={hasRunningSubagent()}
-                        fallback={<Icon name="sparkles" size={12} class="mr-1" />}
-                      >
-                        <Icon name="spinner" size={12} class="animate-spin mr-1" />
+                      {t('agent.subagent.menuTitle')}
+                      <Show when={hasRunningSubagent()}>
+                        <Icon name="spinner" size={11} class="animate-spin mx-0.5" />
                       </Show>
-                      {subagents().length}
+                      {` ${subagents().length} `}
                       <Icon name="chevron-up" size={10} class="ml-0.5" />
                     </button>
                     <Show when={subagentMenuOpen()}>

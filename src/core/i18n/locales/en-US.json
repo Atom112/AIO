@@ -136,6 +136,7 @@
   "chat.agentStatus": "Agent · {{mode}} · Project: {{project}}",
   "chat.attachFile": "Attach file",
   "chat.branch": "Branch",
+  "chat.branchPrefix": "Branch: ",
   "chat.branchFromHere": "Branch from this message",
   "chat.branchMessage": "Branch from here",
   "chat.branchSwitchFailed": "Could not switch branches. Check for uncommitted changes.",

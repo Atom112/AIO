@@ -255,7 +255,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               height="28"
                               class="shrink-0 self-start"
                               fill="none"
-                              stroke="rgba(var(--primary-rgb),0.5)"
+                              stroke="rgba(var(--text-base-rgb),0.35)"
                               stroke-width="1.5"
                               stroke-linecap="round"
                               aria-hidden="true"

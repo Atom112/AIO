@@ -421,7 +421,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               >
                                 <Icon
                                   name={isFolded() ? 'caret-up' : 'caret-down'}
-                                  size={isChild ? 11 : 13}
+                                  size={isChild ? 13 : 15}
                                 />
                               </button>
                             </Show>

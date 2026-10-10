@@ -450,6 +450,8 @@ pub fn anthropic_sse_message_usage(val: &serde_json::Value) -> Option<(u32, Opti
 }
 
 /// Handles one Anthropic stream event: accumulates content/thinking/tool calls/usage and emits delta events to the frontend.
+/// Returns `Some(err)` on a fatal `error` event (PROV-2: previously swallowed by
+/// the `_ => {}` arm — the truncated reply was then persisted as a success).
 #[allow(clippy::too_many_arguments)]
 pub fn handle_anthropic_stream_event(
     val: &serde_json::Value,
@@ -463,7 +465,8 @@ pub fn handle_anthropic_stream_event(
     input_tokens: &mut u32,
     output_tokens: &mut u32,
     cached_input_tokens: &mut u32,
-) {
+    suppress_events: bool,
+) -> Option<String> {
     let etype = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match etype {
         "message_start" => {
@@ -494,7 +497,7 @@ pub fn handle_anthropic_stream_event(
                     .unwrap_or("")
                     .to_string();
                 tc_accum.insert(index, (id.clone(), name.clone(), String::new()));
-                if !id.is_empty() && !name.is_empty() {
+                if !id.is_empty() && !name.is_empty() && !suppress_events {
                     let _ = window.emit(
                         ev::LLM_TOOL_CALL,
                         crate::core::models::ToolCallPayload {
@@ -519,21 +522,23 @@ pub fn handle_anthropic_stream_event(
                 "text_delta" => {
                     if let Some(s) = anthropic_sse_text_delta(val) {
                         content_buf.push_str(s);
-                        let _ = window.emit(
-                            ev::LLM_CHUNK,
-                            crate::core::models::StreamPayload {
-                                assistant_id: assistant_id.to_string(),
-                                topic_id: topic_id.to_string(),
-                                content: s.to_string(),
-                                done: false,
-                                error: None,
-                                input_tokens: None,
-                                output_tokens: None,
-                                context_tokens: None,
-                                cached_input_tokens: None,
-                                images: None,
-                            },
-                        );
+                        if !suppress_events {
+                            let _ = window.emit(
+                                ev::LLM_CHUNK,
+                                crate::core::models::StreamPayload {
+                                    assistant_id: assistant_id.to_string(),
+                                    topic_id: topic_id.to_string(),
+                                    content: s.to_string(),
+                                    done: false,
+                                    error: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    context_tokens: None,
+                                    cached_input_tokens: None,
+                                    images: None,
+                                },
+                            );
+                        }
                     }
                 }
                 "thinking_delta" => {
@@ -542,21 +547,23 @@ pub fn handle_anthropic_stream_event(
                         .and_then(|v| v.as_str())
                     {
                         reasoning_buf.push_str(s);
-                        let _ = window.emit(
-                            ev::LLM_REASONING,
-                            crate::core::models::StreamPayload {
-                                assistant_id: assistant_id.to_string(),
-                                topic_id: topic_id.to_string(),
-                                content: s.to_string(),
-                                done: false,
-                                error: None,
-                                input_tokens: None,
-                                output_tokens: None,
-                                context_tokens: None,
-                                cached_input_tokens: None,
-                                images: None,
-                            },
-                        );
+                        if !suppress_events {
+                            let _ = window.emit(
+                                ev::LLM_REASONING,
+                                crate::core::models::StreamPayload {
+                                    assistant_id: assistant_id.to_string(),
+                                    topic_id: topic_id.to_string(),
+                                    content: s.to_string(),
+                                    done: false,
+                                    error: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    context_tokens: None,
+                                    cached_input_tokens: None,
+                                    images: None,
+                                },
+                            );
+                        }
                     }
                 }
                 "input_json_delta" => {
@@ -596,13 +603,48 @@ pub fn handle_anthropic_stream_event(
                 });
             }
         }
+        // PROV-2: mid-stream error events surface instead of being swallowed
+        "error" => {
+            return Some(
+                anthropic_sse_error_message(val)
+                    .unwrap_or_else(|| "Anthropic stream error".to_string()),
+            );
+        }
         _ => {}
     }
+    None
+}
+
+/// PROV-2: 提取 Anthropic `error` 流事件的消息（None = 非 error 事件或无消息）。
+pub fn anthropic_sse_error_message(val: &serde_json::Value) -> Option<String> {
+    if val.get("type").and_then(|v| v.as_str()) != Some("error") {
+        return None;
+    }
+    val.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .map(String::from)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PROV-2 回归：error 事件的消息必须被提取出来（此前被 `_ => {}` 吞掉，
+    /// 截断回复被当成功持久化）。
+    #[test]
+    fn anthropic_stream_error_event_surfaces() {
+        let val = json!({
+            "type": "error",
+            "error": {"type": "overloaded_error", "message": "Overloaded"}
+        });
+        assert_eq!(
+            anthropic_sse_error_message(&val),
+            Some("Overloaded".to_string())
+        );
+        let not_error = json!({"type": "message_delta", "usage": {"output_tokens": 3}});
+        assert_eq!(anthropic_sse_error_message(&not_error), None);
+    }
 
     #[test]
     fn converts_openai_body_to_anthropic() {

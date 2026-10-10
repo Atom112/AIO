@@ -1,4 +1,4 @@
-// Event listener registration set for ChatPage (20 listen calls) — extracted from ChatPage.onMount.
+// Event listener registration set for ChatPage (21 listen calls) — extracted from ChatPage.onMount.
 //
 // Every dep comes from the ChatPage component scope (Solid setters/signals are stable references, safe to pass along).
 
@@ -883,6 +883,11 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
     listen<{ workflowId: string }>(EVENTS.workflowComplete, () => {
       setWorkflowState((prev) => (prev ? { ...prev, active: false } : null));
       setTimeout(() => setWorkflowState(null), 5000);
+    }),
+    // ---- Compression failure (LOOP-3): the backend now restores the early region and
+    // carries on, so this is a non-fatal notice; log it so failures are never invisible.
+    listen<{ error: string }>(EVENTS.llmCompressionFailed, (e) => {
+      console.warn('[compression] 后端上下文压缩失败（已保持原上下文继续）:', e.payload.error);
     }),
   ];
 }

@@ -40,7 +40,7 @@ src/
 │   ├── agent-prompts.ts # Agent system-prompt presets
 │   └── assets/
 ├── features/
-│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：20 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
+│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：21 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification

@@ -3,7 +3,8 @@
 //! Modules here are organized into four concerns; confirm where a new module belongs before adding it, to avoid a catch-all dumping ground:
 //!
 //! - **Agent tool implementations**: `file_tools`, `git_tools`, `shell_tools`, `web_tools`,
-//!   `lsp_tools`, `lsp_agent_tools`, `project_map`, `project_index`, `think`
+//!   `lsp_tools`, `lsp_agent_tools`, `project_map`, `project_index`, `think`, `worktree`
+//!   (subagent worktree isolation)
 //! - **Security infrastructure**: `sandbox` (subprocess sandbox), `url_validation` (SSRF protection)
 //! - **File and attachment handling**: `file_parser` (PDF/Office/text extraction)
 //! - **General utilities**: `tool_result`, `truncate`, `time`, `diff`, `token_counter`,
@@ -32,3 +33,4 @@ pub mod tool_result;
 pub mod truncate;
 pub mod url_validation;
 pub mod web_tools;
+pub mod worktree;

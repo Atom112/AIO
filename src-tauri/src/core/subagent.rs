@@ -410,7 +410,12 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                     },
                     "wait": {
                         "type": "boolean",
-                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续；其完成后结果会以系统通知自动注入对话，也可随时用 get_subagent_result 工具按 subagent_id 主动查询或等待结果。"
+                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续；其完成后结果会以系统通知自动注入对话，也可随时用 get_subagent_result 工具按 subagent_id 主动查询或等待结果。后台子智能体始终在共享项目目录工作（不适用 worktree 隔离）。"
+                    },
+                    "isolation": {
+                        "type": "string",
+                        "enum": ["worktree", "shared"],
+                        "description": "写入类任务的文件隔离方式（仅 wait=true 时生效）。git 项目默认 worktree：子智能体在独立 git worktree+分支上工作，完成后自动合并回当前分支（冲突会报告冲突文件）；shared 表示在共享项目目录工作（有文件锁保护）。按应用配置 subagentIsolationMode 覆盖此默认。注意：worktree 基于主检出当前 HEAD，不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。"
                     }
                 },
                 "required": ["profile", "task"]
@@ -432,7 +437,9 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
             description: concat!(
                 "批量创建多个子智能体并行执行。所有子任务同时启动，总耗时约等于最慢的子任务；",
                 "context 参数注入公共背景，避免每个子任务重复描述；单次调用启动全部子智能体。",
-                "适用场景：同时探索多个独立目录、并行实现+测试、多个独立分析任务等彼此独立的子任务组合。"
+                "适用场景：同时探索多个独立目录、并行实现+测试、多个独立分析任务等彼此独立的子任务组合。",
+                "git 项目上写入类任务默认使用独立 worktree 隔离（各自分支，完成后自动合并回当前分支，",
+                "冲突会报告冲突文件清单），任务间不会互相覆盖文件；并行写入任务仍应尽量按文件集分工。"
             )
             .into(),
             parameters: serde_json::json!({
@@ -460,6 +467,11 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
                                     "type": "array",
                                     "items": {"type": "string"},
                                     "description": "该子任务相关的初始文件路径列表（相对于项目根目录）"
+                                },
+                                "isolation": {
+                                    "type": "string",
+                                    "enum": ["worktree", "shared"],
+                                    "description": "该任务的文件隔离方式。git 项目上写入类任务默认 worktree（独立分支，完成后自动合并，冲突会报告）；shared 在共享项目目录工作（有文件锁保护）。按应用配置 subagentIsolationMode 覆盖此默认。注意：worktree 不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。"
                                 }
                             },
                             "required": ["profile", "task"]

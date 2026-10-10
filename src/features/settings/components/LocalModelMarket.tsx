@@ -281,6 +281,9 @@ const LocalModelMarket: Component = () => {
   };
   const [installed, setInstalled] = createSignal<InstalledLocalModel[]>([]);
   const [installDir, setInstallDir] = createSignal('');
+  // Editable directory input (applied on save; mirrors the embedding page's install-dir card)
+  const [dirInput, setDirInput] = createSignal('');
+  const [savingDir, setSavingDir] = createSignal(false);
   const [tokenInput, setTokenInput] = createSignal('');
   const [tokenSaved, setTokenSaved] = createSignal(false);
   const [notice, setNotice] = createSignal('');
@@ -451,7 +454,10 @@ const LocalModelMarket: Component = () => {
         .catch(() => {});
     }
     void localModelsGetDir()
-      .then(setInstallDir)
+      .then((dir) => {
+        setInstallDir(dir);
+        setDirInput(dir);
+      })
       .catch(() => {});
     void localModelHfTokenGet()
       .then((tok) => setTokenInput(tok ?? ''))
@@ -639,26 +645,43 @@ const LocalModelMarket: Component = () => {
     }
   };
 
+  /** Folder picker fills the input only; the change applies on 保存 (embedding-page flow). */
   const pickDir = async () => {
     try {
       const dir = await openDialog({ directory: true, multiple: false });
-      if (dir && typeof dir === 'string') {
-        const effective = await localModelsSetDir(dir);
-        setInstallDir(effective);
-        await refreshInstalled();
-      }
+      if (dir && typeof dir === 'string') setDirInput(dir);
     } catch {
       /* user cancelled */
     }
   };
 
+  /** Applies the typed directory (backend migrates models + rewrites provider paths). */
+  const saveDir = async () => {
+    setSavingDir(true);
+    try {
+      const effective = await localModelsSetDir(dirInput().trim());
+      setInstallDir(effective);
+      setDirInput(effective);
+      await refreshInstalled();
+    } catch (e) {
+      setNotice(t('provider.localModelMarket.dirSaveFail', { error: String(e) }));
+    } finally {
+      setSavingDir(false);
+    }
+  };
+
+  /** Restores the default directory immediately (same as clearing + saving). */
   const resetDir = async () => {
+    setSavingDir(true);
     try {
       const effective = await localModelsSetDir('');
       setInstallDir(effective);
+      setDirInput(effective);
       await refreshInstalled();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setNotice(t('provider.localModelMarket.dirSaveFail', { error: String(e) }));
+    } finally {
+      setSavingDir(false);
     }
   };
 
@@ -1001,18 +1024,6 @@ const LocalModelMarket: Component = () => {
             </For>
           </div>
         </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.dirLabel')}</span>
-          <span class="font-mono truncate grow min-w-[120px]" title={installDir()}>
-            {installDir()}
-          </span>
-          <button type="button" class={btnSecondarySm} onClick={() => void pickDir()}>
-            {t('provider.localModelMarket.changeDir')}
-          </button>
-          <button type="button" class={btnSecondarySm} onClick={() => void resetDir()}>
-            {t('provider.localModelMarket.resetDir')}
-          </button>
-        </div>
         {/* HF token: relevant only when the download source can hit HuggingFace
             (auto / huggingface). The stored token itself is never cleared when the
             row hides — switching back to a HF-capable source restores it. */}
@@ -1041,6 +1052,44 @@ const LocalModelMarket: Component = () => {
             </button>
           </div>
         </Show>
+      </div>
+
+      {/* Download directory: embedding-page install-dir card style, without the border */}
+      <div class="bg-white/[0.03] rounded-xl p-4 shrink-0 animate-row-in">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <div class="text-sm text-white font-medium">
+            {t('provider.localModelMarket.dirLabel')}
+          </div>
+          <Icon name="folder" size={18} class="text-white/25 shrink-0" />
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            type="text"
+            class="flex-1 min-w-0 px-3 py-2 bg-black/25 border border-white/[0.08] rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-xs placeholder:text-white/25 focus:outline-none focus:border-pri-50"
+            placeholder={installDir()}
+            value={dirInput()}
+            onInput={(e) => setDirInput(e.currentTarget.value)}
+          />
+          <button type="button" class={btnSecondarySm} onClick={() => void pickDir()}>
+            {t('provider.localModelMarket.dirBrowse')}
+          </button>
+          <button
+            type="button"
+            class={btnSecondarySm}
+            disabled={savingDir()}
+            onClick={() => void resetDir()}
+          >
+            {t('provider.localModelMarket.resetDir')}
+          </button>
+          <button
+            type="button"
+            class={btnSecondarySm}
+            disabled={savingDir() || dirInput() === installDir()}
+            onClick={() => void saveDir()}
+          >
+            {t('common.save')}
+          </button>
+        </div>
       </div>
 
       <div class="shrink-0 border-t" style={{ 'border-color': 'var(--border-dim)' }} />

@@ -105,6 +105,7 @@ Plan mode only researches and outputs a plan; workflow mode splits and auto-exec
 ### Tool Execution Semantics
 
 - **Parallel dispatch**: read-only built-in tools within the same response block execute concurrently (`FuturesUnordered`); mutating tools and MCP tools run serially in original order; `role:tool` backfill preserves index order. Toggle: `parallelToolExecution`.
+- **Multi-agent write coordination**: mutating file tools all funnel through the single `execute_builtin_tool` choke point — a per-file exclusive lock (`core/file_locks.rs`, 120-second wait timeout reporting the holder, `file-lock-contention` event after ≥3s waits) plus last-writer tracking; after another agent modified a file, `replace_in_file` must carry `anchor_hash` and an overwriting `write_file` must carry `expect_hash` (lost updates become recoverable re-read errors); writes go through an atomic tmp+rename (falling back to a direct write on failure).
 - **Main agent tool set** (`mainAgentToolAccess`): `hybrid` by default — read-only tools called directly, mutating work delegated; `orchestrator` is the legacy strict mode; `full` gives the main agent all built-in tools.
 - **MCP tool injection**: tools from servers enabled for the assistant are injected into the main agent and the `general` subagent (`allow_mcp_tools`); name collisions are rewritten to `mcp__<server>__<tool>`; untrusted servers force per-call approval in Auto/Workflow mode (`trusted` field).
 - **Model call retry**: the POST + status-check phase retries transport errors and 429/5xx with 1s/2s/4s backoff (`modelCallRetries`, default 3); mid-stream errors are not retried.
@@ -121,6 +122,8 @@ Tool failures retry up to 2 times by default, with a 500ms interval. The retry w
 ### Sub-agents and Result Preservation
 
 `delegate_task` and `delegate_tasks` reuse a single task execution function. Batch delegation executes 1-10 tasks concurrently via Tokio, with a Semaphore limiting actual concurrency to 5 by default; results are collected per sub-task and fed back to the main Agent in one pass.
+
+**Worktree isolation** (`subagentIsolationMode=auto` by default, `utils/worktree.rs`): on git projects, awaited write-capable subtasks get an isolated git worktree + branch in the sibling `<project>.aio-wt/` directory (based on the main checkout's current HEAD, `git worktree lock` held while running, stale entries swept); file/shell/git/LSP/project_map tools are all confined to the worktree root (commands and edits cannot reach the main checkout), while permission rules and project memory stay bound to the main project root. On completion the changes are committed to the task branch: Auto mode merges back into the current branch directly, Normal mode asks one batch approval; a conflict aborts the merge safely, keeps the worktree, and reports the conflicted files in the result. Non-git projects, network paths, background (`wait=false`) subagents and sequential workflow steps always run shared (file locks still apply).
 
 When an Agent is aborted or a streaming event fails, already-produced steps, tool outputs and file changes are still merged into the current assistant message and persisted, avoiding a blank final reply.
 

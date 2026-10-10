@@ -105,6 +105,7 @@ Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任
 ### 工具执行语义
 
 - **并行分发**：同一响应块内的只读内置工具并发执行（`FuturesUnordered`），变更类工具与 MCP 工具按原始顺序串行；`role:tool` 回填保持索引序。开关：`parallelToolExecution`。
+- **多智能体写协调**：变更类文件工具全部经 `execute_builtin_tool` 单一咽喉点串行化——per-file 互斥锁（`core/file_locks.rs`，等待 120 秒超时报持有者，等待 ≥3 秒发 `file-lock-contention` 事件）+ last-writer 追踪；文件被其他智能体修改过后，`replace_in_file` 强制携带 `anchor_hash`、覆盖性 `write_file` 强制携带 `expect_hash`（丢失更新转为可恢复的重读错误）；写入走 tmp+rename 原子替换（失败回退直接写）。
 - **主 Agent 工具集**（`mainAgentToolAccess`）：默认 `hybrid`——只读工具直达 + 变更走子代理；`orchestrator` 为严格编排（旧行为）；`full` 为主 Agent 持有全部内置工具。
 - **MCP 工具回接**：助手勾选的 server 工具注入主 Agent 与 general 子代理（`allow_mcp_tools`）；重名自动改写为 `mcp__<server>__<tool>`；未信任 server 在 Auto/Workflow 下强制逐次审批（`trusted` 字段）。
 - **模型调用重试**：POST + 状态检查阶段对传输错误与 429/5xx 按 1s/2s/4s 退避重试（`modelCallRetries`，默认 3）；流中段错误不重试。
@@ -121,6 +122,8 @@ Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任
 ### 子智能体与结果保全
 
 `delegate_task` 和 `delegate_tasks` 复用单任务执行函数。批量委托用 Tokio 并发执行 1–10 个任务，并由 Semaphore 将实际并发限制为默认 5；结果按子任务收集后一次回灌主 Agent。
+
+**Worktree 隔离**（`subagentIsolationMode=auto` 默认，`utils/worktree.rs`）：git 项目上被等待的写入类子任务在项目同级 `<项目>.aio-wt/` 目录获得独立 git worktree + 分支（基于主检出当前 HEAD，运行期 `git worktree lock`，过期由 sweep 清理）；file/shell/git/LSP/project_map 工具全部限定在 worktree root（命令与编辑无法触及主检出），权限规则与项目 memory 仍绑定主项目根。完成后变更 commit 到子分支：Auto 模式直接 `git merge` 回当前分支，Normal 模式整批一次审批；冲突则合并安全中止、worktree 保留，结果报告冲突文件清单。非 git 项目、网络路径与后台（`wait=false`）子智能体、工作流串行步骤固定共享模式（文件锁兜底）。
 
 Agent 中止或流式事件失败时，已经产生的步骤、工具输出和文件变更仍会合并进当前助手消息并持久化，避免只保留空白最终回复。
 

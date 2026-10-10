@@ -59,6 +59,7 @@ src-tauri/src/
 │   ├── state.rs         # Tauri managed state (StreamManager, DbState, LocalEngineState, SubagentHandles)
 │   ├── config.rs        # AppConfig 持久化（save_app_config/load_app_config；命令层仅存薄包装）
 │   ├── events.rs        # 后端→前端事件名常量注册表（kebab-case 守门测试；新事件须登记）
+│   ├── file_locks.rs    # 多智能体写协调：per-file 互斥锁 + last-writer 追踪 + 跨写者 hashline 门控
 │   ├── ids.rs           # 内置 ID 常量（BUILTIN_SERVER_ID / BUILTIN_FS_SERVER_ID）
 │   ├── migrate.rs       # 版本化 SQLite 迁移运行器（PRAGMA user_version；chat 库与记忆库共用）
 │   ├── model_registry.rs # 嵌入/重排模型注册表（MANIFEST）与目录解析
@@ -69,7 +70,7 @@ src-tauri/src/
 ├── commands/
 │   ├── mod.rs
 │   ├── config.rs        # Assistants, app config, profile model overrides, custom subagent profiles, auto-start, topic branching
-│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/titles/tool_specs/usage；btw.rs: "By The Way" 侧问
+│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/titles/tool_specs/usage/locked_tools（文件锁接线）；btw.rs: "By The Way" 侧问
 │   ├── engine.rs        # Local engine lifecycle: start/stop/status, engine scan, model listing
 │   ├── attachment.rs    # Chat attachments + file content extraction command
 │   ├── provider_config.rs # Provider configs (LobeHub-shaped), connection tests, model fetching, API key management
@@ -131,7 +132,8 @@ src-tauri/src/
     ├── truncate.rs      # 截断辅助（字符/字节头尾截断、truncate_tool_result）
     ├── diff.rs          # diff 预览（compute_diff_preview/simple_diff，含 char-boundary 安全）
     ├── jsonrpc.rs       # JSON-RPC pending 请求表（PendingMap；MCP 与 LSP 客户端共用）
-    └── project_index.rs # 项目索引辅助（projects 文件解析）
+    ├── project_index.rs # 项目索引辅助（projects 文件解析）
+    └── worktree.rs      # 子智能体 worktree 隔离（创建/提交/合并回主分支/冲突中止/过期清理）
 ```
 
 ## Coding Conventions
@@ -194,7 +196,7 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - `DbState`: SQLite connection.
 - `LocalEngineState`: running local engine processes, HashMap keyed by `engine_type`; one active engine at a time enforced by `start_local_server`.
 - `SubagentHandles`: background subagent join handles.
-- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`.
+- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`, `FileLockRegistry`（多智能体写协调，见 `core/file_locks.rs`）.
 
 ## Important Compatibility Notes
 

@@ -54,6 +54,15 @@ const buildTopicTree = (topics: Topic[]): { roots: Topic[]; children: Map<string
   return { roots, children };
 };
 
+// ---- Branch fold state (module scope) ----
+// Module-level so the fold state survives sidebar remounts: window/view
+// switches (e.g. entering/leaving the subagent conversation view) unmount the
+// whole chat column, and component-local state reset every fold to expanded.
+// Scoped to the current assistant via the reset branch of the effect below.
+const [collapsedTopicIds, setCollapsedTopicIds] = createSignal<Set<string>>(new Set());
+let prevChildCounts = new Map<string, number>();
+let foldAssistantId: string | undefined;
+
 const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
   const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);
@@ -64,13 +73,13 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     targetTopicId: null as string | null,
   });
 
-  // ---- Branch fold state ----
-  // Component-local, default expanded. Auto-expand fires when a folded topic
-  // gains a new child (e.g. branching from a message while the subtree is
-  // folded). Switching assistants resets fold state and counters wholesale.
-  const [collapsedTopicIds, setCollapsedTopicIds] = createSignal<Set<string>>(new Set());
-  let prevChildCounts = new Map<string, number>();
-  let foldAssistantId: string | undefined;
+  // Auto-expand: a folded topic that gains a new child (e.g. branching from a
+  // message while the subtree is folded) unfolds so the new branch is visible.
+  // Switching assistants resets fold state and counters. The reset branch
+  // deliberately FALLS THROUGH to snapshot counts in the same run — an early
+  // return left prevChildCounts empty, so the first fold click after a
+  // remount/switch read as a child-count increase and auto-expanded the very
+  // topic the user had just collapsed (the "click twice to fold" bug).
   createEffect(() => {
     const asst = props.currentAssistant;
     if (!asst) return;
@@ -78,7 +87,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
       foldAssistantId = asst.id;
       prevChildCounts = new Map();
       if (collapsedTopicIds().size > 0) setCollapsedTopicIds(new Set<string>());
-      return;
     }
     const counts = new Map<string, number>();
     for (const tp of asst.topics) {

@@ -2,6 +2,15 @@
 
 # Changelog
 
+## [Unreleased]
+
+### 🤖 Subagents（子智能体）
+
+- **多智能体并行文件编辑**：业界调研（Claude Code / Amp / Vibe Kanban / Magentic-One / OpenHands）后落地两层防冲突机制——
+  - **worktree 物理隔离**（`subagentIsolationMode=auto` 默认）：git 项目上被等待的写入类子任务自动获得独立 git worktree + 分支（项目同级 `<项目>.aio-wt/`、基于当前 HEAD、运行期锁定），完成后提交子分支并自动合并回当前分支（Auto 直并 / Normal 整批一次审批）；冲突安全中止并报告冲突文件清单；非 git/网络路径自动回退共享模式；`delegate_task(s)` 新增 `isolation` 参数支持 per-task 覆盖
+  - **共享模式文件锁基座**：`write_file` / `replace_in_file` / `delete_file` / `make_directory` 按文件互斥锁（120 秒超时报持有者）+ 原子写（tmp+rename）+ 跨写者 hashline 强制（文件被其他智能体修改过后 `replace_in_file` 必须带 `anchor_hash`、覆盖性 `write_file` 必须带新参数 `expect_hash`），丢失更新转为可恢复的重读错误；新增 `file-lock-contention` 事件
+- 设置新增「并行写入隔离」选项（自动 / 始终独立工作区 / 共享目录仅文件锁）
+
 ## [v0.8.0]
 
 <sup>Released on **2026-10-10**</sup>

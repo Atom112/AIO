@@ -59,10 +59,6 @@ pub const MCP_TOOLS_CHANGED: &str = "mcp-tools-changed";
 /// Tool approval request (waiting for user confirmation)
 pub const TOOL_APPROVAL_REQUESTED: &str = "tool-approval-requested";
 
-/// File lock contention between agents (a mutating file tool waited for / timed out on a
-/// per-file lock held by another agent)
-pub const FILE_LOCK_CONTENTION: &str = "file-lock-contention";
-
 /// Agent task board changed (create_tasks / update_task)
 pub const AGENT_TASKS_CHANGED: &str = "agent-tasks-changed";
 
@@ -107,7 +103,6 @@ mod tests {
             MCP_SERVER_STDERR,
             MCP_TOOLS_CHANGED,
             TOOL_APPROVAL_REQUESTED,
-            FILE_LOCK_CONTENTION,
             AGENT_TASKS_CHANGED,
             AGENT_QUESTION_REQUESTED,
             BTW_CHUNK,

@@ -53,9 +53,6 @@ export const EVENTS = {
   /** Tool approval request */
   toolApprovalRequested: 'tool-approval-requested',
 
-  /** File lock contention between agents (wait / timeout on a per-file lock) */
-  fileLockContention: 'file-lock-contention',
-
   /** Agent task board changed (create_tasks / update_task) */
   agentTasksChanged: 'agent-tasks-changed',
 

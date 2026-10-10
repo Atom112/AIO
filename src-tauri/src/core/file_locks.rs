@@ -14,13 +14,14 @@
 //! `cross_writer_gate`).
 //!
 //! Scope: locks are in-process only. The legacy stdio fs MCP server (`mcp_fs_server.rs`)
-//! runs in a separate process and cannot participate — it is a compatibility path; agent
-//! file tools call in-process now (see `utils/file_tools.rs`).
+//! runs in a separate process and cannot participate — its agent-facing tool variants are
+//! therefore filtered out of tool-set assembly (`FsServerPolicy` in
+//! `commands/llm/tool_dispatch.rs`) so every mutating file tool routes through this choke
+//! point; the server itself remains for external MCP clients.
 
 use crate::ierr;
 use dashmap::DashMap;
 use serde_json::Value;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -30,17 +31,15 @@ use tokio_util::sync::CancellationToken;
 /// an actionable error naming the current holder instead of blocking the agent forever.
 pub const LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Waits longer than this emit a `file-lock-contention` event so the UI can surface
-/// coordination friction between agents.
+/// Waits at least this long are logged (tracing) as coordination friction; timeouts always
+/// error to the model with the holder name.
 pub const CONTENTION_REPORT_AFTER: Duration = Duration::from_secs(3);
 
 struct LockEntry {
     sem: Arc<Semaphore>,
     /// Label of the agent currently holding (or last holding) the lock — informational,
-    /// shown in timeout errors and contention events.
+    /// shown in timeout errors.
     holder: Mutex<String>,
-    /// Number of tasks currently waiting to acquire (contention reporting).
-    waiters: AtomicU32,
 }
 
 impl LockEntry {
@@ -48,7 +47,6 @@ impl LockEntry {
         Self {
             sem: Arc::new(Semaphore::new(1)),
             holder: Mutex::new(String::new()),
-            waiters: AtomicU32::new(0),
         }
     }
 }
@@ -102,6 +100,22 @@ impl FileLockRegistry {
         }
     }
 
+    /// Normalized lock key: on Windows the filesystem is case-insensitive, so two
+    /// spellings of one file (Foo.txt / foo.txt) must share one lock and one
+    /// last-writer entry. Keys come from `safe_path`, whose canonicalization only
+    /// covers existing components — the final spelling of not-yet-existing files is
+    /// caller-provided, hence the fold here.
+    fn key(path: &str) -> String {
+        #[cfg(windows)]
+        {
+            path.to_ascii_lowercase()
+        }
+        #[cfg(not(windows))]
+        {
+            path.to_string()
+        }
+    }
+
     /// Acquires the exclusive per-path lock, waiting up to `timeout` for the current
     /// holder. Cancel-safe: the wait aborts when `token` fires (the semaphore acquire is
     /// dropped and any queued waiter moves on).
@@ -112,15 +126,15 @@ impl FileLockRegistry {
         token: Option<&CancellationToken>,
         timeout: Duration,
     ) -> Result<FileLockGuard, FileLockError> {
+        let key = Self::key(path);
         // `entry()`'s RefMut guard derefs to the stored Arc and is dropped at the end of
         // the statement, so awaiting below never holds a DashMap shard lock.
         let entry: Arc<LockEntry> = self
             .locks
-            .entry(path.to_string())
+            .entry(key)
             .or_insert_with(|| Arc::new(LockEntry::new()))
             .clone();
 
-        entry.waiters.fetch_add(1, Ordering::Relaxed);
         let started = Instant::now();
         let was_free = entry.sem.available_permits() > 0;
         let previous_holder =
@@ -135,12 +149,10 @@ impl FileLockRegistry {
 
         let permit = tokio::select! {
             _ = cancelled_fut => {
-                entry.waiters.fetch_sub(1, Ordering::Relaxed);
                 return Err(FileLockError::Cancelled);
             }
             _ = tokio::time::sleep(timeout) => {
                 let current = entry.holder.lock().map(|h| h.clone()).unwrap_or_default();
-                entry.waiters.fetch_sub(1, Ordering::Relaxed);
                 return Err(FileLockError::Timeout {
                     holder: current,
                     waited: started.elapsed(),
@@ -149,7 +161,6 @@ impl FileLockRegistry {
             p = entry.sem.clone().acquire_owned() => match p {
                 Ok(p) => p,
                 Err(_) => {
-                    entry.waiters.fetch_sub(1, Ordering::Relaxed);
                     return Err(FileLockError::Closed);
                 }
             },
@@ -158,7 +169,6 @@ impl FileLockRegistry {
         if let Ok(mut h) = entry.holder.lock() {
             *h = holder.to_string();
         }
-        entry.waiters.fetch_sub(1, Ordering::Relaxed);
         Ok(FileLockGuard {
             _permit: permit,
             waited_for: started.elapsed(),
@@ -169,13 +179,15 @@ impl FileLockRegistry {
     /// The id of the writer that last successfully modified `path` (`None` when the file
     /// was never written through the lock choke point).
     pub fn last_writer(&self, path: &str) -> Option<String> {
-        self.last_writers.get(path).map(|v| v.value().clone())
+        self.last_writers
+            .get(&Self::key(path))
+            .map(|v| v.value().clone())
     }
 
     /// Records a successful write to `path` by `writer_id`.
     pub fn mark_writer(&self, path: &str, writer_id: &str) {
         self.last_writers
-            .insert(path.to_string(), writer_id.to_string());
+            .insert(Self::key(path), writer_id.to_string());
     }
 
     /// Number of lock entries currently tracked (test assertions).
@@ -489,5 +501,38 @@ mod tests {
             .expect("不同路径互不阻塞");
         assert_eq!(r.len(), 2);
         assert!(!r.is_empty());
+    }
+
+    /// On Windows (case-insensitive filesystem) two spellings of one file must share a
+    /// single lock and last-writer entry; on case-sensitive platforms they are distinct
+    /// files by definition and stay independent.
+    #[tokio::test]
+    async fn case_fold_keys_match_filesystem_semantics() {
+        let r = registry();
+        let upper = "/p/Foo.TXT";
+        let lower = "/p/foo.txt";
+        let _g1 = r
+            .acquire(upper, "agent-a", None, Duration::from_secs(1))
+            .await
+            .unwrap();
+        let second = r
+            .acquire(lower, "agent-b", None, Duration::from_millis(80))
+            .await;
+
+        r.mark_writer(upper, "agent-a");
+        let writer_via_lower = r.last_writer(lower);
+
+        #[cfg(windows)]
+        {
+            assert!(second.is_err(), "大小写变体必须是同一把锁");
+            drop(_g1);
+            let w = writer_via_lower.expect("同一 last-writer 条目");
+            assert_eq!(w, "agent-a", "Windows 下大小写折叠必须共享 last-writer");
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(second.is_ok(), "大小写敏感文件系统应为不同文件");
+            assert!(writer_via_lower.is_none(), "不同键不应串写");
+        }
     }
 }

@@ -313,10 +313,7 @@ const McpServerDetail: Component<Props> = (props) => {
                             />
                           }
                         >
-                          {/* FE-01: 密钥托管字段只读展示——显示的是本地化文案，
-                              onInput 拿 DOM 值写回 env 会把 ${KEYRING:...} 引用
-                              替换成垃圾串并被持久化（密钥引用丢失）。重新输入请
-                              删除该条目或直接改写新值前先清空。 */}
+                          {/* FE-01: read-only keyring placeholder (title explains how to replace) */}
                           <input
                             class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
                             style={{

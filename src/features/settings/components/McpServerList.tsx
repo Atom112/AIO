@@ -44,6 +44,40 @@ import { formatNumber, reportError, t } from '../../../core/i18n';
 
 type ViewMode = 'market' | 'downloaded';
 
+// Frontend render-cache for the catalog's default first page (empty search,
+// limit 30): localStorage snapshot rendered synchronously on mount so the
+// market opens instantly, mirroring the skills-market pattern. The backend
+// already disk-caches registry pages (6h TTL); this layer removes the
+// loading flash and the blocking wait on TTL expiry (stale-while-revalidate).
+const CATALOG_CACHE_KEY = 'aio-mcp-catalog-cache-v1';
+const CATALOG_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+interface McpCatalogCache {
+  updatedAt: number;
+  servers: McpCatalogServer[];
+  nextCursor?: string;
+}
+
+const readCatalogCache = (): McpCatalogCache | null => {
+  try {
+    const raw = localStorage.getItem(CATALOG_CACHE_KEY);
+    if (!raw) return null;
+    const cache = JSON.parse(raw) as McpCatalogCache;
+    if (!cache.updatedAt || !Array.isArray(cache.servers)) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+};
+
+const writeCatalogCache = (cache: McpCatalogCache) => {
+  try {
+    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Cache write failure must not block catalog browsing.
+  }
+};
+
 const McpServerList: Component = () => {
   const [view, setView] = createSignal<ViewMode>('market');
   const [catalog, setCatalog] = createSignal<McpCatalogServer[]>([]);
@@ -66,8 +100,11 @@ const McpServerList: Component = () => {
   };
 
   const loadCatalog = async (forceRefresh = false, cursor?: string) => {
+    // Only show the blocking spinner when there is nothing to render yet;
+    // with cached data the refresh happens silently in the background.
+    const isBackground = !!cursor || catalog().length > 0;
     if (cursor) setLoadingMore(true);
-    else setLoading(true);
+    else if (!isBackground) setLoading(true);
     setError(null);
     try {
       const page = await listMcpCatalog({
@@ -78,6 +115,16 @@ const McpServerList: Component = () => {
       });
       setCatalog(cursor ? [...catalog(), ...page.servers] : page.servers);
       setNextCursor(page.nextCursor);
+      // Persist the default first page (no search, no pagination) for the
+      // instant-render-on-mount path; searched/paginated views rely on the
+      // backend cache alone.
+      if (!cursor && !query().trim()) {
+        writeCatalogCache({
+          updatedAt: Date.now(),
+          servers: page.servers,
+          nextCursor: page.nextCursor,
+        });
+      }
     } catch (e) {
       setError(reportError('error.load', e));
     } finally {
@@ -88,7 +135,15 @@ const McpServerList: Component = () => {
 
   onMount(async () => {
     try {
-      await Promise.all([loadLocal(), loadCatalog()]);
+      // Render the persisted snapshot synchronously: the market opens with
+      // content immediately; a fresh cache skips the network entirely.
+      const cache = readCatalogCache();
+      const cacheIsFresh = !!cache && Date.now() - cache.updatedAt < CATALOG_CACHE_TTL_MS;
+      if (cache) {
+        setCatalog(cache.servers);
+        setNextCursor(cache.nextCursor);
+      }
+      await Promise.all([loadLocal(), cacheIsFresh ? Promise.resolve() : loadCatalog()]);
     } catch (e) {
       setError(reportError('error.load', e));
     }

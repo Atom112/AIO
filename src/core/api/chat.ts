@@ -53,6 +53,20 @@ export const summarizeHistory = (creds: LlmCredentials, messagesJson: string, lo
 export const archiveHistory = (messagesJson: string, model: string, locale: string) =>
   invoke<string>('archive_history', { messagesJson, model, locale });
 
+/** Auto vision analysis: a vision-capable model describes the images (used when the main model lacks vision). Returns the structured description. */
+export const visionAnalyzeImages = (
+  creds: LlmCredentials,
+  attachmentIds: string[],
+  userText: string,
+  locale: string,
+) =>
+  invoke<string>('vision_analyze_images', {
+    ...creds,
+    attachmentIds,
+    userText,
+    locale,
+  });
+
 /** Generate a title for a topic; returns the title text. */
 export const generateTopicTitle = (creds: LlmCredentials, messagesJson: string) =>
   invoke<string>('generate_topic_title', { ...creds, messagesJson });

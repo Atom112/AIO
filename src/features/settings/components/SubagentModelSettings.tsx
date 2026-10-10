@@ -51,6 +51,7 @@ const BUILTIN_PROFILE_IDS = new Set([
   'writer',
   'tester',
   'requirements',
+  'vision',
 ]);
 
 const BUILTIN_PROFILES: ProfileInfo[] = [
@@ -98,6 +99,11 @@ const BUILTIN_PROFILES: ProfileInfo[] = [
     id: 'requirements',
     name: t('subagent.profile.requirementsAnalyst'),
     description: t('subagent.profileDesc.requirements'),
+  },
+  {
+    id: 'vision',
+    name: t('subagent.profile.visionAnalyst'),
+    description: t('subagent.profileDesc.vision'),
   },
 ];
 

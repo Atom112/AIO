@@ -14,6 +14,7 @@ import {
   stopLlmStream,
   summarizeHistory,
   archiveHistory,
+  visionAnalyzeImages,
   type ActiveCheckpoint,
 } from '../../core/api/chat';
 import { storeChatAttachment } from '../../core/api/attachment';
@@ -69,6 +70,7 @@ import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
 import Icon from '../../shared/components/Icon';
 import { isImageGenModel } from '../../core/utils/models';
+import { modelSupportsVision, resolveVisionModel } from './vision';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
@@ -1317,11 +1319,47 @@ ${asstObj.prompt}`;
     const topicId = currentTopicId();
     if (!asstId || !topicId) return;
 
+    // ---- auto vision analysis ----
+    // When the selected model cannot see images, the vision agent looks at
+    // them first: its structured description replaces the raw image parts
+    // (a non-vision model would ignore or reject the base64 payloads). The
+    // image attachments are unlinked (id stripped) so later turns never
+    // re-embed them; the history bubbles still show the thumbnails (they
+    // render from storagePath, not the id).
+    let outgoingText = userInput;
+    // Stripped image entries carry an optional id (AttachmentMeta-level):
+    // message_for_api skips id-less files, so later turns never re-embed them.
+    let outgoingFiles: Array<Omit<PendingAttachment, 'id'> & { id?: string }> = files;
+    if (files.some((f) => f.type === 'image') && !modelSupportsVision(currentMdl)) {
+      const visionModel = resolveVisionModel(currentMdl);
+      if (visionModel) {
+        setIsThinking(true);
+        try {
+          const imageIds = files.filter((f) => f.type === 'image').map((f) => f.id);
+          const description = await visionAnalyzeImages(
+            llmCreds(visionModel),
+            imageIds,
+            outgoingText,
+            locale(),
+          );
+          outgoingFiles = files.map((f) => (f.type === 'image' ? { ...f, id: undefined } : f));
+          outgoingText = `${outgoingText}\n\n${t('chat.visionAnalysisPrefix')}\n${description}`;
+        } catch (err) {
+          // Vision analysis failed — fall back to sending the images as-is
+          console.warn('[vision] analysis failed, sending images unchanged:', err);
+        } finally {
+          setIsThinking(false);
+        }
+      } else {
+        console.warn('[vision] no vision-capable model available; sending images unchanged');
+      }
+    }
+
     const newUserMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
-      content: userInput,
-      displayFiles: files.map((f) => ({
+      content: outgoingText,
+      displayFiles: outgoingFiles.map((f) => ({
         id: f.id,
         name: f.name,
         mimeType: f.mimeType,

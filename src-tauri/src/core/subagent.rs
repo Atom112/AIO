@@ -1,6 +1,6 @@
 //! Sub-agent profiles and tool definitions.
 //!
-//! Provides nine built-in sub-agent profiles, each restricting a different toolset and behavior:
+//! Provides ten built-in sub-agent profiles, each restricting a different toolset and behavior:
 //! - `explorer`: read-only code explorer for large-scale file retrieval and architecture analysis
 //! - `coder`: code implementer focused on writing and modifying files
 //! - `general`: general-purpose sub-agent with the full toolset
@@ -10,6 +10,7 @@
 //! - `writer`: documentation writer, can read and write files to produce documentation
 //! - `tester`: test engineer, can run tests and write test files
 //! - `requirements`: requirements analyst, read-only analysis that decomposes user requests into structured workflow plans
+//! - `vision`: vision analyst, toolless; auto-invoked to describe user images when the main model lacks vision
 //!
 //! Sub-agents are created via the main agent's `delegate_task` tool; each sub-agent
 //! has its own LLM context window and reports progress to the frontend via Tauri events.
@@ -330,6 +331,24 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             .into(),
             model_override: None,
         },
+        SubagentProfile {
+            id: "vision".into(),
+            allow_mcp_tools: false,
+            name: "视觉分析师".into(),
+            description: "图像理解与视觉分析。主模型不支持图片输入时自动代为看图，输出结构化的图像描述。不使用任何工具。".into(),
+            // Toolless agent: denied_tools ["*"] blocks every tool (empty
+            // allowed_tools would mean allow-all).
+            allowed_tools: vec![],
+            denied_tools: vec!["*".into()],
+            system_prompt_extension: concat!(
+                "你是 AIO 的视觉分析智能体。主对话模型不支持图像输入时，由你代为查看用户发送的图片。\n",
+                "你的任务是：结合用户的消息，详细描述图片中的关键内容——场景与主体、可见文字（逐字转录）、",
+                "图表与其中的数据、界面元素、以及与用户问题直接相关的细节。\n",
+                "输出一份结构化描述，供主模型作为图像内容的依据。不要臆造图中不存在的信息。"
+            )
+            .into(),
+            model_override: None,
+        },
     ]
 }
 
@@ -369,7 +388,8 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
             description: concat!(
                 "创建一个子智能体执行独立子任务，复杂/多步任务应优先委托。可用角色：",
                 "explorer(只读探索)、coder(实现)、general(全能力)、architect(架构)、debugger(诊断)、",
-                "reviewer(审查)、writer(文档)、tester(测试)、requirements(需求分析)或自定义角色 ID。",
+                "reviewer(审查)、writer(文档)、tester(测试)、requirements(需求分析)、vision(看图分析，",
+                "无需模型自行具备视觉能力)或自定义角色 ID。",
                 "子智能体独立执行并在完成后返回工作总结；同一轮可并行创建多个子智能体。"
             )
             .into(),
@@ -377,7 +397,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                 "type": "object",
                 "properties": {
                     "profile": {
-                        "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用全能力）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试执行）、requirements（需求分析），或任意自定义角色 ID"
+                        "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用全能力）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试执行）、requirements（需求分析）、vision（看图分析），或任意自定义角色 ID"
                     },
                     "task": {
                         "type": "string",
@@ -430,7 +450,7 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
                             "properties": {
                                 "profile": {
                                     "type": "string",
-                                    "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试）、requirements（需求分析）或自定义角色 ID"
+                                    "description": "子智能体类型：explorer（只读探索）、coder（代码编写）、general（通用）、architect（架构设计）、debugger（问题诊断）、reviewer（代码审查）、writer（文档撰写）、tester（测试）、requirements（需求分析）、vision（看图分析）或自定义角色 ID"
                                 },
                                 "task": {
                                     "type": "string",
@@ -526,7 +546,7 @@ pub fn create_workflow_tool_spec() -> ToolSpec {
                             "properties": {
                                 "profile": {
                                     "type": "string",
-                                    "description": "子智能体类型：explorer、coder、general、architect、debugger、reviewer、writer、tester、requirements，或任意自定义角色 ID"
+                                    "description": "子智能体类型：explorer、coder、general、architect、debugger、reviewer、writer、tester、requirements、vision，或任意自定义角色 ID"
                                 },
                                 "name": {
                                     "type": "string",

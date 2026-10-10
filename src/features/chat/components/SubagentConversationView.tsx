@@ -67,6 +67,12 @@ const PROFILE_STYLES: Record<string, SubagentProfileStyle> = {
     bgColor: 'rgba(255,183,77,0.08)',
     borderColor: 'rgba(255,183,77,0.25)',
   },
+  vision: {
+    icon: 'eye',
+    color: 'rgba(255,105,180,0.85)',
+    bgColor: 'rgba(255,105,180,0.08)',
+    borderColor: 'rgba(255,105,180,0.25)',
+  },
 };
 
 const DEFAULT_PROFILE: SubagentProfileStyle = {
@@ -87,6 +93,8 @@ export function subagentProfileLabel(profileId?: string): string {
       return t('agent.profile.general');
     case 'requirements':
       return t('agent.profile.requirements');
+    case 'vision':
+      return t('agent.profile.vision');
     default:
       return t('agent.profile.subagent');
   }

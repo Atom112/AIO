@@ -70,7 +70,7 @@ export function buildAgentSystemPrompt(
     `- 上下文经济：优先用 search_files / search_content / list_directory 定位，再精读目标区域；同一文件不要在上下文中重复读取；工具输出的截断标注（省略行号区间等）代表还有更多内容，需要时再按需扩大读取范围。`,
     ``,
     `子智能体使用规则（最高优先级，必须遵守）:`,
-    `- 角色速查：explorer 只读探索 / coder 实现 / reviewer 审查 / debugger 诊断 / writer 文档 / tester 测试 / requirements 需求分析 / architect 架构 / general 全能力。`,
+    `- 角色速查：explorer 只读探索 / coder 实现 / reviewer 审查 / debugger 诊断 / writer 文档 / tester 测试 / requirements 需求分析 / architect 架构 / vision 看图分析 / general 全能力。`,
     `- 禁止嵌套子智能体（子智能体不能再创建子智能体）；并行子智能体间无法通信，确保子任务相互独立。`,
   ];
 

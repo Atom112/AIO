@@ -40,6 +40,7 @@ pub(crate) mod titles;
 pub(crate) mod tool_dispatch;
 pub(crate) mod tool_specs;
 pub(crate) mod usage;
+pub(crate) mod vision;
 
 pub(crate) use budget::*;
 pub(crate) use checkpoints::*;
@@ -52,6 +53,7 @@ pub(crate) use titles::*;
 pub(crate) use tool_dispatch::*;
 pub(crate) use tool_specs::*;
 pub(crate) use usage::*;
+pub(crate) use vision::*;
 /// Round and context budgets for the agent loop (main loop derives from model window;
 /// subagents use conservative constants but honor explicit user config for rounds).
 ///

@@ -130,6 +130,7 @@ pub fn run() {
             commands::attachment::process_file_content,
             commands::llm::summarize_history,
             commands::llm::archive_history,
+            commands::llm::vision_analyze_images,
             commands::llm::append_message,
             commands::llm::btw::ask_btw_question,
             commands::llm::delete_topic_message,

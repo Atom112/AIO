@@ -65,7 +65,7 @@ src-tauri/src/
 │   ├── paths.rs         # 应用数据目录 / 包 ID
 │   ├── permission.rs    # Agent tool permission model (allowed/denied rules per agent mode)
 │   ├── secure_store.rs  # OS keychain-backed secret storage (API keys, MCP server secrets)
-│   └── subagent.rs      # Subagent profile definitions (9 built-in) + tool specs
+│   └── subagent.rs      # Subagent profile definitions (10 built-in, incl. toolless vision) + tool specs
 ├── commands/
 │   ├── mod.rs
 │   ├── config.rs        # Assistants, app config, profile model overrides, custom subagent profiles, auto-start, topic branching

@@ -321,17 +321,9 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         <div
                           class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
                           classList={{
-                            // Active: root rows keep their neutral surface but gain a
-                            // themed border + inner glow; child rows (transparent,
-                            // borderless at rest) get the glow alone.
-                            ...(topic.id === currentTopicId()
-                              ? isChild
-                                ? { 'active-glow': true }
-                                : {
-                                    '!border-[rgba(var(--primary-rgb),0.55)]': true,
-                                    'active-glow': true,
-                                  }
-                              : {}),
+                            // Active: keep the resting border/background untouched;
+                            // only the themed inner glow marks the state.
+                            'active-glow': topic.id === currentTopicId(),
                           }}
                           onClick={() => setCurrentTopicId(topic.id)}
                         >

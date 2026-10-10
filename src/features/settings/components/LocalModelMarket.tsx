@@ -25,9 +25,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon from '../../../shared/components/Icon';
 import {
-  btnBadge,
-  btnBadgeBar,
-  btnDangerBadge,
+  btnDanger,
   btnSecondarySm,
   btnTabXs,
   tabActive,
@@ -197,9 +195,22 @@ const SEGMENTS: ReadonlyArray<{
 const GGUF_ENGINES = LOCAL_ENGINE_PROVIDERS.filter((p) => p.allowModelFileSelection);
 
 const LocalModelMarket: Component = () => {
-  /** Target engine for registration (llama.cpp / Ollama); download proxy follows its provider config */
-  const [engineId, setEngineId] = createSignal<string>(GGUF_ENGINES[0]?.id ?? 'local-llamacpp');
-  const engineDef = () => GGUF_ENGINES.find((p) => p.id === engineId()) ?? GGUF_ENGINES[0];
+  /**
+   * Target engines for registration (llama.cpp / Ollama), multi-selectable: the GGUF on
+   * disk is shared, so one download can serve both engines. Download proxy follows the
+   * first selected engine provider that has a proxy configured.
+   */
+  const [engineIds, setEngineIds] = createSignal<Set<string>>(
+    new Set(GGUF_ENGINES.map((e) => e.id)),
+  );
+  const toggleEngine = (id: string) => {
+    setEngineIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [query, setQuery] = createSignal('');
   const [debouncedQuery, setDebouncedQuery] = createSignal('');
   const [segment, setSegment] = createSignal('all');
@@ -208,6 +219,8 @@ const LocalModelMarket: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal('');
   const [expandedId, setExpandedId] = createSignal<string | null>(null);
+  /** model id -> download id of its in-flight (or paused) quant-family download */
+  const [activeDownload, setActiveDownload] = createSignal<Record<string, string>>({});
   const [fileGroups, setFileGroups] = createSignal<Record<string, FileGroup[]>>({});
   const [filesLoading, setFilesLoading] = createSignal<Record<string, boolean>>({});
   const [filesError, setFilesError] = createSignal<Record<string, string>>({});
@@ -225,39 +238,46 @@ const LocalModelMarket: Component = () => {
   /** Provider logo (lobehub) for a market row: org table first, then model-name rules */
   const rowLogo = (m: MarketModel) => getLogo(m.org, m.name);
 
-  const engineProxyUrl = () => providerConfigs()[engineId()]?.proxyUrl;
+  const engineProxyUrl = () => {
+    for (const e of engineIds()) {
+      const p = providerConfigs()[e]?.proxyUrl;
+      if (p) return p;
+    }
+    return undefined;
+  };
 
   /**
-   * Registers a downloaded model into the selected engine provider (the same shape as the
-   * manual GGUF import on the provider detail page: localModelPaths + enabledModels).
+   * Registers a downloaded model into every selected engine provider (the same shape as
+   * the manual GGUF import on the provider detail page: localModelPaths + enabledModels).
    */
   const registerModel = async (modelId: string, entryPath: string) => {
-    const pid = engineId();
-    const def = engineDef();
-    const cfgs = providerConfigs();
-    const cur = cfgs[pid];
-    const next: ProviderConfig = {
-      ...(cur ?? {
+    for (const pid of engineIds()) {
+      const def = GGUF_ENGINES.find((p) => p.id === pid);
+      const cfgs = providerConfigs();
+      const cur = cfgs[pid];
+      const next: ProviderConfig = {
+        ...(cur ?? {
+          id: pid,
+          enabled: false,
+          displayName: def?.name ?? pid,
+          apiUrl: def?.defaultApiUrl ?? '',
+          apiKey: '',
+          enabledModels: [],
+          isCustom: true,
+          customModelIds: [],
+        }),
         id: pid,
-        enabled: false,
-        displayName: def?.name ?? pid,
-        apiUrl: def?.defaultApiUrl ?? '',
-        apiKey: '',
-        enabledModels: [],
-        isCustom: true,
-        customModelIds: [],
-      }),
-      id: pid,
-      enabled: true,
-      enabledModels: (cur?.enabledModels ?? []).includes(modelId)
-        ? cur!.enabledModels
-        : [...(cur?.enabledModels ?? []), modelId],
-      localModelPaths: { ...(cur?.localModelPaths ?? {}), [modelId]: entryPath },
-    };
-    const map = { ...cfgs, [pid]: next };
-    const file = { version: 2, updatedAt: String(Date.now()), providers: map };
-    await saveProviderConfigs(file);
-    setProviderConfigs(map);
+        enabled: true,
+        enabledModels: (cur?.enabledModels ?? []).includes(modelId)
+          ? cur!.enabledModels
+          : [...(cur?.enabledModels ?? []), modelId],
+        localModelPaths: { ...(cur?.localModelPaths ?? {}), [modelId]: entryPath },
+      };
+      const map = { ...cfgs, [pid]: next };
+      const file = { version: 2, updatedAt: String(Date.now()), providers: map };
+      await saveProviderConfigs(file);
+      setProviderConfigs(map);
+    }
   };
 
   const hardware = () => cachedHardware();
@@ -359,13 +379,10 @@ const LocalModelMarket: Component = () => {
     return [...list].sort((a, b) => fit(a) - fit(b));
   });
 
-  const toggleExpand = async (m: MarketModel) => {
-    if (expandedId() === m.id) {
-      setExpandedId(null);
-      return;
-    }
-    setExpandedId(m.id);
-    if (fileGroups()[m.id]) return;
+  /** Loads a model's file groups (once); returns null when the listing fails. */
+  const ensureGroups = async (m: MarketModel): Promise<FileGroup[] | null> => {
+    const existing = fileGroups()[m.id];
+    if (existing) return existing;
     setFilesLoading((prev) => ({ ...prev, [m.id]: true }));
     setFilesError((prev) => ({ ...prev, [m.id]: '' }));
     try {
@@ -384,22 +401,30 @@ const LocalModelMarket: Component = () => {
           ...prev,
           [m.id]: t('provider.localModelMarket.noFiles'),
         }));
-        return;
+        return null;
       }
       // Merge by lowercase file name (same file may exist on both platforms)
       const byName = new Map<string, MarketFile>();
       for (const f of all) {
         const key = f.name.toLowerCase();
-        const existing = byName.get(key);
-        if (!existing || f.size > existing.size) byName.set(key, f);
+        const existingFile = byName.get(key);
+        if (!existingFile || f.size > existingFile.size) byName.set(key, f);
       }
-      setFileGroups((prev) => ({
-        ...prev,
-        [m.id]: buildFileGroups([...byName.values()]),
-      }));
+      const groups = buildFileGroups([...byName.values()]);
+      setFileGroups((prev) => ({ ...prev, [m.id]: groups }));
+      return groups;
     } finally {
       setFilesLoading((prev) => ({ ...prev, [m.id]: false }));
     }
+  };
+
+  const toggleExpand = async (m: MarketModel) => {
+    if (expandedId() === m.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(m.id);
+    await ensureGroups(m);
   };
 
   const pct = (id: string) => {
@@ -411,6 +436,7 @@ const LocalModelMarket: Component = () => {
   const downloadGroup = async (m: MarketModel, g: FileGroup) => {
     if (!g.complete) return;
     const id = g.id;
+    setActiveDownload((prev) => ({ ...prev, [m.id]: id }));
     setDownloading((prev) => ({ ...prev, [id]: true }));
     setPausedIds((prev) => ({ ...prev, [id]: false }));
     setProgress((prev) => ({ ...prev, [id]: { file: '', downloaded: 0, total: 0, source: '' } }));
@@ -472,6 +498,18 @@ const LocalModelMarket: Component = () => {
         return next;
       });
     }
+  };
+
+  /** Row-level one-click download: fetches the file list if needed and downloads the
+   *  recommended quant-family (first complete recommended group, else the first group). */
+  const downloadDefault = async (m: MarketModel) => {
+    const groups = await ensureGroups(m);
+    if (!groups) {
+      setNotice(filesError()[m.id] || t('provider.localModelMarket.noFiles'));
+      return;
+    }
+    const g = groups.find((x) => x.recommended && x.complete) ?? groups.find((x) => x.complete);
+    if (g) await downloadGroup(m, g);
   };
 
   const pauseDownload = (id: string) => {
@@ -541,77 +579,152 @@ const LocalModelMarket: Component = () => {
   const renderModelRow = (m: MarketModel, index: () => number) => {
     const groups = () => fileGroups()[m.id] ?? [];
     const isExpanded = () => expandedId() === m.id;
-    const isLoadingFiles = () => filesLoading()[m.id];
     const filesErr = () => filesError()[m.id];
+    // Row-level download state: the active quant-family download of this model
+    const activeId = () => activeDownload()[m.id];
+    const isDownloading = () => (activeId() ? !!downloading()[activeId()!] : false);
+    const isPaused = () => (activeId() ? !!pausedIds()[activeId()!] : false);
+    const dlProgress = () => (activeId() ? progress()[activeId()!] : undefined);
+    const rowPct = () => (activeId() ? pct(activeId()!) : 0);
+    /** Resume the paused download (or fall back to the default quant) */
+    const resumeRow = async () => {
+      const g = groups().find((x) => x.id === activeId());
+      if (g) await downloadGroup(m, g);
+      else await downloadDefault(m);
+    };
     return (
       <div
         class="rounded-[10px] border border-white/[0.05] bg-white/[0.02] animate-row-in"
         style={{ 'animation-delay': (index() + 1) * 30 + 'ms' }}
       >
-        <button
-          type="button"
-          class="w-full flex items-center gap-3 px-3 py-2.5 text-left"
-          onClick={() => void toggleExpand(m)}
-        >
-          <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0">
-            {rowLogo(m) ? (
-              <img src={rowLogo(m)!} alt={m.org} class="w-5 h-5 object-contain" />
-            ) : (
-              <span class="font-bold text-[15px]" style={{ color: 'var(--color-dark-700)' }}>
-                {(m.org || m.name).charAt(0).toUpperCase()}
-              </span>
-            )}
-          </div>
-          <div class="grow min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-[13px] text-white/85 font-medium truncate">{m.name}</span>
-              <Show when={m.paramsB !== null}>
-                <span class="px-1 py-0.5 rounded bg-white/10 text-[10px] shrink-0 font-mono">
-                  {m.paramsB}B
-                </span>
-              </Show>
-              <Show when={fitsHardware(m)}>
-                <span class="px-1 py-0.5 rounded bg-pri-20 text-pri text-[10px] shrink-0">
-                  {t('provider.localModelMarket.hwFit')}
-                </span>
-              </Show>
-              <Show when={m.license}>
-                <span
-                  class="px-1 py-0.5 rounded text-[10px] shrink-0"
-                  style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
-                >
-                  {m.license}
-                </span>
-              </Show>
-            </div>
-            <div class="text-[10px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-              {m.org}
-              <Show when={m.chineseName}>
-                <span class="ml-1.5">{m.chineseName}</span>
-              </Show>
-              <span class="ml-1.5 opacity-70">
-                {formatNumber(m.downloads)} {t('provider.localModelMarket.downloads')}
-              </span>
-              <For each={m.sources}>
-                {(s) => (
-                  <span class="ml-1.5 opacity-70">
-                    {s === 'huggingface' ? 'HuggingFace' : 'ModelScope'}
-                  </span>
-                )}
-              </For>
-            </div>
-          </div>
-          <Show
-            when={!isLoadingFiles()}
-            fallback={<Icon name="spinner" size={12} class="animate-spin shrink-0" />}
+        <div class="flex items-center gap-3 px-3 py-2.5">
+          {/* Left: expandable info area (click toggles the quant list) */}
+          <button
+            type="button"
+            class="flex items-center gap-3 grow min-w-0 text-left"
+            onClick={() => void toggleExpand(m)}
           >
-            <Icon
-              name={isExpanded() ? 'caret-up' : 'caret-down'}
-              size={12}
-              class="shrink-0 text-[rgba(var(--text-base-rgb),0.4)]"
-            />
-          </Show>
-        </button>
+            <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0">
+              {rowLogo(m) ? (
+                <img src={rowLogo(m)!} alt={m.org} class="w-5 h-5 object-contain" />
+              ) : (
+                <span class="font-bold text-[15px]" style={{ color: 'var(--color-dark-700)' }}>
+                  {(m.org || m.name).charAt(0).toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div class="grow min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-[13px] text-white/85 font-medium truncate">{m.name}</span>
+                <Show when={m.paramsB !== null}>
+                  <span class="px-1 py-0.5 rounded bg-white/10 text-[10px] shrink-0 font-mono">
+                    {m.paramsB}B
+                  </span>
+                </Show>
+                <Show when={fitsHardware(m)}>
+                  <span class="px-1 py-0.5 rounded bg-pri-20 text-pri text-[10px] shrink-0">
+                    {t('provider.localModelMarket.hwFit')}
+                  </span>
+                </Show>
+                <Show when={m.license}>
+                  <span
+                    class="px-1 py-0.5 rounded text-[10px] shrink-0"
+                    style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
+                  >
+                    {m.license}
+                  </span>
+                </Show>
+              </div>
+              <div class="text-[10px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+                {m.org}
+                <Show when={m.chineseName}>
+                  <span class="ml-1.5">{m.chineseName}</span>
+                </Show>
+                <span class="ml-1.5 opacity-70">
+                  {formatNumber(m.downloads)} {t('provider.localModelMarket.downloads')}
+                </span>
+                <For each={m.sources}>
+                  {(s) => (
+                    <span class="ml-1.5 opacity-70">
+                      {s === 'huggingface' ? 'HuggingFace' : 'ModelScope'}
+                    </span>
+                  )}
+                </For>
+              </div>
+              <Show when={dlProgress()}>
+                <div class="flex flex-col gap-1 mt-1.5">
+                  <div class="h-1 w-full overflow-hidden rounded bg-white/10">
+                    <div
+                      class="h-1 rounded bg-pri transition-[width] duration-200"
+                      style={{ width: rowPct() + '%' }}
+                    />
+                  </div>
+                  <div
+                    class="text-right text-[10px]"
+                    style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                  >
+                    {t('provider.localModelMarket.downloadingPct', {
+                      file: dlProgress()!.file.split('/').pop() ?? '',
+                      pct: String(rowPct()),
+                      source: dlProgress()!.source,
+                    })}
+                  </div>
+                </div>
+              </Show>
+            </div>
+            <Show when={filesLoading()[m.id]}>
+              <Icon name="spinner" size={12} class="animate-spin shrink-0" />
+            </Show>
+          </button>
+          {/* Right: download controls (one download per row at a time) */}
+          <div class="flex items-center gap-1.5 shrink-0">
+            <Show
+              when={!isDownloading()}
+              fallback={
+                <>
+                  <button
+                    type="button"
+                    class={btnSecondarySm}
+                    onClick={() => activeId() && pauseDownload(activeId()!)}
+                  >
+                    <Icon name="pause" size={12} />
+                    {t('provider.localModelMarket.pause')}
+                  </button>
+                  <button
+                    type="button"
+                    class={btnSecondarySm}
+                    onClick={() => activeId() && void cancelDownload(activeId()!)}
+                  >
+                    <Icon name="x" size={12} />
+                    {t('common.cancel')}
+                  </button>
+                </>
+              }
+            >
+              <button
+                type="button"
+                class={btnSecondarySm}
+                disabled={isDownloading()}
+                onClick={() => void (isPaused() ? resumeRow() : downloadDefault(m))}
+              >
+                <Icon name={isPaused() ? 'play' : 'download'} size={12} />
+                {isPaused()
+                  ? t('provider.localModelMarket.resume')
+                  : t('provider.localModelMarket.download')}
+              </button>
+              <Show when={isPaused()}>
+                <button
+                  type="button"
+                  class={btnSecondarySm}
+                  onClick={() => activeId() && void cancelDownload(activeId()!)}
+                >
+                  <Icon name="x" size={12} />
+                  {t('common.cancel')}
+                </button>
+              </Show>
+            </Show>
+          </div>
+        </div>
         <Show when={isExpanded()}>
           <div class="px-3 pb-3 space-y-1.5">
             <Show when={filesErr()}>
@@ -621,8 +734,6 @@ const LocalModelMarket: Component = () => {
               {(g) => {
                 const isInstalled = () => installed().some((i) => i.id === g.id);
                 const isDownloading = () => downloading()[g.id];
-                const isPaused = () => pausedIds()[g.id];
-                const dlProgress = () => progress()[g.id];
                 return (
                   <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] flex-wrap">
                     <span class="text-[11px] text-white/75 font-mono truncate grow min-w-[120px] max-w-full">
@@ -644,14 +755,6 @@ const LocalModelMarket: Component = () => {
                     >
                       {formatSize(g.totalSize)}
                     </span>
-                    <Show when={dlProgress()}>
-                      <span
-                        class="text-[10px] shrink-0"
-                        style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
-                      >
-                        {pct(g.id)}%
-                      </span>
-                    </Show>
                     <div class="flex items-center gap-1.5 shrink-0">
                       <Show
                         when={!isInstalled()}
@@ -661,73 +764,24 @@ const LocalModelMarket: Component = () => {
                           </span>
                         }
                       >
-                        <Show
-                          when={!isDownloading()}
-                          fallback={
-                            <>
-                              <button
-                                type="button"
-                                class={btnSecondarySm}
-                                onClick={() => pauseDownload(g.id)}
-                              >
-                                <Icon name="pause" size={12} />
-                                {t('provider.localModelMarket.pause')}
-                              </button>
-                              <button
-                                type="button"
-                                class={btnSecondarySm}
-                                onClick={() => void cancelDownload(g.id)}
-                              >
-                                <Icon name="x" size={12} />
-                                {t('common.cancel')}
-                              </button>
-                            </>
-                          }
+                        <button
+                          type="button"
+                          class={btnSecondarySm}
+                          disabled={!g.complete || isDownloading()}
+                          onClick={() => void downloadGroup(m, g)}
                         >
-                          <button
-                            type="button"
-                            class={btnSecondarySm}
-                            disabled={!g.complete}
-                            onClick={() => void downloadGroup(m, g)}
+                          <Show
+                            when={!isDownloading()}
+                            fallback={<Icon name="spinner" size={12} class="animate-spin" />}
                           >
-                            <Icon name={isPaused() ? 'play' : 'download'} size={12} />
-                            {isPaused()
-                              ? t('provider.localModelMarket.resume')
-                              : t('provider.localModelMarket.download')}
-                          </button>
-                          <Show when={isPaused()}>
-                            <button
-                              type="button"
-                              class={btnSecondarySm}
-                              onClick={() => void cancelDownload(g.id)}
-                            >
-                              <Icon name="x" size={12} />
-                              {t('common.cancel')}
-                            </button>
+                            <Icon name="download" size={12} />
                           </Show>
-                        </Show>
+                          {isDownloading()
+                            ? t('provider.localModelMarket.downloading')
+                            : t('provider.localModelMarket.download')}
+                        </button>
                       </Show>
                     </div>
-                    <Show when={dlProgress()}>
-                      <div class="w-full">
-                        <div class="h-1 w-full overflow-hidden rounded bg-white/10">
-                          <div
-                            class="h-1 rounded bg-pri transition-[width] duration-200"
-                            style={{ width: pct(g.id) + '%' }}
-                          />
-                        </div>
-                        <div
-                          class="text-right text-[10px]"
-                          style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
-                        >
-                          {t('provider.localModelMarket.downloadingPct', {
-                            file: dlProgress()!.file.split('/').pop() ?? '',
-                            pct: String(pct(g.id)),
-                            source: dlProgress()!.source,
-                          })}
-                        </div>
-                      </div>
-                    </Show>
                   </div>
                 );
               }}
@@ -743,46 +797,19 @@ const LocalModelMarket: Component = () => {
       class="flex flex-col h-full overflow-hidden p-6 gap-4"
       style={{ color: 'rgba(var(--text-base-rgb),0.88)' }}
     >
-      <div class="animate-row-in flex items-start justify-between gap-4 flex-wrap">
+      <div class="animate-row-in flex items-center justify-between gap-4 flex-wrap">
         <h2 class="text-xl font-semibold">{t('provider.localModelMarket.title')}</h2>
-        <div class="flex items-center gap-3 flex-wrap">
-          {/* Engine target for registration */}
-          <div class="flex items-center gap-2">
-            <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
-              {t('provider.localModelMarket.engineLabel')}
-            </span>
-            <div
-              class="flex items-center gap-1 p-1 rounded-lg"
-              style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
-            >
-              <For each={GGUF_ENGINES}>
-                {(e) => (
-                  <button
-                    class={btnTabXs}
-                    classList={{ [tabActive]: engineId() === e.id }}
-                    onClick={() => setEngineId(e.id)}
-                  >
-                    {e.name}
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-          <button
-            type="button"
-            class={btnBadgeBar}
-            disabled={loading()}
-            onClick={() => void loadMarket(debouncedQuery(), false)}
-          >
-            <Show when={loading()} fallback={<Icon name="refresh" size={11} />}>
-              <Icon name="spinner" size={11} class="animate-spin" />
-            </Show>
-            {loading() ? t('provider.localModelMarket.refreshing') : t('common.refresh')}
-          </button>
-        </div>
-      </div>
-      <div class="text-xs text-[rgba(var(--text-base-rgb),0.55)] animate-row-in">
-        {t('provider.localModelMarket.hint')}
+        <button
+          type="button"
+          class={btnSecondarySm}
+          disabled={loading()}
+          onClick={() => void loadMarket(debouncedQuery(), false)}
+        >
+          <Show when={loading()} fallback={<Icon name="refresh" size={12} />}>
+            <Icon name="spinner" size={12} class="animate-spin" />
+          </Show>
+          {loading() ? t('provider.localModelMarket.refreshing') : t('common.refresh')}
+        </button>
       </div>
 
       {/* Hardware recommendation banner */}
@@ -806,6 +833,71 @@ const LocalModelMarket: Component = () => {
         </div>
       </Show>
 
+      {/* Config block: engine multi-select (one download serves all selected engines),
+          download directory and optional HF token; all action buttons share one height */}
+      <div
+        class="flex flex-col gap-2.5 shrink-0 animate-row-in text-[11px]"
+        style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+      >
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="shrink-0">{t('provider.localModelMarket.engineLabel')}</span>
+          <div
+            class="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
+          >
+            <For each={GGUF_ENGINES}>
+              {(e) => (
+                <button
+                  class={btnTabXs + ' inline-flex items-center gap-1'}
+                  classList={{ [tabActive]: engineIds().has(e.id) }}
+                  onClick={() => toggleEngine(e.id)}
+                >
+                  <Show when={engineIds().has(e.id)}>
+                    <Icon name="check-circle" size={11} />
+                  </Show>
+                  {e.name}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="shrink-0">{t('provider.localModelMarket.dirLabel')}</span>
+          <span class="font-mono truncate grow min-w-[120px]" title={installDir()}>
+            {installDir()}
+          </span>
+          <button type="button" class={btnSecondarySm} onClick={() => void pickDir()}>
+            {t('provider.localModelMarket.changeDir')}
+          </button>
+          <button type="button" class={btnSecondarySm} onClick={() => void resetDir()}>
+            {t('provider.localModelMarket.resetDir')}
+          </button>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="shrink-0">{t('provider.localModelMarket.tokenLabel')}</span>
+          <input
+            type="password"
+            class="grow min-w-[120px] bg-black/25 border border-white/[0.08] rounded-md text-white placeholder:text-white/30 focus:outline-none px-2 py-1.5 text-[11px] font-mono"
+            value={tokenInput()}
+            onInput={(e) => setTokenInput(e.currentTarget.value)}
+            placeholder={t('provider.localModelMarket.tokenPlaceholder')}
+          />
+          <button type="button" class={btnSecondarySm} onClick={() => void saveToken()}>
+            <Show when={tokenSaved()}>
+              <Icon name="check-circle" size={12} />
+            </Show>
+            {t('common.save')}
+          </button>
+          <button
+            type="button"
+            class={btnSecondarySm}
+            onClick={() => void openSafeUrl('https://huggingface.co/settings/tokens')}
+          >
+            {t('provider.localModelMarket.getToken')}
+          </button>
+        </div>
+      </div>
+
       {/* Search + parameter segments */}
       <div class="flex items-center gap-3 flex-wrap shrink-0">
         <div class="relative">
@@ -815,7 +907,7 @@ const LocalModelMarket: Component = () => {
             class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[rgba(var(--text-base-rgb),0.4)] pointer-events-none"
           />
           <input
-            class="w-[240px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
+            class="w-[240px] max-w-full bg-black/25 border border-white/[0.08] rounded-md text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-1.5 text-xs"
             value={query()}
             onInput={(e) => onQueryInput(e.currentTarget.value)}
             placeholder={t('provider.localModelMarket.searchPlaceholder')}
@@ -885,11 +977,7 @@ const LocalModelMarket: Component = () => {
                   >
                     {formatSize(m.sizeBytes)}
                   </span>
-                  <button
-                    type="button"
-                    class={btnDangerBadge}
-                    onClick={() => void removeInstalled(m)}
-                  >
+                  <button type="button" class={btnDanger} onClick={() => void removeInstalled(m)}>
                     {t('common.delete')}
                   </button>
                 </div>
@@ -898,51 +986,6 @@ const LocalModelMarket: Component = () => {
           </div>
         </div>
       </Show>
-
-      {/* Install directory + optional HF token */}
-      <div
-        class="shrink-0 space-y-2 text-[11px]"
-        style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
-      >
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.dirLabel')}</span>
-          <span class="font-mono truncate grow min-w-[120px]" title={installDir()}>
-            {installDir()}
-          </span>
-          <button type="button" class={btnSecondarySm} onClick={() => void pickDir()}>
-            {t('provider.localModelMarket.changeDir')}
-          </button>
-          <button type="button" class={btnBadge} onClick={() => void resetDir()}>
-            {t('provider.localModelMarket.resetDir')}
-          </button>
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.tokenLabel')}</span>
-          <input
-            type="password"
-            class="grow min-w-[120px] bg-black/25 border border-white/[0.08] rounded-lg text-white placeholder:text-white/30 focus:outline-none px-2 py-1.5 text-[11px] font-mono"
-            value={tokenInput()}
-            onInput={(e) => setTokenInput(e.currentTarget.value)}
-            placeholder={t('provider.localModelMarket.tokenPlaceholder')}
-          />
-          <button type="button" class={btnSecondarySm} onClick={() => void saveToken()}>
-            <Show when={tokenSaved()}>
-              <Icon name="check-circle" size={12} />
-            </Show>
-            {t('common.save')}
-          </button>
-          <button
-            type="button"
-            class={btnBadge}
-            onClick={() => void openSafeUrl('https://huggingface.co/settings/tokens')}
-          >
-            {t('provider.localModelMarket.getToken')}
-          </button>
-        </div>
-        <div class="text-[10px]" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-          {t('provider.localModelMarket.tokenHint')}
-        </div>
-      </div>
     </div>
   );
 };

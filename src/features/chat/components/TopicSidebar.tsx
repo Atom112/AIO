@@ -234,8 +234,11 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
               <div class="mt-[15px] space-y-1">
                 {(() => {
                   const { roots, children } = buildTopicTree(asst().topics);
-                  // Render the topic tree recursively
-                  const renderTopic = (topic: Topic, depth: number): any => {
+                  // Render the topic tree recursively; isLast marks whether the topic is the
+                  // final child of its parent (last sibling gets the L-shaped connector,
+                  // earlier siblings get the through-connector whose vertical line continues
+                  // toward the next sibling — classic tree-view guide shapes)
+                  const renderTopic = (topic: Topic, depth: number, isLast = true): any => {
                     const isChild = depth > 0;
                     return (
                       <>
@@ -247,7 +250,10 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           }}
                           onClick={() => setCurrentTopicId(topic.id)}
                         >
-                          {/* Branch marker for child topics: rounded elbow connector */}
+                          {/* Branch marker for child topics: rounded elbow connector.
+                              Last sibling (isLast): L shape — vertical line ends at this row.
+                              Earlier siblings: through shape — vertical line spans the full
+                              row height to continue toward the next sibling below. */}
                           {isChild && (
                             <svg
                               viewBox="0 0 22 28"
@@ -261,7 +267,13 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               aria-hidden="true"
                             >
                               <title>{t('chat.branchTopic')}</title>
-                              <path d="M5 0 V10 Q5 14 9 14 H22" />
+                              <path
+                                d={
+                                  isLast
+                                    ? 'M5 0 V10 Q5 14 9 14 H22'
+                                    : 'M5 0 V28 M5 10 Q5 14 9 14 H22'
+                                }
+                              />
                             </svg>
                           )}
                           <Show
@@ -324,7 +336,12 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                         <div class="space-y-0.5">
                           {
                             <For each={children.get(topic.id)}>
-                              {(child) => renderTopic(child, depth + 1)}
+                              {(child) => {
+                                const siblings = children.get(topic.id) ?? [];
+                                const isLastSibling =
+                                  siblings[siblings.length - 1]?.id === child.id;
+                                return renderTopic(child, depth + 1, isLastSibling);
+                              }}
                             </For>
                           }
                         </div>

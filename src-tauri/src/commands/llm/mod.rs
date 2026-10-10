@@ -825,6 +825,19 @@ pub(crate) async fn execute_builtin_tool(
             &custom_rules,
         );
 
+        // SEC-01: network=true was previously auto-allowed in Auto/Workflow (permission
+        // Allow) — one prompt injection could exfiltrate any user-readable file
+        // silently. Network-declaring commands now require confirmation in every mode.
+        let network_auto = tool_name == "execute_command"
+            && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+            && arguments["network"].as_bool().unwrap_or(false)
+            && action == PermissionAction::Allow;
+        let action = if network_auto {
+            PermissionAction::Ask
+        } else {
+            action
+        };
+
         match action {
             PermissionAction::Deny => {
                 return Err(ierr!(
@@ -868,6 +881,15 @@ pub(crate) async fn execute_builtin_tool(
                 }
                 // Network declaration and sandbox availability annotations: the approval info presents the full risk surface
                 if tool_name == "execute_command" {
+                    if network_auto {
+                        reason.insert_str(
+                            0,
+                            &ierr!(
+                                "自动模式：声明网络访问的命令需确认。\n\n",
+                                "Auto mode: network-declaring commands need confirmation.\n\n"
+                            ),
+                        );
+                    }
                     if arguments["network"].as_bool().unwrap_or(false) {
                         reason.push_str(&ierr!(
                             "\n\n⚠ 此命令声明需要网络访问",

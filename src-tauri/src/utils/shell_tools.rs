@@ -234,6 +234,38 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
+    // PowerShell 递归删除：`Remove-Item -Recurse [-Force] <系统路径/~>`。
+    // §11a 递归会把引号载荷送进本函数（SEC-07 旗标修复后可达），这里补 cmdlet 词法。
+    for i in 0..lower_tokens.len() {
+        if lower_tokens[i] == "remove-item" {
+            let args = &tokens[i + 1..];
+            let has_recurse = args.iter().any(|a| {
+                let la = a.to_lowercase();
+                la == "-recurse" || la == "-r" || la == "-recurse:$true"
+            });
+            if has_recurse {
+                for arg in args {
+                    if arg.starts_with('-') {
+                        continue;
+                    }
+                    let lowered = arg.to_lowercase();
+                    let target = lowered.trim_matches('"').trim_matches('\'');
+                    let is_system = target == "~"
+                        || target.starts_with("~/")
+                        || target.starts_with('/')
+                        || target.starts_with("c:\\")
+                        || target.starts_with("c:");
+                    if is_system {
+                        return Some(DangerInfo {
+                            risk: "危险：PowerShell 递归删除系统关键路径",
+                            category: DangerCategory::Critical,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     // --- 2. Privilege escalation: sudo / su ---
     for t in &lower_tokens {
         // match standalone `sudo` only, not e.g. `sudoedit`
@@ -519,12 +551,14 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         // 11a. Interpreter -c quoted payloads: after tokenization the payload is a
         //      single token, bypassing the lexical checks above (e.g. bash -c "rm -rf ~").
         //      Strip the quotes and recursively check the payload itself.
+        //      SEC-07: PowerShell 的单横线长项 `-Command`（小写化后 "-command"）也必须
+        //      视为载荷旗标——缺了它，`powershell -Command "rm -rf ~"` 逃过递归检查。
         let shells = ["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell"];
         for i in 0..lower_tokens.len() {
             if shells.contains(&lower_tokens[i].as_str())
                 && lower_tokens
                     .get(i + 1)
-                    .is_some_and(|a| a == "-c" || a == "--command")
+                    .is_some_and(|a| a == "-c" || a == "--command" || a == "-command")
             {
                 if let Some(payload) = tokens.get(i + 2) {
                     let stripped = payload.trim_matches(|c| c == '"' || c == '\'');
@@ -1128,8 +1162,26 @@ mod tests {
             "git clean -n",
             "bash -c 'cargo test'",
             "powershell -Command Get-Date",
+            "powershell -Command Get-ChildItem",
         ] {
             assert!(check_dangerous_command(cmd).is_none(), "假阳性: {cmd}");
+        }
+    }
+
+    /// Regression (SEC-07): `powershell -Command "<payload>"` is a quoted payload the
+    /// §11a recursion must inspect — the flag set used to miss the single-dash long
+    /// form, letting `rm -rf ~` slip through as one quoted token.
+    #[test]
+    fn powershell_single_dash_command_flag_is_inspected() {
+        for cmd in [
+            "powershell -Command \"Remove-Item -Recurse -Force ~\"",
+            "pwsh -command 'rm -rf ~'",
+        ] {
+            let danger = check_dangerous_command(cmd);
+            assert!(
+                danger.is_some_and(|d| d.category == DangerCategory::Critical),
+                "应识别载荷危险: {cmd}"
+            );
         }
     }
 

@@ -799,6 +799,11 @@ impl MemoryStore {
             params![STATUS_SUPERSEDED, now, now, id],
         )
         .map_err(|e| e.to_string())?;
+        // MEM-02 加重项：supersede 与 set_status 一致地清理 vec0（此前只删 FTS，
+        // 被取代事实的向量继续参与召回、挤占 top-k 名额）
+        if crate::services::memory::vec0::vec0_available() {
+            crate::services::memory::vec0::vec0_delete(&tx, id).map_err(|e| e.to_string())?;
+        }
         tx.execute("DELETE FROM fts_facts WHERE fact_id = ?1", [id])
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
@@ -831,44 +836,50 @@ impl MemoryStore {
 
     /// Capacity governance: when active facts exceed the limit, archive the lowest-scoring non-pinned facts, score = importance times access decay.
     pub fn prune_to_capacity(&self, max_facts: u32) -> Result<usize, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let active: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_ACTIVE],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if active as u32 <= max_facts {
-            return Ok(0);
-        }
-        let excess = (active as u32 - max_facts) as usize;
-        // Archive lowest score first: importance * (1 + 0.1 * min(access_count, 20))
-        let mut stmt = conn
-            .prepare("SELECT id FROM facts WHERE status = ?1 AND pinned = 0 ORDER BY (importance * (1.0 + 0.1 * MIN(access_count, 20))) ASC, updated_at ASC LIMIT ?2")
-            .map_err(|e| e.to_string())?;
-        let ids: Vec<String> = stmt
-            .query_map(params![STATUS_ACTIVE, excess as i64], |r| {
-                r.get::<_, String>(0)
-            })
-            .map_err(|e| e.to_string())?
-            .collect_rows("store");
-        drop(stmt);
+        // MEM-03: collect ids under the lock, then archive via set_status —
+        // the historic inline UPDATE only flipped the status column, leaving the
+        // vec0 and FTS entries in place; the vec0 search leg has no status filter,
+        // so archived facts kept being recalled and eating top-k slots.
+        let ids: Vec<String> = {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            let active: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM facts WHERE status = ?1",
+                    [STATUS_ACTIVE],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if active as u32 <= max_facts {
+                return Ok(0);
+            }
+            let excess = (active as u32 - max_facts) as usize;
+            let mut stmt = conn
+                .prepare("SELECT id FROM facts WHERE status = ?1 AND pinned = 0 ORDER BY (importance * (1.0 + 0.1 * MIN(access_count, 20))) ASC, updated_at ASC LIMIT ?2")
+                .map_err(|e| e.to_string())?;
+            let ids: Vec<String> = stmt
+                .query_map(params![STATUS_ACTIVE, excess as i64], |r| {
+                    r.get::<_, String>(0)
+                })
+                .map_err(|e| e.to_string())?
+                .collect_rows("store");
+            ids
+        };
         let now = now_iso();
         let mut archived = 0usize;
         for id in ids {
-            let n = conn
-                .execute(
-                    "UPDATE facts SET status = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4",
-                    params![STATUS_ARCHIVED, now, now, id],
-                )
-                .map_err(|e| e.to_string())?;
-            archived += n;
+            if self.set_status(&id, STATUS_ARCHIVED, Some(&now)).is_ok() {
+                archived += 1;
+            }
         }
         Ok(archived)
     }
 
     /// Clears all facts (deletes the project memory).
+    ///
+    /// MEM-05: also clears the relation table, the vec0 facts table and the code-index
+    /// tables — the historic clear left ghost vectors (fetch/extract then treated them
+    /// as "already deduped" hits and silently dropped new facts) and orphan code chunks.
+    /// CASCADE was dead code (foreign_keys is never enabled on the memory DB).
     pub fn clear(&self) -> Result<(), String> {
         let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -878,6 +889,19 @@ impl MemoryStore {
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM fts_facts", [])
             .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM facts_relations", [])
+            .map_err(|e| e.to_string())?;
+        for table in [
+            "vec_facts",
+            "code_chunks",
+            "fts_code",
+            "vec_code",
+            "code_file_state",
+        ] {
+            if table_exists(&tx, table) {
+                let _ = tx.execute(&format!("DELETE FROM {table}"), []);
+            }
+        }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -1016,6 +1040,17 @@ fn log_version_tx(
 /// Current time as ISO (provided centrally by utils::time).
 fn now_iso() -> String {
     crate::utils::time::now_iso()
+}
+
+/// MEM-05 辅助：表是否存在（vec0/FTS 虚表按需建，DELETE 前必须确认存在）。
+fn table_exists(conn: &Connection, name: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+        [name],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
 }
 
 /// Small pipeline helper (for closure chains).
@@ -1397,6 +1432,76 @@ mod tests {
         // The vector path excludes it as well.
         let vec_res = store.search_similar(&v, 10).unwrap();
         assert!(vec_res.iter().all(|(id, _)| *id != saved.id));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Regression: MEM-03 —— prune 走 set_status（归档清理 vec0/FTS）=====
+    #[test]
+    fn test_prune_archives_via_set_status_cleansing_retrieval() {
+        let root = temp_project("prune");
+        let store = MemoryStore::open(&root).unwrap();
+        let v = vec![1.0f32, 0.0, 0.0, 0.0];
+        for i in 0..3 {
+            store
+                .upsert_fact(
+                    &fact(&format!("低分事实 {i}：无足轻重的描述"), None),
+                    Some(("test".into(), 4, v.clone())),
+                )
+                .unwrap();
+        }
+        // 容量 1：必须归档 2 条最低分事实
+        let archived = store.prune_to_capacity(1).unwrap();
+        assert_eq!(archived, 2);
+        // 关键回归：归档后向量/FTS 检索不再召回（历史实现只改 status 列，
+        // vec0 腿无 status 过滤，归档事实继续被召回挤占 top-k）
+        let vec_res = store.search_similar(&v, 10).unwrap();
+        assert!(
+            vec_res.len() <= 1,
+            "归档事实的向量不应继续参与召回: {vec_res:?}"
+        );
+        let fts_res = store
+            .search_hybrid(
+                "低分事实",
+                None,
+                &SearchOptions {
+                    category: None,
+                    k: 10,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            fts_res.len() <= 1,
+            "归档事实不应继续被检索（容量 1 只应剩 1 条）: {:?}",
+            fts_res
+                .iter()
+                .map(|f| f.content.clone())
+                .collect::<Vec<_>>()
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Regression: MEM-05 —— clear 清掉 vec_facts/facts_relations 幽灵 =====
+    #[test]
+    fn test_clear_removes_vector_and_relation_ghosts() {
+        let root = temp_project("clear");
+        let store = MemoryStore::open(&root).unwrap();
+        let v = vec![1.0f32, 0.0, 0.0, 0.0];
+        store
+            .upsert_fact(
+                &fact("clear 测试：会被清空的事实", None),
+                Some(("test".into(), 4, v.clone())),
+            )
+            .unwrap();
+        assert!(!store.search_similar(&v, 3).unwrap().is_empty());
+        store.clear().unwrap();
+        // 关键回归：向量幽灵被清——旧实现 clear 不删 vec_facts，与幽灵相似的新事实
+        // 在 extract 判重时被"读取失败→已判重"静默丢弃
+        assert!(
+            store.search_similar(&v, 3).unwrap().is_empty(),
+            "clear 后不应残留向量幽灵"
+        );
+        assert!(store.list_facts(None, None, 100, 0).unwrap().0.is_empty());
         fs::remove_dir_all(&root).ok();
     }
 

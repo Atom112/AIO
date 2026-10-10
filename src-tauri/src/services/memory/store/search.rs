@@ -234,7 +234,9 @@ impl MemoryStore {
     ) -> Result<ScoredFact, String> {
         let row: (String, String, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT content, category, source_type, updated_at FROM facts WHERE id = ?1",
+                // MEM-03 兜底：vec0 腿无 status 过滤——非 active 事实（归档/被取代
+                // 但向量残留的）不再进入详情装配
+                "SELECT content, category, source_type, updated_at FROM facts WHERE id = ?1 AND status = 'active'",
                 [id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )

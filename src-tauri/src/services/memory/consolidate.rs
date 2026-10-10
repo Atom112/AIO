@@ -171,7 +171,12 @@ pub async fn consolidate(
                     report.updated += 1;
                 }
                 JudgeAction::Supersede => {
-                    store.supersede_fact(&member.0, "被合并整理取代")?;
+                    // MEM-02: 语义对齐 judge 契约（existing=anchor, incoming=member）——
+                    // Supersede 表示 incoming（member）更准确、明确取代旧事实：让位的
+                    // 应是 anchor。历史实现反着 supersede member（新事实），每日自动
+                    // 整理持续把"更准确"的信息标记过时、保留过时内容——越整理越错。
+                    // （tools.rs / extract.rs 路径一直是 supersede existing，此处对齐。）
+                    store.supersede_fact(&anchor_fact.0, "被更准确的事实取代")?;
                     report.superseded += 1;
                 }
             }

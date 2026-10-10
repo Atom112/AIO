@@ -200,10 +200,10 @@ pub async fn extract_and_store(
                                 resolved = Some(existing.id);
                             }
                         }
-                    } else {
-                        report.deduped += 1;
-                        resolved = Some(dup_id);
                     }
+                    // MEM-05: get_fact 失败（幽灵向量——clear 残留等）视为"无重复"，
+                    // 落到下方正常插入；此前"读取失败"被当作"已判重"，与旧幽灵
+                    // 相似的新事实被静默丢弃
                 }
             }
         }

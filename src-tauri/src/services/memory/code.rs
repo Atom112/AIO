@@ -158,6 +158,25 @@ pub async fn index_code(
                 continue;
             }
         };
+        // MEM-04: 先按旧 chunk_id 清理 vec_code——重建会生成全新 uuid，旧 id 的
+        // 幽灵向量若不清理将永远留在 vec_code 里，持续消耗向量召回的 top-k 候选
+        // 名额（检索腿退化为纯 FTS）。必须先于 code_chunks 的删除执行（子查询
+        // 依赖旧 chunks 行）；表按需建，删除前确认存在。
+        let vec_code_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'vec_code'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if vec_code_exists {
+            conn.execute(
+                "DELETE FROM vec_code WHERE chunk_id IN (SELECT id FROM code_chunks WHERE file_path = ?1)",
+                [f.to_string_lossy()],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         conn.execute(
             "DELETE FROM fts_code WHERE file_path = ?1",
             [f.to_string_lossy()],

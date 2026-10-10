@@ -441,9 +441,10 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           </Show>
                           <div class="flex items-center gap-0.5 shrink-0">
                             {/* Fold toggle: only for topics with children, hover-only
-                                visibility (same as the more button). Caret icons:
-                                v (caret-down) when expanded, ^ (caret-up) when
-                                folded. */}
+                                visibility (same as the more button). Caret icons
+                                indicate the click action: v (caret-down) when
+                                folded (click expands downward), ^ (caret-up) when
+                                expanded (click folds up). */}
                             <Show when={hasKids}>
                               <button
                                 type="button"
@@ -470,7 +471,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                 }}
                               >
                                 <Icon
-                                  name={isFolded() ? 'caret-up' : 'caret-down'}
+                                  name={isFolded() ? 'caret-down' : 'caret-up'}
                                   size={isChild ? 13 : 15}
                                 />
                               </button>

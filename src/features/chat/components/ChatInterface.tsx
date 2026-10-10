@@ -1360,7 +1360,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       {/* Scroll-to-bottom button: shown after the user scrolls up into history; click returns to the latest messages */}
       <Show when={!autoScroll()}>
         <button
-          class="absolute bottom-[170px] right-[30px] z-[50] flex items-center justify-center w-9 h-9 rounded-full cursor-pointer
+          class="absolute bottom-[200px] right-[30px] z-[50] flex items-center justify-center w-9 h-9 rounded-full cursor-pointer
                            animate-fade-in transition-all duration-200 hover:scale-110 active:scale-95"
           style={{
             background: 'rgba(var(--primary-rgb),0.15)',

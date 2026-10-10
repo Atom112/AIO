@@ -177,7 +177,7 @@ async fn save_images_to_dir(
                     ext
                 );
                 let path = dir.join(&file_name);
-                if let Err(e) = std::fs::write(&path, &bytes) {
+                if let Err(e) = crate::core::fs_util::atomic_write(&path, &bytes) {
                     tracing::warn!("写入生成图片失败 {}: {}", url, e);
                     continue;
                 }

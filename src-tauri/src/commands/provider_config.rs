@@ -167,12 +167,22 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
                     return Ok(parsed);
                 }
                 Ok(_) => {
-                    // Old version (1) is incompatible; delete outright
+                    // Old version (1) is incompatible; delete outright (v1 content
+                    // is never recoverable into v2 by renaming)
                     let _ = fs::remove_file(&p);
                 }
                 Err(_) => {
-                    // Parse failure (legacy snake_case format etc.); delete
-                    let _ = fs::remove_file(&p);
+                    // Parse failure: quarantine as .corrupt.bak instead of deleting —
+                    // a crash mid-write (pre-atomic-write files) must not turn into
+                    // "all provider configs gone" (PROV-7).
+                    let bak = p.with_extension("corrupt.bak");
+                    match fs::rename(&p, &bak) {
+                        Ok(()) => tracing::warn!(
+                            "provider-configs.json 解析失败，已备份为 {}",
+                            bak.display()
+                        ),
+                        Err(e) => tracing::warn!("provider-configs.json 解析失败，备份失败: {e}"),
+                    }
                 }
             }
         }
@@ -208,7 +218,9 @@ fn save_provider_configs_internal(
         }
     }
     let json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
-    fs::write(&p, json).map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
+    // HOR-1：原子写（崩溃/掉电不再产生半写文件叠加 PROV-7 的删除路径丢全部供应商配置）
+    crate::core::fs_util::atomic_write(&p, json.as_bytes())
+        .map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
     Ok(())
 }
 

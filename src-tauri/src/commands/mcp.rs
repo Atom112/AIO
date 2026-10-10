@@ -120,6 +120,9 @@ pub async fn trust_project_mcp_server(
 /// # Parameters
 /// - `config` — server config; env secrets go to the keyring first, only placeholders are persisted
 /// - `project_id` — when provided, writes to the project-level config, otherwise the global one
+///
+/// Project-level saves record a trust marker at the same time (user intent IS the
+/// authorization; repo-shipped files never pass through here — P0-1).
 #[tauri::command]
 pub async fn add_mcp_server(
     app: AppHandle,
@@ -129,7 +132,9 @@ pub async fn add_mcp_server(
     match project_id {
         Some(ref pid) => {
             let project_path = resolve_project_path_mcp(&app, pid)?;
-            mcp::upsert_project_config(&project_path, config).map_err(|e| e.to_string())
+            mcp::upsert_project_config(&project_path, config.clone()).map_err(|e| e.to_string())?;
+            mcp::mark_project_server_trusted(&app, &project_path, &config);
+            Ok(())
         }
         None => mcp::upsert_config(&app, config).map_err(|e| e.to_string()),
     }

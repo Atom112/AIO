@@ -313,7 +313,7 @@ pub async fn update_models_catalog(
     let cached = appdata_catalog_path(&app)
         .ok_or_else(|| ierr!("无法获取 AppData 目录", "Failed to get AppData directory"))?;
 
-    fs::write(&cached, &body).map_err(|e| {
+    crate::core::fs_util::atomic_write(&cached, &body).map_err(|e| {
         ierr!(
             "写入 AppData 失败 ({}): {}",
             "Failed to write to AppData ({}): {}",

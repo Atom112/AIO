@@ -1,19 +1,18 @@
 //! 原子写工具（持久化文件写入的公共实现，HOR-1 的落地基础）。
 //!
-//! 所有 JSON / 配置类持久化文件统一走 temp + rename：崩溃 / 断电至多留下一个
-//! `.tmp` 残留文件，目标文件要么是旧内容要么是新内容，绝不产生截断的半写
-//! 状态。`std::fs::rename` 在 Unix 上原子替换、在 Windows 上以
+//! 所有 JSON / 配置类持久化文件统一走 temp + fsync + rename：崩溃 / 断电至多
+//! 留下一个 `.tmp` 残留文件，目标文件要么是旧内容要么是新内容，绝不产生截断
+//! 的半写状态。`std::fs::rename` 在 Unix 上原子替换、在 Windows 上以
 //! `MOVEFILE_REPLACE_EXISTING` 语义替换已存在的目标。
 //!
-//! 语义对齐既有正确实现（`core/config.rs` 的 save_app_config）：
-//! 进程崩溃安全；掉电安全依赖文件系统日志，不做 fsync。
+//! 语义对齐既有正确实现（`core/config.rs` 的 save_app_config）：写后
+//! `sync_all` 再 rename，掉电安全不依赖文件系统日志。
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// 原子写入：先写同目录隐藏临时文件（`.<name>.tmp`），再 rename 覆盖目标。
-///
-/// 失败时尽力清理临时文件。同目录保证 rename 不跨卷。
+/// 原子写入：先写同目录隐藏临时文件（`.<name>.tmp`，写后 fsync），再 rename
+/// 覆盖目标。失败时尽力清理临时文件。同目录保证 rename 不跨卷。
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
@@ -25,7 +24,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .to_string_lossy()
         .into_owned();
     let tmp: PathBuf = path.with_file_name(format!(".{file_name}.tmp"));
-    if let Err(e) = std::fs::write(&tmp, bytes) {
+    if let Err(e) = write_and_sync(&tmp, bytes) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
@@ -36,6 +35,14 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
             Err(e)
         }
     }
+}
+
+/// 写入 + fsync（rename 前数据先落盘）。
+fn write_and_sync(tmp: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()
 }
 
 #[cfg(test)]

@@ -62,11 +62,8 @@ fn load_market_cache(app: &AppHandle) -> MarketCacheFile {
 
 fn save_market_cache(app: &AppHandle, cache: &MarketCacheFile) -> Result<(), String> {
     let path = market_cache_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let content = serde_json::to_string(cache).map_err(|e| e.to_string())?;
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
 }
 
 fn load_file(app: &AppHandle) -> SkillsFile {
@@ -124,7 +121,7 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
         tracing::error!("[skills] save_file: {msg}");
         msg
     })?;
-    std::fs::write(&path, &content).map_err(|e| {
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| {
         let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_file: {msg} ({})", path.display());
         msg
@@ -196,7 +193,7 @@ fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String
         tracing::error!("[skills] save_project_file: {msg}");
         msg
     })?;
-    std::fs::write(&path, &content).map_err(|e| {
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| {
         let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_project_file: {msg} ({})", path.display());
         msg

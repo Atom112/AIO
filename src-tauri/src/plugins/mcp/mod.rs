@@ -232,11 +232,8 @@ pub fn load_mcp_servers(app: &AppHandle) -> McpServersFile {
 
 pub fn save_mcp_servers(app: &AppHandle, file: &McpServersFile) -> McpResult<()> {
     let p = mcp_file_path(app).ok_or_else(|| McpError::Server("无法获取 AppData 目录".into()))?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(file)?;
-    std::fs::write(&p, json)?;
+    crate::core::fs_util::atomic_write(&p, json.as_bytes())?;
     Ok(())
 }
 
@@ -261,11 +258,8 @@ pub fn save_project_mcp_servers(project_path: &str, file: &McpServersFile) -> Mc
     let p = std::path::PathBuf::from(project_path)
         .join(".aio")
         .join("mcp-servers.json");
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(file)?;
-    std::fs::write(&p, json)?;
+    crate::core::fs_util::atomic_write(&p, json.as_bytes())?;
     Ok(())
 }
 
@@ -424,6 +418,35 @@ pub fn resolve_env_placeholders(
 
 // ====== Project-level MCP trust gate (P0-1 / MCP-1) ======
 
+/// 判定项目级条目是否为 **AIO 自己生成**的内置文件系统 server：命令必须逐字
+/// 指向当前进程可执行文件、参数恰为 `--fs-server <项目路径>`。仓库可以伪造同名
+/// id，但只要命令/参数与当前进程不匹配就照常走信任门——豁免的是 AIO 写入的
+/// 初始化条目，不是这个 id 本身。
+fn is_self_generated_fs_server(cfg: &McpServerConfig, project_path: &str) -> bool {
+    if cfg.id != crate::core::ids::BUILTIN_FS_SERVER_ID {
+        return false;
+    }
+    let McpTransport::Stdio { command, args, .. } = &cfg.transport else {
+        return false;
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let exe_matches = std::path::Path::new(command) == exe
+        || std::fs::canonicalize(command)
+            .ok()
+            .zip(std::fs::canonicalize(&exe).ok())
+            .is_some_and(|(a, b)| a == b);
+    if !exe_matches || args.len() != 2 || args[0] != "--fs-server" {
+        return false;
+    }
+    std::path::Path::new(&args[1]) == std::path::Path::new(project_path)
+        || std::fs::canonicalize(&args[1])
+            .ok()
+            .zip(std::fs::canonicalize(project_path).ok())
+            .is_some_and(|(a, b)| a == b)
+}
+
 /// 项目级服务器信任存储的落点（$APPDATA/mcp-trust.json，仓库之外）。
 fn trust_store(app: &AppHandle) -> crate::core::mcp_trust::McpTrustStore {
     let dir = app
@@ -434,12 +457,16 @@ fn trust_store(app: &AppHandle) -> crate::core::mcp_trust::McpTrustStore {
 }
 
 /// 项目级配置中尚未信任的服务器（前端据此弹确认；autoStart 对它们一律跳过）。
+/// AIO 自身生成的内置 fs server 条目（见 [`is_self_generated_fs_server`]）视为已信任。
 pub fn untrusted_project_servers(app: &AppHandle, project_path: &str) -> Vec<McpServerConfig> {
     let store = trust_store(app);
     load_project_mcp_servers(project_path)
         .servers
         .into_values()
         .filter(|cfg| {
+            if is_self_generated_fs_server(cfg, project_path) {
+                return false;
+            }
             !store.is_trusted(
                 project_path,
                 &cfg.id,
@@ -471,8 +498,17 @@ pub fn trust_project_server(
     Ok(cfg)
 }
 
+/// 用户经 AIO 设置界面**写入**项目级配置时顺带记录信任（用户意图即授权；
+/// 仓库文件永远不会走这条路径——只有 add_mcp_server 的 UI 流程会）。
+pub fn mark_project_server_trusted(app: &AppHandle, project_path: &str, cfg: &McpServerConfig) {
+    let fingerprint = crate::core::mcp_trust::config_fingerprint(cfg);
+    if let Err(e) = trust_store(app).set_trusted(project_path, &cfg.id, &fingerprint) {
+        tracing::warn!("[mcp-trust] 记录项目级 server 信任失败: {e}");
+    }
+}
+
 /// `start_mcp_server` 的信任门：生效配置来自项目文件（id 存在于其中）且未信任 → false。
-/// 全局配置或已信任的项目配置返回 true。
+/// 全局配置、AIO 自身生成的内置 fs server、已信任的项目配置返回 true。
 pub fn project_server_spawn_allowed(
     app: &AppHandle,
     project_id: Option<&str>,
@@ -489,6 +525,9 @@ pub fn project_server_spawn_allowed(
     else {
         return Ok(true);
     };
+    if is_self_generated_fs_server(&cfg, &project_path) {
+        return Ok(true);
+    }
     let store = trust_store(app);
     let trusted = store.is_trusted(
         &project_path,
@@ -501,6 +540,47 @@ pub fn project_server_spawn_allowed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn self_generated_fs_server_detection() {
+        fn stdio_cfg(id: &str, command: &str, args: Vec<String>) -> McpServerConfig {
+            McpServerConfig {
+                id: id.into(),
+                display_name: "fs".into(),
+                transport: McpTransport::Stdio {
+                    command: command.into(),
+                    args,
+                    env: BTreeMap::new(),
+                    cwd: None,
+                },
+                enabled_tools: vec![],
+                auto_start: false,
+                has_stored_secret: false,
+                trusted: false,
+                from_catalog: None,
+            }
+        }
+        let exe = std::env::current_exe().expect("当前 exe 路径");
+        let project = std::env::temp_dir();
+        let project_str = project.to_string_lossy().into_owned();
+        // AIO 自生成的条目：命令=当前 exe、参数=--fs-server <项目> → 豁免
+        let ok = stdio_cfg(
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &exe.to_string_lossy(),
+            vec!["--fs-server".into(), project_str.clone()],
+        );
+        assert!(is_self_generated_fs_server(&ok, &project_str));
+        // 仓库伪造同名 id 但命令不同 → 不豁免（走信任门）
+        let forged = stdio_cfg(
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            "powershell",
+            vec!["-Command".into(), "evil".into()],
+        );
+        assert!(!is_self_generated_fs_server(&forged, &project_str));
+        // 正常服务器 id → 不豁免
+        let other = stdio_cfg("some-server", &exe.to_string_lossy(), vec![]);
+        assert!(!is_self_generated_fs_server(&other, &project_str));
+    }
 
     #[test]
     fn keyring_placeholder_account_has_no_leading_colon() {

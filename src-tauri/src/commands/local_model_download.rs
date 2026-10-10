@@ -508,7 +508,7 @@ fn write_model_marker(dir: &Path, entry_file: &str) {
         entry_file: entry_file.to_string(),
     };
     if let Ok(bytes) = serde_json::to_vec(&marker) {
-        let _ = std::fs::write(dir.join(MODEL_MARKER), bytes);
+        let _ = crate::core::fs_util::atomic_write(&dir.join(MODEL_MARKER), &bytes);
     }
 }
 

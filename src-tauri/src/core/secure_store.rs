@@ -137,19 +137,14 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
             return Ok(key);
         }
 
-        // keyring unavailable: write to file (0600-level permission protection)
+        // keyring unavailable: write to file (atomic + 0600; the temp file also gets
+        // 0600 BEFORE content is written so the plaintext key is never briefly
+        // world-readable during the write window)
         let _ = fs::create_dir_all(path.parent().unwrap());
-        if fs::write(&path, &hex_key).is_err() {
+        if write_key_file_atomic(&path, &hex_key).is_err() {
             return Err(SecureStoreError::FallbackIo(
                 "无法写入 fallback 密钥文件".into(),
             ));
-        }
-
-        // Try to set file permissions (Unix)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
         }
 
         return Ok(key);
@@ -158,6 +153,22 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
     Err(SecureStoreError::FallbackIo(
         "无 AppData 路径，无法创建 fallback 密钥".into(),
     ))
+}
+
+/// 原子写 fallback 密钥文件（INFRA-4：非原子 `fs::write` 崩溃可产生半写 key，
+/// 之后整个 fallback 库都解不开）。
+fn write_key_file_atomic(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("key.tmp");
+    let mut f = fs::File::create(&tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+    }
+    f.write_all(content.as_bytes())?;
+    f.sync_all()?;
+    fs::rename(&tmp, path)
 }
 
 // ====== AES-256-GCM encrypt/decrypt ======
@@ -219,6 +230,10 @@ fn decrypt_entry(hex_or_base64: &str, key: &[u8; AES_KEY_LEN]) -> Result<String>
 
 // ====== fallback file I/O ======
 
+/// INFRA-4：fallback 文件的读-改-写必须跨线程串行（主线程同步命令与 async
+/// 命令可能并发 set/delete，无锁 RMW 会丢更新——后写覆盖先写）。
+static FALLBACK_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
     let Some(p) = fallback_path(app) else {
         return FallbackStore::default();
@@ -228,9 +243,18 @@ fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
     }
     let json_str = match fs::read_to_string(&p) {
         Ok(s) => s,
-        Err(_) => return FallbackStore::default(),
+        Err(_) => {
+            quarantine_corrupt(&p, "读取失败");
+            return FallbackStore::default();
+        }
     };
-    let raw: FallbackStore = serde_json::from_str(&json_str).unwrap_or_default();
+    let raw: FallbackStore = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => {
+            quarantine_corrupt(&p, "解析失败");
+            return FallbackStore::default();
+        }
+    };
 
     // Decrypt all entries
     let mut store = FallbackStore::default();
@@ -248,6 +272,20 @@ fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
     store
 }
 
+/// INFRA-4：损坏的 fallback 文件先隔离为 `<name>.corrupt.bak`（保留现场），
+/// 而不是当作空库继续运行——否则一次崩溃半写就会在下一次保存时把全部
+/// fallback 密钥静默抹掉。
+fn quarantine_corrupt(path: &std::path::Path, reason: &str) {
+    let bak = path.with_extension("corrupt.bak");
+    match fs::rename(path, &bak) {
+        Ok(()) => tracing::warn!(
+            "[secure_store] fallback 文件损坏（{reason}），已隔离为 {}",
+            bak.display()
+        ),
+        Err(e) => tracing::warn!("[secure_store] fallback 文件损坏（{reason}），隔离失败: {e}"),
+    }
+}
+
 fn save_fallback(app: &AppHandle, store: &FallbackStore, key: &[u8; AES_KEY_LEN]) -> Result<()> {
     let p =
         fallback_path(app).ok_or_else(|| SecureStoreError::FallbackIo("无 AppData 路径".into()))?;
@@ -263,7 +301,9 @@ fn save_fallback(app: &AppHandle, store: &FallbackStore, key: &[u8; AES_KEY_LEN]
 
     let json = serde_json::to_string_pretty(&encoded)
         .map_err(|e| SecureStoreError::FallbackJson(e.to_string()))?;
-    fs::write(&p, json).map_err(|e| SecureStoreError::FallbackIo(e.to_string()))?;
+    // INFRA-4：原子写（temp + fsync + rename）——崩溃/掉电不再产生半写文件
+    crate::core::fs_util::atomic_write(&p, json.as_bytes())
+        .map_err(|e| SecureStoreError::FallbackIo(e.to_string()))?;
     Ok(())
 }
 
@@ -310,6 +350,8 @@ pub fn get(app: &AppHandle, account: &str) -> Result<Option<String>> {
 
 /// Store a credential: keyring first, falling back to the AES-encrypted file when unavailable.
 pub fn set(app: &AppHandle, account: &str, value: &str) -> Result<()> {
+    // INFRA-4: serialize the fallback read-modify-write across threads
+    let _guard = FALLBACK_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     match keyring_set_str(account, value) {
         Ok(()) => {
             // Also remove the same key from the fallback file
@@ -347,6 +389,8 @@ pub fn set_reported(app: &AppHandle, account: &str, value: &str) -> bool {
 
 /// Delete a credential.
 pub fn delete(app: &AppHandle, account: &str) -> Result<()> {
+    // INFRA-4: serialize the fallback read-modify-write across threads
+    let _guard = FALLBACK_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
     let _ = keyring_delete_str(account);
     if let Ok(key) = get_fallback_key(app) {
         let mut store = load_fallback(app, &key);

@@ -289,8 +289,12 @@ pub(crate) async fn handle_delegate_task(
         }
     }
 
-    // Execute the subagent
-    execute_single_delegate(
+    // Execute the subagent. Worktree isolation applies only to awaited delegates
+    // (wait=false background tasks always run shared — their merges cannot be
+    // coordinated with the user's in-flight work).
+    let is_background = arguments["wait"].as_bool() == Some(false);
+    let isolation_hint = arguments["isolation"].as_str();
+    let outcome = execute_single_delegate(
         window,
         app,
         client,
@@ -310,13 +314,282 @@ pub(crate) async fn handle_delegate_task(
         custom_profiles,
         mcp_server_ids,
         locale,
+        isolation_hint,
+        !is_background,
     )
+    .await?;
+
+    // Merge the isolated workspace back (single task merges right after completion)
+    let mut notes = outcome.notes;
+    if let Some(pending) = outcome.pending {
+        let merge_notes =
+            merge_pending_workspaces(app, token, agent_mode, &project_root, vec![pending], locale)
+                .await;
+        notes.extend(merge_notes);
+    }
+
+    // Final tool result: subagent work report + workspace notes
+    let mut text = tool_result_text(&outcome.tool_result);
+    if !notes.is_empty() {
+        text.push_str("\n\n");
+        text.push_str(&notes.join("\n"));
+    }
+    Ok(ToolResult {
+        content: vec![ToolResultContent {
+            kind: "text".into(),
+            data: json!({ "text": text }),
+        }],
+        is_error: false,
+    })
+}
+
+/// Worktree branch produced by an isolated delegated task, awaiting merge back into the
+/// main checkout's current branch.
+pub(crate) struct PendingWorkspace {
+    /// Worktree path (kept on disk until the merge outcome is recorded).
+    pub path: std::path::PathBuf,
+    /// Branch checked out in the worktree (commits land here).
+    pub branch: String,
+    /// Commit stat summary (approval display).
+    pub summary: String,
+    /// Changed files relative to the main checkout's HEAD.
+    pub files: Vec<String>,
+}
+
+/// Result of executing one delegated task (shared by single / batch delegation).
+pub(crate) struct DelegateOutcome {
+    pub tool_result: ToolResult,
+    /// Worktree branch with committed changes awaiting merge (worktree mode, success).
+    pub pending: Option<PendingWorkspace>,
+    /// Informational notes (isolation fallback / merge outcome), appended to the report.
+    pub notes: Vec<String>,
+}
+
+/// Resolves the workspace isolation for a delegated task: per-task `isolation_hint`
+/// overrides the app-config `subagentIsolationMode` default. Write-capable tasks get a
+/// git worktree when supported; everything else runs on the shared project root (with
+/// the per-file write locks from PR1 still protecting it). Returns notes for fallbacks.
+async fn resolve_task_workspace(
+    app: &AppHandle,
+    profile: &subagent::SubagentProfile,
+    project_root: &str,
+    isolation_hint: Option<&str>,
+) -> (crate::utils::worktree::TaskWorkspace, Vec<String>) {
+    use crate::utils::worktree::TaskWorkspace;
+    let mut notes = Vec::new();
+    let write_capable = profile.is_tool_allowed("write_file")
+        || profile.is_tool_allowed("replace_in_file")
+        || profile.is_tool_allowed("delete_file")
+        || profile.is_tool_allowed("execute_command");
+    if !write_capable {
+        return (TaskWorkspace::Shared, notes); // read-only tasks never need isolation
+    }
+    let app_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
+    let mode = app_cfg.subagent_isolation_mode;
+    let requested = isolation_hint.map(|s| s.to_string()).unwrap_or_else(|| {
+        if mode == "off" {
+            "shared".into()
+        } else {
+            "worktree".into()
+        }
+    });
+    if requested != "worktree" {
+        return (TaskWorkspace::Shared, notes);
+    }
+    let root_c = project_root.to_string();
+    let supported =
+        tokio::task::spawn_blocking(move || crate::utils::worktree::worktree_supported(&root_c))
+            .await
+            .unwrap_or(false);
+    if !supported {
+        notes.push(
+            "[工作区] 当前项目不支持 worktree 隔离（非 git 仓库或网络路径），本任务在共享目录工作（有文件锁保护）"
+                .to_string(),
+        );
+        return (TaskWorkspace::Shared, notes);
+    }
+    let id8: String = uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(8)
+        .collect();
+    let root_c2 = project_root.to_string();
+    let created = tokio::task::spawn_blocking(move || {
+        crate::utils::worktree::create_worktree(&root_c2, &id8)
+    })
     .await
+    .unwrap_or_else(|_| Err("worktree 创建线程 panic".to_string()));
+    match created {
+        Ok((path, branch)) => (TaskWorkspace::Worktree { path, branch }, notes),
+        Err(e) => {
+            notes.push(format!(
+                "[工作区] worktree 创建失败，回退共享目录（有文件锁保护）: {e}"
+            ));
+            (TaskWorkspace::Shared, notes)
+        }
+    }
+}
+
+/// Fire-and-forget worktree cleanup (best-effort; failures only logged).
+fn spawn_remove_worktree(main_root: &str, path: &std::path::Path, branch: &str) {
+    let root = main_root.to_string();
+    let p = path.to_path_buf();
+    let b = branch.to_string();
+    tokio::spawn(async move {
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::utils::worktree::remove_worktree(&root, &p, &b)
+        })
+        .await;
+    });
+}
+
+/// Merges pending worktree branches into the main checkout's current branch.
+///
+/// Auto mode merges directly; other modes request ONE approval covering the whole batch
+/// (reason lists branches, changed files and diff summaries). On conflict the merge is
+/// aborted and the worktree + branch are kept for recovery (serial redo / manual
+/// resolution); the returned notes are aligned with the input order for the caller to
+/// attach to each task's report.
+async fn merge_pending_workspaces(
+    app: &AppHandle,
+    token: &CancellationToken,
+    agent_mode: &AgentMode,
+    main_root: &str,
+    pending: Vec<PendingWorkspace>,
+    locale: &str,
+) -> Vec<String> {
+    if pending.is_empty() {
+        return Vec::new();
+    }
+
+    // One batch approval outside Auto mode (the launch approval covered spawning only)
+    if *agent_mode != AgentMode::Auto {
+        let details = pending
+            .iter()
+            .map(|p| {
+                let files = if p.files.len() > 5 {
+                    format!("{} 等 {} 个文件", p.files[..5].join(", "), p.files.len())
+                } else {
+                    p.files.join(", ")
+                };
+                let stat = if p.summary.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n    {}", p.summary)
+                };
+                format!("  - {}（{}）{stat}", p.branch, files)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let reason = if locale == "en-US" {
+            format!(
+                "Merge {} subagent workspace branches into the current branch:\n{details}\n\nConfirm merge?",
+                pending.len()
+            )
+        } else {
+            format!(
+                "合并 {} 个子智能体工作区分支到当前分支：\n{details}\n\n确认合并？",
+                pending.len()
+            )
+        };
+        let state = app.state::<PendingApprovals>();
+        let merge_args = serde_json::json!({
+            "branches": pending.iter().map(|p| p.branch.clone()).collect::<Vec<_>>()
+        });
+        let approval_fut = crate::commands::mcp::request_tool_approval(
+            app,
+            state.inner(),
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            "workspace_merge",
+            &merge_args,
+            &reason,
+            None,
+            None,
+        );
+        match tokio::select! {
+            _ = token.cancelled() => Err("cancelled".to_string()),
+            res = approval_fut => res,
+        } {
+            Ok(_) => {}
+            Err(e) => {
+                return pending
+                    .iter()
+                    .map(|p| {
+                        if e == "cancelled" {
+                            format!(
+                                "[工作区] 合并未执行（已取消），分支 {} 与工作区已保留",
+                                p.branch
+                            )
+                        } else {
+                            format!(
+                                "[工作区] 合并未获批准（{e}），分支 {} 与工作区已保留（可稍后手动合并）",
+                                p.branch
+                            )
+                        }
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    let mut notes = Vec::with_capacity(pending.len());
+    for p in &pending {
+        let root = main_root.to_string();
+        let branch = p.branch.clone();
+        let merged = tokio::task::spawn_blocking(move || {
+            crate::utils::worktree::merge_branch(&root, &branch)
+        })
+        .await
+        .unwrap_or_else(|_| Err("worktree 合并线程 panic".to_string()));
+        match merged {
+            Ok(crate::utils::worktree::MergeOutcome::Merged { summary }) => {
+                spawn_remove_worktree(main_root, &p.path, &p.branch);
+                if summary.is_empty() {
+                    notes.push(format!(
+                        "[工作区] 已合并回当前分支（{}，{} 个文件）",
+                        p.branch,
+                        p.files.len()
+                    ));
+                } else {
+                    notes.push(format!("[工作区] 已合并回当前分支（{summary}）"));
+                }
+            }
+            Ok(crate::utils::worktree::MergeOutcome::Conflicted { summary, files }) => {
+                notes.push(format!(
+                    "[工作区] 合并冲突（{}）。文件：{}。分支 {} 与工作区已保留；请基于最新代码串行重做该任务，或手动解决冲突",
+                    if summary.is_empty() {
+                        "内容冲突".to_string()
+                    } else {
+                        truncate_chars_head(&summary, 200)
+                    },
+                    files.join(", "),
+                    p.branch
+                ));
+            }
+            Ok(crate::utils::worktree::MergeOutcome::Refused { reason }) => {
+                notes.push(format!(
+                    "[工作区] 合并被拒绝（{reason}）。分支 {} 与工作区已保留",
+                    p.branch
+                ));
+            }
+            Err(e) => {
+                notes.push(format!(
+                    "[工作区] 合并失败（{e}）。分支 {} 与工作区已保留",
+                    p.branch
+                ));
+            }
+        }
+    }
+    notes
 }
 
 /// Core logic for executing a single subagent (shared by `handle_delegate_task` and `handle_delegate_tasks`).
 ///
-/// Resolves the profile, model overrides and project root, then calls execute_subagent.
+/// Resolves the profile, model overrides and project root, decides the workspace isolation
+/// (`isolation_hint` per-task override; `allow_worktree` false for background delegates),
+/// runs the subagent, then commits worktree changes onto its branch. The caller owns the
+/// merge-back (single task merges immediately; the batch merges after all tasks settle).
 /// Does not perform permission checks; the caller is responsible.
 #[allow(
     clippy::too_many_arguments,
@@ -342,7 +615,9 @@ pub(crate) async fn execute_single_delegate(
     custom_profiles: &[crate::core::models::CustomSubagentProfile],
     mcp_server_ids: &[String],
     locale: &str,
-) -> Result<ToolResult, String> {
+    isolation_hint: Option<&str>,
+    allow_worktree: bool,
+) -> Result<DelegateOutcome, String> {
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
 
@@ -363,7 +638,26 @@ pub(crate) async fn execute_single_delegate(
     // Resolve the project root
     let project_root = file_tools::resolve_project_root(app, project_id)?;
 
-    execute_subagent(
+    // ---- Workspace isolation (PR2): write-capable awaited tasks get a git worktree ----
+    let (workspace, mut notes) = if allow_worktree {
+        resolve_task_workspace(app, &profile, &project_root, isolation_hint).await
+    } else {
+        // Background (wait=false) tasks always run shared (a background branch merge
+        // cannot be coordinated with the user's in-flight work)
+        (crate::utils::worktree::TaskWorkspace::Shared, Vec::new())
+    };
+    let tools_root: String = match &workspace {
+        crate::utils::worktree::TaskWorkspace::Worktree { path, .. } => {
+            path.to_string_lossy().to_string()
+        }
+        crate::utils::worktree::TaskWorkspace::Shared => project_root.clone(),
+    };
+    let workspace_for_tools: Option<&str> = match &workspace {
+        crate::utils::worktree::TaskWorkspace::Worktree { .. } => Some(tools_root.as_str()),
+        crate::utils::worktree::TaskWorkspace::Shared => None,
+    };
+
+    let exec = execute_subagent(
         window,
         app,
         client,
@@ -377,13 +671,77 @@ pub(crate) async fn execute_single_delegate(
         context_files,
         extra_context,
         &project_root,
+        workspace_for_tools,
         project_id,
         agent_mode,
         token,
         mcp_server_ids,
         locale,
     )
-    .await
+    .await;
+
+    match exec {
+        Ok(tool_result) => {
+            // Collect the worktree's changes onto its branch (system bookkeeping commit on
+            // the throwaway branch; bypasses the model-facing git tool approval)
+            let pending = match &workspace {
+                crate::utils::worktree::TaskWorkspace::Worktree { path, branch } => {
+                    let wt_s = path.to_string_lossy().to_string();
+                    let commit_msg = format!(
+                        "AIO subagent({}): {}",
+                        profile.id,
+                        truncate_chars_head(task_desc, 60)
+                    );
+                    let commit = tokio::task::spawn_blocking(move || {
+                        crate::utils::worktree::commit_all(&wt_s, &commit_msg)
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("worktree 提交线程 panic".to_string()));
+                    match commit {
+                        Ok(crate::utils::worktree::CommitOutcome::NoChanges) => {
+                            // Nothing changed: remove the worktree right away
+                            spawn_remove_worktree(&project_root, path, branch);
+                            None
+                        }
+                        Ok(crate::utils::worktree::CommitOutcome::Committed { summary }) => {
+                            let root_c = project_root.clone();
+                            let branch_c = branch.clone();
+                            let files = tokio::task::spawn_blocking(move || {
+                                crate::utils::worktree::changed_files(&root_c, &branch_c)
+                            })
+                            .await
+                            .unwrap_or_default();
+                            Some(PendingWorkspace {
+                                path: path.clone(),
+                                branch: branch.clone(),
+                                summary,
+                                files,
+                            })
+                        }
+                        Err(e) => {
+                            // Commit failed: keep the worktree for manual recovery, no merge
+                            notes.push(format!("[工作区] 提交失败，工作区与分支已保留: {e}"));
+                            None
+                        }
+                    }
+                }
+                crate::utils::worktree::TaskWorkspace::Shared => None,
+            };
+            Ok(DelegateOutcome {
+                tool_result,
+                pending,
+                notes,
+            })
+        }
+        Err(e) => {
+            // Failed / cancelled: partial work in the throwaway worktree is discarded
+            // (documented policy; the main checkout stays untouched either way)
+            if let crate::utils::worktree::TaskWorkspace::Worktree { path, branch } = &workspace {
+                spawn_remove_worktree(&project_root, path, branch);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Handles the delegate_tasks batch tool call.
@@ -516,10 +874,12 @@ pub(crate) async fn handle_delegate_tasks(
         }
     }
 
-    // Run all subtasks concurrently
+    // Run all subtasks concurrently. Task results are indexed so the merge-back notes can
+    // be attached to the right task after the batch settles.
     let mut unordered = FuturesUnordered::new();
+    let project_root = file_tools::resolve_project_root(app, project_id)?;
 
-    for task_obj in tasks_array.iter() {
+    for (task_idx, task_obj) in tasks_array.iter().enumerate() {
         let profile_id = task_obj["profile"]
             .as_str()
             .unwrap_or("general")
@@ -533,6 +893,7 @@ pub(crate) async fn handle_delegate_tasks(
                     .collect()
             })
             .unwrap_or_default();
+        let isolation_hint = task_obj["isolation"].as_str().map(|s| s.to_string());
         let extra_ctx = shared_context.clone();
 
         let window_clone = window.clone();
@@ -553,51 +914,99 @@ pub(crate) async fn handle_delegate_tasks(
         let mode_clone = agent_mode.clone();
 
         unordered.push(async move {
-            let _permit = sem_clone
-                .acquire()
-                .await
-                .map_err(|_| "并发控制信号量已关闭".to_string())?;
-
-            execute_single_delegate(
-                &window_clone,
-                &app_clone,
-                &client_clone,
-                &api_url_clone,
-                &api_key_clone,
-                &model_clone,
-                &parent_aid,
-                &parent_tid,
-                &profile_id,
-                &task_desc,
-                &task_context_files,
-                extra_ctx.as_deref(),
-                pid_clone.as_deref(),
-                &mode_clone,
-                &token_clone,
-                &overrides_clone,
-                &customs_clone,
-                &mcp_ids_clone,
-                &locale_clone,
-            )
-            .await
+            let outcome = match sem_clone.acquire().await {
+                Ok(permit) => {
+                    let _permit = permit; // held for the whole delegation
+                    execute_single_delegate(
+                        &window_clone,
+                        &app_clone,
+                        &client_clone,
+                        &api_url_clone,
+                        &api_key_clone,
+                        &model_clone,
+                        &parent_aid,
+                        &parent_tid,
+                        &profile_id,
+                        &task_desc,
+                        &task_context_files,
+                        extra_ctx.as_deref(),
+                        pid_clone.as_deref(),
+                        &mode_clone,
+                        &token_clone,
+                        &overrides_clone,
+                        &customs_clone,
+                        &mcp_ids_clone,
+                        &locale_clone,
+                        isolation_hint.as_deref(),
+                        true, // awaited batch delegation supports worktree isolation
+                    )
+                    .await
+                }
+                Err(_) => Err("并发控制信号量已关闭".to_string()),
+            };
+            (task_idx, outcome)
         });
     }
 
-    // Collect all results
+    // Collect all results into indexed slots (task order, not completion order)
+    let mut outcomes: Vec<Option<Result<DelegateOutcome, String>>> =
+        (0..tasks_array.len()).map(|_| None).collect::<Vec<_>>();
+
+    while let Some((task_idx, result)) = unordered.next().await {
+        outcomes[task_idx] = Some(result);
+    }
+
+    // Batch merge-back: pending branches are merged serially after all tasks settle, with
+    // ONE approval outside Auto mode (the merge notes map back to each task by branch).
+    let pendings: Vec<PendingWorkspace> = outcomes
+        .iter()
+        .flatten()
+        .filter_map(|r| r.as_ref().ok())
+        .filter_map(|o| o.pending.as_ref())
+        .map(|p| PendingWorkspace {
+            path: p.path.clone(),
+            branch: p.branch.clone(),
+            summary: p.summary.clone(),
+            files: p.files.clone(),
+        })
+        .collect();
+    let merge_notes =
+        merge_pending_workspaces(app, token, agent_mode, &project_root, pendings, locale).await;
+    // Notes come back aligned with the pending order above; map them by branch
+    let mut merge_note_by_branch: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for (idx, p) in outcomes
+        .iter()
+        .flatten()
+        .filter_map(|r| r.as_ref().ok())
+        .filter_map(|o| o.pending.as_ref())
+        .enumerate()
+    {
+        if let Some(n) = merge_notes.get(idx) {
+            merge_note_by_branch.insert(p.branch.clone(), n.clone());
+        }
+    }
+
+    // Build the per-task summary texts (work report + task notes + merge note), then the
+    // aggregated report in task order (successes first, then failures)
     let mut successes: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
-    while let Some(result) = unordered.next().await {
-        match result {
-            Ok(tr) => {
-                let summary = tr
-                    .content
-                    .iter()
-                    .find(|c| c.kind == "text")
-                    .and_then(|c| c.data.get("text"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("(done)");
-                successes.push(summary.to_string());
+    for outcome in outcomes.into_iter().flatten() {
+        match outcome {
+            Ok(o) => {
+                let mut summary = tool_result_text(&o.tool_result);
+                let mut all_notes = o.notes;
+                if let Some(p) = &o.pending {
+                    if let Some(n) = merge_note_by_branch.get(&p.branch) {
+                        all_notes.push(n.clone());
+                    }
+                }
+                if !all_notes.is_empty() {
+                    summary.push_str("\n\n");
+                    summary.push_str(&all_notes.join("\n"));
+                }
+                successes.push(summary);
             }
             Err(e) => {
                 failures.push(e);
@@ -722,10 +1131,13 @@ pub(crate) async fn execute_workflow(
             task_desc.push_str(&context);
         }
 
-        // Build the arguments JSON (same format as delegate_task)
+        // Build the arguments JSON (same format as delegate_task). Workflow steps are
+        // sequential by definition, so they always run shared (per-file locks apply);
+        // worktree isolation would also hide the user's uncommitted main-tree changes.
         let arguments = serde_json::json!({
             "profile": step.profile_id,
             "task": task_desc,
+            "isolation": "shared",
         });
 
         // Call handle_delegate_task to run this step
@@ -858,6 +1270,7 @@ pub(crate) async fn execute_subagent(
     context_files: &[String],
     extra_context: Option<&str>,
     project_root: &str,
+    workspace_root: Option<&str>,
     project_id: Option<&str>,
     agent_mode: &AgentMode,
     token: &CancellationToken,
@@ -872,6 +1285,8 @@ pub(crate) async fn execute_subagent(
         profile.id,
         &subagent_id[..subagent_id.len().min(8)]
     );
+    // Isolated tasks operate on the worktree; shared tasks on the project root
+    let tools_root = workspace_root.unwrap_or(project_root);
 
     // Notify the frontend: subagent started
     let _ = window.emit(
@@ -890,10 +1305,22 @@ pub(crate) async fn execute_subagent(
         profile,
         task_desc,
         context_files,
-        project_root,
+        tools_root,
         extra_context,
         locale,
     );
+    // Isolated worktree notice: the subagent must know its file operations act on the
+    // worktree (a clean checkout of the current HEAD), not the main project directory
+    if let Some(wt_root) = workspace_root {
+        sub_msgs.push(json!({
+            "role": "user",
+            "content": if locale == "en-US" {
+                format!("[Workspace] This task runs in an isolated git worktree: {wt_root}. All file operations (read/write/edit/commands/git) act on this worktree only; the main project directory stays untouched. Uncommitted changes in the main checkout are not visible here. Do NOT commit or push; your changes are merged back automatically after the task completes.")
+            } else {
+                format!("[工作区] 本任务在独立 git worktree 中执行：{wt_root}。所有文件操作（读写/编辑/命令/git）仅作用于该工作区，主项目目录不受影响；主目录的未提交改动不在工作区内可见。无需自行 commit 或推送，任务完成后系统会自动合并回主分支。")
+            },
+        }));
+    }
     // MCP tool hookup: profiles with allow_mcp_tools get the tools of the servers enabled for the main agent
     let mcp_tools: Option<crate::core::models::AssistantTools> =
         if profile.allow_mcp_tools && !mcp_server_ids.is_empty() {
@@ -912,7 +1339,7 @@ pub(crate) async fn execute_subagent(
             None
         };
     let (sub_tools, sub_tool_server_map) =
-        build_subagent_tools(profile, project_root, mcp_tools.as_ref());
+        build_subagent_tools(profile, tools_root, mcp_tools.as_ref());
     let tools_slice: Option<&[ToolSpec]> = if sub_tools.is_empty() {
         None
     } else {
@@ -1084,6 +1511,7 @@ pub(crate) async fn execute_subagent(
                         let mode = agent_mode.clone();
                         let tok = token.clone();
                         let wl = writer_label.clone();
+                        let wr = workspace_root.map(|s| s.to_string());
                         let fut = Box::pin(async move {
                             execute_builtin_tool(
                                 &app_c,
@@ -1093,6 +1521,7 @@ pub(crate) async fn execute_subagent(
                                 &mode,
                                 &tok,
                                 &wl,
+                                wr.as_deref(),
                             )
                             .await
                         });
@@ -1147,6 +1576,7 @@ pub(crate) async fn execute_subagent(
                             agent_mode, // subagent inherits the parent agent_mode; writes/deletes/exec follow the parent mode's approval flow
                             token,
                             &writer_label,
+                            workspace_root,
                         )
                         .await
                     };

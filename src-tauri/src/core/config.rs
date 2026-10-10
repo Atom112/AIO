@@ -24,6 +24,12 @@ struct AppConfigDisk {
         rename = "maxConcurrentSubagents"
     )]
     max_concurrent_subagents: u32,
+    /// Subagent parallel write isolation mode (auto default / off / worktree)
+    #[serde(
+        default = "crate::core::models::default_subagent_isolation_mode",
+        rename = "subagentIsolationMode"
+    )]
+    subagent_isolation_mode: String,
     /// Workflow step permission mode ("inherit" default / "auto" legacy behavior)
     #[serde(
         default = "crate::core::models::default_workflow_step_mode",
@@ -144,6 +150,7 @@ impl AppConfigDisk {
                 .max_tool_rounds
                 .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS),
             max_concurrent_subagents: cfg.max_concurrent_subagents.unwrap_or(5),
+            subagent_isolation_mode: cfg.subagent_isolation_mode.clone(),
             workflow_step_mode: cfg.workflow_step_mode.clone(),
             parallel_tool_execution: cfg.parallel_tool_execution,
             main_agent_tool_access: cfg.main_agent_tool_access.clone(),
@@ -188,6 +195,7 @@ impl AppConfigDisk {
             auto_start_enabled: self.auto_start_enabled,
             max_concurrent_subagents: Some(self.max_concurrent_subagents),
             max_tool_rounds: Some(self.max_tool_rounds),
+            subagent_isolation_mode: self.subagent_isolation_mode.clone(),
             workflow_step_mode: self.workflow_step_mode,
             parallel_tool_execution: self.parallel_tool_execution,
             main_agent_tool_access: self.main_agent_tool_access,
@@ -222,6 +230,7 @@ impl Default for AppConfigDisk {
             auto_start_enabled: false,
             max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
             max_concurrent_subagents: 5,
+            subagent_isolation_mode: crate::core::models::default_subagent_isolation_mode(),
             workflow_step_mode: crate::core::models::default_workflow_step_mode(),
             parallel_tool_execution: crate::core::models::default_true(),
             main_agent_tool_access: crate::core::models::default_main_agent_tool_access(),

@@ -164,6 +164,15 @@ pub struct AppConfig {
     /// Maximum tool-call rounds per agent run (None = use the default). On hitting the cap the run wraps up gracefully instead of being hard-interrupted, to bound API cost.
     #[serde(default, rename = "maxToolRounds")]
     pub max_tool_rounds: Option<u32>,
+    /// Parallel write isolation for subagents: "auto" (default; awaited write-capable tasks get a
+    /// per-task git worktree when the project is a git repo, falling back to the shared root),
+    /// "off" (always shared root; per-file locks only), "worktree" (require worktrees; fall
+    /// back to shared with a notice when unavailable, e.g. non-git projects).
+    #[serde(
+        default = "default_subagent_isolation_mode",
+        rename = "subagentIsolationMode"
+    )]
+    pub subagent_isolation_mode: String,
     /// Permission mode for workflow steps: "inherit" inherits the parent turn's mode (default; write actions
     /// still require per-action approval under Normal), "auto" forces Auto mode (legacy behavior: step tools are auto-approved).
     #[serde(default = "default_workflow_step_mode", rename = "workflowStepMode")]
@@ -224,6 +233,7 @@ impl Default for AppConfig {
             auto_start_enabled: false,
             max_concurrent_subagents: None,
             max_tool_rounds: None,
+            subagent_isolation_mode: default_subagent_isolation_mode(),
             workflow_step_mode: default_workflow_step_mode(),
             parallel_tool_execution: default_true(),
             main_agent_tool_access: default_main_agent_tool_access(),
@@ -255,6 +265,11 @@ pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 50;
 /// Default value of the workflow step permission mode: inherit the parent turn's mode.
 pub(crate) fn default_workflow_step_mode() -> String {
     "inherit".into()
+}
+
+/// Default value of the subagent parallel write isolation mode: auto (worktree when git repo).
+pub fn default_subagent_isolation_mode() -> String {
+    "auto".into()
 }
 
 pub(crate) fn default_auto_retry_enabled() -> bool {

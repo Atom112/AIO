@@ -69,6 +69,7 @@ const AppSettings: Component = () => {
   const [autoStart, setAutoStart] = createSignal(false);
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (default 25)
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
+  const [subagentIsolation, setSubagentIsolation] = createSignal('auto'); // Parallel write isolation (auto default)
   const [version, setVersion] = createSignal(''); // App version
   const [checkUpdating, setCheckUpdating] = createSignal(false); // Manual update check in progress
   const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // Result of the last manual check
@@ -120,6 +121,9 @@ const AppSettings: Component = () => {
       }
       if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents > 0) {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
+      }
+      if (typeof cfg?.subagentIsolationMode === 'string' && cfg.subagentIsolationMode) {
+        setSubagentIsolation(cfg.subagentIsolationMode);
       }
     } catch (e) {
       console.warn('加载应用配置失败:', e);
@@ -666,6 +670,43 @@ const AppSettings: Component = () => {
               })();
             }}
           />
+        </div>
+
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.subagentIsolation.title')}
+            </span>
+            <p class="text-xs text-white/35 mt-1">{t('app.subagentIsolation.description')}</p>
+          </div>
+
+          <select
+            class="px-3 py-1.5 rounded text-sm outline-none"
+            style={{
+              background: 'rgba(0,0,0,0.3)',
+              border: '1px solid var(--border-dim)',
+              color: 'white',
+            }}
+            value={subagentIsolation()}
+            onChange={(e) => {
+              const mode = e.currentTarget.value;
+              setSubagentIsolation(mode);
+              void (async () => {
+                try {
+                  const cfg = await loadAppConfig().catch(() => null);
+                  if (cfg) {
+                    await saveAppConfig({ ...cfg, subagentIsolationMode: mode });
+                  }
+                } catch (err) {
+                  console.warn('保存并行写入隔离配置失败:', err);
+                }
+              })();
+            }}
+          >
+            <option value="auto">{t('app.subagentIsolation.auto')}</option>
+            <option value="worktree">{t('app.subagentIsolation.worktree')}</option>
+            <option value="off">{t('app.subagentIsolation.off')}</option>
+          </select>
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">

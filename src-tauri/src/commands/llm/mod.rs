@@ -771,6 +771,14 @@ pub async fn stop_llm_stream(
 /// lock (`core::file_locks::FileLockRegistry`) so same-file writes serialize across the
 /// main agent and parallel subagents, and cross-writer edits must carry a fresh hashline
 /// anchor (anchor_hash / expect_hash) to prevent silent lost updates.
+///
+/// `workspace_root` overrides the root the tool operates on (worktree-isolated subagents
+/// pass their worktree path); permission rules and project memory stay bound to the
+/// project root resolved from `project_id`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit execution context incl. workspace isolation"
+)]
 pub(crate) async fn execute_builtin_tool(
     app: &AppHandle,
     tool_name: &str,
@@ -779,8 +787,14 @@ pub(crate) async fn execute_builtin_tool(
     agent_mode: &AgentMode,
     token: &CancellationToken,
     writer_id: &str,
+    workspace_root: Option<&str>,
 ) -> Result<ToolResult, String> {
     let project_root = file_tools::resolve_project_root(app, project_id)?;
+    // Tools operate on the workspace root when the caller runs isolated (git worktree);
+    // permission rules + memory below stay on the main project root.
+    let tools_root = workspace_root
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| project_root.clone());
 
     // Fail-closed: when the sandbox is unavailable (no bwrap/sandbox-exec), autonomous modes
     // refuse command execution per config. Normal/Plan modes still go through permission
@@ -905,7 +919,7 @@ pub(crate) async fn execute_builtin_tool(
         };
         #[cfg(not(windows))]
         let ac_dirs: Option<Vec<String>> = None;
-        let root = project_root.clone();
+        let root = tools_root.clone();
         Ok(tokio::task::spawn_blocking(move || {
             shell_tools::execute_command(&command, &root, timeout, allow_network, ac_dirs)
         })
@@ -920,18 +934,20 @@ pub(crate) async fn execute_builtin_tool(
         let count = arguments["count"].as_u64();
         Ok(web_tools::execute_web_search(query, count).await)
     } else if tool_name == "read_lints" {
-        lsp_tools::execute(app, &project_root, arguments).await
+        lsp_tools::execute(app, &tools_root, arguments).await
     } else if tool_name == "lsp_definition" {
-        lsp_agent_tools::execute_lsp_definition(app, &project_root, arguments).await
+        lsp_agent_tools::execute_lsp_definition(app, &tools_root, arguments).await
     } else if tool_name == "lsp_references" {
-        lsp_agent_tools::execute_lsp_references(app, &project_root, arguments).await
+        lsp_agent_tools::execute_lsp_references(app, &tools_root, arguments).await
     } else if tool_name == "lsp_hover" {
-        lsp_agent_tools::execute_lsp_hover(app, &project_root, arguments).await
+        lsp_agent_tools::execute_lsp_hover(app, &tools_root, arguments).await
     } else if tool_name == "lsp_symbols" {
-        lsp_agent_tools::execute_lsp_symbols(app, &project_root, arguments).await
+        lsp_agent_tools::execute_lsp_symbols(app, &tools_root, arguments).await
     } else if crate::services::memory::tools::MEMORY_TOOL_NAMES.contains(&tool_name) {
         // The memory tool name list is maintained centrally in services/memory/tools.rs
         // (including search_code); never hardcode a literal list here to avoid dispatch/spec drift.
+        // Memory stays bound to the main project root even under worktree isolation (the
+        // memory DB is per-project, not per-worktree).
         let tool_name_c = tool_name.to_string();
         let arguments_c = arguments.clone();
         let root_c = project_root.clone();
@@ -946,11 +962,11 @@ pub(crate) async fn execute_builtin_tool(
     } else if tool_name == "think" {
         Ok(crate::utils::think::execute(arguments))
     } else if tool_name == "project_map" {
-        Ok(crate::utils::project_map::execute(&project_root))
+        Ok(crate::utils::project_map::execute(&tools_root))
     } else if tool_name.starts_with("git_") {
         let tool_name_c = tool_name.to_string();
         let arguments_c = arguments.clone();
-        let root_c = project_root.clone();
+        let root_c = tools_root.clone();
         Ok(tokio::task::spawn_blocking(move || {
             git_tools::execute_git_tool(&tool_name_c, &arguments_c, &root_c)
         })
@@ -970,7 +986,7 @@ pub(crate) async fn execute_builtin_tool(
         // File tools run under the multi-agent write-coordination policy: mutating
         // single-path tools take the per-file exclusive lock and cross-writer edits must
         // carry a fresh hashline anchor (see commands/llm/locked_tools.rs).
-        execute_locked_file_tool(app, tool_name, arguments, &project_root, token, writer_id).await
+        execute_locked_file_tool(app, tool_name, arguments, &tools_root, token, writer_id).await
     } else {
         // Unknown tools must error out explicitly. Never route unmatched tool names to a
         // file_tools fallback, which would give the model a semantically ambiguous result.
@@ -2096,6 +2112,7 @@ pub(crate) async fn run_agent_turn_inner(
                                 &mode,
                                 &tok,
                                 "main-agent",
+                                None,
                             )
                             .await
                         });
@@ -2110,6 +2127,7 @@ pub(crate) async fn run_agent_turn_inner(
                             &agent_mode,
                             &token_inner,
                             "main-agent",
+                            None,
                         )
                         .await
                     } else {

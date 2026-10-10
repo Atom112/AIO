@@ -26,7 +26,7 @@ use crate::utils::truncate::truncate_bytes_head as truncate_output;
 
 /// Runs a git command and returns stdout (stderr is returned as the error message on failure).
 /// Uses argument arrays; never builds shell strings.
-fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
     // Only the git binary is ever invoked
     let output = Command::new("git")
         .args(args)

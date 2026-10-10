@@ -53,6 +53,7 @@ import {
   localModelsSetDir,
 } from '../../../core/api/localModel';
 import type {
+  DownloadSource,
   HardwareProfile,
   InstalledLocalModel,
   MarketFile,
@@ -98,6 +99,27 @@ function writeMarketCache(queryKey: string, entry: MarketCacheEntry) {
 // Hardware profile never changes at runtime: cache at module level so switching
 // settings tabs / providers never re-probes.
 const [cachedHardware, setCachedHardware] = createSignal<HardwareProfile | null>(null);
+
+// Download source preference persists in localStorage (UI pref, no backend state needed)
+const SOURCE_CACHE_KEY = 'aio-local-model-source';
+function readSourcePref(): DownloadSource {
+  try {
+    const v = localStorage.getItem(SOURCE_CACHE_KEY);
+    if (v === 'auto' || v === 'modelscope' || v === 'huggingface') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'auto';
+}
+const [dlSource, setDlSource] = createSignal<DownloadSource>(readSourcePref());
+const selectSource = (s: DownloadSource) => {
+  setDlSource(s);
+  try {
+    localStorage.setItem(SOURCE_CACHE_KEY, s);
+  } catch {
+    /* ignore */
+  }
+};
 
 /** One downloadable quant-family (a single file, or all shards of a split GGUF). */
 interface FileGroup {
@@ -488,6 +510,7 @@ const LocalModelMarket: Component = () => {
         msRepo: m.msRepo,
         files: g.files.map((f) => ({ name: f.name, size: f.size })),
         proxyUrl: engineProxyUrl(),
+        source: dlSource(),
       });
       await refreshInstalled();
       if (outcome.status === 'ok' && outcome.entryPath) {
@@ -860,7 +883,8 @@ const LocalModelMarket: Component = () => {
       </Show>
 
       {/* Config block: engine multi-select (one download serves all selected engines),
-          download directory and optional HF token; all action buttons share one height */}
+          download source, download directory and optional HF token; all action buttons
+          share one height */}
       <div
         class="flex flex-col gap-2.5 shrink-0 animate-row-in text-[11px]"
         style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
@@ -882,6 +906,33 @@ const LocalModelMarket: Component = () => {
                     <Icon name="check-circle" size={11} />
                   </Show>
                   {e.name}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="shrink-0">{t('provider.localModelMarket.sourceLabel')}</span>
+          <div
+            class="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
+          >
+            <For
+              each={
+                [
+                  ['auto', 'provider.localModelMarket.sourceAuto'],
+                  ['modelscope', 'provider.localModelMarket.sourceModelscope'],
+                  ['huggingface', 'provider.localModelMarket.sourceHuggingface'],
+                ] as const
+              }
+            >
+              {([value, label]) => (
+                <button
+                  class={btnTabXs}
+                  classList={{ [tabActive]: dlSource() === value }}
+                  onClick={() => selectSource(value)}
+                >
+                  {t(label)}
                 </button>
               )}
             </For>
@@ -923,6 +974,8 @@ const LocalModelMarket: Component = () => {
           </button>
         </div>
       </div>
+
+      <div class="shrink-0 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
 
       {/* Search + parameter segments */}
       <div class="flex items-center gap-3 flex-wrap shrink-0">
@@ -990,6 +1043,7 @@ const LocalModelMarket: Component = () => {
       {/* Installed models */}
       <Show when={installed().length > 0}>
         <div class="shrink-0">
+          <div class="border-t mb-3" style={{ 'border-color': 'var(--border-dim)' }} />
           <div class="section-label mb-2">{t('provider.localModelMarket.installedTitle')}</div>
           <div class="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
             <For each={installed()}>

@@ -46,6 +46,10 @@ pub struct LocalModelDownloadRequest {
     /// Optional per-provider proxy (e.g. `http://127.0.0.1:7890`) for hard-to-reach sources
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Download source preference: "auto" (default: ModelScope -> hf-mirror -> huggingface.co),
+    /// "modelscope" (ModelScope only) or "huggingface" (hf-mirror -> huggingface.co)
+    #[serde(default)]
+    pub source: Option<String>,
 }
 /// Download outcome: status = ok (finished) | paused (checkpoint kept) | cancelled
 /// (checkpoint deleted). `entryPath` is the first file's absolute path on ok.
@@ -139,26 +143,36 @@ fn source_candidates(
     hf_token: Option<String>,
 ) -> Vec<SourceCandidate> {
     let encoded = crate::commands::local_model_market::encode_repo_path(file);
+    let source = req
+        .source
+        .as_deref()
+        .unwrap_or("auto")
+        .trim()
+        .to_lowercase();
     let mut out = Vec::new();
-    if let Some(repo) = req.ms_repo.as_deref().filter(|r| !r.trim().is_empty()) {
-        let repo = crate::commands::local_model_market::encode_repo_path(repo.trim());
-        out.push(SourceCandidate {
-            name: "modelscope",
-            url: format!("https://modelscope.cn/models/{repo}/resolve/master/{encoded}"),
-            token: None,
-        });
-    }
-    if let Some(repo) = req.hf_repo.as_deref().filter(|r| !r.trim().is_empty()) {
-        let repo = crate::commands::local_model_market::encode_repo_path(repo.trim());
-        for (name, base) in [
-            ("hf-mirror", "https://hf-mirror.com"),
-            ("huggingface", "https://huggingface.co"),
-        ] {
+    if source != "huggingface" {
+        if let Some(repo) = req.ms_repo.as_deref().filter(|r| !r.trim().is_empty()) {
+            let repo = crate::commands::local_model_market::encode_repo_path(repo.trim());
             out.push(SourceCandidate {
-                name,
-                url: format!("{base}/{repo}/resolve/main/{encoded}"),
-                token: hf_token.clone(),
+                name: "modelscope",
+                url: format!("https://modelscope.cn/models/{repo}/resolve/master/{encoded}"),
+                token: None,
             });
+        }
+    }
+    if source != "modelscope" {
+        if let Some(repo) = req.hf_repo.as_deref().filter(|r| !r.trim().is_empty()) {
+            let repo = crate::commands::local_model_market::encode_repo_path(repo.trim());
+            for (name, base) in [
+                ("hf-mirror", "https://hf-mirror.com"),
+                ("huggingface", "https://huggingface.co"),
+            ] {
+                out.push(SourceCandidate {
+                    name,
+                    url: format!("{base}/{repo}/resolve/main/{encoded}"),
+                    token: hf_token.clone(),
+                });
+            }
         }
     }
     out

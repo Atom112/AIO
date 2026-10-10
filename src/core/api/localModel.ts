@@ -43,12 +43,16 @@ export interface HardwareProfile {
   recommendedParamsB: number;
 }
 
+/** Download source preference: auto = ModelScope -> hf-mirror -> huggingface.co */
+export type DownloadSource = 'auto' | 'modelscope' | 'huggingface';
+
 export interface LocalModelDownloadRequest {
   id: string;
   hfRepo: string | null;
   msRepo: string | null;
   files: Array<{ name: string; size: number }>;
   proxyUrl?: string;
+  source?: DownloadSource;
 }
 
 export interface LocalModelDownloadOutcome {

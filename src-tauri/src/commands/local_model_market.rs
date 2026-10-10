@@ -192,7 +192,9 @@ async fn hf_market_list(query: &str, limit: u32, token: Option<&str>) -> Option<
 }
 
 /// One ModelScope dolphin row (subset of the very wide response we consume).
-#[derive(Deserialize, Debug)]
+/// The dolphin API returns PascalCase keys (Path/Name/Downloads/Libraries/...).
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "PascalCase")]
 struct MsListRow {
     #[serde(default)]
     path: String,
@@ -212,20 +214,30 @@ struct MsListRow {
     tags: Vec<String>,
 }
 
+/// Whether a dolphin row is a GGUF repo (gguf library or tag) with a usable name.
+/// Must read real deserialized fields: with wrong field renames every row silently
+/// deserializes to defaults and this predicate rejects everything.
+fn ms_row_is_gguf(r: &MsListRow) -> bool {
+    (r.libraries.iter().any(|l| l.eq_ignore_ascii_case("gguf"))
+        || r.tags.iter().any(|t| t.eq_ignore_ascii_case("gguf")))
+        && !r.name.is_empty()
+}
+
 /// Queries the ModelScope model list with a `Name` substring filter (empty query falls
 /// back to "gguf" so the default page shows GGUF repos). Only entries tagged gguf are
 /// kept, sorted by download count descending. Returns None when the request fails.
+/// With a search term the top results are dominated by official non-GGUF repos, so the
+/// fetch size is doubled (capped at 100) to survive the gguf filtering.
 async fn ms_market_list(query: &str, limit: u32) -> Option<Vec<MsListRow>> {
-    let search = {
-        let q = query.trim();
-        if q.is_empty() {
-            "gguf"
-        } else {
-            q
-        }
+    let trimmed = query.trim();
+    let search = if trimmed.is_empty() { "gguf" } else { trimmed };
+    let fetch = if trimmed.is_empty() {
+        limit.min(100)
+    } else {
+        (limit.saturating_mul(2)).min(100)
     };
     let body = serde_json::json!({
-        "PageSize": limit.min(100),
+        "PageSize": fetch,
         "PageNumber": 1,
         "SortBy": "Default",
         "Name": search,
@@ -242,14 +254,7 @@ async fn ms_market_list(query: &str, limit: u32) -> Option<Vec<MsListRow>> {
         .pointer("/Data/Model/Models")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
-    let mut gguf: Vec<MsListRow> = rows
-        .into_iter()
-        .filter(|r| {
-            (r.libraries.iter().any(|l| l.eq_ignore_ascii_case("gguf"))
-                || r.tags.iter().any(|t| t.eq_ignore_ascii_case("gguf")))
-                && !r.name.is_empty()
-        })
-        .collect();
+    let mut gguf: Vec<MsListRow> = rows.into_iter().filter(ms_row_is_gguf).collect();
     gguf.sort_by_key(|r| std::cmp::Reverse(r.downloads));
     Some(gguf)
 }
@@ -683,6 +688,38 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].hf_repo.as_deref(), Some("unsloth/Qwen3-14B-GGUF"));
         assert_eq!(merged[0].ms_repo.as_deref(), Some("Qwen/Qwen3-14B-GGUF"));
+    }
+
+    /// Regression: the dolphin API returns PascalCase keys. Without the PascalCase
+    /// rename every field silently deserialized to its default (empty name), the gguf
+    /// predicate then dropped every row, and the ModelScope list was always empty.
+    #[test]
+    fn ms_rows_deserialize_realistic_dolphin_payload() {
+        let payload = r#"[
+            {"Path":"unsloth","Name":"Qwen3-8B-GGUF","Downloads":394940,"Stars":7,
+             "License":"apache-2.0","ChineseName":"\u5343\u95ee3-8B","Libraries":["gguf","pytorch"],"Tags":[]},
+            {"Path":"Qwen","Name":"Qwen3-8B","Downloads":5000000,"Stars":99,
+             "License":"apache-2.0","Libraries":["pytorch"],"Tags":[]},
+            {"Path":"broken","Name":"","Downloads":1,"Libraries":["gguf"],"Tags":[]}
+        ]"#;
+        let rows: Vec<MsListRow> = serde_json::from_str(payload).unwrap();
+        assert_eq!(rows.len(), 3);
+        // Real PascalCase fields populate (this is what the bug zeroed out)
+        assert_eq!(rows[0].path, "unsloth");
+        assert_eq!(rows[0].name, "Qwen3-8B-GGUF");
+        assert_eq!(rows[0].downloads, 394940);
+        assert_eq!(rows[0].chinese_name.as_deref(), Some("千问3-8B"));
+        assert_eq!(rows[0].license.as_deref(), Some("apache-2.0"));
+        // The gguf predicate keeps the GGUF row, drops the non-GGUF and the nameless rows
+        let kept: Vec<&MsListRow> = rows.iter().filter(|r| ms_row_is_gguf(r)).collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "Qwen3-8B-GGUF");
+        // Field mapping flows through to the market model
+        let models = ms_to_models(rows.into_iter().filter(ms_row_is_gguf).collect());
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].ms_repo.as_deref(), Some("unsloth/Qwen3-8B-GGUF"));
+        assert_eq!(models[0].downloads, 394940);
+        assert_eq!(models[0].chinese_name.as_deref(), Some("千问3-8B"));
     }
 
     #[test]

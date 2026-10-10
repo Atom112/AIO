@@ -23,7 +23,12 @@ export interface MarketModel {
 }
 
 export interface MarketListResponse {
+  /** View for the requested source ("auto" merges both platforms) */
   models: MarketModel[];
+  /** Raw HuggingFace list (null when HF was not queried) */
+  hfModels: MarketModel[] | null;
+  /** Raw ModelScope list (null when MS was not queried) */
+  msModels: MarketModel[] | null;
   failedSources: string[];
 }
 
@@ -68,9 +73,16 @@ export interface InstalledLocalModel {
   sizeBytes: number;
 }
 
-/** Searches the local model market (empty query = the sites' default GGUF rankings) */
-export const localModelMarketList = (query: string, limit?: number) =>
-  invoke<MarketListResponse>('local_model_market_list', { query, limit: limit ?? null });
+/**
+ * Searches the local model market (empty query = the sites' default GGUF rankings).
+ * `source`: "auto" (merged view + both raw lists), "modelscope" or "huggingface".
+ */
+export const localModelMarketList = (query: string, limit?: number, source?: DownloadSource) =>
+  invoke<MarketListResponse>('local_model_market_list', {
+    query,
+    limit: limit ?? null,
+    source: source ?? null,
+  });
 
 /** Lists the GGUF files of one repo (source: "huggingface" | "modelscope") */
 export const localModelMarketFiles = (source: string, repo: string) =>

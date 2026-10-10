@@ -59,11 +59,16 @@ pub struct MarketModel {
     pub sources: Vec<String>,
 }
 
-/// Market query response: merged models ranked by downloads + sources that failed.
+/// Market query response: `models` is the view for the requested source ("auto" merges
+/// both platforms); `hfModels` / `msModels` carry the raw per-platform lists (Some only
+/// for the platforms that were queried) so the frontend can cache each source
+/// independently from one response.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketListResponse {
     pub models: Vec<MarketModel>,
+    pub hf_models: Option<Vec<MarketModel>>,
+    pub ms_models: Option<Vec<MarketModel>>,
     pub failed_sources: Vec<String>,
 }
 
@@ -249,53 +254,42 @@ async fn ms_market_list(query: &str, limit: u32) -> Option<Vec<MsListRow>> {
     Some(gguf)
 }
 
-/// Merges HF + MS rows by lowercased model name (org-agnostic), ranked by downloads.
-fn merge_market(hf: Vec<HfListRow>, ms: Vec<MsListRow>) -> Vec<MarketModel> {
-    let mut merged: Vec<MarketModel> = Vec::new();
-    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for row in hf {
-        let (org, name) = match row.id.split_once('/') {
-            Some((o, n)) => (o.to_string(), n.to_string()),
-            None => (String::new(), row.id.clone()),
-        };
-        let license = row
-            .tags
-            .iter()
-            .find_map(|t| t.strip_prefix("license:").map(|s| s.to_string()));
-        let entry = MarketModel {
-            id: row.id.clone(),
-            name: name.clone(),
-            org,
-            hf_repo: Some(row.id),
-            ms_repo: None,
-            params_b: params_from_name(&name),
-            license,
-            downloads: row.downloads,
-            likes: row.likes,
-            stars: 0,
-            chinese_name: None,
-            sources: vec!["huggingface".into()],
-        };
-        index.insert(name.to_lowercase(), merged.len());
-        merged.push(entry);
-    }
-    for row in ms {
-        let repo = format!("{}/{}", row.path, row.name);
-        let key = row.name.to_lowercase();
-        if let Some(&i) = index.get(&key) {
-            let e = &mut merged[i];
-            e.ms_repo = Some(repo);
-            e.stars = row.stars;
-            e.chinese_name = row.chinese_name.clone();
-            e.downloads = e.downloads.max(row.downloads);
-            if !e.sources.iter().any(|s| s == "modelscope") {
-                e.sources.push("modelscope".into());
+/// Converts raw HuggingFace rows into market models.
+fn hf_to_models(rows: Vec<HfListRow>) -> Vec<MarketModel> {
+    rows.into_iter()
+        .map(|row| {
+            let (org, name) = match row.id.split_once('/') {
+                Some((o, n)) => (o.to_string(), n.to_string()),
+                None => (String::new(), row.id.clone()),
+            };
+            let license = row
+                .tags
+                .iter()
+                .find_map(|t| t.strip_prefix("license:").map(|s| s.to_string()));
+            MarketModel {
+                id: row.id.clone(),
+                name: name.clone(),
+                org,
+                hf_repo: Some(row.id),
+                ms_repo: None,
+                params_b: params_from_name(&name),
+                license,
+                downloads: row.downloads,
+                likes: row.likes,
+                stars: 0,
+                chinese_name: None,
+                sources: vec!["huggingface".into()],
             }
-            if e.license.is_none() {
-                e.license = row.license.clone();
-            }
-        } else {
-            let entry = MarketModel {
+        })
+        .collect()
+}
+
+/// Converts raw ModelScope rows into market models.
+fn ms_to_models(rows: Vec<MsListRow>) -> Vec<MarketModel> {
+    rows.into_iter()
+        .map(|row| {
+            let repo = format!("{}/{}", row.path, row.name);
+            MarketModel {
                 id: repo.clone(),
                 name: row.name.clone(),
                 org: row.path.clone(),
@@ -308,9 +302,36 @@ fn merge_market(hf: Vec<HfListRow>, ms: Vec<MsListRow>) -> Vec<MarketModel> {
                 stars: row.stars,
                 chinese_name: row.chinese_name,
                 sources: vec!["modelscope".into()],
-            };
+            }
+        })
+        .collect()
+}
+
+/// Merges per-platform model lists by lowercased model name (org-agnostic), ranked by
+/// downloads. HF metadata wins; MS fills in stars / chineseName / repo id.
+fn merge_models(hf: Vec<MarketModel>, ms: Vec<MarketModel>) -> Vec<MarketModel> {
+    let mut merged = hf;
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, m) in merged.iter().enumerate() {
+        index.insert(m.name.to_lowercase(), i);
+    }
+    for row in ms {
+        let key = row.name.to_lowercase();
+        if let Some(&i) = index.get(&key) {
+            let e = &mut merged[i];
+            e.ms_repo = row.ms_repo;
+            e.stars = row.stars;
+            e.chinese_name = row.chinese_name;
+            e.downloads = e.downloads.max(row.downloads);
+            if !e.sources.iter().any(|s| s == "modelscope") {
+                e.sources.push("modelscope".into());
+            }
+            if e.license.is_none() {
+                e.license = row.license;
+            }
+        } else {
             index.insert(key, merged.len());
-            merged.push(entry);
+            merged.push(row);
         }
     }
     merged.sort_by_key(|m| std::cmp::Reverse(m.downloads));
@@ -321,37 +342,83 @@ fn merge_market(hf: Vec<HfListRow>, ms: Vec<MsListRow>) -> Vec<MarketModel> {
 ///
 /// - `query`: search text; empty lists the sites' default GGUF rankings (by downloads)
 /// - `limit`: max rows per source (default 50, capped at 100)
+/// - `source`: "auto" (default; merged view + both raw lists), "modelscope" or
+///   "huggingface" (single-platform view; the other platform is not queried)
 ///
-/// Sources failing entirely are reported in `failedSources` (partial results are still
-/// returned; an empty query result with both sources failed returns an error).
+/// Sources failing entirely are reported in `failedSources` (only platforms that were
+/// queried count); an error is returned when every queried platform failed.
 #[tauri::command]
 pub async fn local_model_market_list(
     app: AppHandle,
     query: String,
     limit: Option<u32>,
+    source: Option<String>,
 ) -> Result<MarketListResponse, String> {
     let limit = limit.unwrap_or(50).clamp(1, 100);
-    let token = hf_token(&app);
-    let (hf, ms) = tokio::join!(
-        hf_market_list(&query, limit, token.as_deref()),
-        ms_market_list(&query, limit)
-    );
-    let mut failed_sources = Vec::new();
-    if hf.is_none() {
-        failed_sources.push("huggingface".into());
-    }
-    if ms.is_none() {
-        failed_sources.push("modelscope".into());
-    }
-    if failed_sources.len() == 2 {
+    let source = source.as_deref().unwrap_or("auto").trim().to_lowercase();
+    if !matches!(source.as_str(), "auto" | "modelscope" | "huggingface") {
         return Err(ierr!(
-            "模型市场暂不可用：HuggingFace 与 ModelScope 均无法访问，请检查网络",
-            "Model market unavailable: both HuggingFace and ModelScope are unreachable, check your network"
+            "未知下载源: {}",
+            "Unknown download source: {}",
+            source
         ));
     }
-    let models = merge_market(hf.unwrap_or_default(), ms.unwrap_or_default());
+    let want_hf = source != "modelscope";
+    let want_ms = source != "huggingface";
+    let token = hf_token(&app);
+    let (hf, ms) = tokio::join!(
+        async {
+            if want_hf {
+                hf_market_list(&query, limit, token.as_deref()).await
+            } else {
+                None
+            }
+        },
+        async {
+            if want_ms {
+                ms_market_list(&query, limit).await
+            } else {
+                None
+            }
+        }
+    );
+    let mut failed_sources = Vec::new();
+    if want_hf && hf.is_none() {
+        failed_sources.push("huggingface".into());
+    }
+    if want_ms && ms.is_none() {
+        failed_sources.push("modelscope".into());
+    }
+    let queried = usize::from(want_hf) + usize::from(want_ms);
+    if failed_sources.len() == queried {
+        return Err(ierr!(
+            "模型市场暂不可用：所选来源无法访问，请检查网络或切换下载源",
+            "Model market unavailable: the selected source is unreachable, check your network or switch the download source"
+        ));
+    }
+    let hf_models = hf.map(hf_to_models);
+    let ms_models = ms.map(ms_to_models);
+    let (models, hf_models, ms_models) = match source.as_str() {
+        "modelscope" => {
+            let m = ms_models.clone().unwrap_or_default();
+            (m, None, ms_models)
+        }
+        "huggingface" => {
+            let h = hf_models.clone().unwrap_or_default();
+            (h, hf_models, None)
+        }
+        _ => {
+            let merged = merge_models(
+                hf_models.clone().unwrap_or_default(),
+                ms_models.clone().unwrap_or_default(),
+            );
+            (merged, hf_models, ms_models)
+        }
+    };
     Ok(MarketListResponse {
         models,
+        hf_models,
+        ms_models,
         failed_sources,
     })
 }
@@ -562,14 +629,14 @@ mod tests {
     }
 
     #[test]
-    fn merge_market_prefers_hf_metadata() {
-        let hf = vec![HfListRow {
+    fn merge_models_prefers_hf_metadata() {
+        let hf = hf_to_models(vec![HfListRow {
             id: "unsloth/Qwen3-14B-GGUF".into(),
             downloads: 100,
             likes: 5,
             tags: vec!["gguf".into(), "license:apache-2.0".into()],
-        }];
-        let ms = vec![MsListRow {
+        }]);
+        let ms = ms_to_models(vec![MsListRow {
             path: "unsloth".into(),
             name: "Qwen3-14B-GGUF".into(),
             downloads: 200,
@@ -578,14 +645,44 @@ mod tests {
             chinese_name: Some("千问3-14B".into()),
             libraries: vec!["gguf".into()],
             tags: vec![],
-        }];
-        let merged = merge_market(hf, ms);
+        }]);
+        let merged = merge_models(hf, ms);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].id, "unsloth/Qwen3-14B-GGUF");
         assert_eq!(merged[0].downloads, 200);
         assert_eq!(merged[0].license.as_deref(), Some("apache-2.0"));
         assert_eq!(merged[0].chinese_name.as_deref(), Some("千问3-14B"));
         assert_eq!(merged[0].sources.len(), 2);
+    }
+
+    #[test]
+    fn per_platform_lists_stay_independent() {
+        let hf = hf_to_models(vec![HfListRow {
+            id: "unsloth/Qwen3-14B-GGUF".into(),
+            downloads: 100,
+            likes: 5,
+            tags: vec![],
+        }]);
+        let ms = ms_to_models(vec![MsListRow {
+            path: "Qwen".into(),
+            name: "Qwen3-14B-GGUF".into(),
+            downloads: 200,
+            stars: 7,
+            license: Some("apache-2.0".into()),
+            chinese_name: None,
+            libraries: vec!["gguf".into()],
+            tags: vec![],
+        }]);
+        // Single-platform lists keep their own repo identity (no cross merge)
+        assert_eq!(hf[0].hf_repo.as_deref(), Some("unsloth/Qwen3-14B-GGUF"));
+        assert_eq!(hf[0].ms_repo, None);
+        assert_eq!(ms[0].ms_repo.as_deref(), Some("Qwen/Qwen3-14B-GGUF"));
+        assert_eq!(ms[0].hf_repo, None);
+        // Merging dedupes by name into one row with both sources
+        let merged = merge_models(hf, ms);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].hf_repo.as_deref(), Some("unsloth/Qwen3-14B-GGUF"));
+        assert_eq!(merged[0].ms_repo.as_deref(), Some("Qwen/Qwen3-14B-GGUF"));
     }
 
     #[test]

@@ -60,7 +60,8 @@ import type {
   MarketModel,
 } from '../../../core/api/localModel';
 
-const MARKET_CACHE_KEY = 'aio-local-model-market-cache-v1';
+// v2: per-source cache buckets ("auto" / "huggingface" / "modelscope" prefixes)
+const MARKET_CACHE_KEY = 'aio-local-model-market-cache-v2';
 const MARKET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 interface MarketCacheEntry {
@@ -71,6 +72,11 @@ interface MarketCacheEntry {
 interface MarketCache {
   updatedAt: number;
   queries: Record<string, MarketCacheEntry>;
+}
+
+/** Cache bucket key: source + query, so each source keeps an independent list */
+function cacheKeyFor(source: DownloadSource, queryKey: string): string {
+  return `${source}::${queryKey}`;
 }
 
 function readMarketCache(): MarketCache | null {
@@ -85,10 +91,10 @@ function readMarketCache(): MarketCache | null {
   }
 }
 
-function writeMarketCache(queryKey: string, entry: MarketCacheEntry) {
+function writeMarketCache(key: string, entry: MarketCacheEntry) {
   try {
     const cache = readMarketCache() ?? { updatedAt: 0, queries: {} };
-    cache.queries[queryKey] = entry;
+    cache.queries[key] = entry;
     cache.updatedAt = Date.now();
     localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
   } catch {
@@ -324,19 +330,54 @@ const LocalModelMarket: Component = () => {
 
   const queryKey = () => debouncedQuery().trim().toLowerCase() || 'default';
 
-  const loadMarket = async (queryText: string, silent: boolean) => {
+  /** The cache entry for the currently selected source + query. */
+  const currentEntry = () => readMarketCache()?.queries[cacheKeyFor(dlSource(), queryKey())];
+
+  /**
+   * Fetches the market for one source and writes caches for every platform the response
+   * carries: an "auto" response includes the raw per-platform lists, so one call
+   * refreshes all three cache buckets (auto / huggingface / modelscope).
+   */
+  const fetchMarket = async (source: DownloadSource, queryText: string) => {
+    const key = queryText.trim().toLowerCase() || 'default';
+    const resp = await localModelMarketList(queryText.trim(), 50, source);
+    writeMarketCache(cacheKeyFor(source, key), {
+      models: resp.models,
+      failedSources: resp.failedSources,
+      cachedAt: Date.now(),
+    });
+    if (resp.hfModels) {
+      writeMarketCache(cacheKeyFor('huggingface', key), {
+        models: resp.hfModels,
+        failedSources: resp.failedSources.filter((s) => s === 'huggingface'),
+        cachedAt: Date.now(),
+      });
+    }
+    if (resp.msModels) {
+      writeMarketCache(cacheKeyFor('modelscope', key), {
+        models: resp.msModels,
+        failedSources: resp.failedSources.filter((s) => s === 'modelscope'),
+        cachedAt: Date.now(),
+      });
+    }
+  };
+
+  /** Renders the currently selected source's cache entry (if present). */
+  const applyDisplay = () => {
+    const entry = currentEntry();
+    if (entry) {
+      setModels(entry.models);
+      setFailedSources(entry.failedSources);
+    }
+    return entry;
+  };
+
+  const loadMarket = async (source: DownloadSource, queryText: string, silent: boolean) => {
     if (!silent) setLoading(true);
     setError('');
     try {
-      const key = queryText.trim().toLowerCase() || 'default';
-      const resp = await localModelMarketList(queryText.trim(), 50);
-      setModels(resp.models);
-      setFailedSources(resp.failedSources);
-      writeMarketCache(key, {
-        models: resp.models,
-        failedSources: resp.failedSources,
-        cachedAt: Date.now(),
-      });
+      await fetchMarket(source, queryText);
+      applyDisplay();
     } catch (e) {
       if (!silent) setError(String(e));
     } finally {
@@ -344,16 +385,22 @@ const LocalModelMarket: Component = () => {
     }
   };
 
-  /** Cache-first render: stale-while-revalidate (fresh cache skips the network). */
-  const applyCache = () => {
-    const cache = readMarketCache();
-    const entry = cache?.queries[queryKey()];
-    if (entry) {
-      setModels(entry.models);
-      setFailedSources(entry.failedSources);
-      if (Date.now() - entry.cachedAt < MARKET_CACHE_TTL_MS) return;
+  /**
+   * Manual refresh: always fetches "auto" (both platforms in one call, each source's
+   * cache updated), then renders the currently selected source's fresh list —
+   * switching sources afterwards is instant.
+   */
+  const refreshAll = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await fetchMarket('auto', debouncedQuery());
+      applyDisplay();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
     }
-    void loadMarket(debouncedQuery(), true);
   };
 
   // Debounced search: typing re-queries after 500ms
@@ -367,10 +414,16 @@ const LocalModelMarket: Component = () => {
     if (searchTimer) clearTimeout(searchTimer);
   });
 
-  // Query change re-applies the cache (segment filtering is client-side)
+  // Source / query change re-applies that source's cache; stale-while-revalidate
+  // (a fresh cache skips the network; the background refresh covers only the
+  // selected source, segment filtering is client-side)
   createEffect(() => {
     void queryKey();
-    applyCache();
+    void dlSource();
+    const entry = applyDisplay();
+    const fresh = entry && Date.now() - entry.cachedAt < MARKET_CACHE_TTL_MS;
+    if (fresh) return;
+    void loadMarket(dlSource(), debouncedQuery(), true);
   });
 
   const refreshInstalled = async () => {
@@ -852,7 +905,7 @@ const LocalModelMarket: Component = () => {
           type="button"
           class={btnSecondarySm}
           disabled={loading()}
-          onClick={() => void loadMarket(debouncedQuery(), false)}
+          onClick={() => void refreshAll()}
         >
           <Show when={loading()} fallback={<Icon name="refresh" size={12} />}>
             <Icon name="spinner" size={12} class="animate-spin" />
@@ -950,29 +1003,34 @@ const LocalModelMarket: Component = () => {
             {t('provider.localModelMarket.resetDir')}
           </button>
         </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.tokenLabel')}</span>
-          <input
-            type="password"
-            class="grow min-w-[120px] bg-black/25 border border-white/[0.08] rounded-md text-white placeholder:text-white/30 focus:outline-none px-2 py-1.5 text-[11px] font-mono"
-            value={tokenInput()}
-            onInput={(e) => setTokenInput(e.currentTarget.value)}
-            placeholder={t('provider.localModelMarket.tokenPlaceholder')}
-          />
-          <button type="button" class={btnSecondarySm} onClick={() => void saveToken()}>
-            <Show when={tokenSaved()}>
-              <Icon name="check-circle" size={12} />
-            </Show>
-            {t('common.save')}
-          </button>
-          <button
-            type="button"
-            class={btnSecondarySm}
-            onClick={() => void openSafeUrl('https://huggingface.co/settings/tokens')}
-          >
-            {t('provider.localModelMarket.getToken')}
-          </button>
-        </div>
+        {/* HF token: relevant only when the download source can hit HuggingFace
+            (auto / huggingface). The stored token itself is never cleared when the
+            row hides — switching back to a HF-capable source restores it. */}
+        <Show when={dlSource() !== 'modelscope'}>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="shrink-0">{t('provider.localModelMarket.tokenLabel')}</span>
+            <input
+              type="password"
+              class="grow min-w-[120px] bg-black/25 border border-white/[0.08] rounded-md text-white placeholder:text-white/30 focus:outline-none px-2 py-1.5 text-[11px] font-mono"
+              value={tokenInput()}
+              onInput={(e) => setTokenInput(e.currentTarget.value)}
+              placeholder={t('provider.localModelMarket.tokenPlaceholder')}
+            />
+            <button type="button" class={btnSecondarySm} onClick={() => void saveToken()}>
+              <Show when={tokenSaved()}>
+                <Icon name="check-circle" size={12} />
+              </Show>
+              {t('common.save')}
+            </button>
+            <button
+              type="button"
+              class={btnSecondarySm}
+              onClick={() => void openSafeUrl('https://huggingface.co/settings/tokens')}
+            >
+              {t('provider.localModelMarket.getToken')}
+            </button>
+          </div>
+        </Show>
       </div>
 
       <div class="shrink-0 border-t" style={{ 'border-color': 'var(--border-dim)' }} />

@@ -866,6 +866,12 @@ pub(crate) async fn execute_subagent(
 ) -> Result<ToolResult, String> {
     let subagent_id = uuid::Uuid::new_v4().to_string();
     let model_to_use = profile.model_override.as_deref().unwrap_or(model);
+    // Writer label for the multi-agent write coordination (per-file locks + hashline gate)
+    let writer_label = format!(
+        "sub-{}-{}",
+        profile.id,
+        &subagent_id[..subagent_id.len().min(8)]
+    );
 
     // Notify the frontend: subagent started
     let _ = window.emit(
@@ -1077,9 +1083,18 @@ pub(crate) async fn execute_subagent(
                         let pid = project_id.map(|p| p.to_string());
                         let mode = agent_mode.clone();
                         let tok = token.clone();
+                        let wl = writer_label.clone();
                         let fut = Box::pin(async move {
-                            execute_builtin_tool(&app_c, &tn, &args_c, pid.as_deref(), &mode, &tok)
-                                .await
+                            execute_builtin_tool(
+                                &app_c,
+                                &tn,
+                                &args_c,
+                                pid.as_deref(),
+                                &mode,
+                                &tok,
+                                &wl,
+                            )
+                            .await
                         });
                         read_futures.push((i, fut));
                         continue;
@@ -1125,9 +1140,13 @@ pub(crate) async fn execute_subagent(
                         .await
                     } else {
                         execute_builtin_tool(
-                            app, &tc.name, &args_val, project_id,
+                            app,
+                            &tc.name,
+                            &args_val,
+                            project_id,
                             agent_mode, // subagent inherits the parent agent_mode; writes/deletes/exec follow the parent mode's approval flow
                             token,
+                            &writer_label,
                         )
                         .await
                     };

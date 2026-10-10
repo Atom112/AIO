@@ -27,6 +27,61 @@ fn sha256_hex(content: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Atomic file replace: write a temp sibling, then rename over the target, so concurrent
+/// readers never observe a torn file and a crash mid-write cannot leave the target half
+/// written. Windows AV/indexer may briefly hold the target, making rename fail; retries,
+/// then falls back to an in-place write (writers are still serialized by the per-file
+/// write lock at the `execute_builtin_tool` choke point).
+fn atomic_write(target: &std::path::Path, content: &str) -> Result<(), String> {
+    let Some(dir) = target.parent() else {
+        return Err(ierr!(
+            "目标缺少父目录: {}",
+            "Target has no parent directory: {}",
+            target.display()
+        ));
+    };
+    for _ in 0..3 {
+        let tmp = dir.join(format!(".aio-tmp-{}", uuid::Uuid::new_v4().simple()));
+        if let Err(e) = std::fs::write(&tmp, content) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(ierr!("写入失败: {}", "Write failed: {}", e));
+        }
+        match std::fs::rename(&tmp, target) {
+            Ok(_) => return Ok(()),
+            Err(_) => {
+                let _ = std::fs::remove_file(&tmp);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+    // Fallback: in-place write (still serialized by the per-file write lock)
+    std::fs::write(target, content).map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))
+}
+
+/// Resolves the canonical target path of a single-path mutating file tool (lock key for
+/// the per-file write lock). Returns `(canonical_path, exists)`; `None` when the tool is
+/// not a single-path mutation or the path cannot be resolved (the tool itself reports the
+/// detailed error right after, without lock protection).
+pub(crate) fn mutating_tool_target(
+    project_root: &str,
+    tool_name: &str,
+    arguments: &Value,
+) -> Option<(PathBuf, bool)> {
+    if !matches!(
+        tool_name,
+        "write_file" | "replace_in_file" | "delete_file" | "make_directory"
+    ) {
+        return None;
+    }
+    let path = arguments["path"].as_str().unwrap_or("");
+    if path.is_empty() {
+        return None;
+    }
+    let target = safe_path(project_root, path, false).ok()?;
+    let exists = target.exists();
+    Some((target, exists))
+}
+
 /// Path sandbox: resolves the requested path and ensures it stays within `allowed_dir`.
 ///
 /// Safety invariant: regardless of whether the target exists or can be canonicalized, it
@@ -153,8 +208,8 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: "write_file".into(),
-                description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）".into(),
-                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容"}},"required":["path","content"]}),
+                description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）；文件被其他智能体修改过后，覆盖时必须携带 expect_hash（当前内容哈希），不匹配会报错".into(),
+                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容"},"expect_hash":{"type":"string","description":"写入前校验的文件当前 SHA-256（read_file(with_hash=true) 获取）。文件被其他智能体修改过后为必填；不匹配则报错，需重新读取最新内容"}},"required":["path","content"]}),
             },
         },
         ToolSpec {
@@ -338,16 +393,34 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if t.exists() && t.is_dir() {
                 return tool_err(&ierr!("目标是目录: {}", "Target is a directory: {}", path));
             }
+            // hashline protocol — expect_hash: pre-overwrite content validation (the
+            // mirror of replace_in_file's anchor_hash). Enforced for cross-writer
+            // scenarios by the execute_builtin_tool gate; validated here whenever given.
+            let expect_hash = arguments["expect_hash"].as_str().unwrap_or("");
+            if !expect_hash.is_empty() && t.is_file() {
+                let current = match std::fs::read(&t) {
+                    Ok(b) => sha256_hex(&b),
+                    Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
+                };
+                if current != expect_hash {
+                    return tool_err(&ierr!(
+                        "[HASH MISMATCH] 文件当前哈希与 expect_hash 不一致（期望 {}，当前 {}）。文件已被修改，请重新 read_file(with_hash=true) 获取最新内容后基于其重写",
+                        "[HASH MISMATCH] Current file digest does not match expect_hash (expected {}, got {}). The file was modified; re-run read_file(with_hash=true) and rewrite from the fresh content",
+                        expect_hash,
+                        current
+                    ));
+                }
+            }
             if let Some(p) = t.parent() {
                 let _ = std::fs::create_dir_all(p);
             }
-            match std::fs::write(&t, content) {
+            match atomic_write(&t, content) {
                 Ok(_) => tool_ok(format!(
                     "✓ 写入 {path} ({}B)\n[HASH sha256:{}]",
                     content.len(),
                     sha256_hex(content.as_bytes())
                 )),
-                Err(e) => tool_err(&ierr!("写入失败: {}", "Write failed: {}", e)),
+                Err(e) => tool_err(&e),
             }
         }
         "list_directory" => {
@@ -626,14 +699,14 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                             MAX_W
                         ));
                     }
-                    match std::fs::write(&t, &new_content) {
+                    match atomic_write(&t, &new_content) {
                         Ok(_) => tool_ok(format!(
                             "✓ 替换 {path}\n第 {} 行: {} 处匹配已替换\n[HASH sha256:{}]",
                             matches[0],
                             1,
                             sha256_hex(new_content.as_bytes())
                         )),
-                        Err(e) => tool_err(&ierr!("写入失败: {}", "Write failed: {}", e)),
+                        Err(e) => tool_err(&e),
                     }
                 }
                 n => {
@@ -787,6 +860,100 @@ mod safe_path_tests {
         assert!(text.contains("    1| hello"));
         assert!(text.contains("    2| world"));
         assert!(text.contains("[HASH sha256:"), "hashline 应保留: {text}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// expect_hash guards write_file overwrites: a mismatched digest is rejected and the
+    /// file is left untouched.
+    #[test]
+    fn write_file_expect_hash_mismatch_rejects() {
+        let base = fresh_base("expect-mismatch");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("a.txt"), "hello").unwrap();
+        let args =
+            serde_json::json!({"path": "a.txt", "content": "NEW", "expect_hash": "deadbeef"});
+        let r = execute_file_tool("write_file", &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("[HASH MISMATCH]"), "应报哈希不匹配: {text}");
+        assert_eq!(fs::read_to_string(base.join("a.txt")).unwrap(), "hello");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A matching expect_hash lets the overwrite proceed atomically.
+    #[test]
+    fn write_file_expect_hash_match_overwrites() {
+        let base = fresh_base("expect-match");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("a.txt"), "hello").unwrap();
+        let hash = super::sha256_hex(b"hello");
+        let args = serde_json::json!({"path": "a.txt", "content": "NEW", "expect_hash": hash});
+        let r = execute_file_tool("write_file", &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("✓ 写入"), "应写入成功: {text}");
+        assert_eq!(fs::read_to_string(base.join("a.txt")).unwrap(), "NEW");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Creating a new file ignores expect_hash (there is nothing to compare against).
+    #[test]
+    fn write_file_expect_hash_new_file_skips_validation() {
+        let base = fresh_base("expect-new");
+        let base_s = base.to_string_lossy().to_string();
+        let args =
+            serde_json::json!({"path": "n.txt", "content": "first", "expect_hash": "whatever"});
+        let r = execute_file_tool("write_file", &args, &base_s);
+        assert!(text_of(&r).contains("✓ 写入"));
+        assert_eq!(fs::read_to_string(base.join("n.txt")).unwrap(), "first");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Atomic replace leaves no `.aio-tmp-*` residue behind, for both create and overwrite.
+    #[test]
+    fn atomic_write_leaves_no_temp_files() {
+        let base = fresh_base("atomic");
+        let base_s = base.to_string_lossy().to_string();
+        execute_file_tool(
+            "write_file",
+            &serde_json::json!({"path": "sub/dir/f.txt", "content": "v1"}),
+            &base_s,
+        );
+        execute_file_tool(
+            "write_file",
+            &serde_json::json!({"path": "sub/dir/f.txt", "content": "v2"}),
+            &base_s,
+        );
+        execute_file_tool(
+            "replace_in_file",
+            &serde_json::json!({"path": "sub/dir/f.txt", "old_string": "v2", "new_string": "v3"}),
+            &base_s,
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("sub/dir/f.txt")).unwrap(),
+            "v3"
+        );
+        for e in fs::read_dir(base.join("sub/dir")).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            assert!(!name.starts_with(".aio-tmp-"), "不应残留临时文件: {name}");
+        }
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// replace_in_file exact-match mode still works through the atomic write path and
+    /// returns the new hash for chained hashline edits.
+    #[test]
+    fn replace_in_file_exact_match_replaces() {
+        let base = fresh_base("replace");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("r.txt"), "alpha\nbeta\ngamma\n").unwrap();
+        let args = serde_json::json!({"path": "r.txt", "old_string": "beta", "new_string": "BETA"});
+        let r = execute_file_tool("replace_in_file", &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("✓ 替换"), "应替换成功: {text}");
+        assert!(text.contains("[HASH sha256:"), "应返回新哈希: {text}");
+        assert_eq!(
+            fs::read_to_string(base.join("r.txt")).unwrap(),
+            "alpha\nBETA\ngamma\n"
+        );
         let _ = fs::remove_dir_all(&base);
     }
 }

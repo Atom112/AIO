@@ -77,7 +77,7 @@
 
 ### 📦 下载发行版 | Download
 
-前往 [GitHub Releases](https://github.com/Atom112/AIO/releases)，下载适合当前系统的安装包。发布流程覆盖 Windows、Ubuntu 22.04，以及 Intel / Apple Silicon macOS。
+前往 [GitHub Releases](https://github.com/Atom112/AIO/releases)，下载适合当前系统的安装包。发布流程覆盖 Windows、Ubuntu 22.04，以及 Apple Silicon macOS（Intel macOS 构建止于 v0.8.0）。
 
 安装后打开"设置 → 供应商设置"：
 

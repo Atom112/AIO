@@ -6,8 +6,7 @@ Download the installation package for your platform from [GitHub Releases](https
 
 - Windows;
 - Ubuntu 22.04;
-- Intel macOS;
-- Apple Silicon macOS.
+- Apple Silicon macOS (the last Intel macOS build is v0.8.0).
 
 The app supports automatic update checking and installation. If the system blocks startup, verify that the installation package came from the project's Releases page.
 

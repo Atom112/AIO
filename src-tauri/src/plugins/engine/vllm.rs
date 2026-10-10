@@ -337,6 +337,9 @@ impl LocalEnginePlugin for VllmPlugin {
                     "4096",
                 ],
             );
+            // ENG-07: 服务进程 stdout piped 从无人读——64KB 管道填满后引擎静默
+            // 挂死；stderr 有人读保持 piped，stdout 改 null
+            cmd.stdout(std::process::Stdio::null());
             if trust_remote_code {
                 cmd.arg("--trust-remote-code");
             }
@@ -411,17 +414,44 @@ impl LocalEnginePlugin for VllmPlugin {
                 .unwrap_or_else(|_| reqwest::Client::new());
             let health_url = format!("http://127.0.0.1:{}/health", port);
 
-            match client.get(&health_url).send().await {
-                Ok(_) => {
-                    let _ = app.emit(self.progress_event_name(), 1.0);
-                }
-                Err(_) => {
+            // ENG-03: 轮询代替"固定等待 5s + 单发（15s 超时）"——vLLM 冷启动
+            // 普遍 30s~数分钟，20s 窗口几乎必败被误杀；健康判定要求 2xx
+            // （端口被占时旧服务的任意响应不再被当作健康）。
+            let deadline = std::time::Instant::now() + Duration::from_secs(180);
+            loop {
+                if std::time::Instant::now() > deadline {
+                    // ENG-06: kill 后 wait，避免 Unix 僵尸进程
                     let _ = child.kill();
+                    let _ = child.wait();
                     return Err(ierr!(
-                        "vLLM 服务未响应健康检查，可能启动失败。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效",
-                        "vLLM service did not respond to the health check, startup may have failed.\nPlease check: 1) the CUDA toolchain is correctly installed 2) VRAM is sufficient 3) the model path is valid"
+                        "vLLM 启动超时（180 秒内健康检查未通过）。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效",
+                        "vLLM startup timed out (health check did not pass within 180s).\nPlease check: 1) the CUDA toolchain is correctly installed 2) VRAM is sufficient 3) the model path is valid"
                     ));
                 }
+                match child.try_wait() {
+                    Ok(None) => {}
+                    Ok(Some(status)) => {
+                        return Err(ierr!(
+                            "vLLM 进程启动后立即退出，退出码: {}。\n常见原因：CUDA 不可用、模型路径错误、显存不足。",
+                            "vLLM process exited immediately after startup, exit code: {}.\nCommon causes: CUDA unavailable, wrong model path, or insufficient VRAM.",
+                            status
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(ierr!(
+                            "无法检查进程状态: {}",
+                            "Failed to check process status: {}",
+                            e
+                        ))
+                    }
+                }
+                if let Ok(resp) = client.get(&health_url).send().await {
+                    if resp.status().is_success() {
+                        let _ = app.emit(self.progress_event_name(), 1.0);
+                        break;
+                    }
+                }
+                sleep(Duration::from_millis(1_000)).await;
             }
 
             state.lock().insert(

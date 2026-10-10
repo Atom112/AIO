@@ -40,7 +40,9 @@ impl Drop for LocalEngineInner {
     fn drop(&mut self) {
         if let Some(mut child) = self.child_process.take() {
             tracing::debug!("[engine] Drop LocalEngineInner — 清理残留子进程");
+            // ENG-06: kill 后 wait，避免 Unix 僵尸进程
             let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }

@@ -170,7 +170,8 @@ fn source_candidates(
                 out.push(SourceCandidate {
                     name,
                     url: format!("{base}/{repo}/resolve/main/{encoded}"),
-                    token: hf_token.clone(),
+                    // ENG-02: Token 仅附于 huggingface.co 官方域；镜像候选匿名访问
+                    token: hf_token.clone().filter(|_| name == "huggingface"),
                 });
             }
         }
@@ -290,7 +291,20 @@ pub async fn local_model_download(
 
     for (file, dest) in request.files.iter().zip(dests.iter()) {
         if dest.exists() {
-            continue;
+            // ENG-04: 盲信跳过使半截文件永久视为完成——已知大小时核对长度，
+            // 并校验 GGUF 魔数；不符则删除重下
+            let size_ok = file.size == 0
+                || std::fs::metadata(dest)
+                    .map(|m| m.len() == file.size)
+                    .unwrap_or(false);
+            if size_ok && verify_gguf_magic(dest).is_ok() {
+                continue;
+            }
+            tracing::warn!(
+                "[download] 已存在的 {} 未通过完整性校验，删除重下",
+                dest.display()
+            );
+            let _ = std::fs::remove_file(dest);
         }
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -318,6 +332,15 @@ pub async fn local_model_download(
                 let mut req = client.get(&cand.url);
                 if attempt_from > 0 {
                     req = req.header(reqwest::header::RANGE, format!("bytes={attempt_from}-"));
+                    // ENG-04: 续传附 If-Range（上次响应的 ETag）——跨源/远端版本变更时
+                    // 服务器改回 200，上面"server ignored Range"分支会清零重下，
+                    // 不再把不同版本的字节拼接成静默损坏的文件
+                    if let Ok(etag) = std::fs::read_to_string(etag_path(&tmp)) {
+                        let etag = etag.trim().to_string();
+                        if !etag.is_empty() {
+                            req = req.header(reqwest::header::IF_RANGE, etag);
+                        }
+                    }
                 }
                 if let Some(t) = cand.token.as_deref() {
                     req = req.bearer_auth(t);
@@ -328,6 +351,7 @@ pub async fn local_model_download(
                         if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
                             // Corrupt checkpoint larger than the remote file: restart clean
                             let _ = tokio::fs::remove_file(&tmp).await;
+                            let _ = tokio::fs::remove_file(etag_path(&tmp)).await;
                             attempt_from = 0;
                             resume_from = 0;
                             continue; // retry this source from scratch
@@ -352,8 +376,34 @@ pub async fn local_model_download(
                             last_err = format!("HTTP {status}");
                             break; // next candidate
                         }
+                        // ENG-04: 206 的 Content-Range 起点必须与续传起点一致——
+                        // 起点不符仍按 206 追加会拼接出错位的损坏文件
+                        if status == reqwest::StatusCode::PARTIAL_CONTENT && attempt_from > 0 {
+                            let range_ok = resp
+                                .headers()
+                                .get(reqwest::header::CONTENT_RANGE)
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|cr| cr.split_once(' '))
+                                .map(|(_, rest)| rest.starts_with(&format!("{attempt_from}-")))
+                                .unwrap_or(false);
+                            if !range_ok {
+                                let _ = tokio::fs::remove_file(&tmp).await;
+                                let _ = tokio::fs::remove_file(etag_path(&tmp)).await;
+                                attempt_from = 0;
+                                resume_from = 0;
+                                continue; // restart this source from scratch
+                            }
+                        }
                         if status != reqwest::StatusCode::PARTIAL_CONTENT {
                             resume_from = 0; // server ignored Range -> full restart
+                        }
+                        // ENG-04: 记录本次响应的 ETag 供下次续传 If-Range 使用
+                        if let Some(etag) = resp
+                            .headers()
+                            .get(reqwest::header::ETAG)
+                            .and_then(|v| v.to_str().ok())
+                        {
+                            let _ = std::fs::write(etag_path(&tmp), etag);
                         }
                         response = Some((cand.name.to_string(), resp));
                         break;
@@ -435,6 +485,7 @@ pub async fn local_model_download(
         match interrupted {
             Some("cancelled") => {
                 let _ = tokio::fs::remove_file(&tmp).await;
+                let _ = tokio::fs::remove_file(etag_path(&tmp)).await;
                 return Ok(LocalModelDownloadOutcome {
                     status: "cancelled".into(),
                     id: request.id,
@@ -449,8 +500,24 @@ pub async fn local_model_download(
                 });
             }
             _ => {
+                // ENG-04: 终长核对——截断流此前被当完成直接 rename，
+                // 之后 dest.exists() 盲信跳过使损坏成为"永久完成"
+                if total > 0 && downloaded != total {
+                    return Err(ierr!(
+                        "下载不完整（{}/{} 字节），检查点已保留可续传",
+                        "Download incomplete ({}/{} bytes); checkpoint kept, resumable",
+                        downloaded,
+                        total
+                    ));
+                }
                 std::fs::rename(&tmp, dest)
                     .map_err(|e| ierr!("重命名失败: {}", "Failed to rename: {}", e))?;
+                let _ = std::fs::remove_file(etag_path(&tmp));
+                // ENG-04: GGUF 魔数校验（跨源续传/截断的最后一道兜底防线）
+                if let Err(e) = verify_gguf_magic(dest) {
+                    let _ = std::fs::remove_file(dest);
+                    return Err(e);
+                }
             }
         }
     }
@@ -715,7 +782,7 @@ fn collect_gguf_files(base: &Path, dir: &Path, out: &mut Vec<MarketFile>) {
     }
 }
 
-/// Removes `*.part` checkpoint files under `dir` (recursive).
+/// Removes `*.part` checkpoint files (and their `.etag` sidecars) under `dir` (recursive).
 fn remove_part_files(dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -725,16 +792,43 @@ fn remove_part_files(dir: &Path) {
         let path = entry.path();
         if path.is_dir() {
             remove_part_files(&path);
-        } else if entry
-            .file_name()
-            .to_string_lossy()
-            .to_lowercase()
-            .ends_with(".part")
-        {
-            let _ = std::fs::remove_file(&path);
+        } else {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.ends_with(".part") || name.ends_with(".part.etag") {
+                let _ = std::fs::remove_file(&path);
+            }
         }
     }
 }
+
+/// ENG-04: 续传检查点旁的 ETag sidecar 路径（`<tmp>.etag`）。
+fn etag_path(tmp: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.etag", tmp.display()))
+}
+
+/// ENG-04: 校验文件头 4 字节为 "GGUF"——下载完成/已存在跳过前的完整性兜底
+/// （跨源续传拼接或截断的文件在此被拦下，成本近零）。
+fn verify_gguf_magic(path: &Path) -> Result<(), String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)
+        .map_err(|e| ierr!("校验模型文件失败: {}", "Failed to verify model file: {}", e))?;
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).map_err(|e| {
+        ierr!(
+            "读取模型文件头失败: {}",
+            "Failed to read model file header: {}",
+            e
+        )
+    })?;
+    if &magic != b"GGUF" {
+        return Err(ierr!(
+            "模型文件校验失败：文件头不是 GGUF 格式（下载可能损坏，已删除请重试）",
+            "Model file verification failed: header is not GGUF format (download may be corrupt; deleted, please retry)"
+        ));
+    }
+    Ok(())
+}
+
 /// Moves every model directory from `old` to `new` (rename first, cross-volume copy
 /// fallback), then rewrites provider localModelPaths entries under `old` to `new`.
 fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
@@ -841,6 +935,23 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ENG-04 回归：GGUF 魔数校验拦下非 GGUF 文件，正确文件放行。
+    #[test]
+    fn gguf_magic_verification() {
+        let dir = std::env::temp_dir().join(format!("aio-magic-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("创建临时目录失败");
+        let good = dir.join("good.gguf");
+        std::fs::write(&good, b"GGUF\x03\x00\x00\x00rest").unwrap();
+        assert!(verify_gguf_magic(&good).is_ok());
+        let bad = dir.join("bad.gguf");
+        std::fs::write(&bad, b"HTML error page payload").unwrap();
+        assert!(verify_gguf_magic(&bad).is_err());
+        // ETag sidecar 路径与 .part 检查点成对
+        let tmp = dir.join("model.gguf.part");
+        assert_eq!(etag_path(&tmp).file_name().unwrap(), "model.gguf.part.etag");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn path_under_matches_case_insensitive_windows_prefix() {

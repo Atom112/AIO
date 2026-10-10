@@ -285,7 +285,9 @@ pub fn run() {
                     let mut engines = state.lock();
                     for (_, mut inner) in engines.drain() {
                         if let Some(mut child) = inner.child_process.take() {
+                            // ENG-06: kill 后 wait，避免 Unix 僵尸进程
                             let _ = child.kill();
+                            let _ = child.wait();
                         }
                     }
                 }

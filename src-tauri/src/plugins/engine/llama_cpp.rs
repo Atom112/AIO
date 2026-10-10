@@ -300,7 +300,9 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                 "--host",
                 "127.0.0.1",
             ])
-            .stdout(std::process::Stdio::piped())
+            // ENG-07: stdout piped 从无人读——64KB 管道填满后引擎静默挂死（长会话
+            // 必现）；stderr 有人读保持 piped，stdout 改 null
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
 
         #[cfg(target_os = "windows")]
@@ -419,17 +421,45 @@ impl LocalEnginePlugin for LlamaCppPlugin {
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             let health_url = format!("http://127.0.0.1:{}/health", port);
-            match client.get(&health_url).send().await {
-                Ok(_) => {
-                    let _ = app.emit(self.progress_event_name(), 1.0);
-                }
-                Err(_) => {
+            // ENG-03: 轮询代替"固定等待 2s + 单发"——14B+ 模型加载普遍超过 7s，
+            // 单发窗口内必然失败被误杀；健康判定要求 2xx（端口被占时旧服务
+            // 的任意响应不再被当作健康）。对齐 ollama 插件的 30s 轮询范本。
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            loop {
+                if std::time::Instant::now() > deadline {
+                    // ENG-06: kill 后 wait，避免 Unix 僵尸进程
                     let _ = child.kill();
+                    let _ = child.wait();
                     return Err(ierr!(
-                        "服务未响应健康检查，可能启动失败",
-                        "Service did not respond to the health check, startup may have failed"
+                        "服务启动超时（30 秒内健康检查未通过）",
+                        "Service startup timed out (health check did not pass within 30s)"
                     ));
                 }
+                // 子进程先于健康检查退出：直接报错
+                match child.try_wait() {
+                    Ok(None) => {}
+                    Ok(Some(status)) => {
+                        return Err(ierr!(
+                            "进程启动后立即退出，退出码: {}",
+                            "Process exited immediately after startup, exit code: {}",
+                            status
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(ierr!(
+                            "无法检查进程状态: {}",
+                            "Failed to check process status: {}",
+                            e
+                        ))
+                    }
+                }
+                if let Ok(resp) = client.get(&health_url).send().await {
+                    if resp.status().is_success() {
+                        let _ = app.emit(self.progress_event_name(), 1.0);
+                        break;
+                    }
+                }
+                sleep(Duration::from_millis(500)).await;
             }
 
             state.lock().insert(

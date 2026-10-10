@@ -494,6 +494,7 @@
   "mcp.detail.saveToKeychain": "存密钥",
   "mcp.detail.saveToKeychainTitle": "存到系统钥匙串（不再显示在 UI 中）",
   "mcp.detail.savedToKeychain": "[密钥·已存keyring]",
+  "mcp.detail.keyringReadOnlyTitle": "该值已托管到系统钥匙串，只读展示。要更换请删除此条目后重新输入，或保存新密钥覆盖。",
   "mcp.detail.selectAll": "全选",
   "mcp.detail.selected": "已选",
   "mcp.detail.testConnection": "测试连接",

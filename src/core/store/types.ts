@@ -162,13 +162,22 @@ export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
  * Context compaction outcome (/compact or auto-triggered), so the UI can report accurately.
  * - compressed: summary persisted (overwrites topic.summary and trims history)
  * - archived: summary failed, fell back to local archive (readable via read_artifact)
- * - skipped: compaction not run (below auto threshold / preserve zone covers all history / nothing to compact)
+ * - skipped: compaction not run (below auto threshold / preserve zone covers all history / nothing to compact /
+ *   CHAT-2: topic switched mid-summarize or the trim would empty the history — persist aborted to protect data)
  * - failed: summary and archive both failed, history unchanged
  */
 export type CompactOutcome =
   | { kind: 'compressed'; summarizedCount: number; keptCount: number }
   | { kind: 'archived'; count: number }
-  | { kind: 'skipped'; reason: 'below-threshold' | 'short-history' | 'nothing-to-compact' }
+  | {
+      kind: 'skipped';
+      reason:
+        | 'below-threshold'
+        | 'short-history'
+        | 'nothing-to-compact'
+        | 'topic-switched'
+        | 'empty-result';
+    }
   | { kind: 'failed'; error: string };
 
 /* Assistant interface defining the AI assistant data structure */

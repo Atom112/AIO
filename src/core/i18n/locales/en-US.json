@@ -494,6 +494,7 @@
   "mcp.detail.saveToKeychain": "Save to keychain",
   "mcp.detail.saveToKeychainTitle": "Save to system keychain (no longer visible in UI)",
   "mcp.detail.savedToKeychain": "[Key stored in keyring]",
+  "mcp.detail.keyringReadOnlyTitle": "This value is stored in the system keyring and shown read-only. To change it, remove the entry and re-enter, or save a new secret to overwrite.",
   "mcp.detail.selectAll": "Select all",
   "mcp.detail.selected": "Selected",
   "mcp.detail.testConnection": "Test connection",

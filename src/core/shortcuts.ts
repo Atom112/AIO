@@ -502,7 +502,10 @@ registerCommand({
   label: t('cmd.new-assistant.label'),
   description: t('cmd.new-assistant.description'),
   category: 'chat',
-  defaultKeys: 'Ctrl+Shift+N',
+  // FE-03: 此前与 new-project 同为 Ctrl+Shift+N——注册序使 new-assistant 默认
+  // 键永远无法触发（getActionByKeys 按插入序取首）；冲突检测只在用户录制时
+  // 触发，对出厂默认不设防
+  defaultKeys: 'Ctrl+Alt+N',
   handler: NOOP_HANDLER,
 });
 registerCommand({

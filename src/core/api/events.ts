@@ -7,6 +7,8 @@ export const EVENTS = {
   llamaProgress: 'llama-progress',
   /** Model download progress */
   modelDownloadProgress: 'model-download-progress',
+  /** Local GGUF model download progress (market downloader) */
+  localModelDownloadProgress: 'local-model-download-progress',
   /** Embedding-model index rebuild progress */
   reindexProgress: 'reindex-progress',
   /** Codebase indexing progress */

@@ -96,6 +96,8 @@ struct AppConfigDisk {
     memory_rerank: MemoryRerankConfig,
     #[serde(default, rename = "embeddingModelsDir")]
     embedding_models_dir: String,
+    #[serde(default, rename = "localModelsDir")]
+    local_models_dir: String,
     #[serde(default, rename = "embeddingModels")]
     embedding_models: Vec<crate::core::models::EmbeddingModelSetting>,
     #[serde(
@@ -162,6 +164,7 @@ impl AppConfigDisk {
             },
             memory_rerank: cfg.memory_rerank.clone(),
             embedding_models_dir: cfg.embedding_models_dir.clone(),
+            local_models_dir: cfg.local_models_dir.clone(),
             embedding_models: cfg.embedding_models.clone(),
             memory_dedup_threshold: cfg.memory_dedup_threshold,
             memory_query_rewrite: cfg.memory_query_rewrite,
@@ -201,6 +204,7 @@ impl AppConfigDisk {
             memory_embedding: self.memory_embedding,
             memory_rerank: self.memory_rerank,
             embedding_models_dir: self.embedding_models_dir,
+            local_models_dir: self.local_models_dir,
             embedding_models: self.embedding_models,
             memory_dedup_threshold: self.memory_dedup_threshold,
             memory_query_rewrite: self.memory_query_rewrite,
@@ -234,6 +238,7 @@ impl Default for AppConfigDisk {
             memory_embedding: MemoryEmbeddingConfig::default(),
             memory_rerank: MemoryRerankConfig::default(),
             embedding_models_dir: String::new(),
+            local_models_dir: String::new(),
             embedding_models: Vec::new(),
             memory_dedup_threshold: crate::core::models::default_dedup_threshold(),
             memory_query_rewrite: false,

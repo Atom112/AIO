@@ -80,6 +80,8 @@ src-tauri/src/
 │   ├── skill.rs         # Skills CRUD, market browsing/download, npx import
 │   ├── lsp.rs           # LSP server lifecycle, diagnostics, auto-detect
 │   ├── catalog.rs       # Models catalog (bundled @aio/models-data / models.dev)
+│   ├── local_model_market.rs  # 本地 GGUF 模型市场：HF/ModelScope 搜索合并 + 硬件档案 + HF Token
+│   ├── local_model_download.rs # 本地 GGUF 下载器：多源回退/断点续传/空间预检/目录迁移
 │   ├── embedding.rs     # 嵌入模型：测试 / 列表 / 下载 / 启停 / 目录
 │   ├── rerank.rs        # 重排模型：测试 / 保存 API Key
 │   ├── memory.rs        # 项目记忆命令（memory_*：CRUD/混合检索/统计/开关）

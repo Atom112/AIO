@@ -36,6 +36,7 @@ import { getProviderLogo } from '../../core/utils/modelLogo';
 import ModelRow from '../../shared/components/ModelRow';
 import Icon from '../../shared/components/Icon';
 import Dropdown from '../../shared/components/Dropdown';
+import LocalModelMarket from './components/LocalModelMarket';
 import {
   btnDanger,
   btnIcon,
@@ -221,6 +222,15 @@ const ProviderDetail: Component = () => {
       localModelPaths: Object.keys(next).length > 0 ? next : undefined,
       enabledModels: (userCfg()?.enabledModels ?? []).filter((m) => m !== modelId),
     });
+  };
+
+  /** Registers a model downloaded from the built-in market (same shape as the manual import) */
+  const registerDownloadedModel = (modelId: string, entryPath: string) => {
+    const current = userCfg()?.localModelPaths ?? {};
+    const next = { ...current, [modelId]: entryPath };
+    const enabled = userCfg()?.enabledModels ?? [];
+    const nextEnabled = enabled.includes(modelId) ? enabled : [...enabled, modelId];
+    persist({ localModelPaths: next, enabledModels: nextEnabled, enabled: true });
   };
 
   /** Start the local engine */
@@ -927,6 +937,16 @@ const ProviderDetail: Component = () => {
               {t('provider.addLocalModel')}
             </button>
           </div>
+        </Show>
+
+        {/* Built-in GGUF model market (HuggingFace + ModelScope search, downloads with
+            pause/resume; finished models auto-register above) */}
+        <Show when={isLocalEngine() && localEngineDef()!.allowModelFileSelection}>
+          <LocalModelMarket
+            providerId={providerId()}
+            proxyUrl={userCfg()?.proxyUrl}
+            onInstalled={registerDownloadedModel}
+          />
         </Show>
         {/* ===== model list section ===== */}
         <Show when={isCustom() && !isLocalEngine()}>

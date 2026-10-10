@@ -8,6 +8,8 @@ pub const ENGINE_PROGRESS: &str = "engine-progress";
 pub const LLAMA_PROGRESS: &str = "llama-progress";
 /// Model download progress
 pub const MODEL_DOWNLOAD_PROGRESS: &str = "model-download-progress";
+/// Local GGUF model download progress (market downloader)
+pub const LOCAL_MODEL_DOWNLOAD_PROGRESS: &str = "local-model-download-progress";
 /// Embedding model reindex progress
 pub const REINDEX_PROGRESS: &str = "reindex-progress";
 /// Codebase indexing progress
@@ -71,6 +73,7 @@ mod tests {
             ENGINE_PROGRESS,
             LLAMA_PROGRESS,
             MODEL_DOWNLOAD_PROGRESS,
+            LOCAL_MODEL_DOWNLOAD_PROGRESS,
             REINDEX_PROGRESS,
             CODE_INDEX_PROGRESS,
             APP_UPDATE_PROGRESS,

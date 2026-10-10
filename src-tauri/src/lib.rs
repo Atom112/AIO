@@ -255,6 +255,18 @@ pub fn run() {
             commands::model_download::embedding_model_set_enabled,
             commands::model_download::embedding_models_get_dir,
             commands::model_download::embedding_models_set_dir,
+            commands::local_model_market::local_model_market_list,
+            commands::local_model_market::local_model_market_files,
+            commands::local_model_market::local_model_hardware_profile,
+            commands::local_model_market::local_model_hf_token_get,
+            commands::local_model_market::local_model_hf_token_set,
+            commands::local_model_download::local_model_download,
+            commands::local_model_download::local_model_pause_download,
+            commands::local_model_download::local_model_cancel_download,
+            commands::local_model_download::local_model_delete,
+            commands::local_model_download::local_model_installed_list,
+            commands::local_model_download::local_models_get_dir,
+            commands::local_model_download::local_models_set_dir,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

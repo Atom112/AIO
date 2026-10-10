@@ -134,6 +134,9 @@ pub struct AppConfig {
     /// Global embedding model install directory (empty = default app_data_dir/models/embed)
     #[serde(default, rename = "embeddingModelsDir")]
     pub embedding_models_dir: String,
+    /// Local GGUF model install directory (empty = default app_data_dir/models/local)
+    #[serde(default, rename = "localModelsDir")]
+    pub local_models_dir: String,
     /// Global embedding model enable/disable registry (missing entries are treated as enabled)
     #[serde(default, rename = "embeddingModels")]
     pub embedding_models: Vec<EmbeddingModelSetting>,
@@ -237,6 +240,7 @@ impl Default for AppConfig {
             memory_embedding: MemoryEmbeddingConfig::default(),
             memory_rerank: MemoryRerankConfig::default(),
             embedding_models_dir: String::new(),
+            local_models_dir: String::new(),
             embedding_models: Vec::new(),
             memory_dedup_threshold: default_dedup_threshold(),
             memory_query_rewrite: false,

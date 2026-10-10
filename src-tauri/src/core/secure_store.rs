@@ -364,6 +364,11 @@ pub mod accounts {
 
     pub const APP_API_KEY: &str = "app-api-key";
 
+    /// Optional HuggingFace access token (read scope) for gated-repo downloads
+    pub fn hf_token() -> String {
+        "hf-access-token".to_string()
+    }
+
     pub fn provider_key(id: &str) -> String {
         format!("provider-{}-api-key", id)
     }

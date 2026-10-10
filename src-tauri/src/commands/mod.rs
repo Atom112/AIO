@@ -10,6 +10,8 @@ pub mod export;
 pub mod git;
 pub mod image_gen;
 pub mod llm;
+pub mod local_model_download;
+pub mod local_model_market;
 pub mod lsp;
 pub mod mcp;
 pub mod mcp_catalog;

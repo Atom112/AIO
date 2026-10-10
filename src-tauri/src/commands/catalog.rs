@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
+use crate::core::events as ev;
+
 use crate::ierr;
 
 const DEFAULT_CATALOG_URL: &str =
@@ -323,7 +325,7 @@ pub async fn update_models_catalog(
     })?;
 
     let _ = app.emit(
-        "models-catalog-updated",
+        ev::MODELS_CATALOG_UPDATED,
         serde_json::json!({
             "version": version,
             "modelCount": model_count,

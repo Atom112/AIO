@@ -61,6 +61,14 @@ export const EVENTS = {
 
   /** BTW side-question streaming delta */
   btwChunk: 'btw-chunk',
+
+  /** LSP diagnostics updated / server stderr / server status */
+  lspDiagnosticsUpdated: 'lsp-diagnostics-updated',
+  lspServerStderr: 'lsp-server-stderr',
+  lspServerStatus: 'lsp-server-status',
+
+  /** Models catalog updated (fresh fetch persisted) */
+  modelsCatalogUpdated: 'models-catalog-updated',
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

@@ -872,7 +872,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       );
     }),
     listen<{ stepId: string; status: 'completed' | 'failed'; duration?: number }>(
-      'workflow-step-complete',
+      EVENTS.workflowStepComplete,
       (e) => {
         setWorkflowState((prev) =>
           prev

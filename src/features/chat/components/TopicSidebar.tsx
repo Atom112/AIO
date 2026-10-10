@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
+import { Component, For, Show, createEffect, createSignal, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   Assistant,
@@ -62,6 +62,38 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     x: 0,
     y: 0,
     targetTopicId: null as string | null,
+  });
+
+  // ---- Branch fold state ----
+  // Component-local, default expanded. Auto-expand fires when a folded topic
+  // gains a new child (e.g. branching from a message while the subtree is
+  // folded). Switching assistants resets fold state and counters wholesale.
+  const [collapsedTopicIds, setCollapsedTopicIds] = createSignal<Set<string>>(new Set());
+  let prevChildCounts = new Map<string, number>();
+  let foldAssistantId: string | undefined;
+  createEffect(() => {
+    const asst = props.currentAssistant;
+    if (!asst) return;
+    if (asst.id !== foldAssistantId) {
+      foldAssistantId = asst.id;
+      prevChildCounts = new Map();
+      if (collapsedTopicIds().size > 0) setCollapsedTopicIds(new Set<string>());
+      return;
+    }
+    const counts = new Map<string, number>();
+    for (const tp of asst.topics) {
+      if (tp.parentTopicId) counts.set(tp.parentTopicId, (counts.get(tp.parentTopicId) ?? 0) + 1);
+    }
+    const next = new Set(collapsedTopicIds());
+    let changed = false;
+    for (const [pid, n] of counts) {
+      if (n > (prevChildCounts.get(pid) ?? 0) && next.has(pid)) {
+        next.delete(pid);
+        changed = true;
+      }
+    }
+    prevChildCounts = counts;
+    if (changed) setCollapsedTopicIds(next);
   });
 
   onMount(() => {
@@ -240,9 +272,8 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                   // - railBelowInherited: the rail continues past this whole subtree
                   //   (a parent's next sibling exists somewhere up the chain). Root
                   //   subtrees are hard-cut — never bridge across root topics.
-                  // Gap sources: root-list space-y-1 (4px) between a root row and its
-                  // children container; children-container space-y-0.5 (2px) between
-                  // sibling rows and between a child row and its own children.
+                  // - folded: this topic's children are collapsed; the rail treats
+                  //   it as a leaf and the children block animates to zero height.
                   const renderTopic = (
                     topic: Topic,
                     depth: number,
@@ -251,17 +282,26 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                     railBelowInherited = false,
                   ): any => {
                     const isChild = depth > 0;
-                    const hasKids = (children.get(topic.id)?.length ?? 0) > 0;
-                    // upExt: the first child reaches up to the parent row's bottom edge.
+                    const kids = children.get(topic.id) ?? [];
+                    const hasKids = kids.length > 0;
+                    const folded = hasKids && collapsedTopicIds().has(topic.id);
+                    // Gap between this topic's children block and the rows
+                    // above/below it (root children get space-y-1's 4px, deeper
+                    // nesting space-y-0.5's 2px).
+                    const childGap = depth === 0 ? 4 : 2;
+                    // upExt: the first child reaches up to the parent row's bottom
+                    // edge. Non-first siblings also extend 2px up: the fold wrapper
+                    // clips the previous sibling's 2px stem overhang below its own
+                    // row, so each next row re-draws that strip from its side and
+                    // the rail stays continuous under clipping.
                     const parentGap = depth === 1 ? 4 : 2;
-                    const upExt = isChild && isFirst ? parentGap : 0;
+                    const upExt = isChild ? (isFirst ? parentGap : 2) : 0;
                     // drawStem: the rail continues below this row — toward the next
-                    // sibling, into this row's own children, or toward an uncle
-                    // (inherited). Without a stem the line ends at the row's elbow (L).
-                    const drawStem = isChild && (!isLast || hasKids || railBelowInherited);
-                    // downExt: a stem crosses the 2px gap below the row to meet
-                    // whatever continues the rail (next sibling or first child —
-                    // the child's own upExt overlaps the same strip, harmlessly).
+                    // sibling, into this row's own (expanded) children, or toward
+                    // an uncle (inherited). Folded children do not continue the
+                    // rail; without a stem the line ends at the row's elbow (L).
+                    const stemToKids = hasKids && !folded;
+                    const drawStem = isChild && (!isLast || stemToKids || railBelowInherited);
                     const downExt = drawStem ? 2 : 0;
                     const railH = 28 + upExt + downExt;
                     const midY = upExt + 14;
@@ -341,46 +381,105 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               onClick={(e) => e.stopPropagation()}
                             />
                           </Show>
-                          <button
-                            class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
-                            style={{
-                              width: isChild ? '22px' : '30px',
-                              height: isChild ? '22px' : '30px',
-                            }}
-                            onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
-                          >
-                            <Icon
-                              src="/icons/app-logo/dot-menu.svg"
-                              class={isChild ? 'w-[13px] h-[13px]' : 'w-[18px] h-[18px]'}
-                            />
-                          </button>
-                        </div>
-                        {/* Render child topics recursively - tighter spacing */}
-                        <div class="space-y-0.5">
-                          {
-                            <For each={children.get(topic.id)}>
-                              {(child) => {
-                                const siblings = children.get(topic.id) ?? [];
-                                const isLastSibling =
-                                  siblings[siblings.length - 1]?.id === child.id;
-                                const isFirstSibling = siblings[0]?.id === child.id;
-                                // Children inherit the rail-below flag: the rail
-                                // continues past this subtree when this topic has a
-                                // next sibling, or when the flag was inherited from
-                                // above. Root subtrees never bridge across roots.
-                                const kidsRailBelow =
-                                  depth === 0 ? false : !isLast || railBelowInherited;
-                                return renderTopic(
-                                  child,
-                                  depth + 1,
-                                  isLastSibling,
-                                  isFirstSibling,
-                                  kidsRailBelow,
-                                );
+                          <div class="flex items-center gap-0.5 shrink-0">
+                            {/* Fold toggle: only for topics with children.
+                                Chevron-down when expanded, rotates to point
+                                right when folded. Always visible (unlike the
+                                more button's hover-only visibility). */}
+                            <Show when={hasKids}>
+                              <button
+                                type="button"
+                                class="flex items-center justify-center border-none bg-transparent cursor-pointer rounded-md text-white/40 hover:text-white/85 transition-colors duration-200"
+                                style={{
+                                  width: isChild ? '18px' : '24px',
+                                  height: isChild ? '18px' : '24px',
+                                }}
+                                title={
+                                  folded ? t('chat.expandBranches') : t('chat.collapseBranches')
+                                }
+                                aria-expanded={!folded}
+                                aria-label={
+                                  folded ? t('chat.expandBranches') : t('chat.collapseBranches')
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCollapsedTopicIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(topic.id)) next.delete(topic.id);
+                                    else next.add(topic.id);
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <Icon
+                                  name="chevron-down"
+                                  size={isChild ? 10 : 12}
+                                  class="transition-transform duration-200"
+                                  classList={{ '-rotate-90': folded }}
+                                />
+                              </button>
+                            </Show>
+                            <button
+                              class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                              style={{
+                                width: isChild ? '22px' : '30px',
+                                height: isChild ? '22px' : '30px',
                               }}
-                            </For>
-                          }
+                              onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
+                            >
+                              <Icon
+                                src="/icons/app-logo/dot-menu.svg"
+                                class={isChild ? 'w-[13px] h-[13px]' : 'w-[18px] h-[18px]'}
+                              />
+                            </button>
+                          </div>
                         </div>
+                        {/* Render child topics recursively. The grid wrapper animates the
+                            fold via grid-template-rows 0fr↔1fr; its negative top margin
+                            cancels the list gap and the inner padding restores it, so the
+                            connector bridge stays inside the clipped box and rows land
+                            exactly where they did before the wrapper existed. */}
+                        <Show when={hasKids}>
+                          <div
+                            class="grid transition-[grid-template-rows] duration-200 ease-out"
+                            style={{
+                              'margin-top': `-${childGap}px`,
+                              'grid-template-rows': folded ? '0fr' : '1fr',
+                            }}
+                          >
+                            <div class="overflow-hidden min-h-0">
+                              <div
+                                class="space-y-0.5 transition-opacity duration-200"
+                                style={{
+                                  'padding-top': `${childGap}px`,
+                                  opacity: folded ? '0' : '1',
+                                }}
+                              >
+                                <For each={children.get(topic.id)}>
+                                  {(child) => {
+                                    const siblings = children.get(topic.id) ?? [];
+                                    const isLastSibling =
+                                      siblings[siblings.length - 1]?.id === child.id;
+                                    const isFirstSibling = siblings[0]?.id === child.id;
+                                    // Children inherit the rail-below flag: the rail
+                                    // continues past this subtree when this topic has a
+                                    // next sibling, or when the flag was inherited from
+                                    // above. Root subtrees never bridge across roots.
+                                    const kidsRailBelow =
+                                      depth === 0 ? false : !isLast || railBelowInherited;
+                                    return renderTopic(
+                                      child,
+                                      depth + 1,
+                                      isLastSibling,
+                                      isFirstSibling,
+                                      kidsRailBelow,
+                                    );
+                                  }}
+                                </For>
+                              </div>
+                            </div>
+                          </div>
+                        </Show>
                       </>
                     );
                   };

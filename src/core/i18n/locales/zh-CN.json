@@ -142,6 +142,8 @@
   "chat.branchMessage": "从此处分支",
   "chat.branchSwitchFailed": "切换分支失败，请检查是否有未提交的更改。",
   "chat.branchTopic": "分支话题",
+  "chat.expandBranches": "展开子话题",
+  "chat.collapseBranches": "收起子话题",
   "chat.btw.awaitingAnswer": "等待回答...",
   "chat.btw.close": "关闭",
   "chat.btw.empty": "(空)",

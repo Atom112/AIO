@@ -142,6 +142,8 @@
   "chat.branchMessage": "Branch from here",
   "chat.branchSwitchFailed": "Could not switch branches. Check for uncommitted changes.",
   "chat.branchTopic": "Branched topic",
+  "chat.expandBranches": "Expand branches",
+  "chat.collapseBranches": "Collapse branches",
   "chat.btw.awaitingAnswer": "Awaiting answer...",
   "chat.btw.close": "Close",
   "chat.btw.empty": "(empty)",

@@ -38,6 +38,10 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 | `delegate_task`   | Orchestration | Ask            | Allow        | Ask          |
 | `delegate_tasks`  | Orchestration | Ask            | Allow        | Ask          |
 | `create_workflow` | Orchestration | Ask            | Allow        | Ask          |
+| `create_tasks`    | Orchestration | Allow          | Allow        | Allow        |
+| `update_task`     | Orchestration | Allow          | Allow        | Allow        |
+| `list_tasks`      | Orchestration | Allow          | Allow        | Allow        |
+| `ask_user`        | Orchestration | Allow          | Allow        | Allow        |
 | `read_skill`      | Orchestration | Allow          | Allow        | Allow        |
 | `read_artifact`   | Orchestration | Allow          | Allow        | Allow        |
 | `remember`        | Knowledge     | Ask            | Allow        | Ask          |
@@ -364,6 +368,50 @@ Create a sequentially-executing sub-agent workflow.
 | **Parameters**  | `title` (string, required) -- workflow title; `steps` (array, required, >=2 items) -- list of steps, each with `profile`, `name`, `task` |
 | **Return**      | Work summary for each step                                                                                                               |
 | **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                         |
+
+### `create_tasks`
+
+Create the agent task list (main-agent task tracking).
+
+| Item            | Value                                                                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Decompose multi-step work into a tracked task list; the user sees a live task panel above the chat area. Keep statuses current with `update_task` as work proceeds.                   |
+| **Parameters**  | `tasks` (array, required, 1-10 items) -- each with `title` (one-line task title); `clear_existing` (boolean, optional) -- clear the existing list (replanning), default false appends |
+| **Return**      | Numbered list with task IDs and statuses                                                                                                                                              |
+| **Permission**  | Allow in all modes (pure metadata; never touches files)                                                                                                                               |
+
+### `update_task`
+
+Update a task's status or rewrite its title.
+
+| Item            | Value                                                                                                                                                           |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Update as each task starts/completes so the user sees real progress.                                                                                            |
+| **Parameters**  | `task_id` (string, required) -- target task ID; `status` (string, optional) -- `pending` / `in_progress` / `completed`; `title` (string, optional) -- new title |
+| **Return**      | The updated full list (errors list the valid IDs when the task is not found)                                                                                    |
+| **Permission**  | Allow in all modes                                                                                                                                              |
+
+### `list_tasks`
+
+View the current topic's task list.
+
+| Item            | Value                                                                        |
+| --------------- | ---------------------------------------------------------------------------- |
+| **Description** | Check it when resuming work in a new turn, to avoid duplicate task creation. |
+| **Parameters**  | None                                                                         |
+| **Return**      | Current list (IDs + statuses)                                                |
+| **Permission**  | Allow in all modes                                                           |
+
+### `ask_user`
+
+Ask the user about decision points (recommended options + custom input).
+
+| Item            | Value                                                                                                                                                                                                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Call for genuine decision points (ambiguous requirements, multiple viable approaches, risky trade-offs); the loop pauses, the user answers in a question bubble in the chat flow (pick an option, type a custom answer, or skip and let the agent decide), and the answers return as the tool result. Ask at most once per point. |
+| **Parameters**  | `questions` (array, required, 1-4 items) -- each with `question`; `options` (0-4 items, each with `label`, optional `description`, optional `recommended` flag); `allow_custom` (custom answers allowed, default true)                                                                                                            |
+| **Return**      | `[User answers]` with the choice per question; when skipped, "decide on your own and continue"                                                                                                                                                                                                                                    |
+| **Permission**  | Allow in all modes (the user's answer IS the confirmation)                                                                                                                                                                                                                                                                        |
 
 ### Multi-agent parallel write coordination
 

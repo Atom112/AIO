@@ -54,6 +54,7 @@ import {
   customSubagentProfiles,
   workflowState,
   setWorkflowState,
+  setAgentTaskBoard,
   isChatMode,
   projects,
   ensureProjectAssistant,
@@ -110,42 +111,10 @@ async function getModelContextWindow(): Promise<number> {
   return maxContext;
 }
 
-/**
- * Build Skill system messages (token efficiency):
- * - Chat mode (no read_skill tool): inject full skill content (previous behavior);
- * - Agent mode: small skills (<= 800 chars) are always fully injected (avoids the
- *   model missing them, keeps them usable); large skills inject only catalog lines
- *   (name + description) and are read in full on demand via the read_skill tool,
- *   so docx/pptx/xlsx-sized skills are not billed in full on every request.
- */
-function buildSkillMessages(asst: any, fullInject: boolean): { role: 'system'; content: string }[] {
-  const skills = resolveAssistantSkills(asst);
-  if (skills.length === 0) return [];
-  if (fullInject) {
-    return skills.map((skill) => ({
-      role: 'system' as const,
-      content: '[Skill: ' + skill.name + ']\n' + skill.content,
-    }));
-  }
-  const SMALL_SKILL_MAX_CHARS = 800;
-  const small = skills.filter((s) => s.content.length <= SMALL_SKILL_MAX_CHARS);
-  const large = skills.filter((s) => s.content.length > SMALL_SKILL_MAX_CHARS);
-  const msgs = small.map((skill) => ({
-    role: 'system' as const,
-    content: '[Skill: ' + skill.name + ']\n' + skill.content,
-  }));
-  if (large.length > 0) {
-    msgs.push({
-      role: 'system' as const,
-      content:
-        t('chat.skillCatalogNotice') +
-        '\n' +
-        large.map((s) => '- ' + s.name + ': ' + (s.description || s.name)).join('\n'),
-    });
-  }
-  return msgs;
-}
 import type { PendingApproval } from './components/ToolApprovalBubble';
+import type { PendingQuestion } from './components/AgentQuestionBubble';
+import TaskBoardPanel from './components/TaskBoardPanel';
+import { buildSkillMessages } from './utils/skillMessages';
 import { clearAllDiagnostics } from '../../core/store/diagnostics';
 
 let isFirstAppLaunch = true;
@@ -240,6 +209,8 @@ const ChatPage: Component = () => {
   const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
   const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
   const [pendingApprovals, setPendingApprovals] = createSignal<PendingApproval[]>([]);
+  /** Pending ask_user question requests (agent pauses until answered/skipped) */
+  const [pendingQuestions, setPendingQuestions] = createSignal<PendingQuestion[]>([]);
   /** /btw floating Q&A overlay list (ephemeral, not stored in history) */
   const [btwOverlays, setBtwOverlays] = createSignal<
     Array<{ id: string; question: string; answer: string | null; loading: boolean }>
@@ -1804,7 +1775,7 @@ ${asstObj.prompt}`;
         alert(t('error.load'));
       });
 
-    // register all event listeners (18 listen() calls, extracted to hooks/chatEventListeners.ts;
+    // register all event listeners (20 listen() calls, extracted to hooks/chatEventListeners.ts;
     // the unlisten functions are stored for cleanup on unmount).
     const unlistens = registerChatEventListeners({
       setDatas,
@@ -1813,6 +1784,8 @@ ${asstObj.prompt}`;
       setPendingApprovals,
       setTypingIndex,
       setWorkflowState,
+      setAgentTaskBoard,
+      setPendingQuestions,
       handleFileUpload,
       datas,
       selectedModel,
@@ -1956,6 +1929,9 @@ ${asstObj.prompt}`;
             <WorkflowVisualization />
           </Show>
 
+          {/* Agent task list panel (create_tasks / update_task live mirror) */}
+          <TaskBoardPanel topicId={activeTopic()?.id ?? ''} />
+
           {/* Checkpoint resume entry: banner for crash-orphaned turns */}
           <Show when={activeCheckpoint() && !isThinking()}>
             <button
@@ -1985,6 +1961,10 @@ ${asstObj.prompt}`;
             pendingApprovals={pendingApprovals()}
             onResolveApproval={(id) =>
               setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== id))
+            }
+            pendingQuestions={pendingQuestions()}
+            onResolveQuestion={(id) =>
+              setPendingQuestions((prev) => prev.filter((q) => q.requestId !== id))
             }
             canShare={!!activeTopic()}
             onOpenShare={() => enterSelectionMode(null)}

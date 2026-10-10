@@ -63,6 +63,12 @@ pub const TOOL_APPROVAL_REQUESTED: &str = "tool-approval-requested";
 /// per-file lock held by another agent)
 pub const FILE_LOCK_CONTENTION: &str = "file-lock-contention";
 
+/// Agent task board changed (create_tasks / update_task)
+pub const AGENT_TASKS_CHANGED: &str = "agent-tasks-changed";
+
+/// Agent asks the user to answer clarification questions (recommended options + custom input)
+pub const AGENT_QUESTION_REQUESTED: &str = "agent-question-requested";
+
 /// Streaming delta for BTW side-question answers (frontend overlay)
 pub const BTW_CHUNK: &str = "btw-chunk";
 
@@ -102,6 +108,8 @@ mod tests {
             MCP_TOOLS_CHANGED,
             TOOL_APPROVAL_REQUESTED,
             FILE_LOCK_CONTENTION,
+            AGENT_TASKS_CHANGED,
+            AGENT_QUESTION_REQUESTED,
             BTW_CHUNK,
         ] {
             assert!(

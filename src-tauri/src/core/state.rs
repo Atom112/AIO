@@ -1,8 +1,10 @@
 /// Global Tauri state definitions
+use crate::core::models::{AgentTask, QuestionResponse};
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -115,5 +117,56 @@ impl SubagentCompletions {
             pending: DashMap::new(),
             notify: tokio::sync::Notify::new(),
         }
+    }
+}
+
+/// Main-agent task board: (assistant_id, topic_id) → ordered task list.
+///
+/// Memory-only (cleared on app exit, like SubagentCompletions); the frontend mirrors it
+/// via the `agent-tasks-changed` event. Mutations happen only through the
+/// `create_tasks` / `update_task` tools (commands/llm/tasks.rs).
+pub struct AgentTaskBoard(pub Arc<DashMap<(String, String), Vec<AgentTask>>>);
+
+impl AgentTaskBoard {
+    pub fn new() -> Self {
+        Self(Arc::new(DashMap::new()))
+    }
+
+    /// Current task list for the key (empty when none).
+    pub fn tasks(&self, key: &(String, String)) -> Vec<AgentTask> {
+        self.0
+            .get(key)
+            .map(|v| v.value().clone())
+            .unwrap_or_default()
+    }
+
+    /// Replaces the whole list (create_tasks path: clear_existing or append).
+    pub fn set_tasks(&self, key: (String, String), tasks: Vec<AgentTask>) {
+        self.0.insert(key, tasks);
+    }
+}
+
+/// Pending ask_user requests: request_id → oneshot sender for the user's response.
+///
+/// Mirrors PendingApprovals: the ask_user tool inserts a sender and awaits it; the
+/// frontend resolves it via the `respond_agent_question` command. Token cancellation and
+/// the wait timeout remove the entry to avoid leaks.
+pub struct PendingAgentQuestions(pub Arc<DashMap<String, oneshot::Sender<QuestionResponse>>>);
+
+impl PendingAgentQuestions {
+    pub fn new() -> Self {
+        Self(Arc::new(DashMap::new()))
+    }
+
+    /// Insert a pending question request and return its request_id.
+    pub fn insert(&self, tx: oneshot::Sender<QuestionResponse>) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.0.insert(id.clone(), tx);
+        id
+    }
+
+    /// Remove and return the sender (consumed once by respond_agent_question).
+    pub fn remove(&self, id: &str) -> Option<oneshot::Sender<QuestionResponse>> {
+        self.0.remove(id).map(|(_, v)| v)
     }
 }

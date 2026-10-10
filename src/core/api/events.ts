@@ -56,6 +56,12 @@ export const EVENTS = {
   /** File lock contention between agents (wait / timeout on a per-file lock) */
   fileLockContention: 'file-lock-contention',
 
+  /** Agent task board changed (create_tasks / update_task) */
+  agentTasksChanged: 'agent-tasks-changed',
+
+  /** Agent asks the user clarification questions (options + custom input) */
+  agentQuestionRequested: 'agent-question-requested',
+
   /** BTW side-question streaming delta */
   btwChunk: 'btw-chunk',
 } as const;

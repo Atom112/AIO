@@ -40,7 +40,7 @@ src/
 │   ├── agent-prompts.ts # Agent system-prompt presets
 │   └── assets/
 ├── features/
-│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, ...)
+│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：20 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
@@ -70,7 +70,7 @@ src-tauri/src/
 ├── commands/
 │   ├── mod.rs
 │   ├── config.rs        # Assistants, app config, profile model overrides, custom subagent profiles, auto-start, topic branching
-│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/titles/tool_specs/usage/locked_tools（文件锁接线）；btw.rs: "By The Way" 侧问
+│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/tasks（任务清单 + ask_user）/titles/tool_specs/usage/locked_tools（文件锁接线）；btw.rs: "By The Way" 侧问
 │   ├── engine.rs        # Local engine lifecycle: start/stop/status, engine scan, model listing
 │   ├── attachment.rs    # Chat attachments + file content extraction command
 │   ├── provider_config.rs # Provider configs (LobeHub-shaped), connection tests, model fetching, API key management

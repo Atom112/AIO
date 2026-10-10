@@ -53,6 +53,7 @@ import { formatNumber, t } from '../../../core/i18n';
 import ReasoningButton from './ReasoningButton';
 import WebSearchButton from './WebSearchButton';
 import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
+import AgentQuestionBubble, { type PendingQuestion } from './AgentQuestionBubble';
 import TokenStatsBar from './TokenStatsBar';
 import {
   totalErrors,
@@ -127,6 +128,10 @@ interface ChatInterfaceProps {
   handleFileUpload: (path: string, type: 'file' | 'image') => Promise<void>;
   pendingApprovals: PendingApproval[];
   onResolveApproval: (approvalId: string) => void;
+  /** Pending ask_user question requests (the agent loop pauses until answered/skipped) */
+  pendingQuestions: PendingQuestion[];
+  /** Callback after a question bubble resolves (answered / skipped / expired) */
+  onResolveQuestion: (requestId: string) => void;
   /** Whether to show the share button (plain chat mode only) */
   canShare: boolean;
   /** Callback to open the share modal (enters message selection mode) */
@@ -1350,6 +1355,17 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               <For each={props.pendingApprovals}>
                 {(approval) => (
                   <ToolApprovalBubble approval={approval} onResolved={props.onResolveApproval} />
+                )}
+              </For>
+            </div>
+          </Show>
+
+          {/* Agent question bubbles (ask_user): options + custom input + skip */}
+          <Show when={props.pendingQuestions.length > 0}>
+            <div class="mb-3 space-y-2">
+              <For each={props.pendingQuestions}>
+                {(question) => (
+                  <AgentQuestionBubble question={question} onResolved={props.onResolveQuestion} />
                 )}
               </For>
             </div>

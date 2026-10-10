@@ -139,6 +139,16 @@ pub(crate) fn build_main_tool_set(
             plan_tools.push(spec);
         }
 
+        // Task board + ask_user: research tracking and clarification are legitimate in
+        // Plan mode (metadata only; never touch files)
+        for spec in crate::commands::llm::tasks::get_agent_task_tool_specs() {
+            plan_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
+            plan_tools.push(spec);
+        }
+
         (plan_tools, plan_map)
     } else if is_agent_mode {
         // Normal/Auto/Workflow: orchestration tools only
@@ -201,6 +211,16 @@ pub(crate) fn build_main_tool_set(
             crate::core::ids::BUILTIN_SERVER_ID.into(),
         );
         orch_tools.push(pm_spec);
+
+        // Task board (create_tasks / update_task / list_tasks) + ask_user: the
+        // orchestrator's progress-tracking and user-interaction tools (main agent only)
+        for spec in crate::commands::llm::tasks::get_agent_task_tool_specs() {
+            orch_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
+            orch_tools.push(spec);
+        }
 
         // Builtin tool set: the main agent holds builtin tools directly, removing the
         // subagent round-trip latency for even a single file read. hybrid (default) =

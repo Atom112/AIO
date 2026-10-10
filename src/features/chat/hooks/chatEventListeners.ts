@@ -1,4 +1,4 @@
-// Event listener registration set for ChatPage (18 listen calls) — extracted from ChatPage.onMount.
+// Event listener registration set for ChatPage (20 listen calls) — extracted from ChatPage.onMount.
 //
 // Every dep comes from the ChatPage component scope (Solid setters/signals are stable references, safe to pass along).
 
@@ -11,6 +11,8 @@ import {
   setDatas as storeSetDatas,
   type ActivatedModel,
   type AgentStep,
+  type AgentTaskBoardState,
+  type AgentTaskState,
   type CompactOutcome,
   type DatasState,
   type Message,
@@ -19,6 +21,7 @@ import {
   type WorkflowState,
 } from '../../../core/store/store';
 import type { PendingApproval } from '../components/ToolApprovalBubble';
+import type { PendingQuestion } from '../components/AgentQuestionBubble';
 import { TOOL_INTERRUPTED } from '../constants';
 
 /** Deps the ChatPage component provides to the listener set (concrete types: setDatas callback params are type-checked too). */
@@ -30,6 +33,8 @@ export interface ChatEventDeps {
   setPendingApprovals: Setter<PendingApproval[]>;
   setTypingIndex: Setter<number | null>;
   setWorkflowState: Setter<WorkflowState | null>;
+  setAgentTaskBoard: Setter<AgentTaskBoardState | null>;
+  setPendingQuestions: Setter<PendingQuestion[]>;
   handleFileUpload: (path: string, kind: 'file' | 'image') => Promise<void>;
   selectedModel: () => ActivatedModel | null;
   saveSingleAssistantToBackend: (id: string) => Promise<void>;
@@ -54,6 +59,8 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
     setPendingApprovals,
     setTypingIndex,
     setWorkflowState,
+    setAgentTaskBoard,
+    setPendingQuestions,
     handleFileUpload,
     datas,
     selectedModel,
@@ -631,6 +638,50 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
           reason,
           previewDiff: preview_diff,
           filePath: file_path,
+        },
+      ]);
+    }),
+
+    // Agent task board changed (create_tasks / update_task): mirror the snapshot (TaskBoardPanel
+    // matches it against the current topic)
+    listen<{ assistant_id: string; topic_id: string; tasks: AgentTaskState[] }>(
+      EVENTS.agentTasksChanged,
+      (e) => {
+        const { assistant_id, topic_id, tasks } = e.payload;
+        setAgentTaskBoard({
+          assistantId: assistant_id,
+          topicId: topic_id,
+          tasks: tasks.map((tk) => ({ id: tk.id, title: tk.title, status: tk.status })),
+        });
+      },
+    ),
+
+    // Agent question request (ask_user): the loop pauses until the user answers via
+    // respond_agent_question (AgentQuestionBubble)
+    listen<{
+      request_id: string;
+      questions: {
+        question_id: string;
+        question: string;
+        options: { label: string; description?: string; recommended?: boolean }[];
+        allow_custom?: boolean;
+      }[];
+    }>(EVENTS.agentQuestionRequested, (e) => {
+      const { request_id, questions } = e.payload;
+      setPendingQuestions((prev) => [
+        ...prev,
+        {
+          requestId: request_id,
+          questions: questions.map((q) => ({
+            questionId: q.question_id,
+            question: q.question,
+            options: q.options.map((o) => ({
+              label: o.label,
+              description: o.description,
+              recommended: o.recommended,
+            })),
+            allowCustom: q.allow_custom !== false,
+          })),
         },
       ]);
     }),

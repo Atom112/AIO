@@ -53,6 +53,9 @@ export const EVENTS = {
   /** Tool approval request */
   toolApprovalRequested: 'tool-approval-requested',
 
+  /** File lock contention between agents (wait / timeout on a per-file lock) */
+  fileLockContention: 'file-lock-contention',
+
   /** BTW side-question streaming delta */
   btwChunk: 'btw-chunk',
 } as const;

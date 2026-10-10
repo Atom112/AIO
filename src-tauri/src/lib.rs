@@ -99,6 +99,7 @@ pub fn run() {
         .manage(PendingApprovals::new())
         .manage(SubagentHandles::new())
         .manage(SubagentCompletions::new())
+        .manage(core::file_locks::FileLockRegistry::new())
         .manage(MemoryStoreManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,

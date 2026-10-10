@@ -34,6 +34,7 @@ pub(crate) mod checkpoints;
 pub(crate) mod client;
 pub(crate) mod compress;
 pub(crate) mod handoff;
+pub(crate) mod locked_tools;
 pub(crate) mod messages;
 pub(crate) mod subagents;
 pub(crate) mod titles;
@@ -47,6 +48,7 @@ pub(crate) use checkpoints::*;
 pub(crate) use client::*;
 pub(crate) use compress::*;
 pub(crate) use handoff::*;
+pub(crate) use locked_tools::*;
 pub(crate) use messages::*;
 pub(crate) use subagents::*;
 pub(crate) use titles::*;
@@ -763,6 +765,12 @@ pub async fn stop_llm_stream(
 ///
 /// Covers file tools (file_tools) and command execution tools (shell_tools), bypassing the MCP channel.
 /// The permission model matches `execute_tool_call`.
+///
+/// `writer_id` labels the calling agent for multi-agent write coordination ("main-agent"
+/// or a subagent label): mutating single-path file tools take the per-file exclusive
+/// lock (`core::file_locks::FileLockRegistry`) so same-file writes serialize across the
+/// main agent and parallel subagents, and cross-writer edits must carry a fresh hashline
+/// anchor (anchor_hash / expect_hash) to prevent silent lost updates.
 pub(crate) async fn execute_builtin_tool(
     app: &AppHandle,
     tool_name: &str,
@@ -770,6 +778,7 @@ pub(crate) async fn execute_builtin_tool(
     project_id: Option<&str>,
     agent_mode: &AgentMode,
     token: &CancellationToken,
+    writer_id: &str,
 ) -> Result<ToolResult, String> {
     let project_root = file_tools::resolve_project_root(app, project_id)?;
 
@@ -958,14 +967,10 @@ pub(crate) async fn execute_builtin_tool(
             | "delete_file"
             | "make_directory"
     ) {
-        let tool_name_c = tool_name.to_string();
-        let arguments_c = arguments.clone();
-        let root_c = project_root.clone();
-        Ok(tokio::task::spawn_blocking(move || {
-            file_tools::execute_file_tool(&tool_name_c, &arguments_c, &root_c)
-        })
-        .await
-        .unwrap_or_else(|_| file_tools::tool_err("文件工具执行线程 panic")))
+        // File tools run under the multi-agent write-coordination policy: mutating
+        // single-path tools take the per-file exclusive lock and cross-writer edits must
+        // carry a fresh hashline anchor (see commands/llm/locked_tools.rs).
+        execute_locked_file_tool(app, tool_name, arguments, &project_root, token, writer_id).await
     } else {
         // Unknown tools must error out explicitly. Never route unmatched tool names to a
         // file_tools fallback, which would give the model a semantically ambiguous result.
@@ -2090,6 +2095,7 @@ pub(crate) async fn run_agent_turn_inner(
                                 pid.as_deref(),
                                 &mode,
                                 &tok,
+                                "main-agent",
                             )
                             .await
                         });
@@ -2103,6 +2109,7 @@ pub(crate) async fn run_agent_turn_inner(
                             project_id_c.as_deref(),
                             &agent_mode,
                             &token_inner,
+                            "main-agent",
                         )
                         .await
                     } else {

@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 
 /// MCP transport plugin trait
 #[async_trait]
@@ -143,11 +142,11 @@ impl McpServerState {
     }
 }
 
-/// In-flight MCP tool calls: call_id -> JoinHandle<Result<ToolResult, McpError>>
-/// When the user hits stop, all entries are iterated and aborted
-pub struct McpRequestManager(
-    pub Arc<DashMap<String, JoinHandle<std::result::Result<ToolResult, McpError>>>>,
-);
+/// In-flight MCP tool calls: call_id -> AbortHandle
+/// Entries stay registered for the whole await; when the user hits stop (or the server
+/// stops / the window closes) the tasks are aborted for real instead of being detached
+/// (the historical insert-then-remove made abort_all iterate an empty table).
+pub struct McpRequestManager(pub Arc<DashMap<String, tokio::task::AbortHandle>>);
 
 impl McpRequestManager {
     pub fn new() -> Self {
@@ -160,6 +159,22 @@ impl McpRequestManager {
             entry.value().abort();
         }
         self.0.clear();
+    }
+
+    /// Abort one server's in-flight calls (call ids carry the `mcp:{server_id}:` prefix).
+    pub fn abort_server(&self, server_id: &str) {
+        let prefix = format!("mcp:{server_id}:");
+        let ids: Vec<String> = self
+            .0
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
+            .map(|entry| entry.key().clone())
+            .collect();
+        for id in ids {
+            if let Some((_, abort)) = self.0.remove(&id) {
+                abort.abort();
+            }
+        }
     }
 }
 

@@ -136,8 +136,13 @@ impl LspClient {
             });
         }
 
-        // Send the initialize request
-        client.initialize(&root_uri).await?;
+        // Send the initialize request. On failure, shut the child down explicitly:
+        // the stdout reader task holds an Arc clone, so kill_on_drop never fires on
+        // its own and an early `?` return would leak the language-server process.
+        if let Err(e) = client.initialize(&root_uri).await {
+            let _ = client.shutdown().await;
+            return Err(e);
+        }
 
         Ok(client)
     }

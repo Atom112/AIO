@@ -669,10 +669,13 @@ body {
       inset 0 0 60px rgba(var(--primary-rgb), 0.1);
   }
 
+  /* active-glow-sm: 28px child-topic rows. Two stacked inset layers are two
+     independent falloff curves; on a small box the halo layer dies mid-row,
+     so brightness stepped down a cliff (bright edge -> sudden drop -> darkest
+     center). A single larger-blur layer fades edge-to-center as one uniform
+     gaussian — no ledges. */
   .active-glow-sm {
-    box-shadow:
-      inset 0 0 6px rgba(var(--primary-rgb), 0.22),
-      inset 0 0 28px rgba(var(--primary-rgb), 0.12);
+    box-shadow: inset 0 0 30px rgba(var(--primary-rgb), 0.18);
   }
 
   .code-body pre {

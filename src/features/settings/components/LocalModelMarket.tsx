@@ -60,8 +60,10 @@ import type {
   MarketModel,
 } from '../../../core/api/localModel';
 
-// v2: per-source cache buckets ("auto" / "huggingface" / "modelscope" prefixes)
-const MARKET_CACHE_KEY = 'aio-local-model-market-cache-v2';
+// v3: per-source cache buckets ("auto" / "huggingface" / "modelscope" prefixes);
+// bumped to invalidate lists cached while the ModelScope PascalCase deserialization
+// bug produced empty rows
+const MARKET_CACHE_KEY = 'aio-local-model-market-cache-v3';
 const MARKET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 interface MarketCacheEntry {

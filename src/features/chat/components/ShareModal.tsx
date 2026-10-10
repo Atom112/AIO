@@ -15,7 +15,7 @@ import {
 import { Portal } from 'solid-js/web';
 import { toCanvas, toPng } from 'html-to-image';
 import { saveBinaryFile } from '../../../core/api/attachment';
-import { save } from '@tauri-apps/plugin-dialog';
+import { pickSavePath } from '../../../core/api/dialog';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { jsPDF } from 'jspdf';
@@ -57,7 +57,7 @@ async function downloadBlob(content: string | Blob, filename: string, mime: stri
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
   try {
     const buf = new Uint8Array(await blob.arrayBuffer());
-    const filePath = await save({ defaultPath: filename });
+    const filePath = await pickSavePath(filename);
     if (filePath) {
       await saveBinaryFile(filePath, Array.from(buf));
       return;
@@ -390,9 +390,9 @@ const ShareModal: Component<ShareModalProps> = (props) => {
       }
 
       const pdfBytes = doc.output('arraybuffer');
-      const filePath = await save({
-        defaultPath: `${topicName}.pdf`,
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      const filePath = await pickSavePath(`${topicName}.pdf`, {
+        name: 'PDF',
+        extensions: ['pdf'],
       });
 
       if (filePath) {

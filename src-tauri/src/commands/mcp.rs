@@ -615,8 +615,14 @@ pub(crate) async fn list_mcp_tools_for_assistant_inner(
     })
 }
 
-/// `call_mcp_tool` enforces a permission check (defense in depth):
-/// the frontend should pre-check via `check_tool_permission`, but the backend re-checks for safety.
+/// Manually invoke one MCP tool (settings-page test runs; the agent loop uses the
+/// internal `execute_tool_call` path instead).
+///
+/// MCP-13/HOR-3: this IPC entry previously accepted an `agent_mode` parameter from
+/// the caller — forgeable, with a missing/unknown value mapping to `Off`, which
+/// skipped the entire permission check (structural fail-open). The parameter is
+/// gone: manual invocations always run under Normal semantics (interactive
+/// approval rules apply); the agent loop derives its mode server-side.
 #[tauri::command]
 pub async fn call_mcp_tool(
     app: AppHandle,
@@ -624,15 +630,8 @@ pub async fn call_mcp_tool(
     tool_name: String,
     arguments: Value,
     project_id: Option<String>,
-    // Current agent mode (e.g. "normal", "auto", "plan", "off"); when provided, a permission check runs
-    agent_mode: Option<String>,
 ) -> Result<ToolResult, String> {
-    let mode = match agent_mode.as_deref() {
-        Some("normal") => AgentMode::Normal,
-        Some("auto") => AgentMode::Auto,
-        Some("plan") => AgentMode::Plan,
-        _ => AgentMode::Off,
-    };
+    let mode = AgentMode::Normal;
     // The call_mcp_tool path has no CancellationToken; use a fresh one (never cancelled)
     let token = tokio_util::sync::CancellationToken::new();
     execute_tool_call(
@@ -687,8 +686,17 @@ pub(crate) async fn execute_tool_call(
         ));
     }
 
-    // Permission check (backend defense layer)
-    if *agent_mode != AgentMode::Off {
+    // Permission check (backend defense layer).
+    // SEC-19: Off (chat mode) previously SKIPPED the check entirely (structural
+    // fail-open — a forged/missing mode meant zero checks); it now fails closed.
+    if matches!(agent_mode, AgentMode::Off) {
+        return Err(ierr!(
+            "工具 '{}' 在 Off（聊天）模式下不可用",
+            "Tool '{}' is unavailable in Off (chat) mode",
+            tool_name
+        ));
+    }
+    {
         let project_path = project_id.and_then(|pid| resolve_project_path_mcp_opt(app, pid));
         let custom_rules = project_path
             .as_ref()
@@ -859,81 +867,10 @@ pub async fn test_mcp_server_connection(
 }
 
 // ====== Permission checks ======
-
-/// Permission check result (returned to the frontend)
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct PermissionCheckResult {
-    pub action: String, // "allow" | "ask" | "deny"
-    /// When action = "ask", holds the approval request ID
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub approval_id: Option<String>,
-    /// Reason explaining the deny or confirmation-required outcome
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// Check tool call permission (pre-check).
-///
-/// The frontend calls this command first in `handleToolCall` and decides whether to execute
-/// based on the returned `action`:
-/// - `"allow"` — may call `call_mcp_tool` directly
-/// - `"ask"` — show the approval dialog, then call `call_mcp_tool` once the user approves
-/// - `"deny"` — the tool is blocked, skip execution
-#[tauri::command]
-pub async fn check_tool_permission(
-    app: AppHandle,
-    tool_name: String,
-    server_id: String,
-    arguments: Value,
-    agent_mode: String,
-    project_id: Option<String>,
-) -> Result<PermissionCheckResult, String> {
-    let mode = match agent_mode.as_str() {
-        "normal" => AgentMode::Normal,
-        "auto" => AgentMode::Auto,
-        "plan" => AgentMode::Plan,
-        _ => AgentMode::Off,
-    };
-
-    // Load project-level custom rules
-    let project_path = project_id
-        .as_ref()
-        .and_then(|pid| resolve_project_path_mcp_opt(&app, pid));
-    let custom_rules = project_path
-        .as_ref()
-        .map(|p| permission::load_permissions(Some(p)).rules)
-        .unwrap_or_default();
-
-    let action =
-        permission::check_permission(&tool_name, &server_id, &arguments, &mode, &custom_rules);
-
-    match action {
-        PermissionAction::Deny => Ok(PermissionCheckResult {
-            action: "deny".into(),
-            approval_id: None,
-            reason: Some(ierr!(
-                "工具 '{}' 在当前模式下已被禁止执行",
-                "Tool '{}' is blocked in the current mode",
-                tool_name
-            )),
-        }),
-        PermissionAction::Allow => Ok(PermissionCheckResult {
-            action: "allow".into(),
-            approval_id: None,
-            reason: None,
-        }),
-        PermissionAction::Ask => Ok(PermissionCheckResult {
-            action: "ask".into(),
-            approval_id: None,
-            reason: Some(ierr!(
-                "工具 '{}' 需要您的确认才能执行",
-                "Tool '{}' requires your confirmation to run",
-                tool_name
-            )),
-        }),
-    }
-}
+// MCP-13: `check_tool_permission` was dead code (zero frontend/Rust callers — the
+// frontend pre-check flow it documented never shipped) and it accepted a forgeable
+// agent_mode parameter. Removed; permission enforcement lives in execute_tool_call,
+// whose mode is derived server-side.
 
 /// Approval request payload (event sent to the frontend)
 ///

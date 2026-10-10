@@ -814,115 +814,122 @@ pub(crate) async fn execute_builtin_tool(
         ));
     }
 
-    // Permission check (matches execute_tool_call; server_id keeps crate::core::ids::BUILTIN_FS_SERVER_ID for compatibility with existing rules)
-    if *agent_mode != AgentMode::Off {
-        let custom_rules = permission::load_permissions(Some(&project_root)).rules;
-        let action = permission::check_permission(
-            tool_name,
-            crate::core::ids::BUILTIN_FS_SERVER_ID,
-            arguments,
-            agent_mode,
-            &custom_rules,
-        );
+    // Permission check (matches execute_tool_call; server_id keeps crate::core::ids::BUILTIN_FS_SERVER_ID for compatibility with existing rules).
+    // SEC-19: Off（聊天模式）此前直接跳过整个权限检查（结构性 fail-open——
+    // 伪造/缺省模式即零审批放行），现在 fail-closed。
+    if matches!(agent_mode, AgentMode::Off) {
+        return Err(ierr!(
+            "工具 '{}' 在 Off（聊天）模式下不可用",
+            "Tool '{}' is unavailable in Off (chat) mode",
+            tool_name
+        ));
+    }
+    let custom_rules = permission::load_permissions(Some(&project_root)).rules;
+    let action = permission::check_permission(
+        tool_name,
+        crate::core::ids::BUILTIN_FS_SERVER_ID,
+        arguments,
+        agent_mode,
+        &custom_rules,
+    );
 
-        // SEC-01: network=true was previously auto-allowed in Auto/Workflow (permission
-        // Allow) — one prompt injection could exfiltrate any user-readable file
-        // silently. Network-declaring commands now require confirmation in every mode.
-        let network_auto = tool_name == "execute_command"
-            && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
-            && arguments["network"].as_bool().unwrap_or(false)
-            && action == PermissionAction::Allow;
-        let action = if network_auto {
-            PermissionAction::Ask
-        } else {
-            action
-        };
+    // SEC-01: network=true was previously auto-allowed in Auto/Workflow (permission
+    // Allow) — one prompt injection could exfiltrate any user-readable file
+    // silently. Network-declaring commands now require confirmation in every mode.
+    let network_auto = tool_name == "execute_command"
+        && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+        && arguments["network"].as_bool().unwrap_or(false)
+        && action == PermissionAction::Allow;
+    let action = if network_auto {
+        PermissionAction::Ask
+    } else {
+        action
+    };
 
-        match action {
-            PermissionAction::Deny => {
-                return Err(ierr!(
+    match action {
+        PermissionAction::Deny => {
+            return Err(ierr!(
                     "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
                     "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo allow it, switch to auto mode or add an allow rule in project permission settings.",
                     tool_name
                 ));
-            }
-            PermissionAction::Ask => {
-                let pending = app.state::<PendingApprovals>();
-                let mut reason = ierr!(
-                    "工具 '{}' 需要您的确认才能执行",
-                    "Tool '{}' needs your confirmation to execute",
-                    tool_name
-                );
-                // Command execution: dangerous-command annotation
-                if tool_name == "execute_command" {
-                    if let Some(cmd) = arguments["command"].as_str() {
-                        if let Some(danger) = shell_tools::check_dangerous_command(cmd) {
-                            let prefix = match danger.category {
-                                shell_tools::DangerCategory::Critical => "🚨 严重危险",
-                                shell_tools::DangerCategory::High => "⚠️ 高风险",
-                                shell_tools::DangerCategory::Medium => "⚡ 中等风险",
-                            };
-                            reason = ierr!(
-                                "{}\n\n{}\n\n命令: {}\n\n确认执行？",
-                                "{}\n\n{}\n\nCommand: {}\n\nConfirm execution?",
-                                prefix,
-                                danger.risk,
-                                cmd
-                            );
-                        } else {
-                            reason = ierr!(
-                                "命令: {}\n\n工具 '{}' 需要您的确认才能执行",
-                                "Command: {}\n\nTool '{}' needs your confirmation to execute",
-                                cmd,
-                                tool_name
-                            );
-                        }
-                    }
-                }
-                // Network declaration and sandbox availability annotations: the approval info presents the full risk surface
-                if tool_name == "execute_command" {
-                    if network_auto {
-                        reason.insert_str(
-                            0,
-                            &ierr!(
-                                "自动模式：声明网络访问的命令需确认。\n\n",
-                                "Auto mode: network-declaring commands need confirmation.\n\n"
-                            ),
+        }
+        PermissionAction::Ask => {
+            let pending = app.state::<PendingApprovals>();
+            let mut reason = ierr!(
+                "工具 '{}' 需要您的确认才能执行",
+                "Tool '{}' needs your confirmation to execute",
+                tool_name
+            );
+            // Command execution: dangerous-command annotation
+            if tool_name == "execute_command" {
+                if let Some(cmd) = arguments["command"].as_str() {
+                    if let Some(danger) = shell_tools::check_dangerous_command(cmd) {
+                        let prefix = match danger.category {
+                            shell_tools::DangerCategory::Critical => "🚨 严重危险",
+                            shell_tools::DangerCategory::High => "⚠️ 高风险",
+                            shell_tools::DangerCategory::Medium => "⚡ 中等风险",
+                        };
+                        reason = ierr!(
+                            "{}\n\n{}\n\n命令: {}\n\n确认执行？",
+                            "{}\n\n{}\n\nCommand: {}\n\nConfirm execution?",
+                            prefix,
+                            danger.risk,
+                            cmd
+                        );
+                    } else {
+                        reason = ierr!(
+                            "命令: {}\n\n工具 '{}' 需要您的确认才能执行",
+                            "Command: {}\n\nTool '{}' needs your confirmation to execute",
+                            cmd,
+                            tool_name
                         );
                     }
-                    if arguments["network"].as_bool().unwrap_or(false) {
-                        reason.push_str(&ierr!(
-                            "\n\n⚠ 此命令声明需要网络访问",
-                            "\n\n⚠ This command declares network access"
-                        ));
-                    }
-                    if !crate::utils::sandbox::sandbox_available() {
-                        reason.push_str(&ierr!(
+                }
+            }
+            // Network declaration and sandbox availability annotations: the approval info presents the full risk surface
+            if tool_name == "execute_command" {
+                if network_auto {
+                    reason.insert_str(
+                        0,
+                        &ierr!(
+                            "自动模式：声明网络访问的命令需确认。\n\n",
+                            "Auto mode: network-declaring commands need confirmation.\n\n"
+                        ),
+                    );
+                }
+                if arguments["network"].as_bool().unwrap_or(false) {
+                    reason.push_str(&ierr!(
+                        "\n\n⚠ 此命令声明需要网络访问",
+                        "\n\n⚠ This command declares network access"
+                    ));
+                }
+                if !crate::utils::sandbox::sandbox_available() {
+                    reason.push_str(&ierr!(
                             "\n\n⚠ 沙箱不可用：此命令将在无 OS 级沙箱的环境执行",
                             "\n\n⚠ Sandbox unavailable: this command will run without an OS-level sandbox"
                         ));
-                    }
-                }
-                // File-modifying tools: precompute a diff preview
-                let (preview_diff, file_path) =
-                    compute_diff_preview(tool_name, arguments, &project_root);
-                let approval_fut = crate::commands::mcp::request_tool_approval(
-                    app,
-                    pending.inner(),
-                    crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    tool_name,
-                    arguments,
-                    &reason,
-                    preview_diff,
-                    file_path,
-                );
-                tokio::select! {
-                    _ = token.cancelled() => return Err("cancelled".into()),
-                    res = approval_fut => res?,
                 }
             }
-            PermissionAction::Allow => {}
+            // File-modifying tools: precompute a diff preview
+            let (preview_diff, file_path) =
+                compute_diff_preview(tool_name, arguments, &project_root);
+            let approval_fut = crate::commands::mcp::request_tool_approval(
+                app,
+                pending.inner(),
+                crate::core::ids::BUILTIN_FS_SERVER_ID,
+                tool_name,
+                arguments,
+                &reason,
+                preview_diff,
+                file_path,
+            );
+            tokio::select! {
+                _ = token.cancelled() => return Err("cancelled".into()),
+                res = approval_fut => res?,
+            }
         }
+        PermissionAction::Allow => {}
     }
 
     // Dispatch and execute
@@ -1120,7 +1127,8 @@ pub(crate) struct TurnContext {
 /// - `mcp_server_ids`: MCP server ids opted in by the assistant. In Agent mode, tools of connected
 ///   servers are injected; conflicting tool names are renamed to mcp__<server>__<tool>; tools from
 ///   untrusted servers still require per-call approval in Auto/Workflow mode (see mcp::execute_tool_call)
-/// - `agent_mode`: agent execution mode; affects permission rules and tool injection (Plan: research tools / Normal/Auto/Workflow: orchestration tools / Off: no tools)
+/// - `_agent_mode`: legacy IPC parameter, accepted for compatibility but IGNORED —
+///   the mode is derived server-side from the assistant's persisted record (MCP-13)
 /// - `project_id`: project id (used to resolve project-level permission rules)
 /// - `locale`: optional UI language; falls back to `zh-CN` when missing on legacy calls
 #[tauri::command]
@@ -1140,7 +1148,7 @@ pub async fn run_agent_turn(
     topic_id: String,
     messages: Vec<Message>,
     mcp_server_ids: Vec<String>,
-    agent_mode: AgentMode,
+    _agent_mode: AgentMode,
     project_id: Option<String>,
     web_search_enabled: bool,
     profile_model_overrides: Vec<ProfileModelOverride>,
@@ -1154,10 +1162,17 @@ pub async fn run_agent_turn(
         api_url,
         api_key,
         model,
-        assistant_id,
+        assistant_id: assistant_id.clone(),
         topic_id,
         messages,
-        agent_mode,
+        // MCP-13：模式由服务端裁决——IPC 传入的 agent_mode 可伪造（伪造 auto
+        // 即获得宽松权限面），助手记录里的持久化模式才是权威来源；记录缺失时
+        // 回退 Off（fail-closed，Off 模式工具一律不可用）。
+        agent_mode: {
+            let conn = db_state.0.lock();
+            crate::commands::config::load_assistant_agent_mode(&conn, &assistant_id)
+                .unwrap_or(AgentMode::Off)
+        },
         project_id,
         web_search_enabled,
         profile_model_overrides,

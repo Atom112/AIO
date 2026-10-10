@@ -1,6 +1,6 @@
 import { Component, createEffect, createSignal, For, Show } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
-import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { pickOpenPath, pickSavePath } from '../../../core/api/dialog';
 import { t } from '../../../core/i18n';
 import Icon from '../../../shared/components/Icon';
 import Dropdown from '../../../shared/components/Dropdown';
@@ -259,12 +259,13 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const doExport = async () => {
-    // Export path chosen via the system save dialog (backend writes the file; no fs permission widening needed)
+    // Export path via the backend save dialog (the chosen path becomes session-approved;
+    // the write command refuses any path the backend dialog never returned)
     let path: string | null = null;
     try {
-      path = await saveDialog({
-        defaultPath: `aio-memory-${projectHash8(props.projectId)}.json`,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
+      path = await pickSavePath(`aio-memory-${projectHash8(props.projectId)}.json`, {
+        name: 'JSON',
+        extensions: ['json'],
       });
     } catch {
       /* user cancelled */
@@ -279,14 +280,10 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const doImport = async () => {
-    // Import file chosen via the system open dialog (backend reads the file)
+    // Import file via the backend open dialog (session-approved read path + size cap)
     let path: string | null = null;
     try {
-      const picked = await openDialog({
-        multiple: false,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      });
-      path = typeof picked === 'string' ? picked : null;
+      path = await pickOpenPath({ name: 'JSON', extensions: ['json'] });
     } catch {
       /* user cancelled */
     }

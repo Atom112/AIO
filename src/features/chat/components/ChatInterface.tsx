@@ -40,7 +40,8 @@ import {
   subagentProfileLabel,
   formatSubagentDuration,
 } from './SubagentConversationView';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
+import { pickSavePath } from '../../../core/api/dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { deleteTopicMessage } from '../../../core/api/chat';
 import { copyStoredImage, discardChatAttachment } from '../../../core/api/attachment';
@@ -292,7 +293,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   /** Download a model-generated image to a user-chosen directory */
   const downloadGeneratedImage = async (img: GeneratedImageInfo) => {
     try {
-      const dest = await save({ defaultPath: img.name });
+      const dest = await pickSavePath(img.name);
       if (!dest) return;
       await copyStoredImage(img.storagePath, dest);
     } catch (e) {

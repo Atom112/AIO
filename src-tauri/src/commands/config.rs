@@ -315,6 +315,24 @@ fn persist_assistant_inner(
     Ok(())
 }
 
+/// 读取单个 assistant 的 agent_mode（MCP-13：`run_agent_turn` 的服务端模式裁决——
+/// IPC 参数可伪造，权限模式必须以数据库里的持久化记录为准；找不到记录返回 None，
+/// 调用方回退到最保守的 Off）。
+pub(crate) fn load_assistant_agent_mode(
+    conn: &rusqlite::Connection,
+    assistant_id: &str,
+) -> Option<crate::core::models::AgentMode> {
+    let mode_str: Option<String> = conn
+        .query_row(
+            "SELECT agent_mode FROM assistants WHERE id = ?1",
+            [assistant_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    mode_str.and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok())
+}
+
 /// Persist a single assistant (with all its topics and messages).
 ///
 /// # Arguments

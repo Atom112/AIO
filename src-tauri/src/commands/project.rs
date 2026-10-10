@@ -18,11 +18,8 @@ use crate::utils::project_index::{load_projects_file, projects_file_path};
 
 fn save_projects_file(app: &AppHandle, file: &ProjectsFile) -> Result<(), String> {
     let path = projects_file_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())
 }
 
 fn now_timestamp() -> String {
@@ -56,9 +53,11 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
             "updatedAt": "",
             "skills": {}
         });
-        std::fs::write(
+        crate::core::fs_util::atomic_write(
             &skills_path,
-            serde_json::to_string_pretty(&empty_skills).map_err(|e| e.to_string())?,
+            serde_json::to_string_pretty(&empty_skills)
+                .map_err(|e| e.to_string())?
+                .as_bytes(),
         )
         .map_err(|e| {
             ierr!(
@@ -101,9 +100,11 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
             "updatedAt": "",
             "servers": servers,
         });
-        std::fs::write(
+        crate::core::fs_util::atomic_write(
             &mcp_path,
-            serde_json::to_string_pretty(&mcp_config).map_err(|e| e.to_string())?,
+            serde_json::to_string_pretty(&mcp_config)
+                .map_err(|e| e.to_string())?
+                .as_bytes(),
         )
         .map_err(|e| {
             ierr!(

@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 
 /// MCP transport plugin trait
 #[async_trait]
@@ -143,11 +142,11 @@ impl McpServerState {
     }
 }
 
-/// In-flight MCP tool calls: call_id -> JoinHandle<Result<ToolResult, McpError>>
-/// When the user hits stop, all entries are iterated and aborted
-pub struct McpRequestManager(
-    pub Arc<DashMap<String, JoinHandle<std::result::Result<ToolResult, McpError>>>>,
-);
+/// In-flight MCP tool calls: call_id -> AbortHandle
+/// Entries stay registered for the whole await; when the user hits stop (or the server
+/// stops / the window closes) the tasks are aborted for real instead of being detached
+/// (the historical insert-then-remove made abort_all iterate an empty table).
+pub struct McpRequestManager(pub Arc<DashMap<String, tokio::task::AbortHandle>>);
 
 impl McpRequestManager {
     pub fn new() -> Self {
@@ -160,6 +159,22 @@ impl McpRequestManager {
             entry.value().abort();
         }
         self.0.clear();
+    }
+
+    /// Abort one server's in-flight calls (call ids carry the `mcp:{server_id}:` prefix).
+    pub fn abort_server(&self, server_id: &str) {
+        let prefix = format!("mcp:{server_id}:");
+        let ids: Vec<String> = self
+            .0
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
+            .map(|entry| entry.key().clone())
+            .collect();
+        for id in ids {
+            if let Some((_, abort)) = self.0.remove(&id) {
+                abort.abort();
+            }
+        }
     }
 }
 
@@ -217,11 +232,8 @@ pub fn load_mcp_servers(app: &AppHandle) -> McpServersFile {
 
 pub fn save_mcp_servers(app: &AppHandle, file: &McpServersFile) -> McpResult<()> {
     let p = mcp_file_path(app).ok_or_else(|| McpError::Server("无法获取 AppData 目录".into()))?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(file)?;
-    std::fs::write(&p, json)?;
+    crate::core::fs_util::atomic_write(&p, json.as_bytes())?;
     Ok(())
 }
 
@@ -246,11 +258,8 @@ pub fn save_project_mcp_servers(project_path: &str, file: &McpServersFile) -> Mc
     let p = std::path::PathBuf::from(project_path)
         .join(".aio")
         .join("mcp-servers.json");
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(file)?;
-    std::fs::write(&p, json)?;
+    crate::core::fs_util::atomic_write(&p, json.as_bytes())?;
     Ok(())
 }
 
@@ -347,14 +356,42 @@ fn now_timestamp() -> String {
 
 // ====== Helpers: resolving env placeholders ======
 
-/// Check whether any env field contains a keyring placeholder
-#[allow(dead_code)]
-pub fn env_has_keyring_placeholder(env: &BTreeMap<String, String>) -> bool {
-    env.values().any(|v| v.contains("${KEYRING:"))
+/// `${KEYRING:account}` 占位符前缀（共 10 字节，冒号位于偏移 9）。
+/// 历史实现按 `start + 9` 切片使 account 带前导冒号，所有 MCP 密钥解析必然失败。
+const KEYRING_PREFIX: &str = "${KEYRING:";
+
+/// 解析值中的**全部** `${KEYRING:account}` 占位符（纯函数，便于测试）。
+///
+/// - `lookup` 返回 `None` → `Err(account)`，由调用方生成用户可见错误；
+/// - 未闭合的占位符原样保留（与历史行为一致）；
+/// - 值可含多个占位符（历史实现只解析第一个）。
+pub(crate) fn resolve_keyring_placeholders(
+    value: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find(KEYRING_PREFIX) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + KEYRING_PREFIX.len()..];
+        let Some(end) = after.find('}') else {
+            // 未闭合：剩余原文原样保留
+            out.push_str(&rest[start..]);
+            return Ok(out);
+        };
+        let account = &after[..end];
+        let Some(secret) = lookup(account) else {
+            return Err(account.to_string());
+        };
+        out.push_str(&secret);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
-/// Resolve keyring placeholders in env to real values
-/// Called only by the stdio transport before spawning the child process
+/// Resolve keyring placeholders in env (stdio) / headers (HTTP) to real values.
+/// Called by both transports before use; every placeholder must resolve.
 pub fn resolve_env_placeholders(
     app: &AppHandle,
     server_id: &str,
@@ -362,29 +399,231 @@ pub fn resolve_env_placeholders(
 ) -> McpResult<BTreeMap<String, String>> {
     let mut resolved = BTreeMap::new();
     for (k, v) in env {
-        let actual = if let Some(start) = v.find("${KEYRING:") {
-            if let Some(end) = v[start..].find('}') {
-                let account_full = &v[start + 9..start + end];
-                // account_full looks like "mcp-server-{server_id}-env-{env_key}"
-                let value = crate::core::secure_store::get(app, account_full)
-                    .map_err(|e| {
-                        McpError::Server(format!("读取 keyring {} 失败: {}", account_full, e))
-                    })?
-                    .ok_or_else(|| {
-                        McpError::Server(format!("keyring 中未找到密钥: {}", account_full))
-                    })?;
-                let prefix = v[..start].to_string();
-                let suffix = v[start + end + 1..].to_string();
-                format!("{}{}{}", prefix, value, suffix)
-            } else {
-                v.clone()
-            }
-        } else {
-            v.clone()
-        };
+        let actual = resolve_keyring_placeholders(v, |account| {
+            crate::core::secure_store::get(app, account).ok().flatten()
+        })
+        .map_err(|account| {
+            McpError::Server(crate::ierr!(
+                "keyring 中未找到密钥: {}",
+                "Secret not found in the keyring: {}",
+                account
+            ))
+        })?;
         // Prevent the keyring account name from being passed to the child process: substitute the server_id placeholder
-        let actual = actual.replace(&"${SERVER_ID}".to_string(), server_id);
+        let actual = actual.replace("${SERVER_ID}", server_id);
         resolved.insert(k.clone(), actual);
     }
     Ok(resolved)
+}
+
+// ====== Project-level MCP trust gate (P0-1 / MCP-1) ======
+
+/// 判定项目级条目是否为 **AIO 自己生成**的内置文件系统 server：命令必须逐字
+/// 指向当前进程可执行文件、参数恰为 `--fs-server <项目路径>`。仓库可以伪造同名
+/// id，但只要命令/参数与当前进程不匹配就照常走信任门——豁免的是 AIO 写入的
+/// 初始化条目，不是这个 id 本身。
+fn is_self_generated_fs_server(cfg: &McpServerConfig, project_path: &str) -> bool {
+    if cfg.id != crate::core::ids::BUILTIN_FS_SERVER_ID {
+        return false;
+    }
+    let McpTransport::Stdio { command, args, .. } = &cfg.transport else {
+        return false;
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let exe_matches = std::path::Path::new(command) == exe
+        || std::fs::canonicalize(command)
+            .ok()
+            .zip(std::fs::canonicalize(&exe).ok())
+            .is_some_and(|(a, b)| a == b);
+    if !exe_matches || args.len() != 2 || args[0] != "--fs-server" {
+        return false;
+    }
+    std::path::Path::new(&args[1]) == std::path::Path::new(project_path)
+        || std::fs::canonicalize(&args[1])
+            .ok()
+            .zip(std::fs::canonicalize(project_path).ok())
+            .is_some_and(|(a, b)| a == b)
+}
+
+/// 项目级服务器信任存储的落点（$APPDATA/mcp-trust.json，仓库之外）。
+fn trust_store(app: &AppHandle) -> crate::core::mcp_trust::McpTrustStore {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    crate::core::mcp_trust::McpTrustStore::open(&dir)
+}
+
+/// 项目级配置中尚未信任的服务器（前端据此弹确认；autoStart 对它们一律跳过）。
+/// AIO 自身生成的内置 fs server 条目（见 [`is_self_generated_fs_server`]）视为已信任。
+pub fn untrusted_project_servers(app: &AppHandle, project_path: &str) -> Vec<McpServerConfig> {
+    let store = trust_store(app);
+    load_project_mcp_servers(project_path)
+        .servers
+        .into_values()
+        .filter(|cfg| {
+            if is_self_generated_fs_server(cfg, project_path) {
+                return false;
+            }
+            !store.is_trusted(
+                project_path,
+                &cfg.id,
+                &crate::core::mcp_trust::config_fingerprint(cfg),
+            )
+        })
+        .collect()
+}
+
+/// 标记一个项目级服务器为已信任（记录当前配置指纹；仓库配置变更后自动失效）。
+/// 返回被标记的配置；项目文件中不存在该 id 时报错。
+pub fn trust_project_server(
+    app: &AppHandle,
+    project_path: &str,
+    server_id: &str,
+) -> McpResult<McpServerConfig> {
+    let file = load_project_mcp_servers(project_path);
+    let cfg = file.servers.get(server_id).cloned().ok_or_else(|| {
+        McpError::Server(crate::ierr!(
+            "项目 .aio/mcp-servers.json 中不存在服务器: {}",
+            "Server not found in the project's .aio/mcp-servers.json: {}",
+            server_id
+        ))
+    })?;
+    let fingerprint = crate::core::mcp_trust::config_fingerprint(&cfg);
+    trust_store(app)
+        .set_trusted(project_path, server_id, &fingerprint)
+        .map_err(McpError::Server)?;
+    Ok(cfg)
+}
+
+/// 用户经 AIO 设置界面**写入**项目级配置时顺带记录信任（用户意图即授权；
+/// 仓库文件永远不会走这条路径——只有 add_mcp_server 的 UI 流程会）。
+pub fn mark_project_server_trusted(app: &AppHandle, project_path: &str, cfg: &McpServerConfig) {
+    let fingerprint = crate::core::mcp_trust::config_fingerprint(cfg);
+    if let Err(e) = trust_store(app).set_trusted(project_path, &cfg.id, &fingerprint) {
+        tracing::warn!("[mcp-trust] 记录项目级 server 信任失败: {e}");
+    }
+}
+
+/// `start_mcp_server` 的信任门：生效配置来自项目文件（id 存在于其中）且未信任 → false。
+/// 全局配置、AIO 自身生成的内置 fs server、已信任的项目配置返回 true。
+pub fn project_server_spawn_allowed(
+    app: &AppHandle,
+    project_id: Option<&str>,
+    id: &str,
+) -> McpResult<bool> {
+    let Some(pid) = project_id else {
+        return Ok(true);
+    };
+    let project_path = resolve_project_path(app, pid)?;
+    let Some(cfg) = load_project_mcp_servers(&project_path)
+        .servers
+        .get(id)
+        .cloned()
+    else {
+        return Ok(true);
+    };
+    if is_self_generated_fs_server(&cfg, &project_path) {
+        return Ok(true);
+    }
+    let store = trust_store(app);
+    let trusted = store.is_trusted(
+        &project_path,
+        id,
+        &crate::core::mcp_trust::config_fingerprint(&cfg),
+    );
+    Ok(trusted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn self_generated_fs_server_detection() {
+        fn stdio_cfg(id: &str, command: &str, args: Vec<String>) -> McpServerConfig {
+            McpServerConfig {
+                id: id.into(),
+                display_name: "fs".into(),
+                transport: McpTransport::Stdio {
+                    command: command.into(),
+                    args,
+                    env: BTreeMap::new(),
+                    cwd: None,
+                },
+                enabled_tools: vec![],
+                auto_start: false,
+                has_stored_secret: false,
+                trusted: false,
+                from_catalog: None,
+            }
+        }
+        let exe = std::env::current_exe().expect("当前 exe 路径");
+        let project = std::env::temp_dir();
+        let project_str = project.to_string_lossy().into_owned();
+        // AIO 自生成的条目：命令=当前 exe、参数=--fs-server <项目> → 豁免
+        let ok = stdio_cfg(
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &exe.to_string_lossy(),
+            vec!["--fs-server".into(), project_str.clone()],
+        );
+        assert!(is_self_generated_fs_server(&ok, &project_str));
+        // 仓库伪造同名 id 但命令不同 → 不豁免（走信任门）
+        let forged = stdio_cfg(
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            "powershell",
+            vec!["-Command".into(), "evil".into()],
+        );
+        assert!(!is_self_generated_fs_server(&forged, &project_str));
+        // 正常服务器 id → 不豁免
+        let other = stdio_cfg("some-server", &exe.to_string_lossy(), vec![]);
+        assert!(!is_self_generated_fs_server(&other, &project_str));
+    }
+
+    #[test]
+    fn keyring_placeholder_account_has_no_leading_colon() {
+        // 回归：历史 off-by-one 使 account 带 ":" 前缀，所有密钥必失败
+        let out = resolve_keyring_placeholders("${KEYRING:mcp-server-x-env-K}", |account| {
+            assert_eq!(account, "mcp-server-x-env-K");
+            Some("SECRET".to_string())
+        })
+        .expect("占位符应解析成功");
+        assert_eq!(out, "SECRET");
+    }
+
+    #[test]
+    fn keyring_placeholder_multiple_with_affixes() {
+        let out = resolve_keyring_placeholders("pre-${KEYRING:a}-mid-${KEYRING:b}-post", |a| {
+            if a == "a" {
+                Some("A".to_string())
+            } else if a == "b" {
+                Some("B".to_string())
+            } else {
+                None
+            }
+        })
+        .expect("多占位符应全部解析");
+        assert_eq!(out, "pre-A-mid-B-post");
+    }
+
+    #[test]
+    fn keyring_placeholder_missing_secret_reports_account() {
+        let err =
+            resolve_keyring_placeholders("${KEYRING:gone}", |_| None).expect_err("缺密钥应报错");
+        assert_eq!(err, "gone");
+    }
+
+    #[test]
+    fn keyring_placeholder_unclosed_left_as_is() {
+        let out = resolve_keyring_placeholders("x${KEYRING:a", |_| None).expect("未闭合应原样保留");
+        assert_eq!(out, "x${KEYRING:a");
+    }
+
+    #[test]
+    fn value_without_placeholder_unchanged() {
+        let out = resolve_keyring_placeholders("plain-value", |_| None).expect("无占位符应原样");
+        assert_eq!(out, "plain-value");
+    }
 }

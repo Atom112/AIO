@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
+use crate::core::events as ev;
+
 use crate::ierr;
 
 const DEFAULT_CATALOG_URL: &str =
@@ -313,7 +315,7 @@ pub async fn update_models_catalog(
     let cached = appdata_catalog_path(&app)
         .ok_or_else(|| ierr!("无法获取 AppData 目录", "Failed to get AppData directory"))?;
 
-    fs::write(&cached, &body).map_err(|e| {
+    crate::core::fs_util::atomic_write(&cached, &body).map_err(|e| {
         ierr!(
             "写入 AppData 失败 ({}): {}",
             "Failed to write to AppData ({}): {}",
@@ -323,7 +325,7 @@ pub async fn update_models_catalog(
     })?;
 
     let _ = app.emit(
-        "models-catalog-updated",
+        ev::MODELS_CATALOG_UPDATED,
         serde_json::json!({
             "version": version,
             "modelCount": model_count,

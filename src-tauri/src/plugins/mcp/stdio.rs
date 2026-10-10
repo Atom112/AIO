@@ -144,13 +144,24 @@ impl super::McpServerPlugin for StdioPlugin {
         );
 
         // stderr → log events (frontend can subscribe to `mcp-server-stderr` for debugging)
+        // MCP-9: 行长上限（一条超长 stderr 行不再无界膨胀事件载荷）
+        const STDERR_LINE_LIMIT: usize = 2_000;
         if let Some(stderr) = stderr {
             let app2 = app.clone();
             let sid = config.id.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = app2.emit(ev::MCP_SERVER_STDERR, json!({ "id": sid, "line": line }));
+                    let capped: String = if line.len() > STDERR_LINE_LIMIT {
+                        format!(
+                            "{}…[+{} chars]",
+                            &line[..line.floor_char_boundary(STDERR_LINE_LIMIT)],
+                            line.len() - STDERR_LINE_LIMIT
+                        )
+                    } else {
+                        line
+                    };
+                    let _ = app2.emit(ev::MCP_SERVER_STDERR, json!({ "id": sid, "line": capped }));
                 }
             });
         }

@@ -283,13 +283,8 @@ pub fn save_app_config(app: &AppHandle, config: &AppConfig) -> Result<(), String
     // Field mapping is centralized in AppConfigDisk::from_config (including api_key stripping and the auto_retry fields)
     let disk = AppConfigDisk::from_config(config);
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
-    // Atomic write
-    let tmp_path = path.with_extension("tmp");
-    use std::io::Write;
-    let mut f = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
-    f.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
+    // Atomic write (fsync before rename; a crash can never leave a truncated half-written config.json)
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -327,9 +322,11 @@ pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
                     ..AppConfigDisk::default()
                 };
                 if key_migrated {
-                    if let Err(e) = fs::write(
+                    if let Err(e) = crate::core::fs_util::atomic_write(
                         &path,
-                        serde_json::to_string_pretty(&disk).unwrap_or_default(),
+                        serde_json::to_string_pretty(&disk)
+                            .unwrap_or_default()
+                            .as_bytes(),
                     ) {
                         tracing::error!("迁移写回 config.json 失败: {e}");
                     }

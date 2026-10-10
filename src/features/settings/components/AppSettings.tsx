@@ -405,13 +405,12 @@ const AppSettings: Component = () => {
   // Clicking elsewhere on the page cancels recording
   const onDocClick = (e: MouseEvent) => {
     if (recordingActionId()) {
-      // Check whether the click is on a shortcut badge
+      // Check whether the click is on a shortcut badge.
+      // FE-02: data-* 属性选择器——整段 Tailwind class 串不是合法 CSS 选择器
+      // （closest 直接抛 SyntaxError 且无 catch，录制永远无法通过点击取消，
+      // Escape 也会被误录成绑定）
       const target = e.target as HTMLElement;
-      if (
-        !target.closest(
-          '.inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]',
-        )
-      ) {
+      if (!target.closest('[data-shortcut-badge]')) {
         stopRecording();
       }
     }
@@ -1023,8 +1022,9 @@ const AppSettings: Component = () => {
                         </span>
                       </div>
                       <div class="flex items-center gap-2 shrink-0">
-                        {/* Shortcut badge */}
+                        {/* Shortcut badge (data-shortcut-badge is the FE-02 anchor used by the onDocClick selector) */}
                         <div
+                          data-shortcut-badge=""
                           class={`inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]${isRecording() ? ' recording' : ''}${modified() ? ' modified' : ''}`}
                           onClick={() => {
                             if (isRecording()) {

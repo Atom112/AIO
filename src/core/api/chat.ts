@@ -89,7 +89,30 @@ export const callLlmStream = (
   assistantId: string,
   topicId: string,
   messages: Message[],
-) => invoke<void>('call_llm_stream', { ...creds, assistantId, topicId, messages });
+) => {
+  recordStreamKey(assistantId, topicId);
+  return invoke<void>('call_llm_stream', { ...creds, assistantId, topicId, messages });
+};
+
+// ---- CHAT-4: 流归属键 ----
+// Stop 按流键控而非当前视图：流按 (assistantId, topicId) 键控，切话题后用当前
+// 视图 ID 调 stop 会打到不存在的流（后端静默 no-op），原流继续跑而 isThinking
+// 全局拦截所有发送——用户被迫切回原话题才能停止。
+let activeStreamAssistantId: string | null = null;
+let activeStreamTopicId: string | null = null;
+
+function recordStreamKey(assistantId: string, topicId: string) {
+  activeStreamAssistantId = assistantId;
+  activeStreamTopicId = topicId;
+}
+
+/** Stop the LLM streaming task actually in flight (keyed by stream ownership). */
+export const stopActiveLlmStream = () => {
+  const assistantId = activeStreamAssistantId;
+  const topicId = activeStreamTopicId;
+  if (!assistantId || !topicId) return Promise.resolve();
+  return invoke<void>('stop_llm_stream', { assistantId, topicId });
+};
 
 /** run_agent_turn arguments (one autonomous agent-loop turn). */
 export interface RunAgentTurnArgs extends LlmCredentials {
@@ -110,8 +133,10 @@ export interface RunAgentTurnArgs extends LlmCredentials {
 }
 
 /** Start one autonomous agent-loop turn (progress reported via the llm-* event series). */
-export const runAgentTurn = (args: RunAgentTurnArgs) =>
-  invoke<void>('run_agent_turn', args as unknown as Record<string, unknown>);
+export const runAgentTurn = (args: RunAgentTurnArgs) => {
+  recordStreamKey(args.assistantId, args.topicId);
+  return invoke<void>('run_agent_turn', args as unknown as Record<string, unknown>);
+};
 
 /** Stop the LLM streaming task of a topic. */
 export const stopLlmStream = (assistantId: string, topicId: string) =>

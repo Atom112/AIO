@@ -23,6 +23,16 @@ The settings page supports viewing, starting/stopping, testing, deleting, and ed
 
 A hidden `__aio-filesystem__` configuration is automatically written when creating a new project. The current implementation executes its tool names using built-in file tools, does not depend on external MCP sub-processes, but is still subject to project root and permission rule restrictions.
 
+## Project-level config and trust
+
+A project repository may ship its own `.aio/mcp-servers.json` (same structure as the global config; same-id servers override the global ones). Because repository content is untrusted, project-level servers **never auto-start** by default:
+
+- Opening/switching a project shows a confirmation prompt that fully discloses the command, arguments, environment, or URL before connecting;
+- The confirmation is stored in the app data directory (outside the repository) and bound to a config fingerprint — changing command / args / env / URL / headers in the repo revokes trust automatically and re-confirmation is required;
+- The backend `start_mcp_server` refuses untrusted project-level configs outright (defense in depth, never relying on the frontend alone);
+- "Skip" applies to the current session only; the prompt returns on the next app start;
+- Prefer ignoring experimental configs via the repository's `.gitignore` to avoid committing files that carry secret placeholders.
+
 ## stdio Configuration Example
 
 The following structure shows non-sensitive fields in `mcp-servers.json`:

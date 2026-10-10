@@ -122,7 +122,7 @@ pub(crate) fn archive_early_messages(
         out.push_str(&format!("[{}]: {}\n", role, text));
     }
     let path = dir.join(format!("{}.txt", artifact_id));
-    std::fs::write(&path, &out).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, out.as_bytes()).map_err(|e| e.to_string())?;
 
     let is_en = locale == "en-US";
     let names = if tool_names.is_empty() {
@@ -260,7 +260,7 @@ pub(crate) fn write_handoff_doc(
         truncate_chars_head_tail(accumulated, 4000),
         files_section
     );
-    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, body.as_bytes()).map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
 }
 

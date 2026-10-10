@@ -12,14 +12,21 @@ use serde_json::Value;
 /// `tools/list` tools array → OpenAI function calling spec.
 ///
 /// MCP returns `{ name, description, inputSchema }`, which must be converted to
-/// `{ type: "function", function: { name, description, parameters } }`;
-/// entries without name/description are skipped, and the result is truncated to `MAX_TOOLS_PER_SERVER`.
+/// `{ type: "function", function: { name, description, parameters } }`; entries
+/// without a name are skipped. The result is truncated to `MAX_TOOLS_PER_SERVER`.
+///
+/// MCP-11: `description` is OPTIONAL in the spec — a valid tool without one is
+/// no longer silently dropped (an empty description is emitted instead).
 pub fn tools_to_specs(tools: Vec<Value>) -> Vec<ToolSpec> {
     tools
         .into_iter()
         .filter_map(|t| {
             let name = t.get("name")?.as_str()?.to_string();
-            let description = t.get("description")?.as_str()?.to_string();
+            let description = t
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
             let parameters = t
                 .get("inputSchema")
                 .cloned()
@@ -83,12 +90,15 @@ mod tests {
         let specs = tools_to_specs(vec![
             json!({"name": "read", "description": "读文件", "inputSchema": {"type": "object"}}),
             json!({"description": "缺少 name，应跳过"}),
-            json!({"name": "write"}), // missing description, skipped
+            // MCP-11: description 是可选字段——无 description 的合法工具不再被丢弃
+            json!({"name": "write"}),
         ]);
-        assert_eq!(specs.len(), 1);
+        assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].function.name, "read");
         assert_eq!(specs[0].kind, "function");
         assert_eq!(specs[0].function.parameters["type"], "object");
+        assert_eq!(specs[1].function.name, "write");
+        assert_eq!(specs[1].function.description, "");
     }
 
     #[test]

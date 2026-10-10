@@ -117,7 +117,9 @@ pub async fn stop_local_server(
             for (_, mut inner) in engines.drain() {
                 if let Some(mut child) = inner.child_process.take() {
                     tracing::debug!("[engine] 正在停止引擎...");
+                    // ENG-06: kill 后 wait，避免 Unix 每次启停泄漏僵尸进程
                     let _ = child.kill();
+                    let _ = child.wait();
                 }
             }
         }
@@ -281,7 +283,9 @@ fn stop_engine_internal(state: &LocalEngineState, engine_type: &str) {
     if let Some(mut inner) = engines.remove(engine_type) {
         if let Some(mut child) = inner.child_process.take() {
             tracing::debug!("[engine] 正在停止引擎 {}...", engine_type);
+            // ENG-06: kill 后 wait，避免 Unix 每次启停泄漏僵尸进程
             let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }

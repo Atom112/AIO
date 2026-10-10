@@ -212,6 +212,11 @@ pub(crate) async fn stream_one_round(
     body_map.insert("model".into(), json!(model));
     body_map.insert("messages".into(), json!(messages));
     body_map.insert("stream".into(), json!(true));
+    // PROV-6: OpenAI 兼容流式 usage 只在 include_usage=true 时随末 chunk 下发
+    // （否则输入/输出 token 统计恒空）；Anthropic 走原生协议转换，不加此字段。
+    if !crate::plugins::provider::anthropic::is_anthropic_url(api_url.as_str()) {
+        body_map.insert("stream_options".into(), json!({"include_usage": true}));
+    }
     if let Some(tools) = tools {
         if !tools.is_empty() {
             body_map.insert("tools".into(), json!(tools));
@@ -237,7 +242,13 @@ pub(crate) async fn stream_one_round(
     .await?;
 
     let mut stream = response.bytes_stream();
-    let mut line_buffer = String::new();
+    // PROV-1: 字节级行缓冲——只在完整行上解码。历史实现逐 chunk
+    // `from_utf8_lossy`，把被 TCP 分段切开的多字节 UTF-8 字符替换成 U+FFFD
+    // （中文流式随机乱码且写入会话历史）。`\n` 不会出现在多字节序列中间，
+    // 因此按 `\n` 切出的行总是完整的 UTF-8。
+    let mut line_buffer: Vec<u8> = Vec::new();
+    // LOOP-9: 无换行的超长数据行不再无界增长（超限即报错中断本轮）
+    const SSE_LINE_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
     // tool_call accumulator: index -> (id, name, arguments); BTreeMap keeps flush ordered by index
     let mut tc_accum: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
 
@@ -272,10 +283,18 @@ pub(crate) async fn stream_one_round(
             Some(Err(e)) => return Err(e.to_string()),
             None => break, // stream ended naturally
         };
-        line_buffer.push_str(&String::from_utf8_lossy(&chunk));
+        line_buffer.extend_from_slice(&chunk);
+        if line_buffer.len() > SSE_LINE_BUFFER_LIMIT {
+            return Err(ierr!(
+                "SSE 行缓冲超限（4MB）：服务器发送了无换行的超长数据行",
+                "SSE line buffer exceeded 4MB: the server sent an overlong line without a newline"
+            ));
+        }
 
-        while let Some(pos) = line_buffer.find('\n') {
-            let line = line_buffer[..pos].trim().to_string();
+        while let Some(pos) = line_buffer.iter().position(|&b| b == b'\n') {
+            let line = String::from_utf8_lossy(&line_buffer[..pos])
+                .trim()
+                .to_string();
             line_buffer.drain(..pos + 1);
 
             if line.is_empty() {
@@ -291,23 +310,37 @@ pub(crate) async fn stream_one_round(
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if is_anthropic_request {
                         // Anthropic Messages stream events: content/thinking/tool calls/usage accumulated uniformly
-                        crate::plugins::provider::anthropic::handle_anthropic_stream_event(
-                            &val,
-                            window,
-                            assistant_id,
-                            topic_id,
-                            &mut content_buf,
-                            &mut reasoning_buf,
-                            &mut tc_accum,
-                            &mut finish_reason,
-                            &mut input_tokens,
-                            &mut output_tokens,
-                            &mut cached_input_tokens,
-                        );
+                        if let Some(err) =
+                            crate::plugins::provider::anthropic::handle_anthropic_stream_event(
+                                &val,
+                                window,
+                                assistant_id,
+                                topic_id,
+                                &mut content_buf,
+                                &mut reasoning_buf,
+                                &mut tc_accum,
+                                &mut finish_reason,
+                                &mut input_tokens,
+                                &mut output_tokens,
+                                &mut cached_input_tokens,
+                                suppress_events,
+                            )
+                        {
+                            // PROV-2：错误事件必须浮出——截断回复不再被当成功返回
+                            return Err(ierr!(
+                                "Anthropic 流错误: {}",
+                                "Anthropic stream error: {}",
+                                err
+                            ));
+                        }
                         if val.get("type").and_then(|v| v.as_str()) == Some("message_stop") {
                             saw_done = true;
                             break;
                         }
+                    } else if let Some(err) = crate::plugins::llm::chat_error_message(&val) {
+                        // PROV-2（OpenAI 兼容分支，与 btw.rs 对齐——此前双实现漂移）：
+                        // 200 + {"error":{...}} 的流式错误事件不再被静默吞掉
+                        return Err(ierr!("LLM 流错误: {}", "LLM stream error: {}", err));
                     } else if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         content_buf.push_str(content);
                         if !suppress_events {
@@ -469,7 +502,15 @@ pub(crate) async fn stream_one_round(
                             cached_input_tokens = cached as u32;
                         }
                     }
-                } // end of else branch (OpenAI-compatible parsing)
+                }
+                // end of else branch (OpenAI-compatible parsing)
+                else {
+                    // PROV-1 companion: malformed SSE data lines are no longer silently dropped
+                    tracing::warn!(
+                        "[stream] 无法解析的 SSE 数据行: {}",
+                        json_str.chars().take(120).collect::<String>()
+                    );
+                }
             }
         }
         if saw_done {
@@ -586,9 +627,14 @@ pub async fn call_llm_stream(
     // 1. Build the task key (structured tuple, avoids "-" concatenation ambiguity)
     let task_key = (assistant_id.clone(), topic_id.clone());
 
-    // 2. If a task is already running for this key, cancel it first (cancel, not abort, so the epilogue still runs)
-    if let Some((_, (_, old_token))) = state.0.remove(&task_key) {
+    // 2. If a task is already running for this key, cancel it first (cancel, not abort,
+    //    so the epilogue still runs). LOOP-1: legacy path previously returned without
+    //    waiting at all — the old epilogue's keyed remove could then delete the NEW
+    //    task's entry. Now it waits like run_agent_turn, and the removal below is
+    //    identity-matched (turn_id) so an outliving old task is harmless.
+    if let Some((_, (old_handle, old_token, _))) = state.0.remove(&task_key) {
         old_token.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), old_handle).await;
     }
 
     // 3. Clone variables for the async task (move closure)
@@ -614,6 +660,9 @@ pub async fn call_llm_stream(
     let token_inner = token.clone();
     let app_handle = window.app_handle().clone();
     let model_c = model.clone();
+    // LOOP-1：本回合代次号（epilogue 身份匹配删除）
+    let stream_turn_id = uuid::Uuid::new_v4().to_string();
+    let stream_turn_id_inner = stream_turn_id.clone();
 
     // 4. Spawn the async task that performs the request
     let handle = tokio::spawn(async move {
@@ -701,12 +750,14 @@ pub async fn call_llm_stream(
             }
         }
 
-        // Remove the task from global state once it finishes
-        state_inner.remove(&task_key_inner);
+        // Remove the task from global state once it finishes (identity-matched, LOOP-1)
+        state_inner.remove_if(&task_key_inner, |_, (_, _, entry_turn)| {
+            entry_turn == &stream_turn_id_inner
+        });
     });
 
     // 5. Store the running task handle and cancellation token in global state
-    state.0.insert(task_key, (handle, token));
+    state.0.insert(task_key, (handle, token, stream_turn_id));
     Ok(())
 }
 
@@ -814,93 +865,122 @@ pub(crate) async fn execute_builtin_tool(
         ));
     }
 
-    // Permission check (matches execute_tool_call; server_id keeps crate::core::ids::BUILTIN_FS_SERVER_ID for compatibility with existing rules)
-    if *agent_mode != AgentMode::Off {
-        let custom_rules = permission::load_permissions(Some(&project_root)).rules;
-        let action = permission::check_permission(
-            tool_name,
-            crate::core::ids::BUILTIN_FS_SERVER_ID,
-            arguments,
-            agent_mode,
-            &custom_rules,
-        );
+    // Permission check (matches execute_tool_call; server_id keeps crate::core::ids::BUILTIN_FS_SERVER_ID for compatibility with existing rules).
+    // SEC-19: Off（聊天模式）此前直接跳过整个权限检查（结构性 fail-open——
+    // 伪造/缺省模式即零审批放行），现在 fail-closed。
+    if matches!(agent_mode, AgentMode::Off) {
+        return Err(ierr!(
+            "工具 '{}' 在 Off（聊天）模式下不可用",
+            "Tool '{}' is unavailable in Off (chat) mode",
+            tool_name
+        ));
+    }
+    let custom_rules = permission::load_permissions(Some(&project_root)).rules;
+    let action = permission::check_permission(
+        tool_name,
+        crate::core::ids::BUILTIN_FS_SERVER_ID,
+        arguments,
+        agent_mode,
+        &custom_rules,
+    );
 
-        match action {
-            PermissionAction::Deny => {
-                return Err(ierr!(
+    // SEC-01: network=true was previously auto-allowed in Auto/Workflow (permission
+    // Allow) — one prompt injection could exfiltrate any user-readable file
+    // silently. Network-declaring commands now require confirmation in every mode.
+    let network_auto = tool_name == "execute_command"
+        && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+        && arguments["network"].as_bool().unwrap_or(false)
+        && action == PermissionAction::Allow;
+    let action = if network_auto {
+        PermissionAction::Ask
+    } else {
+        action
+    };
+
+    match action {
+        PermissionAction::Deny => {
+            return Err(ierr!(
                     "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
                     "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo allow it, switch to auto mode or add an allow rule in project permission settings.",
                     tool_name
                 ));
-            }
-            PermissionAction::Ask => {
-                let pending = app.state::<PendingApprovals>();
-                let mut reason = ierr!(
-                    "工具 '{}' 需要您的确认才能执行",
-                    "Tool '{}' needs your confirmation to execute",
-                    tool_name
-                );
-                // Command execution: dangerous-command annotation
-                if tool_name == "execute_command" {
-                    if let Some(cmd) = arguments["command"].as_str() {
-                        if let Some(danger) = shell_tools::check_dangerous_command(cmd) {
-                            let prefix = match danger.category {
-                                shell_tools::DangerCategory::Critical => "🚨 严重危险",
-                                shell_tools::DangerCategory::High => "⚠️ 高风险",
-                                shell_tools::DangerCategory::Medium => "⚡ 中等风险",
-                            };
-                            reason = ierr!(
-                                "{}\n\n{}\n\n命令: {}\n\n确认执行？",
-                                "{}\n\n{}\n\nCommand: {}\n\nConfirm execution?",
-                                prefix,
-                                danger.risk,
-                                cmd
-                            );
-                        } else {
-                            reason = ierr!(
-                                "命令: {}\n\n工具 '{}' 需要您的确认才能执行",
-                                "Command: {}\n\nTool '{}' needs your confirmation to execute",
-                                cmd,
-                                tool_name
-                            );
-                        }
+        }
+        PermissionAction::Ask => {
+            let pending = app.state::<PendingApprovals>();
+            let mut reason = ierr!(
+                "工具 '{}' 需要您的确认才能执行",
+                "Tool '{}' needs your confirmation to execute",
+                tool_name
+            );
+            // Command execution: dangerous-command annotation
+            if tool_name == "execute_command" {
+                if let Some(cmd) = arguments["command"].as_str() {
+                    if let Some(danger) = shell_tools::check_dangerous_command(cmd) {
+                        let prefix = match danger.category {
+                            shell_tools::DangerCategory::Critical => "🚨 严重危险",
+                            shell_tools::DangerCategory::High => "⚠️ 高风险",
+                            shell_tools::DangerCategory::Medium => "⚡ 中等风险",
+                        };
+                        reason = ierr!(
+                            "{}\n\n{}\n\n命令: {}\n\n确认执行？",
+                            "{}\n\n{}\n\nCommand: {}\n\nConfirm execution?",
+                            prefix,
+                            danger.risk,
+                            cmd
+                        );
+                    } else {
+                        reason = ierr!(
+                            "命令: {}\n\n工具 '{}' 需要您的确认才能执行",
+                            "Command: {}\n\nTool '{}' needs your confirmation to execute",
+                            cmd,
+                            tool_name
+                        );
                     }
                 }
-                // Network declaration and sandbox availability annotations: the approval info presents the full risk surface
-                if tool_name == "execute_command" {
-                    if arguments["network"].as_bool().unwrap_or(false) {
-                        reason.push_str(&ierr!(
-                            "\n\n⚠ 此命令声明需要网络访问",
-                            "\n\n⚠ This command declares network access"
-                        ));
-                    }
-                    if !crate::utils::sandbox::sandbox_available() {
-                        reason.push_str(&ierr!(
+            }
+            // Network declaration and sandbox availability annotations: the approval info presents the full risk surface
+            if tool_name == "execute_command" {
+                if network_auto {
+                    reason.insert_str(
+                        0,
+                        &ierr!(
+                            "自动模式：声明网络访问的命令需确认。\n\n",
+                            "Auto mode: network-declaring commands need confirmation.\n\n"
+                        ),
+                    );
+                }
+                if arguments["network"].as_bool().unwrap_or(false) {
+                    reason.push_str(&ierr!(
+                        "\n\n⚠ 此命令声明需要网络访问",
+                        "\n\n⚠ This command declares network access"
+                    ));
+                }
+                if !crate::utils::sandbox::sandbox_available() {
+                    reason.push_str(&ierr!(
                             "\n\n⚠ 沙箱不可用：此命令将在无 OS 级沙箱的环境执行",
                             "\n\n⚠ Sandbox unavailable: this command will run without an OS-level sandbox"
                         ));
-                    }
-                }
-                // File-modifying tools: precompute a diff preview
-                let (preview_diff, file_path) =
-                    compute_diff_preview(tool_name, arguments, &project_root);
-                let approval_fut = crate::commands::mcp::request_tool_approval(
-                    app,
-                    pending.inner(),
-                    crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    tool_name,
-                    arguments,
-                    &reason,
-                    preview_diff,
-                    file_path,
-                );
-                tokio::select! {
-                    _ = token.cancelled() => return Err("cancelled".into()),
-                    res = approval_fut => res?,
                 }
             }
-            PermissionAction::Allow => {}
+            // File-modifying tools: precompute a diff preview
+            let (preview_diff, file_path) =
+                compute_diff_preview(tool_name, arguments, &project_root);
+            let approval_fut = crate::commands::mcp::request_tool_approval(
+                app,
+                pending.inner(),
+                crate::core::ids::BUILTIN_FS_SERVER_ID,
+                tool_name,
+                arguments,
+                &reason,
+                preview_diff,
+                file_path,
+            );
+            tokio::select! {
+                _ = token.cancelled() => return Err("cancelled".into()),
+                res = approval_fut => res?,
+            }
         }
+        PermissionAction::Allow => {}
     }
 
     // Dispatch and execute
@@ -1098,7 +1178,8 @@ pub(crate) struct TurnContext {
 /// - `mcp_server_ids`: MCP server ids opted in by the assistant. In Agent mode, tools of connected
 ///   servers are injected; conflicting tool names are renamed to mcp__<server>__<tool>; tools from
 ///   untrusted servers still require per-call approval in Auto/Workflow mode (see mcp::execute_tool_call)
-/// - `agent_mode`: agent execution mode; affects permission rules and tool injection (Plan: research tools / Normal/Auto/Workflow: orchestration tools / Off: no tools)
+/// - `_agent_mode`: legacy IPC parameter, accepted for compatibility but IGNORED —
+///   the mode is derived server-side from the assistant's persisted record (MCP-13)
 /// - `project_id`: project id (used to resolve project-level permission rules)
 /// - `locale`: optional UI language; falls back to `zh-CN` when missing on legacy calls
 #[tauri::command]
@@ -1118,7 +1199,7 @@ pub async fn run_agent_turn(
     topic_id: String,
     messages: Vec<Message>,
     mcp_server_ids: Vec<String>,
-    agent_mode: AgentMode,
+    _agent_mode: AgentMode,
     project_id: Option<String>,
     web_search_enabled: bool,
     profile_model_overrides: Vec<ProfileModelOverride>,
@@ -1132,10 +1213,17 @@ pub async fn run_agent_turn(
         api_url,
         api_key,
         model,
-        assistant_id,
+        assistant_id: assistant_id.clone(),
         topic_id,
         messages,
-        agent_mode,
+        // MCP-13：模式由服务端裁决——IPC 传入的 agent_mode 可伪造（伪造 auto
+        // 即获得宽松权限面），助手记录里的持久化模式才是权威来源；记录缺失时
+        // 回退 Off（fail-closed，Off 模式工具一律不可用）。
+        agent_mode: {
+            let conn = db_state.0.lock();
+            crate::commands::config::load_assistant_agent_mode(&conn, &assistant_id)
+                .unwrap_or(AgentMode::Off)
+        },
         project_id,
         web_search_enabled,
         profile_model_overrides,
@@ -1217,9 +1305,11 @@ pub(crate) async fn run_agent_turn_inner(
     let task_key = (assistant_id.clone(), topic_id.clone());
 
     // Cancel the old task for the same topic (cancel, not abort).
-    // The old handle must be awaited to finish its epilogue; otherwise the old task's state_inner.remove
+    // The old handle must be awaited to finish its epilogue; otherwise the old task's state removal
     // could run after the new insert and wrongly delete the new task's entry, leaving the new task orphaned.
-    if let Some((_, (old_handle, old_token))) = stream_mgr.0.remove(&task_key) {
+    // (LOOP-1: the remove is now identity-matched, so even a task that outlives this 10s window —
+    // e.g. stuck in a 300s command — can no longer corrupt the replacement's entry.)
+    if let Some((_, (old_handle, old_token, _))) = stream_mgr.0.remove(&task_key) {
         old_token.cancel();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), old_handle).await;
     }
@@ -1274,11 +1364,14 @@ pub(crate) async fn run_agent_turn_inner(
 
     // ===== Token efficiency: model-aware context budget =====
     // Compression trigger thresholds are derived from the model context window (passed by the frontend
-    // from the model catalog, default 128k), following oh-my-pi's reserve policy: reserve = max(16384, 15% of window).
-    let context_window_n = context_window.unwrap_or(128_000).max(16_000) as usize;
-    let context_reserve = 16_384usize.max(context_window_n / 100 * 15);
-    let context_budget = context_window_n.saturating_sub(context_reserve); // token threshold that triggers compression
-    let keep_recent_tokens = (context_budget / 2).clamp(4_000, 20_000); // recent-token budget kept when compressing
+    // from the model catalog, default 128k), following oh-my-pi's reserve policy.
+    // LOOP-4 (see budget::context_budget + its regression test): the floor used to be
+    // `.max(16_000)`, which pushed small-window local models (4k/8k GGUF are common)
+    // to 16k — reserve (16384) then exceeded the window, budget hit 0, and every
+    // single round re-compressed (one summary LLM call per round).
+    let (context_window_n, _context_reserve, context_budget) =
+        crate::commands::llm::budget::context_budget(context_window);
+    let keep_recent_tokens = (context_budget / 2).clamp(2_000, 20_000); // recent-token budget kept when compressing
 
     // Reasoning models (OpenAI o1/o3/o4, gpt-5 series) reject the max_tokens field (they need max_completion_tokens),
     // so no output cap is injected for them to avoid API errors; other models get half the window as output budget.
@@ -1298,13 +1391,27 @@ pub(crate) async fn run_agent_turn_inner(
     let task_key_inner = task_key.clone();
     let assistant_id_c = assistant_id.clone();
     let topic_id_c = topic_id.clone();
+    // LOOP-1：回合代次号——epilogue 按身份匹配删除自己的条目
+    let turn_id_c = turn_id.clone();
+    let turn_id_public = turn_id.clone();
     let app_c = app.clone();
     let project_id_c = project_id.clone();
     let profile_overrides_c = profile_model_overrides.clone();
     let custom_profiles_c = custom_subagent_profiles.clone();
     let mcp_server_ids_c = mcp_server_ids.clone();
+    // LOOP-6：panic 兜底 epilogue 所需克隆（body_fut 会 move 走原始变量）
+    let window_g = window.clone();
+    let app_c_g = app_c.clone();
+    let assistant_id_g = assistant_id_c.clone();
+    let topic_id_g = topic_id_c.clone();
+    let task_key_g = task_key_inner.clone();
+    let turn_id_g = turn_id_c.clone();
+    let state_inner_g = state_inner.clone();
 
-    let handle = tokio::spawn(async move {
+    // LOOP-6：主体包 catch_unwind——闭包 panic 时 StreamManager 条目泄漏、前端
+    // isThinking 永久卡死（历史实现 panic 直接跳过全部 epilogue）。兜底路径执行
+    // 最小 epilogue：finalize 检查点 + 终止 done 事件 + 身份匹配删除条目。
+    let body_fut = async move {
         // Unwrap Skills (the frontend passes them only in Agent mode; empty in chat mode)
         let skills = skills.unwrap_or_default();
         // Load the app config (incl. auto-retry, subagent concurrency cap, memory toggle);
@@ -2388,20 +2495,22 @@ pub(crate) async fn run_agent_turn_inner(
                 }
                 messages_for_api = msgs;
             }
-        }
 
-        // Checkpoint: the turn's context is settled (after tool backfill + compression decision), persist a snapshot.
-        // After a crash, run_agent_turn(resume_turn_id) resumes from the latest active snapshot;
-        // the epilogue marks this turn terminal - a leftover active checkpoint is the "recoverable" signal.
-        {
-            let conn = app_c.state::<crate::core::state::DbState>();
-            save_checkpoint(
-                &conn.0.lock(),
-                &topic_id_c,
-                &turn_id,
-                round,
-                &messages_for_api,
-            );
+            // Checkpoint: persist a snapshot at the end of EACH round (LOOP-2: this
+            // block used to sit after the loop — a crash mid-turn then had NO active
+            // checkpoint and resume always restarted the turn from scratch, despite
+            // the module doc and retention policy promising per-round snapshots).
+            // The turn's context is settled here: tool backfill + compression done.
+            {
+                let conn = app_c.state::<crate::core::state::DbState>();
+                save_checkpoint(
+                    &conn.0.lock(),
+                    &topic_id_c,
+                    &turn_id,
+                    round,
+                    &messages_for_api,
+                );
+            }
         }
 
         // ===== Incomplete task -> handoff document =====
@@ -2540,10 +2649,59 @@ pub(crate) async fn run_agent_turn_inner(
             },
         );
 
-        // Remove self from global state
-        state_inner.remove(&task_key_inner);
+        // Remove self from global state (LOOP-1: identity-matched remove — after a
+        // replacement raced past the 10s wait, this entry may already belong to the
+        // NEW task, and a keyed remove would orphan it)
+        state_inner.remove_if(&task_key_inner, |_, (_, _, entry_turn)| {
+            entry_turn == &turn_id_c
+        });
+    };
+
+    let handle = tokio::spawn(async move {
+        use futures_util::FutureExt as _;
+        match std::panic::AssertUnwindSafe(body_fut).catch_unwind().await {
+            Ok(()) => {}
+            Err(panic_payload) => {
+                // LOOP-6 兜底 epilogue（主体 panic 时到达）
+                let msg = panic_payload
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic_payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                tracing::error!("[agent-turn] 主循环 panic（已执行兜底 epilogue）: {msg}");
+                {
+                    let conn = app_c_g.state::<crate::core::state::DbState>();
+                    crate::commands::llm::checkpoints::finalize_checkpoints(
+                        &conn.0.lock(),
+                        &topic_id_g,
+                        &turn_id_g,
+                        "error",
+                    );
+                }
+                let _ = window_g.emit(
+                    ev::LLM_CHUNK,
+                    StreamPayload {
+                        assistant_id: assistant_id_g.clone(),
+                        topic_id: topic_id_g.clone(),
+                        content: format!("\n[Error: 内部错误（panic）: {msg}]"),
+                        done: true,
+                        error: Some(msg),
+                        input_tokens: None,
+                        output_tokens: None,
+                        context_tokens: None,
+                        cached_input_tokens: None,
+                        images: None,
+                    },
+                );
+                state_inner_g.remove_if(&task_key_g, |_, (_, _, entry_turn)| {
+                    entry_turn == &turn_id_g
+                });
+            }
+        }
     });
 
-    stream_mgr.0.insert(task_key, (handle, token));
+    stream_mgr
+        .0
+        .insert(task_key, (handle, token, turn_id_public));
     Ok(())
 }

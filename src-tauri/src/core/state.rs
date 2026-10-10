@@ -16,8 +16,12 @@ use tokio_util::sync::CancellationToken;
 /// (emit done + remove itself).
 /// Task key: (assistant_id, topic_id).
 pub type StreamTaskKey = (String, String);
-/// One active LLM streaming task entry (JoinHandle + cancellation token).
-pub type StreamTaskEntry = (JoinHandle<()>, CancellationToken);
+/// One active LLM streaming task entry: (JoinHandle, cancellation token, turn_id).
+/// `turn_id` identifies the generation (LOOP-1): a replacement turn's epilogue must
+/// only remove ITS OWN entry — after the 10s replacement wait times out, the old
+/// task can still be stuck in a long command and its keyed remove would otherwise
+/// delete the NEW task's entry (orphan: stop can't find it, double main loops).
+pub type StreamTaskEntry = (JoinHandle<()>, CancellationToken, String);
 
 /// Concurrent map of active LLM streaming tasks.
 pub struct StreamManager(pub Arc<DashMap<StreamTaskKey, StreamTaskEntry>>);
@@ -36,7 +40,9 @@ impl Drop for LocalEngineInner {
     fn drop(&mut self) {
         if let Some(mut child) = self.child_process.take() {
             tracing::debug!("[engine] Drop LocalEngineInner — 清理残留子进程");
+            // ENG-06: kill 后 wait，避免 Unix 僵尸进程
             let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }

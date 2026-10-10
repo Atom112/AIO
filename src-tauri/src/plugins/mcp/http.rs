@@ -60,11 +60,17 @@ impl Default for HttpPlugin {
     }
 }
 
-/// Builds a reqwest client with timeouts
+/// Builds a reqwest client with timeouts.
+///
+/// MCP-8: redirects are REFUSED. The reqwest default follows up to 10 redirects and
+/// forwards custom auth headers (X-API-Key etc. — only Authorization/Cookie are
+/// stripped cross-host) to the redirect target; an https→http downgrade would hand
+/// the API key to an attacker-controlled host.
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
@@ -366,6 +372,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         return Err(McpError::Server("HTTP transport 已关闭".into()));
     }
     let url = state.endpoint();
+    let expect_id = body.get("id").and_then(|i| i.as_u64());
     let mut req = state
         .client
         .post(&url)
@@ -399,6 +406,20 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     {
         *state.session_id.lock() = Some(sid);
     }
+    // MCP-8: redirect refused (the custom auth headers above must never be forwarded
+    // to a redirect target; https→http downgrade would leak the key)
+    if status.is_redirection() {
+        let target = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<unknown>");
+        return Err(McpError::Server(crate::ierr!(
+            "MCP 端点重定向被拒绝（目标: {}）。请将服务器配置更新为最终地址",
+            "MCP endpoint redirect refused (target: {}). Update the server config to the final URL",
+            target
+        )));
+    }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let truncated = if body.len() > 512 {
@@ -413,43 +434,117 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     }
     if content_type.starts_with("text/event-stream") {
         // SSE parsing: split into blocks on blank lines; multiple data lines within a
-        // block are joined with \n per the SSE spec; event:/id:/comment lines are ignored;
-        // \r\n is tolerated. Takes the first block containing data (in request-response
-        // mode the server returns the JSON-RPC response as the first event).
+        // block are joined with \n per the SSE spec; event:/id:/comment lines are
+        // ignored; \r\n is tolerated. MCP-4: blocks carrying notifications (a
+        // "method" field) or a non-matching id are skipped — only the response for
+        // OUR request is returned; error responses surface as errors.
         use futures_util::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| McpError::Server(format!("SSE read: {}", e)))?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
-            // A blank line (\n\n or \r\n\r\n) is the block boundary
-            let block_end = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"));
-            if let Some(pos) = block_end {
-                let block: String = buffer[..pos].to_string();
-                let mut data_lines: Vec<String> = Vec::new();
-                for line in block.lines() {
-                    let line = line.trim_end_matches('\r');
-                    if let Some(rest) = line.strip_prefix("data:") {
-                        data_lines.push(rest.trim_start().to_string());
-                    }
-                    // event: / id: / :comment lines are ignored per the spec
-                }
-                if !data_lines.is_empty() {
-                    let data = data_lines.join("\n");
-                    if !data.is_empty() {
-                        return serde_json::from_str::<Value>(&data)
-                            .map_err(|e| McpError::Server(format!("SSE JSON: {}", e)));
+            // MCP-5: consume EVERY complete block in the buffer, delimiter included
+            // (the historic drain(..pos) left the "\n\n" separator in place, so the
+            // next find hit 0 forever and a server that opens with a heartbeat/
+            // comment block hung with a never-draining buffer).
+            while let Some((block, consumed)) = next_sse_block(&buffer) {
+                let block = block.to_string();
+                buffer.drain(..consumed);
+                if let Some(data) = sse_block_data(&block) {
+                    if let Some(v) = classify_sse_data(&data, expect_id)? {
+                        return Ok(v);
                     }
                 }
-                // Blocks without data (pure notifications/heartbeats): keep reading the next block
-                buffer.drain(..pos);
             }
         }
         Err(McpError::Server("SSE 流意外关闭".into()))
     } else {
-        resp.json::<Value>()
+        let v: Value = resp
+            .json()
             .await
-            .map_err(|e| McpError::Server(format!("JSON 解析: {}", e)))
+            .map_err(|e| McpError::Server(format!("JSON 解析: {}", e)))?;
+        // MCP-4: HTTP 200 + {"error":{...}} used to degrade into an empty-result
+        // fake success; the id must match the request (missing id tolerated for
+        // lenient servers, mismatched id is a protocol error).
+        if v.get("method").is_some() {
+            return Err(McpError::Server("MCP 返回了通知而非响应".into()));
+        }
+        if v.get("error").is_some() {
+            return Err(rpc_error(&v));
+        }
+        let resp_id = v.get("id").and_then(|i| i.as_u64());
+        if resp_id.is_some() && resp_id != expect_id {
+            return Err(McpError::Server(format!(
+                "MCP 响应 id ({resp_id:?}) 与请求 ({expect_id:?}) 不匹配"
+            )));
+        }
+        Ok(v)
+    }
+}
+
+/// MCP-4: 把 JSON-RPC 响应中的 error 对象转成 [`McpError::Remote`]。
+fn rpc_error(v: &Value) -> McpError {
+    let err = v.get("error").cloned().unwrap_or(json!({}));
+    let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(-32603) as i32;
+    let message = err
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("unknown error")
+        .to_string();
+    McpError::Remote { code, message }
+}
+
+/// MCP-5: 从缓冲取下一个完整 SSE 块，返回 (块内容, 含分隔符应消费的长度)。
+/// `None` = 缓冲中尚无完整块。**消费长度必须包含分隔符**——只 drain 到边界
+/// 会让分隔符残留、后续 find 恒命中 0，缓冲只增不消。
+fn next_sse_block(buffer: &str) -> Option<(&str, usize)> {
+    if let Some(p) = buffer.find("\r\n\r\n") {
+        Some((&buffer[..p], p + 4))
+    } else {
+        buffer.find("\n\n").map(|p| (&buffer[..p], p + 2))
+    }
+}
+
+/// 提取一个 SSE 块的 data 载荷（多行 `data:` 按 SSE 规范以 `\n` 拼接）。
+/// 无 data 行（心跳/注释/纯 event 行）返回 `None`。
+fn sse_block_data(block: &str) -> Option<String> {
+    let mut data_lines: Vec<String> = Vec::new();
+    for line in block.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("data:") {
+            data_lines.push(rest.trim_start().to_string());
+        }
+    }
+    if data_lines.is_empty() {
+        None
+    } else {
+        Some(data_lines.join("\n"))
+    }
+}
+
+/// MCP-4: 判定一个 SSE data 块是否为期待中的响应。
+/// `Ok(Some(v))` = 命中的响应；`Ok(None)` = 跳过（通知块 / id 不匹配 /
+/// 畸形 JSON 仅告警）；`Err` = 远端错误响应。
+fn classify_sse_data(data: &str, expect_id: Option<u64>) -> McpResult<Option<Value>> {
+    let Ok(v) = serde_json::from_str::<Value>(data) else {
+        tracing::warn!(
+            "[mcp:http] 无法解析的 SSE data 块: {}",
+            data.chars().take(120).collect::<String>()
+        );
+        return Ok(None);
+    };
+    if v.get("method").is_some() {
+        return Ok(None); // notification (e.g. notifications/message) — not a response
+    }
+    if v.get("error").is_some() {
+        return Err(rpc_error(&v));
+    }
+    let resp_id = v.get("id").and_then(|i| i.as_u64());
+    if resp_id.is_none() || resp_id == expect_id {
+        Ok(Some(v))
+    } else {
+        Ok(None)
     }
 }
 
@@ -469,5 +564,70 @@ impl super::connection::McpTransport for DummyHttpTransport {
     async fn close(&self) -> McpResult<()> {
         self.closed.store(true, Ordering::SeqCst);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MCP-5 回归：心跳/注释块先到时，块消费必须连同分隔符一起删除——
+    /// 历史实现 drain(..pos) 留下 "\n\n"，之后 find 恒命中 0、缓冲只增不消，
+    /// 先发心跳的服务器 100% 连接失败。
+    #[test]
+    fn sse_blocks_drain_including_delimiter() {
+        // 心跳块 + 响应块（模拟服务器先发 :keep-alive 再发 data）
+        let mut buffer =
+            ": keep-alive\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\n\n".to_string();
+        // 第一个块：心跳（无 data）
+        let (block, consumed) = next_sse_block(&buffer).expect("应切出第一块");
+        assert_eq!(block, ": keep-alive");
+        assert!(sse_block_data(block).is_none());
+        buffer.drain(..consumed);
+        // 关键回归点：第二块仍能正常切出（分隔符已被消费）
+        let (block2, consumed2) = next_sse_block(&buffer).expect("分隔符残留会卡死在此");
+        assert!(block2.starts_with("data:"));
+        buffer.drain(..consumed2);
+        assert!(buffer.is_empty(), "全部块消费后缓冲应清空");
+        // \r\n 分隔符变体
+        let crlf = "data: x\r\n\r\nrest";
+        let (_, consumed) = next_sse_block(crlf).expect("CRLF 分隔符应命中");
+        assert_eq!(&crlf[consumed..], "rest");
+    }
+
+    /// SSE 多行 data 按规范以 \n 拼接。
+    #[test]
+    fn sse_block_data_joins_multiline() {
+        let block = "event: message\ndata: {\"a\":\ndata: 1}";
+        assert_eq!(sse_block_data(block).as_deref(), Some("{\"a\":\n1}"));
+        assert!(sse_block_data(": comment only").is_none());
+    }
+
+    /// MCP-4 回归：通知块跳过、error 响应浮出、id 匹配才返回。
+    #[test]
+    fn sse_data_classification() {
+        // 通知（带 method）→ 跳过
+        let notification =
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}";
+        assert!(classify_sse_data(notification, Some(7)).unwrap().is_none());
+        // 期待 id 的响应 → 命中
+        let response = "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"tools\":[]}}";
+        assert!(classify_sse_data(response, Some(7)).unwrap().is_some());
+        // 别的 id 的响应 → 跳过
+        let other = "{\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}";
+        assert!(classify_sse_data(other, Some(7)).unwrap().is_none());
+        // error 响应 → 报错（此前 200+error 被当空结果假成功）
+        let error_resp =
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32000,\"message\":\"boom\"}}";
+        let err = classify_sse_data(error_resp, Some(7)).unwrap_err();
+        match err {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "boom");
+            }
+            other => panic!("应为 Remote 错误: {other:?}"),
+        }
+        // 畸形 JSON → 跳过不致命
+        assert!(classify_sse_data("not json", Some(7)).unwrap().is_none());
     }
 }

@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::core::events as ev;
 use crate::ierr;
 
 /// Start a language server
@@ -59,7 +60,7 @@ pub async fn start_lsp_server(
 
     // Notify the frontend
     let _ = app.emit(
-        "lsp-server-status",
+        ev::LSP_SERVER_STATUS,
         serde_json::json!({
             "languageId": language_id,
             "projectPath": project_path,
@@ -95,7 +96,7 @@ pub async fn stop_lsp_server(
         })?;
 
     let _ = app.emit(
-        "lsp-server-status",
+        ev::LSP_SERVER_STATUS,
         serde_json::json!({
             "languageId": language_id,
             "projectPath": project_path,

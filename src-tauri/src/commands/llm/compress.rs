@@ -167,15 +167,35 @@ pub(crate) async fn compress_context(
     .await
     {
         Ok(s) => s,
-        Err(e) if e == "cancelled" => return Err("cancelled".into()),
+        Err(e) if e == "cancelled" => {
+            // LOOP-3: early 区已 drain——取消返回前放回原位，调用方拿到的
+            // 上下文不缺一整段（即使本轮即将终止）
+            messages.splice(prefix_end..prefix_end, early);
+            return Err("cancelled".into());
+        }
         Err(e) => {
-            let placeholder = archive_early_messages(window.app_handle(), &early, model, locale)?;
-            tracing::warn!(
-                "[compression] 摘要生成失败（{}），已本地归档 {} 条消息",
-                e,
-                early.len()
-            );
-            placeholder
+            // LOOP-3: 摘要与归档都失败时，early 消息必须原样放回（历史实现
+            // 在 drain 之后用 `?` 传播归档错误，调用方拿到的残缺上下文
+            // 继续跑下一轮且无用户可见告警）
+            match archive_early_messages(window.app_handle(), &early, model, locale) {
+                Ok(placeholder) => {
+                    tracing::warn!(
+                        "[compression] 摘要生成失败（{}），已本地归档 {} 条消息",
+                        e,
+                        early.len()
+                    );
+                    placeholder
+                }
+                Err(archive_err) => {
+                    tracing::error!(
+                        "[compression] 摘要与归档双双失败（{} / {}），已原样放回 early 消息",
+                        e,
+                        archive_err
+                    );
+                    messages.splice(prefix_end..prefix_end, early);
+                    return Err(archive_err.to_string());
+                }
+            }
         }
     };
 

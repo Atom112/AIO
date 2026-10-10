@@ -11,7 +11,7 @@ import {
   llmCreds,
   loadAssistants,
   runAgentTurn,
-  stopLlmStream,
+  stopActiveLlmStream,
   summarizeHistory,
   archiveHistory,
   visionAnalyzeImages,
@@ -48,6 +48,7 @@ import {
   setPendingRenameRequest,
   resolveAssistantSkills,
   currentProjectId,
+  setCurrentProjectId,
   currentProject,
   profileModelOverrides,
   allAvailableModels,
@@ -74,6 +75,7 @@ import { isImageGenModel } from '../../core/utils/models';
 import { modelSupportsVision, resolveVisionModel } from './vision';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
+import ProjectMcpTrustModal from './components/ProjectMcpTrustModal';
 import ChatInterface from './components/ChatInterface';
 import SubagentConversationView from './components/SubagentConversationView';
 import TopicSidebar from './components/TopicSidebar';
@@ -543,7 +545,18 @@ const ChatPage: Component = () => {
     const persistCompactedTopic = async (newSummary: string): Promise<CompactOutcome> => {
       const latestTopic = activeTopic();
       if (!latestTopic) return { kind: 'skipped', reason: 'nothing-to-compact' };
+      // CHAT-2: 入口捕获的话题与当前话题必须一致——多秒 summarize await 期间用户
+      // 切换话题后，旧 count 裁新话题历史会把整个更短话题清空并落盘
+      if (latestTopic.id !== topic.id) {
+        console.warn('[Context] 压缩期间话题已切换，放弃持久化');
+        return { kind: 'skipped', reason: 'topic-switched' } as CompactOutcome;
+      }
       const updatedHistory = latestTopic.history.slice(summarizeCount);
+      // CHAT-2 加固：裁剪结果不应清空历史（同话题变短即中止，防数据丢失）
+      if (updatedHistory.length === 0 && latestTopic.history.length > 0) {
+        console.warn('[Context] 压缩裁剪结果为空，放弃持久化（防数据丢失）');
+        return { kind: 'skipped', reason: 'empty-result' } as CompactOutcome;
+      }
       setDatas(
         'assistants',
         (a) => a.id === currentAssistantId(),
@@ -1500,7 +1513,9 @@ ${asstObj.prompt}`;
    */
   const handleStopGeneration = async () => {
     try {
-      await stopLlmStream(currentAssistantId() ?? '', currentTopicId() ?? '');
+      // CHAT-4: 按流归属键停止——切话题后当前视图 ID 打不到流（后端按键控
+      // 静默 no-op），用户被迫切回原话题才能停止
+      await stopActiveLlmStream();
     } catch (err) {
       console.error('stop_llm_stream 失败:', err);
     }
@@ -1519,8 +1534,14 @@ ${asstObj.prompt}`;
   /** Switch to the given project */
   const switchToProject = async (projectId: string) => {
     try {
+      // CHAT-3: 必须同步 currentProjectId——Agent 工具按 currentProjectId 解析
+      // 项目根（runAgentTurn 的 projectId 参数取自它）；漏同步时冷启动恢复
+      // （localStorage 两键不一致）会让 agent 在错误工作区操作文件。
+      // 与 ProjectSidebar 的同名实现保持五步一致。
+      setCurrentProjectId(projectId);
       const asstId = await ensureProjectAssistant(projectId);
       setCurrentAssistantId(asstId);
+      initMcpServers(projectId);
       const asst = datas.assistants.find((a) => a.id === asstId);
       if (asst?.topics?.length) {
         setCurrentTopicId(asst.topics[0].id);
@@ -2012,6 +2033,9 @@ ${asstObj.prompt}`;
           assistantId={settingsAsstId()}
           onClose={() => setSettingsAsstId(null)}
         />
+      </Portal>
+      <Portal>
+        <ProjectMcpTrustModal />
       </Portal>
 
       <ProblemsPanel />

@@ -297,17 +297,35 @@ const McpServerDetail: Component<Props> = (props) => {
                           value={k}
                           readonly
                         />
-                        <input
-                          class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
-                          style={{
-                            background: 'rgba(0,0,0,0.3)',
-                            border: '1px solid var(--border-dim)',
-                            color: 'white',
-                          }}
-                          value={v.includes('${KEYRING:') ? t('mcp.detail.savedToKeychain') : v}
-                          onInput={(e) => updateEnvEntry(k, e.currentTarget.value)}
-                          placeholder={t('mcp.detail.envValuePlaceholder')}
-                        />
+                        <Show
+                          when={v.includes('${KEYRING:')}
+                          fallback={
+                            <input
+                              class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                              style={{
+                                background: 'rgba(0,0,0,0.3)',
+                                border: '1px solid var(--border-dim)',
+                                color: 'white',
+                              }}
+                              value={v}
+                              onInput={(e) => updateEnvEntry(k, e.currentTarget.value)}
+                              placeholder={t('mcp.detail.envValuePlaceholder')}
+                            />
+                          }
+                        >
+                          {/* FE-01: read-only keyring placeholder (title explains how to replace) */}
+                          <input
+                            class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                            style={{
+                              background: 'rgba(0,0,0,0.3)',
+                              border: '1px solid var(--border-dim)',
+                              color: 'rgba(var(--text-base-rgb),0.55)',
+                            }}
+                            value={t('mcp.detail.savedToKeychain')}
+                            readonly
+                            title={t('mcp.detail.keyringReadOnlyTitle')}
+                          />
+                        </Show>
                         <button
                           class="px-2 py-1 rounded text-xs whitespace-nowrap"
                           style={{

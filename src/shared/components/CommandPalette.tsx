@@ -194,9 +194,8 @@ const CommandPalette: Component = () => {
   // Scroll the selected item into view.
   const scrollToSelected = () => {
     requestAnimationFrame(() => {
-      const selected = listRef?.querySelector(
-        '.flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors duration-100 gap-3.selected',
-      ) as HTMLElement;
+      // FE-05: 属性选择器（class 串是非法/误配选择器，此前恒 null）
+      const selected = listRef?.querySelector('[data-selected]') as HTMLElement;
       selected?.scrollIntoView({ block: 'nearest' });
     });
   };
@@ -341,6 +340,9 @@ const CommandPalette: Component = () => {
 
                         return (
                           <div
+                            // FE-05: data-selected 锚点——class 串当选择器恒 null，
+                            // 键盘导航的 scrollIntoView 从未执行过
+                            data-selected={isSelected() ? 'true' : undefined}
                             class={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors duration-100 gap-3${isSelected() ? ' selected' : ''}`}
                             onClick={() => execute(cmd.id)}
                             onMouseEnter={() => setSelectedIndex(globalIdx())}

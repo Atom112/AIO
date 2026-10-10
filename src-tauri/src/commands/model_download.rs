@@ -368,6 +368,15 @@ pub async fn embedding_model_download(
                 });
             }
             _ => {
+                // ENG-04（同族修复）：终长核对——截断流不再被当完成 rename 成"永久完成"
+                if total > 0 && downloaded != total {
+                    return Err(ierr!(
+                        "下载不完整（{}/{} 字节），检查点已保留可续传",
+                        "Download incomplete ({}/{} bytes); checkpoint kept, resumable",
+                        downloaded,
+                        total
+                    ));
+                }
                 std::fs::rename(&tmp, &dest)
                     .map_err(|e| ierr!("重命名失败: {}", "Failed to rename: {}", e))?;
             }

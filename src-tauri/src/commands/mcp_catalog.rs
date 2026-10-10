@@ -53,14 +53,8 @@ fn load_cache(app: &AppHandle) -> CacheFile {
 
 fn save_cache(app: &AppHandle, cache: &CacheFile) -> Result<(), String> {
     let path = cache_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    std::fs::write(
-        path,
-        serde_json::to_string(cache).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
+    let body = serde_json::to_string(cache).map_err(|error| error.to_string())?;
+    crate::core::fs_util::atomic_write(&path, body.as_bytes()).map_err(|error| error.to_string())
 }
 
 fn text(value: &Value, keys: &[&str]) -> String {

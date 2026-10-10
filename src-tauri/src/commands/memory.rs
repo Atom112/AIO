@@ -344,26 +344,58 @@ pub fn memory_prune(app: AppHandle, project_id: String) -> Result<usize, String>
 }
 
 /// Export all memory facts as a JSON file (vectors excluded) to a user-chosen filesystem path.
-/// `path`: absolute target file path (picked via the frontend dialog save).
+/// `path`: absolute target file path — must have been returned by the backend
+/// `pick_save_path` dialog in this session (MEM-10: a bare IPC path string is refused).
 #[tauri::command]
 pub fn memory_export_file(app: AppHandle, project_id: String, path: String) -> Result<(), String> {
+    if !crate::commands::export::is_approved_save_path(&path) {
+        return Err(ierr!(
+            "导出路径未经过系统保存对话框确认，已拒绝写入",
+            "Export path was not confirmed through the system save dialog; write refused"
+        ));
+    }
     let root = resolve_root(&app, &project_id)?;
     let json = app
         .state::<MemoryStoreManager>()
         .open(&root)?
         .export_facts()?;
-    std::fs::write(&path, json)
+    crate::core::fs_util::atomic_write(std::path::Path::new(&path), json.as_bytes())
         .map_err(|e| ierr!("写入导出文件失败: {}", "Failed to write export file: {}", e))
 }
 
+/// Upper bound for an import file (guards the read-to-string against huge inputs).
+const MEMORY_IMPORT_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Import memory facts from a user-chosen JSON file (dedup by key; vectors must be rebuilt).
-/// `path`: absolute source file path (picked via the frontend dialog open).
+/// `path`: absolute source file path — must have been returned by the backend
+/// `pick_open_path` dialog in this session; size-capped at 16 MiB, `.json` only.
 #[tauri::command]
 pub fn memory_import_file(
     app: AppHandle,
     project_id: String,
     path: String,
 ) -> Result<usize, String> {
+    if !crate::commands::export::is_approved_read_path(&path) {
+        return Err(ierr!(
+            "导入路径未经过系统打开对话框确认，已拒绝读取",
+            "Import path was not confirmed through the system open dialog; read refused"
+        ));
+    }
+    let p = std::path::Path::new(&path);
+    if p.extension().and_then(|e| e.to_str()) != Some("json") {
+        return Err(ierr!(
+            "导入文件必须是 .json 文件",
+            "The import file must be a .json file"
+        ));
+    }
+    if let Ok(meta) = std::fs::metadata(p) {
+        if meta.len() > MEMORY_IMPORT_MAX_BYTES {
+            return Err(ierr!(
+                "导入文件过大（上限 16 MB）",
+                "Import file is too large (limit 16 MB)"
+            ));
+        }
+    }
     let root = resolve_root(&app, &project_id)?;
     let json = std::fs::read_to_string(&path)
         .map_err(|e| ierr!("读取导入文件失败: {}", "Failed to read import file: {}", e))?;

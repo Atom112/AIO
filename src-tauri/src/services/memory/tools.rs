@@ -532,18 +532,35 @@ async fn execute_update(
         .get("category")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .unwrap_or(existing.category);
-    let fact = NewFact {
-        key: existing.key.clone(),
-        content: new_content.clone(),
-        category: new_category,
-        importance: existing.importance,
-        source_type: existing.source_type.clone(),
-        source_refs: existing.source_refs.clone(),
-        pinned: existing.pinned,
+        .unwrap_or_else(|| existing.category.clone());
+    // MEM-01: keyless 事实（自动提取的事实全部如此）必须**原地**更新——
+    // upsert_fact(key: None) 必走 INSERT，每次"更新"都复制一条新事实、旧事实
+    // 仍 active，工具还报告"已更新"（对齐 commands::memory::memory_update 的
+    // keyless 分支语义）
+    let saved = if existing.key.is_some() {
+        let fact = NewFact {
+            key: existing.key.clone(),
+            content: new_content.clone(),
+            category: new_category,
+            importance: existing.importance,
+            source_type: existing.source_type.clone(),
+            source_refs: existing.source_refs.clone(),
+            pinned: existing.pinned,
+        };
+        let embedding = embed_one(app, store, &new_content).await;
+        store.upsert_fact(&fact, embedding)?
+    } else {
+        let mut updated = store.update_content(id, &new_content, "update")?;
+        if new_category != existing.category {
+            updated = store.set_category(id, &new_category)?;
+        }
+        if let Some(embedding) = embed_one(app, store, &new_content).await {
+            if let Err(e) = store.set_embedding(id, Some(embedding)) {
+                tracing::warn!("记忆 {id} 向量重写失败（保留旧向量）: {e}");
+            }
+        }
+        updated
     };
-    let embedding = embed_one(app, store, &new_content).await;
-    let saved = store.upsert_fact(&fact, embedding)?;
     Ok(tool_ok(format!("已更新记忆: {}", saved.id)))
 }
 

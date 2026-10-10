@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+### 🔒 全仓深度审查修复（CODE_REVIEW_REPORT.md：阶段 0/1/2，P0×2 + P1×31 全量 + 高价值 P2）
+
+**阶段 0（P0 紧急止血）**
+
+- **项目级 MCP 配置信任门（P0-1）**：仓库自带 `.aio/mcp-servers.json` 的服务器不再零确认自动 spawn（恶意仓库一个 JSON 文件即可任意执行命令的供应链攻击面）。打开/切换项目时弹确认窗完整展示 command/args/env/URL；信任标记保存在应用数据目录（仓库之外）并绑定配置指纹——仓库改动即自动失效需重新确认；后端 `start_mcp_server` 对未信任的项目级配置一律拒绝（纵深防御）；AIO 自身生成的 `__aio-filesystem__` 条目按「命令=当前进程 exe」逐字校验豁免；新增 `list_untrusted_project_mcp_servers` / `trust_project_mcp_server` 命令与 `ProjectMcpTrustModal` 确认界面
+- **本地模型命令路径强校验（P0-2）**：新增 `core/path_safety::safe_join`，`local_model_delete` / `local_model_download` / `local_model_cancel_download` 对前端传入的 id / 文件名拒绝绝对路径（含 Windows 盘符/UNC）、`..` 回溯与保留字符——堵住「任意目录递归删除 / 任意路径写入」原语
+- **MCP 密钥占位符 off-by-one（MCP-3）**：`${KEYRING:...}` 解析切片差一字节使 account 恒带前导冒号，stdio env 与 HTTP header 的所有托管密钥解析必失败；修复并支持同值多占位符循环解析
+
+**阶段 1（安全组）**
+
+- **会话授权放大收紧（SEC-02）**：execute_command 会话规则拒绝链式命令（批准 `cargo build` 不再放行 `cargo build && curl 外发`）；write_file 系规则收窄为精确单文件路径（原父目录 `/**` glob 一次批准即全项目写通行）
+- **沙箱读边界（SEC-01）**：Linux bwrap 用 tmpfs 遮蔽 $HOME 并只读回绑工具链目录（`~/.ssh`/云凭据/`.config` 令牌对命令不可见）；macOS SBPL 同构 home 读拒绝 + 工具链例外；Auto/Workflow 模式下 `network=true` 的命令从免审批升级为需确认（一次提示注入不再能静默外发任意可读文件）；Windows AppContainer 原本已阻断
+- **MCP 生命周期批（MCP-2/6/7/15 + INFRA-1）**：McpRequestManager 改 AbortHandle 真实驻留（停止/关窗真正中止在途调用，原 insert-后-立即-remove 使 abort 永远空转）；start 失败路径与窗口销毁显式杀子进程（stdout reader 持 Arc 使 kill_on_drop 永不触发）；重复 start 互斥；审批等待 Drop 守卫清理；LSP initialize 失败同根修复
+- **IPC 信任边界统一（HOR-3/MEM-10/INFRA-5/MCP-13）**：新增后端原生对话框 `pick_save_path` / `pick_open_path`，`save_binary_file` / `copy_stored_image` / `memory_export/import` 只接受本会话经对话框确认的路径（导入限 .json + 16MB）；`call_mcp_tool` 删除可伪造的 agent_mode 参数（缺省映射 Off 恰好跳过全部权限检查——结构性 fail-open），`run_agent_turn` 模式改由 assistant 数据库记录服务端裁决，Off 模式 fail-closed
+- **原子写全仓接入（HOR-1）+ 崩溃恢复（PROV-7/INFRA-4）**：`fs_util::atomic_write`（temp+fsync+rename）接入全部 18 处持久化写入点；provider-configs.json 解析失败改隔离 `.corrupt.bak`（原直接删除可丢全部供应商配置）；secure_store fallback 加互斥 + 原子写 + 损坏隔离（原静默当空库、下次保存抹掉全部密钥）；`.fallback-key` 原子 + 0600
+- **Critical 旗标逃逸（SEC-07）**：PowerShell `-Command`（单横线）纳入载荷递归检查；新增 `Remove-Item -Recurse` 系统路径词法检测
+
+**阶段 2（正确性/数据完整性组）**
+
+- **主循环批（LOOP-1/2/3/4/6/9）**：StreamManager 条目带回合代次号、epilogue 身份匹配删除（换代竞态下旧任务超窗不再误删新任务→孤儿/双主循环）；checkpoint 移入循环体每轮保存（循环内崩溃可从最近完成轮恢复，原每回合仅一次且立即 terminal）；压缩归档失败/取消把 early 消息原样放回（残缺上下文不再继续下一轮）；context 预算下限 2k + reserve 按比例（小窗口本地模型不再预算 0 触发每轮压缩风暴）；主循环包 catch_unwind + 兜底 epilogue（panic 不再泄漏 StreamManager 条目、卡死 isThinking）；SSE 行缓冲 4MB 上限
+- **SSE 批（PROV-1/2/4/6 + PROV-3）**：字节级行缓冲、只在完整行上解码（逐 chunk `from_utf8_lossy` 把被 TCP 分段切开的多字节 UTF-8 变乱码写入会话历史——中文流式主场景）；Anthropic/OpenAI SSE error 事件浮出（截断回复不再被当成功持久化）；Anthropic 事件处理补 suppress_events（子代理流不污染主聊天）；OpenAI 流式补 `include_usage`；google.rs 补 chat_completions_url 覆写——默认配置下 Gemini 聊天从必现 404 修复为 `/v1beta/openai/chat/completions`
+- **引擎与下载批（ENG-02/03/04/06/07/13）**：HF Token 只发 huggingface.co 官方域（镜像不再收令牌）；健康检查改轮询（llama 30s / vLLM 180s、2xx 判定、轮询间检查进程退出——14B+ 模型加载 >7s 此前必被误杀）；下载完整性三道防线（终长核对 + 已存在文件大小/魔数复检 + 206 Content-Range/If-Range 续传防跨源拼接）；引擎 kill 后 wait（不再泄漏 Unix 僵尸）；无人读的 piped stdout 改 null（64KB 管道填满引擎静默挂死——Ollama 长会话必现）；Token 保存失败上抛
+- **MCP HTTP 传输批（MCP-4/5/8）**：SSE 块消费连同分隔符一起 drain（先发心跳/注释块的服务器此前 100% 连接失败）；JSON-RPC error/id 双校验（200+error 不再变空结果假成功、通知块不再被误当响应）；重定向一律拒绝（自定义认证头不再被转发到重定向目标——https→http 降级即 key 外送）
+- **记忆子系统批（MEM-01..05）**：update_memory keyless 分支改原地更新（不再每订正一次复制一条）；consolidate Supersede 方向反转修正（每日自动整理不再把更准确的信息标记过时）；prune 走 set_status（归档清 vec0/FTS，不再继续被召回）；代码重建先清 vec_code 幽灵向量；memory_clear 清向量/关系表/代码表，extract 判重遇幽灵视为无重复（不再静默丢新事实）
+- **前端批（CHAT-1..6 + FE-01/02/03/05）**：导出 HTML 全文转义 + iframe sandbox（srcdoc 明文注入→应用内钓鱼面）；压缩持久化话题守卫（切话题后旧 count 裁新话题可清空整个话题历史并落盘）；switchToProject 补 setCurrentProjectId（冷启动不再在错误项目根操作文件）；Stop 按流归属键（切话题后不再打空、被迫切回才能停）；PDF 多页按源裁剪（原每页压入整幅图）；llmToolResult 未命中保持引用稳定（工具事件不再整列消息重挂载——解锁渲染层重构）；keyring 托管字段只读（编辑不再毁掉密钥引用）；快捷键徽章/命令面板改 data-* 属性选择器（class 串选择器抛错/恒 null）；new-assistant 默认键改 Ctrl+Alt+N（原与 new-project 冲突永不可触发）
+- **杂项 P2**：LSP 事件族（3 个）+ models-catalog-updated 双端登记消灭裸串；MCP 工具无 description 不再被丢弃；MCP stderr 行长上限 2KB
+
+修复全程逐条先在当前代码核实（7 板块并行核实子代理 + 父级复核 P0/P1 全部证据链）后才动手；每修一条补回归测试，新增 Rust 测试 33 个（220→253）、前端测试 6 个（18→24）。
+
 ### 🤖 Subagents（子智能体）
 
 - **多智能体并行文件编辑**：业界调研（Claude Code / Amp / Vibe Kanban / Magentic-One / OpenHands）后落地两层防冲突机制——

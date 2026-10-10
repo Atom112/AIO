@@ -15,7 +15,7 @@ import {
 import { Portal } from 'solid-js/web';
 import { toCanvas, toPng } from 'html-to-image';
 import { saveBinaryFile } from '../../../core/api/attachment';
-import { save } from '@tauri-apps/plugin-dialog';
+import { pickSavePath } from '../../../core/api/dialog';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { jsPDF } from 'jspdf';
@@ -57,7 +57,7 @@ async function downloadBlob(content: string | Blob, filename: string, mime: stri
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
   try {
     const buf = new Uint8Array(await blob.arrayBuffer());
-    const filePath = await save({ defaultPath: filename });
+    const filePath = await pickSavePath(filename);
     if (filePath) {
       await saveBinaryFile(filePath, Array.from(buf));
       return;
@@ -365,34 +365,46 @@ const ShareModal: Component<ShareModalProps> = (props) => {
 
       // Scale canvas to fit page width
       const imgWidth = contentWidth;
-      const imgHeight = (canvas.height * contentWidth) / canvas.width;
 
-      // Split into pages if needed
-      let remainingHeight = imgHeight;
-      let page = 0;
-
-      while (remainingHeight > 0) {
+      // Split into pages: each page draws its own slice of the source canvas
+      // (CHAT-5: the historic loop pressed the FULL canvas into every page's
+      // sliceHeight — a multi-page conversation exported as N squashed copies
+      // of the whole image). Source slice height in canvas pixels derived from
+      // the PDF-point slice height via the scale factor.
+      const scale = canvas.width / imgWidth; // canvas px per PDF pt
+      const pageSlicePt = contentHeight;
+      const pageSlicePx = Math.floor(pageSlicePt * scale);
+      const totalPages = Math.max(1, Math.ceil(canvas.height / pageSlicePx));
+      for (let page = 0; page < totalPages; page++) {
         if (page > 0) doc.addPage();
-        const sliceHeight = Math.min(remainingHeight, contentHeight);
+        const srcY = page * pageSlicePx;
+        const srcH = Math.min(pageSlicePx, canvas.height - srcY);
+        if (srcH <= 0) break;
+        // Intermediate slice canvas: copy the source region, then place it 1:1
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = srcH;
+        const ctx = slice.getContext('2d');
+        if (!ctx) break;
+        ctx.fillStyle = '#ffffff'; // gate-allow: color #ffffff
+        ctx.fillRect(0, 0, slice.width, slice.height);
+        ctx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
         doc.addImage(
-          canvas.toDataURL('image/png'),
+          slice.toDataURL('image/png'),
           'PNG',
           margin,
           margin,
           imgWidth,
-          sliceHeight,
+          srcH / scale,
           undefined,
           'FAST',
         );
-
-        remainingHeight -= sliceHeight;
-        page++;
       }
 
       const pdfBytes = doc.output('arraybuffer');
-      const filePath = await save({
-        defaultPath: `${topicName}.pdf`,
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      const filePath = await pickSavePath(`${topicName}.pdf`, {
+        name: 'PDF',
+        extensions: ['pdf'],
       });
 
       if (filePath) {
@@ -740,6 +752,10 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                       <iframe
                         ref={pdfIframeRef}
                         srcdoc={htmlContent()}
+                        // CHAT-1: sandbox 禁脚本（toCanvas 只需同源读 DOM）——
+                        // 无 sandbox 时 srcdoc 内联脚本/handlers 虽被页面 CSP 阻断，
+                        // form-action/meta-refresh 导航不受约束
+                        sandbox="allow-same-origin"
                         class="w-full h-full rounded-lg border-0"
                         style={{ background: '#fff' }} // gate-allow: color #fff
                         title="PDF preview"

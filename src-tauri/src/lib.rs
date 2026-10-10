@@ -120,6 +120,8 @@ pub fn run() {
             commands::attachment::discard_chat_attachment,
             commands::export::save_binary_file,
             commands::export::copy_stored_image,
+            commands::export::pick_save_path,
+            commands::export::pick_open_path,
             commands::llm::call_llm_stream,
             commands::image_gen::generate_image,
             commands::llm::stop_llm_stream,
@@ -182,6 +184,8 @@ pub fn run() {
             commands::skill::refresh_npx_skill,
             // MCP server management
             commands::mcp::list_mcp_servers,
+            commands::mcp::list_untrusted_project_mcp_servers,
+            commands::mcp::trust_project_mcp_server,
             commands::mcp::add_mcp_server,
             commands::mcp::save_mcp_server_secret,
             commands::mcp::remove_mcp_server,
@@ -192,7 +196,6 @@ pub fn run() {
             commands::mcp::list_mcp_tools_for_assistant,
             commands::mcp::call_mcp_tool,
             commands::mcp::test_mcp_server_connection,
-            commands::mcp::check_tool_permission,
             commands::mcp::respond_tool_approval,
             commands::mcp::list_mcp_transports,
             commands::mcp::list_mcp_resources,
@@ -282,7 +285,9 @@ pub fn run() {
                     let mut engines = state.lock();
                     for (_, mut inner) in engines.drain() {
                         if let Some(mut child) = inner.child_process.take() {
+                            // ENG-06: kill 后 wait，避免 Unix 僵尸进程
                             let _ = child.kill();
+                            let _ = child.wait();
                         }
                     }
                 }
@@ -292,11 +297,33 @@ pub fn run() {
                     entry.value().1.cancel();
                 }
                 stream_mgr.0.clear();
-                // Clean up MCP state (abort in-flight calls + clear the connection pool)
+                // Clean up MCP state: abort in-flight calls for real (MCP-2 made abort
+                // actually work), then stop every connection via its transport plugin
+                // (stdio children are killed explicitly — relying on stdin-EOF is not
+                // reliable on Windows, MCP-15).
                 let req_mgr = window.state::<McpRequestManager>();
                 req_mgr.abort_all();
                 let mcp_state = window.state::<McpServerState>();
-                mcp_state.lock().clear();
+                let mcp_mgr = window.state::<crate::plugins::mcp::McpServerManager>();
+                let jobs: Vec<(
+                    std::sync::Arc<dyn crate::plugins::mcp::McpServerPlugin>,
+                    std::sync::Arc<crate::plugins::mcp::connection::McpConnection>,
+                )> = {
+                    let mut map = mcp_state.lock();
+                    map.drain()
+                        .filter_map(|(_, conn)| {
+                            let plugin = mcp_mgr.get(&conn.transport_kind)?;
+                            Some((plugin, conn))
+                        })
+                        .collect()
+                };
+                if !jobs.is_empty() {
+                    tauri::async_runtime::spawn(async move {
+                        for (plugin, conn) in jobs {
+                            let _ = plugin.stop((*conn).clone()).await;
+                        }
+                    });
+                }
             }
         })
         .run(tauri::generate_context!())

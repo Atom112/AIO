@@ -175,7 +175,9 @@ async fn hf_market_list(query: &str, limit: u32, token: Option<&str>) -> Option<
     for base in HF_ENDPOINTS {
         let url = url.replacen(HF_ENDPOINTS[0], base, 1);
         let mut req = client.get(&url);
-        if let Some(t) = token {
+        // ENG-02: 用户 HF Token 只发给 huggingface.co 官方域——hf-mirror.com 是
+        // 第三方镜像（公开仓库匿名即可用），令牌外送无收益纯增风险。
+        if let Some(t) = token.filter(|_| base.contains("huggingface.co")) {
             req = req.bearer_auth(t);
         }
         match req.send().await {
@@ -491,7 +493,8 @@ pub async fn local_model_market_files(
             let mut last_err = String::new();
             for base in HF_ENDPOINTS {
                 let mut req = client.get(format!("{base}{path}"));
-                if let Some(t) = token.as_deref() {
+                // ENG-02: 用户 HF Token 只发给 huggingface.co 官方域
+                if let Some(t) = token.as_deref().filter(|_| base.contains("huggingface.co")) {
                     req = req.bearer_auth(t);
                 }
                 match req.send().await {
@@ -612,7 +615,14 @@ pub fn local_model_hf_token_set(app: AppHandle, token: String) -> Result<(), Str
         secure_store::delete(&app, &account)
             .map_err(|e| ierr!("清除 Token 失败: {}", "Failed to clear token: {}", e))
     } else {
-        secure_store::set_reported(&app, &account, token);
+        // ENG-13: set_reported 失败必须上抛——此前返回值被丢弃，keyring 双双
+        // 失败时用户以为已保存（secure_store 文档明确警告过这个反模式）
+        if !secure_store::set_reported(&app, &account, token) {
+            return Err(ierr!(
+                "保存 Token 失败（密钥存储不可用）",
+                "Failed to save the token (secure storage unavailable)"
+            ));
+        }
         Ok(())
     }
 }

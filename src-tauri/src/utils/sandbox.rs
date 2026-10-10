@@ -272,11 +272,37 @@ pub use win_appcontainer::{spawn_in_appcontainer, terminate, wait_with_timeout};
 //
 // On Unix, Agent commands have no process isolation by default. This is a best-effort wrapper:
 // - Linux: when `bwrap` (bubblewrap) is available, runs with "system read-only + only the
-//   project dir writable + private /tmp + separate PID namespace"; the command can use
-//   the network and write the project, but cannot write anywhere else on the system.
-// - macOS: when `sandbox-exec` is available, uses an SBPL profile configured "only the project dir writable".
+//   project dir writable + private /tmp + separate PID namespace + $HOME read boundary
+//   (tmpfs over the home dir, only common toolchain subdirs re-mounted read-only)". The
+//   command can use the network and write the project, but cannot write anywhere else on
+//   the system, and cannot read home-dir secrets (~/.ssh, cloud tokens, etc.).
+// - macOS: when `sandbox-exec` is available, uses an SBPL profile configured "only the
+//   project dir writable + home reads denied except toolchain subpaths".
 // Both are enabled only when the tool exists; otherwise execution falls back to native
 // (backstopped by `setpgid` process-group cleanup), so no environment regresses on a missing dependency.
+
+/// $HOME 下需要**只读回绑**的工具链子目录（命令运行需要它们）。
+/// 其余 home 内容被 tmpfs 遮蔽、对命令不可见——`~/.ssh`、云凭据、
+/// `~/.config` 里其他工具的 token 等一律读不到（SEC-01 读边界）。
+/// 注意刻意不包含 `.local`（`share` 下有多种工具的凭据）与整个 `.config`
+/// （gh / npm / gcloud 的 token 都在里面），git 配置只放行 `.config/git`。
+const HOME_TOOLCHAIN_SUBDIRS: &[&str] = &[
+    ".cargo",
+    ".rustup",
+    ".nvm",
+    ".volta",
+    ".bun",
+    ".deno",
+    ".pyenv",
+    ".rbenv",
+    ".go",
+    ".m2",
+    ".gradle",
+    ".config/git",
+];
+
+/// $HOME 下需要只读回绑的单个文件（git 全局配置）。
+const HOME_TOOLCHAIN_FILES: &[&str] = &[".gitconfig"];
 
 /// Looks up an executable in PATH (Unix only).
 #[cfg(unix)]
@@ -293,6 +319,10 @@ fn find_in_path(bin: &str) -> bool {
 /// Network egress control: `allow_network=false` (default) appends `--unshare-net` —
 /// the command runs in an isolated network namespace with no external egress (including localhost);
 /// `true` keeps the host network (dependency downloads, API calls, etc., declared explicitly by the model).
+///
+/// Read boundary (SEC-01): after the whole-root read-only bind, `$HOME` is covered by a tmpfs
+/// and only [`HOME_TOOLCHAIN_SUBDIRS`] / [`HOME_TOOLCHAIN_FILES`] are re-mounted read-only —
+/// the rest of the home directory (credentials) is invisible to the command.
 #[allow(dead_code)]
 pub fn build_bwrap_argv(
     project_root: &str,
@@ -325,6 +355,26 @@ pub fn build_bwrap_argv(
         "--unshare-pid".to_string(),
         "--unshare-user".to_string(),
     ];
+    // SEC-01: home read boundary. Ordering matters — bwrap applies mounts in argv
+    // order, so the tmpfs shadows the real home bound by --ro-bind / /, and the
+    // toolchain re-binds land on top of the tmpfs. (Pure string building — cross-
+    // platform testable; the argv itself is only consumed on Linux.)
+    if let Some(home) = std::env::var("HOME").ok().filter(|h| !h.is_empty()) {
+        argv.push("--tmpfs".to_string());
+        argv.push(home.clone());
+        for sub in HOME_TOOLCHAIN_SUBDIRS {
+            let path = format!("{home}/{sub}");
+            argv.push("--ro-bind-try".to_string());
+            argv.push(path.clone());
+            argv.push(path);
+        }
+        for file in HOME_TOOLCHAIN_FILES {
+            let path = format!("{home}/{file}");
+            argv.push("--ro-bind-try".to_string());
+            argv.push(path.clone());
+            argv.push(path);
+        }
+    }
     if !allow_network {
         argv.push("--unshare-net".to_string());
     }
@@ -335,7 +385,8 @@ pub fn build_bwrap_argv(
     Some(argv)
 }
 
-/// Builds the macOS sandbox-exec wrapper argv (write protection: only the project dir is writable). Pure function, unit-testable cross-platform.
+/// Builds the macOS sandbox-exec wrapper argv (write protection: only the project dir is writable;
+/// read protection: home denied except toolchain subpaths). Pure function, unit-testable cross-platform.
 ///
 /// Network egress control: `allow_network=false` (default) appends
 /// `(deny network*)` to the SBPL — blocking all network egress; `true` keeps the host network.
@@ -357,9 +408,26 @@ pub fn build_sandbox_exec_argv(
     } else {
         "(deny network*)\n".to_string()
     };
+    // SEC-01: home read boundary — deny home reads, then allow the toolchain
+    // subpaths (more specific SBPL subpath rules take precedence). Pure string
+    // building — cross-platform testable; the profile is only consumed on macOS.
+    let home_rules = std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(|home| {
+            let mut rules = format!("(deny file-read* (subpath \"{home}\"))\n");
+            for sub in HOME_TOOLCHAIN_SUBDIRS {
+                rules.push_str(&format!("(allow file-read* (subpath \"{home}/{sub}\"))\n"));
+            }
+            for file in HOME_TOOLCHAIN_FILES {
+                rules.push_str(&format!("(allow file-read* (subpath \"{home}/{file}\"))\n"));
+            }
+            rules
+        })
+        .unwrap_or_default();
     let profile = format!(
-        "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{}\"))\n{}",
-        root, network_rule
+        "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{}\"))\n{}{}",
+        root, home_rules, network_rule
     );
     Some(vec![
         "sandbox-exec".into(),
@@ -462,6 +530,50 @@ mod tests {
             !with_net.contains(&"--unshare-net".to_string()),
             "显式声明网络时不应隔离: {with_net:?}"
         );
+    }
+
+    /// SEC-01: home is shadowed by a tmpfs and only toolchain subdirs/files are
+    /// re-mounted read-only; credential locations (.ssh / .aws / whole .config)
+    /// stay invisible to the command.
+    #[test]
+    fn bwrap_home_read_boundary() {
+        let home = match std::env::var("HOME") {
+            Ok(h) if !h.is_empty() => h,
+            // Windows CI without HOME: the boundary block is skipped by design
+            _ => return,
+        };
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let argv = build_bwrap_argv(&root, "sh", "-c", "ls ~", true).expect("argv");
+        let joined = argv.join(" ");
+        assert!(
+            joined.contains(&format!("--tmpfs {home}")),
+            "home 应被 tmpfs 遮蔽: {joined}"
+        );
+        assert!(joined.contains(&format!("--ro-bind-try {home}/.cargo {home}/.cargo")));
+        assert!(joined.contains(&format!(
+            "--ro-bind-try {home}/.gitconfig {home}/.gitconfig"
+        )));
+        for secret in [".ssh", ".aws", ".gnupg"] {
+            assert!(
+                !joined.contains(secret),
+                "不得回绑凭据目录 {secret}: {joined}"
+            );
+        }
+    }
+
+    /// SEC-01 (macOS): the SBPL denies home reads and re-allows toolchain subpaths only.
+    #[test]
+    fn sandbox_exec_home_read_boundary() {
+        let home = match std::env::var("HOME") {
+            Ok(h) if !h.is_empty() => h,
+            _ => return,
+        };
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let argv = build_sandbox_exec_argv(&root, "sh", "-c", "ls ~", true).expect("argv");
+        let profile = &argv[2];
+        assert!(profile.contains(&format!("(deny file-read* (subpath \"{home}\"))")));
+        assert!(profile.contains(&format!("(allow file-read* (subpath \"{home}/.cargo\"))")));
+        assert!(!profile.contains(".ssh"));
     }
 
     #[test]

@@ -68,6 +68,16 @@ pub const AGENT_QUESTION_REQUESTED: &str = "agent-question-requested";
 /// Streaming delta for BTW side-question answers (frontend overlay)
 pub const BTW_CHUNK: &str = "btw-chunk";
 
+/// LSP diagnostics updated (payload: languageId / project root)
+pub const LSP_DIAGNOSTICS_UPDATED: &str = "lsp-diagnostics-updated";
+/// LSP server stderr output
+pub const LSP_SERVER_STDERR: &str = "lsp-server-stderr";
+/// LSP server status change
+pub const LSP_SERVER_STATUS: &str = "lsp-server-status";
+
+/// Models catalog updated (fresh fetch persisted to AppData)
+pub const MODELS_CATALOG_UPDATED: &str = "models-catalog-updated";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +116,10 @@ mod tests {
             AGENT_TASKS_CHANGED,
             AGENT_QUESTION_REQUESTED,
             BTW_CHUNK,
+            LSP_DIAGNOSTICS_UPDATED,
+            LSP_SERVER_STDERR,
+            LSP_SERVER_STATUS,
+            MODELS_CATALOG_UPDATED,
         ] {
             assert!(
                 name.chars()

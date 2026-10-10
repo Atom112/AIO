@@ -74,7 +74,7 @@ pub async fn store_chat_attachment(
 
         let destination = attachment_storage_path(&app, &sha256, &extension)?;
         if !destination.exists() {
-            std::fs::write(&destination, &bytes).map_err(|e| e.to_string())?;
+            crate::core::fs_util::atomic_write(&destination, &bytes).map_err(|e| e.to_string())?;
         }
 
         let extracted_text = match extract_file_content(&source, &extension) {

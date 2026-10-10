@@ -7,6 +7,7 @@
 
 use super::error::LspResult;
 use super::transport::{encode_message, read_frame};
+use crate::core::events as ev;
 use crate::ierr;
 use crate::utils::jsonrpc::{PendingMap, WaitError};
 use dashmap::DashMap;
@@ -129,15 +130,20 @@ impl LspClient {
                 let mut lines = tokio::io::BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let _ = app2.emit(
-                        "lsp-server-stderr",
+                        ev::LSP_SERVER_STDERR,
                         serde_json::json!({ "languageId": lid, "line": line }),
                     );
                 }
             });
         }
 
-        // Send the initialize request
-        client.initialize(&root_uri).await?;
+        // Send the initialize request. On failure, shut the child down explicitly:
+        // the stdout reader task holds an Arc clone, so kill_on_drop never fires on
+        // its own and an early `?` return would leak the language-server process.
+        if let Err(e) = client.initialize(&root_uri).await {
+            let _ = client.shutdown().await;
+            return Err(e);
+        }
 
         Ok(client)
     }
@@ -388,7 +394,7 @@ fn spawn_stdout_reader(
                             if method == "textDocument/publishDiagnostics" {
                                 if let Some(params) = v.get("params") {
                                     let _ = app.emit(
-                                        "lsp-diagnostics-updated",
+                                        ev::LSP_DIAGNOSTICS_UPDATED,
                                         serde_json::json!({
                                             "languageId": language_id,
                                             "params": params,
@@ -401,7 +407,7 @@ fn spawn_stdout_reader(
                 }
                 Ok(None) => {
                     let _ = app.emit(
-                        "lsp-server-status",
+                        ev::LSP_SERVER_STATUS,
                         serde_json::json!({
                             "languageId": language_id,
                             "status": "stopped"
@@ -413,7 +419,7 @@ fn spawn_stdout_reader(
                     err_count += 1;
                     if err_count > 10 {
                         let _ = app.emit(
-                            "lsp-server-stderr",
+                            ev::LSP_SERVER_STDERR,
                             serde_json::json!({
                                 "languageId": language_id,
                                 "line": format!("stdout read error: {}", e),

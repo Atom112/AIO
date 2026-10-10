@@ -1,4 +1,4 @@
-// Event listener registration set for ChatPage (20 listen calls) — extracted from ChatPage.onMount.
+// Event listener registration set for ChatPage (21 listen calls) — extracted from ChatPage.onMount.
 //
 // Every dep comes from the ChatPage component scope (Solid setters/signals are stable references, safe to pass along).
 
@@ -512,6 +512,14 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         (h: any[]) =>
           h.map((m: any) => {
             if (m.role !== 'assistant' || !m.toolCalls) return m;
+            // CHAT-6: 未命中即原样返回，保持引用稳定——<For> 按引用比较，此前
+            // 每个工具事件都无条件产出新数组/新对象，整列消息行重挂载
+            // （AgentProcessBlock 被迫长出模块级渲染队列对抗它）
+            const hitToolCall = m.toolCalls.some((tc: any) => tc.id === tool_call_id);
+            const hitStep = (m.agentSteps || []).some(
+              (s: any) => s.type === 'tool_call' && s.toolCall?.id === tool_call_id,
+            );
+            if (!hitToolCall && !hitStep) return m;
             const newToolCalls = m.toolCalls.map((tc: any) =>
               tc.id === tool_call_id
                 ? {
@@ -864,7 +872,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
       );
     }),
     listen<{ stepId: string; status: 'completed' | 'failed'; duration?: number }>(
-      'workflow-step-complete',
+      EVENTS.workflowStepComplete,
       (e) => {
         setWorkflowState((prev) =>
           prev
@@ -883,6 +891,11 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
     listen<{ workflowId: string }>(EVENTS.workflowComplete, () => {
       setWorkflowState((prev) => (prev ? { ...prev, active: false } : null));
       setTimeout(() => setWorkflowState(null), 5000);
+    }),
+    // ---- Compression failure (LOOP-3): the backend now restores the early region and
+    // carries on, so this is a non-fatal notice; log it so failures are never invisible.
+    listen<{ error: string }>(EVENTS.llmCompressionFailed, (e) => {
+      console.warn('[compression] 后端上下文压缩失败（已保持原上下文继续）:', e.payload.error);
     }),
   ];
 }

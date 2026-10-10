@@ -361,9 +361,11 @@ impl LocalEnginePlugin for OllamaPlugin {
         _gpu_layers: i32,
     ) -> std::process::Command {
         let mut cmd = std::process::Command::new(exe_path);
+        // ENG-07: serve 进程的双管道此前均 piped 且无人读——ollama serve 日志量大，
+        // 64KB 管道填满后引擎静默挂死（长会话必现）。日志本就无人消费，改 null。
         cmd.arg("serve")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         if port != 11434 {
             cmd.env("OLLAMA_HOST", format!("127.0.0.1:{}", port));
         }

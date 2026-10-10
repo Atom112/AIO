@@ -15,6 +15,7 @@ import { Window } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from './core/utils/models';
+import { EVENTS } from './core/api/events';
 import {
   setAppUpdateAvailable,
   setAppUpdateInfo,
@@ -68,7 +69,7 @@ const Layout: Component<ParentProps> = (props) => {
 
     // Listen for LSP diagnostics update events
     unlistenDiagnostics = await listen<LspDiagnosticsUpdatePayload>(
-      'lsp-diagnostics-updated',
+      EVENTS.lspDiagnosticsUpdated,
       (event) => {
         updateDiagnostics(event.payload);
       },

@@ -315,6 +315,24 @@ fn persist_assistant_inner(
     Ok(())
 }
 
+/// 读取单个 assistant 的 agent_mode（MCP-13：`run_agent_turn` 的服务端模式裁决——
+/// IPC 参数可伪造，权限模式必须以数据库里的持久化记录为准；找不到记录返回 None，
+/// 调用方回退到最保守的 Off）。
+pub(crate) fn load_assistant_agent_mode(
+    conn: &rusqlite::Connection,
+    assistant_id: &str,
+) -> Option<crate::core::models::AgentMode> {
+    let mode_str: Option<String> = conn
+        .query_row(
+            "SELECT agent_mode FROM assistants WHERE id = ?1",
+            [assistant_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    mode_str.and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok())
+}
+
 /// Persist a single assistant (with all its topics and messages).
 ///
 /// # Arguments
@@ -440,7 +458,7 @@ pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Res
     }
 
     let json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -494,7 +512,7 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
             sanitized.push(v);
         }
         if let Ok(json) = serde_json::to_string_pretty(&sanitized) {
-            if let Err(e) = std::fs::write(&path, json) {
+            if let Err(e) = crate::core::fs_util::atomic_write(&path, json.as_bytes()) {
                 tracing::error!("迁移写回 activated_models.json 失败: {e}");
             }
         }
@@ -508,7 +526,7 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
 pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
     let path = crate::core::paths::app_config_file("fetched_models.json")?;
     let json = serde_json::to_string_pretty(&models).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -564,7 +582,7 @@ pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Res
         overrides,
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -646,7 +664,7 @@ pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<()
         profiles,
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -684,7 +702,7 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
         profiles,
     };
     let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -798,7 +816,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 crate::core::paths::BUNDLE_ID,
                 exe_str
             );
-            fs::write(&plist_path, plist).map_err(|e| {
+            crate::core::fs_util::atomic_write(&plist_path, plist.as_bytes()).map_err(|e| {
                 ierr!(
                     "写入 LaunchAgent 失败: {}",
                     "Failed to write LaunchAgent: {}",
@@ -835,7 +853,7 @@ Terminal=false
 X-GNOME-Autostart-enabled=true"#,
                 exe_str
             );
-            fs::write(&desktop_path, desktop).map_err(|e| {
+            crate::core::fs_util::atomic_write(&desktop_path, desktop.as_bytes()).map_err(|e| {
                 ierr!(
                     "写入 autostart 失败: {}",
                     "Failed to write autostart file: {}",

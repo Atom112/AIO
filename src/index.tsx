@@ -60,6 +60,7 @@ const UsageSettings = lazy(() => import('./features/settings/components/UsageSet
 const EmbeddingModelSettings = lazy(
   () => import('./features/settings/components/EmbeddingModelSettings'),
 );
+const LocalModelMarket = lazy(() => import('./features/settings/components/LocalModelMarket'));
 
 render(
   () => (
@@ -82,6 +83,7 @@ render(
           <Route path="/app" component={AppSettings} />
           <Route path="/subagent-models" component={SubagentModelSettings} />
           <Route path="/embedding-models" component={EmbeddingModelSettings} />
+          <Route path="/local-models" component={LocalModelMarket} />
         </Route>
       </Router>
     </Suspense>

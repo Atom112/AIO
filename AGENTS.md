@@ -41,7 +41,7 @@ src/
 │   └── assets/
 ├── features/
 │   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, ...)
-│   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, UsageSettings + usage chart components)
+│   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
 ```

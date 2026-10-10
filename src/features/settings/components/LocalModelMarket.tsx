@@ -1,11 +1,13 @@
 /**
- * LocalModelMarket - the in-app GGUF model market embedded in local-engine provider pages
- * (llama.cpp / Ollama).
+ * LocalModelMarket - the standalone "local model market" settings sub-page
+ * (route /settings/local-models) for downloading GGUF chat models without a browser.
  *
  * - Discovery: HuggingFace + ModelScope merged rankings (download counts), search-first,
  *   classified by parameter-size segments; hardware-fit models are floated to the top
- * - Download: one quant-family (all shards) at a time with pause / resume / cancel and
- *   progress events; finished models are auto-registered via the onInstalled callback
+ *   - Download: one quant-family (all shards) at a time with pause / resume / cancel and
+ *   progress events; finished models are registered into the selected local engine
+ *   (llama.cpp / Ollama) via providerConfigs, exactly like the manual file import
+ * - Icons: rows reuse the lobehub provider logos (same source as the online model list)
  * - Persistence: market query results cached in localStorage (6h TTL, stale-while-revalidate,
  *   same pattern as the skill market); hardware profile cached at module level
  */
@@ -33,6 +35,10 @@ import {
 import { t, formatNumber } from '../../../core/i18n';
 import { formatSize } from '../../../core/utils/format';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
+import { getLogo } from '../../../core/utils/modelLogo';
+import { LOCAL_ENGINE_PROVIDERS, type ProviderConfig } from '../../../core/utils/models';
+import { providerConfigs, setProviderConfigs } from '../../../core/store/store';
+import { saveProviderConfigs } from '../../../core/api/providers';
 import { EVENTS } from '../../../core/api/events';
 import {
   localModelCancelDownload,
@@ -187,14 +193,13 @@ const SEGMENTS: ReadonlyArray<{
   { id: '32plus', label: 'provider.localModelMarket.seg32plus', test: (b) => b !== null && b > 32 },
 ];
 
-interface LocalModelMarketProps {
-  providerId: string;
-  proxyUrl?: string;
-  /** Persist the downloaded model into the provider (localModelPaths + enabledModels) */
-  onInstalled: (modelId: string, entryPath: string) => void;
-}
+/** Engines that can load GGUF files (the market registers finished models into one of them). */
+const GGUF_ENGINES = LOCAL_ENGINE_PROVIDERS.filter((p) => p.allowModelFileSelection);
 
-const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
+const LocalModelMarket: Component = () => {
+  /** Target engine for registration (llama.cpp / Ollama); download proxy follows its provider config */
+  const [engineId, setEngineId] = createSignal<string>(GGUF_ENGINES[0]?.id ?? 'local-llamacpp');
+  const engineDef = () => GGUF_ENGINES.find((p) => p.id === engineId()) ?? GGUF_ENGINES[0];
   const [query, setQuery] = createSignal('');
   const [debouncedQuery, setDebouncedQuery] = createSignal('');
   const [segment, setSegment] = createSignal('all');
@@ -216,6 +221,44 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
   const [tokenInput, setTokenInput] = createSignal('');
   const [tokenSaved, setTokenSaved] = createSignal(false);
   const [notice, setNotice] = createSignal('');
+
+  /** Provider logo (lobehub) for a market row: org table first, then model-name rules */
+  const rowLogo = (m: MarketModel) => getLogo(m.org, m.name);
+
+  const engineProxyUrl = () => providerConfigs()[engineId()]?.proxyUrl;
+
+  /**
+   * Registers a downloaded model into the selected engine provider (the same shape as the
+   * manual GGUF import on the provider detail page: localModelPaths + enabledModels).
+   */
+  const registerModel = async (modelId: string, entryPath: string) => {
+    const pid = engineId();
+    const def = engineDef();
+    const cfgs = providerConfigs();
+    const cur = cfgs[pid];
+    const next: ProviderConfig = {
+      ...(cur ?? {
+        id: pid,
+        enabled: false,
+        displayName: def?.name ?? pid,
+        apiUrl: def?.defaultApiUrl ?? '',
+        apiKey: '',
+        enabledModels: [],
+        isCustom: true,
+        customModelIds: [],
+      }),
+      id: pid,
+      enabled: true,
+      enabledModels: (cur?.enabledModels ?? []).includes(modelId)
+        ? cur!.enabledModels
+        : [...(cur?.enabledModels ?? []), modelId],
+      localModelPaths: { ...(cur?.localModelPaths ?? {}), [modelId]: entryPath },
+    };
+    const map = { ...cfgs, [pid]: next };
+    const file = { version: 2, updatedAt: String(Date.now()), providers: map };
+    await saveProviderConfigs(file);
+    setProviderConfigs(map);
+  };
 
   const hardware = () => cachedHardware();
   /** Whether a model's parameter size fits the hardware recommendation. */
@@ -406,11 +449,11 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
         hfRepo: m.hfRepo,
         msRepo: m.msRepo,
         files: g.files.map((f) => ({ name: f.name, size: f.size })),
-        proxyUrl: props.proxyUrl,
+        proxyUrl: engineProxyUrl(),
       });
       await refreshInstalled();
       if (outcome.status === 'ok' && outcome.entryPath) {
-        props.onInstalled(id, outcome.entryPath);
+        await registerModel(id, outcome.entryPath);
         setNotice(t('provider.localModelMarket.downloaded', { name: id }));
       } else if (outcome.status === 'paused') {
         setPausedIds((prev) => ({ ...prev, [id]: true }));
@@ -510,16 +553,14 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
           class="w-full flex items-center gap-3 px-3 py-2.5 text-left"
           onClick={() => void toggleExpand(m)}
         >
-          <div
-            class="flex items-center justify-center w-9 h-9 rounded-lg shrink-0"
-            style={{
-              background: fitsHardware(m)
-                ? 'rgba(var(--primary-rgb),0.15)'
-                : 'rgba(var(--text-base-rgb),0.06)',
-              color: fitsHardware(m) ? 'var(--primary-color)' : 'rgba(var(--text-base-rgb),0.5)',
-            }}
-          >
-            <Icon name="model" size={18} />
+          <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0">
+            {rowLogo(m) ? (
+              <img src={rowLogo(m)!} alt={m.org} class="w-5 h-5 object-contain" />
+            ) : (
+              <span class="font-bold text-[15px]" style={{ color: 'var(--color-dark-700)' }}>
+                {(m.org || m.name).charAt(0).toUpperCase()}
+              </span>
+            )}
           </div>
           <div class="grow min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
@@ -698,29 +739,56 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
   };
 
   return (
-    <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '82ms' }}>
-      <div class="flex items-center justify-between mb-3">
-        <div class="section-label">{t('provider.localModelMarket.title')}</div>
-        <button
-          type="button"
-          class={btnBadgeBar}
-          disabled={loading()}
-          onClick={() => void loadMarket(debouncedQuery(), false)}
-        >
-          <Show when={loading()} fallback={<Icon name="refresh" size={11} />}>
-            <Icon name="spinner" size={11} class="animate-spin" />
-          </Show>
-          {loading() ? t('provider.localModelMarket.refreshing') : t('common.refresh')}
-        </button>
+    <div
+      class="flex flex-col h-full overflow-hidden p-6 gap-4"
+      style={{ color: 'rgba(var(--text-base-rgb),0.88)' }}
+    >
+      <div class="animate-row-in flex items-start justify-between gap-4 flex-wrap">
+        <h2 class="text-xl font-semibold">{t('provider.localModelMarket.title')}</h2>
+        <div class="flex items-center gap-3 flex-wrap">
+          {/* Engine target for registration */}
+          <div class="flex items-center gap-2">
+            <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
+              {t('provider.localModelMarket.engineLabel')}
+            </span>
+            <div
+              class="flex items-center gap-1 p-1 rounded-lg"
+              style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
+            >
+              <For each={GGUF_ENGINES}>
+                {(e) => (
+                  <button
+                    class={btnTabXs}
+                    classList={{ [tabActive]: engineId() === e.id }}
+                    onClick={() => setEngineId(e.id)}
+                  >
+                    {e.name}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+          <button
+            type="button"
+            class={btnBadgeBar}
+            disabled={loading()}
+            onClick={() => void loadMarket(debouncedQuery(), false)}
+          >
+            <Show when={loading()} fallback={<Icon name="refresh" size={11} />}>
+              <Icon name="spinner" size={11} class="animate-spin" />
+            </Show>
+            {loading() ? t('provider.localModelMarket.refreshing') : t('common.refresh')}
+          </button>
+        </div>
       </div>
-      <div class="text-xs text-[rgba(var(--text-base-rgb),0.55)] mb-3">
+      <div class="text-xs text-[rgba(var(--text-base-rgb),0.55)] animate-row-in">
         {t('provider.localModelMarket.hint')}
       </div>
 
       {/* Hardware recommendation banner */}
       <Show when={hardware()}>
         <div
-          class="flex items-center gap-2 px-3 py-2 mb-3 rounded-lg border"
+          class="flex items-center gap-2 px-3 py-2 rounded-lg border animate-row-in shrink-0"
           style={{
             background: 'rgba(var(--primary-rgb),0.08)',
             'border-color': 'rgba(var(--primary-rgb),0.25)',
@@ -739,7 +807,7 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
       </Show>
 
       {/* Search + parameter segments */}
-      <div class="flex items-center gap-3 flex-wrap mb-3">
+      <div class="flex items-center gap-3 flex-wrap shrink-0">
         <div class="relative">
           <Icon
             name="search"
@@ -772,20 +840,20 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
       </div>
 
       <Show when={failedSources().length > 0}>
-        <div class="text-[10px] text-amber-300/70 mb-2">
+        <div class="text-[10px] text-amber-300/70">
           {t('provider.localModelMarket.partialSources', {
             sources: failedSources().join(', '),
           })}
         </div>
       </Show>
       <Show when={error()}>
-        <div class="text-[11px] text-red-300/80 mb-2">{error()}</div>
+        <div class="text-[11px] text-red-300/80">{error()}</div>
       </Show>
       <Show when={notice()}>
-        <div class="text-[11px] text-green-400/70 mb-2">{notice()}</div>
+        <div class="text-[11px] text-green-400/70">{notice()}</div>
       </Show>
 
-      {/* Model list */}
+      {/* Model list (fills the remaining height; rows expand inline) */}
       <Show
         when={visibleModels().length > 0}
         fallback={
@@ -796,16 +864,16 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
           </div>
         }
       >
-        <div class="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
+        <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
           <For each={visibleModels()}>{renderModelRow}</For>
         </div>
       </Show>
 
       {/* Installed models */}
       <Show when={installed().length > 0}>
-        <div class="mt-4">
+        <div class="shrink-0">
           <div class="section-label mb-2">{t('provider.localModelMarket.installedTitle')}</div>
-          <div class="space-y-1.5">
+          <div class="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
             <For each={installed()}>
               {(m) => (
                 <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
@@ -832,7 +900,10 @@ const LocalModelMarket: Component<LocalModelMarketProps> = (props) => {
       </Show>
 
       {/* Install directory + optional HF token */}
-      <div class="mt-4 space-y-2 text-[11px]" style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}>
+      <div
+        class="shrink-0 space-y-2 text-[11px]"
+        style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+      >
         <div class="flex items-center gap-2 flex-wrap">
           <span class="shrink-0">{t('provider.localModelMarket.dirLabel')}</span>
           <span class="font-mono truncate grow min-w-[120px]" title={installDir()}>

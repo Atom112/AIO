@@ -33,7 +33,7 @@
 - **TokenBar**：上下文窗口进度条，颜色编码（绿 → 黄 → 红），实时显示已用 Token / 最大 Token。
 - **TokenStatsBar**：汇总栏展示总计 Token、请求数、预估费用。
 
-使用量达到约 75% 且历史超过 10 条时，AIO 会总结较早消息、保留较新的约 30%；也可以使用 `/compact` 主动压缩。
+使用量达到约 75% 且历史超过 10 条时，AIO 会总结较早消息、按 token 预算保留最近消息（约 2 万 token，最少一个完整回合），新摘要会整体替换旧摘要避免膨胀；也可以使用 `/compact` 主动压缩。
 
 组件位于 `src/features/chat/components/`（`SessionStats.tsx`、`TokenBar.tsx`、`TokenStatsBar.tsx`）。
 
@@ -119,14 +119,15 @@ Agent 回复会按步骤展示思考、工具调用、子智能体和耗时。�
 
 - LSP 启动失败不会阻止普通文件读取、搜索或 Git 操作。
 
-## 跨会话项目知识
+## 项目记忆（RAG）
 
-在“设置 → 应用设置”开启跨会话记忆后，Agent 会获得：
+项目级记忆（语义 RAG）在项目设置弹窗中开启（已取代旧的全局“跨会话项目记忆”开关）。开启后，Agent 会获得：
 
-- `remember`：保存 `decision`、`pattern`、`convention` 或 `note`；
-- `recall`：按关键词及可选类别检索。
+- `remember` / `update_memory` / `forget_memory`：新增、更新与删除事实；
+- `recall` / `search_memory`：语义 + 关键词混合检索；
+- `search_code`：代码级检索（子智能体只读可用）。
 
-条目保存在 `.aio/knowledge.json`，最多保留 50 条，并在之后的项目对话中注入。它不会跨项目共享，也不会因关闭开关自动删除。详细设置见[应用设置与快捷键](app-settings-and-shortcuts.md#跨会话记忆)。
+事实保存在项目 `.aio/memory/memory.sqlite`，并在后续对话中自动注入相关条目。旧版 `.aio/knowledge.json` 首次打开记忆时自动迁移。详细说明见[应用设置与快捷键](app-settings-and-shortcuts.md#项目记忆rag)。
 
 ## 子智能体
 

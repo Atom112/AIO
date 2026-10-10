@@ -1,4 +1,13 @@
-/// 本地推理引擎管理相关的 Tauri 命令：启动、停止、检查状态、扫描安装、拉取模型列表。
+//! Tauri commands for local inference engine management: start, stop, status check,
+//! install scan, and model listing.
+//!
+//! Engine differences (executable, port, launch arguments) are provided by the
+//! `LocalEnginePlugin` trait in `plugins/engine`; this module only handles
+//! orchestration and IPC.
+//!
+//! Note: never hardcode engine names in code. Engine identifiers always come from
+//! `ActivatedModel.engine_type` or the plugin's `identifier()` (AGENTS.md convention).
+
 use crate::core::models::EngineInstallInfo;
 use crate::core::state::LocalEngineState;
 use crate::plugins::engine::EngineManager;
@@ -7,11 +16,25 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use tokio::time::{sleep, Duration};
 
-/// 启动本地大模型服务器
-/// @param model_path 模型文件的绝对路径（H8 沙箱校验）
-/// @param port 指定服务器运行的端口
-/// @param gpu_layers 卸载到 GPU 的模型层数
-/// @param engine_type 可选的引擎类型标识，不传时默认使用 llama_cpp（兼容旧配置）
+use crate::ierr;
+
+/// Default engine identifier used when an older frontend call omits engine_type
+/// (default local engine = the llama.cpp plugin).
+/// Declared once here so the literal is not scattered across command bodies.
+const DEFAULT_ENGINE_ID: &str = "llama_cpp";
+
+/// Starts the local LLM server.
+///
+/// # Arguments
+/// - `model_path`: absolute path to the model file (sandbox-checked via `validate_model_path`)
+/// - `port`: port to listen on
+/// - `gpu_layers`: number of layers to offload to the GPU
+/// - `engine_type`: engine identifier; defaults to `llama_cpp` (old-config compatibility)
+/// - `trust_remote_code`: vLLM only; whether running custom code from the model repo
+///   is allowed (the frontend asks for confirmation first)
+///
+/// # Returns
+/// The engine state description after a successful start; only one local engine may run at a time.
 #[tauri::command]
 #[allow(
     clippy::too_many_arguments,
@@ -27,20 +50,24 @@ pub async fn start_local_server(
     engine_type: Option<String>,
     trust_remote_code: Option<bool>,
 ) -> Result<String, String> {
-    let engine_id = engine_type.unwrap_or_else(|| "llama_cpp".to_string());
+    let engine_id = engine_type.unwrap_or_else(|| DEFAULT_ENGINE_ID.to_string());
     let trust_remote = trust_remote_code.unwrap_or(false);
 
-    let plugin = engine_mgr
-        .get(&engine_id)
-        .ok_or_else(|| format!("不支持的本地引擎: {}", engine_id))?;
+    let plugin = engine_mgr.get(&engine_id).ok_or_else(|| {
+        ierr!(
+            "不支持的本地引擎: {}",
+            "Unsupported local engine: {}",
+            engine_id
+        )
+    })?;
 
-    // H8 沙箱：拒绝 home/AppData 外的模型路径（Ollama 等外部引擎免检）
-    let safe_path = if engine_id == "ollama" {
+    // Sandbox: reject model paths outside home/AppData (external engines are exempt; their models are managed by the engine itself)
+    let safe_path = if plugin.is_external() {
         std::path::PathBuf::from(&model_path)
     } else {
         validate_model_path(&model_path)?
     };
-    // 启动前清理：停止所有其他类型的引擎（同时间只允许一个本地引擎运行）
+    // Pre-start cleanup: stop engines of all other types (only one local engine may run at a time)
     {
         let engines = state.lock();
         let other_ids: Vec<String> = engines
@@ -54,12 +81,12 @@ pub async fn start_local_server(
             stop_engine_internal(&state, &id);
         }
     }
-    // 如果同类型引擎已在运行，也先停止（清理旧进程）
+    // If an engine of the same type is already running, stop it first as well (clears the old process)
     if is_engine_running_internal(&state, &engine_id) {
         stop_engine_internal(&state, &engine_id);
         sleep(Duration::from_millis(500)).await;
     }
-    // 调用插件启动
+    // Start via the plugin
     let url = plugin
         .start(
             app,
@@ -74,8 +101,8 @@ pub async fn start_local_server(
     Ok(url)
 }
 
-/// 停止本地服务器
-/// @param engine_type 可选的引擎类型。不传时停止所有运行中的引擎。
+/// Stops the local server
+/// @param engine_type optional engine type. When omitted, stops all running engines.
 #[tauri::command]
 pub async fn stop_local_server(
     state: State<'_, LocalEngineState>,
@@ -98,8 +125,8 @@ pub async fn stop_local_server(
     Ok(())
 }
 
-/// 检查本地服务器是否正在运行
-/// @param engine_type 可选的引擎类型。不传时返回是否有任一引擎在运行。
+/// Checks whether the local server is running
+/// @param engine_type optional engine type. When omitted, returns whether any engine is running.
 #[tauri::command]
 pub fn is_local_server_running(
     state: State<'_, LocalEngineState>,
@@ -109,7 +136,7 @@ pub fn is_local_server_running(
         Some(id) => is_engine_running_internal(&state, &id),
         None => {
             let mut engines = state.lock();
-            // 先清理已退出的进程，再判断是否有存活进程
+            // Clean up exited processes first, then check whether any live process remains
             engines.retain(|_, inner| {
                 if let Some(child) = inner.child_process.as_mut() {
                     match child.try_wait() {
@@ -125,7 +152,7 @@ pub fn is_local_server_running(
     }
 }
 
-/// 扫描系统上已安装的推理引擎
+/// Scan result for an inference engine installed on the system.
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineScanResult {
@@ -138,7 +165,17 @@ pub struct EngineScanResult {
     pub default_api_url: String,
 }
 
-#[tauri::command]
+/// Scans the install status of all local inference engines (called once at app startup;
+/// the frontend caches the result).
+///
+/// # Arguments
+/// - `engine_mgr`: engine plugin manager (registration order decides result order)
+///
+/// # Behavior
+/// Calls each plugin's `detect_installation` and `default_port` in turn and aggregates
+/// them into `EngineScanResult`s; one plugin's detection failure only records empty
+/// info and never affects other engines.
+#[tauri::command(async)]
 pub fn scan_installed_engines(
     app: AppHandle,
     engine_mgr: State<'_, EngineManager>,
@@ -150,12 +187,8 @@ pub fn scan_installed_engines(
         let info: EngineInstallInfo = plugin.detect_installation(&app);
         let port = plugin.default_port();
 
-        // Ollama uses root URL (no /v1); llama.cpp / vLLM use /v1
-        let default_api_url = if plugin.identifier() == "ollama" {
-            format!("http://localhost:{}", port)
-        } else {
-            format!("http://localhost:{}/v1", port)
-        };
+        // URL shape is declared by the plugin (Ollama root URL; OpenAI-compatible engines append /v1)
+        let default_api_url = plugin.default_api_url(port);
 
         results.push(EngineScanResult {
             id: plugin.identifier().to_string(),
@@ -171,24 +204,34 @@ pub fn scan_installed_engines(
     Ok(results)
 }
 
-/// 从运行中的引擎拉取模型列表
-/// @param api_url 引擎的 API URL（如 http://localhost:11434）
-/// @param engine_type 引擎类型标识
+/// Fetches the model list from a running engine.
+///
+/// # Arguments
+/// - `api_url`: the engine's API URL (e.g. http://localhost:11434)
+/// - `engine_type`: engine type identifier (used to pick the plugin: URL shape and
+///   response parsing are declared by the plugin; no engine name is hardcoded here)
+///
+/// # Returns
+/// A list of model ids; HTTP or parsing failures return an error string.
 #[tauri::command]
 pub async fn list_engine_models(
+    engine_mgr: State<'_, EngineManager>,
     api_url: String,
     engine_type: String,
 ) -> Result<Vec<String>, String> {
-    let base = api_url.trim_end_matches('/').to_string();
+    let plugin = engine_mgr.get(&engine_type).ok_or_else(|| {
+        ierr!(
+            "不支持的引擎类型: {}",
+            "Unsupported engine type: {}",
+            engine_type
+        )
+    })?;
 
-    let models_url = if engine_type == "ollama" {
-        format!("{}/api/tags", base)
-    } else {
-        format!("{}/models", base)
-    };
+    // Endpoint shape is declared by the plugin (Ollama=/api/tags, OpenAI-compatible=/models)
+    let models_url = plugin.models_url(&api_url);
 
     let client = reqwest::Client::builder()
-        .user_agent("AIO-Desktop/0.4")
+        .user_agent(format!("AIO-Desktop/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(std::time::Duration::from_secs(3))
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -198,7 +241,7 @@ pub async fn list_engine_models(
         .get(&models_url)
         .send()
         .await
-        .map_err(|e| format!("请求失败: {}", e))?;
+        .map_err(|e| ierr!("请求失败: {}", "Request failed: {}", e))?;
 
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
@@ -207,30 +250,13 @@ pub async fn list_engine_models(
     let body = resp
         .text()
         .await
-        .map_err(|e| format!("读取响应失败: {}", e))?;
+        .map_err(|e| ierr!("读取响应失败: {}", "Failed to read response: {}", e))?;
 
-    let v: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("响应非 JSON: {}", e))?;
+    let v: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| ierr!("响应非 JSON: {}", "Response is not JSON: {}", e))?;
 
-    if engine_type == "ollama" {
-        // Ollama: { "models": [ { "name": "llama3.2:3b", ... }, ... ] }
-        let models = v["models"]
-            .as_array()
-            .ok_or("Unexpected Ollama response format")?;
-        Ok(models
-            .iter()
-            .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
-            .collect())
-    } else {
-        // OpenAI-compat: { "data": [ { "id": "model-name", ... }, ... ] }
-        let data = v["data"]
-            .as_array()
-            .ok_or("Unexpected OpenAI-compat response format")?;
-        Ok(data
-            .iter()
-            .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
-            .collect())
-    }
+    // Response parsing is declared by the plugin (Ollama's {models:[{name}]} vs OpenAI's {data:[{id}]})
+    Ok(plugin.parse_model_ids(&v))
 }
 
 // ─── Internal helpers ───

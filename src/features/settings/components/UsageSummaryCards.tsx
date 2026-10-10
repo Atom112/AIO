@@ -1,29 +1,18 @@
 /**
- * UsageSummaryCards — 用量统计卡片行
+ * UsageSummaryCards - usage summary cards row
  *
- * 展示：总 Token、总请求数、预估费用、活跃天数
- * 4 张等宽卡片水平排列
+ * Shows: total tokens, total requests, estimated cost, active days
+ * 4 equal-width cards laid out horizontally
  */
 import { Component, createMemo } from 'solid-js';
 import { getCachedCatalog } from '../../../core/utils/models';
 import type { ModelMeta } from '@aio/models-data';
 import { formatNumber, t } from '../../../core/i18n';
 
-/** 按天聚合的用量（对应 Rust UsageSummary） */
-export interface UsageSummary {
-  date: string;
-  inputTokens: number;
-  outputTokens: number;
-  requestCount: number;
-}
+import type { UsageSummary, UsageSummaryByModel } from '../../../core/types/usage';
 
-/** 按模型聚合的用量（对应 Rust UsageSummaryByModel） */
-export interface UsageSummaryByModel {
-  modelId: string;
-  inputTokens: number;
-  outputTokens: number;
-  requestCount: number;
-}
+// Usage types moved to core/types/usage.ts (re-exported here to keep the old import path)
+export type { UsageSummary, UsageSummaryByModel };
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -57,13 +46,15 @@ const UsageSummaryCards: Component<Props> = (props) => {
   const totals = createMemo(() => {
     let input = 0,
       output = 0,
+      cached = 0,
       requests = 0;
     for (const d of props.summary) {
       input += d.inputTokens;
       output += d.outputTokens;
+      cached += d.cachedInputTokens || 0;
       requests += d.requestCount;
     }
-    return { input, output, requests, activeDays: props.summary.length };
+    return { input, output, cached, requests, activeDays: props.summary.length };
   });
 
   const cost = createMemo(() => {
@@ -78,8 +69,8 @@ const UsageSummaryCards: Component<Props> = (props) => {
   const totalTokens = () => totals().input + totals().output;
 
   return (
-    <div class="grid grid-cols-4 gap-3">
-      {/* 总 Token */}
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      {/* Total tokens */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
@@ -105,7 +96,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
         </div>
       </div>
 
-      {/* 总请求 */}
+      {/* Total requests */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
@@ -130,7 +121,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
         </span>
       </div>
 
-      {/* 预估费用 */}
+      {/* Estimated cost */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{
@@ -155,7 +146,7 @@ const UsageSummaryCards: Component<Props> = (props) => {
         </span>
       </div>
 
-      {/* 活跃天数 */}
+      {/* Active days */}
       <div
         class="rounded-xl p-4 flex flex-col gap-1.5"
         style={{

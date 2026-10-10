@@ -1,20 +1,21 @@
-//! 内置 Project Map 工具 — 项目结构概览。
+//! Built-in Project Map tool — project structure overview.
 //!
-//! 提供一个只读工具，生成项目目录结构树状图，
-//! 供 Plan 模式和编排 Agent 了解项目布局。
-//! 不修改任何文件，无副作用。
+//! Provides a read-only tool that renders the project directory structure as a tree,
+//! for Plan mode and orchestration Agents to understand the project layout.
+//! Modifies no files; no side effects.
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::utils::tool_result::{tool_err, tool_ok};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
 
-/// 项目结构树的显示深度上限
+/// Maximum display depth of the project structure tree
 const MAX_DEPTH: usize = 4;
-/// 每个目录最多展示的条目数
+/// Maximum entries shown per directory
 const MAX_ENTRIES_PER_DIR: usize = 50;
 
-/// 返回 Project Map 工具的 ToolSpec。
+/// Return the ToolSpec of the Project Map tool.
 pub fn tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
@@ -30,17 +31,11 @@ pub fn tool_spec() -> ToolSpec {
     }
 }
 
-/// 执行 Project Map 工具 — 返回项目根目录的树状结构。
+/// Execute the Project Map tool — returns the tree structure of the project root.
 pub fn execute(project_root: &str) -> ToolResult {
     let root = Path::new(project_root);
     if !root.is_dir() {
-        return ToolResult {
-            content: vec![ToolResultContent {
-                kind: "text".into(),
-                data: json!({ "text": format!("[Error] 项目根目录不存在: {}", project_root) }),
-            }],
-            is_error: true,
-        };
+        return tool_err(&format!("项目根目录不存在: {project_root}"));
     }
 
     let mut output = String::new();
@@ -51,16 +46,10 @@ pub fn execute(project_root: &str) -> ToolResult {
         output.push_str("(空目录)");
     }
 
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({ "text": output }),
-        }],
-        is_error: false,
-    }
+    tool_ok(output)
 }
 
-/// 递归构建目录树字符串。
+/// Recursively build the directory tree string.
 fn build_tree(dir: &Path, output: &mut String, depth: usize, prefix: &str) {
     if depth > MAX_DEPTH {
         output.push_str(&format!("{}... (超过最大深度)\n", prefix));
@@ -72,7 +61,7 @@ fn build_tree(dir: &Path, output: &mut String, depth: usize, prefix: &str) {
         Err(_) => return,
     };
 
-    // 排序：目录在前，文件在后；字母序
+    // Sort: directories first, then files; alphabetical order
     entries.sort_by(|a, b| {
         let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
         let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
@@ -81,7 +70,7 @@ fn build_tree(dir: &Path, output: &mut String, depth: usize, prefix: &str) {
             .then_with(|| a.file_name().cmp(&b.file_name()))
     });
 
-    // 跳过隐藏文件和 node_modules / target 等常见忽略目录
+    // Skip hidden files and common ignore dirs such as node_modules / target
     let ignore_dirs = [
         "node_modules",
         "target",

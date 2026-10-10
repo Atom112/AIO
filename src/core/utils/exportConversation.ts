@@ -1,31 +1,31 @@
 /**
- * 对话导出纯函数 — Markdown / JSON 格式生成。
- * 输入 Topic + 选项，输出格式化字符串；无 UI 依赖。
+ * Conversation export pure functions - Markdown / JSON generation.
+ * Takes a Topic + options, returns a formatted string; no UI dependencies.
  */
 import type { Topic, Message } from '../store/store';
 import { formatDateTime, locale, t } from '../i18n';
 
-// -------- 选项类型 --------
+// -------- Option types --------
 
 export interface ExportOptions {
-  /** 是否包含 system 角色消息（默认 false） */
+  /** Whether to include system-role messages (default false) */
   includeSystem?: boolean;
-  /** 是否在 assistant 消息后附带 tool calls 描述（默认 false） */
+  /** Whether to append tool call descriptions after assistant messages (default false) */
   includeToolCalls?: boolean;
-  /** 是否包含 reasoning 内容（默认 true） */
+  /** Whether to include reasoning content (default true) */
   includeReasoning?: boolean;
-  /** 仅导出指定 ID 的消息；未指定时导出全部 */
+  /** Export only messages with these IDs; export all when unset */
   selectedMessageIds?: Set<string>;
 }
 
-// -------- 辅助 --------
+// -------- Helpers --------
 
-/** 格式化时间戳为 YYYY-MM-DD HH:mm */
+/** Format the current timestamp as YYYY-MM-DD HH:mm */
 function formatTime(): string {
   return formatDateTime(new Date(), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-/** 从消息提取纯文本内容。优先 displayText，其次 content（若为数组则取各 item.text 拼接）。 */
+/** Extract plain text from a message. Prefers displayText, then content (if an array, joins each item.text). */
 function extractText(msg: Message): string {
   if (msg.displayText != null) return String(msg.displayText);
   if (typeof msg.content === 'string') return msg.content;
@@ -38,7 +38,7 @@ function extractText(msg: Message): string {
   return '';
 }
 
-/** 判断消息是否应被导出（综合考虑角色过滤 + 消息 ID 筛选） */
+/** Decide whether a message should be exported (role filtering + message ID selection) */
 function shouldInclude(msg: Message, opts: ExportOptions): boolean {
   if (msg.role === 'tool') return false;
   if (msg.role === 'system' && !opts.includeSystem) return false;
@@ -49,9 +49,9 @@ function shouldInclude(msg: Message, opts: ExportOptions): boolean {
 // -------- Markdown --------
 
 /**
- * 将话题导出为 Markdown 字符串。
- * @param topic 完整话题对象
- * @param options 过滤 / 格式化选项
+ * Export a topic as a Markdown string.
+ * @param topic full topic object
+ * @param options filter / formatting options
  */
 export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string {
   const opts: ExportOptions = {
@@ -63,7 +63,7 @@ export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string 
 
   const lines: string[] = [];
 
-  // 标题
+  // Title
   lines.push(`# ${topic.name}`);
   lines.push(`> ${formatTime()}`);
   lines.push('');
@@ -84,7 +84,7 @@ export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string 
         : t('export.role.assistant');
       lines.push(`### ${label}`);
 
-      // reasoning（引用块）
+      // reasoning (blockquote)
       if (opts.includeReasoning && msg.reasoning) {
         lines.push('');
         for (const line of msg.reasoning.split('\n')) {
@@ -93,11 +93,11 @@ export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string 
         lines.push('');
       }
 
-      // 正文
+      // Body text
       const text = extractText(msg);
       lines.push(text || t('export.empty'));
 
-      // tool calls 描述（可选）
+      // tool call descriptions (optional)
       if (opts.includeToolCalls && msg.toolCalls && msg.toolCalls.length > 0) {
         lines.push('');
         lines.push(`**${t('export.toolCalls')}:**`);
@@ -129,19 +129,19 @@ export function exportAsMarkdown(topic: Topic, options?: ExportOptions): string 
 // -------- JSON --------
 
 export interface JsonExportOptions {
-  /** 'full'：完整 Topic + 元数据；'simple'：仅 role+content 数组 */
+  /** 'full': full Topic + metadata; 'simple': role+content array only */
   mode?: 'full' | 'simple';
-  /** 仅导出指定 ID 的消息；未指定时导出全部 */
+  /** Export only messages with these IDs; export all when unset */
   selectedMessageIds?: Set<string>;
 }
 
-/** 简单模式：每条消息提取 role + content（保持原始 content 类型） */
+/** Simple mode: each message extracts role + content (content keeps its original type) */
 interface SimpleMessage {
   role: string;
   content: unknown;
 }
 
-/** 完整模式：保留消息所有关键字段 */
+/** Full mode: keeps all key message fields */
 interface FullMessage {
   role: string;
   content: unknown;
@@ -160,7 +160,7 @@ interface FullExport {
   messages: FullMessage[];
 }
 
-/** 消息级过滤：跳过 tool 角色，并按 selectedMessageIds 筛选 */
+/** Message-level filter: skip the tool role and filter by selectedMessageIds */
 function filterMessages(msgs: Message[], ids?: Set<string>): Message[] {
   return msgs.filter((m) => {
     if (m.role === 'tool') return false;
@@ -170,9 +170,9 @@ function filterMessages(msgs: Message[], ids?: Set<string>): Message[] {
 }
 
 /**
- * 将话题导出为 JSON 字符串（pretty-print）。
- * @param topic 完整话题对象
- * @param options 模式选择 + 消息筛选
+ * Export a topic as a pretty-printed JSON string.
+ * @param topic full topic object
+ * @param options mode selection + message filtering
  */
 export function exportAsJSON(topic: Topic, options?: JsonExportOptions): string {
   const mode = options?.mode ?? 'full';
@@ -208,7 +208,7 @@ export function exportAsJSON(topic: Topic, options?: JsonExportOptions): string 
 
 // -------- HTML (for PDF / print) --------
 
-/** HTML 实体转义，防止 XSS */
+/** Escape HTML entities to prevent XSS */
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -218,36 +218,36 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * 将 Markdown 文本转为简易 HTML（仅处理常见内联 + 代码块 + 列表，不引入完整 markdown 解析器）。
- * 用于 print-friendly HTML 生成。
+ * Convert Markdown text to simple HTML (only common inline styles + code blocks + lists; no full markdown parser).
+ * Used for print-friendly HTML generation.
  */
 function mdToHtml(md: string): string {
   let html = md;
-  // 代码块 ```...```
+  // Code block ```...```
   html = html.replace(
     /```(\w*)\n([\s\S]*?)```/g,
     (_m, lang, code: string) => `<pre><code>${escapeHtml(code.trimEnd())}</code></pre>`,
   );
-  // 行内代码 `...`
-  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  // 粗体 **...**
-  html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-  // 斜体 *...*
-  html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-  // 列表项 - ...
-  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  // Inline code `...`
+  html = html.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${escapeHtml(code)}</code>`);
+  // Bold **...**
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, (_m, s: string) => `<strong>${escapeHtml(s)}</strong>`);
+  // Italic *...*
+  html = html.replace(/\*([^*\n]+)\*/g, (_m, s: string) => `<em>${escapeHtml(s)}</em>`);
+  // List item - ...
+  html = html.replace(/^- (.+)$/gm, (_m, s: string) => `<li>${escapeHtml(s)}</li>`);
   // wrap consecutive <li> in <ul>
   html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
-  // 双换行 → 段落
+  // Double newline -> paragraph
   html = html.replace(/\n\n+/g, '</p><p>');
-  // 单换行 → <br>
+  // Single newline -> <br>
   html = html.replace(/\n/g, '<br>');
   return `<p>${html}</p>`;
 }
 
 /**
- * 生成适合打印/PDF 导出的完整 HTML 文档。
- * 包含内联样式，不依赖外部 CSS。
+ * Generate a complete HTML document suited for print/PDF export.
+ * Includes inline styles; no external CSS dependency.
  */
 export function exportAsHtml(topic: Topic, options?: ExportOptions): string {
   const opts: ExportOptions = {

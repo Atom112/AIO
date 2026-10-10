@@ -1,15 +1,16 @@
 /**
- * UsageSettings — 使用量子页面
+ * UsageSettings - usage stats sub-page
  *
- * 组合：时间范围选择器 + 统计卡片 + 热力图(固定365天) + 模型分布
+ * Composes: time range selector + summary cards + heatmap (fixed 365 days) + model breakdown
  */
 import { Component, createSignal, createEffect, createMemo, Show, For } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
 import UsageSummaryCards from './UsageSummaryCards';
-import type { UsageSummary, UsageSummaryByModel } from './UsageSummaryCards';
+import type { UsageSummary, UsageSummaryByModel } from '../../../core/types/usage';
+import { getUsageSummary, getUsageSummaryByModel } from '../../../core/api/usage';
 import UsageHeatmap from './UsageHeatmap';
 import ModelBreakdown from './ModelBreakdown';
 import Icon from '../../../shared/components/Icon';
+import { btnIcon, btnTabXs, tabActive, tabInactive } from '../../../shared/components/buttonStyles';
 import { reportError, t, type TranslationKey } from '../../../core/i18n';
 
 type Range = { labelKey: TranslationKey; days: number };
@@ -22,24 +23,21 @@ const RANGES: Range[] = [
 ];
 
 const UsageSettings: Component = () => {
-  const [range, setRange] = createSignal<Range>(RANGES[1]); // 默认 30 天
+  const [range, setRange] = createSignal<Range>(RANGES[1]); // default: 30 days
   const [summary, setSummary] = createSignal<UsageSummary[]>([]);
   const [byModel, setByModel] = createSignal<UsageSummaryByModel[]>([]);
-  // 热力图固定加载 365 天数据，不受时间范围影响
+  // Heatmap always loads 365 days of data, independent of the time range
   const [heatmapSummary, setHeatmapSummary] = createSignal<UsageSummary[]>([]);
   const [selectedDate, setSelectedDate] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
 
-  // 加载受时间范围影响的数据
+  // Load range-dependent data
   const fetchRangeData = async (days: number) => {
     setLoading(true);
     setError(null);
     try {
-      const [s, m] = await Promise.all([
-        invoke<UsageSummary[]>('get_usage_summary', { days }),
-        invoke<UsageSummaryByModel[]>('get_usage_summary_by_model', { days }),
-      ]);
+      const [s, m] = await Promise.all([getUsageSummary(days), getUsageSummaryByModel(days)]);
       setSummary(s);
       setByModel(m);
     } catch (e) {
@@ -50,40 +48,35 @@ const UsageSettings: Component = () => {
     }
   };
 
-  // 按日期获取模型分布（热力图点击后调用）
+  // Fetch model breakdown for one date (called after a heatmap click)
   const fetchModelByDate = async (date: string) => {
     try {
-      const m = await invoke<UsageSummaryByModel[]>('get_usage_summary_by_model', {
-        days: range().days,
-        date,
-      });
+      const m = await getUsageSummaryByModel(range().days, date);
       setByModel(m);
     } catch (e) {
       console.error('获取单日模型分布失败:', e);
     }
   };
 
-  // 热力图日期点击回调
+  // Heatmap date click callback
   const handleDateSelect = (date: string) => {
     setSelectedDate(date);
     fetchModelByDate(date);
   };
 
-  // 初始化：同时加载热力图数据（固定365天）和时间范围数据
+  // Init: load heatmap data (fixed 365 days) and time-range data together
   createEffect(() => {
-    // 加载热力图数据（只执行一次，因为不依赖 range）
-    invoke<UsageSummary[]>('get_usage_summary', { days: 365 })
-      .then(setHeatmapSummary)
-      .catch(console.error);
+    // Load heatmap data (runs once since it does not depend on range)
+    getUsageSummary(365).then(setHeatmapSummary).catch(console.error);
   });
 
-  // 统一 Effect：日期选择模式 vs 时间范围模式
+  // Single effect: date-selected mode vs time-range mode
   createEffect(() => {
     if (selectedDate()) {
-      // 日期选择模式：仅刷新模型分布
+      // Date-selected mode: refresh model breakdown only
       fetchModelByDate(selectedDate()!);
     } else {
-      // 普通模式：刷新 summary + byModel
+      // Normal mode: refresh summary + byModel
       fetchRangeData(range().days);
     }
   });
@@ -96,7 +89,7 @@ const UsageSettings: Component = () => {
         class="w-full h-full rounded-xl p-8 flex flex-col"
         style={{ background: 'transparent', 'box-shadow': '0 8px 32px rgba(0, 0, 0, 0.2)' }}
       >
-        {/* 标题行 */}
+        {/* Header row */}
         <div
           class="flex items-center justify-between pb-3 mb-6 shrink-0 animate-row-in"
           style={{ 'border-bottom': '1px solid var(--border-dim)' }}
@@ -107,7 +100,7 @@ const UsageSettings: Component = () => {
           >
             {t('usage.title')}
           </h3>
-          {/* 时间范围选择器 */}
+          {/* Time range selector */}
           <div
             class="flex gap-1 animate-row-in"
             style={{
@@ -120,15 +113,7 @@ const UsageSettings: Component = () => {
             <For each={RANGES}>
               {(r) => (
                 <button
-                  class="px-3 py-1 text-xs font-medium rounded-md transition-all duration-200 border-none cursor-pointer"
-                  style={{
-                    background:
-                      r.days === range().days ? 'rgba(var(--primary-rgb), 0.2)' : 'transparent',
-                    color:
-                      r.days === range().days
-                        ? 'rgba(var(--text-base-rgb),0.9)'
-                        : 'rgba(var(--text-base-rgb),0.4)',
-                  }}
+                  class={`${btnTabXs} ${r.days === range().days ? tabActive : tabInactive}`}
                   onClick={() => {
                     setSelectedDate(null);
                     setRange(r);
@@ -141,7 +126,7 @@ const UsageSettings: Component = () => {
           </div>
         </div>
 
-        {/* 加载状态 */}
+        {/* Loading state */}
         <Show when={loading()}>
           <div
             class="flex items-center justify-center py-16"
@@ -151,7 +136,7 @@ const UsageSettings: Component = () => {
           </div>
         </Show>
 
-        {/* 错误状态 */}
+        {/* Error state */}
         <Show when={error() && !loading()}>
           <div
             class="flex items-center justify-center py-16"
@@ -161,9 +146,9 @@ const UsageSettings: Component = () => {
           </div>
         </Show>
 
-        {/* 数据展示 */}
+        {/* Data display */}
         <Show when={!loading() && !error()}>
-          {/* 无数据占位 */}
+          {/* Empty state */}
           <Show when={!hasData()}>
             <div class="flex flex-col items-center justify-center py-16 gap-3">
               <Icon name="chart-bar" size={30} />
@@ -178,12 +163,12 @@ const UsageSettings: Component = () => {
 
           <Show when={hasData()}>
             <div class="flex flex-col gap-6 overflow-y-auto">
-              {/* 统计卡片 */}
+              {/* Summary cards */}
               <div class="animate-row-in" style={{ 'animation-delay': '60ms' }}>
                 <UsageSummaryCards summary={summary()} byModel={byModel()} />
               </div>
 
-              {/* 热力图 — 固定 365 天，不受时间范围影响 */}
+              {/* Heatmap - fixed 365 days, independent of the time range */}
               <div
                 class="rounded-xl p-5 animate-row-in"
                 style={{
@@ -205,7 +190,7 @@ const UsageSettings: Component = () => {
                 />
               </div>
 
-              {/* 模型分布 */}
+              {/* Model breakdown */}
               <Show when={byModel().length > 0}>
                 <div
                   class="rounded-xl p-5 animate-row-in"
@@ -232,12 +217,8 @@ const UsageSettings: Component = () => {
                     >
                       <span>{t('usage.selectedModelBreakdown', { date: selectedDate()! })}</span>
                       <button
-                        class="border-none cursor-pointer flex items-center justify-center w-4 h-4 rounded-full hover:bg-white/[0.1] transition-colors"
-                        style={{
-                          color: 'rgba(var(--text-base-rgb),0.4)',
-                          'font-size': '10px',
-                          'line-height': '1',
-                        }}
+                        class={'w-4 h-4 text-white/40 ' + btnIcon}
+                        style={{ 'font-size': '10px', 'line-height': '1' }}
                         onClick={() => {
                           setSelectedDate(null);
                           fetchRangeData(range().days);

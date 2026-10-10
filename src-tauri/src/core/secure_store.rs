@@ -1,22 +1,24 @@
-//! # 跨平台安全凭据存储
+//! # Cross-platform secure credential storage
 //!
-//! 使用 [`keyring`] crate 抽象各 OS 原生凭据管理器：
+//! Uses the [`keyring`] crate to abstract each OS's native credential manager:
 //! - **Windows**: Windows Credential Manager (`wincred`)
 //! - **macOS**: Keychain (`security-framework`)
 //! - **Linux**: Secret Service / `libsecret` (`secret-service-rs`)
 //!
-//! 在 GUI 不可用的环境（无桌面会话 / 无 dbus）下，调用可能失败。
-//! 失败时降级到 AppData 中的 AES-256-GCM 加密文件（使用机器绑定密钥）。
+//! Calls may fail in environments without a GUI (no desktop session / no dbus).
+//! On failure, falls back to an AES-256-GCM encrypted file in AppData (the key is stored
+//! in keyring first, otherwise a 0600 local random key file — not machine-bound, only
+//! static obfuscation: any process able to read both files can decrypt).
 //!
-//! Service 标识：`com.loch.aio`
-//! Account 命名空间：
-//! - `auth-token`: 后端登录 JWT
-//! - `app-api-url`: 全局 API URL（仅当用户选择加密存储时）
-//! - `app-api-key`: 全局 API Key
-//! - `fallback-key`: AES 加密密钥（用于加密 fallback 文件）
-//! - `provider-{provider_id}-api-key`: 每个 provider 的 API Key
-//! - `mcp-server-{server_id}-env-{env_key}`: 每个 MCP server 的环境变量密钥
-//! - `activated-model-{hash}-api-key`: 已激活模型 API Key
+//! Service identifier: `com.loch.aio`
+//! Account namespaces:
+//! - `auth-token`: backend login JWT
+//! - `app-api-url`: global API URL (only when the user opts into encrypted storage)
+//! - `app-api-key`: global API Key
+//! - `fallback-key`: AES encryption key (used to encrypt the fallback file)
+//! - `provider-{provider_id}-api-key`: per-provider API Key
+//! - `mcp-server-{server_id}-env-{env_key}`: per-MCP-server environment variable secret
+//! - `activated-model-{hash}-api-key`: activated model API Key
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -31,7 +33,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-const SERVICE: &str = "com.loch.aio";
+const SERVICE: &str = crate::core::paths::BUNDLE_ID;
 const FALLBACK_FILE: &str = "secure-store.json";
 const FALLBACK_KEY_ACCOUNT: &str = "fallback-key";
 const AES_KEY_LEN: usize = 32;
@@ -64,7 +66,7 @@ struct FallbackStore {
     entries: HashMap<String, String>,
 }
 
-// ====== fallback 文件路径 ======
+// ====== fallback file paths ======
 
 fn fallback_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
@@ -80,19 +82,20 @@ fn fallback_key_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|d| d.join(".fallback-key"))
 }
 
-// ====== AES-256-GCM 密钥管理 ======
+// ====== AES-256-GCM key management ======
 
-/// 获取或创建 fallback 文件的 AES-256 加密密钥。
+/// Get or create the AES-256 encryption key for the fallback file.
 ///
-/// 优先级：keyring → 机器绑定派生 → 随机密钥文件（最弱后备）
+/// Priority: keyring → local random key file (0600 permissions, weakest fallback).
+/// Note: there is no "machine-bound derivation" layer — the file key only provides static obfuscation.
 fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
-    // 1. 尝试从 keyring 读取持久化的加密密钥
+    // 1. Try reading the persisted encryption key from keyring
     if let Ok(hex_key) = keyring_get_str(FALLBACK_KEY_ACCOUNT) {
         if let Ok(bytes) = hex::decode(&hex_key) {
             if bytes.len() == AES_KEY_LEN {
                 let mut key = [0u8; AES_KEY_LEN];
                 key.copy_from_slice(&bytes);
-                // keyring 可用：清理残留的明文 fallback-key 文件
+                // keyring available: clean up any leftover plaintext fallback-key file
                 if let Some(kp) = fallback_key_path(app) {
                     if kp.exists() {
                         let _ = fs::remove_file(&kp);
@@ -106,7 +109,7 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
         }
     }
 
-    // 2. keyring 不可用：尝试从文件读取（机器绑定密钥）
+    // 2. keyring unavailable: try reading the key from the file
     if let Some(path) = fallback_key_path(app) {
         if path.exists() {
             if let Ok(hex_str) = fs::read_to_string(&path) {
@@ -120,21 +123,21 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
             }
         }
 
-        // 3. 生成新密钥：优先存入 keyring，否则写入文件
+        // 3. Generate a new key: store in keyring first, otherwise write to a file
         let mut key = [0u8; AES_KEY_LEN];
         OsRng.fill_bytes(&mut key);
         let hex_key = hex::encode(key);
 
-        // 尝试存入 keyring
+        // Try storing it in keyring
         if keyring_set_str(FALLBACK_KEY_ACCOUNT, &hex_key).is_ok() {
-            // keyring 写入成功：清理可能遗留的明文密钥文件
+            // keyring write succeeded: clean up any leftover plaintext key file
             if path.exists() {
                 let _ = fs::remove_file(&path);
             }
             return Ok(key);
         }
 
-        // keyring 不可用：写入文件（权限 0600 级保护）
+        // keyring unavailable: write to file (0600-level permission protection)
         let _ = fs::create_dir_all(path.parent().unwrap());
         if fs::write(&path, &hex_key).is_err() {
             return Err(SecureStoreError::FallbackIo(
@@ -142,7 +145,7 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
             ));
         }
 
-        // 尝试设置文件权限（Unix）
+        // Try to set file permissions (Unix)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -157,10 +160,10 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
     ))
 }
 
-// ====== AES-256-GCM 加解密 ======
+// ====== AES-256-GCM encrypt/decrypt ======
 
-/// 用 AES-256-GCM 加密一段明文。
-/// 返回格式：hex(nonce[12] + ciphertext[..] + auth_tag[16])
+/// Encrypt a plaintext string with AES-256-GCM.
+/// Return format: hex(nonce[12] + ciphertext[..] + auth_tag[16])
 fn encrypt_entry(plaintext: &str, key: &[u8; AES_KEY_LEN]) -> Result<String> {
     let cipher =
         Aes256Gcm::new_from_slice(key).map_err(|e| SecureStoreError::AesEncrypt(e.to_string()))?;
@@ -173,17 +176,17 @@ fn encrypt_entry(plaintext: &str, key: &[u8; AES_KEY_LEN]) -> Result<String> {
         .encrypt(nonce, plaintext.as_bytes())
         .map_err(|e| SecureStoreError::AesEncrypt(e.to_string()))?;
 
-    // nonce + ciphertext（包含 auth tag）
+    // nonce + ciphertext (includes the auth tag)
     let mut combined = nonce_bytes.to_vec();
     combined.extend_from_slice(&ciphertext);
 
     Ok(hex::encode(combined))
 }
 
-/// 解密 AES-256-GCM 加密的 hex 字符串。
-/// 自动兼容旧 base64 格式（无加密）。
+/// Decrypt a hex string encrypted with AES-256-GCM.
+/// Also accepts the legacy base64 format (no encryption).
 fn decrypt_entry(hex_or_base64: &str, key: &[u8; AES_KEY_LEN]) -> Result<String> {
-    // 1. 尝试 hex → AES-256-GCM 解密
+    // 1. Try hex → AES-256-GCM decryption
     if let Ok(combined) = hex::decode(hex_or_base64) {
         if combined.len() >= NONCE_LEN + 16 {
             let cipher = Aes256Gcm::new_from_slice(key)
@@ -202,7 +205,7 @@ fn decrypt_entry(hex_or_base64: &str, key: &[u8; AES_KEY_LEN]) -> Result<String>
         }
     }
 
-    // 2. 回退：旧 base64 格式（无加密，仅解码）
+    // 2. Fallback: legacy base64 format (no encryption, decode only)
     if let Ok(bytes) = general_purpose::STANDARD.decode(hex_or_base64) {
         if let Ok(s) = String::from_utf8(bytes) {
             return Ok(s);
@@ -214,7 +217,7 @@ fn decrypt_entry(hex_or_base64: &str, key: &[u8; AES_KEY_LEN]) -> Result<String>
     ))
 }
 
-// ====== fallback 文件 I/O ======
+// ====== fallback file I/O ======
 
 fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
     let Some(p) = fallback_path(app) else {
@@ -229,7 +232,7 @@ fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
     };
     let raw: FallbackStore = serde_json::from_str(&json_str).unwrap_or_default();
 
-    // 解密所有 entry
+    // Decrypt all entries
     let mut store = FallbackStore::default();
     for (k, v) in &raw.entries {
         match decrypt_entry(v, key) {
@@ -237,7 +240,7 @@ fn load_fallback(app: &AppHandle, key: &[u8; AES_KEY_LEN]) -> FallbackStore {
                 store.entries.insert(k.clone(), plain);
             }
             Err(_) => {
-                // 无法解密的 entry 跳过（可能是损坏数据）
+                // Skip entries that fail to decrypt (possibly corrupted data)
                 tracing::warn!("[secure_store] 无法解密 entry '{}'，已跳过", k);
             }
         }
@@ -252,7 +255,7 @@ fn save_fallback(app: &AppHandle, store: &FallbackStore, key: &[u8; AES_KEY_LEN]
         let _ = fs::create_dir_all(parent);
     }
 
-    // 加密所有 entry
+    // Encrypt all entries
     let mut encoded = FallbackStore::default();
     for (k, v) in &store.entries {
         encoded.entries.insert(k.clone(), encrypt_entry(v, key)?);
@@ -264,7 +267,7 @@ fn save_fallback(app: &AppHandle, store: &FallbackStore, key: &[u8; AES_KEY_LEN]
     Ok(())
 }
 
-// ====== keyring 操作 ======
+// ====== keyring operations ======
 
 fn keyring_get_str(account: &str) -> Result<String> {
     let entry = keyring::Entry::new(SERVICE, account)
@@ -290,9 +293,9 @@ fn keyring_delete_str(account: &str) -> Result<()> {
         .map_err(|e| SecureStoreError::Keyring(e.to_string()))
 }
 
-// ====== 高层 API ======
+// ====== high-level API ======
 
-/// 读取凭据：优先 keyring，不可用时回退到 AES 加密文件。
+/// Read a credential: keyring first, falling back to the AES-encrypted file when unavailable.
 pub fn get(app: &AppHandle, account: &str) -> Result<Option<String>> {
     match keyring_get_str(account) {
         Ok(v) => Ok(Some(v)),
@@ -305,11 +308,11 @@ pub fn get(app: &AppHandle, account: &str) -> Result<Option<String>> {
     }
 }
 
-/// 存储凭据：优先 keyring，不可用时回退到 AES 加密文件。
+/// Store a credential: keyring first, falling back to the AES-encrypted file when unavailable.
 pub fn set(app: &AppHandle, account: &str, value: &str) -> Result<()> {
     match keyring_set_str(account, value) {
         Ok(()) => {
-            // 同步清理 fallback 文件中的同 key
+            // Also remove the same key from the fallback file
             if let Ok(key) = get_fallback_key(app) {
                 let mut store = load_fallback(app, &key);
                 if store.entries.remove(account).is_some() {
@@ -327,7 +330,22 @@ pub fn set(app: &AppHandle, account: &str, value: &str) -> Result<()> {
     }
 }
 
-/// 删除凭据。
+/// Store a credential with failure visibility: logs an error and returns false on failure.
+///
+/// Callers use the return value to decide whether to keep the plaintext field in data:
+/// swallowing a `set(...)` failure and then stripping plaintext silently loses the secret
+/// when keyring and the fallback file both fail.
+pub fn set_reported(app: &AppHandle, account: &str, value: &str) -> bool {
+    match set(app, account, value) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::error!("安全存储写入失败 (account={account}): {e}");
+            false
+        }
+    }
+}
+
+/// Delete a credential.
 pub fn delete(app: &AppHandle, account: &str) -> Result<()> {
     let _ = keyring_delete_str(account);
     if let Ok(key) = get_fallback_key(app) {
@@ -339,52 +357,29 @@ pub fn delete(app: &AppHandle, account: &str) -> Result<()> {
     Ok(())
 }
 
-/// 删除所有匹配前缀的凭据（用于清理 MCP server 等）。
-#[allow(dead_code)]
-pub fn delete_matching(app: &AppHandle, prefix: &str) -> Result<()> {
-    if let Ok(key) = get_fallback_key(app) {
-        let mut store = load_fallback(app, &key);
-        let to_remove: Vec<String> = store
-            .entries
-            .keys()
-            .filter(|k| k.starts_with(prefix))
-            .cloned()
-            .collect();
-        if !to_remove.is_empty() {
-            for k in &to_remove {
-                store.entries.remove(k);
-            }
-            save_fallback(app, &store, &key)?;
-        }
-    }
-    // keyring 不支持按前缀删除，调用方需显式传 key 名
-    Ok(())
-}
-
-// ====== 已知 account 命名空间 ======
+// ====== known account namespaces ======
 
 pub mod accounts {
     use sha2::{Digest, Sha256};
 
     pub const APP_API_KEY: &str = "app-api-key";
 
+    /// Optional HuggingFace access token (read scope) for gated-repo downloads
+    pub fn hf_token() -> String {
+        "hf-access-token".to_string()
+    }
+
     pub fn provider_key(id: &str) -> String {
         format!("provider-{}-api-key", id)
     }
 
-    /// MCP server 环境变量密钥：${KEYRING:mcp-server-{server_id}-env-{env_key}}
+    /// MCP server environment variable secret: ${KEYRING:mcp-server-{server_id}-env-{env_key}}
     pub fn mcp_server_env(server_id: &str, env_key: &str) -> String {
         format!("mcp-server-{}-env-{}", server_id, env_key)
     }
 
-    /// 删除某 MCP server 的所有密钥（删除 server 时调用）
-    #[allow(dead_code)]
-    pub fn mcp_server_prefix(server_id: &str) -> String {
-        format!("mcp-server-{}-", server_id)
-    }
-
-    /// 已激活模型的 API Key（用 api_url + model_id 的 SHA-256 hash 作标识符，
-    /// 避免将 URL 明文写入 keyring account 名）。
+    /// API Key for an activated model (identified by the SHA-256 hash of api_url + model_id,
+    /// avoiding writing the URL in plaintext into the keyring account name).
     pub fn activated_model_key(api_url: &str, model_id: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(api_url.as_bytes());

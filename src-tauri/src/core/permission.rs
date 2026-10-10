@@ -1,64 +1,73 @@
-//! Agent 工具调用权限规则引擎。
+//! Permission rule engine for agent tool calls.
 //!
-//! 实现 allow / ask / deny 三层权限模型，参考 Claude Code 的权限设计。
-//! 规则按优先级评估，Deny 总是优先于 Allow，无匹配规则时默认 Ask（fail-closed）。
+//! Implements the three-tier allow / ask / deny permission model, following the Claude Code permission design.
+//! Rules are evaluated by priority; Deny always wins over Allow, and calls with no matching rule default to Ask (fail-closed).
 //!
-//! 规则可自定义存储在项目 `.aio/permissions.json` 中，覆盖内置默认配置。
+//! Custom rules can be stored in the project's `.aio/permissions.json`, overriding the built-in defaults.
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::models::AgentMode;
 
-// ====== 权限动作 ======
+// ====== Permission actions ======
 
-/// 权限决策结果
+/// The permission decision outcome.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionAction {
-    /// 自动允许，无需确认
+    /// Allowed automatically, no confirmation needed.
     Allow,
-    /// 需要用户确认
+    /// Requires user confirmation.
     Ask,
-    /// 直接拒绝
+    /// Denied outright.
     Deny,
 }
 
-// ====== 规则定义 ======
+// ====== Rule definitions ======
 
-/// 一条权限规则
+/// A single permission rule.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionRule {
-    /// 规则唯一 ID
+    /// Unique rule ID.
     pub id: String,
-    /// 工具名称或 glob 模式，如 `"write_file"`, `"delete_*"`, `"*"`（全部匹配）
+    /// Tool name or glob pattern, e.g. `"write_file"`, `"delete_*"`, `"*"` (matches everything).
     pub tool_pattern: String,
-    /// 限制到特定 MCP server ID，`None` = 应用于所有 server
+    /// Restricted to a specific MCP server ID; `None` = applies to all servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_id: Option<String>,
-    /// 该规则适用的 agent 模式列表，空列表 = 所有模式
+    /// Agent modes this rule applies to; an empty list means all modes.
     #[serde(default)]
     pub modes: Vec<AgentMode>,
-    /// 决策
+    /// The decision.
     pub action: PermissionAction,
-    /// 可选的路径 glob 匹配（针对 filesystem 类工具的 `path` 参数值）
+    /// Optional path glob match (against the `path` argument value of filesystem-style tools).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_pattern: Option<String>,
-    /// 优先级，越大越优先。Deny 类型的规则即使优先级低也优先于 Allow
+    /// Optional command prefix match (execute_command only): the command's first whitespace-delimited token must equal this prefix
+    /// (token-level match blocks injection bypasses like "cargo; rm -rf /"; layered with the hard blacklist).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_prefix: Option<String>,
+    /// Priority: higher wins. Deny rules beat Allow even at lower priority.
     #[serde(default)]
     pub priority: i32,
 }
 
-// ====== 持久化文件 ======
+// ====== Persistence file ======
 
-/// 权限配置持久化文件（`.aio/permissions.json`）
+/// Permission config persistence file (`.aio/permissions.json`).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionsFile {
     pub version: u32,
     pub updated_at: String,
-    /// 自定义规则列表（覆盖内置默认规则）
+    /// Custom rule list (overrides the built-in default rules).
+    ///
+    /// Effective semantics: Deny wins globally (regardless of priority); other actions rank by priority high -> low,
+    /// with custom rules winning ties. Path rules (path_pattern) support path / basePath /
+    /// file_path / filePath / url plus files / paths array arguments (see path_matches).
     #[serde(default)]
     pub rules: Vec<PermissionRule>,
 }
@@ -73,589 +82,629 @@ impl Default for PermissionsFile {
     }
 }
 
-/// 工具分类（用于内置默认规则）
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ToolCategory {
-    /// 读操作：read_file, list_directory, search_files, search_content
-    Read,
-    /// 写操作：write_file, make_directory
-    Write,
-    /// 删除操作：delete_file
-    Delete,
-    /// 其他 MCP 工具
-    Other,
+// No separate tool-category table: categorization lives solely in the default_rules_for_mode rule table below.
+
+// ====== Built-in default rules ======
+
+/// Returns the built-in default rule set for the given mode.
+/// Custom rules (from `.aio/permissions.json`) stack on top of / override these defaults.
+/// Built-in rule constructor: defaults server=None / path_pattern=None / priority=10.
+/// Collapses the 8-field struct literal to one line so the mode matrix stays auditable.
+fn r(
+    id: &str,
+    tool_pattern: &str,
+    modes: &[AgentMode],
+    action: PermissionAction,
+) -> PermissionRule {
+    rf(id, tool_pattern, modes, action, None, None, 10)
 }
 
-#[allow(dead_code)]
-fn categorize_tool(name: &str) -> ToolCategory {
-    match name {
-        "read_file" | "list_directory" | "search_files" | "search_content" | "web_fetch"
-        | "web_search" | "git_status" | "git_diff" | "git_log" => ToolCategory::Read,
-        "write_file" | "make_directory" | "replace_in_file" | "git_add" | "git_commit" => {
-            ToolCategory::Write
-        }
-        "delete_file" => ToolCategory::Delete,
-        _ => ToolCategory::Other,
+/// Full constructor (server / path_pattern / priority can be overridden).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "
+声明式规则表的单一构造入口
+"
+)]
+fn rf(
+    id: &str,
+    tool_pattern: &str,
+    modes: &[AgentMode],
+    action: PermissionAction,
+    server_id: Option<&str>,
+    path_pattern: Option<&str>,
+    priority: i32,
+) -> PermissionRule {
+    PermissionRule {
+        id: id.into(),
+        tool_pattern: tool_pattern.into(),
+        server_id: server_id.map(Into::into),
+        modes: modes.to_vec(),
+        action,
+        path_pattern: path_pattern.map(Into::into),
+        command_prefix: None,
+        priority,
     }
 }
 
-// ====== 内置默认规则 ======
-
-/// 根据 mode 返回内置默认规则集。
-/// 自定义规则（来自 `.aio/permissions.json`）会叠加/覆盖这些默认规则。
 pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
     match mode {
         AgentMode::Off => vec![
-            // Off 模式不应有工具调用，全部拒绝
-            PermissionRule {
-                id: "builtin-off-deny-all".into(),
-                tool_pattern: "*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Off],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 100,
-            },
+            // Off mode must not issue tool calls: deny everything.
+            rf(
+                "builtin-off-deny-all",
+                "*",
+                &[AgentMode::Off],
+                PermissionAction::Deny,
+                None,
+                None,
+                100,
+            ),
         ],
 
         AgentMode::Normal => vec![
-            // 读操作：自动允许
-            PermissionRule {
-                id: "builtin-normal-allow-read".into(),
-                tool_pattern: "read_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-normal-allow-list-dir".into(),
-                tool_pattern: "list_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-normal-allow-search".into(),
-                tool_pattern: "search_*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 写操作：需要确认
-            PermissionRule {
-                id: "builtin-normal-ask-write".into(),
-                tool_pattern: "write_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-normal-ask-replace".into(),
-                tool_pattern: "replace_in_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            // Git 读操作：自动允许
-            PermissionRule {
-                id: "builtin-normal-allow-git-read".into(),
-                tool_pattern: "git_status".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-normal-allow-git-diff".into(),
-                tool_pattern: "git_diff".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-normal-allow-git-log".into(),
-                tool_pattern: "git_log".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // Git 写操作：需要确认
-            PermissionRule {
-                id: "builtin-normal-ask-git-add".into(),
-                tool_pattern: "git_add".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-normal-ask-git-commit".into(),
-                tool_pattern: "git_commit".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-normal-ask-mkdir".into(),
-                tool_pattern: "make_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 删除操作：需要确认
-            PermissionRule {
-                id: "builtin-normal-ask-delete".into(),
-                tool_pattern: "delete_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 其他 MCP 工具（非内置 filesystem）：需要确认
-            PermissionRule {
-                id: "builtin-normal-ask-other-tools".into(),
-                tool_pattern: "*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Normal],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 0,
-            },
+            // Read operations: auto-allowed.
+            r(
+                "builtin-normal-allow-read",
+                "read_file",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-list-dir",
+                "list_directory",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-search",
+                "search_*",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            // Write operations: require confirmation.
+            r(
+                "builtin-normal-ask-write",
+                "write_file",
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+            ),
+            r(
+                "builtin-normal-ask-replace",
+                "replace_in_file",
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+            ),
+            // Git read operations: auto-allowed.
+            r(
+                "builtin-normal-allow-git-read",
+                "git_status",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-git-diff",
+                "git_diff",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-git-log",
+                "git_log",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            // Git write operations: require confirmation.
+            r(
+                "builtin-normal-ask-git-add",
+                "git_add",
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+            ),
+            r(
+                "builtin-normal-ask-git-commit",
+                "git_commit",
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+            ),
+            r(
+                "builtin-normal-ask-mkdir",
+                "make_directory",
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+            ),
+            // Delete operations: require confirmation.
+            r(
+                "builtin-normal-ask-delete",
+                "delete_file",
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+            ),
+            // Memory tools: reads and writes allowed (low-risk in-project metadata; users can override via permissions.json).
+            r(
+                "builtin-normal-allow-memory-read",
+                "recall",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-memory-search",
+                "search_memory",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-memory-write",
+                "remember",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-memory-update",
+                "update_memory",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-memory-forget",
+                "forget_memory",
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            // Other MCP tools (non-builtin filesystem): require confirmation.
+            rf(
+                "builtin-normal-ask-other-tools",
+                "*",
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+                None,
+                None,
+                0,
+            ),
         ],
 
         AgentMode::Auto => vec![
-            // 所有内置 filesystem 操作：自动允许
-            PermissionRule {
-                id: "builtin-auto-allow-fs-read".into(),
-                tool_pattern: "read_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-fs-list".into(),
-                tool_pattern: "list_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-fs-search".into(),
-                tool_pattern: "search_*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-fs-write".into(),
-                tool_pattern: "write_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-fs-replace".into(),
-                tool_pattern: "replace_in_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // Git 工具：全部自动允许（Auto 模式的前提是用户已信任所有操作）
-            PermissionRule {
-                id: "builtin-auto-allow-git-status".into(),
-                tool_pattern: "git_status".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-git-diff".into(),
-                tool_pattern: "git_diff".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-git-log".into(),
-                tool_pattern: "git_log".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-git-add".into(),
-                tool_pattern: "git_add".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-git-commit".into(),
-                tool_pattern: "git_commit".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-auto-allow-fs-mkdir".into(),
-                tool_pattern: "make_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 删除操作：需要确认（危险操作）
-            PermissionRule {
-                id: "builtin-auto-ask-delete".into(),
-                tool_pattern: "delete_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 命令执行：自动允许（Auto 模式下无需逐条确认，进入前已有风险提醒）
-            PermissionRule {
-                id: "builtin-auto-allow-command".into(),
-                tool_pattern: "execute_command".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 其他 MCP 工具：自动允许
-            PermissionRule {
-                id: "builtin-auto-allow-other-tools".into(),
-                tool_pattern: "*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Auto],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 0,
-            },
+            // All built-in filesystem operations: auto-allowed.
+            r(
+                "builtin-auto-allow-fs-read",
+                "read_file",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-fs-list",
+                "list_directory",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-fs-search",
+                "search_*",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-fs-write",
+                "write_file",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-fs-replace",
+                "replace_in_file",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            // Git tools: all auto-allowed (Auto mode presupposes the user has trusted all operations).
+            r(
+                "builtin-auto-allow-git-status",
+                "git_status",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-git-diff",
+                "git_diff",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-git-log",
+                "git_log",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-git-add",
+                "git_add",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-git-commit",
+                "git_commit",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-fs-mkdir",
+                "make_directory",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            // Delete operations: require confirmation (dangerous).
+            r(
+                "builtin-auto-ask-delete",
+                "delete_file",
+                &[AgentMode::Auto],
+                PermissionAction::Ask,
+            ),
+            // Command execution: auto-allowed (no per-command confirmation in Auto mode; a risk notice was shown on entry).
+            r(
+                "builtin-auto-allow-command",
+                "execute_command",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+            ),
+            // Other MCP tools: auto-allowed.
+            rf(
+                "builtin-auto-allow-other-tools",
+                "*",
+                &[AgentMode::Auto],
+                PermissionAction::Allow,
+                None,
+                None,
+                0,
+            ),
         ],
 
         AgentMode::Workflow => vec![
-            // 完全等同于 Auto 模式的权限规则：全自动允许，文件删除需确认
-            PermissionRule {
-                id: "builtin-workflow-allow-fs-read".into(),
-                tool_pattern: "read_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-workflow-allow-fs-list".into(),
-                tool_pattern: "list_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-workflow-allow-fs-write".into(),
-                tool_pattern: "write_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-workflow-allow-fs-edit".into(),
-                tool_pattern: "replace_in_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-workflow-allow-fs-glob".into(),
-                tool_pattern: "glob".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-workflow-allow-fs-search".into(),
-                tool_pattern: "search_*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-workflow-allow-fs-mkdir".into(),
-                tool_pattern: "make_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 删除操作：需要确认（危险操作）
-            PermissionRule {
-                id: "builtin-workflow-ask-delete".into(),
-                tool_pattern: "delete_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 命令执行：自动允许
-            PermissionRule {
-                id: "builtin-workflow-allow-command".into(),
-                tool_pattern: "execute_command".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 其他 MCP 工具：自动允许
-            PermissionRule {
-                id: "builtin-workflow-allow-other-tools".into(),
-                tool_pattern: "*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Workflow],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 0,
-            },
+            // Identical to the Auto mode rules: fully automatic, except file deletion which still asks.
+            r(
+                "builtin-workflow-allow-fs-read",
+                "read_file",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-workflow-allow-fs-list",
+                "list_directory",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-workflow-allow-fs-write",
+                "write_file",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-workflow-allow-fs-edit",
+                "replace_in_file",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-workflow-allow-fs-glob",
+                "glob",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-workflow-allow-fs-search",
+                "search_*",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-workflow-allow-fs-mkdir",
+                "make_directory",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            // Delete operations: require confirmation (dangerous).
+            r(
+                "builtin-workflow-ask-delete",
+                "delete_file",
+                &[AgentMode::Workflow],
+                PermissionAction::Ask,
+            ),
+            // Command execution: auto-allowed.
+            r(
+                "builtin-workflow-allow-command",
+                "execute_command",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+            ),
+            // Other MCP tools: auto-allowed.
+            rf(
+                "builtin-workflow-allow-other-tools",
+                "*",
+                &[AgentMode::Workflow],
+                PermissionAction::Allow,
+                None,
+                None,
+                0,
+            ),
         ],
         AgentMode::Plan => vec![
-            // Plan 模式：只读，所有写/删操作拒绝
-            PermissionRule {
-                id: "builtin-plan-allow-read".into(),
-                tool_pattern: "read_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-plan-allow-list-dir".into(),
-                tool_pattern: "list_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-plan-allow-search".into(),
-                tool_pattern: "search_*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // 写/删操作：拒绝
-            PermissionRule {
-                id: "builtin-plan-deny-write".into(),
-                tool_pattern: "write_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            PermissionRule {
-                id: "builtin-plan-deny-replace".into(),
-                tool_pattern: "replace_in_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            PermissionRule {
-                id: "builtin-plan-deny-mkdir".into(),
-                tool_pattern: "make_directory".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            PermissionRule {
-                id: "builtin-plan-deny-delete".into(),
-                tool_pattern: "delete_file".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            // 禁止 Web 访问
-            PermissionRule {
-                id: "builtin-plan-deny-web-fetch".into(),
-                tool_pattern: "web_fetch".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            PermissionRule {
-                id: "builtin-plan-deny-web-search".into(),
-                tool_pattern: "web_search".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            // Git 读操作：允许（Plan 阶段可以查看历史和状态）
-            PermissionRule {
-                id: "builtin-plan-allow-git-status".into(),
-                tool_pattern: "git_status".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-plan-allow-git-diff".into(),
-                tool_pattern: "git_diff".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            PermissionRule {
-                id: "builtin-plan-allow-git-log".into(),
-                tool_pattern: "git_log".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Allow,
-                path_pattern: None,
-                priority: 10,
-            },
-            // Git 写操作：拒绝（Plan 模式不修改文件）
-            PermissionRule {
-                id: "builtin-plan-deny-git-add".into(),
-                tool_pattern: "git_add".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            PermissionRule {
-                id: "builtin-plan-deny-git-commit".into(),
-                tool_pattern: "git_commit".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Deny,
-                path_pattern: None,
-                priority: 20,
-            },
-            // 其他 MCP 工具需要确认
-            PermissionRule {
-                id: "builtin-plan-ask-other-tools".into(),
-                tool_pattern: "*".into(),
-                server_id: None,
-                modes: vec![AgentMode::Plan],
-                action: PermissionAction::Ask,
-                path_pattern: None,
-                priority: 0,
-            },
+            // Plan mode is read-only: all write/delete operations denied.
+            r(
+                "builtin-plan-allow-read",
+                "read_file",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-plan-allow-list-dir",
+                "list_directory",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-plan-allow-search",
+                "search_*",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            // Write/delete operations: denied.
+            rf(
+                "builtin-plan-deny-write",
+                "write_file",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            rf(
+                "builtin-plan-deny-replace",
+                "replace_in_file",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            rf(
+                "builtin-plan-deny-mkdir",
+                "make_directory",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            rf(
+                "builtin-plan-deny-delete",
+                "delete_file",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            // No web access.
+            rf(
+                "builtin-plan-deny-web-fetch",
+                "web_fetch",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            rf(
+                "builtin-plan-deny-web-search",
+                "web_search",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            // Git read operations: allowed (Plan may inspect history and status).
+            r(
+                "builtin-plan-allow-git-status",
+                "git_status",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-plan-allow-git-diff",
+                "git_diff",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-plan-allow-git-log",
+                "git_log",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            // Git write operations: denied (Plan mode makes no file changes).
+            rf(
+                "builtin-plan-deny-git-add",
+                "git_add",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            rf(
+                "builtin-plan-deny-git-commit",
+                "git_commit",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            // Memory tools: reads allowed, writes denied.
+            r(
+                "builtin-plan-allow-memory-read",
+                "recall",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-plan-allow-memory-search",
+                "search_memory",
+                &[AgentMode::Plan],
+                PermissionAction::Allow,
+            ),
+            rf(
+                "builtin-plan-deny-memory-write",
+                "remember",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            rf(
+                "builtin-plan-deny-memory-update",
+                "update_memory",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            rf(
+                "builtin-plan-deny-memory-forget",
+                "forget_memory",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            // Command execution has side effects, conflicting with Plan mode's research-only goal -> explicitly denied.
+            rf(
+                "builtin-plan-deny-execute-command",
+                "execute_command",
+                &[AgentMode::Plan],
+                PermissionAction::Deny,
+                None,
+                None,
+                20,
+            ),
+            // Other MCP tools require confirmation.
+            rf(
+                "builtin-plan-ask-other-tools",
+                "*",
+                &[AgentMode::Plan],
+                PermissionAction::Ask,
+                None,
+                None,
+                0,
+            ),
         ],
     }
 }
 
-// ====== 简单 Glob 匹配 ======
+// ====== Simple glob matching ======
 
-/// 简单的 glob 匹配，仅支持 `*`（匹配任意字符序列）。
-/// 不处理 `?` 或 `[...]`。
+/// Simple glob -> regex.
+/// Supports `*` (any character sequence, not crossing path separators) and `**` (any depth, including path separators).
+/// All other characters (including `?`, `[`, `]`) are escaped literally, preserving the legacy implementation's behavior.
+fn glob_to_regex(pattern: &str) -> String {
+    let mut out = String::from("^");
+    let mut it = pattern.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '*' {
+            if it.peek() == Some(&'*') {
+                it.next();
+                out.push_str(".*");
+            } else {
+                out.push_str("[^/]*");
+            }
+        } else {
+            out.push_str(&regex::escape(&c.to_string()));
+        }
+    }
+    out.push('$');
+    out
+}
+
+/// Simple glob matching supporting `*` and `**`.
+/// `*` matches any character sequence (not crossing `/`); `**` matches any depth (may cross `/`).
 fn glob_match(pattern: &str, name: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if let Some(suffix) = pattern.strip_prefix('*') {
-        // 模式以 * 开头：如 `*_file` 匹配任何以 `_file` 结尾的
-        return name.ends_with(suffix);
-    }
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        // 模式以 * 结尾：如 `search_*` 匹配任何以 `search_` 开头的
-        return name.starts_with(prefix);
-    }
-    // 无通配符：精确匹配
-    pattern == name
+    Regex::new(&glob_to_regex(pattern))
+        .map(|re| re.is_match(name))
+        .unwrap_or(false)
 }
 
-// ====== 路径匹配 ======
+// ====== Path matching ======
 
-/// 检查工具参数中的 path 是否匹配路径模式。
-/// 如果规则没有 `path_pattern`，则忽略路径检查。
-fn path_matches(rule_path: &str, arguments: &Value) -> bool {
-    let arg_path = match arguments.get("path") {
-        Some(Value::String(p)) => p,
-        _ => return true, // 无 path 参数，忽略路径检查
+/// Checks whether path-like values in the tool arguments match the rule's path pattern.
+/// If the rule has no path_pattern, the path check is skipped.
+///
+/// Supported path-like argument keys: path, basePath, file_path, filePath, url (single values),
+/// plus files / paths (arrays, checked per element), so tools such as search_files(basePath) or
+/// git_add(files[]) cannot silently bypass path rules.
+///
+/// Semantics differ by rule action (prefer strict over loose):
+/// - Deny rules: any matching path triggers the rule (one restricted path inside an array still triggers Deny);
+/// - Allow/Ask rules: all paths must match (authorization cannot be partially out of bounds).
+///
+/// When the arguments carry no path-like values at all, legacy behavior is kept: the rule still matches (degenerates to a pure tool_pattern rule).
+fn path_matches(rule: &PermissionRule, arguments: &Value) -> bool {
+    let pattern = match &rule.path_pattern {
+        Some(p) => p,
+        None => return true,
     };
-    glob_match(rule_path, arg_path)
+    let mut paths: Vec<&str> = Vec::new();
+    for key in ["path", "basePath", "file_path", "filePath", "url"] {
+        if let Some(v) = arguments.get(key).and_then(|v| v.as_str()) {
+            paths.push(v);
+        }
+    }
+    for key in ["files", "paths"] {
+        if let Some(arr) = arguments.get(key).and_then(|v| v.as_array()) {
+            paths.extend(arr.iter().filter_map(|v| v.as_str()));
+        }
+    }
+    if paths.is_empty() {
+        return true;
+    }
+    match rule.action {
+        PermissionAction::Deny => paths.iter().any(|p| glob_match(pattern, p)),
+        _ => paths.iter().all(|p| glob_match(pattern, p)),
+    }
 }
 
-// ====== 规则评估 ======
+// ====== Session-level always-allow rules ======
 
-/// 检查一条规则是否匹配当前工具调用。
+/// Session rules valid while the app process runs (created by the approval dialog's "always allow this session" option).
+/// Priority 50 (above built-in defaults 10/20, below any higher user-defined priority);
+/// Deny rules (from any source) still always win - a session allow cannot cross the Deny line.
+static SESSION_RULES: std::sync::OnceLock<parking_lot::RwLock<Vec<PermissionRule>>> =
+    std::sync::OnceLock::new();
+
+fn session_rules() -> &'static parking_lot::RwLock<Vec<PermissionRule>> {
+    SESSION_RULES.get_or_init(|| parking_lot::RwLock::new(Vec::new()))
+}
+
+/// Registers a session-level allow rule (valid for the process lifetime).
+pub fn add_session_rule(rule: PermissionRule) {
+    session_rules().write().push(rule);
+}
+
+/// Clears session rules (for tests).
+#[cfg(test)]
+pub fn clear_session_rules() {
+    session_rules().write().clear();
+}
+
+// ====== Rule evaluation ======
+
+/// Checks whether a single rule matches the current tool call.
 fn rule_matches(
     rule: &PermissionRule,
     tool_name: &str,
@@ -663,42 +712,54 @@ fn rule_matches(
     arguments: &Value,
     agent_mode: &AgentMode,
 ) -> bool {
-    // 1. 检查模式匹配
+    // 1. Check mode match.
     if !rule.modes.is_empty() && !rule.modes.contains(agent_mode) {
         return false;
     }
-    // 2. 检查 server_id
+    // 2. Check server_id.
     if let Some(ref sid) = rule.server_id {
         if sid != server_id {
             return false;
         }
     }
-    // 3. 检查工具名称 glob
+    // 3. Check tool name glob.
     if !glob_match(&rule.tool_pattern, tool_name) {
         return false;
     }
-    // 4. 检查路径模式
-    if let Some(ref pat) = rule.path_pattern {
-        if !path_matches(pat, arguments) {
+    // 4. Check path pattern (multiple path keys; semantics in path_matches).
+    if !path_matches(rule, arguments) {
+        return false;
+    }
+    // 5. Command prefix: execute_command only - the first whitespace-delimited token must match exactly.
+    if let Some(prefix) = &rule.command_prefix {
+        let cmd = arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let first_token = cmd.split_whitespace().next().unwrap_or("");
+        if tool_name != "execute_command"
+            || first_token.is_empty()
+            || !first_token.eq_ignore_ascii_case(prefix)
+        {
             return false;
         }
     }
     true
 }
 
-/// 评估工具调用权限。
+/// Evaluates permission for a tool call.
 ///
-/// # 参数
-/// - `tool_name` — MCP 工具名称
+/// # Arguments
+/// - `tool_name` — MCP tool name
 /// - `server_id` — MCP server ID
-/// - `arguments` — 工具调用参数（JSON）
-/// - `agent_mode` — 当前 agent 模式
-/// - `custom_rules` — 用户自定义规则（来自 `.aio/permissions.json`）
+/// - `arguments` — tool call arguments (JSON)
+/// - `agent_mode` — current agent mode
+/// - `custom_rules` — user-defined rules (from `.aio/permissions.json`)
 ///
-/// # 返回
-/// `PermissionAction::Allow` — 可执行
-/// `PermissionAction::Ask` — 需要用户确认
-/// `PermissionAction::Deny` — 已拒绝
+/// # Returns
+/// `PermissionAction::Allow` — may execute
+/// `PermissionAction::Ask` — requires user confirmation
+/// `PermissionAction::Deny` — denied
 pub fn check_permission(
     tool_name: &str,
     server_id: &str,
@@ -706,42 +767,56 @@ pub fn check_permission(
     agent_mode: &AgentMode,
     custom_rules: &[PermissionRule],
 ) -> PermissionAction {
-    // 1. 收集所有匹配规则（内置 + 自定义）
+    // 1. Collect all matching rules (built-in + custom + session always-allow), flagging which are custom.
     let builtin_rules = default_rules_for_mode(agent_mode);
-    let mut all_candidates: Vec<&PermissionRule> = Vec::new();
+    let session = session_rules().read().clone();
+    let mut all_candidates: Vec<(&PermissionRule, bool)> = Vec::new();
 
     for rule in &builtin_rules {
         if rule_matches(rule, tool_name, server_id, arguments, agent_mode) {
-            all_candidates.push(rule);
+            all_candidates.push((rule, false));
         }
     }
     for rule in custom_rules {
         if rule_matches(rule, tool_name, server_id, arguments, agent_mode) {
-            all_candidates.push(rule);
+            all_candidates.push((rule, true));
+        }
+    }
+    // Session rules: participate at high priority; Deny (any source) still wins globally at step 3.
+    for rule in &session {
+        if rule_matches(rule, tool_name, server_id, arguments, agent_mode) {
+            all_candidates.push((rule, true));
         }
     }
 
-    // 2. 按优先级排序（高 → 低）
-    all_candidates.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
+    // 2. Sort by priority (high -> low); at equal priority, custom rules beat built-in rules,
+    //    matching the documented promise of PermissionsFile.rules ("override built-in default rules").
+    all_candidates.sort_by_key(|(rule, is_custom)| {
+        (
+            std::cmp::Reverse(rule.priority),
+            std::cmp::Reverse(*is_custom),
+        )
+    });
 
-    // 3. 检查是否有 Deny（Deny 总是优先于 Allow 和 Ask）
-    for rule in &all_candidates {
+    // 3. Check for any Deny (Deny always beats Allow and Ask, regardless of priority).
+    for (rule, _) in &all_candidates {
         if rule.action == PermissionAction::Deny {
             return PermissionAction::Deny;
         }
     }
 
-    // 4. 取最高优先级的非 Deny 动作
-    if let Some(highest) = all_candidates.first() {
+    // 4. Take the highest-priority non-Deny action (custom wins ties).
+    if let Some((highest, _)) = all_candidates.first() {
         return highest.action.clone();
     }
 
-    // 5. 无匹配规则：fail-closed → Ask
+    // 5. No matching rule: fail-closed -> Ask.
     PermissionAction::Ask
 }
 
-/// 检查工具调用权限（简化版，直接使用默认规则）。
-/// 供 `call_mcp_tool` 后端防御调用。
+/// Checks tool call permission (simplified: built-in default rules only, no custom rules read).
+/// For tests and internal paths that need "pure built-in semantics" only; real tool calls must
+/// always go through [`check_permission`] (which includes .aio/permissions.json custom rules).
 #[allow(dead_code)]
 pub fn check_permission_defaults(
     tool_name: &str,
@@ -753,10 +828,10 @@ pub fn check_permission_defaults(
     check_permission(tool_name, server_id, arguments, agent_mode, &custom_rules)
 }
 
-// ====== 路径工具 ======
+// ====== Path utilities ======
 
-/// 加载项目级权限配置。
-/// 如果文件不存在，返回默认空配置。
+/// Loads the project-level permission config.
+/// Returns the default empty config if the file does not exist.
 pub fn load_permissions(project_path: Option<&str>) -> PermissionsFile {
     let path = match project_path {
         Some(p) => std::path::Path::new(p)
@@ -770,7 +845,7 @@ pub fn load_permissions(project_path: Option<&str>) -> PermissionsFile {
     match std::fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<PermissionsFile>(&content) {
             Ok(f) => f,
-            // 解析失败时警告（旧实现静默 unwrap_or_default，用户自定义规则会无声消失）
+            // Warn on parse failure so user-defined rules do not silently vanish.
             Err(e) => {
                 tracing::warn!(
                     "[permissions] 解析 {} 失败，已回退到空配置：{}",
@@ -806,13 +881,33 @@ mod tests {
         assert!(glob_match("*_file", "write_file"));
         assert!(glob_match("*_file", "delete_file"));
         assert!(!glob_match("*_file", "list_directory"));
+
+        // ** matches paths recursively: dir/** should match deep paths.
+        assert!(glob_match("dir/**", "dir/a/b"));
+        assert!(glob_match("dir/**", "dir/file.txt"));
+        assert!(!glob_match("dir/**", "other/a"));
+        assert!(!glob_match("dir/**", "beta/x"));
+        // * does not cross `/`: dir/* matches one level only.
+        assert!(glob_match("dir/*", "dir/a.rs"));
+        assert!(!glob_match("dir/*", "dir/a/b.rs"));
+        // .env* keeps current semantics.
+        assert!(glob_match(".env*", ".env"));
+        assert!(glob_match(".env*", ".env.local"));
+        assert!(!glob_match(".env*", "x.env"));
+        // ? / [ ] are treated literally.
+        assert!(glob_match("a?b", "a?b"));
+        assert!(!glob_match("a?b", "axb"));
     }
 
     #[test]
     fn test_normal_mode_read_allowed() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result =
-            check_permission_defaults("read_file", "__aio-filesystem__", &args, &AgentMode::Normal);
+        let result = check_permission_defaults(
+            "read_file",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Normal,
+        );
         assert_eq!(result, PermissionAction::Allow);
     }
 
@@ -821,7 +916,7 @@ mod tests {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
         let result = check_permission_defaults(
             "write_file",
-            "__aio-filesystem__",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
         );
@@ -833,7 +928,7 @@ mod tests {
         let args = serde_json::json!({"path": "src/main.rs"});
         let result = check_permission_defaults(
             "delete_file",
-            "__aio-filesystem__",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
         );
@@ -843,32 +938,129 @@ mod tests {
     #[test]
     fn test_plan_mode_write_denied() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
-        let result =
-            check_permission_defaults("write_file", "__aio-filesystem__", &args, &AgentMode::Plan);
+        let result = check_permission_defaults(
+            "write_file",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Plan,
+        );
         assert_eq!(result, PermissionAction::Deny);
+    }
+
+    #[test]
+    fn test_plan_mode_execute_command_denied() {
+        let args = serde_json::json!({"command": "cargo test"});
+        let result = check_permission_defaults(
+            "execute_command",
+            crate::core::ids::BUILTIN_SERVER_ID,
+            &args,
+            &AgentMode::Plan,
+        );
+        assert_eq!(result, PermissionAction::Deny);
+    }
+
+    /// Session-level always-allow: once registered, identical calls no longer ask;
+    /// command prefix is token-level matching (blocks injection bypass); Deny still wins.
+    #[test]
+    fn session_allow_rules_override_ask_but_not_deny() {
+        clear_session_rules();
+        let cmd_args = serde_json::json!({"command": "cargo build"});
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &cmd_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Ask
+        );
+        add_session_rule(PermissionRule {
+            id: "test-session-cargo".into(),
+            tool_pattern: "execute_command".into(),
+            server_id: None,
+            modes: Vec::new(),
+            action: PermissionAction::Allow,
+            path_pattern: None,
+            command_prefix: Some("cargo".into()),
+            priority: 50,
+        });
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &cmd_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Allow
+        );
+        // Different prefix -> no match (falls back to built-in Ask).
+        let npm_args = serde_json::json!({"command": "npm test"});
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &npm_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Ask
+        );
+        // Prefix injection bypass: first token is not cargo -> no match.
+        let inject_args = serde_json::json!({"command": "cargox; rm -rf /"});
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &inject_args,
+                &AgentMode::Normal
+            ),
+            PermissionAction::Ask
+        );
+        // Session allow cannot cross Deny (Plan mode has a built-in Deny for execute_command).
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &cmd_args,
+                &AgentMode::Plan
+            ),
+            PermissionAction::Deny
+        );
+        clear_session_rules();
     }
 
     #[test]
     fn test_auto_mode_write_allowed() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
-        let result =
-            check_permission_defaults("write_file", "__aio-filesystem__", &args, &AgentMode::Auto);
+        let result = check_permission_defaults(
+            "write_file",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Auto,
+        );
         assert_eq!(result, PermissionAction::Allow);
     }
 
     #[test]
     fn test_auto_mode_delete_asks() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result =
-            check_permission_defaults("delete_file", "__aio-filesystem__", &args, &AgentMode::Auto);
+        let result = check_permission_defaults(
+            "delete_file",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Auto,
+        );
         assert_eq!(result, PermissionAction::Ask);
     }
 
     #[test]
     fn test_off_mode_denies_all() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result =
-            check_permission_defaults("read_file", "__aio-filesystem__", &args, &AgentMode::Off);
+        let result = check_permission_defaults(
+            "read_file",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Off,
+        );
         assert_eq!(result, PermissionAction::Deny);
     }
 
@@ -881,12 +1073,13 @@ mod tests {
             modes: vec![AgentMode::Normal],
             action: PermissionAction::Allow,
             path_pattern: None,
-            priority: 100, // 高于内置（默认 10）
+            command_prefix: None,
+            priority: 100, // above built-in (default 10)
         }];
         let args = serde_json::json!({"path": "src/old.rs"});
         let result = check_permission(
             "delete_file",
-            "__aio-filesystem__",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
             &custom,
@@ -903,12 +1096,13 @@ mod tests {
             modes: vec![AgentMode::Auto],
             action: PermissionAction::Deny,
             path_pattern: Some(".env*".into()),
-            priority: 5, // 低于内置 allow（10），但 Deny 总是优先
+            command_prefix: None,
+            priority: 5, // below built-in allow (10), but Deny always wins
         }];
         let args = serde_json::json!({"path": ".env"});
         let result = check_permission(
             "read_file",
-            "__aio-filesystem__",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Auto,
             &custom,
@@ -917,11 +1111,185 @@ mod tests {
     }
 
     #[test]
+    fn test_normal_memory_tools_allowed() {
+        let args = serde_json::json!({});
+        for tool in [
+            "remember",
+            "recall",
+            "search_memory",
+            "update_memory",
+            "forget_memory",
+        ] {
+            let result = check_permission_defaults(
+                tool,
+                crate::core::ids::BUILTIN_FS_SERVER_ID,
+                &args,
+                &AgentMode::Normal,
+            );
+            assert_eq!(
+                result,
+                PermissionAction::Allow,
+                "tool {tool} should be allowed in Normal"
+            );
+        }
+    }
+
+    #[test]
+    fn test_plan_memory_read_allowed_write_denied() {
+        let args = serde_json::json!({});
+        assert_eq!(
+            check_permission_defaults(
+                "recall",
+                crate::core::ids::BUILTIN_FS_SERVER_ID,
+                &args,
+                &AgentMode::Plan
+            ),
+            PermissionAction::Allow,
+        );
+        assert_eq!(
+            check_permission_defaults(
+                "remember",
+                crate::core::ids::BUILTIN_FS_SERVER_ID,
+                &args,
+                &AgentMode::Plan
+            ),
+            PermissionAction::Deny,
+        );
+    }
+
+    #[test]
     fn test_no_match_fallbacks_to_ask() {
-        // 自定义工具不在内置规则中
+        // Custom tool not covered by built-in rules.
         let args = serde_json::json!({"query": "SELECT * FROM users"});
         let result =
             check_permission_defaults("custom_db_query", "my-db-server", &args, &AgentMode::Normal);
         assert_eq!(result, PermissionAction::Ask);
+    }
+
+    /// Regression: same-priority custom rules must override built-in rules (per the documented "override built-in default rules").
+    #[test]
+    fn test_custom_rule_same_priority_overrides_builtin() {
+        // Normal mode: read_file is built-in Allow (priority 10); a same-priority custom rule tightens it to Ask.
+        let custom = vec![PermissionRule {
+            id: "tighten-read".into(),
+            tool_pattern: "read_file".into(),
+            server_id: None,
+            modes: vec![],
+            action: PermissionAction::Ask,
+            path_pattern: None,
+            command_prefix: None,
+            priority: 10,
+        }];
+        let args = serde_json::json!({"path": "src/main.rs"});
+        let result = check_permission(
+            "read_file",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Normal,
+            &custom,
+        );
+        assert_eq!(result, PermissionAction::Ask, "同优先级自定义规则必须胜出");
+    }
+
+    /// Deny wins globally: a low-priority custom Deny still takes effect.
+    #[test]
+    fn test_custom_low_priority_deny_still_wins() {
+        let custom = vec![PermissionRule {
+            id: "deny-write-src".into(),
+            tool_pattern: "write_file".into(),
+            server_id: None,
+            modes: vec![AgentMode::Auto],
+            action: PermissionAction::Deny,
+            path_pattern: Some("src/**".into()),
+            command_prefix: None,
+            priority: 1,
+        }];
+        let args = serde_json::json!({"path": "src/main.rs", "content": "x"});
+        let result = check_permission(
+            "write_file",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Auto,
+            &custom,
+        );
+        assert_eq!(result, PermissionAction::Deny);
+    }
+
+    /// Regression: path_pattern must apply to basePath / files[] arguments.
+    #[test]
+    fn test_path_pattern_matches_basepath_and_files_array() {
+        let deny_env = vec![PermissionRule {
+            id: "deny-env".into(),
+            tool_pattern: "*".into(),
+            server_id: None,
+            modes: vec![],
+            action: PermissionAction::Deny,
+            path_pattern: Some(".env*".into()),
+            command_prefix: None,
+            priority: 100,
+        }];
+        // search_files uses basePath.
+        let r = check_permission(
+            "search_files",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &serde_json::json!({"basePath": ".env", "query": "x"}),
+            &AgentMode::Auto,
+            &deny_env,
+        );
+        assert_eq!(
+            r,
+            PermissionAction::Deny,
+            "basePath 命中 .env* 必须触发 Deny"
+        );
+        // git_add uses a files array: Deny semantics match on any hit.
+        let r = check_permission(
+            "git_add",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &serde_json::json!({"files": [".env", "src/a.rs"]}),
+            &AgentMode::Auto,
+            &deny_env,
+        );
+        assert_eq!(
+            r,
+            PermissionAction::Deny,
+            "files 数组混入 .env 必须触发 Deny"
+        );
+    }
+
+    /// Allow/Ask path rules use all-paths-must-match semantics (no partially out-of-bounds authorization).
+    #[test]
+    fn test_allow_path_rule_requires_all_paths_to_match() {
+        let allow_src = vec![PermissionRule {
+            id: "allow-src".into(),
+            tool_pattern: "git_add".into(),
+            server_id: None,
+            modes: vec![AgentMode::Normal],
+            action: PermissionAction::Allow,
+            path_pattern: Some("src/**".into()),
+            command_prefix: None,
+            priority: 100,
+        }];
+        // All paths inside src/** -> matches this Allow rule.
+        let r = check_permission(
+            "git_add",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &serde_json::json!({"files": ["src/a.rs", "src/b.rs"]}),
+            &AgentMode::Normal,
+            &allow_src,
+        );
+        assert_eq!(r, PermissionAction::Allow);
+        // A path outside src/** mixed in -> this Allow rule no longer matches, falls back to built-in/Ask.
+        let r2 = check_permission(
+            "git_add",
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &serde_json::json!({"files": ["src/a.rs", "README.md"]}),
+            &AgentMode::Normal,
+            &allow_src,
+        );
+        assert_ne!(
+            r2,
+            PermissionAction::Allow,
+            "部分路径越界时不得命中 Allow 规则"
+        );
     }
 }

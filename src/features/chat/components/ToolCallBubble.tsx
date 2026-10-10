@@ -5,13 +5,13 @@ import { t } from '../../../core/i18n';
 
 interface Props {
   toolCall: ToolCall;
-  /** 当前状态：'calling' = 工具调用中；'success' = 已返回结果；'error' = 失败 */
+  /** Current state: 'calling' = tool call in flight; 'success' = result returned; 'error' = failed */
   state: 'calling' | 'success' | 'error';
-  /** 工具执行结果（success 时） */
+  /** Tool execution result (when success) */
   result?: ToolResultContent[];
-  /** 错误信息（error 时） */
+  /** Error message (when error) */
   error?: string;
-  /** 工具名（用于显示） */
+  /** Tool name (for display) */
   serverName?: string;
 }
 
@@ -31,7 +31,7 @@ const ToolCallBubble: Component<Props> = (props) => {
       class="mb-1.5 rounded-md overflow-hidden text-xs animate-expand-width"
       style={{ border: '1px solid var(--border-dim)' }}
     >
-      {/* 更紧凑的头部：无衬底背景，仅 hover 时交互 */}
+      {/* More compact header: no base background, interactive only on hover */}
       <div
         class="flex items-center gap-1.5 px-2 py-1 cursor-pointer select-none rounded-md transition-colors duration-150"
         style={{ background: 'rgba(var(--text-base-rgb),0.03)' }}
@@ -53,12 +53,14 @@ const ToolCallBubble: Component<Props> = (props) => {
             fallback={
               <Show
                 when={props.state === 'error'}
-                fallback={<span style={{ color: '#7cd9a0', 'font-size': '10px' }}>✓</span>}
+                fallback={
+                  <span style={{ color: 'var(--color-success)', 'font-size': '10px' }}>✓</span>
+                }
               >
                 <Icon
                   src="/icons/app-logo/close-x.svg"
                   class="w-2.5 h-2.5"
-                  style={{ color: '#ff8a8a' }}
+                  style={{ color: 'var(--color-danger)' }}
                 />
               </Show>
             }
@@ -66,7 +68,7 @@ const ToolCallBubble: Component<Props> = (props) => {
             <Icon
               src="/icons/app-logo/loading.svg"
               class="w-2.5 h-2.5 animate-spin"
-              style={{ color: '#e0c060' }}
+              style={{ color: 'var(--color-warn)' }}
             />
           </Show>
         </span>
@@ -99,7 +101,7 @@ const ToolCallBubble: Component<Props> = (props) => {
         </span>
       </div>
 
-      {/* 展开详情 */}
+      {/* Expanded details */}
       <Show when={expanded()}>
         <div
           class="px-2 py-1.5 flex flex-col gap-1.5 text-[11px]"

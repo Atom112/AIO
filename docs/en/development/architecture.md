@@ -41,12 +41,17 @@ Routing centers on the chat page and nested settings pages. Provider details wit
 - `commands/skill.rs`: Global/project Skills, marketplace and NPX import;
 - `commands/project.rs`: Project CRUD and `.aio/` initialization;
 - `commands/lsp.rs`, `commands/git.rs`: Project language service and Git operations.
+- `commands/memory.rs`, `commands/embedding.rs`: project memory (RAG) fact CRUD / retrieval and embedding provisioning;
+- `commands/model_download.rs`: on-demand model downloader (embed manifest + install-dir/enable management, settings page "Embedding models");
+- `services/memory/`: per-project memory store (facts + FTS5 + vector scoring), hybrid retrieval and memory tools;
+- `plugins/embed/`: embedding (vectorization) plugin (local ONNX only: bundled model + downloaded models).
 
 ## Plugin Boundary
 
 - Provider: Google, Anthropic, Ollama and OpenAI-compatible.
 - Local Engine: llama.cpp, Ollama and vLLM (auto-discovered via engine scanning, see [providers-and-models.md -> Engine Scanning](../usage/providers-and-models.md#engine-scanning-and-auto-discovery)).
 - MCP Transport: stdio, HTTP and Streamable HTTP.
+- Embed: local ONNX text embeddings (vectorization) powering semantic project memory — bundled all-MiniLM-L6-v2 out of the box, plus mainstream open-source models downloaded via Settings → Embedding models; online embedding is no longer supported.
 - LSP: Manages startup, requests, diagnostics and shutdown for different language servers.
 
 The Manager registers plugins at startup; commands look up implementations by identifier. New implementations should reuse existing traits rather than adding parallel dispatch layers.
@@ -59,7 +64,8 @@ Long-term data:
 - JSON: Provider, MCP, Skill, model catalog and app settings;
 - System credential store: API Keys and MCP secrets;
 - Project `.aio/`: Project-level MCP, Skill and permissions.
-- Project `.aio/knowledge.json`: Optional cross-session project knowledge.
+- Project `.aio/knowledge.json`: Optional cross-session project knowledge;
+- Project `.aio/memory/memory.sqlite`: project-level semantic memory (RAG) store with facts, version audit, FTS5 full-text and vector indexes.
 
 Runtime state:
 
@@ -96,6 +102,14 @@ On window destruction, stream tasks are cancelled, local engines are terminated,
 
 Plan mode only researches and outputs a plan; workflow mode splits and auto-executes tasks. Sub-agents use a role-constrained toolset and cannot delegate further.
 
+### Tool Execution Semantics
+
+- **Parallel dispatch**: read-only built-in tools within the same response block execute concurrently (`FuturesUnordered`); mutating tools and MCP tools run serially in original order; `role:tool` backfill preserves index order. Toggle: `parallelToolExecution`.
+- **Main agent tool set** (`mainAgentToolAccess`): `hybrid` by default — read-only tools called directly, mutating work delegated; `orchestrator` is the legacy strict mode; `full` gives the main agent all built-in tools.
+- **MCP tool injection**: tools from servers enabled for the assistant are injected into the main agent and the `general` subagent (`allow_mcp_tools`); name collisions are rewritten to `mcp__<server>__<tool>`; untrusted servers force per-call approval in Auto/Workflow mode (`trusted` field).
+- **Model call retry**: the POST + status-check phase retries transport errors and 429/5xx with 1s/2s/4s backoff (`modelCallRetries`, default 3); mid-stream errors are not retried.
+- **Background subagents**: `delegate_task(wait=false)` handles and cancellation tokens are registered in `SubagentHandles` and can be stopped individually via the `stop_subagent` command (parent cancel cascades).
+
 ### Permissions and Retries
 
 The permission module first loads mode default rules, then overlays `.aio/permissions.json`. Matching considers tool name, Server, mode and path; deny rules take precedence, then priority selection. When a decision requires asking, the backend creates a pending approval request and dispatches it to the frontend via events; pending calls resume once allow or deny is received.
@@ -110,9 +124,13 @@ Tool failures retry up to 2 times by default, with a 500ms interval. The retry w
 
 When an Agent is aborted or a streaming event fails, already-produced steps, tool outputs and file changes are still merged into the current assistant message and persisted, avoiding a blank final reply.
 
-### Cross-session Memory
+### Project Memory (RAG)
 
-When `knowledgeEnabled` is enabled, the system prompt injects existing entries from `.aio/knowledge.json` and adds `remember` and `recall` tools to the Agent. Knowledge is isolated per project, updated by key, with a maximum of 50 entries.
+With project memory enabled (`memoryEnabled`, overridable per project in project settings), the Agent gets five tools (`remember` / `recall` / `search_memory` / `update_memory` / `forget_memory`); facts are written to a per-project `.aio/memory/memory.sqlite` (semantic vectors + FTS5 keyword hybrid retrieval) and auto-injected into the stable system-prompt prefix (index=1) under a token budget. The embedding model is configured per project (stored in the project memory store meta, switched from the Memory panel; defaults to the bundled all-MiniLM-L6-v2 that works out of the box and offline, or any other local model downloaded and enabled in Settings → Embedding models; switching clears that project's vectors and re-embeds automatically); keyword retrieval is the automatic fallback when embeddings are not configured or the selected model is disabled.
+
+Self-evolution landed in P2: after each agent turn, facts are extracted asynchronously in the background (sleep-time compute, debounced, per-project opt-in); near-duplicate high-similarity facts are arbitrated by the LLM (merge / update / supersede / keep_separate, fail-safe on errors), with a full audit trail in `fact_versions`; when active facts exceed the per-project cap, lowest-scoring non-pinned facts are archived by importance x access decay. A memory panel (search / list / edit / pin / archive / delete / version history / reindex / prune / clear) is available in project settings.
+
+P3 integrates sqlite-vec (vec0 virtual tables) for in-SQLite vector search (auto-registered via sqlite3_auto_extension, falling back to brute-force cosine when unavailable); memory can be exported/imported as JSON (no vectors; reindex after import) and reindexing emits progress events. P4 adds code-level RAG: parallel `code_chunks` + `fts_code` + `vec_code` stores, incremental `memory_code_index` (skips unchanged files by mtime/size and ignores .git/node_modules/target etc.), a `search_code` tool plus `memory_code_search` command doing vector + keyword fusion; subagents (explorer/architect, etc.) get read-only `recall` / `search_code` tools.
 
 ## MCP Data Flow
 

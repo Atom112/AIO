@@ -1,17 +1,17 @@
 /**
- * WorkflowVisualization — 工作流步骤可视化管线
+ * WorkflowVisualization - workflow step visualization pipeline
  *
- * 在工作流执行期间，于 TopicSidebar 上方渲染一条水平步骤卡片管线，
- * 实时显示各步骤的状态（pending/running/completed/failed）和耗时。
+ * While a workflow runs, renders a horizontal step-card pipeline above TopicSidebar,
+ * showing each step's status (pending/running/completed/failed) and duration in real time.
  *
- * 数据来源：store 中 workflowState 信号（由后端 Tauri 事件驱动更新）。
+ * Data source: the workflowState signal in the store (driven by backend Tauri events).
  */
 import { Component, createSignal, Show, For } from 'solid-js';
 import { workflowState, type WorkflowStepState } from '../../../core/store/store';
 import Icon from '../../../shared/components/Icon';
 import { t, type TranslationKey } from '../../../core/i18n';
 
-/** 步骤状态 → Tailwind 圆点颜色 */
+/** Step status → Tailwind dot color */
 const STATUS_DOT: Record<string, string> = {
   pending: 'bg-gray-400',
   running: 'bg-blue-500 animate-pulse',
@@ -19,7 +19,7 @@ const STATUS_DOT: Record<string, string> = {
   failed: 'bg-red-500',
 };
 
-/** 步骤状态 → Tailwind 文字颜色 */
+/** Step status → Tailwind text color */
 const STATUS_TEXT: Record<string, string> = {
   pending: 'text-gray-400',
   running: 'text-blue-400',
@@ -34,7 +34,7 @@ const STATUS_LABEL: Record<string, TranslationKey> = {
   failed: 'agent.status.failed',
 };
 
-/** 毫秒 → "Xs" 格式（秒取整） */
+/** Milliseconds → "Xs" format (seconds rounded) */
 function formatDuration(ms?: number): string {
   if (!ms || ms <= 0) return '';
   return `${Math.round(ms / 1000)}s`;
@@ -47,7 +47,7 @@ const WorkflowVisualization: Component = () => {
     <Show when={workflowState()}>
       {(ws) => (
         <div class="bg-gray-800/60 border-b border-gray-700 shrink-0">
-          {/* 标题栏 */}
+          {/* Header bar */}
           <button
             type="button"
             class="flex items-center justify-between w-full px-3 py-1.5 text-left hover:bg-white/[0.03] transition-colors"
@@ -67,7 +67,7 @@ const WorkflowVisualization: Component = () => {
             />
           </button>
 
-          {/* 步骤卡片管线 */}
+          {/* Step-card pipeline */}
           <Show when={!collapsed()}>
             <div class="flex gap-2 px-3 pb-2 overflow-x-auto scrollbar-thin">
               <For each={ws().steps}>
@@ -78,23 +78,23 @@ const WorkflowVisualization: Component = () => {
                       'opacity-50': step.status === 'pending',
                     }}
                   >
-                    {/* 步骤序号 */}
+                    {/* Step index */}
                     <span class="text-gray-600 tabular-nums w-3 text-right">{index() + 1}</span>
 
-                    {/* 状态圆点 */}
+                    {/* Status dot */}
                     <span
                       class={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[step.status] || 'bg-gray-400'}`}
                     />
 
-                    {/* 步骤名 */}
+                    {/* Step name */}
                     <span class="text-gray-300 truncate max-w-[80px]">{step.name}</span>
 
-                    {/* 状态文字 */}
+                    {/* Status text */}
                     <span class={`${STATUS_TEXT[step.status] || 'text-gray-400'} shrink-0`}>
                       {STATUS_LABEL[step.status] ? t(STATUS_LABEL[step.status]) : step.status}
                     </span>
 
-                    {/* 耗时 */}
+                    {/* Duration */}
                     {step.duration != null && step.duration > 0 && (
                       <span class="text-gray-600 shrink-0">{formatDuration(step.duration)}</span>
                     )}

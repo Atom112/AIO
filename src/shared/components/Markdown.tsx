@@ -1,13 +1,14 @@
 import { marked, Tokens } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import DOMPurify from 'dompurify';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { createMemo, Component, Index, Show } from 'solid-js';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
 import ThinkBlock from './ThinkBlock';
 import { t } from '../../core/i18n';
 
-// 配置 Marked 高亮和渲染器
+// Configure Marked highlighting and renderers
 marked.use(
   markedHighlight({
     langPrefix: 'hljs language-',
@@ -190,15 +191,15 @@ ICONS.makefile = _s(
   `<path fill="none" stroke="var(--vscode-ctp-peach)" stroke-linecap="round" stroke-linejoin="round" d="M3.5 1.5h-2v13h2m9-13h2v13h-2m-8-11h7v3h-2v6h-3v-6h-2z"/>`,
 );
 
-function getLangIcon(lang: string): string {
+export function getLangIcon(lang: string): string {
   const key = lang.toLowerCase().trim();
   return ICONS[key] ?? _FALLBACK;
 }
 
 /**
- * 重写代码块渲染规则（参考 LobeHub 风格）
- * @param {Tokens.Code} token - 代码块 Token
- * @returns {string} 带 header 栏和复制按钮的 HTML
+ * Override the code-block rendering rule (LobeHub style)
+ * @param {Tokens.Code} token - code block token
+ * @returns {string} HTML with a header bar and a copy button
  */
 renderer.code = (token: Tokens.Code) => {
   const renderedCode = originalCodeRenderer(token);
@@ -224,6 +225,22 @@ renderer.code = (token: Tokens.Code) => {
     `;
 };
 
+// aio-image://<base64(absPath)> → local resource URL displayable via convertFileSrc
+renderer.image = ({ href, title, text }: Tokens.Image) => {
+  let src = href || '';
+  if (src.startsWith('aio-image://')) {
+    try {
+      const bytes = Uint8Array.from(atob(src.slice('aio-image://'.length)), (c) => c.charCodeAt(0));
+      src = convertFileSrc(new TextDecoder().decode(bytes));
+    } catch {
+      /* keep an invalid token as-is */
+    }
+  }
+  const alt = text ? ` alt="${text}"` : '';
+  const ttl = title ? ` title="${title}"` : '';
+  return `<img src="${src}"${alt}${ttl} class="aio-chat-image" loading="lazy" />`;
+};
+
 marked.use({ renderer });
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -234,9 +251,9 @@ type Segment =
 const isStreamingSegment = (segment: Segment) => segment.type === 'think' && segment.isStreaming;
 
 /**
- * 将消息文本解析为分段: think 块 / markdown 段 (保留位置顺序)
- * - 支持多个完整 <think>...</think> 块
- * - 支持未闭合的尾部 <think> (流式中)
+ * Parse message text into segments: think blocks / markdown segments (order preserved)
+ * - supports multiple complete <think>...</think> blocks
+ * - supports an unclosed trailing <think> (while streaming)
  */
 const parseSegments = (text: string): Segment[] => {
   const segments: Segment[] = [];
@@ -280,16 +297,23 @@ const parseSegments = (text: string): Segment[] => {
   return segments;
 };
 
+// Bounded render cache (content → HTML) to skip re-running marked+hljs+DOMPurify on unchanged segments.
+// Bounded (degenerate LRU: clear when full) so the cache itself cannot grow unbounded.
+const RENDER_CACHE_MAX = 64;
+const renderCache = new Map<string, string>();
+
 const renderMarkdownHtml = (raw: string): string => {
   if (!raw.trim()) return '';
+  const cached = renderCache.get(raw);
+  if (cached !== undefined) return cached;
   const html = marked.parse(raw) as string;
-  return DOMPurify.sanitize(html, {
+  const out = DOMPurify.sanitize(html, {
     ADD_TAGS: [
       'button',
       'svg',
       'path',
       'span',
-      // 表格标签
+      // table tags
       'table',
       'thead',
       'tbody',
@@ -313,7 +337,7 @@ const renderMarkdownHtml = (raw: string): string => {
       'd',
       'stroke-linecap',
       'stroke-linejoin',
-      // 表格属性
+      // table attributes
       'colspan',
       'rowspan',
       'align',
@@ -323,6 +347,11 @@ const renderMarkdownHtml = (raw: string): string => {
     ],
     USE_PROFILES: { html: true, svg: true },
   });
+  if (renderCache.size >= RENDER_CACHE_MAX) {
+    renderCache.clear();
+  }
+  renderCache.set(raw, out);
+  return out;
 };
 
 interface MarkdownProps {
@@ -330,16 +359,16 @@ interface MarkdownProps {
 }
 
 /**
- * Markdown 渲染组件 (含思考过程块)
- * @param {MarkdownProps} props - 组件属性
- * @returns {JSX.Element} 渲染后的 HTML 元素
+ * Markdown rendering component (with think blocks)
+ * @param {MarkdownProps} props - component props
+ * @returns {JSX.Element} rendered HTML element
  */
 const Markdown: Component<MarkdownProps> = (props) => {
   const segments = createMemo(() => parseSegments(props.content || ''));
 
   /**
-   * 处理代码块复制
-   * @param {MouseEvent} e - 点击事件
+   * Handle code-block copy
+   * @param {MouseEvent} e - click event
    */
   const handleCopy = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -358,7 +387,7 @@ const Markdown: Component<MarkdownProps> = (props) => {
           if (span) {
             const oldText = span.innerText || '';
             span.innerText = t('chat.markdown.copied');
-            (btn as HTMLElement).style.color = '#3fb950';
+            (btn as HTMLElement).style.color = 'var(--color-success)';
             (btn as HTMLElement).style.borderColor = 'rgba(63,185,80,0.3)';
             (btn as HTMLElement).style.backgroundColor = 'rgba(46,160,67,0.15)';
             (btn as HTMLElement).style.opacity = '1';

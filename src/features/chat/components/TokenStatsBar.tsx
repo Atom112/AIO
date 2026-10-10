@@ -1,8 +1,8 @@
 /**
- * TokenStatsBar — 紧凑型一行式 Token/上下文统计条
+ * TokenStatsBar - compact single-line token/context stats bar
  *
- * 位于聊天输入框与 Agent 模式选择器之间，一行展示：
- *   上下文进度条 | 输入/输出 tokens | 消息数 | 工具调用
+ * Sits between the chat input and the agent mode selector, showing one row:
+ *   context progress bar | input/output tokens | message count | tool calls
  */
 
 import { Component, Show, createMemo } from 'solid-js';
@@ -32,9 +32,9 @@ function fmtPrice(n: number): string {
 }
 
 function usageColor(pct: number): string {
-  if (pct > 0.95) return '#ef4444';
-  if (pct > 0.85) return '#f59e0b';
-  if (pct > 0.7) return '#eab308';
+  if (pct > 0.95) return 'var(--color-danger)';
+  if (pct > 0.85) return 'var(--color-warn)';
+  if (pct > 0.7) return 'var(--color-warn)';
   return 'rgba(var(--text-base-rgb),0.45)';
 }
 
@@ -46,6 +46,7 @@ const TokenStatsBar: Component = () => {
       return {
         input: 0,
         output: 0,
+        cached: 0,
         messages: 0,
         tools: 0,
         maxContext: 128_000,
@@ -54,12 +55,14 @@ const TokenStatsBar: Component = () => {
       };
     let input = 0,
       output = 0,
+      cached = 0,
       tools = 0;
     let contextInput = 0;
     for (const msg of topic.history || []) {
       if (msg.role === 'assistant') {
         input += msg.inputTokens || 0;
         output += msg.outputTokens || 0;
+        cached += msg.cachedInputTokens || 0;
         tools += msg.toolCalls?.length || 0;
         contextInput = msg.contextTokens || msg.inputTokens || 0;
       }
@@ -79,6 +82,7 @@ const TokenStatsBar: Component = () => {
     return {
       input,
       output,
+      cached,
       messages: topic.history?.length || 0,
       tools,
       maxContext: maxCtx,
@@ -86,6 +90,16 @@ const TokenStatsBar: Component = () => {
       price,
     };
   });
+
+  // Cache hit rate = cached input / total input (cumulative for this topic)
+  // input already includes the cached portion: OpenAI/DeepSeek cached_tokens is a subset of prompt_tokens,
+  // while Anthropic input_tokens excludes cache_read_input_tokens, so normalize as (cached + input).
+  const cacheDenom = () => stats().input + stats().cached;
+  const cachePct = () => (cacheDenom() > 0 ? Math.round((stats().cached / cacheDenom()) * 100) : 0);
+  /** Whether any cache hit data was ever received: always false for models whose backend does not report cached usage */
+  const hasCacheStats = () => stats().cached > 0;
+  /** Any input usage is enough to show the rate; with no cache hit data show "—" (distinguishes "no cache" from "not reported") */
+  const showCacheRate = () => cacheDenom() > 0;
 
   const total = () => stats().contextInput;
   const pct = () => Math.min(total() / stats().maxContext, 1);
@@ -102,9 +116,10 @@ const TokenStatsBar: Component = () => {
           toolCalls: stats().tools,
           maxContext: fmt(stats().maxContext),
           pct: (pct() * 100).toFixed(0),
+          cacheHit: hasCacheStats() ? `${cachePct()}%` : '—',
         })}
       >
-        {/* 微型进度条 */}
+        {/* Mini progress bar */}
         <div
           class="w-8 h-1 rounded-full overflow-hidden shrink-0"
           style={{ background: 'rgba(var(--text-base-rgb),0.08)' }}
@@ -115,7 +130,7 @@ const TokenStatsBar: Component = () => {
           />
         </div>
 
-        {/* 用量数字 */}
+        {/* Usage numbers */}
         <span class="font-mono whitespace-nowrap" style={{ color: color() }}>
           {fmt(total())}
         </span>
@@ -161,6 +176,29 @@ const TokenStatsBar: Component = () => {
             style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}
           >
             {fmtPrice(stats().price)}
+          </span>
+        </Show>
+
+        {/* Cache hit rate (OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens / Anthropic cache_read_input_tokens) */}
+        <Show when={showCacheRate()}>
+          <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
+          <span
+            class="inline-flex items-center gap-1 whitespace-nowrap"
+            style={{
+              color: hasCacheStats() ? 'var(--color-success)' : 'rgba(var(--text-base-rgb),0.22)',
+            }}
+            title={
+              hasCacheStats()
+                ? t('chat.statsCacheHit', {
+                    pct: cachePct(),
+                    cached: fmt(stats().cached),
+                    total: fmt(cacheDenom()),
+                  })
+                : t('chat.statsCacheHitUnavailable')
+            }
+          >
+            <Icon name="bolt" size={12} />
+            <span class="font-mono">{hasCacheStats() ? `${cachePct()}%` : '—'}</span>
           </span>
         </Show>
       </div>

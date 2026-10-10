@@ -16,7 +16,11 @@ import {
   showProjectCreateModal,
   setShowProjectCreateModal,
 } from '../../../core/store/store';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  deleteProject as deleteProjectApi,
+  listProjects,
+  updateProject,
+} from '../../../core/api/project';
 import Icon from '../../../shared/components/Icon';
 import ProjectCreateModal from './ProjectCreateModal';
 import { t } from '../../../core/i18n';
@@ -28,13 +32,15 @@ interface ProjectSidebarProps {
   onResize: (e: MouseEvent) => void;
   isResizing: boolean;
   onOpenSettings: (assistantId: string) => void;
+  /** Layout width (px) for expanded content: when narrowing, content keeps this width and is revealed by clipping at the panel's left edge */
+  revealMinPx?: number;
 }
 
 const DIALOG_ASST_ID = 'default-assistant-id';
 
 /**
- * 项目侧边栏：聊天入口 + 项目列表。
- * 替代旧的 AssistantSidebar，提供"对话"和"项目"双模式入口。
+ * Project sidebar: chat entry + project list.
+ * Provides the "chat" and "project" dual-mode entries.
  */
 const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   const [showMenuDiv, setShowMenuDiv] = createSignal(false);
@@ -49,7 +55,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
   let menuCloseTimeoutId: ReturnType<typeof setTimeout>;
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(null);
 
-  // 点击菜单外部时自动关闭（与右侧话题栏"更多"按钮行为一致）
+  // Auto-close when clicking outside the menu (matches the topic sidebar "more" button behavior)
   onMount(() => {
     const handleClickOutside = () => {
       if (menuState().isOpen) closeMenu();
@@ -67,13 +73,13 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     onCleanup(() => window.removeEventListener('contextmenu', handleContextMenuOutside));
   });
 
-  /** 当前助理 */
+  /** Current assistant */
   const currentAsst = () => datas.assistants.find((a) => a.id === currentAssistantId());
 
-  /** 是否是聊天模式活跃 */
+  /** Whether chat mode is active */
   const isChatActive = () =>
     currentAsst()?.assistantType === 'chat' || currentAsst()?.id === DIALOG_ASST_ID;
-  /** 当前活跃的项目 ID（从助理反查） */
+  /** Currently active project ID (resolved from the assistant) */
   const activeProjectId = () => currentAsst()?.projectId ?? null;
 
   const openMenu = (e: MouseEvent, projectId: string, isRightClick = false) => {
@@ -107,7 +113,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }, 200);
   };
 
-  /** 切换到聊天模式 */
+  /** Switch to chat mode */
   const switchToChat = () => {
     setCurrentProjectId(null);
     setCurrentAssistantId(DIALOG_ASST_ID);
@@ -117,7 +123,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }
   };
 
-  /** 切换到某个项目 */
+  /** Switch to a specific project */
   const switchToProject = async (projectId: string) => {
     try {
       setCurrentProjectId(projectId);
@@ -133,12 +139,12 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }
   };
 
-  /** 重命名项目 */
+  /** Rename a project */
   const renameProject = async (projectId: string, newName: string) => {
     if (!newName.trim()) return;
     try {
-      await invoke('update_project', { id: projectId, name: newName.trim() });
-      // 也更新助理名称
+      await updateProject(projectId, newName.trim());
+      // Also update the assistant name
       const asst = datas.assistants.find((a) => a.projectId === projectId);
       if (asst) {
         setDatas('assistants', (a) => a.id === asst.id, 'name', newName.trim());
@@ -149,20 +155,20 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     }
   };
 
-  /** 删除项目 */
+  /** Delete a project */
   const deleteProject = async (projectId: string) => {
     if (!confirm(t('project.deleteConfirm'))) return;
     try {
       const asst = datas.assistants.find((a) => a.projectId === projectId);
       if (asst) {
         await deleteAssistantFile(asst.id);
-        // 如果当前选中的是这个助理，切换到聊天
+        // If this assistant is currently selected, switch back to chat
         if (currentAssistantId() === asst.id) {
           switchToChat();
         }
         setDatas('assistants', (prev) => prev.filter((a) => a.id !== asst.id));
       }
-      await invoke('delete_project', { id: projectId });
+      await deleteProjectApi(projectId);
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (e) {
       alert(t('project.deleteFailed') + '\n' + e);
@@ -170,72 +176,99 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
     closeMenu();
   };
 
-  /** 创建项目成功后 */
+  /** After a project is created */
   const handleProjectCreated = async (projectId: string) => {
     setShowProjectCreateModal(false);
-    // 重新加载项目列表
+    // Reload the project list
     try {
-      const list = await invoke<
-        Array<{
-          id: string;
-          name: string;
-          path: string;
-          createdAt: string;
-          updatedAt: string;
-          assistantId: string;
-        }>
-      >('list_projects');
-      setProjects(
-        list.map((p: Record<string, string>) => ({
-          id: p.id,
-          name: p.name,
-          path: p.path,
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-          assistantId: p.assistantId,
-        })),
-      );
+      const list = await listProjects();
+      setProjects(list);
     } catch {
       /* ignore */
     }
     await switchToProject(projectId);
   };
 
-  /** 过滤：仅显示 project-type 的助理关联的项目（排除 chat 和游离助理） */
+  /** Filter: only show projects tied to project-type assistants (excludes chat and orphan assistants) */
   const projectList = createMemo(() => {
     const allProjects = projects();
     return allProjects;
   });
 
+  /** Expansion ratio 0-1: used to interpolate padding and fade content in by width */
+  const expandRatio = () => Math.min(Math.max(props.width / 15, 0), 1);
+  /**
+   * Expanded-content opacity: meets the rail icons' fade-out curve end to end (crossing at 4%-5%),
+   * so at any width at least one of the two content layers stays visible with no empty transition frames;
+   * the content itself uses a curtain-style reveal (fixed layout + clipping) and does not rely on fading to hide it.
+   */
+  const expandedOpacity = () => Math.min(Math.max((props.width - 4) / 1, 0), 1);
+  /**
+   * Curtain soft-transition mask: computes the right-edge fade zone from the exact overflow amount
+   * (covering the whole clipped region plus a 20px margin) so no raw clip line is exposed: icons stay sharp
+   * while labels fade out instead of being cut mid-glyph. Back at 15% width (no overflow) the fade zone
+   * collapses to 0 for a seamless switch. Container width is derived from revealMin: revealMin = base*0.15 - 38 (same as ChatPage, with 2px safety margin).
+   */
+  const revealMask = () => {
+    const w = props.width;
+    if (props.isCollapsed || w >= 15) return 'none';
+    const revealMin = props.revealMinPx ?? 0;
+    if (revealMin <= 0) return 'none';
+    const base = (revealMin + 38) / 0.15;
+    const contentPx = (w / 100) * base - 2 * padX() - PAGE_SIDE_INSET_PX; // subtract the asymmetric horizontal padding
+    const overflowPx = revealMin - contentPx;
+    if (overflowPx <= 0.5) return 'none';
+    const fadePx = Math.min(overflowPx + 20, contentPx * 0.6);
+    return `linear-gradient(to right, black calc(100% - ${fadePx}px), transparent 100%)`;
+  };
+  /**
+   * Page container left inset (ChatPage root px-[6px]). The right divider sits flush against the panel edge,
+   * while left-side elements are 6px away from the window edge. Adding the same value to the right padding
+   * makes the spacing to the left window edge and to the right divider equal (each state keeps its own spacing values).
+   */
+  const PAGE_SIDE_INSET_PX = 6;
+  /** Collapsed rail width: 54px leaves 12px on each side of the icons (matching the window-edge spacing), centering icons between window edge and divider */
+  const RAIL_WIDTH_PX = 54;
+  /** Effective padding (px): rail value when collapsed; when expanded, interpolated from the rail value to 15px by width */
+  const padY = () => (props.isCollapsed ? 6 : 6 + 9 * expandRatio());
+  const padX = () => (props.isCollapsed ? 4 : 4 + 11 * expandRatio());
+
   return (
     <div
       class="relative flex flex-col flex-shrink-0 min-w-0 z-10 h-full"
       style={{
-        width: props.isCollapsed ? '48px' : `${props.width}%`,
-        padding: props.isCollapsed ? '6px 4px' : '15px',
-        background: 'rgba(var(--surface-bg), 0.15)',
-        'backdrop-filter': 'blur(16px)',
-        border: '1px solid var(--border-dim)',
-        'border-radius': '12px',
-        'box-shadow':
-          'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
+        // CSS-level minimum width: whatever width the upper layer computes, the panel physically cannot be narrower than the collapsed rail
+        'min-width': `${RAIL_WIDTH_PX}px`,
+        // Curtain-reveal layout width (child content lays out at this width; narrowing clips it instead of reflowing)
+        '--reveal-min': `${props.revealMinPx ?? 0}px`,
+        width: props.isCollapsed ? `${RAIL_WIDTH_PX}px` : `${props.width}%`,
+        // Right padding exceeds the left by PAGE_SIDE_INSET_PX to compensate the page container's left inset,
+        // equalizing spacing to the left window edge and the right divider (interpolated by width; each state takes its own value)
+        padding: `${padY()}px ${padX() + PAGE_SIDE_INSET_PX}px ${padY()}px ${padX()}px`,
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <div class="relative flex-1 min-h-0">
-        {/* 展开状态 — 折叠时淡出 */}
+        {/* Expanded state - curtain-style soft reveal: content keeps its full layout without reflow, the part beyond the panel is clipped, and the right edge uses a mask fade instead of a hard clip */}
         <div
-          class="absolute inset-0 transition-opacity duration-300 ease-out"
-          classList={{ 'opacity-0 pointer-events-none': props.isCollapsed }}
+          class="absolute inset-0 overflow-hidden transition-opacity ease-out"
+          style={{
+            opacity: props.isCollapsed ? 0 : expandedOpacity(),
+            'pointer-events': props.isCollapsed || expandedOpacity() < 0.5 ? 'none' : 'auto',
+            'mask-image': revealMask(),
+            transition: props.isResizing ? 'none' : 'opacity 0.3s ease-out',
+          }}
         >
-          <div class="h-full w-full overflow-hidden hover:overflow-y-auto">
-            {/* 聊天入口 */}
+          <div
+            class="h-full w-full overflow-hidden hover:overflow-y-auto"
+            style={{ 'min-width': 'var(--reveal-min, 0px)' }}
+          >
+            {/* Chat entry */}
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
               classList={{
-                '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
-                  isChatActive(),
+                'active-glow': isChatActive(),
               }}
               onClick={switchToChat}
             >
@@ -248,10 +281,10 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               </span>
             </div>
 
-            {/* 分隔线 */}
+            {/* Divider */}
             <div class="my-3 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
 
-            {/* 项目区域 */}
+            {/* Project section */}
             <div
               class="flex items-center h-12 text-xs uppercase tracking-[1.5px] font-semibold px-3 mb-1"
               style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
@@ -266,8 +299,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   <div
                     class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                     classList={{
-                      '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
-                        isActive(),
+                      'active-glow': isActive(),
                     }}
                     onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                     onClick={() => switchToProject(project.id)}
@@ -323,7 +355,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
               }}
             </For>
 
-            {/* 新建项目按钮 */}
+            {/* New project button */}
             <button
               class="w-full mt-[10px] px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
               style={{
@@ -339,58 +371,63 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                 (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')
               }
             >
-              新建项目
+              {t('project.sidebar.newProject')}
             </button>
-          </div>
-        </div>
-
-        {/* 收起状态 — 展开时淡出 */}
-        <div
-          class="absolute inset-0 transition-opacity duration-300 ease-out"
-          classList={{ 'opacity-0 pointer-events-none': !props.isCollapsed }}
-        >
-          <div class="flex flex-col items-center gap-3 py-2 h-full">
-            <button
-              class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
-              style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
-              onClick={switchToChat}
-              title={t('project.sidebar.dialog') as string}
-            >
-              <Icon name="chat" size={16} />
-            </button>
-            <div class="w-5 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
-            <div class="flex flex-col items-center gap-1 flex-1 w-full overflow-y-auto">
-              <For each={projectList()}>
-                {(project) => {
-                  const isActive = () => activeProjectId() === project.id;
-                  return (
-                    <div
-                      class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
-                      style={isActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
-                      onClick={() => switchToProject(project.id)}
-                      onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
-                      title={project.name}
-                    >
-                      <span class="text-xs font-semibold">
-                        {(project.name || '?').charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                  );
-                }}
-              </For>
-              <button
-                class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white"
-                onClick={() => setShowProjectCreateModal(true)}
-                title={t('project.sidebar.newProject')}
-              >
-                <Icon name="plus" size={16} />
-              </button>
-            </div>
           </div>
         </div>
       </div>
 
-      {/* 上下文菜单 */}
+      {/* Collapsed state (icon rail) - attached to the panel root with right inset PAGE_SIDE_INSET_PX: icons center in the window-edge-to-divider band with equal spacing on both sides; fades to zero with opacity when expanded, so the right inset has no visual effect */}
+      <div
+        class="absolute ease-out"
+        style={{
+          inset: `0 ${PAGE_SIDE_INSET_PX}px 0 0`,
+          opacity: props.isCollapsed ? 1 : Math.min(Math.max((4 - props.width) / 1, 0), 1),
+          'pointer-events': props.isCollapsed ? 'auto' : 'none',
+          transition: props.isResizing ? 'none' : 'opacity 0.3s ease-out',
+        }}
+      >
+        <div class="flex flex-col items-center gap-3 py-2 h-full">
+          <button
+            class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/75 hover:bg-white/[0.10] hover:text-white"
+            style={isChatActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
+            onClick={switchToChat}
+            title={t('project.sidebar.dialog') as string}
+          >
+            <Icon name="chat" size={16} />
+          </button>
+          <div class="w-5 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
+          <div class="flex flex-col items-center gap-1 flex-1 w-full overflow-y-auto">
+            <For each={projectList()}>
+              {(project) => {
+                const isActive = () => activeProjectId() === project.id;
+                return (
+                  <div
+                    class="flex items-center justify-center w-9 h-9 rounded-full cursor-pointer transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white select-none"
+                    style={isActive() ? 'background: rgba(var(--primary-rgb),0.30);' : ''}
+                    onClick={() => switchToProject(project.id)}
+                    onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
+                    title={project.name}
+                  >
+                    <span class="text-xs font-semibold">
+                      {(project.name || '?').charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                );
+              }}
+            </For>
+            <button
+              class="flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 bg-white/[0.05] text-white/60 hover:bg-white/[0.10] hover:text-white"
+              onClick={() => setShowProjectCreateModal(true)}
+              title={t('project.sidebar.newProject')}
+            >
+              <Icon name="plus" size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Context menu */}
       {showMenuDiv() && (
         <Portal>
           <div
@@ -441,7 +478,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </Portal>
       )}
 
-      {/* 新建项目弹窗 — Portal 到 body 避免被侧边栏 overflow-hidden 裁剪 */}
+      {/* New project modal - portaled to body to avoid clipping by the sidebar's overflow-hidden */}
       <Show when={showProjectCreateModal()}>
         <Portal>
           <ProjectCreateModal
@@ -451,13 +488,24 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         </Portal>
       </Show>
 
-      {/* 调整大小把手 */}
+      {/* Three-pane divider line: placed on the panel edge (+/-0.5px), its center exactly aligned with the resize handle below */}
+      <span
+        aria-hidden="true"
+        class="absolute top-0 bottom-0 w-px pointer-events-none"
+        style={{ right: '-0.5px', background: 'rgba(var(--text-base-rgb),0.12)' }}
+      />
+
+      {/* Resize handle: 6px grab strip centered on the panel edge (concentric with the divider line); when collapsed it can still be dragged outward to expand */}
       <div
-        class="absolute top-0 bottom-0 right-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group"
+        class="absolute top-0 bottom-0 right-[-3px] w-[6px] flex items-center justify-center cursor-ew-resize z-[1000] group"
         onMouseDown={(e) => props.onResize(e as MouseEvent)}
       >
         <div
-          class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
+          class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 hover:scale-110"
+          classList={{
+            'opacity-0 group-hover:opacity-100': !props.isCollapsed,
+            'opacity-60 group-hover:opacity-100': props.isCollapsed,
+          }}
           style={{
             background: 'rgba(var(--text-base-rgb),0.08)',
             color: 'rgba(var(--text-base-rgb),0.6)',

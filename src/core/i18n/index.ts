@@ -33,9 +33,19 @@ const translate = translator(activeDictionary, resolveTemplate);
 
 export const locale = localeSignal;
 
+/** Syncs the locale to the backend (backend error messages render per locale). Dynamic import avoids side effects in non-Tauri environments. */
+function syncBackendLocale(next: Locale): void {
+  void import('../api/config')
+    .then((m) => m.setBackendLocale(next))
+    .catch(() => {
+      // Silently ignored in non-Tauri environments (Node tests) or while the backend is unavailable; the backend defaults to Chinese
+    });
+}
+
 export function setLocale(next: Locale): void {
   setLocaleSignal(next);
   document.documentElement.lang = next;
+  syncBackendLocale(next);
   try {
     localStorage.setItem(STORAGE_KEY, next);
   } catch (error) {
@@ -72,3 +82,5 @@ export function reportError(key: TranslationKey, error: unknown): string {
 }
 
 document.documentElement.lang = initialLocale;
+// Sync the initial (persisted) locale to the backend once at startup
+syncBackendLocale(initialLocale);

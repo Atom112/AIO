@@ -4,6 +4,12 @@
 
 Agent mode provides 20+ built-in tools across 6 categories. The following table lists all tools and their basic permission characteristics:
 
+> **Execution semantics**: read-only tools within the same response block (reads/search/web queries/git read/LSP/memory recall) run concurrently; mutating tools (file writes, command execution, git write) and MCP tools run serially in original order. Can be disabled via `parallelToolExecution` in app config.
+>
+> **Main agent tool set**: hybrid by default — read-only built-in tools are called directly, mutating work is delegated to subagents (`mainAgentToolAccess`: hybrid / orchestrator / full).
+>
+> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in Auto/Workflow mode (the "Trusted" toggle in MCP settings).
+
 | Tool Name         | Category      | Normal Default | Auto Default | Plan Default |
 | ----------------- | ------------- | -------------- | ------------ | ------------ |
 | `read_file`       | File          | Allow          | Allow        | Allow        |
@@ -32,6 +38,8 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 | `delegate_task`   | Orchestration | Ask            | Allow        | Ask          |
 | `delegate_tasks`  | Orchestration | Ask            | Allow        | Ask          |
 | `create_workflow` | Orchestration | Ask            | Allow        | Ask          |
+| `read_skill`      | Orchestration | Allow          | Allow        | Allow        |
+| `read_artifact`   | Orchestration | Allow          | Allow        | Allow        |
 | `remember`        | Knowledge     | Ask            | Allow        | Ask          |
 | `recall`          | Knowledge     | Ask            | Allow        | Ask          |
 
@@ -49,13 +57,13 @@ All file tool paths are restricted by the project root directory sandbox (`safe_
 
 Read file content.
 
-| Item            | Value                                                                                         |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| **Description** | Read the content of a specified file within the project directory. Binary files are rejected. |
-| **Parameters**  | `path` (string, required) -- file path                                                        |
-| **Return**      | Text content of the file                                                                      |
-| **Limits**      | Maximum 1MB; truncated with a notice if exceeded                                              |
-| **Permission**  | Read operation: Normal/Allow, Auto/Allow, Plan/Allow                                          |
+| Item            | Value                                                                                                                                                                                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Read the content of a specified file within the project directory, with 1-based line numbers (format ` 1                                                                                                                                                                | content`, directly usable for `replace_in_file` `start_line`/`end_line`). Binary files are rejected. Default max 300 lines / 32KB; when exceeded, returns head+tail with the omitted line range annotated. |
+| **Parameters**  | `path` (string, required) -- file path; `max_lines` (integer, optional) -- max lines, default 300, pass -1 for unlimited; `max_bytes` (integer, optional) -- max bytes, default 32KB; `with_hash` (boolean, optional) -- return file SHA-256 digest (hashline protocol) |
+| **Return**      | Line-numbered text content of the file; when limited, returns head+tail with the omitted line range annotated                                                                                                                                                           |
+| **Limits**      | Default max 300 lines / 32KB; hard cap 1MB                                                                                                                                                                                                                              |
+| **Permission**  | Read operation: Normal/Allow, Auto/Allow, Plan/Allow                                                                                                                                                                                                                    |
 
 ### `write_file`
 
@@ -107,15 +115,15 @@ Search file contents with a regular expression.
 
 ### `replace_in_file`
 
-Perform an exact string replacement in a file.
+Perform a replacement in a file (exact match or line-range anchored).
 
-| Item            | Value                                                                                                                                                                             |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Replace `old_string` with `new_string`. `old_string` must appear exactly once in the file, otherwise an error is raised requesting more context.                                  |
-| **Parameters**  | `path` (string, required) -- file path; `old_string` (string, required) -- original string to replace (must match exactly); `new_string` (string, required) -- replacement string |
-| **Return**      | Replacement confirmation and matched line number                                                                                                                                  |
-| **Limits**      | Content after replacement must not exceed 5MB; binary files cannot be replaced                                                                                                    |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny                                                                                                                                                 |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Two modes: 1) exact replacement of `old_string` (must appear exactly once); 2) line-range anchored -- leave `old_string` empty and pass `start_line`/`end_line` (1-based); the tool reads the current line range and replaces it with `new_string`, so large edits do not require resending the old code (token-efficient). If line numbers are stale, it errors and asks you to re-read. |
+| **Parameters**  | `path` (string, required) -- file path; `old_string` (string, optional) -- original string to replace (must match exactly); `new_string` (string, required) -- replacement string; `start_line`/`end_line` (integer, optional) -- line-range mode boundaries; `anchor_hash` (string, optional) -- file SHA-256 digest (hashline drift protection)                                         |
+| **Return**      | Replacement confirmation and matched line number                                                                                                                                                                                                                                                                                                                                          |
+| **Limits**      | Content after replacement must not exceed 5MB; binary files cannot be replaced                                                                                                                                                                                                                                                                                                            |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny                                                                                                                                                                                                                                                                                                                                                         |
 
 ### `delete_file`
 
@@ -357,6 +365,28 @@ Create a sequentially-executing sub-agent workflow.
 | **Return**      | Work summary for each step                                                                                                               |
 | **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                         |
 
+### `read_skill`
+
+Read the full instructions of an enabled Skill on demand (token efficiency: in Agent mode only a skill directory is injected; full content is read on demand).
+
+| Item            | Value                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| **Description** | Read the full instructions of an enabled Skill. Call this tool first when a task involves a skill. |
+| **Parameters**  | `name` (string, required) -- skill name (e.g. `docx`, `xlsx`)                                      |
+| **Return**      | Full skill instruction text; when not found, returns the list of available skills                  |
+| **Permission**  | Allow in all modes                                                                                 |
+
+### `read_artifact`
+
+Read a locally archived history artifact (snapcompact-style: when summarization fails, early messages are archived locally and a `[History archive #id]` placeholder is inserted; read details on demand).
+
+| Item            | Value                                                                    |
+| --------------- | ------------------------------------------------------------------------ |
+| **Description** | Read the archived content of early conversation messages by artifact id. |
+| **Parameters**  | `artifact_id` (string, required) -- history archive ID                   |
+| **Return**      | Archived content (truncated to ~30k chars)                               |
+| **Permission**  | Allow in all modes                                                       |
+
 ### `think`
 
 Record structured thinking (no-op).
@@ -381,31 +411,33 @@ Generate a project structure overview.
 
 ---
 
-## Knowledge Tools
+## Memory Tools (Project-level RAG)
 
-Source: `src-tauri/src/utils/knowledge.rs`
+Source: `src-tauri/src/services/memory/tools.rs`
 
-Knowledge data is persisted to `{project_root}/.aio/knowledge.json` and automatically injected into the system prompt when the Agent starts.
+When project memory is enabled (`memoryEnabled` + per-project toggle), the Agent gets six memory tools: `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` / `search_code`. Facts are stored in `{project_root}/.aio/memory/memory.sqlite` (semantic vectors + FTS5 keyword hybrid retrieval, optionally refined by two-stage reranking); a legacy `{project_root}/.aio/knowledge.json` is auto-migrated into facts on first open (idempotent). Retrieved facts are injected into the stable system-prompt prefix (index=1) under a token budget.
 
 ### `remember`
 
-Save project-level knowledge.
+Save a project-level fact (vector dedup before write; near-duplicates are arbitrated by the LLM into merge / update / supersede).
 
-| Item            | Value                                                                                                                                                                                                                         |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Remember a piece of project-level knowledge (architecture decisions, code conventions, common patterns), persisted across sessions.                                                                                           |
-| **Parameters**  | `key` (string, required) -- short identifier (used for deduplication and retrieval); `content` (string, required) -- knowledge content; `category` (enum, required) -- `"decision"` / `"pattern"` / `"convention"` / `"note"` |
-| **Return**      | Save confirmation                                                                                                                                                                                                             |
-| **Limits**      | Maximum 50 entries; when exceeded, the oldest entry is removed                                                                                                                                                                |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                                                                              |
+| Item            | Value                                                                                                                                                                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Remember a project-level fact (architecture decisions, code conventions, common patterns, key findings), persisted across sessions with semantic retrieval.                                                                                           |
+| **Parameters**  | `key` (string, optional) -- short identifier (used for deduplication); `content` (string, required) -- fact content; `category` (enum, required) -- `"decision"` / `"pattern"` / `"convention"` / `"note"` / `"entity"` / `"architecture"` / `"task"` |
+| **Return**      | Save confirmation                                                                                                                                                                                                                                     |
+| **Limits**      | Default cap of 2000 active facts per project; excess facts are archived by importance x access decay, lowest first (pinned facts are kept)                                                                                                            |
+| **Permission**  | Normal/Allow, Auto/Allow, Plan/Deny                                                                                                                                                                                                                   |
 
 ### `recall`
 
-Retrieve project-level knowledge.
+Hybrid semantic + keyword retrieval over project memory.
 
-| Item            | Value                                                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Description** | Fuzzy match `key` and `content` by keywords, optionally filter by category.                                                                                              |
-| **Parameters**  | `query` (string, required) -- search keywords (case-insensitive); `category` (enum, optional) -- category filter: `"decision"` / `"pattern"` / `"convention"` / `"note"` |
-| **Return**      | List of matching knowledge entries                                                                                                                                       |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                         |
+| Item            | Value                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| **Description** | Retrieve project-level memory (vector + FTS5 keyword hybrid; returns facts with relevance scores). |
+| **Parameters**  | `query` (string, required) -- retrieval intent; `category` (string, optional) -- category filter   |
+| **Return**      | List of facts with relevance scores                                                                |
+| **Permission**  | Normal/Allow, Auto/Allow, Plan/Allow                                                               |
+
+Other memory tools: `search_memory` (fine-grained search with `k` and a minimum relevance `min_score`), `update_memory` (edit a fact by id), `forget_memory` (archive / soft-delete), `search_code` (codebase semantic search; index the codebase first from the memory panel). Sub-agents get the read-only `recall` / `search_code` tools. Everything is managed from project settings -> Memory panel, which also supports exporting/importing memory JSON.

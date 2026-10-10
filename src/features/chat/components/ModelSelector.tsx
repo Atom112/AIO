@@ -1,7 +1,7 @@
 /**
- * 输入框模型快速选择器（LobeHub 风格）
- * @description 在输入框工具栏左侧展示当前模型，点击弹出向上展开的下拉，
- * 列出全部可用模型（线上 / 本地）供快速切换。选中后绑定到当前助手并持久化。
+ * Quick model selector for the chat input (LobeHub-style)
+ * @description Shows the current model on the left of the input toolbar; clicking opens an
+ * upward-expanding dropdown listing all available models (cloud / local) for quick switching. Selection binds to the current assistant and persists.
  */
 import { Component, createSignal, Show, For } from 'solid-js';
 import Icon from '../../../shared/components/Icon';
@@ -23,22 +23,22 @@ const getModelLogo = (name: string) => getLogoByIds(null, name);
 const ModelSelector: Component = () => {
   const [open, setOpen] = createSignal(false);
 
-  /** 当前助手对象（用于解析其绑定的生效模型） */
+  /** Current assistant object (used to resolve its bound active model) */
   const currentAssistant = () => datas.assistants.find((a) => a.id === currentAssistantId()) as any;
 
-  /** 当前生效模型（优先按助手绑定的 modelId 解析，未绑定则回退全局 selectedModel） */
+  /** Active model (resolves via the assistant's bound modelId first, falls back to the global selectedModel when unbound) */
   const activeModel = () => resolveAssistantModel(currentAssistant());
 
   const cloudModels = () => allAvailableModels().filter((m) => !isLocalModel(m));
   const localModels = () => allAvailableModels().filter((m) => isLocalModel(m));
 
-  /** 判断某模型是否为当前选中（统一按复合键精确匹配） */
+  /** Whether a model is the current selection (exact match on the composite key) */
   const isCurrent = (m: ActivatedModel): boolean => {
     const cur = activeModel();
     return cur ? modelKey(m) === modelKey(cur) : false;
   };
 
-  /** 选中某模型：绑定到当前助手 + 同步全局 + 持久化（本地模型顺带拉起引擎） */
+  /** Select a model: bind to the current assistant + sync global + persist (local models also start their engine) */
   const handlePick = (m: ActivatedModel) => {
     const id = currentAssistantId();
     if (id) void setAssistantModel(id, m);
@@ -47,7 +47,7 @@ const ModelSelector: Component = () => {
 
   return (
     <div class="relative">
-      {/* 触发按钮：仅显示当前模型图标（hover title 显示完整名称） */}
+      {/* Trigger button: shows only the current model icon (hover title shows the full name) */}
       <button
         class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1 transition-all duration-200"
         title={activeModel() ? activeModel()!.model_id : t('chat.model.switch')}
@@ -69,7 +69,7 @@ const ModelSelector: Component = () => {
             <Show
               when={getModelLogo(activeModel()!.model_id)}
               fallback={
-                <span class="text-[11px] font-bold" style={{ color: '#1a1e2c' }}>
+                <span class="text-[11px] font-bold" style={{ color: 'var(--color-dark-700)' }}>
                   {activeModel()!.model_id.charAt(0).toUpperCase()}
                 </span>
               }
@@ -84,11 +84,11 @@ const ModelSelector: Component = () => {
         </Show>
       </button>
 
-      {/* 透明遮罩：仅展开时拦截点击空白处收起 */}
+      {/* Transparent overlay: rendered only while open; catches clicks on empty space to collapse */}
       <Show when={open()}>
         <div class="fixed inset-0 z-[40]" onClick={() => setOpen(false)} />
       </Show>
-      {/* 下拉面板：始终渲染，通过 class 切换实现展开/收起过渡动画（向上展开） */}
+      {/* Dropdown panel: always rendered; class toggling drives the expand/collapse transition (opens upward) */}
       <div
         class="absolute bottom-full left-0 mb-2 z-[41] w-[300px] rounded-xl overflow-hidden flex flex-col transition-all duration-200 ease-out origin-bottom"
         classList={{
@@ -104,7 +104,7 @@ const ModelSelector: Component = () => {
         }}
       >
         <div class="flex flex-col overflow-y-auto scrollbar-thin">
-          {/* 线上模型 */}
+          {/* Cloud models */}
           <div
             class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest sticky top-0"
             style={{
@@ -173,7 +173,7 @@ const ModelSelector: Component = () => {
             </Show>
           </div>
 
-          {/* 本地模型 */}
+          {/* Local models */}
           <div
             class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
             style={{

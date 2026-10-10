@@ -170,6 +170,6 @@ project/
     └── knowledge.json
 ```
 
-`knowledge.json` 只在启用跨会话记忆并产生知识后创建，`permissions.json` 只在存在自定义规则时需要。提交 `.aio/` 前检查环境相关路径和业务信息；密钥必须保留为凭据库占位符。
+`knowledge.json` 属于旧版跨会话记忆，首次打开项目记忆（RAG）时已自动迁移，仅存量项目可能保留该文件；`permissions.json` 只在存在自定义规则时需要。提交 `.aio/` 前检查环境相关路径和业务信息；密钥必须保留为凭据库占位符。
 
 故障处理见[MCP 与 Skill 排查](../troubleshooting.md#mcp-server-无法启动)。

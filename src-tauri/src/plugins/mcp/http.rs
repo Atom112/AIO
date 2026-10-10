@@ -1,15 +1,20 @@
-//! MCP HTTP+SSE 传输
+//! MCP HTTP+SSE transport
 //!
-//! 设计决策：HTTP 插件**不**走 McpConnection 抽象（HTTP 是请求-响应模式，
-//! 不需要后台 reader 任务）。`start()` 返回的 McpConnection 主要是为了满足 trait，
-//! 实际 list_tools / call_tool 等方法直接用 reqwest 调用 server。
+//! Design decision: the HTTP plugin does **not** use McpConnection's pending-map
+//! abstraction (HTTP is request-response and needs no background reader task).
+//! The McpConnection returned by `start()` is merely a handle satisfying the trait
+//! shape (its transport is a no-op implementation); real calls go directly through reqwest.
 //!
-//! Streamable SSE 长连接在 P2 完整实现。
+//! Per-server transport state (URL/headers/client/id counter) lives in the states
+//! map of **this plugin instance**, whose lifecycle is managed by McpServerManager;
+//! `stop()` removes the entry, so error paths leave no residue.
+//!
+//! Streamable SSE long connections are fully implemented.
 
 use super::error::{McpError, McpResult};
 use crate::core::models::{
     GetPromptResult, McpPrompt, McpResource, McpServerConfig, McpServerInfo, ReadResourceResult,
-    ToolResult, ToolResultContent, ToolSpec,
+    ToolResult, ToolSpec,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -20,9 +25,42 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::AppHandle;
 
-pub struct HttpPlugin;
+/// MCP HTTP+SSE transport plugin.
+///
+/// State is stored per server_id in the map of **this plugin instance** (not a
+/// process-level global static table): the lifecycle is managed by the plugin
+/// instance (owned by McpServerManager), so error paths leave no stale entries.
+pub struct HttpPlugin {
+    states: Arc<parking_lot::Mutex<std::collections::HashMap<String, HttpTransportState>>>,
+    /// true = Streamable HTTP transport (identifier "streamable_http", accepts
+    /// StreamableHttp config, manages the Mcp-Session-Id session header); false = legacy "http".
+    streamable: bool,
+}
 
-/// 构造带超时的 reqwest 客户端
+impl HttpPlugin {
+    pub fn new() -> Self {
+        Self {
+            states: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+            streamable: false,
+        }
+    }
+
+    /// Streamable HTTP transport plugin (registers the transport so the StreamableHttp config variant is not dead code).
+    pub fn streamable() -> Self {
+        Self {
+            states: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+            streamable: true,
+        }
+    }
+}
+
+impl Default for HttpPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Builds a reqwest client with timeouts
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
@@ -31,7 +69,7 @@ fn http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// HTTP transport 内部状态：url + headers + id 计数器
+/// HTTP transport internal state: url + headers + id counter + session id (Streamable)
 #[derive(Clone)]
 pub struct HttpTransportState {
     pub base_url: String,
@@ -39,6 +77,9 @@ pub struct HttpTransportState {
     pub client: Client,
     pub next_id: Arc<AtomicU64>,
     pub closed: Arc<AtomicBool>,
+    /// Streamable HTTP session: the Mcp-Session-Id from the initialize response,
+    /// echoed back on subsequent requests (session expiry is a server-side error; the client just forwards it)
+    pub session_id: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 impl HttpTransportState {
@@ -59,7 +100,11 @@ impl HttpTransportState {
 #[async_trait]
 impl super::McpServerPlugin for HttpPlugin {
     fn identifier(&self) -> &'static str {
-        "http"
+        if self.streamable {
+            "streamable_http"
+        } else {
+            "http"
+        }
     }
 
     async fn start(
@@ -68,26 +113,31 @@ impl super::McpServerPlugin for HttpPlugin {
         config: &McpServerConfig,
     ) -> McpResult<super::connection::McpConnection> {
         let (url, headers) = match &config.transport {
-            crate::core::models::McpTransport::Http { url, headers } => {
+            crate::core::models::McpTransport::Http { url, headers } if !self.streamable => {
+                (url.clone(), headers.clone())
+            }
+            crate::core::models::McpTransport::StreamableHttp { url, headers }
+                if self.streamable =>
+            {
                 (url.clone(), headers.clone())
             }
             _ => {
                 return Err(McpError::Server(
-                    "HttpPlugin 收到非 http transport 配置".into(),
+                    "HttpPlugin 收到不匹配的 transport 配置".into(),
                 ))
             }
         };
 
-        // SSRF 防护：统一 URL 校验（MCP server 可能运行在本地，允许 localhost）
+        // SSRF protection: unified URL validation (MCP servers may run locally, so localhost is allowed)
         let url = crate::utils::url_validation::validate_http_url(
             &url,
             &crate::utils::url_validation::HttpUrlOptions::local_engine(),
         )
         .map_err(|e| McpError::TransportStartup(format!("MCP HTTP server URL 非法: {e}")))?;
 
-        // HTTP transport 不需要 McpConnection 的 pending map 机制，
-        // 但为了满足 trait，我们仍返回一个 dummy 连接。
-        // 真实调用走 HttpTransportState 路径。
+        // The HTTP transport does not need McpConnection's pending-map mechanism,
+        // but a dummy connection is still returned to satisfy the trait.
+        // Real calls go through the HttpTransportState path.
         let headers = super::resolve_env_placeholders(&app, &config.id, &headers)?;
         let state = HttpTransportState {
             base_url: url,
@@ -95,14 +145,16 @@ impl super::McpServerPlugin for HttpPlugin {
             client: http_client(),
             next_id: Arc::new(AtomicU64::new(1)),
             closed: Arc::new(AtomicBool::new(false)),
+            session_id: Arc::new(parking_lot::Mutex::new(None)),
         };
         let dummy_transport = Box::new(DummyHttpTransport {
             closed: state.closed.clone(),
         });
-        let conn = super::connection::McpConnection::new(&config.id, "http", dummy_transport);
-        // 把真实状态挂到 conn.server_id 之外的某个可达地方
-        // 这里用 thread_local 简化：把 state 存到全局 HashMap
-        HTTP_STATES.lock().insert(config.id.clone(), state);
+        let conn =
+            super::connection::McpConnection::new(&config.id, self.identifier(), dummy_transport);
+        // Stash the real state somewhere reachable other than conn.server_id
+        // Simplified: the state is stored in the plugin's states HashMap
+        self.states.lock().insert(config.id.clone(), state);
         Ok(conn)
     }
 
@@ -110,7 +162,8 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<McpServerInfo> {
-        let state = HTTP_STATES
+        let state = self
+            .states
             .lock()
             .get(&conn.server_id)
             .cloned()
@@ -121,7 +174,7 @@ impl super::McpServerPlugin for HttpPlugin {
             "id": id,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-06-18",
                 "capabilities": {},
                 "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
             }
@@ -164,7 +217,8 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<ToolSpec>> {
-        let state = HTTP_STATES
+        let state = self
+            .states
             .lock()
             .get(&conn.server_id)
             .cloned()
@@ -180,26 +234,8 @@ impl super::McpServerPlugin for HttpPlugin {
             .and_then(|t| t.as_array())
             .cloned()
             .unwrap_or_default();
-        // MCP 协议返回 { name, description, inputSchema }，需转换为 OpenAI
-        // function calling 格式 { type: "function", function: { name, description, parameters } }
-        let specs: Vec<ToolSpec> = tools
-            .into_iter()
-            .filter_map(|t| {
-                let name = t.get("name")?.as_str()?.to_string();
-                let description = t.get("description")?.as_str()?.to_string();
-                let parameters = t.get("inputSchema").cloned().unwrap_or(json!({}));
-                Some(ToolSpec {
-                    kind: "function".to_string(),
-                    function: crate::core::models::ToolFunctionSpec {
-                        name,
-                        description,
-                        parameters,
-                    },
-                })
-            })
-            .take(super::MAX_TOOLS_PER_SERVER)
-            .collect();
-        Ok(specs)
+        // Protocol conversion is centralized in the convert module (single implementation shared by stdio/http)
+        Ok(super::convert::tools_to_specs(tools))
     }
 
     async fn call_tool(
@@ -209,7 +245,8 @@ impl super::McpServerPlugin for HttpPlugin {
         arguments: Value,
         timeout: Duration,
     ) -> McpResult<ToolResult> {
-        let state = HTTP_STATES
+        let state = self
+            .states
             .lock()
             .get(&conn.server_id)
             .cloned()
@@ -225,26 +262,15 @@ impl super::McpServerPlugin for HttpPlugin {
             .await
             .map_err(|_| McpError::Timeout(timeout))??;
         let result = v.get("result").cloned().unwrap_or(json!({}));
-        let content_val = result.get("content").cloned().unwrap_or(json!([]));
-        let content: Vec<ToolResultContent> = match content_val {
-            Value::Array(arr) => arr
-                .into_iter()
-                .filter_map(|x| serde_json::from_value(x).ok())
-                .collect(),
-            _ => vec![],
-        };
-        let is_error = result
-            .get("isError")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false);
-        Ok(ToolResult { content, is_error })
+        Ok(super::convert::parse_call_tool_result(&result))
     }
 
     async fn list_resources(
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<McpResource>> {
-        let state = HTTP_STATES
+        let state = self
+            .states
             .lock()
             .get(&conn.server_id)
             .cloned()
@@ -258,11 +284,7 @@ impl super::McpServerPlugin for HttpPlugin {
             .and_then(|a| a.as_array())
             .cloned()
             .unwrap_or_default();
-        let specs: Vec<McpResource> = resources
-            .into_iter()
-            .filter_map(|r| serde_json::from_value(r).ok())
-            .collect();
-        Ok(specs)
+        Ok(super::convert::parse_resources(resources))
     }
 
     async fn read_resource(
@@ -270,7 +292,8 @@ impl super::McpServerPlugin for HttpPlugin {
         conn: &super::connection::McpConnection,
         uri: &str,
     ) -> McpResult<ReadResourceResult> {
-        let state = HTTP_STATES
+        let state = self
+            .states
             .lock()
             .get(&conn.server_id)
             .cloned()
@@ -289,7 +312,8 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<McpPrompt>> {
-        let state = HTTP_STATES
+        let state = self
+            .states
             .lock()
             .get(&conn.server_id)
             .cloned()
@@ -303,11 +327,7 @@ impl super::McpServerPlugin for HttpPlugin {
             .and_then(|a| a.as_array())
             .cloned()
             .unwrap_or_default();
-        let specs: Vec<McpPrompt> = prompts
-            .into_iter()
-            .filter_map(|p| serde_json::from_value(p).ok())
-            .collect();
-        Ok(specs)
+        Ok(super::convert::parse_prompts(prompts))
     }
 
     async fn get_prompt(
@@ -316,7 +336,8 @@ impl super::McpServerPlugin for HttpPlugin {
         name: &str,
         arguments: Option<Value>,
     ) -> McpResult<GetPromptResult> {
-        let state = HTTP_STATES
+        let state = self
+            .states
             .lock()
             .get(&conn.server_id)
             .cloned()
@@ -335,16 +356,10 @@ impl super::McpServerPlugin for HttpPlugin {
     }
 
     async fn stop(&self, conn: super::connection::McpConnection) -> McpResult<()> {
-        HTTP_STATES.lock().remove(&conn.server_id);
+        self.states.lock().remove(&conn.server_id);
         Ok(())
     }
 }
-
-/// 内部全局表：server_id → HttpTransportState
-/// 由于 start/list_tools 不在同一个 async 上下文，用 parking_lot::Mutex
-static HTTP_STATES: once_cell::sync::Lazy<
-    parking_lot::Mutex<std::collections::HashMap<String, HttpTransportState>>,
-> = once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
 
 async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value> {
     if state.closed.load(Ordering::SeqCst) {
@@ -360,6 +375,10 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     for (k, v) in state.headers.iter() {
         req = req.header(k, v);
     }
+    // Streamable HTTP session: subsequent requests echo back the Mcp-Session-Id obtained from initialize
+    if let Some(sid) = state.session_id.lock().clone() {
+        req = req.header("Mcp-Session-Id", sid);
+    }
     let resp = req
         .send()
         .await
@@ -371,6 +390,15 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    // Capture the session id issued/updated by the server (present in both initialize and session-renewal responses)
+    if let Some(sid) = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+    {
+        *state.session_id.lock() = Some(sid);
+    }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let truncated = if body.len() > 512 {
@@ -384,24 +412,37 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         )));
     }
     if content_type.starts_with("text/event-stream") {
-        // 简化：从 SSE 块中提取首个 "data:" 行的 JSON
+        // SSE parsing: split into blocks on blank lines; multiple data lines within a
+        // block are joined with \n per the SSE spec; event:/id:/comment lines are ignored;
+        // \r\n is tolerated. Takes the first block containing data (in request-response
+        // mode the server returns the JSON-RPC response as the first event).
         use futures_util::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| McpError::Server(format!("SSE read: {}", e)))?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
-            if let Some(pos) = buffer.find("\n\n") {
-                let block = &buffer[..pos];
+            // A blank line (\n\n or \r\n\r\n) is the block boundary
+            let block_end = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"));
+            if let Some(pos) = block_end {
+                let block: String = buffer[..pos].to_string();
+                let mut data_lines: Vec<String> = Vec::new();
                 for line in block.lines() {
+                    let line = line.trim_end_matches('\r');
                     if let Some(rest) = line.strip_prefix("data:") {
-                        let data = rest.trim();
-                        if !data.is_empty() {
-                            return serde_json::from_str::<Value>(data)
-                                .map_err(|e| McpError::Server(format!("SSE JSON: {}", e)));
-                        }
+                        data_lines.push(rest.trim_start().to_string());
+                    }
+                    // event: / id: / :comment lines are ignored per the spec
+                }
+                if !data_lines.is_empty() {
+                    let data = data_lines.join("\n");
+                    if !data.is_empty() {
+                        return serde_json::from_str::<Value>(&data)
+                            .map_err(|e| McpError::Server(format!("SSE JSON: {}", e)));
                     }
                 }
+                // Blocks without data (pure notifications/heartbeats): keep reading the next block
+                buffer.drain(..pos);
             }
         }
         Err(McpError::Server("SSE 流意外关闭".into()))
@@ -412,7 +453,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     }
 }
 
-/// Dummy transport：仅用于满足 McpConnection 抽象
+/// Dummy transport: exists only to satisfy the McpConnection abstraction
 struct DummyHttpTransport {
     closed: Arc<AtomicBool>,
 }
@@ -420,7 +461,7 @@ struct DummyHttpTransport {
 #[async_trait]
 impl super::connection::McpTransport for DummyHttpTransport {
     async fn send(&self, _payload: &str) -> McpResult<()> {
-        // HTTP 模式不走这里
+        // Not used in HTTP mode
         Err(McpError::Unimplemented(
             "HTTP 模式应直接走 HttpTransportState".into(),
         ))

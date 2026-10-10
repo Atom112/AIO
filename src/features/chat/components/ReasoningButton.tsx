@@ -1,8 +1,8 @@
 /**
- * 推理强度按钮 (LobeHub 风格)
+ * Reasoning intensity button (LobeHub-style)
  *
- * 位于聊天输入框上传文件按钮左侧, 点击展开弹窗选择推理等级.
- * 弹窗向上弹出 (避免被聊天区遮挡), 包含 4 个等级选项 (关/低/中/高).
+ * Sits left of the file upload button in the chat input; clicking opens a popup to pick a reasoning level.
+ * The popup opens upward (avoids being covered by the chat area) and offers 4 levels (off/low/medium/high).
  */
 import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import {
@@ -59,10 +59,10 @@ const ReasoningButton: Component = () => {
   let containerRef: HTMLDivElement | undefined;
   const current = () => LEVELS.find((l) => l.value === reasoningLevel()) || LEVELS[0];
 
-  /** 当前等级不是 off 时, 按钮高亮显示 */
+  /** Button is highlighted when the current level is not off */
   const isActive = () => reasoningLevel() !== 'off';
 
-  /** 点击外部关闭 */
+  /** Close on outside click */
   const onDocClick = (e: MouseEvent) => {
     if (!containerRef) return;
     if (!containerRef.contains(e.target as Node)) {
@@ -82,7 +82,7 @@ const ReasoningButton: Component = () => {
     <div ref={containerRef} class="relative inline-block">
       <button
         type="button"
-        class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/55 text-xs font-medium hover:bg-white/[0.06] hover:text-[#7c9abf]/60"
+        class="flex items-center gap-1.5 px-2.5 h-8 rounded-md border-none cursor-pointer transition-all duration-200 select-none bg-transparent text-white/55 text-xs font-medium hover:bg-white/[0.06] hover:text-[var(--color-pri)]/60"
         style={{ color: LEVEL_COLORS[reasoningLevel()] }}
         classList={{ 'is-active': isActive() }}
         title={t('chat.reasoning')}

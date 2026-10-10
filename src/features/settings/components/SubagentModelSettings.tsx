@@ -25,6 +25,12 @@ import {
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import Icon from '../../../shared/components/Icon';
+import {
+  btnIcon,
+  btnPrimarySm,
+  btnSecondarySm,
+  tabActive,
+} from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 
 // --- Profile descriptions (mirrors subagent::builtin_profiles) ---
@@ -45,6 +51,7 @@ const BUILTIN_PROFILE_IDS = new Set([
   'writer',
   'tester',
   'requirements',
+  'vision',
 ]);
 
 const BUILTIN_PROFILES: ProfileInfo[] = [
@@ -92,6 +99,11 @@ const BUILTIN_PROFILES: ProfileInfo[] = [
     id: 'requirements',
     name: t('subagent.profile.requirementsAnalyst'),
     description: t('subagent.profileDesc.requirements'),
+  },
+  {
+    id: 'vision',
+    name: t('subagent.profile.visionAnalyst'),
+    description: t('subagent.profileDesc.vision'),
   },
 ];
 
@@ -184,9 +196,9 @@ const SubagentModelSettings: Component = () => {
   ]);
 
   const isBuiltin = (id: string) => BUILTIN_PROFILE_IDS.has(id);
-  // NOTE: 此函数与 ProjectSettingsModal.tsx 中的 getProviderIdFor 存在分支副本；
-  // 两者行为略有差异（此版本含 .trim() 和 deepseek.ai 检查），
-  // 合并前需确认行为差异是否有意。另见 core/utils/models.ts 中的 detectProviderByUrl。
+  // NOTE: this function is a diverged copy of getProviderIdFor in ProjectSettingsModal.tsx;
+  // their behavior differs slightly (this version has .trim() and a deepseek.ai check).
+  // Confirm the difference is intentional before merging them. See also detectProviderByUrl in core/utils/models.ts.
   const getProviderIdFor = (model: ActivatedModel): string => {
     if ((model as any).provider_id) return (model as any).provider_id;
 
@@ -305,9 +317,6 @@ const SubagentModelSettings: Component = () => {
     <div class="space-y-1">
       <div class="pb-3 border-b border-[var(--border-dim)] animate-row-in">
         <h2 class="text-lg text-white font-semibold m-0">{t('subagent.title')}</h2>
-        <p class="text-xs text-white/35 mt-1.5 leading-relaxed">
-          {t('subagent.settingsDescription')}
-        </p>
       </div>
 
       <For each={allProfiles()}>
@@ -332,12 +341,8 @@ const SubagentModelSettings: Component = () => {
                 </div>
                 <div class="flex items-center gap-2 ml-3 shrink-0">
                   <button
-                    class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all border font-medium flex items-center gap-1.5"
-                    classList={{
-                      'bg-pri-20 border-pri-30 text-pri': !!current(),
-                      'bg-white/[0.04] border-[var(--border-dim)] text-white/40 hover:text-white hover:bg-white/[0.06]':
-                        !current(),
-                    }}
+                    class={btnSecondarySm}
+                    classList={{ [tabActive]: !!current() }}
                     onClick={() => setOpenDropdown(isOpen() ? null : profile.id)}
                   >
                     {current() ? getModelLogo(current()!.model_id) : null}
@@ -348,7 +353,9 @@ const SubagentModelSettings: Component = () => {
                   </button>
                   <Show when={!isBuiltin(profile.id)}>
                     <button
-                      class="w-6 h-6 rounded flex items-center justify-center cursor-pointer transition-colors bg-transparent border-none text-white/25 hover:text-red-400 hover:bg-red-400/10"
+                      class={
+                        'w-6 h-6 text-white/25 hover:text-red-400 hover:bg-red-400/10 ' + btnIcon
+                      }
                       onClick={() => void handleDeleteCustom(profile.id)}
                       title={t('subagent.deleteCustom')}
                     >
@@ -371,16 +378,16 @@ const SubagentModelSettings: Component = () => {
                   <div
                     class="flex items-center gap-2.5 p-2.5 rounded-lg cursor-pointer select-none transition-all text-sm"
                     classList={{
-                      'text-white/50 hover:bg-white/[0.04] hover:text-white/80': !current(),
-                      'text-pri bg-pri-10': !!current(),
+                      'text-white bg-pri-10': !current(),
+                      'text-white/50 hover:bg-white/[0.04] hover:text-white/80': !!current(),
                     }}
                     onClick={() => void handlePickModel(profile.id, null)}
                   >
                     <span>{t('subagent.followMainModel')}</span>
-                    <Show when={!current()}>
+                    <Show when={!!current()}>
                       <Icon name="arrow-left" size={13} class="text-white/30 ml-auto" />
                     </Show>
-                    <Show when={current()}>
+                    <Show when={!current()}>
                       <Icon name="check" size={13} class="ml-auto" />
                     </Show>
                   </div>
@@ -580,7 +587,7 @@ const SubagentModelSettings: Component = () => {
                             <div
                               class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] cursor-pointer transition-[background,color] duration-[120ms] select-none"
                               classList={{
-                                'text-pri bg-pri-10': sel(),
+                                'text-white bg-pri-10': sel(),
                                 'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
                               }}
                               onClick={() => toggleTool(toolName, true)}
@@ -640,7 +647,7 @@ const SubagentModelSettings: Component = () => {
                             <div
                               class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] cursor-pointer transition-[background,color] duration-[120ms] select-none"
                               classList={{
-                                'text-[#ff8a8a] bg-[rgba(255,107,107,0.12)]': sel(),
+                                'text-[var(--color-danger)] bg-[rgba(255,107,107,0.12)]': sel(),
                                 'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
                               }}
                               onClick={() => toggleTool(toolName, false)}
@@ -648,7 +655,7 @@ const SubagentModelSettings: Component = () => {
                               <Icon
                                 name={sel() ? 'x-circle' : 'plus'}
                                 size={11}
-                                class={sel() ? 'text-[#ff8a8a]' : 'text-white/25'}
+                                class={sel() ? 'text-[var(--color-danger)]' : 'text-white/25'}
                               />
                               <span class="truncate">{toolName}</span>
                             </div>
@@ -668,7 +675,9 @@ const SubagentModelSettings: Component = () => {
               <textarea
                 value={newSystemPrompt()}
                 onInput={(e) => setNewSystemPrompt(e.currentTarget.value)}
-                placeholder={t('subagent.systemPromptPlaceholder', { name: newName() || '助手' })}
+                placeholder={t('subagent.systemPromptPlaceholder', {
+                  name: newName() || t('common.assistant'),
+                })}
                 rows={3}
                 class="w-full px-2.5 py-1.5 rounded-lg bg-[rgba(0,0,0,0.2)] border border-[var(--border-dim)] text-xs text-white placeholder:text-white/15 outline-none focus:border-pri-30 transition-colors resize-none"
               />
@@ -676,7 +685,7 @@ const SubagentModelSettings: Component = () => {
 
             <div class="flex gap-2 justify-end pt-1">
               <button
-                class="px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all bg-white/[0.04] border border-[var(--border-dim)] text-white/40 hover:text-white hover:bg-white/[0.06]"
+                class={btnSecondarySm}
                 onClick={() => {
                   setShowCreateForm(false);
                   setNewName('');
@@ -684,10 +693,7 @@ const SubagentModelSettings: Component = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button
-                class="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all bg-pri-20 border border-pri-30 text-pri hover:bg-pri-30"
-                onClick={() => void handleCreate()}
-              >
+              <button class={btnPrimarySm} onClick={() => void handleCreate()}>
                 {t('subagent.create')}
               </button>
             </div>

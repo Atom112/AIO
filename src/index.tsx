@@ -1,6 +1,6 @@
 /**
  * @file index.tsx
- * @description 应用的核心入口文件，负责渲染根节点、配置全站路由及懒加载Suspense。
+ * @description App entry point: renders the root node, wires up all routes, and enables lazy loading with Suspense.
  */
 import { render } from 'solid-js/web';
 import { Router, Route, Navigate } from '@solidjs/router';
@@ -17,17 +17,35 @@ import {
 } from './core/store/store';
 import { t } from './core/i18n';
 
-// 应用启动时初始化项目列表
+// Initialize the project list on app startup
 initProjects();
-// 应用启动时初始化 MCP 服务器（加载配置 + 自动连接标记为 autoStart 的 server）
+// Initialize MCP servers on app startup (load configs + auto-connect servers marked autoStart)
 initMcpServers();
 initSkills();
-// 应用启动时初始化 per-profile 模型覆盖配置
+// Initialize per-profile model overrides on app startup
 initProfileModelOverrides();
-// 应用启动时初始化自定义子智能体配置文件
+// Initialize custom subagent profiles on app startup
 initCustomSubagentProfiles();
-// 应用启动时扫描已安装的推理引擎
+// Scan for installed inference engines on app startup
 initEngineScan();
+
+/**
+ * Detect the weak Linux/WebKitGTK rendering engine and enable performance-degradation styles
+ * only on that platform (`backdrop-filter: none`, opacity-only message animations). Windows(WebView2)/macOS(WKWebView)
+ * do not set `data-webkitgtk`, so visuals and effects are unchanged.
+ */
+function enableWebKitGTKDegrade() {
+  try {
+    const ua = navigator.userAgent.toLowerCase();
+    const isWebKitGTK = ua.includes('linux') && ua.includes('webkit') && !ua.includes('chrome');
+    if (isWebKitGTK) {
+      document.documentElement.setAttribute('data-webkitgtk', '');
+    }
+  } catch {
+    /* Ignore in non-browser environments */
+  }
+}
+enableWebKitGTKDegrade();
 
 const Settings = lazy(() => import('./features/settings/SettingsPage'));
 const ProviderList = lazy(() => import('./features/settings/components/ProviderList'));
@@ -39,6 +57,10 @@ const SubagentModelSettings = lazy(
   () => import('./features/settings/components/SubagentModelSettings'),
 );
 const UsageSettings = lazy(() => import('./features/settings/components/UsageSettings'));
+const EmbeddingModelSettings = lazy(
+  () => import('./features/settings/components/EmbeddingModelSettings'),
+);
+const LocalModelMarket = lazy(() => import('./features/settings/components/LocalModelMarket'));
 
 render(
   () => (
@@ -60,6 +82,8 @@ render(
           <Route path="/usage" component={UsageSettings} />
           <Route path="/app" component={AppSettings} />
           <Route path="/subagent-models" component={SubagentModelSettings} />
+          <Route path="/embedding-models" component={EmbeddingModelSettings} />
+          <Route path="/local-models" component={LocalModelMarket} />
         </Route>
       </Router>
     </Suspense>

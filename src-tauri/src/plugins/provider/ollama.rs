@@ -1,16 +1,15 @@
-//! Ollama provider plugin (本地推理)
+//! Ollama provider plugin (local inference)
 //!
-//! 端点规范:
+//! Endpoint spec:
 //! - URL: `${base}/api/tags`
-//! - Auth: 无 (本地服务)
-//! - Response: `{models: [{name, ...}]}` —— 字段名是 `name`，外层是 `models`
+//! - Auth: none (local service)
+//! - Response: `{models: [{name, ...}]}` - the field is `name`, the outer key is `models`
 //!
-//! 匹配规则: URL 含 `11434` 端口 / `localhost` / `127.0.0.1` / `ollama` 关键字
+//! Match rule: URL contains port `11434` or the `ollama` keyword
 //!
-//! 参考 LobeHub `packages/model-runtime/src/providers/ollama/index.ts:80-95`
+//! Reference: LobeHub `packages/model-runtime/src/providers/ollama/index.ts:80-95`
 
-use reqwest::{Client, RequestBuilder};
-use std::time::Duration;
+use reqwest::RequestBuilder;
 
 use super::ProviderPlugin;
 use crate::core::models::LiveModel;
@@ -22,31 +21,13 @@ impl ProviderPlugin for OllamaProvider {
         "ollama"
     }
 
-    fn name(&self) -> &'static str {
-        "Ollama"
-    }
-
     fn matches(&self, api_url: &str) -> bool {
+        // Only claims unambiguous Ollama signatures: default port 11434 or "ollama" in the host/id.
+        // Claiming any localhost/127.0.0.1 would misclassify local OpenAI-compatible
+        // endpoints (LM Studio, llama.cpp server, text-generation-webui) as Ollama
+        // and send /api/tags to the wrong endpoint (local engines use the engine_type direct path).
         let u = api_url.to_lowercase();
-        u.contains("11434")
-            || u.contains("localhost")
-            || u.contains("127.0.0.1")
-            || u.contains("ollama")
-    }
-
-    fn build_client(&self, proxy_url: Option<&str>, timeout_secs: u64) -> Result<Client, String> {
-        let mut b = Client::builder()
-            .user_agent("AIO-Desktop/0.4 (ollama-provider)")
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(timeout_secs));
-        if let Some(p) = proxy_url {
-            if !p.trim().is_empty() {
-                let proxy = reqwest::Proxy::all(p).map_err(|e| format!("代理 URL 非法: {}", e))?;
-                b = b.proxy(proxy);
-            }
-        }
-        b.build()
-            .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
+        u.contains("11434") || u.contains("ollama")
     }
 
     fn models_url(&self, api_url: &str) -> String {
@@ -54,13 +35,13 @@ impl ProviderPlugin for OllamaProvider {
     }
 
     fn apply_auth(&self, req: RequestBuilder, _api_key: &str) -> RequestBuilder {
-        // Ollama 无认证
+        // Ollama has no auth
         req
     }
 
     fn chat_completions_url(&self, api_url: &str) -> String {
         let base = api_url.trim_end_matches('/');
-        // Ollama 的 OpenAI 兼容端点在 /v1 路径下
+        // Ollama's OpenAI-compatible endpoint lives under the /v1 path
         if base.ends_with("/v1") {
             format!("{}/chat/completions", base)
         } else {

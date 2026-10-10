@@ -1,16 +1,16 @@
 /**
  * @file GlobalKeyboardHandler.tsx
- * @description 全局键盘快捷键监听组件（无 UI），挂载到 Layout 中
+ * @description Global keyboard shortcut listener component (no UI), mounted in Layout
  *
- * 职责：
- * 1. 监听 document 的 keydown 事件
- * 2. 将按键标准化后查找对应的注册命令
- * 3. 执行命令处理器
- * 4. Escape 键优先级：命令面板 → 用户注册的 Escape 命令（如停止生成）→ 浏览器默认
+ * Responsibilities:
+ * 1. Listen to document keydown events
+ * 2. Normalize the key combo and look up the matching registered command
+ * 3. Execute the command handler
+ * 4. Escape priority: command palette → user-registered Escape commands (e.g. stop generation) → browser default
  *
- * 边界条件：
- * - 输入框聚焦时，仅允许 Escape/Enter 等白名单快捷键通过
- * - 命令面板打开时，Escape 优先关闭面板
+ * Edge cases:
+ * - When an input is focused, only whitelisted shortcuts such as Escape/Enter pass through
+ * - When the command palette is open, Escape closes the palette first
  */
 
 import { onMount, onCleanup } from 'solid-js';
@@ -29,30 +29,30 @@ const GlobalKeyboardHandler = () => {
     const combo = normalizeKeyCombo(event);
     if (!combo) return;
 
-    // Escape 优先级链：命令面板 > 注册命令
+    // Escape priority chain: command palette > registered commands
     if (combo === 'Escape') {
-      // 优先级 1：关闭命令面板
+      // Priority 1: close the command palette
       if (commandPaletteOpen()) {
         event.preventDefault();
         event.stopPropagation();
         setCommandPaletteOpen(false);
         return;
       }
-      // 优先级 2：执行注册的 Escape 命令（如停止生成、关闭弹窗）
-      // 继续走下面的查找逻辑
+      // Priority 2: run a registered Escape command (e.g. stop generation, close modal)
+      // falls through to the lookup logic below
     }
 
-    // 查找匹配的命令
+    // Look up the matching command
     const actionId = getActionByKeys(combo);
     if (!actionId) return;
 
-    // 输入框聚焦时，仅白名单快捷键通过
+    // When an input is focused, only whitelisted shortcuts pass through
     const targetIsEditable = isEditableTarget(event.target);
     if (targetIsEditable && !isInputPassthrough(combo)) {
       return;
     }
 
-    // 执行命令
+    // Execute the command
     event.preventDefault();
     event.stopPropagation();
     executeCommand(actionId);
@@ -66,7 +66,7 @@ const GlobalKeyboardHandler = () => {
     document.removeEventListener('keydown', onKeyDown, { capture: true });
   });
 
-  // 纯逻辑组件，不渲染任何 DOM
+  // Pure logic component, renders no DOM
   return null;
 };
 

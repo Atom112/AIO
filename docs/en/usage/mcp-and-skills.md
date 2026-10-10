@@ -170,6 +170,6 @@ project/
     └── knowledge.json
 ```
 
-`knowledge.json` is only created after enabling cross-session memory and generating knowledge; `permissions.json` is only needed when custom rules exist. Before committing `.aio/`, check for environment-related paths and business information; secrets must remain as credential store placeholders.
+`knowledge.json` belongs to the legacy cross-session memory and is auto-migrated the first time project memory (RAG) is opened; only existing projects may still keep the file. `permissions.json` is only needed when custom rules exist. Before committing `.aio/`, check for environment-related paths and business information; secrets must remain as credential store placeholders.
 
 For troubleshooting, see [MCP and Skill Troubleshooting](../troubleshooting.md#mcp-server-fails-to-start).

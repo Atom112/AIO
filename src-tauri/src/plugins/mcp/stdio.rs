@@ -1,13 +1,14 @@
-//! MCP stdio 传输
+//! MCP stdio transport
 //!
-//! 启动一个子进程，通过 stdin/stdout 收发 JSON-RPC 2.0 消息（每行一个 JSON）。
-//! 启动子进程时不继承系统 env，仅传白名单 env 字段（防止密钥泄露）。
+//! Spawns a child process and exchanges JSON-RPC 2.0 messages over stdin/stdout (one JSON per line).
+//! The child process does not inherit the system env; only whitelisted env vars are passed (to prevent secret leakage).
 
 use super::connection::{McpConnection, McpTransport};
 use super::error::{McpError, McpResult};
+use crate::core::events as ev;
 use crate::core::models::{
     GetPromptResult, McpPrompt, McpResource, McpServerConfig, McpServerInfo, McpStatus,
-    ReadResourceResult, ToolResult, ToolResultContent, ToolSpec,
+    ReadResourceResult, ToolResult, ToolSpec,
 };
 use crate::core::secure_store;
 use async_trait::async_trait;
@@ -19,6 +20,42 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 pub struct StdioPlugin;
+
+/// Whitelist of system env vars passed through to the MCP stdio child process.
+/// The full host environment is no longer inherited; only node/npm/npx and other
+/// essentials for running common MCP servers, plus common proxy/locale settings,
+/// are allowed. User-configured env for the server can append to/override this list.
+fn inherited_env_whitelist() -> std::collections::HashMap<String, String> {
+    const KEYS: &[&str] = &[
+        "PATH",
+        "HOME",
+        "USER",
+        "USERNAME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "PATHEXT",
+        "ComSpec",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "NO_PROXY",
+    ];
+    let mut out = std::collections::HashMap::new();
+    for k in KEYS {
+        if let Some(v) = std::env::var_os(k) {
+            out.insert(k.to_string(), v.to_string_lossy().into_owned());
+        }
+    }
+    out
+}
 
 #[async_trait]
 impl super::McpServerPlugin for StdioPlugin {
@@ -41,21 +78,23 @@ impl super::McpServerPlugin for StdioPlugin {
             }
         };
 
-        // 解析 env 中的 ${KEYRING:...} 占位符
+        // Resolve ${KEYRING:...} placeholders in env
         let env = super::resolve_env_placeholders(&app, &config.id, &env_raw)?;
 
-        // Windows: `npx`/`npm`/`pnpm` 等实为 `.cmd` 批处理脚本，CreateProcess 不会
-        // 按 PATHEXT 搜索扩展名，直接 `Command::new("npx")` 会报 "program not found"。
-        // 先把裸命令名解析为完整路径（如 `C:\...\npx.cmd`），std 会自动用 `cmd /C`
-        // 包装执行；解析不到则回退原命令，保留原生报错。
+        // Windows: `npx`/`npm`/`pnpm` are actually `.cmd` batch scripts; CreateProcess does
+        // not resolve extensions via PATHEXT, so `Command::new("npx")` fails with "program not found".
+        // Resolve the bare command name to a full path (e.g. `C:\...\npx.cmd`) first; std then
+        // wraps execution with `cmd /C` automatically. Falls back to the original command when
+        // resolution fails, preserving the native error.
         #[cfg(windows)]
         let program = resolve_command_on_path(&command).unwrap_or_else(|| command.clone());
         #[cfg(not(windows))]
         let program = command.clone();
 
-        // 构造 tokio::process::Command
-        // 继承系统 env（npx/node 依赖 PATH/APPDATA/TEMP 等），用户配置的 env 覆盖同名变量。
+        // Build the tokio::process::Command
+        // Do not inherit the full system env: clear it, then pass the whitelist + user-configured env (user config overrides the whitelist).
         let mut cmd = Command::new(&program);
+        cmd.env_clear().envs(inherited_env_whitelist());
         cmd.args(&args)
             .envs(env)
             .stdin(Stdio::piped())
@@ -65,7 +104,7 @@ impl super::McpServerPlugin for StdioPlugin {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        // Windows: 抑制控制台窗口
+        // Windows: suppress the console window
         #[cfg(windows)]
         {
             #[allow(unused_imports)]
@@ -96,7 +135,7 @@ impl super::McpServerPlugin for StdioPlugin {
 
         let conn = McpConnection::new(&config.id, "stdio", transport);
 
-        // 启动 stdout 行读取循环
+        // Start the stdout line-reading loop
         spawn_stdout_reader(
             conn.clone(),
             BufReader::new(stdout),
@@ -104,14 +143,14 @@ impl super::McpServerPlugin for StdioPlugin {
             config.id.clone(),
         );
 
-        // stderr → 日志事件（前端可订阅 `mcp-server-stderr` 调试）
+        // stderr → log events (frontend can subscribe to `mcp-server-stderr` for debugging)
         if let Some(stderr) = stderr {
             let app2 = app.clone();
             let sid = config.id.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = app2.emit("mcp-server-stderr", json!({ "id": sid, "line": line }));
+                    let _ = app2.emit(ev::MCP_SERVER_STDERR, json!({ "id": sid, "line": line }));
                 }
             });
         }
@@ -120,9 +159,9 @@ impl super::McpServerPlugin for StdioPlugin {
     }
 
     async fn initialize(&self, conn: &McpConnection) -> McpResult<McpServerInfo> {
-        // MCP initialize 协议
+        // MCP initialize handshake (upgraded to protocol version 2025-06-18; keeps working with the server's returned version)
         let params = json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "capabilities": {},
             "clientInfo": {
                 "name": "aio",
@@ -132,10 +171,10 @@ impl super::McpServerPlugin for StdioPlugin {
         let result = conn
             .request("initialize", Some(params), Duration::from_secs(60))
             .await?;
-        // 协议要求 initialize 后必须发 notifications/initialized
+        // The protocol requires notifications/initialized to be sent after initialize
         conn.notify("notifications/initialized", None).await?;
 
-        // 解析 serverInfo
+        // Parse serverInfo
         let info_val = result.get("serverInfo").cloned().unwrap_or(json!({}));
         let name = info_val
             .get("name")
@@ -146,7 +185,7 @@ impl super::McpServerPlugin for StdioPlugin {
             .get("version")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        // 解析 capabilities
+        // Parse capabilities
         let capabilities = result
             .get("capabilities")
             .and_then(|v| serde_json::from_value(v.clone()).ok());
@@ -166,26 +205,8 @@ impl super::McpServerPlugin for StdioPlugin {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        // MCP 协议返回 { name, description, inputSchema }，需转换为 OpenAI
-        // function calling 格式 { type: "function", function: { name, description, parameters } }
-        let specs: Vec<ToolSpec> = tools
-            .into_iter()
-            .filter_map(|t| {
-                let name = t.get("name")?.as_str()?.to_string();
-                let description = t.get("description")?.as_str()?.to_string();
-                let parameters = t.get("inputSchema").cloned().unwrap_or(json!({}));
-                Some(ToolSpec {
-                    kind: "function".to_string(),
-                    function: crate::core::models::ToolFunctionSpec {
-                        name,
-                        description,
-                        parameters,
-                    },
-                })
-            })
-            .take(super::MAX_TOOLS_PER_SERVER)
-            .collect();
-        Ok(specs)
+        // Protocol conversion is centralized in the convert module (single implementation shared by stdio/http)
+        Ok(super::convert::tools_to_specs(tools))
     }
 
     async fn call_tool(
@@ -197,20 +218,8 @@ impl super::McpServerPlugin for StdioPlugin {
     ) -> McpResult<ToolResult> {
         let params = json!({ "name": name, "arguments": arguments });
         let result = conn.request("tools/call", Some(params), timeout).await?;
-        // MCP 返回 { content: [...], isError: bool }
-        let content_val = result.get("content").cloned().unwrap_or(json!([]));
-        let content: Vec<ToolResultContent> = match content_val {
-            Value::Array(arr) => arr
-                .into_iter()
-                .filter_map(|v| serde_json::from_value(v).ok())
-                .collect(),
-            _ => vec![],
-        };
-        let is_error = result
-            .get("isError")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        Ok(ToolResult { content, is_error })
+        // MCP returns { content: [...], isError: bool }; parsing is centralized in the convert module
+        Ok(super::convert::parse_call_tool_result(&result))
     }
 
     async fn list_resources(&self, conn: &McpConnection) -> McpResult<Vec<McpResource>> {
@@ -222,11 +231,7 @@ impl super::McpServerPlugin for StdioPlugin {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let specs: Vec<McpResource> = resources
-            .into_iter()
-            .filter_map(|r| serde_json::from_value(r).ok())
-            .collect();
-        Ok(specs)
+        Ok(super::convert::parse_resources(resources))
     }
 
     async fn read_resource(
@@ -250,11 +255,7 @@ impl super::McpServerPlugin for StdioPlugin {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let specs: Vec<McpPrompt> = prompts
-            .into_iter()
-            .filter_map(|p| serde_json::from_value(p).ok())
-            .collect();
-        Ok(specs)
+        Ok(super::convert::parse_prompts(prompts))
     }
 
     async fn get_prompt(
@@ -281,7 +282,7 @@ impl super::McpServerPlugin for StdioPlugin {
 struct StdioTransportHandle {
     child: tokio::sync::Mutex<Option<Child>>,
     stdin: tokio::sync::Mutex<tokio::process::ChildStdin>,
-    /// 保留 stderr task 的 JoinHandle（防止被 drop）
+    /// Keeps the stderr task's JoinHandle (prevents it from being dropped)
     #[allow(dead_code)]
     stderr_task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -299,7 +300,7 @@ impl McpTransport for StdioTransportHandle {
     async fn close(&self) -> McpResult<()> {
         let mut child_guard = self.child.lock().await;
         if let Some(mut child) = child_guard.take() {
-            // 优雅终止：先尝试 kill（tokio 的 child 只能 kill，不能优雅）
+            // Termination: attempt kill (tokio's child only supports kill, no graceful shutdown)
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
@@ -307,7 +308,7 @@ impl McpTransport for StdioTransportHandle {
     }
 }
 
-/// 在后台持续读取 stdout，每解析到一行 JSON 就分发到 McpConnection
+/// Continuously reads stdout in the background; each parsed JSON line is dispatched to McpConnection
 fn spawn_stdout_reader(
     conn: McpConnection,
     reader: BufReader<tokio::process::ChildStdout>,
@@ -324,12 +325,14 @@ fn spawn_stdout_reader(
                     if line.trim().is_empty() {
                         continue;
                     }
-                    conn.dispatch_line(&line);
+                    if let Some((method, params)) = conn.dispatch_line(&line) {
+                        handle_server_notification(&app, &server_id, &method, &params);
+                    }
                 }
                 Ok(None) => {
                     // EOF
                     let _ = app.emit(
-                        "mcp-server-status",
+                        ev::MCP_SERVER_STATUS,
                         json!({ "id": server_id, "status": McpStatus::Disconnected }),
                     );
                     break;
@@ -338,7 +341,7 @@ fn spawn_stdout_reader(
                     err_count += 1;
                     if err_count > 10 {
                         let _ = app.emit(
-                            "mcp-server-stderr",
+                            ev::MCP_SERVER_STDERR,
                             json!({ "id": server_id, "line": format!("stdout read error: {}", e) }),
                         );
                         break;
@@ -349,15 +352,50 @@ fn spawn_stdout_reader(
     });
 }
 
-/// Windows: 把命令名解析为完整可执行路径。
+/// Consumes notifications pushed proactively by the server.
+/// - notifications/tools/list_changed: tool list changed → emit an event so the frontend refreshes its cache
+/// - notifications/message (logging): forwarded to the stderr debug channel for display
+pub(crate) fn handle_server_notification(
+    app: &tauri::AppHandle,
+    server_id: &str,
+    method: &str,
+    params: &serde_json::Value,
+) {
+    match method {
+        "notifications/tools/list_changed" => {
+            let _ = app.emit(ev::MCP_TOOLS_CHANGED, json!({ "id": server_id }));
+        }
+        "notifications/message" => {
+            // MCP logging notification: level + data
+            let level = params
+                .get("level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("info");
+            let data = params
+                .get("data")
+                .map(|d| d.to_string())
+                .unwrap_or_default();
+            let _ = app.emit(
+                ev::MCP_SERVER_STDERR,
+                json!({ "id": server_id, "line": format!("[{level}] {data}") }),
+            );
+        }
+        _ => {
+            tracing::debug!("[mcp:{server_id}] 未消费的通知: {method}");
+        }
+    }
+}
+
+/// Windows: resolves a command name to a full executable path.
 ///
-/// `CreateProcess` 不会像 `cmd.exe` 那样按 `PATHEXT` 搜索扩展名，而 `npx`/`npm`/
-/// `pnpm` 等在 Windows 上实为 `.cmd` 批处理脚本，因此 `Command::new("npx")` 会
-/// 报 "program not found"。这里手动遍历 `PATH` × `PATHEXT` 找到首个存在的文件。
+/// `CreateProcess` does not search extensions via `PATHEXT` the way `cmd.exe` does,
+/// and `npx`/`npm`/`pnpm` on Windows are actually `.cmd` batch scripts, so
+/// `Command::new("npx")` fails with "program not found". This manually walks
+/// `PATH` × `PATHEXT` to find the first existing file.
 ///
-/// - 裸命令名（如 `npx`）：遍历 PATH 各目录补 PATHEXT 扩展名。
-/// - 带目录的裸名（如 `C:\nodejs\npx`）：仅在其所在目录内补扩展名。
-/// - 已带扩展名：返回 None，交由调用方回退到原命令保留原生报错。
+/// - Bare command name (e.g. `npx`): walk all PATH directories, appending PATHEXT extensions.
+/// - Bare name with a directory (e.g. `C:\nodejs\npx`): only append extensions within that directory.
+/// - Already has an extension: returns None; the caller falls back to the original command to preserve the native error.
 #[cfg(windows)]
 fn resolve_command_on_path(command: &str) -> Option<String> {
     use std::path::{Path, PathBuf};
@@ -371,7 +409,7 @@ fn resolve_command_on_path(command: &str) -> Option<String> {
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
     let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
 
-    // command 含目录部分时只在该目录内查找；否则遍历 PATH
+    // If command contains a directory part, search only that directory; otherwise walk PATH
     let dirs: Vec<PathBuf> = match p.parent() {
         Some(d) if !d.as_os_str().is_empty() => vec![d.to_path_buf()],
         _ => std::env::var("PATH")
@@ -394,7 +432,7 @@ fn resolve_command_on_path(command: &str) -> Option<String> {
     None
 }
 
-/// 工具：从已有 keyring account 推导出占位符（供 UI 在保存前调用）
+/// Utility: derives the placeholder from an existing keyring account (for the UI to call before saving)
 #[allow(dead_code)]
 pub fn build_keyring_placeholder(server_id: &str, env_key: &str) -> String {
     let account = secure_store::accounts::mcp_server_env(server_id, env_key);

@@ -5,16 +5,16 @@ import Icon from '../../shared/components/Icon';
 import { t } from '../../core/i18n';
 
 /**
- * 设置页面布局 (lobehub v2 嵌套路由)
- * - 侧栏: 切换顶级 tab (provider / account / app)
- * - 主区域: 渲染当前匹配的子路由 (props.children)
- * - provider tab 下还有子路由: /settings/provider (列表) + /settings/provider/:id (详情)
- *   进入详情时侧栏隐藏, 详情页自带返回按钮
+ * Settings page layout (LobeHub v2 nested routes)
+ * - Sidebar: switches top-level tabs (provider / account / app)
+ * - Main area: renders the currently matched child route (props.children)
+ * - The provider tab has sub-routes: /settings/provider (list) + /settings/provider/:id (detail)
+ *   The sidebar hides in detail view; the detail page provides its own back button
  */
 const Settings: Component<{ children?: JSX.Element }> = (props) => {
   const location = useLocation();
 
-  /** 详情页 (匹配 /settings/provider/<id>) 时隐藏侧栏 */
+  /** Hide the sidebar on detail pages (matching /settings/provider/<id>) */
   const isProviderDetail = () => /^\/settings\/provider\/[^/]+/.test(location.pathname);
 
   const menuItems = createMemo(
@@ -50,6 +50,18 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         icon: <Icon name="sparkles" class="w-5 h-5" />,
       },
       {
+        id: 'embedding-models',
+        path: '/settings/embedding-models',
+        label: t('settings.embeddingModels'),
+        icon: <Icon name="layers" class="w-5 h-5" />,
+      },
+      {
+        id: 'local-models',
+        path: '/settings/local-models',
+        label: t('settings.localModels'),
+        icon: <Icon name="download" class="w-5 h-5" />,
+      },
+      {
         id: 'app',
         path: '/settings/app',
         label: t('settings.app'),
@@ -69,7 +81,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
   return (
     <div class="h-full flex p-4 gap-4" style={{ background: 'transparent' }}>
       <Show when={!isProviderDetail()}>
-        {/* 侧边栏 */}
+        {/* Sidebar */}
         <div
           class="w-[200px] flex flex-col rounded-lg overflow-hidden shrink-0"
           style={{
@@ -78,7 +90,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
             border: '1px solid var(--border-dim)',
           }}
         >
-          <div class="px-5 py-6 text-lg text-[#999] uppercase tracking-[2px] font-bold">
+          <div class="px-5 py-6 text-lg text-[rgba(var(--text-base-rgb),0.6)] uppercase tracking-[2px] font-bold">
             {t('settings.title')}
           </div>
 
@@ -90,8 +102,8 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
                   class={`relative px-5 py-4 my-1 cursor-pointer flex items-center gap-3 rounded-lg border border-transparent transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group overflow-hidden no-underline
                                     ${
                                       isActive(item.path)
-                                        ? 'bg-pri-10 text-pri [text-shadow:0_0_8px_var(--primary-5)] border-pri-20 shadow-[inset_0_0_10px_var(--primary-10)]'
-                                        : 'text-[#aaa] hover:bg-pri-10 hover:text-white hover:pl-6'
+                                        ? 'bg-pri-10 text-white [text-shadow:0_0_8px_var(--primary-5)] border-pri-20 shadow-[inset_0_0_10px_var(--primary-10)]'
+                                        : 'text-[rgba(var(--text-base-rgb),0.65)] hover:bg-pri-10 hover:text-white hover:pl-6'
                                     }`}
                 >
                   <span
@@ -99,7 +111,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
                                         ${isActive(item.path) ? 'scale-y-100' : 'scale-y-0 group-hover:scale-y-50'}`}
                   />
                   <span
-                    class={`flex items-center justify-center w-5 h-5 transition-colors duration-300 ${isActive(item.path) ? 'text-pri' : 'text-[#666] group-hover:text-white'}`}
+                    class={`flex items-center justify-center w-5 h-5 transition-colors duration-300 ${isActive(item.path) ? 'text-pri' : 'text-[rgba(var(--text-base-rgb),0.4)] group-hover:text-white'}`}
                   >
                     {item.icon}
                   </span>
@@ -111,7 +123,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         </div>
       </Show>
 
-      {/* 主内容区 */}
+      {/* Main content area */}
       <Transition name="subpage-fade">
         <div
           class="flex-1 overflow-y-auto overflow-x-hidden min-w-0"

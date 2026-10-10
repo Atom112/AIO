@@ -8,8 +8,17 @@ import {
   on,
   onMount,
 } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import {
+  deleteSkill,
+  discoverNpxSkills,
+  downloadMarketSkill,
+  importNpxSkill,
+  listSkillMarket,
+  listSkills,
+  refreshNpxSkill,
+  saveSkill,
+} from '../../../core/api/skills';
+import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   datas,
   saveSingleAssistantToBackend,
@@ -19,15 +28,19 @@ import {
   currentProjectId,
   currentProject,
 } from '../../../core/store/store';
-import Dropdown from '../../../shared/components/Dropdown';
 import Icon from '../../../shared/components/Icon';
+import {
+  btnBadge,
+  btnBadgeBar,
+  btnDanger,
+  btnPrimarySm,
+  btnSecondarySm,
+  btnSuccess,
+  btnTabXs,
+  tabActive,
+} from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
-import type {
-  MarketSkill,
-  SkillConfig,
-  SkillMarketCategory,
-  DiscoveredNpxSkill,
-} from '../../../core/types/skill';
+import type { MarketSkill, SkillConfig, DiscoveredNpxSkill } from '../../../core/types/skill';
 
 type MarketSort = 'all' | 'trending' | 'hot';
 type ViewMode = 'market' | 'downloaded' | 'npx';
@@ -38,7 +51,6 @@ const MARKET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 interface SkillMarketCache {
   updatedAt: number;
-  categories: SkillMarketCategory[];
   markets: Partial<Record<MarketSort, MarketSkill[]>>;
   marketUpdatedAt: Partial<Record<MarketSort, number>>;
 }
@@ -48,7 +60,7 @@ const readMarketCache = (): SkillMarketCache | null => {
     const raw = localStorage.getItem(MARKET_CACHE_KEY);
     if (!raw) return null;
     const cache = JSON.parse(raw) as SkillMarketCache;
-    if (!cache.updatedAt || !Array.isArray(cache.categories) || !cache.markets) return null;
+    if (!cache.updatedAt || !cache.markets) return null;
     cache.marketUpdatedAt ??= { all: cache.updatedAt };
     return cache;
   } catch {
@@ -60,7 +72,7 @@ const writeMarketCache = (cache: SkillMarketCache) => {
   try {
     localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
   } catch {
-    // 缓存失败不应阻塞市场浏览。
+    // Cache write failure must not block market browsing.
   }
 };
 
@@ -70,6 +82,10 @@ const formatInstalls = (value: number): string => {
   return String(value);
 };
 
+// ====== npx discovery cache (module-level signal: survives leaving the page or switching settings tabs, avoids rescanning on every visit) ======
+// Session-only; the first npx tab visit after an app restart still scans. Click "rescan" to force a refresh.
+const [cachedNpxSkills, setCachedNpxSkills] = createSignal<DiscoveredNpxSkill[] | null>(null);
+
 const SkillList: Component = () => {
   const initialCache = readMarketCache();
   const [view, setView] = createSignal<ViewMode>('market');
@@ -78,11 +94,7 @@ const SkillList: Component = () => {
   const [marketSkills, setMarketSkills] = createSignal<MarketSkill[]>(
     initialCache?.markets.all ?? [],
   );
-  const [categories, setCategories] = createSignal<SkillMarketCategory[]>(
-    initialCache?.categories ?? [],
-  );
   const [sort, setSort] = createSignal<MarketSort>('all');
-  const [category, setCategory] = createSignal('all');
   const [query, setQuery] = createSignal('');
   const [loading, setLoading] = createSignal(!initialCache?.markets.all);
   const [refreshing, setRefreshing] = createSignal(false);
@@ -94,19 +106,20 @@ const SkillList: Component = () => {
   const [editing, setEditing] = createSignal<SkillConfig | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
-  // ====== npx 发现状态 ======
-  const [npxSkills, setNpxSkills] = createSignal<DiscoveredNpxSkill[]>([]);
+  // ====== npx discovery state ======
+  const [npxSkills, setNpxSkills] = createSignal<DiscoveredNpxSkill[]>(cachedNpxSkills() ?? []);
   const [npxLoading, setNpxLoading] = createSignal(false);
   const [npxImportingId, setNpxImportingId] = createSignal<string | null>(null);
   const [npxRefreshingId, setNpxRefreshingId] = createSignal<string | null>(null);
-  let npxScanned = false; // 首次进入 npx 标签自动扫描，之后缓存结果
+  let npxScanned = cachedNpxSkills() !== null; // auto-scan on first npx tab visit, then reuse the cached result
 
   const discoverNpx = async () => {
     setNpxLoading(true);
     setError(null);
     try {
-      const list = await invoke<DiscoveredNpxSkill[]>('discover_npx_skills');
+      const list = await discoverNpxSkills();
       setNpxSkills(list);
+      setCachedNpxSkills(list);
       npxScanned = true;
     } catch (e) {
       setError(t('skill.scanFailed', { error: String(e) }));
@@ -116,22 +129,21 @@ const SkillList: Component = () => {
   };
 
   const importNpx = async (pkgName: string) => {
-    // 安全确认：npx 导入会执行来自 npm 的未审查代码
+    // Safety confirmation: npx import executes unreviewed code from npm
     const confirmed = window.confirm(t('skill.importNpxConfirm', { name: pkgName }));
     if (!confirmed) return;
 
     setNpxImportingId(pkgName);
     setError(null);
     try {
-      const imported = await invoke<SkillConfig>('import_npx_skill', {
-        packageName: pkgName,
-        projectId: projectId(),
-      });
+      const imported = await importNpxSkill(pkgName, projectId());
       setSkills({ ...skills(), [imported.id]: imported });
-      // 更新列表中的 alreadyImported 标记
-      setNpxSkills((prev) =>
-        prev.map((s) => (s.packageName === pkgName ? { ...s, alreadyImported: true } : s)),
+      // Update the alreadyImported flag in the list (keep local signal and module-level cache in sync)
+      const next = npxSkills().map((s) =>
+        s.packageName === pkgName ? { ...s, alreadyImported: true } : s,
       );
+      setNpxSkills(next);
+      setCachedNpxSkills(next);
     } catch (e) {
       setError(t('skill.importFailed', { error: String(e) }));
     } finally {
@@ -140,17 +152,14 @@ const SkillList: Component = () => {
   };
 
   const refreshNpx = async (id: string) => {
-    // 安全确认
+    // Safety confirmation
     const confirmed = window.confirm(t('skill.refreshConfirm'));
     if (!confirmed) return;
 
     setNpxRefreshingId(id);
     setError(null);
     try {
-      const updated = await invoke<SkillConfig>('refresh_npx_skill', {
-        id,
-        projectId: projectId(),
-      });
+      const updated = await refreshNpxSkill(id, projectId());
       setSkills({ ...skills(), [updated.id]: updated });
     } catch (e) {
       setError(t('skill.refreshFailed') + ': ' + e);
@@ -159,12 +168,12 @@ const SkillList: Component = () => {
     }
   };
 
-  const loadMarket = async (nextSort = sort(), nextCategory = category(), forceRefresh = false) => {
+  const loadMarket = async (nextSort = sort(), forceRefresh = false) => {
     setLoading(true);
     setError(null);
     try {
       const cache = readMarketCache();
-      if (!forceRefresh && nextCategory === 'all') {
+      if (!forceRefresh) {
         const cachedList = cache?.markets[nextSort];
         const cachedAt = cache?.marketUpdatedAt[nextSort] ?? 0;
         const cacheIsFresh = Date.now() - cachedAt < MARKET_CACHE_TTL_MS;
@@ -174,22 +183,18 @@ const SkillList: Component = () => {
           return;
         }
       }
-      const list = await invoke<MarketSkill[]>('list_skill_market', {
+      const list = await listSkillMarket({
         sort: nextSort,
-        category: nextCategory === 'all' ? null : nextCategory,
         forceRefresh,
       });
       setMarketSkills(list);
-      if (nextCategory === 'all') {
-        const updatedAt = Date.now();
-        writeMarketCache({
-          updatedAt,
-          categories: categories(),
-          markets: { ...(cache?.markets ?? {}), [nextSort]: list },
-          marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [nextSort]: updatedAt },
-        });
-        setLastRefreshedAt(new Date(updatedAt));
-      }
+      const updatedAt = Date.now();
+      writeMarketCache({
+        updatedAt,
+        markets: { ...(cache?.markets ?? {}), [nextSort]: list },
+        marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [nextSort]: updatedAt },
+      });
+      setLastRefreshedAt(new Date(updatedAt));
     } catch (e) {
       setError(t('skill.loadShFailed', { error: String(e) }));
     } finally {
@@ -204,24 +209,15 @@ const SkillList: Component = () => {
       Date.now() - initialCache.updatedAt < MARKET_CACHE_TTL_MS;
     setLoading(!initialCache?.markets.all);
     try {
-      const localList = await invoke<SkillConfig[]>('list_skills', { projectId: projectId() });
+      const localList = await listSkills(projectId());
       setSkills(Object.fromEntries(localList.map((skill) => [skill.id, skill])));
       if (cacheIsFresh) return;
 
-      const [categoryList, marketList] = await Promise.all([
-        invoke<SkillMarketCategory[]>('list_skill_market_categories', { forceRefresh: false }),
-        invoke<MarketSkill[]>('list_skill_market', {
-          sort: 'all',
-          category: null,
-          forceRefresh: false,
-        }),
-      ]);
-      setCategories(categoryList);
+      const marketList = await listSkillMarket({ sort: 'all', forceRefresh: false });
       setMarketSkills(marketList);
       const updatedAt = Date.now();
       writeMarketCache({
         updatedAt,
-        categories: categoryList,
         markets: { ...(initialCache?.markets ?? {}), all: marketList },
         marketUpdatedAt: { ...(initialCache?.marketUpdatedAt ?? {}), all: updatedAt },
       });
@@ -233,13 +229,13 @@ const SkillList: Component = () => {
     }
   });
 
-  // 监听 scope 切换，自动重新加载对应范围的 Skill 列表
+  // Watch scope switches and reload the skill list for the new scope
   createEffect(
     on(
       projectId,
       async (pid) => {
         try {
-          const list = await invoke<SkillConfig[]>('list_skills', { projectId: pid });
+          const list = await listSkills(pid);
           setSkills(Object.fromEntries(list.map((skill) => [skill.id, skill])));
         } catch (e) {
           console.warn('切换 Skill 范围失败:', e);
@@ -270,19 +266,9 @@ const SkillList: Component = () => {
     );
   });
 
-  const categoryOptions = createMemo(() => [
-    { value: 'all', label: t('skill.allCategories') },
-    ...categories().map((item) => ({ value: item.id, label: `${item.name} (${item.skillCount})` })),
-  ]);
-
   const selectSort = (value: MarketSort) => {
     setSort(value);
-    void loadMarket(value, category());
-  };
-
-  const selectCategory = (value: string) => {
-    setCategory(value);
-    void loadMarket(sort(), value);
+    void loadMarket(value);
   };
 
   const refreshMarket = async () => {
@@ -290,21 +276,15 @@ const SkillList: Component = () => {
     setError(null);
     setRefreshResult(null);
     try {
-      const [categoryList, marketList] = await Promise.all([
-        invoke<SkillMarketCategory[]>('list_skill_market_categories', { forceRefresh: true }),
-        invoke<MarketSkill[]>('list_skill_market', {
-          sort: sort(),
-          category: category() === 'all' ? null : category(),
-          forceRefresh: true,
-        }),
-      ]);
-      setCategories(categoryList);
+      const marketList = await listSkillMarket({
+        sort: sort(),
+        forceRefresh: true,
+      });
       setMarketSkills(marketList);
       const updatedAt = Date.now();
       const cache = readMarketCache();
       writeMarketCache({
         updatedAt,
-        categories: categoryList,
         markets: { ...(cache?.markets ?? {}), [sort()]: marketList },
         marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [sort()]: updatedAt },
       });
@@ -322,12 +302,7 @@ const SkillList: Component = () => {
     setDownloadingId(skill.id);
     setError(null);
     try {
-      const downloaded = await invoke<SkillConfig>('download_market_skill', {
-        owner: skill.owner,
-        repo: skill.repo,
-        slug: skill.slug,
-        projectId: projectId(),
-      });
+      const downloaded = await downloadMarketSkill(skill, projectId());
       setSkills({ ...skills(), [downloaded.id]: downloaded });
     } catch (e) {
       setError(t('skill.downloadFailed', { error: String(e) }));
@@ -349,7 +324,7 @@ const SkillList: Component = () => {
       return;
     }
     try {
-      await invoke('save_skill', { skill, projectId: projectId() });
+      await saveSkill(skill, projectId());
       setSkills({ ...skills(), [skill.id]: skill });
       setEditing(null);
     } catch (e) {
@@ -360,7 +335,7 @@ const SkillList: Component = () => {
   const remove = async (id: string) => {
     if (!confirm(t('skill.removeConfirm'))) return;
     try {
-      await invoke('delete_skill', { id, projectId: projectId() });
+      await deleteSkill(id, projectId());
       const next = { ...skills() };
       delete next[id];
       setSkills(next);
@@ -401,22 +376,22 @@ const SkillList: Component = () => {
             style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
           >
             <button
-              class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-pri': view() === 'market' }}
+              class={btnTabXs}
+              classList={{ [tabActive]: view() === 'market' }}
               onClick={() => setView('market')}
             >
               {t('skill.tabMarket')}
             </button>
             <button
-              class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-pri': view() === 'downloaded' }}
+              class={btnTabXs}
+              classList={{ [tabActive]: view() === 'downloaded' }}
               onClick={() => setView('downloaded')}
             >
               {t('skill.tabDownloaded', { count: Object.keys(skills()).length })}
             </button>
             <button
-              class="px-3 py-1.5 rounded-md text-sm"
-              classList={{ 'bg-pri-20 text-pri': view() === 'npx' }}
+              class={btnTabXs}
+              classList={{ [tabActive]: view() === 'npx' }}
               onClick={() => {
                 setView('npx');
                 if (!npxScanned) discoverNpx();
@@ -425,22 +400,22 @@ const SkillList: Component = () => {
               {t('skill.tabNpx')}
             </button>
           </div>
-          {/* 存在活跃项目时，显示作用域切换（市场/已下载/npx 均可看到） */}
+          {/* Show scope switcher when an active project exists (visible in market/downloaded/npx views) */}
           {currentProjectId() && (
             <div
               class="flex items-center gap-1 p-1 rounded-lg"
               style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
             >
               <button
-                class="px-2.5 py-1 rounded-md text-xs"
-                classList={{ 'bg-pri-20 text-pri': scope() === 'global' }}
+                class={btnTabXs}
+                classList={{ [tabActive]: scope() === 'global' }}
                 onClick={() => setScope('global')}
               >
                 {t('skill.scopeGlobal')}
               </button>
               <button
-                class="px-2.5 py-1 rounded-md text-xs"
-                classList={{ 'bg-pri-20 text-pri': scope() === 'project' }}
+                class={btnTabXs}
+                classList={{ [tabActive]: scope() === 'project' }}
                 onClick={() => setScope('project')}
               >
                 {t('skill.scopeProject', { name: currentProject()?.name ?? '' })}
@@ -452,7 +427,7 @@ const SkillList: Component = () => {
           <Icon
             name="search"
             size={13}
-            class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#666] pointer-events-none"
+            class="absolute left-2.5 top-1/2 -translate-y-1/2 text-[rgba(var(--text-base-rgb),0.4)] pointer-events-none"
           />
           <input
             class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
@@ -468,7 +443,10 @@ const SkillList: Component = () => {
           class="animate-row-in flex items-center gap-3 flex-wrap"
           style={{ 'animation-delay': '60ms' }}
         >
-          <div class="flex gap-1">
+          <div
+            class="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
+          >
             <For
               each={
                 [
@@ -480,9 +458,8 @@ const SkillList: Component = () => {
             >
               {([value, label]) => (
                 <button
-                  class="px-3 py-1.5 rounded-md text-xs"
-                  classList={{ 'bg-pri-20 text-pri': sort() === value }}
-                  style={sort() === value ? '' : 'background: rgba(var(--text-base-rgb),0.04);'}
+                  class={btnTabXs}
+                  classList={{ [tabActive]: sort() === value }}
                   onClick={() => selectSort(value)}
                 >
                   {label}
@@ -490,15 +467,9 @@ const SkillList: Component = () => {
               )}
             </For>
           </div>
-          <Dropdown
-            value={category()}
-            onChange={(v) => selectCategory(v)}
-            options={categoryOptions()}
-            class="text-xs"
-          />
           <button
             type="button"
-            class="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/10 text-[#aaa] hover:border-pri-30 hover:text-white transition-all duration-200 active:scale-95 disabled:opacity-50 ml-auto"
+            class={btnBadgeBar + ' ml-auto'}
             disabled={refreshing()}
             onClick={() => void refreshMarket()}
           >
@@ -529,7 +500,7 @@ const SkillList: Component = () => {
       <Show when={error()}>
         <div
           class="px-3 py-2 rounded-md text-sm"
-          style={{ background: 'rgba(255,77,77,0.1)', color: '#ff8a8a' }}
+          style={{ background: 'rgba(255,77,77,0.1)', color: 'var(--color-danger)' }}
         >
           {error()}
           <button class="ml-3 underline" onClick={() => setError(null)}>
@@ -557,7 +528,7 @@ const SkillList: Component = () => {
                   class="col-span-full py-12 text-center text-sm"
                   style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 >
-                  没有匹配的 Skill。
+                  {t('skill.noMatch')}
                 </div>
               }
             >
@@ -585,7 +556,7 @@ const SkillList: Component = () => {
                         <button
                           class="text-xs font-mono truncate hover:underline"
                           style={{ color: 'rgba(var(--primary-rgb),0.8)' }}
-                          onClick={() => void openUrl(skill.sourceUrl)}
+                          onClick={() => void openSafeUrl(skill.sourceUrl)}
                         >
                           {skill.owner}/{skill.repo}
                         </button>
@@ -615,13 +586,8 @@ const SkillList: Component = () => {
                           : t('skill.communityContent')}
                       </span>
                       <button
-                        class="px-3 py-1.5 rounded-md text-xs"
+                        class={downloaded() ? btnSuccess : btnSecondarySm}
                         disabled={downloaded() || downloadingId() === skill.id}
-                        style={
-                          downloaded()
-                            ? 'background: rgba(124,217,160,0.12); color: #7cd9a0;'
-                            : 'background: rgba(var(--primary-rgb),0.2); border: 1px solid rgba(var(--primary-rgb),0.3);'
-                        }
                         onClick={() => void download(skill)}
                       >
                         {downloaded()
@@ -678,26 +644,14 @@ const SkillList: Component = () => {
                   </div>
                   <div class="flex gap-2 ml-3">
                     <Show when={skill.sourceUrl}>
-                      <button
-                        class="px-2 py-1 rounded text-xs"
-                        style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                        onClick={() => void openUrl(skill.sourceUrl!)}
-                      >
+                      <button class={btnBadge} onClick={() => void openSafeUrl(skill.sourceUrl!)}>
                         {t('skill.source')}
                       </button>
                     </Show>
-                    <button
-                      class="px-2 py-1 rounded text-xs"
-                      style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                      onClick={() => setEditing({ ...skill })}
-                    >
+                    <button class={btnBadge} onClick={() => setEditing({ ...skill })}>
                       {t('skill.edit')}
                     </button>
-                    <button
-                      class="px-2 py-1 rounded text-xs"
-                      style={{ background: 'rgba(255,77,77,0.1)', color: 'rgba(255,107,107,0.9)' }}
-                      onClick={() => void remove(skill.id)}
-                    >
+                    <button class={btnDanger} onClick={() => void remove(skill.id)}>
                       {t('skill.remove')}
                     </button>
                   </div>
@@ -707,19 +661,11 @@ const SkillList: Component = () => {
           </div>
         </Show>
 
-        {/* npx 发现标签页 */}
+        {/* npx discovery tab */}
         <Show when={view() === 'npx'}>
           <div class="animate-row-in flex flex-col gap-3" style={{ 'animation-delay': '30ms' }}>
             <div class="flex items-center justify-between">
-              <p class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}>
-                {t('skill.npxHint')}
-              </p>
-              <button
-                class="px-3 py-1.5 rounded-md text-xs"
-                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                onClick={() => discoverNpx()}
-                disabled={npxLoading()}
-              >
+              <button class={btnSecondarySm} onClick={() => discoverNpx()} disabled={npxLoading()}>
                 {npxLoading() ? t('skill.scanning') : t('skill.rescan')}
               </button>
             </div>
@@ -731,7 +677,7 @@ const SkillList: Component = () => {
                   class="py-12 text-center text-sm"
                   style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
                 >
-                  正在扫描系统上的 npx skill...
+                  {t('skill.scanningNpx')}
                 </div>
               }
             >
@@ -779,7 +725,7 @@ const SkillList: Component = () => {
                           when={item.alreadyImported}
                           fallback={
                             <button
-                              class="px-3 py-1 rounded text-xs bg-pri text-black disabled:opacity-50"
+                              class={btnSecondarySm}
                               onClick={() => importNpx(item.packageName)}
                               disabled={npxImportingId() === item.packageName}
                             >
@@ -799,8 +745,7 @@ const SkillList: Component = () => {
                             {t('skill.imported')}
                           </span>
                           <button
-                            class="px-2 py-1 rounded text-xs"
-                            style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
+                            class={btnBadge}
                             onClick={() => refreshNpx(`npx-${item.packageName}`)}
                             disabled={npxRefreshingId() === `npx-${item.packageName}`}
                           >
@@ -861,17 +806,10 @@ const SkillList: Component = () => {
               />
             </label>
             <div class="flex justify-end gap-2">
-              <button
-                class="px-3 py-1.5 rounded text-sm"
-                style={{ background: 'rgba(var(--text-base-rgb),0.05)' }}
-                onClick={() => setEditing(null)}
-              >
+              <button class={btnSecondarySm} onClick={() => setEditing(null)}>
                 {t('skill.cancel')}
               </button>
-              <button
-                class="px-3 py-1.5 rounded text-sm bg-pri text-black"
-                onClick={() => void save()}
-              >
+              <button class={btnPrimarySm} onClick={() => void save()}>
                 {t('skill.save')}
               </button>
             </div>

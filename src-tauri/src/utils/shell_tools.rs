@@ -1,89 +1,63 @@
-//! 内置系统命令执行工具 — 供 Agent 运行终端命令。
+//! Built-in system command execution tool - lets the Agent run terminal commands.
 //!
-//! 业界参考：Claude Code 的 Bash 工具（简单 schema + 权限记忆）。
-//! 由 `run_agent_turn` 在工具分发时直接调用，跳过 MCP 子进程通道。
+//! Design reference: Claude Code's Bash tool (simple schema + permission memory).
+//! Invoked directly by `run_agent_turn` at tool dispatch, bypassing the MCP subprocess channel.
 //!
-//! 安全措施：
-//! - 路径沙箱：工作目录限定在项目根目录
-//! - 输出截断：stdout/stderr 各 50KB
-//! - 超时控制：默认 60s，最大 300s
-//! - 危险命令检测：词法级 token 分析，拒绝高危模式
-//!   (系统破坏 / 提权 / 网络外泄 / 代码执行 / 环境注入 / fork bomb 等)
-//! - 命令过滤：长度限制 4096 字符、禁止反引号/$() 命令替换
-//! - Windows Job Object 沙箱：限制子进程权限
-//! - 权限系统：复用现有 Allow/Ask/Deny 规则引擎
+//! Safety measures:
+//! - Path sandbox: working directory confined to the project root
+//! - Output truncation: stdout/stderr capped at 50KB each
+//! - Timeout control: default 60s, max 300s
+//! - Dangerous-command detection: lexical token analysis; Critical findings
+//!   (system destruction / privilege escalation / fork bomb) are rejected in
+//!   every mode; High/Medium findings log a warn and surface in the approval prompt
+//! - Command filtering: 4096-char length limit; backtick/$() substitution forbidden
+//! - Windows Job Object sandbox: constrains child process privileges
+//! - Permission system: reuses the existing Allow/Ask/Deny rule engine
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
 
-// ====== 常量 ======
+// ====== Constants ======
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 const MAX_OUTPUT_BYTES: usize = 50_000;
 const MAX_COMMAND_LEN: usize = 4096;
 
-// ====== 辅助函数 ======
+// ====== Helpers ======
 
-fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
+// tool_ok / tool_err come from utils::tool_result (single source of truth repo-wide)
+pub use crate::utils::tool_result::{tool_err, tool_ok};
 
-pub(crate) fn tool_err(msg: &str) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": format!("[Error] {msg}")}),
-        }],
-        is_error: true,
-    }
-}
+// Truncation is provided by utils::truncate (name matches semantics)
+use crate::utils::truncate::truncate_bytes_lossy as truncate_output;
 
-/// 截断输出到指定字节数，超限时追加 "(truncated)" 标记。
-fn truncate_output(output: &[u8], limit: usize) -> String {
-    if output.len() <= limit {
-        String::from_utf8_lossy(output).into_owned()
-    } else {
-        format!(
-            "{}\n...(truncated, {} bytes total)",
-            String::from_utf8_lossy(&output[..limit]),
-            output.len()
-        )
-    }
-}
+// ====== Dangerous-command detection ======
 
-// ====== 危险命令检测 ======
-
-/// 危险类别 — 用于分级展示警告。
+/// Danger category - used for tiered warning display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DangerCategory {
-    /// 严重：系统破坏 / 提权 / fork bomb
+    /// Critical: system destruction / privilege escalation / fork bomb
     Critical,
-    /// 高风险：网络外泄 / 环境注入
+    /// High: network exfiltration / environment injection
     High,
-    /// 中等：代码执行 / git 危险操作
+    /// Medium: code execution / dangerous git operations
     Medium,
 }
 
-/// 危险命令检测结果。
+/// Result of dangerous-command detection.
 #[derive(Debug, Clone)]
 pub struct DangerInfo {
-    /// 风险描述（中文，供 UI 展示）
+    /// Risk description (zh-CN, shown in the UI)
     pub risk: &'static str,
-    /// 危险类别
+    /// Danger category
     pub category: DangerCategory,
 }
 
-/// 将命令拆分为 token 列表，保留引号边界。
-/// 例如: `rm -rf "/path with spaces"` → `["rm", "-rf", "/path with spaces"]`
+/// Splits a command into a token list, preserving quote boundaries.
+/// e.g. `rm -rf "/path with spaces"` → `["rm", "-rf", "/path with spaces"]`
 fn tokenize_command(command: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -128,13 +102,13 @@ fn tokenize_command(command: &str) -> Vec<String> {
     tokens
 }
 
-/// Windows: 查找 `cmd /C` 包装之后的真正用户命令。
+/// Windows: finds the real user command behind the `cmd /C` wrapper.
 #[cfg(windows)]
 fn extract_inner_command(command: &str) -> &str {
     let trimmed = command.trim();
     let lower = trimmed.to_lowercase();
     if lower.starts_with("cmd ") || lower.starts_with("cmd.exe ") {
-        // 查找 /C 或 /c
+        // find /C or /c
         let after_cmd = &trimmed[if lower.starts_with("cmd.exe ") { 8 } else { 4 }..];
         if let Some(idx) = after_cmd.to_lowercase().find(" /c ") {
             return after_cmd[idx + 4..].trim();
@@ -151,7 +125,7 @@ fn extract_inner_command(command: &str) -> &str {
     command.trim()
 }
 
-/// 检查 token 是否是 `rm` 命令的别名（rm、/bin/rm、/usr/bin/rm、rmdir、del）。
+/// Checks whether a token is an `rm` alias (rm, /bin/rm, /usr/bin/rm, rmdir, del).
 fn is_rm_command(token: &str) -> bool {
     let basename = if let Some(pos) = token.rfind(['/', '\\']) {
         &token[pos + 1..]
@@ -161,16 +135,16 @@ fn is_rm_command(token: &str) -> bool {
     matches!(basename, "rm" | "rmdir" | "del" | "rm.exe" | "del.exe")
 }
 
-/// 从 `curl` / `wget` 命令 token 列表中提取目标 URL。
+/// Extracts the target URL from `curl` / `wget` command tokens.
 fn extract_url_from_tokens(tokens: &[String], expected_cmd: &[&str]) -> Option<String> {
-    // 跳过命令名本身，查找第一个不是 flag 的参数（不以 - 开头）
+    // skip the command name itself; take the first argument that is not a flag (not starting with -)
     let start_idx = tokens.iter().position(|t| {
         let lower = t.to_lowercase();
         expected_cmd.iter().any(|c| lower.ends_with(c))
     })?;
     for t in &tokens[start_idx + 1..] {
         if !t.starts_with('-') && !t.is_empty() {
-            // 去掉可能的前后引号
+            // strip any surrounding quotes
             let url = t.trim_matches(|c: char| c == '"' || c == '\'');
             if url.contains("://") || url.contains('.') {
                 return Some(url.to_string());
@@ -180,20 +154,27 @@ fn extract_url_from_tokens(tokens: &[String], expected_cmd: &[&str]) -> Option<S
     None
 }
 
-/// 检测命令是否包含高危操作（词法级别）。
+/// Detects whether a command contains high-risk operations (lexically).
 ///
-/// 使用 token 分析而非子串匹配，避免路径前缀绕过
-/// （如 `/usr/bin/sudo` 绕过 `sudo` 起始匹配）。
+/// **Positioning**: the enforcement layer is the OS sandbox (Linux bwrap / macOS sandbox-exec /
+/// Windows AppContainer; see utils::sandbox); this check is a defense-in-depth
+/// early-warning layer - Critical findings are hard-blocked unconditionally
+/// (backstop for the no-approval Auto mode), while High/Medium findings only
+/// annotate risk in the approval prompt. Lexical checks are inherently bypassable
+/// and must not be the sole line of defense.
 ///
-/// 返回 `Some(DangerInfo)` 表示危险，`None` 表示安全。
+/// Uses token analysis instead of substring matching to avoid path-prefix bypasses
+/// (e.g. `/usr/bin/sudo` bypassing a `sudo` prefix match).
+///
+/// Returns `Some(DangerInfo)` for dangerous, `None` for safe.
 pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     let cmd = extract_inner_command(command);
     let lower_cmd = cmd.to_lowercase();
     let tokens = tokenize_command(cmd);
     let lower_tokens: Vec<String> = tokens.iter().map(|t| t.to_lowercase()).collect();
 
-    // --- 1. 系统破坏：rm -rf + 关键系统路径 ---
-    // 检测 `rm` 后面紧跟 `-rf`/`-fr`/`-r`/`-f` + 系统路径
+    // --- 1. System destruction: rm -rf + critical system paths ---
+    // detect `rm` immediately followed by `-rf`/`-fr`/`-r`/`-f` + a system path
     let system_paths = [
         "/", "/*", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/media", "/mnt",
         "/opt", "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var", "~", "~/",
@@ -223,7 +204,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // 检测 Windows: `del /s /q C:\`、`rmdir /s /q C:\`、`format C:`
+    // Windows detection: `del /s /q C:\`, `rmdir /s /q C:\`, `format C:`
     #[cfg(windows)]
     {
         for i in 0..lower_tokens.len() {
@@ -231,7 +212,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
             if (t == "del" || t == "del.exe" || t == "rmdir" || t == "rmdir.exe")
                 && lower_tokens.get(i + 1).is_some_and(|a| a == "/s")
             {
-                // 检查是否有 C:\ 之类的系统盘路径
+                // check for a system drive path such as C:\
                 for arg in lower_tokens.iter().skip(i + 2) {
                     if arg.starts_with("c:\\") || arg.starts_with("c:") || arg == "c:\\" {
                         return Some(DangerInfo {
@@ -253,9 +234,9 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // --- 2. 提权：sudo / su ---
+    // --- 2. Privilege escalation: sudo / su ---
     for t in &lower_tokens {
-        // 只匹配 standalone `sudo`，不匹配 e.g. `sudoedit`
+        // match standalone `sudo` only, not e.g. `sudoedit`
         if t == "sudo" || t == "sudo.exe" {
             return Some(DangerInfo {
                 risk: "危险：尝试提权执行 (sudo)",
@@ -263,7 +244,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
             });
         }
         if t == "su" || t == "su.exe" {
-            // 检查是否后面跟了 `-c` 或 `root`
+            // check whether it is followed by `-c` or `root`
             let idx = lower_tokens.iter().position(|x| x == t).unwrap_or(0);
             let next = lower_tokens.get(idx.saturating_add(1)).map(|s| s.as_str());
             let next2 = lower_tokens.get(idx.saturating_add(2)).map(|s| s.as_str());
@@ -276,9 +257,9 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // --- 3. 设备文件写入：dd of=/dev/... / > /dev ---
+    // --- 3. Device-file writes: dd of=/dev/... / > /dev ---
     if lower_tokens.iter().any(|t| t == "dd" || t == "dd.exe") {
-        // 查找 of= 参数指向 /dev/
+        // find an of= argument pointing into /dev/
         for t in &tokens {
             let lower = t.to_lowercase();
             if (lower.starts_with("of=/dev/") || lower.starts_with("of=/dev/"))
@@ -295,9 +276,9 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // 重定向到 /dev/ 设备
+    // redirection into a /dev/ device
     if cmd.contains("> /dev/") || cmd.contains(">> /dev/") || cmd.contains("> /dev") {
-        // 允许 /dev/null、/dev/zero、/dev/random、/dev/urandom
+        // allow /dev/null, /dev/zero, /dev/random, /dev/urandom
         let has_dangerous_redirect = ["> /dev/", ">> /dev/", "> /dev"].iter().any(|pat| {
             if let Some(pos) = cmd.find(pat) {
                 let suffix = &cmd[pos + pat.len()..];
@@ -341,7 +322,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         });
     }
 
-    // --- 5. 系统关机/重启 ---
+    // --- 5. System shutdown/reboot ---
     {
         let shutdown_cmds = [
             "shutdown",
@@ -354,7 +335,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         ];
         for t in &lower_tokens {
             if shutdown_cmds.contains(&t.as_str()) {
-                // `init 6` / `init 0` 才算危险，单独的 `init` 不是
+                // only `init 6` / `init 0` are dangerous; bare `init` is not
                 if t == "init" {
                     let idx = lower_tokens.iter().position(|x| x == t).unwrap_or(0);
                     let next = lower_tokens.get(idx.saturating_add(1)).map(|s| s.as_str());
@@ -374,7 +355,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // --- 6. 网络外泄：curl/wget + 内网地址 ---
+    // --- 6. Network exfiltration: curl/wget + intranet addresses ---
     {
         let download_cmds = ["curl", "curl.exe", "wget", "wget.exe"];
         if lower_tokens
@@ -384,7 +365,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
             if let Some(url_str) = extract_url_from_tokens(&tokens, &download_cmds) {
                 if let Ok(parsed) = url::Url::parse(&url_str) {
                     let host = parsed.host_str().unwrap_or("");
-                    // 检查内网
+                    // check for an intranet host
                     if host.parse::<std::net::Ipv4Addr>().is_ok()
                         || host.parse::<std::net::Ipv6Addr>().is_ok()
                     {
@@ -401,7 +382,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                             category: DangerCategory::High,
                         });
                     }
-                    // 非 HTTPS 的目标
+                    // non-HTTPS target
                     if parsed.scheme() != "https" {
                         return Some(DangerInfo {
                             risk: "危险：curl/wget 使用非 HTTPS 协议（明文传输）",
@@ -410,7 +391,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                     }
                 }
             }
-            // curl 管道到 bash/sh
+            // curl piped into bash/sh
             if cmd.contains("| bash")
                 || cmd.contains("| sh")
                 || cmd.contains("|bash")
@@ -424,7 +405,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // netcat 反弹 shell 检测
+    // netcat reverse-shell detection
     {
         let nc_cmds = ["nc", "ncat", "netcat", "nc.exe", "ncat.exe", "netcat.exe"];
         if lower_tokens.iter().any(|t| nc_cmds.contains(&t.as_str()))
@@ -437,7 +418,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // --- 7. 代码执行：eval / exec / source ---
+    // --- 7. Code execution: eval / exec / source ---
     {
         let exec_cmds = ["eval", "exec", "source"];
         if lower_tokens.iter().any(|t| exec_cmds.contains(&t.as_str())) {
@@ -446,13 +427,13 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                 category: DangerCategory::Medium,
             });
         }
-        // 检测 `. script.sh` 模式（dot-space：bash source 语法）
+        // detect the `. script.sh` pattern (dot-space: bash source syntax)
         if lower_tokens.len() >= 2
             && lower_tokens[0] == "."
             && !lower_tokens[1].starts_with('/')
             && !lower_tokens[1].starts_with("./")
         {
-            // `.` 后跟非路径 token 可能是 source 命令
+            // `.` followed by a non-path token is likely the source command
             if lower_tokens[1].contains(".sh") || lower_tokens[1].contains(".bash") {
                 return Some(DangerInfo {
                     risk: "危险：使用 source/dot 命令执行脚本",
@@ -462,16 +443,16 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // --- 8. 环境注入：KEY=VALUE cmd ---
+    // --- 8. Environment injection: KEY=VALUE cmd ---
     {
         let env_inject_regex = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*=").ok();
         if let Some(re) = &env_inject_regex {
             let first = tokens.first().map(|t| t.as_str()).unwrap_or("");
             if re.is_match(first)
-                && !first.contains('/')  // 排除路径中的 = 符号
+                && !first.contains('/')  // exclude '=' inside paths
                 && tokens.len() > 1
             {
-                // 检查是否在篡改 PATH/LD_PRELOAD/LD_LIBRARY_PATH 等关键变量
+                // check for tampering with critical vars like PATH/LD_PRELOAD/LD_LIBRARY_PATH
                 let var_name = first.split('=').next().unwrap_or("").to_uppercase();
                 if matches!(
                     var_name.as_str(),
@@ -486,7 +467,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // --- 9. git 危险操作 ---
+    // --- 9. Dangerous git operations ---
     {
         let git_idx = lower_tokens
             .iter()
@@ -514,7 +495,7 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
-    // --- 10. chmod 777 / chown 到关键路径 ---
+    // --- 10. chmod 777 / chown on critical paths ---
     {
         let chmod_idx = lower_tokens
             .iter()
@@ -533,24 +514,118 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         }
     }
 
+    // --- 11. Historical bypass vectors ---
+    {
+        // 11a. Interpreter -c quoted payloads: after tokenization the payload is a
+        //      single token, bypassing the lexical checks above (e.g. bash -c "rm -rf ~").
+        //      Strip the quotes and recursively check the payload itself.
+        let shells = ["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell"];
+        for i in 0..lower_tokens.len() {
+            if shells.contains(&lower_tokens[i].as_str())
+                && lower_tokens
+                    .get(i + 1)
+                    .is_some_and(|a| a == "-c" || a == "--command")
+            {
+                if let Some(payload) = tokens.get(i + 2) {
+                    let stripped = payload.trim_matches(|c| c == '"' || c == '\'');
+                    if let Some(inner) = check_dangerous_command(stripped) {
+                        return Some(inner);
+                    }
+                }
+            }
+        }
+
+        // 11b. Any producer piped into a shell: applies to every producer
+        //      (echo/ cat/ base64, ...), not only curl/wget.
+        let is_shell_token = |t: &str| {
+            let base = t.rsplit('/').next().unwrap_or(t);
+            matches!(base, "sh" | "bash" | "zsh" | "dash" | "ksh")
+        };
+        for i in 0..tokens.len() {
+            let t = tokens[i].as_str();
+            // shape 1: `|` as a standalone token, next token is a shell
+            if t == "|" && tokens.get(i + 1).is_some_and(|n| is_shell_token(n)) {
+                return Some(DangerInfo {
+                    risk: "危险：命令管道到 shell 执行（任意代码执行）",
+                    category: DangerCategory::Critical,
+                });
+            }
+            // shape 2: `|sh` written as a single token
+            if let Some(rest) = t.strip_prefix('|') {
+                if is_shell_token(rest) {
+                    return Some(DangerInfo {
+                        risk: "危险：命令管道到 shell 执行（任意代码执行）",
+                        category: DangerCategory::Critical,
+                    });
+                }
+            }
+        }
+
+        // 11c. find -delete / find -exec rm: common recursive-deletion bypass shapes
+        if lower_tokens.iter().any(|t| t == "find" || t == "find.exe") {
+            if lower_tokens.iter().any(|t| t == "-delete") {
+                return Some(DangerInfo {
+                    risk: "危险：find -delete 递归删除",
+                    category: DangerCategory::Critical,
+                });
+            }
+            if let Some(exec_idx) = lower_tokens.iter().position(|t| t == "-exec") {
+                if lower_tokens
+                    .get(exec_idx + 1)
+                    .is_some_and(|n| is_rm_command(n))
+                {
+                    return Some(DangerInfo {
+                        risk: "危险：find -exec rm 递归删除",
+                        category: DangerCategory::Critical,
+                    });
+                }
+            }
+        }
+
+        // 11d. xargs rm: bulk deletion
+        if let Some(xidx) = lower_tokens
+            .iter()
+            .position(|t| t == "xargs" || t == "xargs.exe")
+        {
+            if lower_tokens.get(xidx + 1).is_some_and(|n| is_rm_command(n)) {
+                return Some(DangerInfo {
+                    risk: "危险：xargs rm 批量删除",
+                    category: DangerCategory::Critical,
+                });
+            }
+        }
+
+        // 11e. git clean -f*: wipes all untracked files (-x includes ignored files)
+        if let Some(idx) = lower_tokens
+            .iter()
+            .position(|t| t == "git" || t == "git.exe")
+        {
+            if lower_tokens.get(idx + 1).is_some_and(|s| s == "clean") {
+                let has_f = lower_tokens
+                    .get(idx + 2)
+                    .is_some_and(|a| a.starts_with('-') && a.contains('f'));
+                if has_f {
+                    return Some(DangerInfo {
+                        risk: "危险：git clean -f 删除未跟踪文件",
+                        category: DangerCategory::Critical,
+                    });
+                }
+            }
+        }
+    }
+
     None
 }
 
-// 保留旧接口兼容性（仅返回风险描述字符串），供调用方逐步迁移使用。
-#[allow(dead_code)]
-pub fn check_dangerous_command_str(command: &str) -> Option<&'static str> {
-    check_dangerous_command(command).map(|d| d.risk)
-}
+// ====== Tool definitions ======
 
-// ====== 工具定义 ======
-
-/// 返回 execute_command 的 ToolSpec。
+/// Returns the ToolSpec for execute_command.
 pub fn get_command_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         function: ToolFunctionSpec {
             name: "execute_command".into(),
-            description: "在项目目录中执行系统命令，返回 stdout/stderr/stdout 和退出码。用于运行构建、测试、git 命令等。".into(),
+            description: "在项目目录中执行系统命令，返回 stdout/stderr 和退出码。沙箱内默认**无网络**（Linux/macOS OS 级隔离）：命令需要联网（下载依赖、API 调用、访问 localhost 服务）时必须显式设 network=true（审批时向用户标注）。用于运行构建、测试、git 命令等。".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -565,6 +640,10 @@ pub fn get_command_tool_spec() -> ToolSpec {
                     "timeout": {
                         "type": "integer",
                         "description": "超时毫秒，默认 60s，最大 300s（5分钟）。长时间编译适量增大。"
+                    },
+                    "network": {
+                        "type": "boolean",
+                        "description": "此命令是否需要网络访问。默认 false（沙箱内无网络，OS 级阻断外部出口）。npm install / cargo build 首次拉取依赖、curl API 等必须设为 true。"
                     }
                 },
                 "required": ["command"]
@@ -573,17 +652,17 @@ pub fn get_command_tool_spec() -> ToolSpec {
     }
 }
 
-// ====== 命令执行 ======
+// ====== Command execution ======
 
-/// 检查命令中的高危 shell 元字符序列。
+/// Checks the command for dangerous shell metacharacter sequences.
 fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
-    // 1. 反引号命令替换
+    // 1. backtick command substitution
     if command.contains('`') {
         return Some("禁止使用反引号 (`) 进行命令替换");
     }
 
-    // 2. $() 命令替换（排除在单引号内的）
-    // 简化处理：只要出现 $( 且在引号外就拒绝
+    // 2. $() command substitution (excluding ones inside single quotes)
+    // simplified: any $( outside single quotes is rejected
     let mut in_single = false;
     let bytes = command.as_bytes();
     for i in 0..bytes.len().saturating_sub(1) {
@@ -597,27 +676,63 @@ fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
         }
     }
 
-    // 3. 检测 `> /dev/` 设备文件重定向
-    // 这个已经由 check_dangerous_command 覆盖，此处不重复检查
+    // 3. `> /dev/` device-file redirection
+    // already covered by check_dangerous_command; not rechecked here
 
     None
 }
 
-/// 在项目根目录中执行系统命令。
+/// Reads a pipe into a bounded buffer: keeps the first cap bytes, **keeps draining**
+/// (discarding the rest) and counts total bytes read. Continuous draining guarantees
+/// the producer never blocks writing to the pipe (paired with reader threads started
+/// before wait(), this avoids the deadlock when output exceeds the ~64KB OS pipe buffer).
 ///
-/// # 参数
-/// - `command` — 要执行的命令字符串
-/// - `project_root` — 项目根目录绝对路径（工作目录）
-/// - `timeout_ms` — 可选超时毫秒，默认 60s
+/// Returns (kept bytes, total bytes); the total feeds the truncation note in the result.
+fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usize) {
+    let mut kept = Vec::new();
+    let mut total = 0usize;
+    let mut buf = [0u8; 16384];
+    loop {
+        match pipe.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                total += n;
+                if kept.len() < cap {
+                    let take = (cap - kept.len()).min(n);
+                    kept.extend_from_slice(&buf[..take]);
+                }
+            }
+        }
+    }
+    (kept, total)
+}
+
+/// Executes a system command in the project root directory.
 ///
-/// # 返回
-/// ToolResult，包含 stdout、stderr、exit_code、timed_out 信息。
-pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64>) -> ToolResult {
+/// # Arguments
+/// - `command` - the command string to execute
+/// - `project_root` - absolute path of the project root (working directory)
+/// - `timeout_ms` - optional timeout in milliseconds, default 60s
+/// - `allow_network` - whether network egress is allowed (false = Linux --unshare-net /
+///   macOS SBPL deny network*; declared explicitly by the model via the `network` tool
+///   parameter, default false)
+/// - `ac_dirs` - Windows AppContainer config (Some = enabled + toolchain R+X dirs;
+///   resolved by the caller from the app config; always None on non-Windows)
+///
+/// # Returns
+/// A ToolResult carrying stdout, stderr, exit_code and timed_out.
+pub fn execute_command(
+    command: &str,
+    project_root: &str,
+    timeout_ms: Option<u64>,
+    allow_network: bool,
+    ac_dirs: Option<Vec<String>>,
+) -> ToolResult {
     if command.trim().is_empty() {
         return tool_err("命令为空");
     }
 
-    // 长度限制
+    // length limit
     if command.len() > MAX_COMMAND_LEN {
         return tool_err(&format!(
             "命令过长 ({:.1}KB)，最大允许 {:.1}KB",
@@ -626,43 +741,110 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         ));
     }
 
-    // 高危 shell 元字符检查
+    // dangerous shell metacharacter check
     if let Some(reason) = check_shell_metacharacters(command) {
         return tool_err(&format!("安全拦截: {reason}"));
     }
 
+    // Dangerous-command detection: Critical findings (system destruction / privilege
+    // escalation / fork bomb) are **rejected in every agent mode** - in Auto/Workflow
+    // mode the execute_command permission is Allow and skips the approval prompt, so
+    // without this interception there would be no protection at all. High/Medium
+    // findings only log a warning (in Ask mode the approval prompt shows the risk
+    // description to the user).
+    if let Some(danger) = check_dangerous_command(command) {
+        if danger.category == DangerCategory::Critical {
+            return tool_err(&format!("已拒绝执行高危命令: {}", danger.risk));
+        }
+        tracing::warn!("检测到潜在风险命令（{}）: {}", danger.risk, command);
+    }
+
     let timeout = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS);
 
-    // 平台选择 shell
+    // Windows AppContainer OS-level sandbox: when enabled via config
+    // (sandboxWindows=appcontainer) take a dedicated path - file-write control +
+    // network blocked by default; any failure fails closed with an error.
+    #[cfg(windows)]
+    if let Some(dirs) = ac_dirs {
+        return execute_command_in_appcontainer(
+            command,
+            project_root,
+            timeout,
+            allow_network,
+            &dirs,
+        );
+    }
+
+    // pick the shell per platform
     let (shell, shell_arg) = if cfg!(windows) {
         ("cmd", "/C")
     } else {
         ("sh", "-c")
     };
 
-    let child = match Command::new(shell)
-        .arg(shell_arg)
-        .arg(command)
-        .current_dir(project_root)
+    // Sandbox wrapping (Linux/macOS best-effort): replace the launch argv when available; otherwise run natively
+    let sandbox_argv = crate::utils::sandbox::sandbox_command_prefix(
+        shell,
+        shell_arg,
+        command,
+        project_root,
+        allow_network,
+    );
+    let mut cmd = if let Some(argv) = sandbox_argv {
+        let mut c = Command::new(&argv[0]);
+        c.args(&argv[1..]);
+        c
+    } else {
+        let mut c = Command::new(shell);
+        c.arg(shell_arg).arg(command);
+        c
+    };
+    cmd.current_dir(project_root)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    // Non-Windows: run the command in its own process group so timeout/cleanup kills the whole subtree
+    #[cfg(unix)]
     {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return tool_err(&format!("启动命令失败: {e}")),
     };
 
-    // Windows: 将子进程分配到限制 Job Object
-    #[cfg(windows)]
-    {
-        if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
-            // 沙箱分配失败不应阻塞执行，但记录错误到输出中
-            // 注意：我们这里不 kill 进程，因为这属于非致命错误
+    // Windows: assign the child to a per-execution Job Object sandbox (the guard's
+    // Drop tears down the entire process tree, grandchildren included, on timeout).
+    // No-op on non-Windows.
+    let mut job_guard = match crate::utils::sandbox::assign_to_job(&child) {
+        Ok(g) => Some(g),
+        Err(e) => {
+            // sandbox assignment failure must not block execution, but log the error
             tracing::warn!("[shell] 无法分配 Job Object 沙箱: {e}");
+            None
         }
+    };
+
+    // Reader threads must start before wait(): reading only after wait() deadlocks
+    // once output exceeds the OS pipe buffer (~64KB) - the child blocks writing to
+    // the pipe and never exits, then gets killed by the timeout even if the command
+    // itself would finish in 2 seconds. Readers keep the first MAX_OUTPUT_BYTES bytes
+    // and keep draining the rest so the child never blocks on pipe writes.
+    use std::sync::mpsc;
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    if let Some(pipe) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let _ = stdout_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
+    }
+    if let Some(pipe) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let _ = stderr_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
     }
 
-    // 等待执行（带超时），使用 channel 避免依赖 wait_timeout（未稳定）
+    // wait with timeout via a channel, avoiding a dependency on the unstable wait_timeout
     use std::sync::{Arc, Mutex};
     let child_arc = Arc::new(Mutex::new(child));
     let child_clone = Arc::clone(&child_arc);
@@ -678,8 +860,20 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         Ok(Ok(status)) => (status.code(), false),
         Ok(Err(_)) => return tool_err("等待命令进程失败"),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            // 超时 → 杀掉进程
+            // timeout -> tear down the whole process tree immediately:
+            // - Windows: dropping the Job guard triggers KILL_ON_JOB_CLOSE (all grandchildren included)
+            // - non-Windows: kill the process group (process_group(0) put the subtree in its own group)
+            drop(job_guard.take());
             if let Ok(mut c) = child_arc.lock() {
+                #[cfg(unix)]
+                {
+                    let pid = c.id();
+                    if pid > 0 {
+                        let _ = std::process::Command::new("kill")
+                            .args(["-KILL", &format!("-{pid}")])
+                            .status();
+                    }
+                }
                 let _ = c.kill();
                 let _ = c.wait();
             }
@@ -690,34 +884,127 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         }
     };
 
-    // 读取输出
-    let stdout = {
-        let mut c = child_arc.lock().unwrap();
-        use std::io::Read;
-        c.stdout
-            .take()
-            .and_then(|mut o| {
-                let mut buf = Vec::new();
-                std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
-                Some(buf)
-            })
-            .unwrap_or_default()
+    // collect reader results: the process has exited or been torn down, so the pipes
+    // close and the readers finish shortly; in the extreme case (a leftover process
+    // still holds the pipe write end) give up after 10s to avoid unbounded waiting.
+    let (stdout, stdout_total) = stdout_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+    let (stderr, stderr_total) = stderr_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+
+    build_command_result(
+        command,
+        exit_code,
+        timed_out,
+        timeout,
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+    )
+}
+
+/// Full command lifecycle for the Windows AppContainer path.
+///
+/// Differences from the native path: the process is created with the
+/// SECURITY_CAPABILITY attribute (low-privilege token, network off by default);
+/// file writes are limited to the project root / dedicated temp dir / toolchain
+/// R+X dirs; stdout/stderr pipes are created by the AC module (File read ends);
+/// timeouts tear down the whole process tree via Job guard Drop + TerminateProcess.
+/// All other semantics (drain-to-avoid-deadlock, truncation, result building)
+/// match the native path.
+#[cfg(windows)]
+fn execute_command_in_appcontainer(
+    command: &str,
+    project_root: &str,
+    timeout: u64,
+    allow_network: bool,
+    toolchain_dirs: &[String],
+) -> ToolResult {
+    // Same command-line shape as the native path: cmd /C <command> (cwd is set to
+    // the project root by the AC module). With the AppContainer attribute present,
+    // executable resolution runs under the low-privilege token - the full path
+    // (ComSpec) must be used; a bare "cmd" fails with ERROR_FILE_NOT_FOUND.
+    let cmd_path = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+    let cmdline = format!("{cmd_path} /C {command}");
+    let (mut child, job) = match crate::utils::sandbox::spawn_in_appcontainer(
+        &cmdline,
+        project_root,
+        allow_network,
+        toolchain_dirs,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            return tool_err(&format!(
+                "AppContainer 沙箱启动失败（fail-closed，不回退无沙箱执行）: {e}"
+            ))
+        }
+    };
+    let mut job = Some(job);
+    tracing::debug!("[appcontainer] 命令已启动 (pid={}): {command}", child.pid);
+
+    // reader threads (same drain semantics as the native path; avoids the >64KB output deadlock)
+    use std::sync::mpsc;
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    if let Some(pipe) = child.stdout_read.take() {
+        std::thread::spawn(move || {
+            let _ = stdout_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
+    }
+    if let Some(pipe) = child.stderr_read.take() {
+        std::thread::spawn(move || {
+            let _ = stderr_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+        });
+    }
+
+    // wait (blocking; this function runs on a spawn_blocking thread). Timeout -> Job kills the whole tree + terminate as backstop
+    let (exit_code, timed_out) = {
+        let (code, to) = crate::utils::sandbox::wait_with_timeout(&child, timeout as u32);
+        if to {
+            drop(job.take());
+            crate::utils::sandbox::terminate(&child);
+            (None, true)
+        } else {
+            (code, false)
+        }
     };
 
-    let stderr = {
-        let mut c = child_arc.lock().unwrap();
-        use std::io::Read;
-        c.stderr
-            .take()
-            .and_then(|mut o| {
-                let mut buf = Vec::new();
-                std::io::BufReader::new(&mut o).read_to_end(&mut buf).ok()?;
-                Some(buf)
-            })
-            .unwrap_or_default()
-    };
+    let (stdout, stdout_total) = stdout_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+    let (stderr, stderr_total) = stderr_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_default();
+    // also clean up potentially leftover grandchildren (daemons etc.) on the normal path
+    drop(job.take());
 
-    // 构建结果
+    build_command_result(
+        command,
+        exit_code,
+        timed_out,
+        timeout,
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+    )
+}
+
+/// Shared result construction for the native and AppContainer paths.
+#[allow(clippy::too_many_arguments)]
+fn build_command_result(
+    command: &str,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    timeout: u64,
+    stdout: Vec<u8>,
+    stdout_total: usize,
+    stderr: Vec<u8>,
+    stderr_total: usize,
+) -> ToolResult {
     let mut result = String::new();
     result.push_str(&format!("$ {command}\n"));
 
@@ -729,22 +1016,150 @@ pub fn execute_command(command: &str, project_root: &str, timeout_ms: Option<u64
         result.push_str(&format!("\nexit code: {code}\n"));
     }
 
-    if !stdout.is_empty() {
+    if !stdout.is_empty() || stdout_total > 0 {
         result.push_str(&format!(
             "\n[stdout]:\n{}\n",
             truncate_output(&stdout, MAX_OUTPUT_BYTES)
         ));
+        if stdout_total > stdout.len() {
+            result.push_str(&format!(
+                "[!] stdout 输出超长，仅保留前 {}B / 共 {}B\n",
+                stdout.len(),
+                stdout_total
+            ));
+        }
     }
-    if !stderr.is_empty() {
+    if !stderr.is_empty() || stderr_total > 0 {
         result.push_str(&format!(
             "\n[stderr]:\n{}\n",
             truncate_output(&stderr, MAX_OUTPUT_BYTES)
         ));
+        if stderr_total > stderr.len() {
+            result.push_str(&format!(
+                "[!] stderr 输出超长，仅保留前 {}B / 共 {}B\n",
+                stderr.len(),
+                stderr_total
+            ));
+        }
     }
 
     if (exit_code != Some(0)) || timed_out {
         tool_err(&result)
     } else {
         tool_ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_of(r: &ToolResult) -> String {
+        r.content
+            .first()
+            .and_then(|c| c.data.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// Critical-level dangerous commands must be rejected directly inside
+    /// execute_command, without relying on the approval prompt. Covers the
+    /// protection gap of Auto/Workflow mode (execute_command permission is
+    /// Allow, no Ask prompt). Note: these samples are all lexically matched -
+    /// detection returns before anything actually runs.
+    #[test]
+    fn critical_dangerous_commands_are_blocked() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        for cmd in [
+            "sudo echo aio_test",
+            // targets a nonexistent device name: harmless even if the guard fails
+            "dd if=/dev/zero of=/dev/aio_test_nonexistent_device",
+        ] {
+            let r = execute_command(cmd, &root, Some(5_000), false, None);
+            assert!(r.is_error, "命令应被拒绝: {cmd}");
+            assert!(
+                text_of(&r).contains("高危命令"),
+                "拒绝原因缺失: {}",
+                text_of(&r)
+            );
+        }
+    }
+
+    /// Known bypass vectors listed in the security review must all be classified Critical.
+    #[test]
+    fn known_bypass_vectors_are_blocked() {
+        for cmd in [
+            // interpreter quoted payload (a single token after tokenization)
+            "bash -c \"rm -rf ~\"",
+            "sh -c 'sudo reboot'",
+            // any producer piped into a shell
+            "echo payload | sh",
+            "cat evil.sh | bash",
+            "base64 -d payload | sh",
+            "xxd -r x | bash",
+            "|bash echo x",
+            // find / xargs recursive deletion
+            "find / -delete",
+            "find . -exec rm {} ;",
+            "xargs rm -rf .",
+            // git clean
+            "git clean -fdx",
+        ] {
+            let info = check_dangerous_command(cmd);
+            assert!(info.is_some(), "绕过向量未命中: {cmd}");
+            assert_eq!(
+                info.unwrap().category,
+                DangerCategory::Critical,
+                "应为 Critical: {cmd}"
+            );
+        }
+    }
+
+    /// New checks must not introduce false positives (benign pipe/find/git usage stays unaffected).
+    #[test]
+    fn benign_pipe_and_find_still_run() {
+        for cmd in [
+            "ls | grep foo",
+            "cargo build | tee log.txt",
+            "find . -name '*.rs'",
+            "find . -type f -exec grep x {} ;",
+            "echo rm | xargs echo",
+            "git clean -n",
+            "bash -c 'cargo test'",
+            "powershell -Command Get-Date",
+        ] {
+            assert!(check_dangerous_command(cmd).is_none(), "假阳性: {cmd}");
+        }
+    }
+
+    /// Benign commands are unaffected (false-positive regression guard).
+    #[test]
+    fn benign_command_still_runs() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command("echo aio_benign_check", &root, Some(10_000), false, None);
+        assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
+        assert!(text_of(&r).contains("aio_benign_check"));
+    }
+
+    /// Large-output commands must not deadlock: stdout/stderr must be read before
+    /// wait(); reading only after wait() deadlocks once output exceeds the OS pipe
+    /// buffer (~64KB) - the child blocks writing to the pipe, never exits, and gets
+    /// killed by the timeout even if it would finish in 2 seconds. Readers start
+    /// before wait and drain continuously.
+    #[test]
+    fn large_output_does_not_deadlock() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        // ~340KB output (Windows: 20000 lines x 17B; Unix: head -n 20000)
+        let cmd = if cfg!(windows) {
+            "for /L %i in (1,1,20000) do @echo 0123456789ABCDEF"
+        } else {
+            "yes 0123456789ABCDEF | head -n 20000"
+        };
+        let r = execute_command(cmd, &root, Some(30_000), false, None);
+        let text = text_of(&r);
+        assert!(!r.is_error, "大输出命令应正常完成: {text}");
+        assert!(!text.contains("超时"), "不应被超时误杀: {text}");
+        assert!(text.contains("0123456789ABCDEF"), "输出内容缺失");
     }
 }

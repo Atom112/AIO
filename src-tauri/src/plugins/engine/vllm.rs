@@ -1,20 +1,21 @@
-/// vLLM 本地推理引擎插件实现
+/// vLLM local inference engine plugin implementation
 ///
-/// ⚠️ 注意：vLLM 官方仅支持 Linux 和 macOS，Windows 上不提供此引擎选项。
-/// 启动策略：
-/// 1. 检查系统是否已安装 vllm (python -c "import vllm")
-/// 2. 若未安装但 resources/engines/vllm/ 下有 .whl 文件，自动 pip install
-/// 3. 通过 python -m vllm.entrypoints.openai.api_server 启动 OpenAI 兼容服务
+/// Note: vLLM officially supports Linux and macOS only; this engine option is
+/// unavailable on Windows.
+/// Startup strategy:
+/// 1. Scan candidate Python interpreters and pick one with vllm installed
+/// 2. Start the OpenAI-compatible server via python -m vllm.entrypoints.openai.api_server
 use crate::core::state::LocalEngineState;
+use crate::ierr;
 use crate::plugins::engine::LocalEnginePlugin;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task;
 use tokio::time::{sleep, Duration};
 use tracing::debug;
 
+use crate::core::events as ev;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -32,17 +33,18 @@ fn create_progress_cmd(program: &str, args: &[&str]) -> std::process::Command {
     cmd
 }
 
-fn check_vllm_installed() -> bool {
-    let mut cmd = create_progress_cmd("python", &["-c", "import vllm; print(vllm.__version__)"]);
+/// Check whether the vllm package is installed in the given Python interpreter
+fn check_vllm_installed(python: &str) -> bool {
+    let mut cmd = create_progress_cmd(python, &["-c", "import vllm; print(vllm.__version__)"]);
     cmd.spawn()
         .and_then(|mut c| c.wait())
         .map(|s| s.success())
         .unwrap_or(false)
 }
 
-/// 获取 vLLM 版本号
-fn get_vllm_version() -> Option<String> {
-    let mut cmd = create_progress_cmd("python", &["-c", "import vllm; print(vllm.__version__)"]);
+/// Get the vLLM version string (using the resolved Python interpreter)
+fn get_vllm_version(python: &str) -> Option<String> {
+    let mut cmd = create_progress_cmd(python, &["-c", "import vllm; print(vllm.__version__)"]);
     match cmd.output() {
         Ok(output) => {
             let raw = String::from_utf8_lossy(&output.stdout);
@@ -52,61 +54,155 @@ fn get_vllm_version() -> Option<String> {
     }
 }
 
-fn find_python() -> Result<String, String> {
-    for python in ["python", "python3"] {
-        let mut cmd = create_progress_cmd(python, &["--version"]);
-        if cmd
-            .spawn()
-            .and_then(|mut c| c.wait())
-            .map(|s| s.success())
-            .unwrap_or(false)
-        {
-            return Ok(python.to_string());
-        }
-    }
-    Err("未找到 Python 运行时。请安装 Python 3.8+ 并确保已加入 PATH。".to_string())
-}
-
-fn find_bundled_wheels(resource_dir: &Path) -> Vec<std::path::PathBuf> {
-    let mut wheels = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(resource_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext == "whl" {
-                    wheels.push(path);
-                }
-            }
-        }
-    }
-    wheels.sort();
-    wheels
-}
-
-fn install_from_wheels(python: &str, wheels: &[std::path::PathBuf]) -> Result<(), String> {
-    let mut args = vec!["-m", "pip", "install", "--quiet"];
-    for w in wheels {
-        args.push(
-            w.to_str()
-                .ok_or_else(|| format!("无效的 wheel 路径: {:?}", w))?,
-        );
-    }
-
-    debug!("[vLLM] 正在从 bundled .whl 安装 vllm...");
-    let mut cmd = create_progress_cmd(python, &args);
-    let status = cmd
+/// Run `python --version` to verify the interpreter works
+fn python_runs(python: &str) -> bool {
+    create_progress_cmd(python, &["--version"])
         .spawn()
-        .map_err(|e| format!("pip install 启动失败: {}", e))?
-        .wait()
-        .map_err(|e| format!("pip install 执行失败: {}", e))?;
+        .and_then(|mut c| c.wait())
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
-    if !status.success() {
-        return Err(
-            "pip install vllm 失败。请检查 Python 环境和 CUDA 工具链是否正确安装。".to_string(),
+/// Collect all candidate Python interpreter paths.
+///
+/// Search order: PATH names → VIRTUAL_ENV → system absolute paths → CONDA_PREFIX → HOME dirs (conda/venv/pyenv/pip --user).
+/// Processes launched by the installer or desktop launcher may hold a stale PATH snapshot
+/// (missing user-installed Python), so relying on `python` / `python3` from PATH alone
+/// is not enough.
+fn python_candidates() -> Vec<String> {
+    let mut candidates: Vec<String> = Vec::new();
+
+    // 1. PATH names
+    for name in ["python3", "python"] {
+        candidates.push(name.to_string());
+    }
+
+    // 2. VIRTUAL_ENV (user virtual env)
+    if let Ok(venv) = std::env::var("VIRTUAL_ENV") {
+        candidates.push(
+            Path::new(&venv)
+                .join("bin")
+                .join("python")
+                .display()
+                .to_string(),
         );
     }
-    debug!("[vLLM] vllm 安装成功");
-    Ok(())
+
+    // 3. system absolute paths
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push("/opt/homebrew/bin/python3".to_string());
+        candidates.push("/usr/local/bin/python3".to_string());
+        candidates.push("/usr/bin/python3".to_string());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        candidates.push("/usr/local/bin/python3".to_string());
+        candidates.push("/usr/bin/python3".to_string());
+    }
+
+    // 4. conda via CONDA_PREFIX
+    if let Ok(prefix) = std::env::var("CONDA_PREFIX") {
+        candidates.push(
+            Path::new(&prefix)
+                .join("bin")
+                .join("python3")
+                .display()
+                .to_string(),
+        );
+    }
+
+    // 5. HOME based dirs and extra fallbacks
+    if let Ok(home) = std::env::var("HOME") {
+        for name in ["miniconda3", "anaconda3", "miniforge3", "mambaforge"] {
+            candidates.push(
+                Path::new(&home)
+                    .join(name)
+                    .join("bin")
+                    .join("python")
+                    .display()
+                    .to_string(),
+            );
+        }
+        // ~/.venv
+        candidates.push(
+            Path::new(&home)
+                .join(".venv")
+                .join("bin")
+                .join("python")
+                .display()
+                .to_string(),
+        );
+        // pyenv shims
+        candidates.push(
+            Path::new(&home)
+                .join(".pyenv")
+                .join("shims")
+                .join("python3")
+                .display()
+                .to_string(),
+        );
+        candidates.push(
+            Path::new(&home)
+                .join(".pyenv")
+                .join("shims")
+                .join("python")
+                .display()
+                .to_string(),
+        );
+        // ~/.local/bin (pip install --user) — critical: the desktop launcher PATH lacks user install paths
+        // The Ollama plugin falls back to this same path; see plugins/engine/ollama.rs
+        candidates.push(
+            Path::new(&home)
+                .join(".local")
+                .join("bin")
+                .join("python3")
+                .display()
+                .to_string(),
+        );
+    }
+
+    candidates
+}
+
+/// Filter the candidate list with the `verify` closure, returning the first matching Python path.
+fn find_python_impl(verify: impl Fn(&str) -> bool) -> Result<String, String> {
+    for python in python_candidates() {
+        if verify(&python) {
+            return Ok(python);
+        }
+    }
+    Err(ierr!(
+        "未找到 Python 运行时。请安装 Python 3.8+ 并确保已加入 PATH。",
+        "Python runtime not found. Install Python 3.8+ and make sure it is on PATH."
+    ))
+}
+
+/// Scan all candidate Pythons and return the first interpreter that **both** runs
+/// **and** has vllm installed.
+///
+/// Trying each candidate (e.g. `~/.local/bin/python3`, conda env, pyenv shims) fixes
+/// the "detected in dev, undetected in the packaged app" problem caused by the
+/// incomplete PATH in desktop-launcher environments.
+fn find_python_with_vllm() -> Result<String, String> {
+    find_python_impl(|p| python_runs(p) && check_vllm_installed(p))
+}
+
+/// Check whether a vLLM service is already running on the default port 8000
+/// (HTTP fallback, consistent with the ollama plugin: a running service counts
+/// as the engine being available even when Python is not detectable from the
+/// process environment)
+fn vllm_http_reachable() -> bool {
+    let url = "http://127.0.0.1:8000/health";
+    std::thread::spawn(move || {
+        reqwest::blocking::Client::new()
+            .get(url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .is_ok()
+    })
+    .join()
+    .unwrap_or(false)
 }
 
 impl LocalEnginePlugin for VllmPlugin {
@@ -116,10 +212,6 @@ impl LocalEnginePlugin for VllmPlugin {
 
     fn identifier(&self) -> &'static str {
         "vllm"
-    }
-
-    fn supported_extensions(&self) -> &[&'static str] {
-        &["gguf", "safetensors"]
     }
 
     fn is_platform_supported(&self) -> bool {
@@ -137,12 +229,23 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn is_installed(&self, _app: &AppHandle) -> bool {
-        check_vllm_installed()
+        // Scan all candidate Python interpreters; any one with vllm installed means ready.
+        // Per-candidate probing works around the incomplete PATH of desktop launchers.
+        // Fallback: a vLLM service already running on port 8000 (started manually by the user).
+        find_python_with_vllm().is_ok() || vllm_http_reachable()
     }
 
-    fn detect_installation(&self, app: &AppHandle) -> crate::core::models::EngineInstallInfo {
-        let installed = self.is_installed(app);
-        let version = if installed { get_vllm_version() } else { None };
+    fn detect_installation(&self, _app: &AppHandle) -> crate::core::models::EngineInstallInfo {
+        // Prefer find_python_with_vllm: scan all candidates for an interpreter that both runs and has vllm installed.
+        // If none is found (no interpreter with vllm, or the HTTP fallback hit), fall back to service detection.
+        let python = find_python_with_vllm().ok();
+        let has_vllm = python.is_some();
+        let installed = has_vllm || vllm_http_reachable();
+        let version = if let Some(ref p) = python {
+            get_vllm_version(p)
+        } else {
+            None
+        };
         crate::core::models::EngineInstallInfo { installed, version }
     }
 
@@ -151,7 +254,7 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn progress_event_name(&self) -> &'static str {
-        "engine-progress"
+        ev::ENGINE_PROGRESS
     }
 
     fn build_command(
@@ -162,20 +265,6 @@ impl LocalEnginePlugin for VllmPlugin {
         _gpu_layers: i32,
     ) -> std::process::Command {
         std::process::Command::new("python")
-    }
-
-    fn parse_progress_from_log(&self, line: &str) -> Option<f64> {
-        if line.contains("Loading model weights") {
-            Some(0.3)
-        } else if line.contains("Model loaded") || line.contains("model loaded") {
-            Some(0.6)
-        } else if line.contains("Uvicorn running on") {
-            Some(0.8)
-        } else if line.contains("Application startup complete") {
-            Some(1.0)
-        } else {
-            None
-        }
     }
 
     fn start<'a>(
@@ -195,53 +284,39 @@ impl LocalEnginePlugin for VllmPlugin {
             );
 
             if !Path::new(model_path).exists() {
-                return Err(format!("模型文件/目录不存在: {}", model_path));
+                return Err(ierr!(
+                    "模型文件/目录不存在: {}",
+                    "Model file/directory does not exist: {}",
+                    model_path
+                ));
             }
-
             let _ = app.emit(self.progress_event_name(), 0.02);
 
-            // spawn_blocking: find_python 执行同步 subprocess（避免阻塞 async worker）
-            let python = tokio::task::spawn_blocking(find_python)
+            // Step 1: try find_python_with_vllm() first — scan all candidates for one with vllm installed.
+            // Verify each candidate (system Python may lack vllm while ~/.local/bin/python3, conda env, pyenv shims etc. have it).
+            let python = match tokio::task::spawn_blocking(find_python_with_vllm)
                 .await
-                .map_err(|_| "python 检测线程 panic".to_string())??;
+                .map_err(|_| ierr!("python 检测线程 panic", "Python detection thread panicked"))?
+            {
+                Ok(p) => {
+                    debug!("[vLLM] 找到已安装 vllm 的 Python: {}", p);
+                    p
+                }
+                Err(_) => {
+                    return Err(ierr!(
+                        "未找到已安装 vllm 的 Python 解释器。\n\
+                         请执行: pip install --user vllm\n\
+                         或: pip install vllm\n\n\
+                         注意：vLLM 仅支持 Linux/macOS，需要 CUDA 工具链支持。",
+                        "No Python interpreter with vllm installed.\n\
+                         Run: pip install --user vllm\n\
+                         Or: pip install vllm\n\n\
+                         Note: vLLM supports Linux/macOS only and requires the CUDA toolchain."
+                    ));
+                }
+            };
 
             let _ = app.emit(self.progress_event_name(), 0.05);
-
-            // spawn_blocking: check_vllm_installed 执行同步 subprocess
-            let installed = tokio::task::spawn_blocking(check_vllm_installed)
-                .await
-                .unwrap_or(false);
-            if !installed {
-                let resource_dir = app
-                    .path()
-                    .resolve("resources/engines/vllm", BaseDirectory::Resource)
-                    .map_err(|e| format!("无法解析资源路径: {}", e))?;
-
-                let wheels = find_bundled_wheels(&resource_dir);
-
-                if wheels.is_empty() {
-                    return Err(
-                        "系统未安装 vllm 包，且 resources/engines/vllm/ 下未找到 .whl 安装包。\n\
-                         请执行以下步骤之一：\n\
-                         1. 手动安装: pip install vllm\n\
-                         2. 将 vllm 的 .whl 文件放入 resources/engines/vllm/ 目录后重试\n\n\
-                         注意：vLLM 需要 CUDA 工具链支持，请确保已安装 NVIDIA GPU 驱动和 CUDA。"
-                            .to_string(),
-                    );
-                }
-
-                let _ = app.emit(self.progress_event_name(), 0.1);
-                // spawn_blocking: pip install 可能耗时数分钟
-                let wheels_clone = wheels.clone();
-                let python_clone = python.clone();
-                tokio::task::spawn_blocking(move || {
-                    install_from_wheels(&python_clone, &wheels_clone)
-                })
-                .await
-                .map_err(|_| "pip install 线程 panic".to_string())??;
-            } else {
-                debug!("[vLLM] 检测到系统已安装 vllm 包");
-            }
 
             let _ = app.emit(self.progress_event_name(), 0.15);
 
@@ -267,8 +342,9 @@ impl LocalEnginePlugin for VllmPlugin {
             }
 
             let mut child = cmd.spawn().map_err(|e| {
-                format!(
-                    "启动 vLLM 失败: {}。\n请确保 Python 和 vllm 已正确安装 (pip install vllm)。",
+                ierr!(
+                    "启动 vLLM 失败: {}。\n请确保 Python 和 vllm 已正确安装 (pip install --user vllm)。",
+                    "Failed to start vLLM: {}.\nMake sure Python and vllm are properly installed (pip install --user vllm).",
                     e
                 )
             })?;
@@ -277,7 +353,12 @@ impl LocalEnginePlugin for VllmPlugin {
 
             let stderr = match child.stderr.take() {
                 Some(s) => s,
-                None => return Err("无法获取 vLLM 子进程 stderr".to_string()),
+                None => {
+                    return Err(ierr!(
+                        "无法获取 vLLM 子进程 stderr",
+                        "Failed to capture vLLM child process stderr"
+                    ))
+                }
             };
             let app_clone = app.clone();
             let event_name = self.progress_event_name().to_string();
@@ -308,9 +389,19 @@ impl LocalEnginePlugin for VllmPlugin {
             match child.try_wait() {
                 Ok(None) => {}
                 Ok(Some(status)) => {
-                    return Err(format!("vLLM 进程启动后立即退出，退出码: {}。\n常见原因：CUDA 不可用、模型路径错误、显存不足。", status));
+                    return Err(ierr!(
+                        "vLLM 进程启动后立即退出，退出码: {}。\n常见原因：CUDA 不可用、模型路径错误、显存不足。",
+                        "vLLM process exited immediately after startup, exit code: {}.\nCommon causes: CUDA unavailable, wrong model path, or insufficient VRAM.",
+                        status
+                    ));
                 }
-                Err(e) => return Err(format!("无法检查进程状态: {}", e)),
+                Err(e) => {
+                    return Err(ierr!(
+                        "无法检查进程状态: {}",
+                        "Failed to check process status: {}",
+                        e
+                    ))
+                }
             }
 
             let client = reqwest::Client::builder()
@@ -326,7 +417,10 @@ impl LocalEnginePlugin for VllmPlugin {
                 }
                 Err(_) => {
                     let _ = child.kill();
-                    return Err("vLLM 服务未响应健康检查，可能启动失败。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效".to_string());
+                    return Err(ierr!(
+                        "vLLM 服务未响应健康检查，可能启动失败。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效",
+                        "vLLM service did not respond to the health check, startup may have failed.\nPlease check: 1) the CUDA toolchain is correctly installed 2) VRAM is sufficient 3) the model path is valid"
+                    ));
                 }
             }
 
@@ -339,5 +433,120 @@ impl LocalEnginePlugin for VllmPlugin {
 
             Ok(format!("http://127.0.0.1:{}/v1", port))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn restore_env(key: &str, old: Option<std::ffi::OsString>) {
+        match old {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    // The tests below read and write process-wide environment variables (HOME / CONDA_PREFIX / VIRTUAL_ENV);
+    // Rust tests run in parallel and would race, causing flaky failures, so they are serialized with a global lock.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn find_python_prefers_path_name_when_working() {
+        let result = find_python_impl(|c| c == "python3");
+        assert_eq!(result, Ok("python3".to_string()));
+    }
+
+    #[test]
+    fn find_python_falls_back_to_home_venv() {
+        let tmp = std::env::temp_dir().join(format!("aio-vllm-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &tmp);
+        // Remove other vars to isolate
+        let old_conda = std::env::var_os("CONDA_PREFIX");
+        let old_venv = std::env::var_os("VIRTUAL_ENV");
+        std::env::remove_var("CONDA_PREFIX");
+        std::env::remove_var("VIRTUAL_ENV");
+
+        let expected = tmp
+            .join(".venv")
+            .join("bin")
+            .join("python")
+            .display()
+            .to_string();
+        let result = find_python_impl(|c| c == expected);
+        assert_eq!(result, Ok(expected));
+
+        // restore env
+        restore_env("HOME", old_home);
+        match old_conda {
+            Some(v) => std::env::set_var("CONDA_PREFIX", v),
+            None => std::env::remove_var("CONDA_PREFIX"),
+        }
+        match old_venv {
+            Some(v) => std::env::set_var("VIRTUAL_ENV", v),
+            None => std::env::remove_var("VIRTUAL_ENV"),
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn python_candidates_includes_local_bin() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // Verify ~/.local/bin/python3 is in the candidate list (only effective when HOME is set)
+        if let Ok(home) = std::env::var("HOME") {
+            let candidates = python_candidates();
+            let expected = Path::new(&home)
+                .join(".local")
+                .join("bin")
+                .join("python3")
+                .display()
+                .to_string();
+            assert!(
+                candidates.contains(&expected),
+                "候选列表应包含 ~/.local/bin/python3 (pip install --user)，实际列表: {:?}",
+                candidates
+            );
+        }
+        // When HOME is unset this candidate is not added, so skip the assertion
+    }
+
+    #[test]
+    fn python_candidates_starts_with_path_names() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // Verify the first two entries of the candidate list are PATH names
+        let old_conda = std::env::var_os("CONDA_PREFIX");
+        let old_venv = std::env::var_os("VIRTUAL_ENV");
+        std::env::remove_var("CONDA_PREFIX");
+        std::env::remove_var("VIRTUAL_ENV");
+
+        let candidates = python_candidates();
+        assert_eq!(candidates[0], "python3", "第一个候选应为 python3");
+        assert_eq!(candidates[1], "python", "第二个候选应为 python");
+
+        restore_env("CONDA_PREFIX", old_conda);
+        restore_env("VIRTUAL_ENV", old_venv);
+    }
+
+    #[test]
+    fn find_python_with_vllm_returns_err_when_not_installed() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // When no Python has vllm installed, this should return Err (not panic).
+        // Use a nonexistent HOME path to isolate from system environment interference.
+        let old_home = std::env::var_os("HOME");
+        let old_conda = std::env::var_os("CONDA_PREFIX");
+        let old_venv = std::env::var_os("VIRTUAL_ENV");
+        std::env::set_var("HOME", "/nonexistent-aaaa");
+        std::env::remove_var("CONDA_PREFIX");
+        std::env::remove_var("VIRTUAL_ENV");
+
+        let result = find_python_with_vllm();
+        assert!(result.is_err(), "无 vllm 时应返回 Err: {:?}", result);
+
+        restore_env("HOME", old_home);
+        restore_env("CONDA_PREFIX", old_conda);
+        restore_env("VIRTUAL_ENV", old_venv);
     }
 }

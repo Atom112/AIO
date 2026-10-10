@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 @theme {
-  /* ── 主题色（映射 CSS 变量）── */
+  /* ── Theme colors (mapped to CSS variables) ── */
   --color-pri: var(--primary-color);
   --color-pri-5: var(--primary-5);
   --color-pri-10: var(--primary-10);
@@ -9,7 +9,7 @@
   --color-pri-30: var(--primary-30);
   --color-pri-50: var(--primary-50);
 
-  /* ── 深色背景色阶 ── */
+  /* ── Dark background scale ── */
   --color-dark: #161a28;
   --color-dark-50: #6a6e7a;
   --color-dark-100: #585c6a;
@@ -24,14 +24,18 @@
   --color-dark-900: #0e121f;
   --color-dark-950: #0a0e1a;
 
-  /* ── 危险/关闭操作色 ── */
+  /* ── Danger / close-action color ── */
   --color-danger: #e08090;
+  /* ── Success / pass color ── */
+  --color-success: #50dc64;
+  /* ── Warning color ── */
+  --color-warn: #facc15;
 
-  /* ── 阴影 ── */
+  /* ── Shadows ── */
   --shadow-theme-inner: inset 0 0 20px rgba(0, 0, 0, 0.3);
   --shadow-acrylic: 0 8px 32px rgba(0, 0, 0, 0.25);
 
-  /* ── 动画 ── */
+  /* ── Animations ── */
   --animate-shimmer: shimmer 2s linear infinite;
   --animate-stream-fade-in: stream-fade-in 0.3s ease-out forwards;
   --animate-fade-in: fade-in 0.2s ease-out forwards;
@@ -57,7 +61,7 @@
   --animate-welcome-card-in: welcomeCardIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 
-/* 尊重操作系统无障碍 / 减少动画偏好 */
+/* Respect OS accessibility / reduced-motion preference */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -70,7 +74,7 @@
 }
 
 /* ══════════════════════════════════════════════
-   CSS 变量
+   CSS variables
    ══════════════════════════════════════════════ */
 
 :root {
@@ -89,12 +93,22 @@
   --text-base-rgb: 255, 255, 255;
   --border-rgb: 255, 255, 255;
 
-  --border-dim: rgba(255, 255, 255, 0.06);
+  --border-dim: rgba(255, 255, 255, 0.16);
 
   --acrylic-bg: rgba(var(--surface-bg), 0.72);
   --acrylic-border: rgba(var(--border-rgb), 0.06);
   --acrylic-blur: 40px;
   --acrylic-radius: 12px;
+
+  /* ── Modal/panel background (grey to avoid a pure-black look in dark theme) ── */
+  --panel-bg: #3b3f4a;
+
+  /* ── App background (light/default theme): same as VaporGit (four corner glows + #2f2f2f base) ── */
+  --app-bg:
+    radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.55) 0, transparent 500px),
+    radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.4) 0, transparent 500px),
+    radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.35) 0, transparent 500px),
+    radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.35) 0, transparent 500px), #2f2f2f;
 }
 
 /* ── Dark mode: CSS variable overrides for surface/text/border ── */
@@ -107,13 +121,23 @@
 
   --acrylic-bg: rgba(var(--surface-bg), 0.85);
   --acrylic-border: rgba(var(--border-rgb), 0.1);
+
+  /* Modal/panel background (dark theme: grey rather than pure black) */
+  --panel-bg: #2a2e38;
+
+  /* Same as VaporGit dark (faint four-corner glows + pure black base) */
+  --app-bg:
+    radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.06) 0, transparent 500px),
+    radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.04) 0, transparent 500px),
+    radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.03) 0, transparent 500px),
+    radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.03) 0, transparent 500px), #000;
 }
 
 /* ══════════════════════════════════════════════
-   Keyframes（全部从 tailwind.config.js + @layer 迁移至此）
+   Keyframes (all keyframes defined here)
    ══════════════════════════════════════════════ */
 
-/* ── 消息 / 通用 ── */
+/* ── Messages / generic ── */
 @keyframes bubble-in {
   0% {
     opacity: 0;
@@ -183,6 +207,39 @@
   }
 }
 
+/* ── Linux/WebKitGTK performance degradation (applies only on that platform; win/mac visuals unchanged) ── */
+[data-webkitgtk] *,
+[data-webkitgtk] *::before,
+[data-webkitgtk] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Linux windows are opaque (avoids whole-window ARGB compositing cost of transparent windows): drop the root container's border radius so corners don't expose the window background */
+[data-webkitgtk] .app-container {
+  border-radius: 0 !important;
+}
+/* Message animations are opacity-only on WebKitGTK to avoid repeated rasterization of large-element transforms */
+[data-webkitgtk] {
+  --animate-message-in: message-in-kgtk 0.4s ease-out forwards;
+  --animate-message-out: message-out-kgtk 0.25s ease-in forwards;
+}
+@keyframes message-in-kgtk {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes message-out-kgtk {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 @keyframes shimmer {
   0% {
     background-position: -200% 0;
@@ -212,7 +269,7 @@
   }
 }
 
-/* ── 右键菜单 ── */
+/* ── Context menu ── */
 @keyframes contextMenuIn {
   from {
     opacity: 0;
@@ -235,7 +292,7 @@
   }
 }
 
-/* ── 模态框 ── */
+/* ── Modal ── */
 @keyframes modalOverlayIn {
   from {
     opacity: 0;
@@ -279,7 +336,7 @@
   }
 }
 
-/* ── 行入场 ── */
+/* ── Row entrance ── */
 @keyframes rowIn {
   from {
     opacity: 0;
@@ -291,7 +348,7 @@
   }
 }
 
-/* ── 思考图标 ── */
+/* ── Thinking icon ── */
 @keyframes thinkIconPulse {
   0%,
   100% {
@@ -311,7 +368,7 @@
   }
 }
 
-/* ── Agent Process 图标 ── */
+/* ── Agent Process icon ── */
 @keyframes agentProcessIconPulse {
   0%,
   100% {
@@ -331,7 +388,7 @@
   }
 }
 
-/* ── 步骤卡片 ── */
+/* ── Step card ── */
 @keyframes stepCardPulse {
   0%,
   100% {
@@ -342,7 +399,7 @@
   }
 }
 
-/* ── 宽度展开（clip-path）── */
+/* ── Width expand (clip-path) ── */
 @keyframes expand-width {
   from {
     clip-path: inset(0 100% 0 0);
@@ -352,7 +409,7 @@
   }
 }
 
-/* ── 工具审批 ── */
+/* ── Tool approval ── */
 @keyframes toolApprovalIn {
   from {
     opacity: 0;
@@ -364,7 +421,7 @@
   }
 }
 
-/* kebab-case 版本，供内联 animation 直接引用 */
+/* Kebab-case version for direct reference from inline animation */
 @keyframes tool-approval-in {
   from {
     opacity: 0;
@@ -376,7 +433,7 @@
   }
 }
 
-/* ── 命令面板 ── */
+/* ── Command palette ── */
 @keyframes commandPaletteFadeIn {
   from {
     opacity: 0;
@@ -399,7 +456,7 @@
   }
 }
 
-/* kebab-case 版本，供内联 animation 直接引用 */
+/* Kebab-case version for direct reference from inline animation */
 @keyframes command-palette-fade-in {
   from {
     opacity: 0;
@@ -420,7 +477,7 @@
   }
 }
 
-/* ── 快捷键录制 ── */
+/* ── Shortcut recording ── */
 @keyframes shortcutRecordingPulse {
   0%,
   100% {
@@ -431,7 +488,7 @@
   }
 }
 
-/* ── 斜杠菜单 ── */
+/* ── Slash menu ── */
 @keyframes slashMenuIn {
   from {
     opacity: 0;
@@ -454,7 +511,7 @@
   }
 }
 
-/* ── 欢迎页 ── */
+/* ── Welcome page ── */
 @keyframes welcomeLogoFloat {
   0%,
   100% {
@@ -487,7 +544,7 @@
   }
 }
 
-/* ── 步骤滑入（非主题 token，直接内联引用）── */
+/* ── Step slide-in (not a theme token; referenced inline directly) ── */
 @keyframes stepSlideIn {
   from {
     opacity: 0;
@@ -500,7 +557,7 @@
 }
 
 /* ══════════════════════════════════════════════
-   基础样式
+   Base styles
    ══════════════════════════════════════════════ */
 
 * {
@@ -538,7 +595,7 @@ body {
 }
 
 /* ══════════════════════════════════════════════
-   页面过渡
+   Page transitions
    ══════════════════════════════════════════════ */
 
 .page-fade-enter-active,
@@ -595,10 +652,32 @@ body {
 }
 
 /* ══════════════════════════════════════════════
-   @layer components（仅保留 .code-body）
+   @layer components (contains only .code-body)
    ══════════════════════════════════════════════ */
 
 @layer components {
+  /* Active-state inner glow for sidebar rows (projects/topics): themed
+     inset glow inside the row, marking the selected state on top of the
+     untouched resting border/background. Two stops: a brighter edge halo
+     and a deeper, softer spread reaching further toward the row center.
+     active-glow-sm is the same look scaled to the 28px child-topic rows:
+     large blurs on a small stadium-shaped box die out at the row center,
+     leaving a bright ring that appears to cut off around the text. */
+  .active-glow {
+    box-shadow:
+      inset 0 0 12px rgba(var(--primary-rgb), 0.22),
+      inset 0 0 60px rgba(var(--primary-rgb), 0.1);
+  }
+
+  /* active-glow-sm: 28px child-topic rows. Two stacked inset layers are two
+     independent falloff curves; on a small box the halo layer dies mid-row,
+     so brightness stepped down a cliff (bright edge -> sudden drop -> darkest
+     center). A single larger-blur layer fades edge-to-center as one uniform
+     gaussian — no ledges. */
+  .active-glow-sm {
+    box-shadow: inset 0 0 30px rgba(var(--primary-rgb), 0.18);
+  }
+
   .code-body pre {
     @apply m-0 p-4 rounded-none;
     background: transparent !important;
@@ -654,7 +733,7 @@ body {
 }
 
 /* ══════════════════════════════════════════════
-   Range 输入
+   Range inputs
    ══════════════════════════════════════════════ */
 
 input[type='range'] {
@@ -691,7 +770,18 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 /* ══════════════════════════════════════════════
-   Markdown 样式
+   Number inputs (hide the native WebView spin buttons; the step arrows are drawn by
+   the NumberInput component — the native solid triangles clash with the acrylic theme and pseudo-element spinners do not render in WebView2)
+   ══════════════════════════════════════════════ */
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ══════════════════════════════════════════════
+   Markdown styles
    ══════════════════════════════════════════════ */
 
 .markdown-segment > :first-child {
@@ -762,7 +852,7 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 .markdown-body a {
-  @apply text-[#7c9abf] no-underline;
+  @apply text-[var(--color-pri)] no-underline;
   border-bottom: 1px solid transparent;
   transition: border-color 0.15s;
 }
@@ -878,8 +968,13 @@ input[type='range']::-webkit-slider-thumb:active {
   @apply px-2 py-[6px] text-white/50 text-[0.85em] caption-bottom;
 }
 
+.markdown-body img.aio-chat-image {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
 /* ══════════════════════════════════════════════
-   消息流式输出动画
+   Message streaming animation
    ══════════════════════════════════════════════ */
 
 .message-streaming::after {
@@ -905,7 +1000,7 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 
 /* ══════════════════════════════════════════════
-   斜杠命令菜单滚动条
+   Slash command menu scrollbar
    ══════════════════════════════════════════════ */
 
 .slash-command-menu::-webkit-scrollbar {
@@ -952,4 +1047,36 @@ input[type='range']::-webkit-slider-thumb:active {
 }
 [data-theme='dark'] .border-white\/\[0\.15\] {
   border-color: rgba(240, 240, 240, 0.3) !important;
+}
+
+/* ── Light mode: brighten main-page borders (parallel to the dark-mode boost; dark mode unchanged) ── */
+[data-theme='light'] .border-white\/5 {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+[data-theme='light'] .border-white\/10 {
+  border-color: rgba(255, 255, 255, 0.21) !important;
+}
+[data-theme='light'] .border-white\/15 {
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+[data-theme='light'] .border-white\/20 {
+  border-color: rgba(255, 255, 255, 0.34) !important;
+}
+[data-theme='light'] .border-white\/\[0\.03\] {
+  border-color: rgba(255, 255, 255, 0.11) !important;
+}
+[data-theme='light'] .border-white\/\[0\.04\] {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+[data-theme='light'] .border-white\/\[0\.05\] {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+[data-theme='light'] .border-white\/\[0\.06\] {
+  border-color: rgba(255, 255, 255, 0.17) !important;
+}
+[data-theme='light'] .border-white\/\[0\.08\] {
+  border-color: rgba(255, 255, 255, 0.19) !important;
+}
+[data-theme='light'] .border-white\/\[0\.15\] {
+  border-color: rgba(255, 255, 255, 0.3) !important;
 }

@@ -1,7 +1,7 @@
 /**
- * 模型目录加载与查询工具
- * @description 包装 @aio/models-data 包，提供 catalog 加载、模型查询、能力补全
- * @data-source D:/base/aio-models-data (每周日 04:00 UTC 自动同步)
+ * Model catalog loading and query utilities
+ * @description Wraps the @aio/models-data package: catalog loading, model lookup, capability completion
+ * @data-source D:/base/aio-models-data (auto-synced every Sunday 04:00 UTC)
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -14,13 +14,13 @@ import {
 
 export type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data';
 
-/** 从 provider API 拉取并持久化的模型条目（仿 LobeHub 列表行） */
+/** Model entries fetched from a provider API and persisted (LobeHub-shaped list rows) */
 export interface FetchedModel {
   id: string;
   ownedBy: string;
-  /** 厂商返回的展示名（Google `displayName` / Anthropic `display_name`），OpenAI/Ollama 无 */
+  /** Vendor-provided display name (Google `displayName` / Anthropic `display_name`); absent for OpenAI/Ollama */
   displayName?: string;
-  /** 发布日期 YYYY-MM-DD，OpenAI `created` 转 / Anthropic `created_at` 原样 */
+  /** Release date YYYY-MM-DD; OpenAI `created` converted, Anthropic `created_at` passed through */
   releasedAt?: string;
 }
 
@@ -33,11 +33,11 @@ export interface ProviderConfig {
   enabledModels: string[];
   isCustom: boolean;
   customModelIds: string[];
-  /** per-provider HTTP/HTTPS 代理 (例如 `http://127.0.0.1:7890`)，用于解决国内访问 OpenAI/Google 的网络问题 */
+  /** per-provider HTTP/HTTPS proxy (e.g. `http://127.0.0.1:7890`), for regions where OpenAI/Google are hard to reach */
   proxyUrl?: string;
-  /** 从 API 持久化拉取的模型列表，用于仿 LobeHub 风格的双段 toggle 列表 */
+  /** Model list fetched and persisted from the API, for the LobeHub-style two-section toggle list */
   fetchedModels?: FetchedModel[];
-  /** 本地引擎专属：模型文件路径映射 { modelId -> localPath } */
+  /** Local-engine only: model file path mapping { modelId -> localPath } */
   localModelPaths?: Record<string, string>;
 }
 
@@ -47,9 +47,9 @@ export interface ProviderConfigFile {
   providers: Record<string, ProviderConfig>;
 }
 
-// ==================== 本地推理引擎供应商定义 ====================
+// ==================== Local inference engine provider definitions ====================
 
-/** 内置本地推理引擎供应商定义 */
+/** Built-in local inference engine provider definition */
 export interface LocalEngineProvider {
   id: string; // provider identifier, e.g. 'local-llamacpp'
   name: string; // display name, e.g. 'llama.cpp'
@@ -58,7 +58,7 @@ export interface LocalEngineProvider {
   fileExtensions: string[]; // ['gguf'] for file picker, [] for no file picker
   allowModelFileSelection: boolean;
   engineInstallUrl?: string; // docs URL for manual install (not AIO auto-install)
-  /** 是否支持从 API 拉取模型列表（Ollama 的 /api/tags；llama.cpp/vLLM 启动时固定模型，无需拉取） */
+  /** Whether the model list can be fetched from the API (Ollama's /api/tags; llama.cpp/vLLM fix the model at startup, no fetch needed) */
   supportsFetchModels?: boolean;
 }
 
@@ -95,11 +95,11 @@ export const LOCAL_ENGINE_PROVIDERS: LocalEngineProvider[] = [
   },
 ];
 
-/** 判断 provider id 是否是本地引擎 provider */
+/** Whether a provider id is a local engine provider */
 export const isLocalEngineProvider = (id: string): boolean =>
   LOCAL_ENGINE_PROVIDERS.some((p) => p.id === id);
 
-/** 根据 provider id 取 LocalEngineProvider 定义 */
+/** Get the LocalEngineProvider definition for a provider id */
 export const getLocalEngineProvider = (id: string): LocalEngineProvider | undefined =>
   LOCAL_ENGINE_PROVIDERS.find((p) => p.id === id);
 
@@ -217,10 +217,6 @@ export async function updateModelsCatalog(url?: string): Promise<UpdateResult> {
   return result;
 }
 
-export async function getCatalogUrl(): Promise<string> {
-  return await invoke<string>('get_catalog_url');
-}
-
 export function findModel(catalog: Catalog, provider: string, id: string): ModelMeta | null {
   const prov = (provider || '').toLowerCase();
   const target = (id || '').toLowerCase();
@@ -239,34 +235,7 @@ export function findModel(catalog: Catalog, provider: string, id: string): Model
   );
 }
 
-export function listProvidersForApiUrl(catalog: Catalog, apiUrl: string): ProviderMeta[] {
-  if (!apiUrl) return catalog.providers.slice(0, 50);
-  const u = apiUrl.toLowerCase();
-  const knownHosts: Record<string, string> = {
-    'api.openai.com': 'openai',
-    'api.anthropic.com': 'anthropic',
-    'generativelanguage.googleapis.com': 'google',
-    'api.deepseek.com': 'deepseek',
-    'api.groq.com': 'groq',
-    'api.mistral.ai': 'mistral',
-    'api.x.ai': 'xai',
-    'openrouter.ai': 'openrouter',
-    'api.cohere.ai': 'cohere',
-  };
-  for (const [host, prov] of Object.entries(knownHosts)) {
-    if (u.includes(host)) {
-      return catalog.providers.filter((p: ProviderMeta) => p.id === prov);
-    }
-  }
-  return catalog.providers.filter((p: ProviderMeta) => !p.isAggregator).slice(0, 50);
-}
-
-export function listCatalogModels(catalog: Catalog, providerId?: string): ModelMeta[] {
-  if (!providerId || providerId === 'all') return catalog.models;
-  return catalog.models.filter((m: ModelMeta) => m.provider === providerId);
-}
-
-/** 格式化上下文窗口（1234567 → "1.2M"） */
+/** Format a context window size (1234567 -> "1.2M") */
 export function formatContextWindow(tokens: number): string {
   if (tokens >= 1_000_000)
     return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -274,13 +243,7 @@ export function formatContextWindow(tokens: number): string {
   return String(tokens);
 }
 
-/** 格式化单条价格（per 1M tokens） */
-export function formatPricing(input: number, output: number): string {
-  if (input === 0 && output === 0) return t('common.free');
-  return `$${input}/${output}/1M`;
-}
-
-/** 把 ISO 时间格式化为「X 天前」之类的相对描述 */
+/** Format an ISO timestamp as a relative description like "X days ago" */
 export function formatRelativeTime(iso: string | null): string {
   if (!iso) return t('common.neverUpdated');
   try {
@@ -302,19 +265,19 @@ export function formatRelativeTime(iso: string | null): string {
   }
 }
 
-/** 格式化 releaseDate（"2025-01-15" → "2025-01"）只取年月 */
+/** Format a releaseDate ("2025-01-15" -> "2025-01"), year + month only */
 export function formatReleaseDate(iso: string | null | undefined): string {
   if (!iso) return '';
   return formatLocaleDateTime(`${iso.slice(0, 10)}T00:00:00`, { year: 'numeric', month: 'short' });
 }
 
-// ==================== v2 工具函数 ====================
+// ==================== v2 utility functions ====================
 
 /**
- * 合并 catalog 模型元数据 + 用户启用状态, 拆分为三段
- * - enabled: 已启用的 (按 enabledIds 原顺序)
- * - available: catalog 中有但未启用的 (按 releaseDate desc, 同日期按 id 字母序)
- * - orphans: enabledModels 中有但 catalog 没有的 (遗留 custom / 老 config)
+ * Merge catalog model metadata + user-enabled state, split into three sections
+ * - enabled: enabled models (in the original enabledIds order)
+ * - available: in catalog but not enabled (releaseDate desc, then id alphabetical)
+ * - orphans: in enabledModels but not in the catalog (legacy custom / old config)
  */
 export function listProviderModels(
   catalog: Catalog,
@@ -339,7 +302,7 @@ export function listProviderModels(
       seen.add(m.id);
     }
   }
-  // 按 enabledIds 顺序排序 enabled
+  // Sort enabled by enabledIds order
   enabled.sort((a, b) => (enabledOrder.get(a.id) ?? 0) - (enabledOrder.get(b.id) ?? 0));
 
   for (const m of catalogModels) {
@@ -347,7 +310,7 @@ export function listProviderModels(
       available.push(m);
     }
   }
-  // 按 releaseDate desc, 同日期按 id 字母序
+  // releaseDate desc, then id alphabetical for the same date
   available.sort((a, b) => {
     const ra = a.releaseDate ?? '';
     const rb = b.releaseDate ?? '';
@@ -355,7 +318,7 @@ export function listProviderModels(
     return a.id.localeCompare(b.id);
   });
 
-  // orphans: enabledIds 中有但 catalog 没有的
+  // orphans: in enabledIds but not in the catalog
   const catalogIds = new Set(catalogModels.map((m: ModelMeta) => m.id));
   const orphans = enabledIds.filter((id) => !catalogIds.has(id));
 
@@ -363,8 +326,8 @@ export function listProviderModels(
 }
 
 /**
- * 通过 host 反查 provider id (统一入口, 替代三处重复实现)
- * 优先匹配 catalog 中 ProviderMeta 的 api 字段, 兜底用 9 个常见 host 映射
+ * Reverse-lookup a provider id by host (single entry point)
+ * Prefers the api field of ProviderMeta in the catalog, falls back to 9 common host mappings
  */
 const KNOWN_HOSTS: ReadonlyArray<readonly [string, string]> = [
   ['api.openai.com', 'openai'],
@@ -387,7 +350,24 @@ export function detectProviderByUrl(url: string): string | null {
   return null;
 }
 
-/** 列表页搜索: 仅匹配 provider id / name, 不含模型名 */
+/**
+ * Whether to use the dedicated /images/generations endpoint (otherwise images are inline in chat/completions).
+ *
+ * - `dall-e-2`/`dall-e-3`: no chat mode, dedicated endpoint only.
+ * - `gpt-image-*`: chat mode preferred (streamed array chunks).
+ * - Others: check whether catalog `modalities.output` includes `image`.
+ */
+export function isImageGenModel(modelId: string, apiUrl?: string): boolean {
+  const lower = (modelId || '').toLowerCase();
+  if (/^dall-e-[23]$/.test(lower)) return true; // no chat mode, dedicated endpoint only
+  if (/^gpt-image-/.test(lower)) return false; // chat mode (streamed array chunks) is better
+  const provider = apiUrl ? detectProviderByUrl(apiUrl) : null;
+  const catalog = getCachedCatalog();
+  const meta = provider && catalog ? findModel(catalog, provider, modelId) : null;
+  return !!meta?.modalities?.output?.includes('image');
+}
+
+/** List-page search: match provider id / name only, not model names */
 export function searchProviders(catalog: Catalog, query: string): ProviderMeta[] {
   if (!query.trim()) return catalog.providers;
   const q = query.toLowerCase();

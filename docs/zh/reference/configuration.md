@@ -27,13 +27,18 @@ AIO 使用 Tauri 提供的应用数据目录和系统配置目录，应用标识
 
 `config.json` 当前持久化：
 
-| 字段               | 行为                                 |
-| ------------------ | ------------------------------------ |
-| `api_url`          | 兼容旧版的默认 API URL               |
-| `default_model`    | 兼容旧版的默认模型                   |
-| `local_model_path` | 兼容旧版的本地模型路径               |
-| `knowledgeEnabled` | 是否启用项目跨会话记忆，默认 `false` |
-| `autoStartEnabled` | 是否随系统启动，默认 `false`         |
+| 字段                          | 行为                                                                                                                                                                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_url`                     | 兼容旧版的默认 API URL                                                                                                                                                                                                                                        |
+| `default_model`               | 兼容旧版的默认模型                                                                                                                                                                                                                                            |
+| `local_model_path`            | 兼容旧版的本地模型路径                                                                                                                                                                                                                                        |
+| `memoryEnabled`               | 项目级语义记忆（RAG）的全局默认，默认 `false`；每项目可在项目设置中覆盖                                                                                                                                                                                       |
+| `memoryEmbedding`             | 遗留全局嵌入配置（仅作迁移源）：实际嵌入模型现在按项目配置，存在各项目记忆库 meta 中，在项目「记忆面板 → 切换模型」中管理；默认 `local`（all-MiniLM-L6-v2，384 维，开箱即用、离线可用），切换会清空该项目全部向量并重新嵌入。仅支持本地模型（在线嵌入已移除） |
+| `embeddingModelsDir`          | 全局嵌入模型安装目录（默认 `<app_data_dir>/models/embed`；设置页「Embedding 模型管理」可自定义）                                                                                                                                                              |
+| `embeddingModels`             | 全局嵌入模型启停注册表（`[{id, enabled}]`；缺省条目视为启用，设置页「Embedding 模型管理」维护）                                                                                                                                                               |
+| `memoryMaxFacts`              | 每项目活跃事实上限，默认 `2000`                                                                                                                                                                                                                               |
+| `memoryInjectionBudgetTokens` | 记忆注入系统提示词的 token 预算，默认 `3000`                                                                                                                                                                                                                  |
+| `autoStartEnabled`            | 是否随系统启动，默认 `false`                                                                                                                                                                                                                                  |
 
 后端 `AppConfig` 还包含以下运行字段：
 
@@ -84,7 +89,6 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 | 左右侧栏状态与宽度               | 聊天布局              |
 | `aio_ignored_update_version`     | 忽略的更新版本        |
 | `aio-local-auto-start-confirmed` | 本地引擎启动确认      |
-| `user-avatar-path`               | 用户头像文件路径      |
 
 清理 WebView 数据会恢复这些界面偏好，但不会删除 SQLite 聊天记录、Provider 配置或项目 `.aio/`。
 
@@ -108,16 +112,18 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 
 - `permissions.json`：项目工具的允许、询问和拒绝规则，详见[权限系统参考](permissions.md)；
 - `knowledge.json`：跨会话知识，类别为 `decision`、`pattern`、`convention` 或 `note`，最多保留 50 条。
+- `memory/`：项目级语义记忆库（`memory.sqlite`：facts、版本审计、FTS5、向量索引），建议加入 `.gitignore`。
 
 ## 附件白名单
 
-| 类型 | 扩展名                                            | 大小上限 |
-| ---- | ------------------------------------------------- | -------- |
-| 图片 | png、jpg、jpeg、webp                              | 10 MiB   |
-| 文档 | pdf、docx、pptx                                   | 30 MiB   |
-| 文本 | txt、md、json、csv、log、xml、yaml、yml、ini、tsv | 5 MiB    |
+| 类型 | 扩展名                                                                                                                                                                                                        | 大小上限 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 图片 | png、jpg、jpeg、webp                                                                                                                                                                                          | 10 MiB   |
+| 文档 | pdf、docx、pptx                                                                                                                                                                                               | 30 MiB   |
+| 文本 | txt、md、json、csv、log、xml、yaml、yml、ini、tsv                                                                                                                                                             | 5 MiB    |
+| 源码 | rs、c、h、cpp、hpp、cc、cxx、cs、go、java、rb、py、js、mjs、cjs、ts、tsx、jsx、php、swift、kt、kts、scala、lua、sql、toml、sh、bash、zsh、dart、html、css、scss、less、vue、svelte、gradle、properties、r、pl | 5 MiB    |
 
-解析前会检查扩展名、大小和沙箱路径。图片转换为 base64 数据 URI 供模型请求使用；其他类型提取为文本。原附件按哈希复制到应用数据目录，数据库保存引用关系。
+解析前会检查扩展名、大小和路径安全（要求绝对路径且不含 `..`）；不限制文件所在目录，用户通过系统文件选择器主动指定的文件可位于磁盘任意位置。图片转换为 base64 数据 URI 供模型请求使用；其他类型提取为文本。原附件按哈希复制到应用数据目录，数据库保存引用关系。
 
 ## 网络与命令安全
 

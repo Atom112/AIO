@@ -1,15 +1,17 @@
 /**
  * @file Layout.tsx
- * @description 应用的通用布局组件, 整窗为统一亚克力面板(NavBar + 页面共享同块玻璃),
- * 背景为静态多色渐变(不受主题色影响), 主题色仅作用于按钮/开关等交互元素.
+ * @description Root layout component: the whole window is a single acrylic panel (NavBar + pages share one glass surface);
+ * the background is a static multi-color gradient (unaffected by the theme color), and the theme color only applies to interactive elements like buttons and switches.
  */
 import NavBar from './shared/components/NavBar';
 import UpdateNotification from './shared/components/UpdateNotification';
 import GlobalKeyboardHandler from './shared/components/GlobalKeyboardHandler';
 import CommandPalette from './shared/components/CommandPalette';
 import { Transition } from 'solid-transition-group';
-import { Component, onCleanup, onMount, ParentProps } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { Component, createSignal, onCleanup, onMount, ParentProps } from 'solid-js';
+import { loadProviderConfigs } from './core/api/config';
+import { checkAppUpdate } from './core/api/update';
+import { Window } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from './core/utils/models';
@@ -28,35 +30,43 @@ import {
   setModelsCatalogVersion,
   setModelsCatalogGeneratedAt,
   setProviderConfigs,
-  isDarkMode,
 } from './core/store/store';
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
-import type { ProviderConfigFile } from './core/utils/models';
 
 /**
- * Layout 组件
- * @param props - 包含 children (当前匹配路由指向的组件内容)
- * @returns 返回一个包含通用导航和过渡动画的内容区域
+ * Layout component
+ * @param props - contains children (the matched route's component content)
+ * @returns a content area with global navigation and transition animations
  */
 const Layout: Component<ParentProps> = (props) => {
+  // Whether the window is maximized (a transparent window should drop rounded corners when maximized so the desktop doesn't show through the corners)
+  const [windowMaximized, setWindowMaximized] = createSignal(false);
+  const appWindow = new Window('main');
   let unlistenDiagnostics: (() => void) | undefined;
+  let unlistenResized: (() => void) | undefined;
 
   /**
-   * 应用启动时自动检查更新
-   * 流程：延迟 1.5s（避开首屏渲染高峰）→ 调用 check_app_update
-   *      → 若发现新版本且未被用户忽略则点亮左下角 Toast
+   * Check for app updates automatically on startup
+   * Flow: delay 1.5s (to avoid the first-paint peak) -> call check_app_update
+   *      -> if a new version is found and not user-ignored, light up the bottom-left Toast
    */
   onMount(async () => {
     const currentVersion = await getVersion().catch(() => '');
 
-    // 启动时重置一次性状态（防止上次会话残留）
+    // Initialize the maximized state and keep it in sync on window resize (drives rounded corners)
+    setWindowMaximized(await appWindow.isMaximized().catch(() => false));
+    unlistenResized = await appWindow.onResized(async () => {
+      setWindowMaximized(await appWindow.isMaximized().catch(() => false));
+    });
+
+    // Reset one-shot state on startup (guards against leftovers from the previous session)
     setAppUpdateAvailable(false);
     setAppUpdateDismissed(false);
     setAppUpdateDownloading(false);
     setAppUpdateProgress(0);
     setAppUpdateReady(false);
 
-    // 监听 LSP 诊断更新事件
+    // Listen for LSP diagnostics update events
     unlistenDiagnostics = await listen<LspDiagnosticsUpdatePayload>(
       'lsp-diagnostics-updated',
       (event) => {
@@ -64,7 +74,7 @@ const Layout: Component<ParentProps> = (props) => {
       },
     );
 
-    // 异步加载模型目录（不阻塞首屏，由 settings 页面按需使用）
+    // Load the models catalog asynchronously (non-blocking for first paint; consumed on demand by the settings page)
     setModelsCatalogStatus('loading');
     loadModelsCatalog()
       .then((c) => {
@@ -78,12 +88,12 @@ const Layout: Component<ParentProps> = (props) => {
       })
       .catch(() => setModelsCatalogStatus('failed'));
 
-    // 异步加载 provider 配置（启动后做一次）
-    invoke<ProviderConfigFile>('load_provider_configs')
+    // Load provider configs asynchronously (once after startup)
+    loadProviderConfigs()
       .then((file) => setProviderConfigs(file.providers))
       .catch((e) => console.warn('[provider-configs] 启动加载失败:', e));
 
-    // 静默后台检查 catalog 更新（仅在已加载完成后再触发，避免阻塞首屏）
+    // Silently check for catalog updates in the background (fires only after the initial load completes, to avoid blocking first paint)
     setTimeout(async () => {
       try {
         const result = await updateModelsCatalog();
@@ -103,58 +113,40 @@ const Layout: Component<ParentProps> = (props) => {
 
     setTimeout(async () => {
       try {
-        type CheckUpdateResult =
-          | { kind: 'up_to_date'; current_version: string }
-          | {
-              kind: 'update_available';
-              info: { version: string; current_version: string; notes?: string; pub_date?: string };
-            }
-          | { kind: 'service_not_ready'; current_version: string; endpoint: string; reason: string }
-          | { kind: 'network'; current_version: string; endpoint: string; reason: string }
-          | { kind: 'failed'; current_version: string; endpoint: string; reason: string };
-
-        const result = await invoke<CheckUpdateResult>('check_app_update');
+        const result = await checkAppUpdate();
 
         if (result.kind === 'update_available') {
           const info = result.info;
-          // 用户已经点过"稍后"过该版本就不再提示
+          // Skip re-prompting if the user already snoozed this version
           if (getIgnoredUpdateVersion() === info.version) return;
 
           setAppUpdateInfo({
             version: info.version,
-            currentVersion: info.current_version || currentVersion,
+            currentVersion: info.currentVersion || currentVersion,
             notes: info.notes,
-            pubDate: info.pub_date,
+            pubDate: info.pubDate,
           });
           setAppUpdateAvailable(true);
         }
-        // 其他情况：up_to_date / service_not_ready / network / failed → 静默不打扰
+        // Other cases: up_to_date / service_not_ready / network / failed -> stay silent
       } catch (e) {
-        // 网络失败静默处理，不打扰用户
+        // Handle network failures silently; do not disturb the user
         console.warn('启动时检查更新失败:', e);
       }
     }, 1500);
   });
 
   onCleanup(() => {
-    // 清理 LSP 事件监听
+    // Clean up the LSP diagnostics listener and the window resize listener
     unlistenDiagnostics?.();
+    unlistenResized?.();
   });
 
   return (
     <div
       class="app-container h-screen flex flex-col overflow-hidden rounded-xl"
-      style={{
-        background: [
-          isDarkMode()
-            ? '#0a0e1a'
-            : [
-                'radial-gradient(ellipse 100% 70% at 25% 15%, rgba(70, 120, 200, 0.45), transparent 60%)',
-                'radial-gradient(ellipse 80% 90% at 70% 85%, rgba(50, 90, 140, 0.35), transparent 55%)',
-                'linear-gradient(135deg, #1e3a5f 0%, #2d2d5e 30%, #3d2d5a 50%, #2a2050 70%, #1a2540 100%)',
-              ].join(', '),
-        ].join(', '),
-      }}
+      classList={{ 'rounded-none': windowMaximized() }}
+      style={{ background: 'var(--app-bg)' }}
     >
       <GlobalKeyboardHandler />
       <CommandPalette />

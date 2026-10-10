@@ -1,24 +1,24 @@
-/** Skill 来源类型。 */
+/** Skill source type. */
 export type SkillSource = 'local' | 'market' | 'npx';
 
-/** 可复用的助手系统指令模块。 */
+/** Reusable assistant system-instruction module. */
 export interface SkillConfig {
   id: string;
   name: string;
   description: string;
   content: string;
-  /** Skill 来源。缺省为 local。 */
+  /** Skill source. Defaults to local. */
   source?: SkillSource;
   sourceUrl?: string;
   sourceOwner?: string;
   sourceRepo?: string;
   sourceSlug?: string;
   installs?: number;
-  /** npx 包名（source = npx 时必填） */
+  /** npx package name (required when source = npx) */
   npxPackage?: string;
-  /** npx 已安装版本号 */
+  /** Installed npx version */
   npxVersion?: string;
-  /** npx 执行命令 */
+  /** npx execution command */
   npxCommand?: string;
 }
 
@@ -33,17 +33,9 @@ export interface MarketSkill {
   installs: number;
   installsLabel: string;
   weeklyInstalls: number[];
-  category?: string;
 }
 
-export interface SkillMarketCategory {
-  id: string;
-  name: string;
-  description: string;
-  skillCount: number;
-}
-
-/** npx skill 发现结果：系统上检测到的可导入 Skill 包。 */
+/** npx skill discovery result: importable skill packages detected on the system. */
 export interface DiscoveredNpxSkill {
   packageName: string;
   version: string;

@@ -6,8 +6,7 @@
 
 - Windows；
 - Ubuntu 22.04；
-- Intel macOS；
-- Apple Silicon macOS。
+- Apple Silicon macOS（Intel macOS 构建止于 v0.8.0）。
 
 应用支持自动检查和安装更新。若系统阻止启动，请先确认安装包来自项目 Releases 页面。
 

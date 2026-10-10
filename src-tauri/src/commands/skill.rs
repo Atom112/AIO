@@ -1,13 +1,13 @@
-//! Skill 配置管理命令。
+//! Skill configuration management commands.
 
-use crate::core::models::{
-    MarketSkill, ProjectsFile, SkillConfig, SkillMarketCategory, SkillsFile,
-};
+use crate::core::models::{MarketSkill, ProjectsFile, SkillConfig, SkillsFile};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+
+use crate::ierr;
 
 const SKILLS_FILE: &str = "skills.json";
 const MARKET_CACHE_FILE: &str = "skill-market-cache.json";
@@ -30,7 +30,11 @@ struct MarketCacheEntry {
 
 fn skills_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| {
-        let msg = format!("app_data_dir 解析失败: {e}");
+        let msg = ierr!(
+            "app_data_dir 解析失败: {}",
+            "Failed to resolve app_data_dir: {}",
+            e
+        );
         tracing::error!("[skills] {msg}");
         msg
     })?;
@@ -106,18 +110,22 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
     let path = skills_file_path(app)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            let msg = format!("创建目录失败: {e}");
+            let msg = ierr!("创建目录失败: {}", "Failed to create directory: {}", e);
             tracing::error!("[skills] save_file: {msg} ({})", parent.display());
             msg
         })?;
     }
     let content = serde_json::to_string_pretty(file).map_err(|e| {
-        let msg = format!("序列化 skills 失败: {e}");
+        let msg = ierr!(
+            "序列化 skills 失败: {}",
+            "Failed to serialize skills: {}",
+            e
+        );
         tracing::error!("[skills] save_file: {msg}");
         msg
     })?;
     std::fs::write(&path, &content).map_err(|e| {
-        let msg = format!("写入文件失败: {e}");
+        let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_file: {msg} ({})", path.display());
         msg
     })?;
@@ -129,9 +137,9 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
     Ok(())
 }
 
-// ====== 项目级 Skill 文件操作 ======
+// ====== Project-level skill file operations ======
 
-/// 加载项目级 skills.json（不存在则返回空）。
+/// Loads the project-level skills.json (returns an empty file if it does not exist).
 fn load_project_file(project_path: &str) -> SkillsFile {
     let path = crate::commands::project::project_skills_path(project_path);
     if !path.exists() {
@@ -169,23 +177,27 @@ fn load_project_file(project_path: &str) -> SkillsFile {
     }
 }
 
-/// 保存项目级 skills.json。
+/// Saves the project-level skills.json.
 fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String> {
     let path = crate::commands::project::project_skills_path(project_path);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            let msg = format!("创建目录失败: {e}");
+            let msg = ierr!("创建目录失败: {}", "Failed to create directory: {}", e);
             tracing::error!("[skills] save_project_file: {msg} ({})", parent.display());
             msg
         })?;
     }
     let content = serde_json::to_string_pretty(file).map_err(|e| {
-        let msg = format!("序列化 skills 失败: {e}");
+        let msg = ierr!(
+            "序列化 skills 失败: {}",
+            "Failed to serialize skills: {}",
+            e
+        );
         tracing::error!("[skills] save_project_file: {msg}");
         msg
     })?;
     std::fs::write(&path, &content).map_err(|e| {
-        let msg = format!("写入文件失败: {e}");
+        let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_project_file: {msg} ({})", path.display());
         msg
     })?;
@@ -197,31 +209,21 @@ fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String
     Ok(())
 }
 
-/// 通过 project_id 解析项目路径。
+/// Resolves a project path from its project_id.
 fn resolve_project_path(app: &AppHandle, project_id: &str) -> Result<String, String> {
     let file = load_projects_index(app);
     file.projects
         .get(project_id)
         .map(|p| p.path.clone())
-        .ok_or_else(|| format!("项目 {} 不存在", project_id))
+        .ok_or_else(|| ierr!("项目 {} 不存在", "Project {} not found", project_id))
 }
 
-/// 加载项目索引文件。
+/// Loads the projects index file (implementation lives in utils::project_index).
 fn load_projects_index(app: &AppHandle) -> ProjectsFile {
-    let Ok(path) = app
-        .path()
-        .app_data_dir()
-        .map(|dir| dir.join("projects.json"))
-    else {
-        return ProjectsFile::default();
-    };
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
+    crate::utils::project_index::load_projects_file(app)
 }
 
-/// 合并全局和项目 Skill：项目同 ID 覆盖全局。
+/// Merges global and project skills: a project skill with the same ID overrides the global one.
 fn merge_skills(
     global: BTreeMap<String, SkillConfig>,
     project: BTreeMap<String, SkillConfig>,
@@ -263,9 +265,19 @@ async fn fetch_market_page(path: &str) -> Result<String, String> {
         .get(format!("{}{}", SKILLS_SH, path))
         .send()
         .await
-        .map_err(|e| format!("请求 skills.sh 失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "请求 skills.sh 失败: {}",
+                "Failed to request skills.sh: {}",
+                e
+            )
+        })?;
     if !response.status().is_success() {
-        return Err(format!("skills.sh 返回 HTTP {}", response.status()));
+        return Err(ierr!(
+            "skills.sh 返回 HTTP {}",
+            "skills.sh returned HTTP {}",
+            response.status()
+        ));
     }
     response.text().await.map_err(|e| e.to_string())
 }
@@ -299,7 +311,7 @@ async fn fetch_market_page_cached(
             Ok(html)
         }
         Err(error) => {
-            // 网络不可用时允许使用过期缓存，保证市场页仍可浏览。
+            // When the network is unavailable, allow a stale cache so the market page stays browsable.
             if force_refresh {
                 Err(error)
             } else {
@@ -439,70 +451,12 @@ fn parse_market_skills(html: &str) -> Vec<MarketSkill> {
                 installs: parse_compact_number(&installs_label),
                 installs_label,
                 weekly_installs,
-                category: None,
             })
         })
         .collect()
 }
 
-fn parse_topic_skill_descriptions(html: &str) -> HashMap<String, String> {
-    let anchor =
-        Regex::new(r#"(?s)<a class="group grid[^"]*" href="/([^/"]+/[^/"]+/[^/"]+)">(.*?)</a>"#)
-            .expect("valid topic skill regex");
-    let description = Regex::new(r#"(?s)<p class="lg:col-span-9[^"]*">(.*?)</p>"#)
-        .expect("valid topic description regex");
-    anchor
-        .captures_iter(html)
-        .filter_map(|capture| {
-            let path = capture.get(1)?.as_str().to_string();
-            let body = capture.get(2)?.as_str();
-            let text = description
-                .captures(body)
-                .and_then(|inner| inner.get(1))
-                .map(|value| strip_html(value.as_str()))
-                .unwrap_or_default();
-            Some((path, text))
-        })
-        .collect()
-}
-
-fn parse_categories(html: &str) -> Vec<SkillMarketCategory> {
-    let category = Regex::new(r#"(?s)<a[^>]*href="/topic/([^"]+)"[^>]*>(.*?)</a>"#)
-        .expect("valid category regex");
-    let name_re = Regex::new(r#"(?s)<h2[^>]*>(.*?)</h2>"#).expect("valid category name regex");
-    let paragraphs =
-        Regex::new(r#"(?s)<p[^>]*>(.*?)</p>"#).expect("valid category paragraph regex");
-    let count_re = Regex::new(r"([0-9]+)").expect("valid category count regex");
-    category
-        .captures_iter(html)
-        .filter_map(|capture| {
-            let body = capture.get(2)?.as_str();
-            let name = name_re
-                .captures(body)
-                .and_then(|inner| inner.get(1))
-                .map(|value| strip_html(value.as_str()))?;
-            let paragraph_values: Vec<String> = paragraphs
-                .captures_iter(body)
-                .filter_map(|inner| inner.get(1).map(|value| strip_html(value.as_str())))
-                .collect();
-            let description = paragraph_values.first().cloned().unwrap_or_default();
-            let skill_count = paragraph_values
-                .get(1)
-                .and_then(|value| count_re.captures(value))
-                .and_then(|inner| inner.get(1))
-                .and_then(|value| value.as_str().parse().ok())
-                .unwrap_or(0);
-            Some(SkillMarketCategory {
-                id: capture.get(1)?.as_str().to_string(),
-                name: name.replace(" skills", ""),
-                description,
-                skill_count,
-            })
-        })
-        .collect()
-}
-
-/// 返回全部 Skill 配置。project_id 存在时合并全局 + 项目（项目优先）。
+/// Returns all skill configs. When project_id is present, global and project skills are merged (project wins).
 #[tauri::command]
 pub fn list_skills(app: AppHandle, project_id: Option<String>) -> Result<Vec<SkillConfig>, String> {
     let global = load_file(&app).skills;
@@ -516,7 +470,7 @@ pub fn list_skills(app: AppHandle, project_id: Option<String>) -> Result<Vec<Ski
     Ok(merge_skills(global, project).into_values().collect())
 }
 
-/// 新增或更新一个 Skill。project_id 存在时写入项目级文件。
+/// Creates or updates a skill. When project_id is present, writes to the project-level file.
 #[tauri::command]
 pub fn save_skill(
     app: AppHandle,
@@ -525,7 +479,10 @@ pub fn save_skill(
 ) -> Result<(), String> {
     if skill.id.trim().is_empty() || skill.name.trim().is_empty() || skill.content.trim().is_empty()
     {
-        return Err("Skill id、名称和指令内容不能为空".to_string());
+        return Err(ierr!(
+            "Skill id、名称和指令内容不能为空",
+            "Skill id, name, and instruction content must not be empty"
+        ));
     }
     match project_id {
         Some(ref pid) => {
@@ -544,7 +501,7 @@ pub fn save_skill(
     }
 }
 
-/// 删除指定 Skill 配置。project_id 存在时从项目级文件删除。
+/// Deletes the given skill config. When project_id is present, deletes from the project-level file.
 #[tauri::command]
 pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> Result<(), String> {
     match project_id {
@@ -564,22 +521,11 @@ pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> R
     }
 }
 
-/// 返回 skills.sh 官方分类。
-#[tauri::command]
-pub async fn list_skill_market_categories(
-    app: AppHandle,
-    force_refresh: bool,
-) -> Result<Vec<SkillMarketCategory>, String> {
-    let html = fetch_market_page_cached(&app, "/topic", force_refresh).await?;
-    Ok(parse_categories(&html))
-}
-
-/// 浏览 skills.sh 市场。sort 支持 all、trending、hot；category 可选。
+/// Browses the skills.sh market. sort supports all, trending, hot.
 #[tauri::command]
 pub async fn list_skill_market(
     app: AppHandle,
     sort: String,
-    category: Option<String>,
     force_refresh: bool,
 ) -> Result<Vec<MarketSkill>, String> {
     let path = match sort.as_str() {
@@ -587,30 +533,11 @@ pub async fn list_skill_market(
         "hot" => "/hot",
         _ => "/",
     };
-    let mut skills =
-        parse_market_skills(&fetch_market_page_cached(&app, path, force_refresh).await?);
-    if let Some(category_id) = category.filter(|value| !value.is_empty() && value != "all") {
-        let topic_html =
-            fetch_market_page_cached(&app, &format!("/topic/{}", category_id), force_refresh)
-                .await?;
-        let topic_skills = parse_topic_skill_descriptions(&topic_html);
-        skills.retain_mut(|skill| {
-            let path = format!("{}/{}/{}", skill.owner, skill.repo, skill.slug);
-            if let Some(description) = topic_skills.get(&path) {
-                skill.category = Some(category_id.clone());
-                if skill.description.is_empty() {
-                    skill.description = description.clone();
-                }
-                true
-            } else {
-                false
-            }
-        });
-    }
+    let skills = parse_market_skills(&fetch_market_page_cached(&app, path, force_refresh).await?);
     Ok(skills)
 }
 
-/// 从 skills.sh 详情页下载 Skill 内容并保存到 Skill 库。project_id 存在时写入项目级。
+/// Downloads skill content from a skills.sh detail page and saves it to the skill library. When project_id is present, writes to the project-level file.
 #[tauri::command]
 pub async fn download_market_skill(
     app: AppHandle,
@@ -623,7 +550,7 @@ pub async fn download_market_skill(
         .iter()
         .any(|value| value.is_empty() || value.contains('/') || value.contains(".."))
     {
-        return Err("非法的 Skill 路径".to_string());
+        return Err(ierr!("非法的 Skill 路径", "Invalid skill path"));
     }
     let source_url = format!("{}/{}/{}/{}", SKILLS_SH, owner, repo, slug);
     let html = fetch_market_page(&format!("/{}/{}/{}", owner, repo, slug)).await?;
@@ -653,15 +580,15 @@ pub async fn download_market_skill(
     let marker = "<span>SKILL.md</span>";
     let marker_index = html
         .find(marker)
-        .ok_or_else(|| "详情页缺少 SKILL.md".to_string())?;
+        .ok_or_else(|| ierr!("详情页缺少 SKILL.md", "Detail page is missing SKILL.md"))?;
     let prose_start = html[marker_index..]
         .find("<div class=\"prose ")
         .map(|index| marker_index + index)
-        .ok_or_else(|| "无法定位 Skill 内容".to_string())?;
+        .ok_or_else(|| ierr!("无法定位 Skill 内容", "Unable to locate skill content"))?;
     let content_start = html[prose_start..]
         .find('>')
         .map(|index| prose_start + index + 1)
-        .ok_or_else(|| "无法解析 Skill 内容".to_string())?;
+        .ok_or_else(|| ierr!("无法解析 Skill 内容", "Unable to parse skill content"))?;
     let content_end = html[content_start..]
         .find("<div class=\"relative\">")
         .map(|index| content_start + index)
@@ -670,10 +597,18 @@ pub async fn download_market_skill(
                 .find("<section class=\"mt-16\">")
                 .map(|index| content_start + index)
         })
-        .ok_or_else(|| "无法确定 Skill 内容边界".to_string())?;
+        .ok_or_else(|| {
+            ierr!(
+                "无法确定 Skill 内容边界",
+                "Unable to determine skill content boundary"
+            )
+        })?;
     let content = strip_html(&html[content_start..content_end]);
     if content.trim().is_empty() {
-        return Err("下载到的 Skill 内容为空".to_string());
+        return Err(ierr!(
+            "下载到的 Skill 内容为空",
+            "Downloaded skill content is empty"
+        ));
     }
 
     let skill = SkillConfig {
@@ -709,71 +644,94 @@ pub async fn download_market_skill(
     Ok(skill)
 }
 
-// ====== npx Skill 发现与导入 ======
+// ====== npx skill discovery and import ======
 
-/// 验证 npx 包名是否合法。
+/// Validates an npx package name.
 ///
-/// 规则：
-/// - 符合 npm 命名规范：`@scope/name` 或 `name`，仅含小写字母、数字、`-`、`_`、`.`
-/// - 总长度 ≤ 214 字符
-/// - 不含 shell 元字符
-/// - 不在高危黑名单中
+/// Rules:
+/// - Follows npm naming conventions: `@scope/name` or `name`, lowercase letters, digits, `-`, `_`, `.` only
+/// - Total length <= 214 characters
+/// - No shell metacharacters
+/// - Not on the high-risk blocklist
 fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
-    // 拒绝空
+    // Reject empty names
     if package_name.trim().is_empty() {
-        return Err("包名不能为空".into());
+        return Err(ierr!("包名不能为空", "Package name must not be empty"));
     }
 
-    // 拒绝路径穿越
+    // Reject path traversal
     if package_name.contains("..") {
-        return Err("包名包含非法字符 '..'".into());
+        return Err(ierr!(
+            "包名包含非法字符 '..'",
+            "Package name contains illegal characters '..'"
+        ));
     }
 
-    // 拒绝 shell 元字符
+    // Reject shell metacharacters
     for ch in package_name.chars() {
         if matches!(
             ch,
             ';' | '|' | '&' | '$' | '`' | '\\' | '\'' | '"' | '<' | '>' | '!' | '\n' | '\r' | '\t'
         ) {
-            return Err(format!("包名包含禁止字符: '{}'", ch));
+            return Err(ierr!(
+                "包名包含禁止字符: '{}'",
+                "Package name contains a forbidden character: '{}'",
+                ch
+            ));
         }
     }
 
-    // npm 命名规范: @scope/name 或 name
+    // npm naming convention: @scope/name or name
     let name = if let Some(rest) = package_name.strip_prefix('@') {
         // scoped package: @scope/name
         let parts: Vec<&str> = rest.splitn(2, '/').collect();
         if parts.len() != 2 {
-            return Err("scoped 包名格式错误: 应为 @scope/name".into());
+            return Err(ierr!(
+                "scoped 包名格式错误: 应为 @scope/name",
+                "Invalid scoped package name: expected @scope/name"
+            ));
         }
         let scope = parts[0];
         let name_part = parts[1];
         if scope.is_empty() || name_part.is_empty() {
-            return Err("scoped 包名格式错误: scope 或 name 为空".into());
+            return Err(ierr!(
+                "scoped 包名格式错误: scope 或 name 为空",
+                "Invalid scoped package name: scope or name is empty"
+            ));
         }
-        // 验证 scope
+        // Validate the scope
         if !scope.chars().all(|c| {
             c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
         }) {
-            return Err("scoped 包名 scope 部分包含非法字符".into());
+            return Err(ierr!(
+                "scoped 包名 scope 部分包含非法字符",
+                "Scoped package name scope contains illegal characters"
+            ));
         }
         name_part
     } else {
         package_name
     };
 
-    // 验证 name 部分
+    // Validate the name part
     if name.is_empty() || name.len() > 214 {
-        return Err(format!("包名长度不合法: {} 字符（最大 214）", name.len()));
+        return Err(ierr!(
+            "包名长度不合法: {} 字符（最大 214）",
+            "Invalid package name length: {} characters (max 214)",
+            name.len()
+        ));
     }
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.')
     {
-        return Err("包名包含非法字符（仅允许小写字母、数字、-、_、.）".into());
+        return Err(ierr!(
+            "包名包含非法字符（仅允许小写字母、数字、-、_、.）",
+            "Package name contains illegal characters (only lowercase letters, digits, -, _, . are allowed)"
+        ));
     }
 
-    // 拒绝伪装成 Node.js 内置模块
+    // Reject names impersonating Node.js built-in modules
     let node_builtins = [
         "child_process",
         "fs",
@@ -805,24 +763,28 @@ fn validate_npx_package_name(package_name: &str) -> Result<(), String> {
         &lower_name
     };
     if node_builtins.contains(&base_name) {
-        return Err(format!(
+        return Err(ierr!(
             "包名 '{}' 伪装为 Node.js 内置模块，拒绝导入",
+            "Package name '{}' impersonates a Node.js built-in module; import rejected",
             package_name
         ));
     }
 
-    // 拒绝 git 协议 URL 伪装
+    // Reject git protocol URL spoofing
     if package_name.starts_with("git://")
         || package_name.starts_with("git+")
         || package_name.starts_with("ssh://")
     {
-        return Err("包名不是合法的 npm 包名".into());
+        return Err(ierr!(
+            "包名不是合法的 npm 包名",
+            "Package name is not a valid npm package name"
+        ));
     }
 
     Ok(())
 }
 
-/// 系统上检测到的 npx skill 包信息。
+/// Information about an npx skill package detected on the system.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct NpxSkillInfo {
@@ -834,7 +796,7 @@ pub struct NpxSkillInfo {
     pub already_imported: bool,
 }
 
-/// 扫描系统上已安装的 npx skill 包。
+/// Scans the system for installed npx skill packages.
 #[tauri::command]
 pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, String> {
     let mut discovered: Vec<NpxSkillInfo> = Vec::new();
@@ -844,10 +806,10 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         existing.len()
     );
 
-    // 1) 主要方式：通过 `npx skills list --json` 获取已安装 skill 列表
+    // 1) Primary method: get the installed skill list via `npx skills list --json`
     tracing::info!("[skills] discover_npx: 正在执行 npx --yes skills list -g --json ...");
 
-    // 使用 tokio spawn_blocking 避免阻塞 async worker 线程
+    // Use tokio spawn_blocking to avoid blocking an async worker thread
     let skills_cli_result = tokio::task::spawn_blocking(move || {
         let npx_cmd = resolve_command("npx");
         let child = match std::process::Command::new(&npx_cmd)
@@ -857,19 +819,34 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             .spawn()
         {
             Ok(c) => c,
-            Err(e) => return Err(format!("启动 {} 失败: {}", npx_cmd, e)),
+            Err(e) => {
+                return Err(ierr!(
+                    "启动 {} 失败: {}",
+                    "Failed to start {}: {}",
+                    npx_cmd,
+                    e
+                ))
+            }
         };
 
-        // Windows: 分配到限制性 Job Object
-        if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
-            tracing::warn!("[skills] discover npx sandbox 分配失败: {e}");
-        }
+        // Windows: assign each run to its own Job Object (the guard cleans up the whole process tree on Drop)
+        let _job_guard = match crate::utils::sandbox::assign_to_job(&child) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                tracing::warn!("[skills] discover npx sandbox 分配失败: {e}");
+                None
+            }
+        };
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| format!("等待 npx 进程失败: {e}"))?;
+        let output = child.wait_with_output().map_err(|e| {
+            ierr!(
+                "等待 npx 进程失败: {}",
+                "Failed to wait for npx process: {}",
+                e
+            )
+        })?;
 
-        // 截断输出到 1MB
+        // Truncate output to 1MB
         let stdout = if output.stdout.len() > 1_048_576 {
             tracing::warn!(
                 "[skills] discover npx stdout 过大 ({}B)，已截断",
@@ -886,9 +863,9 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         ))
     })
     .await
-    .unwrap_or_else(|_| Err("npx 线程 panic".to_string()));
+    .unwrap_or_else(|_| Err(ierr!("npx 线程 panic", "npx thread panicked")));
 
-    // 处理 npx skills list 结果
+    // Handle the npx skills list result
     match skills_cli_result {
         Ok((success, stdout, stderr)) => {
             if success {
@@ -946,10 +923,10 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         }
     }
 
-    // 如果 skills CLI 没有返回结果，回退到目录扫描
+    // If the skills CLI returned nothing, fall back to directory scanning
     if discovered.is_empty() {
         tracing::info!("[skills] discover_npx: skills CLI 无结果，回退到目录扫描");
-        // 2) 扫描已知的 skill 注册目录：~/.claude/skills/ 和 ~/.agents/skills/
+        // 2) Scan known skill registry directories: ~/.claude/skills/ and ~/.agents/skills/
         let skill_dirs: Vec<std::path::PathBuf> = dirs::home_dir()
             .into_iter()
             .flat_map(|h| {
@@ -974,7 +951,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
             }
         }
 
-        // 3) 扫描全局 npm 包中带有 skill 特征的包（回退方案）
+        // 3) Scan global npm packages with skill-like traits (fallback)
         let npm_output = std::process::Command::new("npm")
             .args(["list", "-g", "--depth=0", "--json"])
             .output();
@@ -1013,7 +990,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         }
     }
 
-    // 按名称排序
+    // Sort by name
     discovered.sort_by(|a, b| a.package_name.cmp(&b.package_name));
     tracing::info!(
         "[skills] discover_npx: 最终发现 {} 条 npx skill",
@@ -1022,7 +999,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
     Ok(discovered)
 }
 
-/// 从 skill 目录的 package.json 读取版本和描述。
+/// Reads version and description from a skill directory's package.json.
 fn read_skill_dir_info(
     path: &std::path::Path,
     existing: &std::collections::BTreeMap<String, SkillConfig>,
@@ -1051,7 +1028,7 @@ fn read_skill_dir_info(
     })
 }
 
-/// 从 skill 目录的 package.json 读取版本和描述（用于 skills CLI JSON 结果）。
+/// Reads version and description from a skill directory's package.json (for skills CLI JSON results).
 fn try_read_package_meta_from_dir(dir: &std::path::Path) -> (String, String) {
     let pkg_json = dir.join("package.json");
     match std::fs::read_to_string(&pkg_json) {
@@ -1066,19 +1043,19 @@ fn try_read_package_meta_from_dir(dir: &std::path::Path) -> (String, String) {
     }
 }
 
-// ====== npx Skill 执行安全层 ======
+// ====== npx skill execution security layer ======
 
-/// 带超时和输出限制的 npx 子进程执行。
+/// Runs an npx subprocess with timeout and output limits.
 ///
-/// # 参数
-/// - `args` — 传递给 npx 的参数（不含 "npx" 本身）
-/// - `timeout_secs` — 超时（秒），超时后强制 kill 进程
-/// - `max_output_bytes` — stdout 最大允许字节数
+/// # Parameters
+/// - `args` — arguments passed to npx (excluding "npx" itself)
+/// - `timeout_secs` — timeout in seconds; the process is force-killed on expiry
+/// - `max_output_bytes` — maximum allowed stdout bytes
 ///
-/// # 返回
-/// Ok(Some(stdout)) — 执行成功且有输出
-/// Ok(None) — 执行成功但输出为空
-/// Err(msg) — 启动失败、非零退出码、或超时
+/// # Returns
+/// Ok(Some(stdout)) — succeeded with output
+/// Ok(None) — succeeded but output is empty
+/// Err(msg) — spawn failure, non-zero exit code, or timeout
 fn run_npx_sandboxed(
     args: &[&str],
     timeout_secs: u64,
@@ -1090,14 +1067,20 @@ fn run_npx_sandboxed(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("启动 {} 失败: {}", npx_cmd, e))?;
+        .map_err(|e| ierr!("启动 {} 失败: {}", "Failed to start {}: {}", npx_cmd, e))?;
 
-    // Windows: 分配到限制性 Job Object
-    if let Err(e) = crate::utils::sandbox::assign_to_job(&child) {
-        tracing::warn!("[skills] npx sandbox 分配失败: {e}");
-    }
+    // Windows: assign each run to its own Job Object. Dropping the guard (including the
+    // early `?` return on timeout) triggers KILL_ON_JOB_CLOSE and tears down the whole
+    // npx process tree, so timed-out children never outlive the run.
+    let _job_guard = match crate::utils::sandbox::assign_to_job(&child) {
+        Ok(g) => Some(g),
+        Err(e) => {
+            tracing::warn!("[skills] npx sandbox 分配失败: {e}");
+            None
+        }
+    };
 
-    // 带超时的等待
+    // Wait with timeout
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let output = child.wait_with_output();
@@ -1106,10 +1089,22 @@ fn run_npx_sandboxed(
 
     let output = rx
         .recv_timeout(std::time::Duration::from_secs(timeout_secs))
-        .map_err(|_| format!("npx 命令超时（>{timeout_secs}s），已终止"))?
-        .map_err(|e| format!("等待 npx 进程失败: {e}"))?;
+        .map_err(|_| {
+            ierr!(
+                "npx 命令超时（>{}s），已终止",
+                "npx command timed out (>{}s), terminated",
+                timeout_secs
+            )
+        })?
+        .map_err(|e| {
+            ierr!(
+                "等待 npx 进程失败: {}",
+                "Failed to wait for npx process: {}",
+                e
+            )
+        })?;
 
-    // 记录 stderr 用于审计
+    // Log stderr for auditing
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.is_empty() {
         let stderr_short: String = stderr.chars().take(300).collect();
@@ -1118,10 +1113,15 @@ fn run_npx_sandboxed(
 
     if !output.status.success() {
         let stderr_short: String = stderr.chars().take(300).collect();
-        return Err(format!("npx 退出码 {}: {}", output.status, stderr_short));
+        return Err(ierr!(
+            "npx 退出码 {}: {}",
+            "npx exited with code {}: {}",
+            output.status,
+            stderr_short
+        ));
     }
 
-    // 截断输出
+    // Truncate output
     let stdout_bytes = if output.stdout.len() > max_output_bytes {
         tracing::warn!(
             "[skills] npx stdout 过大 ({}B > {}B limit)，已截断",
@@ -1140,32 +1140,35 @@ fn run_npx_sandboxed(
     Ok(Some(content))
 }
 
-/// 清洗 npx stdout 内容后再存入 SkillConfig。
+/// Sanitizes npx stdout content before storing it in a SkillConfig.
 ///
-/// 去除 ANSI 转义序列、null 字节，验证 UTF-8 有效性，
-/// 并检查是否为纯二进制内容。
+/// Strips ANSI escape sequences and null bytes, validates UTF-8,
+/// and checks whether the content is pure binary.
 fn sanitize_skill_content(raw: &str) -> Result<String, String> {
-    // 1. 去除 ANSI 转义序列（CSI 序列: ESC [ ... m）
+    // 1. Strip ANSI escape sequences (CSI sequences: ESC [ ... m)
     let re_ansi = regex::Regex::new("\x1b\\[[0-9;]*[a-zA-Z]").unwrap();
     let mut cleaned = re_ansi.replace_all(raw, "").to_string();
 
-    // 2. 去除 null 字节
+    // 2. Strip null bytes
     cleaned = cleaned.replace('\0', "");
 
-    // 3. 去除其他控制字符（保留换行、制表符）
+    // 3. Strip other control characters (keeping newline and tab)
     cleaned = cleaned
         .chars()
         .filter(|c| *c == '\n' || *c == '\r' || *c == '\t' || !c.is_control())
         .collect();
 
-    // 4. 修剪首尾空白
+    // 4. Trim leading and trailing whitespace
     cleaned = cleaned.trim().to_string();
 
     if cleaned.is_empty() {
-        return Err("清洗后内容为空（可能为纯控制字符）".into());
+        return Err(ierr!(
+            "清洗后内容为空（可能为纯控制字符）",
+            "Content is empty after sanitization (may be pure control characters)"
+        ));
     }
 
-    // 5. 检查前 512 字节中可打印字符比例（拒绝二进制 blob）
+    // 5. Check the printable-character ratio of the first 512 bytes (reject binary blobs)
     let sample = if cleaned.len() > 512 {
         &cleaned[..512]
     } else {
@@ -1176,34 +1179,43 @@ fn sanitize_skill_content(raw: &str) -> Result<String, String> {
         .filter(|c| c.is_ascii_graphic() || c.is_whitespace())
         .count();
     if !sample.is_empty() && (printable_count as f64 / sample.len() as f64) < 0.5 {
-        return Err("内容看似为二进制数据，拒绝导入".into());
+        return Err(ierr!(
+            "内容看似为二进制数据，拒绝导入",
+            "Content appears to be binary data; import rejected"
+        ));
     }
 
     Ok(cleaned)
 }
 
-/// 导入一个 npx skill 包：执行 npx 获取内容，保存到 Skill 池。
+/// Imports an npx skill package: runs npx to fetch content and saves it to the skill pool.
 #[tauri::command]
 pub async fn import_npx_skill(
     app: AppHandle,
     package_name: String,
     project_id: Option<String>,
 ) -> Result<SkillConfig, String> {
-    // 包名校验
+    // Validate the package name
     validate_npx_package_name(&package_name)?;
 
-    // 沙箱执行 npx <package> 获取 skill 内容（spawn_blocking 避免阻塞 async worker）
+    // Run npx <package> in a sandbox to fetch skill content (spawn_blocking avoids blocking an async worker)
     let pkg = package_name.clone();
     let raw_content =
         tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
             .await
-            .map_err(|_| "npx 线程 panic".to_string())??
-            .ok_or_else(|| format!("npx {} 未返回任何内容", package_name))?;
+            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
+            .ok_or_else(|| {
+                ierr!(
+                    "npx {} 未返回任何内容",
+                    "npx {} returned no content",
+                    package_name
+                )
+            })?;
 
-    // 清洗内容（去除 ANSI 序列、null 字节、控制字符）
+    // Sanitize content (strip ANSI sequences, null bytes, control characters)
     let content = sanitize_skill_content(&raw_content)?;
 
-    // 尝试从 package.json 获取元数据（spawn_blocking 避免阻塞 async worker）
+    // Try to read metadata from package.json (spawn_blocking avoids blocking an async worker)
     let pkg2 = package_name.clone();
     let (name, description, version) =
         tokio::task::spawn_blocking(move || try_read_package_meta(&pkg2))
@@ -1248,14 +1260,14 @@ pub async fn import_npx_skill(
     Ok(skill)
 }
 
-/// 刷新一个已导入的 npx skill（重新执行 npx 拉取最新内容）。
+/// Refreshes an imported npx skill (re-runs npx to fetch the latest content).
 #[tauri::command]
 pub async fn refresh_npx_skill(
     app: AppHandle,
     id: String,
     project_id: Option<String>,
 ) -> Result<SkillConfig, String> {
-    // 查找已有 skill
+    // Look up the existing skill
     let existing = match project_id {
         Some(ref pid) => {
             let project_path = resolve_project_path(&app, pid)?;
@@ -1263,23 +1275,31 @@ pub async fn refresh_npx_skill(
         }
         None => load_file(&app).skills.get(&id).cloned(),
     }
-    .ok_or_else(|| format!("Skill {} 不存在", id))?;
+    .ok_or_else(|| ierr!("Skill {} 不存在", "Skill {} not found", id))?;
 
-    let pkg_name = existing
-        .npx_package
-        .as_ref()
-        .ok_or_else(|| "该 Skill 不是 npx 来源".to_string())?;
+    let pkg_name = existing.npx_package.as_ref().ok_or_else(|| {
+        ierr!(
+            "该 Skill 不是 npx 来源",
+            "This skill is not from an npx source"
+        )
+    })?;
 
-    // 包名校验（重新验证，防止存储的包名被篡改）
+    // Re-validate the package name in case the stored value was tampered with
     validate_npx_package_name(pkg_name)?;
 
-    // 沙箱刷新执行（spawn_blocking 避免阻塞 async worker）
+    // Sandboxed refresh execution (spawn_blocking avoids blocking an async worker)
     let pkg = pkg_name.to_string();
     let raw_content =
         tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
             .await
-            .map_err(|_| "npx 线程 panic".to_string())??
-            .ok_or_else(|| format!("npx {} 未返回任何内容", pkg_name))?;
+            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
+            .ok_or_else(|| {
+                ierr!(
+                    "npx {} 未返回任何内容",
+                    "npx {} returned no content",
+                    pkg_name
+                )
+            })?;
 
     let content = sanitize_skill_content(&raw_content)?;
 
@@ -1312,7 +1332,7 @@ pub async fn refresh_npx_skill(
     Ok(updated)
 }
 
-/// 尝试读取 npm 全局包的 package.json 获取元数据（带 10s 超时）。
+/// Tries to read metadata from the npm global package.json (with a 10s timeout).
 fn try_read_package_meta(package_name: &str) -> (String, String, String) {
     use std::io::Read;
 
@@ -1326,7 +1346,7 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
         Err(_) => return (String::new(), String::new(), "0.0.0".to_string()),
     };
 
-    // 带超时等待（10s）
+    // Wait with a 10s timeout
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut stdout = Vec::new();
@@ -1345,7 +1365,7 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
         return (String::new(), String::new(), "0.0.0".to_string());
     }
 
-    // 输出上限 256KB
+    // Cap output at 256KB
     let capped = if stdout.len() > 256 * 1024 {
         &stdout[..256 * 1024]
     } else {
@@ -1379,9 +1399,9 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
     (String::new(), String::new(), "0.0.0".to_string())
 }
 
-/// Windows: 将裸命令名（如 "npx"）解析为完整路径（如 "C:\...\npx.cmd"）。
-/// Process::Command 不会按 PATHEXT 扩展名搜索，需要手动处理。
-/// 非 Windows 直接返回原命令名。
+/// Windows: resolves a bare command name (e.g. "npx") to a full path (e.g. "C:\...\npx.cmd").
+/// Process::Command does not search PATHEXT extensions, so this is done manually.
+/// Non-Windows returns the command name unchanged.
 fn resolve_command(command: &str) -> String {
     #[cfg(windows)]
     {
@@ -1437,20 +1457,6 @@ mod tests {
         assert_eq!(skills[0].owner, "vercel-labs");
         assert_eq!(skills[0].installs, 2_100_000);
         assert_eq!(skills[0].weekly_installs, vec![102_724, 112_234]);
-    }
-
-    #[test]
-    fn parses_topic_categories() {
-        let html = r#"
-        <a href="/topic/react"><h2>Frontend &amp; React skills</h2>
-          <p>React production guidance.</p><p>8<!-- --> skills</p>
-        </a>
-        "#;
-        let categories = parse_categories(html);
-        assert_eq!(categories.len(), 1);
-        assert_eq!(categories[0].id, "react");
-        assert_eq!(categories[0].name, "Frontend & React");
-        assert_eq!(categories[0].skill_count, 8);
     }
 
     #[test]

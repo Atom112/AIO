@@ -13,6 +13,8 @@
   </p>
 </div>
 
+**English** | [简体中文](README.zh-CN.md)
+
 ---
 
 ![AIO Chat Workspace](docs/assets/screenshots/chat-overview.webp)
@@ -74,7 +76,7 @@
 
 ### Download Release
 
-Visit [GitHub Releases](https://github.com/Atom112/AIO/releases) and download the package for your system. Releases cover Windows, Ubuntu 22.04, and Intel / Apple Silicon macOS.
+Visit [GitHub Releases](https://github.com/Atom112/AIO/releases) and download the package for your system. Releases cover Windows, Ubuntu 22.04, and Apple Silicon macOS (the last Intel macOS build is v0.8.0).
 
 After installation, open Settings -> Provider Settings:
 

@@ -202,6 +202,15 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - **Config Migration**: The `ActivatedModel` struct supports an optional `engine_type` field. Old configs without this field deserialize safely (defaults to `None`), and logic treats `None` as legacy llama.cpp behavior.
 - **Event Names**: `engine-progress` is the generic progress event (all engines default to it); the llama.cpp plugin still emits `llama-progress` for backward compatibility. Other frontend events: `llm-chunk`, `llm-round-start`, `llm-compression`, `llm-compression-failed`, `subagent-start` / `subagent-step` / `subagent-done` / `subagent-error`, `mcp-server-status`, `mcp-server-stderr`, `app-update-progress`. New events must be kebab-case.
 
+## Branch & Release Workflow
+
+单人开发约定（分支名规范 + PR 流程）：
+
+- **日常开发**：从 `dev` 切出功能分支，命名 `dev-<功能>`（Git 不允许在 `dev` 分支存在时创建 `dev/<功能>` 命名空间，故用连字符前缀）；更改提交到功能分支。
+- **功能完成**：功能分支 PR 到 `dev`，merge 后删除功能分支（本地 + 远端）。
+- **发布版本**：决定发版时 `dev` PR 到 `master` 并 merge；`dev` 分支保留不动。随后 bump 版本（CHANGELOG + 三处版本号）、打 `vX.Y.Z` tag 推送触发 `release.yml`。
+- **master** 仅包含已发布版本内容；长期存在的分支只有 `dev` 与 `master`。
+
 ## Build & Dev Commands
 
 ```bash

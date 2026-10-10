@@ -234,12 +234,40 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
               <div class="mt-[15px] space-y-1">
                 {(() => {
                   const { roots, children } = buildTopicTree(asst().topics);
-                  // Render the topic tree recursively; isLast marks whether the topic is the
-                  // final child of its parent (last sibling gets the L-shaped connector,
-                  // earlier siblings get the through-connector whose vertical line continues
-                  // toward the next sibling — classic tree-view guide shapes)
-                  const renderTopic = (topic: Topic, depth: number, isLast = true): any => {
+                  // Render the topic tree recursively. Connector geometry bridges the
+                  // list gaps so the vertical rail reads as one continuous line:
+                  // - isLast / isFirst: sibling position in the parent's child list;
+                  // - railBelowInherited: the rail continues past this whole subtree
+                  //   (a parent's next sibling exists somewhere up the chain). Root
+                  //   subtrees are hard-cut — never bridge across root topics.
+                  // Gap sources: root-list space-y-1 (4px) between a root row and its
+                  // children container; children-container space-y-0.5 (2px) between
+                  // sibling rows and between a child row and its own children.
+                  const renderTopic = (
+                    topic: Topic,
+                    depth: number,
+                    isLast = true,
+                    isFirst = false,
+                    railBelowInherited = false,
+                  ): any => {
                     const isChild = depth > 0;
+                    const hasKids = (children.get(topic.id)?.length ?? 0) > 0;
+                    // upExt: the first child reaches up to the parent row's bottom edge.
+                    const parentGap = depth === 1 ? 4 : 2;
+                    const upExt = isChild && isFirst ? parentGap : 0;
+                    // drawStem: the rail continues below this row — toward the next
+                    // sibling, into this row's own children, or toward an uncle
+                    // (inherited). Without a stem the line ends at the row's elbow (L).
+                    const drawStem = isChild && (!isLast || hasKids || railBelowInherited);
+                    // downExt: a stem crosses the 2px gap below the row to meet
+                    // whatever continues the rail (next sibling or first child —
+                    // the child's own upExt overlaps the same strip, harmlessly).
+                    const downExt = drawStem ? 2 : 0;
+                    const railH = 28 + upExt + downExt;
+                    const midY = upExt + 14;
+                    const connectorPath = drawStem
+                      ? `M5 0 V${railH} M5 ${upExt + 10} Q5 ${midY} 9 ${midY} H22`
+                      : `M5 0 V${upExt + 10} Q5 ${midY} 9 ${midY} H22`;
                     return (
                       <>
                         <div
@@ -251,15 +279,16 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           onClick={() => setCurrentTopicId(topic.id)}
                         >
                           {/* Branch marker for child topics: rounded elbow connector.
-                              Last sibling (isLast): L shape — vertical line ends at this row.
-                              Earlier siblings: through shape — vertical line spans the full
-                              row height to continue toward the next sibling below. */}
+                              The SVG may overflow the row box (margin-top negative /
+                              extra height) so the vertical rail spans the list gaps
+                              and connects with the rows above and below. */}
                           {isChild && (
                             <svg
-                              viewBox="0 0 22 28"
+                              viewBox={`0 0 22 ${railH}`}
                               width="22"
-                              height="28"
+                              height={railH}
                               class="shrink-0 self-start"
+                              style={upExt ? { 'margin-top': `-${upExt}px` } : undefined}
                               fill="none"
                               stroke="rgba(var(--text-base-rgb),0.35)"
                               stroke-width="1.5"
@@ -267,13 +296,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               aria-hidden="true"
                             >
                               <title>{t('chat.branchTopic')}</title>
-                              <path
-                                d={
-                                  isLast
-                                    ? 'M5 0 V10 Q5 14 9 14 H22'
-                                    : 'M5 0 V28 M5 10 Q5 14 9 14 H22'
-                                }
-                              />
+                              <path d={connectorPath} />
                             </svg>
                           )}
                           <Show
@@ -340,7 +363,20 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                 const siblings = children.get(topic.id) ?? [];
                                 const isLastSibling =
                                   siblings[siblings.length - 1]?.id === child.id;
-                                return renderTopic(child, depth + 1, isLastSibling);
+                                const isFirstSibling = siblings[0]?.id === child.id;
+                                // Children inherit the rail-below flag: the rail
+                                // continues past this subtree when this topic has a
+                                // next sibling, or when the flag was inherited from
+                                // above. Root subtrees never bridge across roots.
+                                const kidsRailBelow =
+                                  depth === 0 ? false : !isLast || railBelowInherited;
+                                return renderTopic(
+                                  child,
+                                  depth + 1,
+                                  isLastSibling,
+                                  isFirstSibling,
+                                  kidsRailBelow,
+                                );
                               }}
                             </For>
                           }

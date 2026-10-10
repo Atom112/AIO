@@ -11,6 +11,11 @@
   - **共享模式文件锁基座**：`write_file` / `replace_in_file` / `delete_file` / `make_directory` 按文件互斥锁（120 秒超时报持有者）+ 原子写（tmp+rename）+ 跨写者 hashline 强制（文件被其他智能体修改过后 `replace_in_file` 必须带 `anchor_hash`、覆盖性 `write_file` 必须带新参数 `expect_hash`），丢失更新转为可恢复的重读错误；新增 `file-lock-contention` 事件
 - 设置新增「并行写入隔离」选项（自动 / 始终独立工作区 / 共享目录仅文件锁）
 
+### 📋 任务清单与争议确认（主 Agent 交互工具）
+
+- **任务清单**（`create_tasks` / `update_task` / `list_tasks`）：多步工作拆解为可跟踪任务，聊天区顶部实时任务面板（进度 x/y、待办/进行中/已完成、可折叠），每话题独立、内存态不落盘
+- **`ask_user` 争议点提问**：需求歧义/多方案/风险取舍时 Agent 以提问气泡暂停等待用户作答——每问题 2-4 个选项（推荐项置首带「推荐」标记）、支持自定义回答输入、可整体跳过由 Agent 自行决定；一次最多 4 问，回答回灌后继续执行；新命令 `respond_agent_question`、新事件 `agent-tasks-changed` / `agent-question-requested`
+
 ## [v0.8.0]
 
 <sup>Released on **2026-10-10**</sup>

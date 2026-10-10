@@ -37,6 +37,7 @@ pub(crate) mod handoff;
 pub(crate) mod locked_tools;
 pub(crate) mod messages;
 pub(crate) mod subagents;
+pub(crate) mod tasks;
 pub(crate) mod titles;
 pub(crate) mod tool_dispatch;
 pub(crate) mod tool_specs;
@@ -51,6 +52,7 @@ pub(crate) use handoff::*;
 pub(crate) use locked_tools::*;
 pub(crate) use messages::*;
 pub(crate) use subagents::*;
+pub(crate) use tasks::*;
 pub(crate) use titles::*;
 pub(crate) use tool_dispatch::*;
 pub(crate) use tool_specs::*;
@@ -2089,6 +2091,34 @@ pub(crate) async fn run_agent_turn_inner(
                         && tc.name == "read_skill"
                     {
                         execute_skill_read(&skills, args_val["name"].as_str().unwrap_or(""))
+                    } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
+                        && matches!(
+                            tc.name.as_str(),
+                            "create_tasks" | "update_task" | "list_tasks"
+                        )
+                    {
+                        // Orchestrator task board: in-memory metadata + frontend mirror,
+                        // dispatched before the permission path (read_artifact precedent)
+                        Ok(execute_task_board_tool(
+                            &app_c,
+                            &assistant_id_c,
+                            &topic_id_c,
+                            &tc.name,
+                            &args_val,
+                        ))
+                    } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
+                        && tc.name == "ask_user"
+                    {
+                        // Clarification questions: pauses the loop until the user answers
+                        // (respond_agent_question), the token cancels, or the timeout fires
+                        execute_ask_user(
+                            &app_c,
+                            &assistant_id_c,
+                            &topic_id_c,
+                            &args_val,
+                            &token_inner,
+                        )
+                        .await
                     } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                         && app_config.parallel_tool_execution
                         && is_parallel_safe(&tc.name)

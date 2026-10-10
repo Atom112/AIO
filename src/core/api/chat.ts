@@ -132,3 +132,20 @@ export interface ActiveCheckpoint {
 /** Query the active checkpoint of a topic (entry point for resuming an unfinished turn after a crash). */
 export const getActiveCheckpoint = (topicId: string) =>
   invoke<ActiveCheckpoint | null>('get_active_checkpoint', { topicId });
+
+/** One answer of an ask_user request (matches backend QuestionAnswer, camelCase). */
+export interface QuestionAnswerPayload {
+  questionId: string;
+  answer: string;
+  isCustom: boolean;
+}
+
+/**
+ * Answer an ask_user request (agent-question-requested event): resolves the paused agent
+ * loop with the user's answers; skipped = let the agent decide on its own.
+ */
+export const respondAgentQuestion = (
+  requestId: string,
+  skipped: boolean,
+  answers: QuestionAnswerPayload[],
+) => invoke<void>('respond_agent_question', { requestId, skipped, answers });

@@ -100,6 +100,8 @@ pub fn run() {
         .manage(SubagentHandles::new())
         .manage(SubagentCompletions::new())
         .manage(core::file_locks::FileLockRegistry::new())
+        .manage(core::state::AgentTaskBoard::new())
+        .manage(core::state::PendingAgentQuestions::new())
         .manage(MemoryStoreManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
@@ -134,6 +136,7 @@ pub fn run() {
             commands::llm::vision_analyze_images,
             commands::llm::append_message,
             commands::llm::btw::ask_btw_question,
+            commands::llm::tasks::respond_agent_question,
             commands::llm::delete_topic_message,
             commands::llm::generate_topic_title,
             commands::llm::get_usage_summary,

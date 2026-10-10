@@ -99,4 +99,50 @@ pub struct CustomSubagentProfilesFile {
     pub profiles: Vec<CustomSubagentProfile>,
 }
 
+// ====== Agent task board (main-agent task list) ======
+
+/// Status of one agent task (snake_case: pending / in_progress / completed).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+/// One tracked task on the main agent's task board (per assistant+topic, memory-only).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AgentTask {
+    /// Short generated id ("task-xxxxxxxx") used by update_task
+    pub id: String,
+    /// One-line task title
+    pub title: String,
+    /// Current status
+    pub status: AgentTaskStatus,
+}
+
+// ====== ask_user (agent question to the user) ======
+
+/// One answered question (sent back by the frontend via respond_agent_question).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionAnswer {
+    /// Which question this answers
+    pub question_id: String,
+    /// Chosen option label, or the free-form custom answer
+    pub answer: String,
+    /// Whether the answer was typed as free-form text
+    pub is_custom: bool,
+}
+
+/// Final user response for one ask_user request (skipped = user let the agent decide).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionResponse {
+    /// true = the user skipped; answers is empty and the agent decides on its own
+    pub skipped: bool,
+    /// One answer per question, in question order
+    pub answers: Vec<QuestionAnswer>,
+}
+
 // ====== Engine Scanner ======

@@ -226,7 +226,15 @@ pub async fn local_model_download(
     let mut request = request;
     request.id = id.clone();
 
-    let dir = local_models_dir(&app).join(&request.id);
+    // P0-2：前端传入的 id / file.name 一律经 safe_join 校验——拒绝绝对路径（含
+    // Windows 盘符 / UNC）、`..` 回溯与保留字符，防止任意目录写入与递归删除
+    let dir = crate::core::path_safety::safe_join(&local_models_dir(&app), &id)?;
+    let dests: Vec<PathBuf> = request
+        .files
+        .iter()
+        .map(|f| crate::core::path_safety::safe_join(&dir, &f.name))
+        .collect::<Result<_, _>>()?;
+
     std::fs::create_dir_all(&dir).map_err(|e| {
         ierr!(
             "创建模型目录失败: {}",
@@ -239,8 +247,9 @@ pub async fn local_model_download(
     let pending: u64 = request
         .files
         .iter()
-        .filter(|f| !dir.join(&f.name).exists())
-        .map(|f| f.size)
+        .zip(dests.iter())
+        .filter(|(_, dest)| !dest.exists())
+        .map(|(f, _)| f.size)
         .sum();
     if pending > 0 {
         if let Some(avail) = available_space(&dir) {
@@ -279,8 +288,7 @@ pub async fn local_model_download(
             .ok()
             .flatten();
 
-    for file in &request.files {
-        let dest = dir.join(&file.name);
+    for (file, dest) in request.files.iter().zip(dests.iter()) {
         if dest.exists() {
             continue;
         }
@@ -441,15 +449,12 @@ pub async fn local_model_download(
                 });
             }
             _ => {
-                std::fs::rename(&tmp, &dest)
+                std::fs::rename(&tmp, dest)
                     .map_err(|e| ierr!("重命名失败: {}", "Failed to rename: {}", e))?;
             }
         }
     }
-    let entry = dir
-        .join(request.files[0].name.as_str())
-        .to_string_lossy()
-        .to_string();
+    let entry = dests[0].to_string_lossy().to_string();
     // Record the market marker so the installed-list scan recognizes this directory as a
     // market-managed model (recursive scan + exact entry file, even for nested layouts)
     write_model_marker(&dir, &request.files[0].name);
@@ -477,7 +482,8 @@ pub fn local_model_pause_download(id: String) -> bool {
 pub fn local_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
     let active = signal_download(&id, |c| c.cancel.store(true, Ordering::Relaxed));
     if !active {
-        let dir = local_models_dir(&app).join(id.trim());
+        // P0-2：id 经 safe_join 校验后再定位目录
+        let dir = crate::core::path_safety::safe_join(&local_models_dir(&app), id.trim())?;
         if dir.is_dir() {
             remove_part_files(&dir);
         }
@@ -516,7 +522,9 @@ fn read_model_marker(dir: &Path) -> Option<ModelMarker> {
 /// `.gguf` file itself when the id refers to a top-level file).
 #[tauri::command]
 pub fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let path = local_models_dir(&app).join(id.trim());
+    // P0-2：id 经 safe_join 校验——`Path::join` 对绝对路径参数会整体替换基路径，
+    // `..` 组件在 syscall 时逃逸；这里杜绝「任意目录递归删除」原语
+    let path = crate::core::path_safety::safe_join(&local_models_dir(&app), id.trim())?;
     if path.is_dir() {
         std::fs::remove_dir_all(&path)
             .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;

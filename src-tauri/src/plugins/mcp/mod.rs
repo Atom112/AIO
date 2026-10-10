@@ -347,14 +347,42 @@ fn now_timestamp() -> String {
 
 // ====== Helpers: resolving env placeholders ======
 
-/// Check whether any env field contains a keyring placeholder
-#[allow(dead_code)]
-pub fn env_has_keyring_placeholder(env: &BTreeMap<String, String>) -> bool {
-    env.values().any(|v| v.contains("${KEYRING:"))
+/// `${KEYRING:account}` 占位符前缀（共 10 字节，冒号位于偏移 9）。
+/// 历史实现按 `start + 9` 切片使 account 带前导冒号，所有 MCP 密钥解析必然失败。
+const KEYRING_PREFIX: &str = "${KEYRING:";
+
+/// 解析值中的**全部** `${KEYRING:account}` 占位符（纯函数，便于测试）。
+///
+/// - `lookup` 返回 `None` → `Err(account)`，由调用方生成用户可见错误；
+/// - 未闭合的占位符原样保留（与历史行为一致）；
+/// - 值可含多个占位符（历史实现只解析第一个）。
+pub(crate) fn resolve_keyring_placeholders(
+    value: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find(KEYRING_PREFIX) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + KEYRING_PREFIX.len()..];
+        let Some(end) = after.find('}') else {
+            // 未闭合：剩余原文原样保留
+            out.push_str(&rest[start..]);
+            return Ok(out);
+        };
+        let account = &after[..end];
+        let Some(secret) = lookup(account) else {
+            return Err(account.to_string());
+        };
+        out.push_str(&secret);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
-/// Resolve keyring placeholders in env to real values
-/// Called only by the stdio transport before spawning the child process
+/// Resolve keyring placeholders in env (stdio) / headers (HTTP) to real values.
+/// Called by both transports before use; every placeholder must resolve.
 pub fn resolve_env_placeholders(
     app: &AppHandle,
     server_id: &str,
@@ -362,29 +390,145 @@ pub fn resolve_env_placeholders(
 ) -> McpResult<BTreeMap<String, String>> {
     let mut resolved = BTreeMap::new();
     for (k, v) in env {
-        let actual = if let Some(start) = v.find("${KEYRING:") {
-            if let Some(end) = v[start..].find('}') {
-                let account_full = &v[start + 9..start + end];
-                // account_full looks like "mcp-server-{server_id}-env-{env_key}"
-                let value = crate::core::secure_store::get(app, account_full)
-                    .map_err(|e| {
-                        McpError::Server(format!("读取 keyring {} 失败: {}", account_full, e))
-                    })?
-                    .ok_or_else(|| {
-                        McpError::Server(format!("keyring 中未找到密钥: {}", account_full))
-                    })?;
-                let prefix = v[..start].to_string();
-                let suffix = v[start + end + 1..].to_string();
-                format!("{}{}{}", prefix, value, suffix)
-            } else {
-                v.clone()
-            }
-        } else {
-            v.clone()
-        };
+        let actual = resolve_keyring_placeholders(v, |account| {
+            crate::core::secure_store::get(app, account).ok().flatten()
+        })
+        .map_err(|account| {
+            McpError::Server(crate::ierr!(
+                "keyring 中未找到密钥: {}",
+                "Secret not found in the keyring: {}",
+                account
+            ))
+        })?;
         // Prevent the keyring account name from being passed to the child process: substitute the server_id placeholder
-        let actual = actual.replace(&"${SERVER_ID}".to_string(), server_id);
+        let actual = actual.replace("${SERVER_ID}", server_id);
         resolved.insert(k.clone(), actual);
     }
     Ok(resolved)
+}
+
+// ====== Project-level MCP trust gate (P0-1 / MCP-1) ======
+
+/// 项目级服务器信任存储的落点（$APPDATA/mcp-trust.json，仓库之外）。
+fn trust_store(app: &AppHandle) -> crate::core::mcp_trust::McpTrustStore {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    crate::core::mcp_trust::McpTrustStore::open(&dir)
+}
+
+/// 项目级配置中尚未信任的服务器（前端据此弹确认；autoStart 对它们一律跳过）。
+pub fn untrusted_project_servers(app: &AppHandle, project_path: &str) -> Vec<McpServerConfig> {
+    let store = trust_store(app);
+    load_project_mcp_servers(project_path)
+        .servers
+        .into_values()
+        .filter(|cfg| {
+            !store.is_trusted(
+                project_path,
+                &cfg.id,
+                &crate::core::mcp_trust::config_fingerprint(cfg),
+            )
+        })
+        .collect()
+}
+
+/// 标记一个项目级服务器为已信任（记录当前配置指纹；仓库配置变更后自动失效）。
+/// 返回被标记的配置；项目文件中不存在该 id 时报错。
+pub fn trust_project_server(
+    app: &AppHandle,
+    project_path: &str,
+    server_id: &str,
+) -> McpResult<McpServerConfig> {
+    let file = load_project_mcp_servers(project_path);
+    let cfg = file.servers.get(server_id).cloned().ok_or_else(|| {
+        McpError::Server(crate::ierr!(
+            "项目 .aio/mcp-servers.json 中不存在服务器: {}",
+            "Server not found in the project's .aio/mcp-servers.json: {}",
+            server_id
+        ))
+    })?;
+    let fingerprint = crate::core::mcp_trust::config_fingerprint(&cfg);
+    trust_store(app)
+        .set_trusted(project_path, server_id, &fingerprint)
+        .map_err(McpError::Server)?;
+    Ok(cfg)
+}
+
+/// `start_mcp_server` 的信任门：生效配置来自项目文件（id 存在于其中）且未信任 → false。
+/// 全局配置或已信任的项目配置返回 true。
+pub fn project_server_spawn_allowed(
+    app: &AppHandle,
+    project_id: Option<&str>,
+    id: &str,
+) -> McpResult<bool> {
+    let Some(pid) = project_id else {
+        return Ok(true);
+    };
+    let project_path = resolve_project_path(app, pid)?;
+    let Some(cfg) = load_project_mcp_servers(&project_path)
+        .servers
+        .get(id)
+        .cloned()
+    else {
+        return Ok(true);
+    };
+    let store = trust_store(app);
+    let trusted = store.is_trusted(
+        &project_path,
+        id,
+        &crate::core::mcp_trust::config_fingerprint(&cfg),
+    );
+    Ok(trusted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyring_placeholder_account_has_no_leading_colon() {
+        // 回归：历史 off-by-one 使 account 带 ":" 前缀，所有密钥必失败
+        let out = resolve_keyring_placeholders("${KEYRING:mcp-server-x-env-K}", |account| {
+            assert_eq!(account, "mcp-server-x-env-K");
+            Some("SECRET".to_string())
+        })
+        .expect("占位符应解析成功");
+        assert_eq!(out, "SECRET");
+    }
+
+    #[test]
+    fn keyring_placeholder_multiple_with_affixes() {
+        let out = resolve_keyring_placeholders("pre-${KEYRING:a}-mid-${KEYRING:b}-post", |a| {
+            if a == "a" {
+                Some("A".to_string())
+            } else if a == "b" {
+                Some("B".to_string())
+            } else {
+                None
+            }
+        })
+        .expect("多占位符应全部解析");
+        assert_eq!(out, "pre-A-mid-B-post");
+    }
+
+    #[test]
+    fn keyring_placeholder_missing_secret_reports_account() {
+        let err =
+            resolve_keyring_placeholders("${KEYRING:gone}", |_| None).expect_err("缺密钥应报错");
+        assert_eq!(err, "gone");
+    }
+
+    #[test]
+    fn keyring_placeholder_unclosed_left_as_is() {
+        let out = resolve_keyring_placeholders("x${KEYRING:a", |_| None).expect("未闭合应原样保留");
+        assert_eq!(out, "x${KEYRING:a");
+    }
+
+    #[test]
+    fn value_without_placeholder_unchanged() {
+        let out = resolve_keyring_placeholders("plain-value", |_| None).expect("无占位符应原样");
+        assert_eq!(out, "plain-value");
+    }
 }

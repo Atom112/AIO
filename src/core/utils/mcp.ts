@@ -1,7 +1,24 @@
 // MCP utility functions
 
-import type { McpTransport, McpStatus } from '../types/mcp';
+import type { McpServerConfig, McpServerStatusInfo, McpTransport, McpStatus } from '../types/mcp';
 import { t } from '../i18n';
+
+/**
+ * Pick servers eligible for auto-start: excludes already-connected ones and
+ * untrusted project-level servers (P0-1: repo-shipped configs never auto-start).
+ */
+export function selectAutoStartIds(
+  map: Record<string, McpServerConfig>,
+  statusMap: Record<string, McpServerStatusInfo>,
+  untrustedIds: ReadonlySet<string>,
+): string[] {
+  return Object.values(map)
+    .filter(
+      (cfg) =>
+        cfg.autoStart && statusMap[cfg.id]?.status !== 'connected' && !untrustedIds.has(cfg.id),
+    )
+    .map((cfg) => cfg.id);
+}
 
 /** Builds a keyring placeholder */
 export function buildKeyringPlaceholder(serverId: string, envKey: string): string {

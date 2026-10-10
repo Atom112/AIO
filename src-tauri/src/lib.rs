@@ -182,6 +182,8 @@ pub fn run() {
             commands::skill::refresh_npx_skill,
             // MCP server management
             commands::mcp::list_mcp_servers,
+            commands::mcp::list_untrusted_project_mcp_servers,
+            commands::mcp::trust_project_mcp_server,
             commands::mcp::add_mcp_server,
             commands::mcp::save_mcp_server_secret,
             commands::mcp::remove_mcp_server,

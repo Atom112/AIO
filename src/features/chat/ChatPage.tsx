@@ -74,6 +74,7 @@ import { isImageGenModel } from '../../core/utils/models';
 import { modelSupportsVision, resolveVisionModel } from './vision';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
+import ProjectMcpTrustModal from './components/ProjectMcpTrustModal';
 import ChatInterface from './components/ChatInterface';
 import SubagentConversationView from './components/SubagentConversationView';
 import TopicSidebar from './components/TopicSidebar';
@@ -2012,6 +2013,9 @@ ${asstObj.prompt}`;
           assistantId={settingsAsstId()}
           onClose={() => setSettingsAsstId(null)}
         />
+      </Portal>
+      <Portal>
+        <ProjectMcpTrustModal />
       </Portal>
 
       <ProblemsPanel />

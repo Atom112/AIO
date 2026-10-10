@@ -70,6 +70,44 @@ pub async fn list_mcp_servers(
     mcp::list_configs_merged(&app, project_id.as_deref()).map_err(|e| e.to_string())
 }
 
+/// List project-level `.aio/mcp-servers.json` servers that are not trusted yet.
+///
+/// Project-repo configs never auto-start until the user confirms trust (P0-1);
+/// the frontend uses this list to render the trust prompt on project open.
+///
+/// # Parameters
+/// - `project_id` — project ID
+///
+/// # Returns
+/// Untrusted project-level configs (full transport, so the prompt can show
+/// command/args/env/url); empty when the project file is absent or all trusted.
+#[tauri::command]
+pub async fn list_untrusted_project_mcp_servers(
+    app: AppHandle,
+    project_id: String,
+) -> Result<Vec<McpServerConfig>, String> {
+    let project_path = resolve_project_path_mcp(&app, &project_id)?;
+    Ok(mcp::untrusted_project_servers(&app, &project_path))
+}
+
+/// Mark one project-level MCP server as trusted (records the current config
+/// fingerprint in the app-data trust store; a later repo change revokes trust).
+///
+/// # Parameters
+/// - `project_id` — project ID; `server_id` — server ID within the project file
+///
+/// # Returns
+/// The trusted server config (the caller may start it right away).
+#[tauri::command]
+pub async fn trust_project_mcp_server(
+    app: AppHandle,
+    project_id: String,
+    server_id: String,
+) -> Result<McpServerConfig, String> {
+    let project_path = resolve_project_path_mcp(&app, &project_id)?;
+    mcp::trust_project_server(&app, &project_path, &server_id).map_err(|e| e.to_string())
+}
+
 /// Add or update (upsert by id) an MCP server config.
 ///
 /// # Parameters
@@ -202,10 +240,25 @@ pub async fn start_mcp_server(
     id: String,
     project_id: Option<String>,
 ) -> Result<Vec<ToolSpec>, String> {
-    emit_status(&app, &id, McpStatus::Connecting, None, 0);
-
     let config = mcp::get_config_merged(&app, &id, project_id.as_deref())
         .ok_or_else(|| ierr!("未找到 MCP server: {}", "MCP server not found: {}", id))?;
+
+    // P0-1 信任门（纵深防御）：生效配置来自项目 `.aio/mcp-servers.json` 且未经
+    // 用户确认信任时拒绝 spawn。恶意仓库放置 autoStart 配置即可零确认执行任意
+    // 命令，因此信任标记必须先经前端确认写入（仓库之外），这里只认信任存储。
+    if !mcp::project_server_spawn_allowed(&app, project_id.as_deref(), &id)
+        .map_err(|e| e.to_string())?
+    {
+        let message = ierr!(
+            "服务器「{}」的配置来自项目 .aio/mcp-servers.json，未经信任确认已拒绝启动（请在项目打开时的 MCP 确认提示中信任）",
+            "Server \"{}\" uses config from the project's .aio/mcp-servers.json and is not trusted yet; start refused (confirm trust in the project MCP prompt)",
+            config.display_name
+        );
+        emit_status(&app, &id, McpStatus::Error, Some(message.clone()), 0);
+        return Err(message);
+    }
+
+    emit_status(&app, &id, McpStatus::Connecting, None, 0);
 
     let transport_id = match &config.transport {
         McpTransport::Stdio { .. } => "stdio",

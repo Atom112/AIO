@@ -13,6 +13,14 @@ import type {
 export const listMcpServers = (projectId?: string | null) =>
   invoke<McpServerConfig[]>('list_mcp_servers', { projectId: projectId ?? null });
 
+/** List project-level servers that are not trusted yet (autoStart is blocked until confirmed). */
+export const listUntrustedProjectMcpServers = (projectId: string) =>
+  invoke<McpServerConfig[]>('list_untrusted_project_mcp_servers', { projectId });
+
+/** Mark a project-level server as trusted (records a config fingerprint; repo changes revoke it). */
+export const trustProjectMcpServer = (projectId: string, serverId: string) =>
+  invoke<McpServerConfig>('trust_project_mcp_server', { projectId, serverId });
+
 /** Start an MCP server and return its tool list. */
 export const startMcpServer = (id: string, projectId?: string | null) =>
   invoke<ToolSpec[]>('start_mcp_server', { id, projectId: projectId ?? null });

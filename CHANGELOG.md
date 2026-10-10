@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🔒 全仓深度审查修复（阶段 0：P0 紧急止血）
+
+- **项目级 MCP 配置信任门（P0-1）**：仓库自带 `.aio/mcp-servers.json` 的服务器不再零确认自动 spawn（恶意仓库一个 JSON 文件即可任意执行命令的供应链攻击面）。打开/切换项目时弹确认窗完整展示 command/args/env/URL；信任标记保存在应用数据目录（仓库之外）并绑定配置指纹——仓库改动即自动失效需重新确认；后端 `start_mcp_server` 对未信任的项目级配置一律拒绝（纵深防御）；新增 `list_untrusted_project_mcp_servers` / `trust_project_mcp_server` 命令与 `ProjectMcpTrustModal` 确认界面
+- **本地模型命令路径强校验（P0-2）**：新增 `core/path_safety::safe_join`，`local_model_delete` / `local_model_download` / `local_model_cancel_download` 对前端传入的 id / 文件名拒绝绝对路径（含 Windows 盘符/UNC）、`..` 回溯与保留字符——堵住「任意目录递归删除 / 任意路径写入」原语
+- **MCP 密钥占位符 off-by-one（MCP-3）**：`${KEYRING:...}` 解析切片差一字节使 account 恒带前导冒号，stdio env 与 HTTP header 的所有托管密钥解析必失败；修复并支持同值多占位符循环解析
+
 ### 🤖 Subagents（子智能体）
 
 - **多智能体并行文件编辑**：业界调研（Claude Code / Amp / Vibe Kanban / Magentic-One / OpenHands）后落地两层防冲突机制——

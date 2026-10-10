@@ -8,7 +8,14 @@ import {
 } from '../api/chat';
 import { listen } from '@tauri-apps/api/event';
 import { listSkills } from '../api/skills';
-import { listMcpServerStatuses, listMcpServers, listMcpTools, startMcpServer } from '../api/mcp';
+import {
+  listMcpServerStatuses,
+  listMcpServers,
+  listMcpTools,
+  listUntrustedProjectMcpServers,
+  startMcpServer,
+  trustProjectMcpServer,
+} from '../api/mcp';
 import { EVENTS } from '../api/events';
 import type {
   McpServerConfig,
@@ -27,6 +34,7 @@ import {
 } from './models';
 import { currentProjectId, projects } from './project';
 import { isDarkMode, themeColor } from './ui-prefs';
+import { selectAutoStartIds } from '../utils/mcp';
 export interface DatasState {
   /** All assistants, including their topics and message trees */
   assistants: Assistant[];
@@ -51,6 +59,19 @@ export const [mcpServerStatus, setMcpServerStatus] = createSignal<
 export const [mcpToolsCache, setMcpToolsCache] = createSignal<ToolSpec[]>([]);
 /** Global skill config map (id → config). */
 export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({});
+
+/**
+ * 项目级 MCP 待确认队列（P0-1 信任门的前端侧）。
+ * 打开/切换项目时填充来自 `.aio/mcp-servers.json` 且尚未信任的服务器；
+ * autoStart 对它们一律跳过，直到用户确认（落盘信任标记）或忽略（仅本次会话）。
+ */
+export const [pendingProjectMcpServers, setPendingProjectMcpServers] = createSignal<
+  McpServerConfig[]
+>([]);
+/** 待确认队列归属的项目 ID。 */
+export const [pendingProjectMcpProjectId, setPendingProjectMcpProjectId] = createSignal<
+  string | null
+>(null);
 
 /** LLM tool call event bus (listened to by ChatPage) */
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
@@ -92,7 +113,8 @@ const installMcpListeners = async () => {
 };
 
 /**
- * Load and initialize the MCP server list, sync backend connection status, and auto-start servers marked autoStart
+ * Load and initialize the MCP server list, sync backend connection status, and auto-start servers marked autoStart.
+ * Project-repo servers that are not trusted yet never auto-start; they enter the pending-confirmation queue instead.
  */
 export const initMcpServers = async (projectId?: string | null) => {
   try {
@@ -107,17 +129,62 @@ export const initMcpServers = async (projectId?: string | null) => {
     // Install the process-level background listeners first (await them before autoStart to avoid lost events)
     await installMcpListeners();
 
-    // Auto-start servers marked autoStart (skip connected ones to avoid duplicate starts)
+    // P0-1: project-level untrusted servers go to the confirmation queue instead of auto-starting
+    let untrustedIds = new Set<string>();
+    if (projectId) {
+      try {
+        const untrusted = await listUntrustedProjectMcpServers(projectId);
+        if (untrusted.length > 0) {
+          untrustedIds = new Set(untrusted.map((cfg) => cfg.id));
+          setPendingProjectMcpProjectId(projectId);
+          setPendingProjectMcpServers(untrusted);
+        } else {
+          setPendingProjectMcpProjectId(null);
+          setPendingProjectMcpServers([]);
+        }
+      } catch {
+        // Untrusted listing is best-effort; the backend start gate still refuses untrusted spawns
+      }
+    }
+
+    // Auto-start servers marked autoStart (skip connected + untrusted project servers)
     // (Whether an assistant uses a server is filtered by Assistant.mcpServerIds in list_mcp_tools_for_assistant)
-    const autoStartIds = Object.values(map)
-      .filter((cfg) => cfg.autoStart && statusMap[cfg.id]?.status !== 'connected')
-      .map((cfg) => cfg.id);
+    const autoStartIds = selectAutoStartIds(map, statusMap, untrustedIds);
     if (autoStartIds.length > 0) {
       const pid = projectId ?? null;
       await Promise.allSettled(autoStartIds.map((id) => startMcpServerAndRefresh(id, pid)));
     }
   } catch (e) {
     console.warn('加载 MCP server 列表失败:', e);
+  }
+};
+
+/**
+ * Confirm trust for one project-level MCP server: persist the trust marker
+ * (config fingerprint, repo changes revoke it), then start the server.
+ */
+export const confirmProjectMcpServer = async (cfg: McpServerConfig): Promise<void> => {
+  const pid = pendingProjectMcpProjectId() ?? currentProjectId();
+  if (!pid) return;
+  try {
+    await trustProjectMcpServer(pid, cfg.id);
+    setPendingProjectMcpServers((prev) => prev.filter((c) => c.id !== cfg.id));
+    if (pendingProjectMcpServers().length === 0) {
+      setPendingProjectMcpProjectId(null);
+    }
+    await startMcpServerAndRefresh(cfg.id, pid).catch(() => {
+      // Start failure is surfaced via mcp-server-status; trust itself already succeeded
+    });
+  } catch (e) {
+    console.warn('信任项目 MCP server 失败:', e);
+  }
+};
+
+/** Dismiss one pending project MCP server (this session only; re-prompted on next app start). */
+export const dismissProjectMcpServer = (id: string) => {
+  setPendingProjectMcpServers((prev) => prev.filter((c) => c.id !== id));
+  if (pendingProjectMcpServers().length === 0) {
+    setPendingProjectMcpProjectId(null);
   }
 };
 

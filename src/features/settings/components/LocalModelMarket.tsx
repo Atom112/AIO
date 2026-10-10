@@ -529,6 +529,9 @@ const LocalModelMarket: Component = () => {
   };
 
   const cancelDownload = async (id: string) => {
+    // Flash immediately so the visible cancel button flips to "已取消" while the
+    // in-flight download winds down; the outcome branch re-flashes after it settles.
+    flash(id, 'cancelled');
     const wasActive = downloading()[id];
     try {
       await localModelCancelDownload(id);
@@ -537,7 +540,6 @@ const LocalModelMarket: Component = () => {
     }
     if (!wasActive) {
       setPausedIds((prev) => ({ ...prev, [id]: false }));
-      flash(id, 'cancelled');
     }
   };
 
@@ -721,16 +723,18 @@ const LocalModelMarket: Component = () => {
                 onClick={() => void (isPaused() ? resumeRow() : downloadDefault(m))}
               >
                 <Show
-                  when={rowFlash() !== 'done'}
-                  fallback={<Icon name="check-circle" size={12} />}
+                  when={rowFlash() === undefined}
+                  fallback={<Icon name={rowFlash() === 'done' ? 'check-circle' : 'x'} size={12} />}
                 >
                   <Icon name={isPaused() ? 'play' : 'download'} size={12} />
                 </Show>
                 {rowFlash() === 'done'
                   ? t('provider.localModelMarket.flashDone')
-                  : isPaused()
-                    ? t('provider.localModelMarket.resume')
-                    : t('provider.localModelMarket.download')}
+                  : rowFlash() === 'cancelled'
+                    ? t('provider.localModelMarket.flashCancelled')
+                    : isPaused()
+                      ? t('provider.localModelMarket.resume')
+                      : t('provider.localModelMarket.download')}
               </button>
               <Show when={isPaused()}>
                 <button

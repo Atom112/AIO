@@ -436,6 +436,9 @@ pub async fn local_model_download(
         .join(request.files[0].name.as_str())
         .to_string_lossy()
         .to_string();
+    // Record the market marker so the installed-list scan recognizes this directory as a
+    // market-managed model (recursive scan + exact entry file, even for nested layouts)
+    write_model_marker(&dir, &request.files[0].name);
     let _ = window.emit(
         ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
         serde_json::json!({ "id": request.id, "done": true }),
@@ -468,19 +471,54 @@ pub fn local_model_cancel_download(app: AppHandle, id: String) -> Result<bool, S
     Ok(active)
 }
 
-/// Deletes an installed local model (removes its install directory).
+/// Marker file written on download completion: distinguishes market-managed model
+/// directories from foreign subdirectories during the installed-list scan (a foreign
+/// dir qualifies only when it directly contains `*.gguf` files, never via deep nesting).
+const MODEL_MARKER: &str = ".aio-model.json";
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelMarker {
+    /// Repo-relative entry file (first shard) recorded at download time
+    entry_file: String,
+}
+
+fn write_model_marker(dir: &Path, entry_file: &str) {
+    let marker = ModelMarker {
+        entry_file: entry_file.to_string(),
+    };
+    if let Ok(bytes) = serde_json::to_vec(&marker) {
+        let _ = std::fs::write(dir.join(MODEL_MARKER), bytes);
+    }
+}
+
+/// Reads a model directory's marker (None when absent or unreadable).
+fn read_model_marker(dir: &Path) -> Option<ModelMarker> {
+    let bytes = std::fs::read(dir.join(MODEL_MARKER)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Deletes an installed local model (removes its install directory, or the loose
+/// `.gguf` file itself when the id refers to a top-level file).
 #[tauri::command]
 pub fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let dir = local_models_dir(&app).join(id.trim());
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)
+    let path = local_models_dir(&app).join(id.trim());
+    if path.is_dir() {
+        std::fs::remove_dir_all(&path)
+            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
+    } else if path.is_file() {
+        std::fs::remove_file(&path)
             .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
     }
     Ok(())
 }
 
-/// Lists installed local models (scans the install directory for `*.gguf` files).
-/// The entry file of each model is its alphabetically-first shard.
+/// Lists installed local models by scanning the install directory for GGUF content:
+/// - a top-level loose `*.gguf` file counts as a single-file model;
+/// - a subdirectory counts only when the market wrote a marker into it (recursive
+///   scan, marker's entry file) or when it DIRECTLY contains `*.gguf` files (no
+///   recursion) — foreign directories (caches, tool folders with deeply nested
+///   models) are never mistaken for downloaded models.
 #[tauri::command]
 pub fn local_model_installed_list(app: AppHandle) -> Result<Vec<InstalledLocalModel>, String> {
     let root = local_models_dir(&app);
@@ -490,23 +528,56 @@ pub fn local_model_installed_list(app: AppHandle) -> Result<Vec<InstalledLocalMo
         Err(_) => return Ok(out),
     };
     for entry in entries.flatten() {
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_file() {
+            // Top-level loose GGUF: a single-file model
+            if !name.to_lowercase().ends_with(".gguf") {
+                continue;
+            }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let id = name
+                .strip_suffix(".gguf")
+                .or_else(|| name.strip_suffix(".GGUF"))
+                .map(str::to_string)
+                .unwrap_or_else(|| name.clone());
+            out.push(InstalledLocalModel {
+                id,
+                files: vec![MarketFile {
+                    name: name.clone(),
+                    size,
+                }],
+                entry_path: path.to_string_lossy().to_string(),
+                size_bytes: size,
+            });
             continue;
         }
-        let id = entry.file_name().to_string_lossy().to_string();
-        let dir = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        // Model directory: marker (market install, recursive) or direct GGUF files only
+        let marker = read_model_marker(&path);
         let mut files: Vec<MarketFile> = Vec::new();
-        collect_gguf_files(&dir, &dir, &mut files);
+        if marker.is_some() {
+            collect_gguf_files(&path, &path, &mut files);
+        } else {
+            collect_gguf_files_shallow(&path, &mut files);
+        }
         if files.is_empty() {
             continue;
         }
         files.sort_by(|a, b| a.name.cmp(&b.name));
-        let entry_path = dir.join(&files[0].name).to_string_lossy().to_string();
+        let entry_rel = marker
+            .and_then(|m| {
+                let rel = m.entry_file.replace('\\', "/");
+                files.iter().any(|f| f.name == rel).then_some(rel)
+            })
+            .unwrap_or_else(|| files[0].name.clone());
         let size_bytes = files.iter().map(|f| f.size).sum();
         out.push(InstalledLocalModel {
-            id,
+            id: name,
             files,
-            entry_path,
+            entry_path: path.join(entry_rel).to_string_lossy().to_string(),
             size_bytes,
         });
     }
@@ -575,7 +646,27 @@ fn path_under(p: &str, base: &Path) -> Option<String> {
     }
 }
 
+/// Collects `*.gguf` files DIRECTLY inside `dir` (no recursion). Foreign directories
+/// qualify as models only through this shallow scan, so caches/tool folders with
+/// deeply nested models are never mistaken for downloaded models.
+fn collect_gguf_files_shallow(dir: &Path, out: &mut Vec<MarketFile>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+            && name.to_lowercase().ends_with(".gguf")
+        {
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push(MarketFile { name, size });
+        }
+    }
+}
+
 /// Recursively collects `*.gguf` files under `root`, returning repo-relative names + sizes.
+/// Only used for market-managed directories (marker present).
 fn collect_gguf_files(base: &Path, dir: &Path, out: &mut Vec<MarketFile>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -633,10 +724,31 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
             );
         } else {
             for entry in std::fs::read_dir(old).ok().into_iter().flatten().flatten() {
-                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    continue;
-                }
                 let src = entry.path();
+                if src.is_file() {
+                    // Top-level loose GGUF: migrate like a model directory
+                    if !entry
+                        .file_name()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .ends_with(".gguf")
+                    {
+                        continue;
+                    }
+                } else if !src.is_dir() {
+                    continue;
+                } else {
+                    // Only directories that qualify as models move (marker or direct
+                    // GGUF files); foreign subdirectories stay where they are
+                    let is_model = read_model_marker(&src).is_some() || {
+                        let mut probe = Vec::new();
+                        collect_gguf_files_shallow(&src, &mut probe);
+                        !probe.is_empty()
+                    };
+                    if !is_model {
+                        continue;
+                    }
+                }
                 let dst = new.join(entry.file_name());
                 if dst.exists() {
                     tracing::warn!(
@@ -743,6 +855,40 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].name, "nested/b-00001-of-00002.gguf");
         assert_eq!(files[0].size, 2);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn shallow_scan_ignores_nested_ggufs() {
+        let tmp = std::env::temp_dir().join(format!("aio-test-shallow-{}", uuid::Uuid::new_v4()));
+        let nested = tmp.join("cache").join("deep");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("hidden.gguf"), "x").unwrap();
+        std::fs::write(tmp.join("direct.gguf"), "xyz").unwrap();
+        std::fs::write(tmp.join("notes.txt"), "x").unwrap();
+
+        // A foreign dir with only deeply nested GGUFs yields nothing on the shallow scan
+        let mut files = Vec::new();
+        collect_gguf_files_shallow(&tmp.join("cache"), &mut files);
+        assert!(files.is_empty());
+
+        // Direct files are picked up (name + size)
+        let mut files = Vec::new();
+        collect_gguf_files_shallow(&tmp, &mut files);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "direct.gguf");
+        assert_eq!(files[0].size, 3);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn model_marker_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("aio-test-marker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(read_model_marker(&tmp).is_none());
+        write_model_marker(&tmp, "nested/entry-00001-of-00002.gguf");
+        let marker = read_model_marker(&tmp).unwrap();
+        assert_eq!(marker.entry_file, "nested/entry-00001-of-00002.gguf");
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

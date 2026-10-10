@@ -59,7 +59,9 @@ export type IconName =
   | 'chevron-left'
   | 'chevron-right'
   | 'chevron-up'
-  | 'chevron-down';
+  | 'chevron-down'
+  | 'caret-up'
+  | 'caret-down';
 
 /**
  * Icon path factory table.
@@ -287,6 +289,8 @@ const PATHS: Record<IconName, () => JSX.Element> = {
   'chevron-right': () => <path d="M9 18l6-6-6-6" />,
   'chevron-up': () => <path d="m6 14 6-6 6 6" />,
   'chevron-down': () => <path d="m6 10 6 6 6-6" />,
+  'caret-up': () => <path d="m6 15 6-6 6 6" />,
+  'caret-down': () => <path d="m6 9 6 6 6-6" />,
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

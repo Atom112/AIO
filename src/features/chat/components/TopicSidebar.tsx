@@ -284,7 +284,6 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                     const isChild = depth > 0;
                     const kids = children.get(topic.id) ?? [];
                     const hasKids = kids.length > 0;
-                    const folded = hasKids && collapsedTopicIds().has(topic.id);
                     // Gap between this topic's children block and the rows
                     // above/below it (root children get space-y-1's 4px, deeper
                     // nesting space-y-0.5's 2px).
@@ -296,18 +295,27 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                     // the rail stays continuous under clipping.
                     const parentGap = depth === 1 ? 4 : 2;
                     const upExt = isChild ? (isFirst ? parentGap : 2) : 0;
-                    // drawStem: the rail continues below this row — toward the next
+                    const midY = upExt + 14;
+                    // Fold state must be read ONLY inside the closures / JSX
+                    // attribute expressions below, never directly in this body:
+                    // the whole IIFE is a memo, so a body-level signal read would
+                    // rebuild the entire subtree on every toggle — fresh DOM nodes
+                    // carry no transition, which is why the fold animation never
+                    // played. Closure reads compile to fine-grained per-attribute
+                    // effects that update the SAME nodes in place, letting the
+                    // grid-template-rows / opacity transitions actually run.
+                    const isFolded = () => hasKids && collapsedTopicIds().has(topic.id);
+                    // stemOn: the rail continues below this row — toward the next
                     // sibling, into this row's own (expanded) children, or toward
                     // an uncle (inherited). Folded children do not continue the
                     // rail; without a stem the line ends at the row's elbow (L).
-                    const stemToKids = hasKids && !folded;
-                    const drawStem = isChild && (!isLast || stemToKids || railBelowInherited);
-                    const downExt = drawStem ? 2 : 0;
-                    const railH = 28 + upExt + downExt;
-                    const midY = upExt + 14;
-                    const connectorPath = drawStem
-                      ? `M5 0 V${railH} M5 ${upExt + 10} Q5 ${midY} 9 ${midY} H22`
-                      : `M5 0 V${upExt + 10} Q5 ${midY} 9 ${midY} H22`;
+                    const stemOn = () =>
+                      isChild && (!isLast || (hasKids && !isFolded()) || railBelowInherited);
+                    const railH = () => 28 + upExt + (stemOn() ? 2 : 0);
+                    const connectorPath = () =>
+                      stemOn()
+                        ? `M5 0 V${railH()} M5 ${upExt + 10} Q5 ${midY} 9 ${midY} H22`
+                        : `M5 0 V${upExt + 10} Q5 ${midY} 9 ${midY} H22`;
                     return (
                       <>
                         <div
@@ -324,9 +332,9 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               and connects with the rows above and below. */}
                           {isChild && (
                             <svg
-                              viewBox={`0 0 22 ${railH}`}
+                              viewBox={`0 0 22 ${railH()}`}
                               width="22"
-                              height={railH}
+                              height={railH()}
                               class="shrink-0 self-start"
                               style={upExt ? { 'margin-top': `-${upExt}px` } : undefined}
                               fill="none"
@@ -336,7 +344,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               aria-hidden="true"
                             >
                               <title>{t('chat.branchTopic')}</title>
-                              <path d={connectorPath} />
+                              <path d={connectorPath()} />
                             </svg>
                           )}
                           <Show
@@ -382,24 +390,24 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                             />
                           </Show>
                           <div class="flex items-center gap-0.5 shrink-0">
-                            {/* Fold toggle: only for topics with children.
-                                Chevron-down when expanded, rotates to point
-                                right when folded. Always visible (unlike the
-                                more button's hover-only visibility). */}
+                            {/* Fold toggle: only for topics with children, hover-only
+                                visibility (same as the more button). Caret icons:
+                                v (caret-down) when expanded, ^ (caret-up) when
+                                folded. */}
                             <Show when={hasKids}>
                               <button
                                 type="button"
-                                class="flex items-center justify-center border-none bg-transparent cursor-pointer rounded-md text-white/40 hover:text-white/85 transition-colors duration-200"
+                                class="flex items-center justify-center border-none bg-transparent cursor-pointer rounded-md text-white/40 hover:text-white/85 transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100"
                                 style={{
                                   width: isChild ? '18px' : '24px',
                                   height: isChild ? '18px' : '24px',
                                 }}
                                 title={
-                                  folded ? t('chat.expandBranches') : t('chat.collapseBranches')
+                                  isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
                                 }
-                                aria-expanded={!folded}
+                                aria-expanded={!isFolded()}
                                 aria-label={
-                                  folded ? t('chat.expandBranches') : t('chat.collapseBranches')
+                                  isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
                                 }
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -412,10 +420,8 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                 }}
                               >
                                 <Icon
-                                  name="chevron-down"
-                                  size={isChild ? 10 : 12}
-                                  class="transition-transform duration-200"
-                                  classList={{ '-rotate-90': folded }}
+                                  name={isFolded() ? 'caret-up' : 'caret-down'}
+                                  size={isChild ? 11 : 13}
                                 />
                               </button>
                             </Show>
@@ -444,7 +450,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                             class="grid transition-[grid-template-rows] duration-200 ease-out"
                             style={{
                               'margin-top': `-${childGap}px`,
-                              'grid-template-rows': folded ? '0fr' : '1fr',
+                              'grid-template-rows': isFolded() ? '0fr' : '1fr',
                             }}
                           >
                             <div class="overflow-hidden min-h-0">
@@ -452,7 +458,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                                 class="space-y-0.5 transition-opacity duration-200"
                                 style={{
                                   'padding-top': `${childGap}px`,
-                                  opacity: folded ? '0' : '1',
+                                  opacity: isFolded() ? '0' : '1',
                                 }}
                               >
                                 <For each={children.get(topic.id)}>

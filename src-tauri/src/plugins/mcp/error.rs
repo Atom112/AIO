@@ -1,4 +1,4 @@
-//! MCP 模块统一错误类型
+//! Unified error types for the MCP module
 
 use thiserror::Error;
 

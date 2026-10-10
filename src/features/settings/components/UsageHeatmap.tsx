@@ -1,8 +1,8 @@
 /**
- * UsageHeatmap — GitHub 风格贡献热力图（固定 365 天）
+ * UsageHeatmap - GitHub-style contribution heatmap (fixed 365 days)
  *
- * 7 行（周日-周六）× 最多 53 列（周）
- * 每个格子代表一天，颜色深度对应 token 用量
+ * 7 rows (Sunday-Saturday) x up to 53 columns (weeks)
+ * Each cell is one day; color depth maps to token usage
  */
 import { Component, createMemo, createSignal, Show, For } from 'solid-js';
 import type { UsageSummary } from './UsageSummaryCards';
@@ -78,7 +78,7 @@ const UsageHeatmap: Component<Props> = (props) => {
   const gridData = createMemo(() => {
     const dateMap = buildDateMap(props.summary);
 
-    // 固定生成最近 365 天
+    // Always generate the last 365 days
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const dates: Date[] = [];
@@ -88,14 +88,14 @@ const UsageHeatmap: Component<Props> = (props) => {
       dates.push(d);
     }
 
-    // 对齐到周日开始
+    // Pad to align the grid to a Sunday start
     const firstDate = dates[0];
     const dayOfWeek = firstDate.getDay(); // 0=Sun
     const padded: (Date | null)[] = [];
     for (let i = 0; i < dayOfWeek; i++) padded.push(null);
     for (const d of dates) padded.push(d);
 
-    // 分成 7 行（每周 7 天，每行是一个星期几）
+    // Split into 7 rows (one per weekday, 7 days per week)
     const rows: (Date | null)[][] = [];
     const cols = Math.ceil(padded.length / 7);
     for (let row = 0; row < 7; row++) {
@@ -107,7 +107,7 @@ const UsageHeatmap: Component<Props> = (props) => {
       rows.push(weekRow);
     }
 
-    // 分位数
+    // Quantiles
     const allTokens: number[] = [];
     for (const d of dates) {
       const key = fmtDate(d);
@@ -116,7 +116,7 @@ const UsageHeatmap: Component<Props> = (props) => {
     }
     const levels = calcLevels(allTokens);
 
-    // 月份标签（带年份）
+    // Month labels (with year)
     const monthLabels: { col: number; year?: string; month: string }[] = [];
     if (rows[0]) {
       let lastMonth = -1;
@@ -155,7 +155,7 @@ const UsageHeatmap: Component<Props> = (props) => {
   const handleMove = (d: Date, e: MouseEvent) => {
     const key = fmtDate(d);
     const entry = gridData().dateMap.get(key);
-    // 以格子中心为基准计算 tooltip 位置
+    // Compute the tooltip position relative to the cell center
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const containerRect = (e.currentTarget as HTMLElement)
       .closest('.heatmap-container')
@@ -174,9 +174,9 @@ const UsageHeatmap: Component<Props> = (props) => {
 
   return (
     <div class="heatmap-container relative select-none">
-      {/* 年份 + 月份标签（两行：年份在上，月份在下） */}
+      {/* Year + month labels (two rows: year on top, month below) */}
       <div class="relative ml-8" style={{ height: '28px', 'margin-bottom': '2px' }}>
-        {/* 年份行 */}
+        {/* Year row */}
         <div class="absolute top-0 left-0 w-full" style={{ height: '14px' }}>
           <For each={gridData().monthLabels}>
             {({ col, year }) => {
@@ -197,7 +197,7 @@ const UsageHeatmap: Component<Props> = (props) => {
             }}
           </For>
         </div>
-        {/* 月份行 */}
+        {/* Month row */}
         <div class="absolute bottom-0 left-0 w-full" style={{ height: '14px' }}>
           <For each={gridData().monthLabels}>
             {({ col, month }) => {
@@ -219,7 +219,7 @@ const UsageHeatmap: Component<Props> = (props) => {
         </div>
       </div>
       <div class="flex gap-0.5">
-        {/* 星期标签 */}
+        {/* Weekday labels */}
         <div class="flex flex-col gap-0.5 mr-1.5">
           <For each={dayLabels()}>
             {(label, i) => (
@@ -236,7 +236,7 @@ const UsageHeatmap: Component<Props> = (props) => {
           </For>
         </div>
 
-        {/* 热力图网格 */}
+        {/* Heatmap grid */}
         <div class="flex gap-0.5">
           <For each={Array.from({ length: gridData().cols })}>
             {(_, col) => (
@@ -269,7 +269,7 @@ const UsageHeatmap: Component<Props> = (props) => {
         </div>
       </div>
 
-      {/* 图例 */}
+      {/* Legend */}
       <div class="flex items-center gap-1.5 mt-2 justify-end">
         <span class="text-[9px]" style={{ color: 'rgba(var(--text-base-rgb),0.2)' }}>
           {t('usage.less')}
@@ -282,7 +282,7 @@ const UsageHeatmap: Component<Props> = (props) => {
         </span>
       </div>
 
-      {/* Tooltip — absolute 定位，跟随鼠标在格子上的位置 */}
+      {/* Tooltip - absolutely positioned, follows the hovered cell */}
       <Show when={tooltip()}>
         {(tip) => (
           <div

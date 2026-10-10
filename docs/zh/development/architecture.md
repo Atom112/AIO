@@ -41,12 +41,17 @@ Rust commands
 - `commands/skill.rs`：全局/项目 Skill、市场和 NPX 导入；
 - `commands/project.rs`：项目 CRUD 与 `.aio/` 初始化；
 - `commands/lsp.rs`、`commands/git.rs`：项目语言服务和 Git 操作。
+- `commands/memory.rs`、`commands/embedding.rs`：项目记忆（RAG）事实 CRUD/检索与嵌入供给；
+- `commands/model_download.rs`：按需模型下载器（embed 模型清单 + 安装目录/启停管理，设置页「Embedding 模型管理」）；
+- `services/memory/`：每项目记忆库（facts + FTS5 + 向量打分）、混合检索与记忆工具；
+- `plugins/embed/`：嵌入（向量化）插件（仅本地 ONNX：内置 + 下载模型）。
 
 ## 插件边界
 
 - Provider：Google、Anthropic、Ollama 和 OpenAI-compatible。
 - Local Engine：llama.cpp、Ollama 与 vLLM（通过引擎扫描自动发现，参见 [providers-and-models.md → 引擎扫描](../usage/providers-and-models.md#引擎扫描与自动发现)）。
 - MCP Transport：stdio、HTTP 与 Streamable HTTP。
+- Embed：本地 ONNX 文本嵌入（向量化），为项目记忆提供语义检索——内置 all-MiniLM-L6-v2 开箱即用，另可在「设置 → Embedding 模型管理」下载主流开源模型；在线嵌入已不再支持。
 - LSP：管理不同语言服务器的启动、请求、诊断和关闭。
 
 Manager 在启动时注册插件，command 根据标识符查找实现。新增实现应复用现有 trait，不新增平行调度层。
@@ -59,7 +64,8 @@ Manager 在启动时注册插件，command 根据标识符查找实现。新增�
 - JSON：Provider、MCP、Skill、模型目录和应用设置；
 - 系统凭据库：API Key 与 MCP 密钥；
 - 项目 `.aio/`：项目级 MCP、Skill 和权限。
-- 项目 `.aio/knowledge.json`：可选的跨会话项目知识。
+- 项目 `.aio/knowledge.json`：可选的跨会话项目知识；
+- 项目 `.aio/memory/memory.sqlite`：项目级语义记忆（RAG）库，含事实、版本审计、FTS5 全文与向量索引。
 
 运行时状态：
 
@@ -96,6 +102,14 @@ Manager 在启动时注册插件，command 根据标识符查找实现。新增�
 
 Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任务。子智能体使用受角色约束的工具集，不能再次委派。
 
+### 工具执行语义
+
+- **并行分发**：同一响应块内的只读内置工具并发执行（`FuturesUnordered`），变更类工具与 MCP 工具按原始顺序串行；`role:tool` 回填保持索引序。开关：`parallelToolExecution`。
+- **主 Agent 工具集**（`mainAgentToolAccess`）：默认 `hybrid`——只读工具直达 + 变更走子代理；`orchestrator` 为严格编排（旧行为）；`full` 为主 Agent 持有全部内置工具。
+- **MCP 工具回接**：助手勾选的 server 工具注入主 Agent 与 general 子代理（`allow_mcp_tools`）；重名自动改写为 `mcp__<server>__<tool>`；未信任 server 在 Auto/Workflow 下强制逐次审批（`trusted` 字段）。
+- **模型调用重试**：POST + 状态检查阶段对传输错误与 429/5xx 按 1s/2s/4s 退避重试（`modelCallRetries`，默认 3）；流中段错误不重试。
+- **后台子智能体**：`delegate_task(wait=false)` 的句柄与独立取消令牌登记于 `SubagentHandles`，可经 `stop_subagent` 命令单独停止（父取消级联）。
+
 ### 权限与重试
 
 权限模块先加载模式默认规则，再叠加 `.aio/permissions.json`。匹配会考虑工具名、Server、模式和路径；拒绝规则优先，之后按优先级选择。需要询问时，后端创建待审批请求并通过事件交给前端，收到允许或拒绝后恢复挂起调用。
@@ -110,9 +124,13 @@ Plan 模式只研究并输出计划；工作流模式会拆分并自动执行任
 
 Agent 中止或流式事件失败时，已经产生的步骤、工具输出和文件变更仍会合并进当前助手消息并持久化，避免只保留空白最终回复。
 
-### 跨会话记忆
+### 项目记忆（RAG）
 
-启用 `knowledgeEnabled` 后，系统提示词注入 `.aio/knowledge.json` 中的现有条目，并向 Agent 增加 `remember`、`recall` 工具。知识按项目隔离、按 key 更新，最多保留 50 条。
+启用项目记忆（`memoryEnabled`，可在项目设置中每项目覆盖）后，Agent 获得 `remember` / `recall` / `search_memory` / `update_memory` / `forget_memory` 五个工具，事实写入每项目 `.aio/memory/memory.sqlite`（语义向量 + FTS5 关键词混合检索），并在 Agent 运行时按 token 预算自动注入相关记忆到系统提示词稳定前缀（index=1）。嵌入模型按项目配置（存于项目记忆库 meta，记忆面板中切换；默认本地内置 all-MiniLM-L6-v2 开箱即用、离线可用，也可选择在「设置 → Embedding 模型管理」中下载并启用的其他本地模型；切换会清空该项目全部向量并自动重新嵌入），未配置嵌入或所选模型被全局停用时自动降级为关键词检索。内置模型随应用打包，无需下载与配置；其余本地模型在「Embedding 模型管理」中按需下载（安装目录可自定义）。
+
+P2 起实现自进化：Agent 轮次结束后后台异步提取事实（sleep-time compute，去抖 + 每项目开关），写入时对向量近邻高分事实由 LLM 仲裁（merge / update / supersede / keep_separate，失败 fail-safe），`fact_versions` 表记录完整版本审计链；每项目活跃事实超过上限时按 importance 乘访问衰减归档最低分非 pinned 事实。前端提供记忆面板（搜索 / 列表 / 编辑 / 钉住 / 归档 / 删除 / 版本历史 / 重建索引 / 清理超额 / 清空）。
+
+P3 接入 sqlite-vec（vec0 虚拟表）作为 SQLite 内向量检索（自动注册 sqlite3_auto_extension，不可用时回退 Rust 暴力余弦，功能等价）；记忆可导出/导入 JSON（不含向量，导入后重建），重建索引带进度事件。P4 提供代码级 RAG：`code_chunks` + `fts_code` + `vec_code` 并行存储，`memory_code_index` 增量索引（mtime/size 跳过未变化文件，忽略 .git/node_modules/target 等目录），`search_code` 工具与 `memory_code_search` 命令做向量 + 关键词融合检索；子智能体（explorer/architect 等）获得只读 `recall` / `search_code` 工具。
 
 ## MCP 数据流
 

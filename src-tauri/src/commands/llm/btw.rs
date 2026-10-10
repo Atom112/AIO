@@ -2,14 +2,16 @@
 //!
 //! These commands answer quick contextual questions without modifying the main conversation.
 
+use crate::core::events as ev;
+use crate::ierr;
 use futures_util::StreamExt;
 use serde_json::json;
 use tauri::{Emitter, Window};
 
-/// `/btw` 侧问命令：基于当前对话上下文回答一个简短问题（无工具、流式、不修改对话历史）。
+/// `/btw` side-question command: answers a short question from the current conversation context (no tools, streaming, leaves conversation history untouched).
 ///
-/// 接收前端构建好的消息列表（含对话历史 + btw 问题），
-/// 通过 SSE 流式调用 LLM，逐 chunk 通过 `btw-chunk` 事件推送到前端指定 overlay。
+/// Takes a message list built by the frontend (conversation history + the btw question),
+/// calls the LLM over SSE streaming, and pushes each chunk to the target frontend overlay via the `btw-chunk` event.
 #[tauri::command]
 pub async fn ask_btw_question(
     window: Window,
@@ -33,13 +35,13 @@ pub async fn ask_btw_question(
                 obj.insert("tool_calls".to_string(), v);
             }
         }
-        // 剥离 aio-image 生成图片标记，防止 token 泄漏到 LLM
+        // Strip aio-image generated-image tokens so they do not leak to the LLM
         if let Some(serde_json::Value::String(s)) = msg.get_mut("content") {
             *s = crate::utils::generated_images::strip_generated_image_tokens(s);
         }
     }
 
-    // SSRF 防护
+    // SSRF protection
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
@@ -47,32 +49,28 @@ pub async fn ask_btw_question(
 
     let client = super::streaming_http_client();
     let body = json!({ "model": model, "messages": messages, "stream": true });
-    let endpoint = super::normalize_chat_url(&api_url);
 
-    let res = match tokio::time::timeout(
+    let (res, is_anthropic) = match tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        client
-            .post(&endpoint)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&body)
-            .send(),
+        super::post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
     {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
             let _ = window.emit(
-                "btw-chunk",
+                ev::BTW_CHUNK,
                 json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": e.to_string() }),
             );
             return Err(e.to_string());
         }
         Err(_) => {
+            let err = ierr!("BTW 请求超时（60s）", "BTW request timed out (60s)");
             let _ = window.emit(
-                "btw-chunk",
-                json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": "BTW 请求超时（60s）" }),
+                ev::BTW_CHUNK,
+                json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": err.clone() }),
             );
-            return Err("BTW 请求超时（60s）".to_string());
+            return Err(err);
         }
     };
 
@@ -85,7 +83,7 @@ pub async fn ask_btw_question(
             &body_text
         };
         let _ = window.emit(
-            "btw-chunk",
+            ev::BTW_CHUNK,
             json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": format!("LLM API {}: {}", status, truncated) }),
         );
         return Err(format!("LLM API {}", status));
@@ -98,11 +96,15 @@ pub async fn ask_btw_question(
         let next = tokio::select! {
             item = stream.next() => item,
             _ = tokio::time::sleep(std::time::Duration::from_secs(120)) => {
-                let _ = window.emit(
-                    "btw-chunk",
-                    json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": "BTW 流超时：120 秒未收到数据" }),
+                let err = ierr!(
+                    "BTW 流超时：120 秒未收到数据",
+                    "BTW stream timed out: no data for 120s"
                 );
-                return Err("BTW 流超时：120 秒未收到数据".to_string());
+                let _ = window.emit(
+                    ev::BTW_CHUNK,
+                    json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": err.clone() }),
+                );
+                return Err(err);
             }
         };
 
@@ -110,7 +112,7 @@ pub async fn ask_btw_question(
             Some(Ok(c)) => c,
             Some(Err(e)) => {
                 let _ = window.emit(
-                    "btw-chunk",
+                    ev::BTW_CHUNK,
                     json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": e.to_string() }),
                 );
                 return Err(e.to_string());
@@ -129,7 +131,7 @@ pub async fn ask_btw_question(
             }
             if line == "data: [DONE]" {
                 let _ = window.emit(
-                    "btw-chunk",
+                    ev::BTW_CHUNK,
                     json!({ "overlay_id": overlay_id, "content": "", "done": true }),
                 );
                 return Ok(());
@@ -142,14 +144,30 @@ pub async fn ask_btw_question(
                             .and_then(|m| m.as_str())
                             .unwrap_or("API Error");
                         let _ = window.emit(
-                            "btw-chunk",
+                            ev::BTW_CHUNK,
                             json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": msg }),
                         );
                         return Err(msg.to_string());
                     }
-                    if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
+                    if is_anthropic {
+                        // Anthropic stream parsing reuses the provider plugin's shared helpers
+                        // (single implementation shared with handle_anthropic_stream_event, avoiding drift)
+                        use crate::plugins::provider::anthropic as anth;
+                        if let Some(content) = anth::anthropic_sse_text_delta(&val) {
+                            let _ = window.emit(
+                                ev::BTW_CHUNK,
+                                json!({ "overlay_id": overlay_id, "content": content, "done": false }),
+                            );
+                        } else if anth::anthropic_sse_is_message_stop(&val) {
+                            let _ = window.emit(
+                                ev::BTW_CHUNK,
+                                json!({ "overlay_id": overlay_id, "content": "", "done": true }),
+                            );
+                            return Ok(());
+                        }
+                    } else if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         let _ = window.emit(
-                            "btw-chunk",
+                            ev::BTW_CHUNK,
                             json!({ "overlay_id": overlay_id, "content": content, "done": false }),
                         );
                     }
@@ -160,7 +178,7 @@ pub async fn ask_btw_question(
 
     // Stream ended without [DONE] — emit terminal event
     let _ = window.emit(
-        "btw-chunk",
+        ev::BTW_CHUNK,
         json!({ "overlay_id": overlay_id, "content": "", "done": true }),
     );
     Ok(())

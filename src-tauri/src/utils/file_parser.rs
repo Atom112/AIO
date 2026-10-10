@@ -1,25 +1,26 @@
-/// 工具函数组：处理文件内容提取和转换。
+use crate::ierr;
+/// Utility module: file content extraction and conversion.
 ///
-/// 安全加固（修复 H8：任意路径读取）：
-/// - `process_file_content` 接受路径仅当满足：扩展名白名单 + 父目录在用户 home 或 AppData 内
-/// - `start_local_server` 接受的 `model_path` 仅允许用户 home 或 AppData/engines 内的文件
-/// - 限制文件大小（图片 10MB / 文档 30MB）防止 OOM DoS
+/// Hardening (arbitrary-path read protection):
+/// - `process_file_content` accepts a path only if: the extension is whitelisted + the parent directory is inside the user home or AppData
+/// - `start_local_server` accepts a `model_path` only for files inside the user home or AppData/engines
+/// - File size limits (images 10MB / documents 30MB) prevent OOM DoS
 use base64::{engine::general_purpose, Engine as _};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use zip::ZipArchive;
 
-/// 文件大小上限
+/// File size limits
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_DOC_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 5 * 1024 * 1024;
 
-/// 图片扩展名
+/// Image extensions
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
-/// 富文档扩展名（PDF / Office）
+/// Rich document extensions (PDF / Office)
 const DOC_EXTENSIONS: &[&str] = &["pdf", "docx", "pptx"];
-/// 纯文本 / 源代码扩展名（按 UTF-8 读取为文本注入上下文）
+/// Plain text / source code extensions (read as UTF-8 and injected into the context as text)
 const TEXT_EXTENSIONS: &[&str] = &[
     "txt",
     "md",
@@ -31,7 +32,7 @@ const TEXT_EXTENSIONS: &[&str] = &[
     "yml",
     "ini",
     "tsv",
-    // 源代码
+    // source code
     "rs",
     "c",
     "h",
@@ -74,24 +75,25 @@ const TEXT_EXTENSIONS: &[&str] = &[
     "pl",
 ];
 
-/// 校验用户通过文件选择器主动指定的文件路径（与模型路径一致）。
-/// 附件/文件源自系统文件选择器/拖拽，用户主动发起，可位于磁盘任意位置。
-/// 仅作路径穿越防御：必须为绝对路径且不含 ParentDir 段。
-/// 真正的读取防线在于：不在白名单的扩展名一律拒绝 + 大小上限。
+/// Validates a file path the user picked via the file dialog (same policy as the model path).
+/// Attachments come from the system file dialog / drag-and-drop, are user-initiated, and may sit anywhere on disk.
+/// Only guards against path traversal: the path must be absolute and contain no ParentDir components.
+/// The real read-side defense: reject every extension not on the whitelist + enforce size limits.
 fn validate_safe_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
-        return Err("路径必须为绝对路径".into());
+        return Err(ierr!("路径必须为绝对路径", "Path must be absolute"));
     }
     for comp in path.components() {
         if matches!(comp, Component::ParentDir) {
-            return Err("路径不允许包含 ..".into());
+            return Err(ierr!("路径不允许包含 ..", "Path must not contain .."));
         }
     }
-    let _ = std::fs::canonicalize(path).map_err(|e| format!("路径无法解析: {}", e))?;
+    let _ = std::fs::canonicalize(path)
+        .map_err(|e| ierr!("路径无法解析: {}", "Failed to resolve path: {}", e))?;
     Ok(())
 }
 
-/// 扩展名白名单校验
+/// Extension whitelist check
 fn check_extension(path: &Path, allowed: &[&str]) -> Result<String, String> {
     let ext = path
         .extension()
@@ -99,17 +101,23 @@ fn check_extension(path: &Path, allowed: &[&str]) -> Result<String, String> {
         .unwrap_or("")
         .to_lowercase();
     if !allowed.iter().any(|a| *a == ext) {
-        return Err(format!("扩展名 {:?} 不在白名单 {:?} 内", ext, allowed));
+        return Err(ierr!(
+            "扩展名 {:?} 不在白名单 {:?} 内",
+            "Extension {:?} is not in the whitelist {:?}",
+            ext,
+            allowed
+        ));
     }
     Ok(ext)
 }
 
-/// 检查文件大小
+/// Checks file size
 fn check_size(path: &Path, max: u64) -> Result<(), String> {
     let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
     if meta.len() > max {
-        return Err(format!(
+        return Err(ierr!(
             "文件过大 ({} bytes, 上限 {} bytes)",
+            "File too large ({} bytes, limit {} bytes)",
             meta.len(),
             max
         ));
@@ -163,10 +171,10 @@ pub fn extract_file_content(path: &Path, extension: &str) -> Result<Option<Strin
         "png" | "jpg" | "jpeg" | "webp" => Ok(None),
         "pdf" => pdf_extract::extract_text(path)
             .map(Some)
-            .map_err(|e| format!("PDF解析失败: {}", e)),
+            .map_err(|e| ierr!("PDF解析失败: {}", "Failed to parse PDF: {}", e)),
         "docx" | "pptx" => read_office_file(
             path.to_str()
-                .ok_or_else(|| "文件路径不是有效 UTF-8".to_string())?,
+                .ok_or_else(|| ierr!("文件路径不是有效 UTF-8", "File path is not valid UTF-8"))?,
             extension,
         )
         .map(Some),
@@ -179,11 +187,15 @@ pub fn extract_file_content(path: &Path, extension: &str) -> Result<Option<Strin
             let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
             Ok(Some(res.into_owned()))
         }
-        _ => Err(format!("不支持的附件扩展名: {}", extension)),
+        _ => Err(ierr!(
+            "不支持的附件扩展名: {}",
+            "Unsupported attachment extension: {}",
+            extension
+        )),
     }
 }
 
-/// 从 Office XML 的 `<t>` 标签中提取文本内容。
+/// Extracts text content from `<t>` tags in Office XML.
 pub fn extract_text_from_xml(xml: &str) -> String {
     let reader = xml::EventReader::new(xml.as_bytes());
     let mut out = String::new();
@@ -210,7 +222,7 @@ pub fn extract_text_from_xml(xml: &str) -> String {
     out
 }
 
-/// 读取并解析 OpenXML 格式（docx/pptx）的文件内容。
+/// Reads and parses OpenXML (docx/pptx) file content.
 pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
@@ -237,17 +249,17 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
     Ok(full_text)
 }
 
-/// 处理各种格式的文件内容（H8 路径沙箱加固）
+/// Processes file content in all supported formats (path sandbox hardening).
 ///
-/// 图像 (png/jpg/webp): 返回 Base64 DataURI。
-/// PDF: 返回提取内容文本。
-/// Office (docx/pptx): 返回提取内容文本。
-/// 其他: 尝试按 UTF-8 编码读取为纯文本。
+/// Images (png/jpg/webp): returns a Base64 DataURI.
+/// PDF: returns extracted text.
+/// Office (docx/pptx): returns extracted text.
+/// Others: tries to read as UTF-8 plain text.
 pub async fn process_file_content(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let path_obj = Path::new(&path);
 
-        validate_safe_path(path_obj).map_err(|e| format!("文件路径校验失败: {}", e))?;
+        validate_safe_path(path_obj).map_err(|e| ierr!("文件路径校验失败: {}", "File path validation failed: {}", e))?;
 
         let extension = path_obj
             .extension()
@@ -265,7 +277,7 @@ pub async fn process_file_content(path: String) -> Result<String, String> {
             }
             "pdf" => {
                 check_size(path_obj, MAX_DOC_BYTES)?;
-                pdf_extract::extract_text(&path).map_err(|e| format!("PDF解析失败: {}", e))
+                pdf_extract::extract_text(&path).map_err(|e| ierr!("PDF解析失败: {}", "Failed to parse PDF: {}", e))
             }
             "docx" | "pptx" => {
                 check_size(path_obj, MAX_DOC_BYTES)?;
@@ -283,42 +295,57 @@ pub async fn process_file_content(path: String) -> Result<String, String> {
                 let (res, _, _) = encoding_rs::UTF_8.decode(&bytes);
                 Ok(res.into_owned())
             }
-            _ => Err(format!(
+            _ => Err(ierr!(
                 "扩展名 {:?} 不在白名单内（支持图片/富文档/文本与常用源代码格式）",
+                "Extension {:?} is not in the whitelist (images, rich documents, text, and common source code formats are supported)",
                 extension
             )),
         }
     })
     .await
-    .map_err(|_| "文件处理线程异常".to_string())?
+    .map_err(|_| ierr!("文件处理线程异常", "File processing thread error"))?
 }
 
-/// 校验模型路径安全性（不限制目录，仅验证路径合法 + 文件存在）。
-/// 模型文件由用户通过文件选择器主动指定，可以存放在任意位置。
+/// Validates model path safety (no directory restriction; only path validity + file existence).
+/// The model file is user-picked via the file dialog and may live anywhere on disk.
 pub fn validate_model_path(path: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(path);
     if !p.is_absolute() {
-        return Err("模型路径必须为绝对路径".into());
+        return Err(ierr!(
+            "模型路径必须为绝对路径",
+            "Model path must be absolute"
+        ));
     }
-    // 拒绝含 .. 的路径（防目录穿越）
+    // Reject paths containing .. (path traversal guard)
     for comp in p.components() {
         if matches!(comp, std::path::Component::ParentDir) {
-            return Err("模型路径不允许包含 ..".into());
+            return Err(ierr!(
+                "模型路径不允许包含 ..",
+                "Model path must not contain .."
+            ));
         }
     }
     if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
         let ext_lower = ext.to_lowercase();
         if !["gguf", "safetensors", "bin"].contains(&ext_lower.as_str()) {
-            return Err(format!(
+            return Err(ierr!(
                 "模型文件扩展名 {:?} 不在白名单内 (gguf/safetensors/bin)",
+                "Model file extension {:?} is not in the whitelist (gguf/safetensors/bin)",
                 ext_lower
             ));
         }
     } else {
-        return Err("模型文件必须有扩展名".into());
+        return Err(ierr!(
+            "模型文件必须有扩展名",
+            "Model file must have an extension"
+        ));
     }
     if !p.exists() {
-        return Err(format!("模型文件不存在: {}", path));
+        return Err(ierr!(
+            "模型文件不存在: {}",
+            "Model file does not exist: {}",
+            path
+        ));
     }
     Ok(p)
 }

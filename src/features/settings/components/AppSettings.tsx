@@ -10,7 +10,12 @@ import {
   untrack,
 } from 'solid-js';
 import { open } from '@tauri-apps/plugin-shell';
-import { invoke } from '@tauri-apps/api/core';
+import {
+  loadAppConfig,
+  saveAppConfig,
+  setAutoStart as apiSetAutoStart,
+} from '../../../core/api/config';
+import { checkAppUpdate, type CheckUpdateResult } from '../../../core/api/update';
 import {
   setThemeColor,
   themeColor,
@@ -36,49 +41,49 @@ import {
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
+import NumberInput from '../../../shared/components/NumberInput';
+import {
+  btnIcon,
+  btnPrimary,
+  btnSecondary,
+  btnSecondarySm,
+  btnTabXs,
+  tabActive,
+  tabInactive,
+} from '../../../shared/components/buttonStyles';
 import { locale, setLocale, t, type Locale } from '../../../core/i18n';
 
 /**
- * 后端 check_app_update 返回的结构化结果（与 src-tauri/src/commands/update.rs 一一对应）
- * 用 `kind` 字段做 tag，前端按类别显示不同提示
+ * Structured result returned by the backend check_app_update (mirrors src-tauri/src/commands/update.rs)
+ * The `kind` field acts as the tag; the frontend shows a different hint per kind
  */
-type CheckUpdateResult =
-  | { kind: 'up_to_date'; current_version: string }
-  | {
-      kind: 'update_available';
-      info: { version: string; current_version: string; notes?: string; pub_date?: string };
-    }
-  | { kind: 'service_not_ready'; current_version: string; endpoint: string; reason: string }
-  | { kind: 'network'; current_version: string; endpoint: string; reason: string }
-  | { kind: 'failed'; current_version: string; endpoint: string; reason: string };
 
 /**
- * 应用设置页面组件
- * @returns {JSX.Element} 应用设置页面的 JSX 元素
+ * App settings page component
+ * @returns {JSX.Element} The app settings page JSX element
  */
 const AppSettings: Component = () => {
-  const [h, setH] = createSignal(0); // 色相 (0-360 度)
-  const [s, setS] = createSignal(0); // 饱和度 (0-100%)
-  const [l, setL] = createSignal(0); // 亮度 (0-100%)
+  const [h, setH] = createSignal(0); // Hue (0-360 degrees)
+  const [s, setS] = createSignal(0); // Saturation (0-100%)
+  const [l, setL] = createSignal(0); // Lightness (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
-  const [knowledgeEnabled, setKnowledgeEnabled] = createSignal(false);
-  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // 单次 Agent 最大工具调用轮数（默认 25）
-  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // 并发子智能体上限（默认 5）
-  const [version, setVersion] = createSignal(''); // 应用版本号
-  const [checkUpdating, setCheckUpdating] = createSignal(false); // 手动检查更新中
-  const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // 最近一次手动检查结果
+  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (default 25)
+  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
+  const [version, setVersion] = createSignal(''); // App version
+  const [checkUpdating, setCheckUpdating] = createSignal(false); // Manual update check in progress
+  const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // Result of the last manual check
 
-  // ---- 快捷键设置状态 ----
-  const [recordingActionId, setRecordingActionId] = createSignal<string | null>(null); // 正在录制的命令 ID
+  // ---- Shortcut settings state ----
+  const [recordingActionId, setRecordingActionId] = createSignal<string | null>(null); // Command ID currently being recorded
   const [conflictDialog, setConflictDialog] = createSignal<{
     actionId: string;
     newKeys: string;
     conflictActionId: string;
-  } | null>(null); // 冲突确认对话框状态
-  const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // 重置全部确认状态
-  const [langOpen, setLangOpen] = createSignal(false); // 语言切换下拉开关
-  let langRef: HTMLDivElement | undefined; // 语言切换下拉容器
-  let recordingCleanup: (() => void) | null = null; // 录制模式清理函数
+  } | null>(null); // Conflict confirmation dialog state
+  const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // Reset-all confirmation state
+  const [langOpen, setLangOpen] = createSignal(false); // Language dropdown open state
+  let langRef: HTMLDivElement | undefined; // Language dropdown container
+  let recordingCleanup: (() => void) | null = null; // Recording-mode cleanup function
 
   onMount(() => {
     const onDocMouse = (e: MouseEvent) => {
@@ -89,7 +94,7 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * 初始化 HSL 状态和获取应用版本
+   * Initialize HSL state and fetch the app version
    */
   onMount(async () => {
     const initialHsl = hexToHsl(themeColor());
@@ -104,12 +109,9 @@ const AppSettings: Component = () => {
       console.error('获取版本失败', e);
     }
 
-    // 加载跨会话记忆 + 系统自启配置
+    // Load the auto-start config
     try {
-      const cfg: Record<string, unknown> = await invoke('load_app_config');
-      if (typeof cfg?.knowledgeEnabled === 'boolean') {
-        setKnowledgeEnabled(cfg.knowledgeEnabled);
-      }
+      const cfg = await loadAppConfig();
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
       }
@@ -125,7 +127,7 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * 监听全局主题色变化，同步更新本地 HSL 状态
+   * Track global theme color changes and sync local HSL state
    */
   createEffect(() => {
     const currentHex = themeColor();
@@ -144,9 +146,9 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * 处理色相/饱和度/亮度滑块输入
-   * @param {('h' | 's' | 'l')} type - 滑块类型
-   * @param {number} val - 滑块数值
+   * Handle hue/saturation/lightness slider input
+   * @param {('h' | 's' | 'l')} type - Slider type
+   * @param {number} val - Slider value
    */
   const handleSliderUpdate = (type: 'h' | 's' | 'l', val: number) => {
     let nextH = h();
@@ -169,22 +171,22 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 手动检查更新：调用后端 check_app_update，根据结构化结果更新 toast 状态和按钮提示
+   * Manual update check: calls backend check_app_update, then updates toast state and button hint from the structured result
    */
   const handleManualCheck = async () => {
     setCheckUpdating(true);
     setCheckResult(null);
     try {
-      const result = await invoke<CheckUpdateResult>('check_app_update');
+      const result: CheckUpdateResult = await checkAppUpdate();
       setCheckResult(result);
 
       switch (result.kind) {
         case 'update_available':
           setAppUpdateInfo({
             version: result.info.version,
-            currentVersion: result.info.current_version,
+            currentVersion: result.info.currentVersion,
             notes: result.info.notes,
-            pubDate: result.info.pub_date,
+            pubDate: result.info.pubDate,
           });
           setAppUpdateDismissed(false);
           setAppUpdateAvailable(true);
@@ -193,7 +195,7 @@ const AppSettings: Component = () => {
         case 'service_not_ready':
         case 'network':
         case 'failed':
-          // 这几种情况都不弹左下角 Toast
+          // These kinds never show the bottom-left toast
           break;
       }
     } catch (e) {
@@ -202,7 +204,8 @@ const AppSettings: Component = () => {
         kind: 'failed',
         current_version: version(),
         endpoint: '',
-        reason: typeof e === 'string' ? e : e instanceof Error ? e.message : '未知错误',
+        reason:
+          typeof e === 'string' ? e : e instanceof Error ? e.message : t('common.unknownError'),
       });
     } finally {
       setCheckUpdating(false);
@@ -210,7 +213,7 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 把结构化的检查结果翻译为显示在按钮旁的提示文字
+   * Map the structured check result to the hint text shown next to the button
    */
   const checkResultMessage = (): string => {
     const r = checkResult();
@@ -230,9 +233,9 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * Hex 颜色转 RGB 对象
-   * @param {string} hex - Hex 颜色字符串
-   * @returns {{r: number, g: number, b: number}} RGB 分量对象
+   * Convert a Hex color to an RGB object
+   * @param {string} hex - Hex color string
+   * @returns {{r: number, g: number, b: number}} RGB component object
    */
   const hexToRgb = (hex: string) => {
     const r = parseInt(hex.slice(1, 3), 16) || 0;
@@ -242,9 +245,9 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * Hex 颜色转 HSL 对象
-   * @param {string} hex - Hex 颜色字符串
-   * @returns {{h: number, s: number, l: number}} HSL 分量对象（h:0-360, s/l:0-100）
+   * Convert a Hex color to an HSL object
+   * @param {string} hex - Hex color string
+   * @returns {{h: number, s: number, l: number}} HSL component object (h: 0-360, s/l: 0-100)
    */
   const hexToHsl = (hex: string) => {
     let { r, g, b } = hexToRgb(hex);
@@ -277,9 +280,9 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 环形色盘交互处理：将鼠标/触摸位置映射为色相角度
-   * @param {MouseEvent | TouchEvent} e - 鼠标或触摸事件
-   * @param {DOMRect} rect - 色环元素的边界
+   * Ring color-wheel interaction: map the mouse/touch position to a hue angle
+   * @param {MouseEvent | TouchEvent} e - Mouse or touch event
+   * @param {DOMRect} rect - Bounds of the ring element
    */
   const handleRingInteraction = (e: MouseEvent | TouchEvent, rect: DOMRect) => {
     const centerX = rect.left + rect.width / 2;
@@ -293,7 +296,7 @@ const AppSettings: Component = () => {
   };
 
   /**
-   * 计算色环指示点位置（基于当前色相）
+   * Compute the ring indicator position (from the current hue)
    */
   const pointerStyle = createMemo(() => {
     const rad = ((h() - 90) * Math.PI) / 180;
@@ -307,11 +310,11 @@ const AppSettings: Component = () => {
   });
 
   /**
-   * HSL 颜色转 Hex 字符串
-   * @param {number} h - 色相 (0-360)
-   * @param {number} s - 饱和度 (0-100)
-   * @param {number} l - 亮度 (0-100)
-   * @returns {string} Hex 颜色字符串
+   * Convert an HSL color to a Hex string
+   * @param {number} h - Hue (0-360)
+   * @param {number} s - Saturation (0-100)
+   * @param {number} l - Lightness (0-100)
+   * @returns {string} Hex color string
    */
   const hslToHex = (h: number, s: number, l: number) => {
     l /= 100;
@@ -328,13 +331,13 @@ const AppSettings: Component = () => {
     return `#${f(0)}${f(8)}${f(4)}`;
   };
 
-  const rgb = createMemo(() => hexToRgb(themeColor())); // 当前主题色的 RGB 值
+  const rgb = createMemo(() => hexToRgb(themeColor())); // RGB value of the current theme color
 
-  // ---- 快捷键录制逻辑 ----
+  // ---- Shortcut recording logic ----
 
-  /** 开始录制快捷键 */
+  /** Start recording a shortcut */
   const startRecording = (actionId: string) => {
-    // 先清理之前的录制
+    // Clean up any previous recording first
     if (recordingCleanup) {
       recordingCleanup();
       recordingCleanup = null;
@@ -348,21 +351,21 @@ const AppSettings: Component = () => {
       e.preventDefault();
       e.stopPropagation();
 
-      // 检查冲突
+      // Check for conflicts
       const conflictId = getActionByKeys(combo);
       if (conflictId && conflictId !== actionId) {
-        // 有冲突，弹确认框
+        // Conflict found: show the confirmation dialog
         setConflictDialog({
           actionId,
           newKeys: combo,
           conflictActionId: conflictId,
         });
       } else {
-        // 无冲突，直接设置
+        // No conflict: apply directly
         setShortcutBinding(actionId, combo);
       }
 
-      // 停止录制
+      // Stop recording
       stopRecording();
     };
 
@@ -372,7 +375,7 @@ const AppSettings: Component = () => {
     };
   };
 
-  /** 停止录制 */
+  /** Stop recording */
   const stopRecording = () => {
     setRecordingActionId(null);
     if (recordingCleanup) {
@@ -381,7 +384,7 @@ const AppSettings: Component = () => {
     }
   };
 
-  /** 处理冲突确认：覆盖 */
+  /** Handle conflict confirmation: override */
   const handleConflictOverride = () => {
     const d = conflictDialog();
     if (d) {
@@ -390,15 +393,15 @@ const AppSettings: Component = () => {
     setConflictDialog(null);
   };
 
-  /** 处理冲突确认：取消 */
+  /** Handle conflict confirmation: cancel */
   const handleConflictCancel = () => {
     setConflictDialog(null);
   };
 
-  // 点击页面其他地方取消录制
+  // Clicking elsewhere on the page cancels recording
   const onDocClick = (e: MouseEvent) => {
     if (recordingActionId()) {
-      // 检查点击是否在快捷键徽章上
+      // Check whether the click is on a shortcut badge
       const target = e.target as HTMLElement;
       if (
         !target.closest(
@@ -419,10 +422,10 @@ const AppSettings: Component = () => {
     if (recordingCleanup) recordingCleanup();
   });
 
-  // 所有注册的命令（用于设置列表显示）
+  // All registered commands (displayed in the settings list)
   const allCommands = createMemo(() => getRegisteredCommands());
 
-  // 按类别分组
+  // Grouped by category
   const groupedCommands = createMemo(() => {
     const groups: { category: string; label: string; items: CommandAction[] }[] = [];
     const seen = new Set<string>();
@@ -448,11 +451,11 @@ const AppSettings: Component = () => {
   });
 
   const presetThemes = [
-    { name: t('app.theme.softBlue'), color: '#7c9abf' },
-    { name: t('app.theme.ashPink'), color: '#b8929e' },
-    { name: t('app.theme.warmGray'), color: '#a8a098' },
-    { name: t('app.theme.sageGreen'), color: '#9aab9a' },
-    { name: t('app.theme.lavender'), color: '#a89cc8' },
+    { name: t('app.theme.softBlue'), color: 'var(--color-pri)' },
+    { name: t('app.theme.ashPink'), color: '#b8929e' }, // gate-allow: color #b8929e
+    { name: t('app.theme.warmGray'), color: '#a8a098' }, // gate-allow: color #a8a098
+    { name: t('app.theme.sageGreen'), color: '#9aab9a' }, // gate-allow: color #9aab9a
+    { name: t('app.theme.lavender'), color: '#a89cc8' }, // gate-allow: color #a89cc8
   ];
 
   const langOptions = createMemo(() => [
@@ -489,7 +492,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div class="pr-6">
-            <span class="block text-[#eee] text-[14px]">{t('app.language.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.language.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">
               {t('app.language.description')} {t('app.language.system')}
             </p>
@@ -552,28 +557,24 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div class="pr-6">
-            <span class="block text-[#eee] text-[14px]">{t('app.darkMode.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.darkMode.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.darkMode.description')}</p>
           </div>
           <div class="flex rounded-md border border-white/10 overflow-hidden">
             <button
               type="button"
-              class="px-3 py-1 text-xs transition-all duration-200"
-              classList={{
-                'bg-pri-10 text-white': !isDarkMode(),
-                'text-white/35 hover:text-white/60': isDarkMode(),
-              }}
+              class={btnTabXs}
+              classList={{ [tabActive]: !isDarkMode(), [tabInactive]: isDarkMode() }}
               onClick={() => setIsDarkMode(false)}
             >
               {t('app.darkMode.off')}
             </button>
             <button
               type="button"
-              class="px-3 py-1 text-xs transition-all duration-200"
-              classList={{
-                'bg-pri-10 text-white': isDarkMode(),
-                'text-white/35 hover:text-white/60': !isDarkMode(),
-              }}
+              class={btnTabXs}
+              classList={{ [tabActive]: isDarkMode(), [tabInactive]: !isDarkMode() }}
               onClick={() => setIsDarkMode(true)}
             >
               {t('app.darkMode.on')}
@@ -583,7 +584,9 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.autoStart.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.autoStart.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.autoStart.description')}</p>
           </div>
 
@@ -596,10 +599,10 @@ const AppSettings: Component = () => {
                 const val = e.currentTarget.checked;
                 setAutoStart(val);
                 try {
-                  await invoke('set_auto_start', { enabled: val });
+                  await apiSetAutoStart(val);
                 } catch (err) {
                   console.warn('设置自启失败:', err);
-                  setAutoStart(!val); // 回滚
+                  setAutoStart(!val); // Roll back
                 }
               }}
             />
@@ -609,120 +612,86 @@ const AppSettings: Component = () => {
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.knowledge.title')}</span>
-            <p class="text-xs text-white/35 mt-1">{t('app.knowledge.description')}</p>
-          </div>
-
-          <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
-            <input
-              class="opacity-0 w-0 h-0 peer"
-              type="checkbox"
-              checked={knowledgeEnabled()}
-              onChange={async (e) => {
-                const val = e.currentTarget.checked;
-                setKnowledgeEnabled(val);
-                try {
-                  const cfg: any = await invoke('load_app_config').catch(() => null);
-                  if (cfg) {
-                    await invoke('save_app_config', { config: { ...cfg, knowledgeEnabled: val } });
-                  }
-                } catch (err) {
-                  console.warn('保存 knowledge 配置失败:', err);
-                }
-              }}
-            />
-            <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
-          </label>
-        </div>
-
-        <div class="flex justify-between items-center py-3 border-b border-white/5">
-          <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.maxToolRounds.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.maxToolRounds.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.maxToolRounds.description')}</p>
           </div>
 
-          <input
-            type="number"
+          <NumberInput
+            value={maxToolRounds()}
             min={1}
             max={200}
-            step={1}
-            value={maxToolRounds()}
-            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
-            onInput={async (e) => {
-              const raw = Number(e.currentTarget.value);
-              const clamped = Number.isFinite(raw)
-                ? Math.min(200, Math.max(1, Math.round(raw)))
-                : 25;
+            fallback={25}
+            onInput={(clamped) => {
               setMaxToolRounds(clamped);
-              try {
-                const cfg: any = await invoke('load_app_config').catch(() => null);
-                if (cfg) {
-                  await invoke('save_app_config', { config: { ...cfg, maxToolRounds: clamped } });
+              void (async () => {
+                try {
+                  const cfg = await loadAppConfig().catch(() => null);
+                  if (cfg) {
+                    await saveAppConfig({ ...cfg, maxToolRounds: clamped });
+                  }
+                } catch (err) {
+                  console.warn('保存最大工具轮数配置失败:', err);
                 }
-              } catch (err) {
-                console.warn('保存最大工具轮数配置失败:', err);
-              }
+              })();
             }}
           />
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
               {t('app.maxConcurrentSubagents.title')}
             </span>
             <p class="text-xs text-white/35 mt-1">{t('app.maxConcurrentSubagents.description')}</p>
           </div>
 
-          <input
-            type="number"
+          <NumberInput
+            value={maxConcurrentSubagents()}
             min={1}
             max={32}
-            step={1}
-            value={maxConcurrentSubagents()}
-            class="w-[84px] h-[30px] px-2 rounded-md text-sm text-right bg-white/[0.05] border border-white/[0.1] focus:outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
-            onInput={async (e) => {
-              const raw = Number(e.currentTarget.value);
-              const clamped = Number.isFinite(raw) ? Math.min(32, Math.max(1, Math.round(raw))) : 5;
+            fallback={5}
+            onInput={(clamped) => {
               setMaxConcurrentSubagents(clamped);
-              try {
-                const cfg: any = await invoke('load_app_config').catch(() => null);
-                if (cfg) {
-                  await invoke('save_app_config', {
-                    config: { ...cfg, maxConcurrentSubagents: clamped },
-                  });
+              void (async () => {
+                try {
+                  const cfg = await loadAppConfig().catch(() => null);
+                  if (cfg) {
+                    await saveAppConfig({ ...cfg, maxConcurrentSubagents: clamped });
+                  }
+                } catch (err) {
+                  console.warn('保存并发子智能体上限配置失败:', err);
                 }
-              } catch (err) {
-                console.warn('保存并发子智能体上限配置失败:', err);
-              }
+              })();
             }}
           />
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
-            <span class="block text-[#eee] text-[14px]">{t('app.openSource.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.openSource.title')}
+            </span>
             <p class="text-xs text-white/35 mt-1">{t('app.openSource.description')}</p>
           </div>
 
-          <div
-            class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200"
-            style={{
-              background: 'rgba(var(--primary-rgb), 0.18)',
-              color: '#fff',
-              border: '1px solid rgba(var(--primary-rgb), 0.25)',
-            }}
+          <button
+            type="button"
+            class={btnSecondarySm + ' min-w-[112px]'}
             onClick={() => open('https://github.com/Atom112/AIO')}
             title={t('app.openSource.visit')}
           >
-            <Icon src="/icons/app-logo/github.svg" class="w-5 h-5" />
-            <span>GitHub</span>
-          </div>
+            <Icon src="/icons/app-logo/github.svg" class="w-4 h-4" />
+            <span class="text-sm font-medium">GitHub</span>
+          </button>
         </div>
 
         <div class="flex justify-between items-center py-3">
           <div class="flex-1 min-w-0 pr-4">
-            <span class="block text-[#eee] text-[14px]">{t('app.update.title')}</span>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.update.title')}
+            </span>
             <p
               class="text-xs mt-1"
               style={{
@@ -731,8 +700,8 @@ const AppSettings: Component = () => {
                   if (!r) return 'rgba(var(--text-base-rgb),0.35)';
                   if (r.kind === 'update_available') return 'var(--primary-color)';
                   if (r.kind === 'service_not_ready' || r.kind === 'failed' || r.kind === 'network')
-                    return '#d99';
-                  return '#7c9abf';
+                    return '#d99'; // gate-allow: color return #d99
+                  return 'var(--color-pri)';
                 })(),
               }}
             >
@@ -741,12 +710,7 @@ const AppSettings: Component = () => {
           </div>
 
           <button
-            class="flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-            style={{
-              background: 'rgba(var(--primary-rgb), 0.18)',
-              color: '#fff',
-              border: '1px solid rgba(var(--primary-rgb), 0.25)',
-            }}
+            class={btnSecondarySm + ' min-w-[112px]'}
             disabled={checkUpdating()}
             onClick={handleManualCheck}
             title={t('app.update.check')}
@@ -831,6 +795,7 @@ const AppSettings: Component = () => {
                 </span>
               </div>
 
+              {/* gate-allow: color hue knob glow (hue picker UI primitive, white base) */}
               <div
                 class="absolute top-1/2 left-1/2 w-[18px] h-[18px] border-[3px] border-white rounded-full shadow-[0_0_5px_#fff,inset_0_0_10px_#fff] pointer-events-none z-[3]"
                 style={pointerStyle()}
@@ -847,7 +812,7 @@ const AppSettings: Component = () => {
                       background: theme.color,
                       border:
                         themeColor().toLowerCase() === theme.color.toLowerCase()
-                          ? '2px solid #fff'
+                          ? '2px solid #fff' // gate-allow: color 2px solid #fff
                           : '2px solid transparent',
                     }}
                   />
@@ -885,7 +850,7 @@ const AppSettings: Component = () => {
                 value={l()}
                 class="custom-slider light-slider"
                 style={{
-                  background: `linear-gradient(to right, #000, hsl(${h()}, ${s()}%, 50%), #fff)`,
+                  background: `linear-gradient(to right, #000, hsl(${h()}, ${s()}%, 50%), #fff)`, // gate-allow: color hue bar black/white anchors
                 }}
                 onInput={(e) => handleSliderUpdate('l', parseInt(e.currentTarget.value))}
               />
@@ -894,7 +859,7 @@ const AppSettings: Component = () => {
         </div>
       </div>
 
-      {/* 快捷键设置面板 */}
+      {/* Shortcut settings panel */}
       <div
         class="bg-[rgb(255_255_255/0.04)] rounded-xl p-6 animate-row-in"
         style={{
@@ -910,12 +875,7 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.shortcuts.description')}</p>
           </div>
           <button
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all duration-200"
-            style={{
-              background: 'rgba(var(--text-base-rgb), 0.04)',
-              color: 'rgba(var(--text-base-rgb), 0.40)',
-              border: '1px solid var(--border-dim)',
-            }}
+            class={btnSecondarySm}
             onClick={() => setResetAllConfirm(true)}
             title={t('app.shortcuts.restoreDefaults')}
           >
@@ -924,7 +884,7 @@ const AppSettings: Component = () => {
           </button>
         </div>
 
-        {/* 恢复全部确认对话框 */}
+        {/* Reset-all confirmation dialog */}
         <Show when={resetAllConfirm()}>
           <div
             class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -939,14 +899,11 @@ const AppSettings: Component = () => {
                 {t('app.shortcuts.resetMessage')}
               </p>
               <div class="flex justify-end gap-2">
-                <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel"
-                  onClick={() => setResetAllConfirm(false)}
-                >
+                <button class={btnSecondary} onClick={() => setResetAllConfirm(false)}>
                   {t('common.cancel')}
                 </button>
                 <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm"
+                  class={btnPrimary}
                   onClick={() => {
                     resetAllShortcutBindings();
                     setResetAllConfirm(false);
@@ -959,7 +916,7 @@ const AppSettings: Component = () => {
           </div>
         </Show>
 
-        {/* 冲突确认对话框 */}
+        {/* Conflict confirmation dialog */}
         <Show when={conflictDialog()}>
           <div
             class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -984,16 +941,10 @@ const AppSettings: Component = () => {
                 })}
               </p>
               <div class="flex justify-end gap-2">
-                <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent cancel"
-                  onClick={handleConflictCancel}
-                >
+                <button class={btnSecondary} onClick={handleConflictCancel}>
                   {t('common.cancel')}
                 </button>
-                <button
-                  class="px-4 py-1.5 rounded-[7px] text-[13px] font-medium cursor-pointer transition-all duration-150 border border-transparent confirm"
-                  onClick={handleConflictOverride}
-                >
+                <button class={btnPrimary} onClick={handleConflictOverride}>
                   {t('app.shortcuts.replace')}
                 </button>
               </div>
@@ -1001,7 +952,7 @@ const AppSettings: Component = () => {
           </div>
         </Show>
 
-        {/* 快捷键列表（按类别分组） */}
+        {/* Shortcut list (grouped by category) */}
         <For each={groupedCommands()}>
           {(group) => (
             <div class="mb-4 last:mb-0">
@@ -1031,7 +982,7 @@ const AppSettings: Component = () => {
                         </span>
                       </div>
                       <div class="flex items-center gap-2 shrink-0">
-                        {/* 快捷键徽章 */}
+                        {/* Shortcut badge */}
                         <div
                           class={`inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]${isRecording() ? ' recording' : ''}${modified() ? ' modified' : ''}`}
                           onClick={() => {
@@ -1050,6 +1001,7 @@ const AppSettings: Component = () => {
                           <Show
                             when={!isRecording()}
                             fallback={
+                              // gate-allow: color hue preview in white (screenshot preview UI primitive)
                               <span class="text-[11px] font-medium" style={{ color: '#fff' }}>
                                 {t('app.shortcuts.recording')}
                               </span>
@@ -1070,10 +1022,10 @@ const AppSettings: Component = () => {
                           </Show>
                         </div>
 
-                        {/* 重置按钮（仅修改后显示） */}
+                        {/* Reset button (shown only when modified) */}
                         <Show when={modified()}>
                           <button
-                            class="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[5px] border-none bg-white/[0.04] text-white/30 cursor-pointer transition-all duration-150 p-0 hover:bg-white/[0.08] hover:text-white/60"
+                            class={'w-[22px] h-[22px] text-white/30 hover:text-white/60 ' + btnIcon}
                             onClick={(e) => {
                               e.stopPropagation();
                               resetShortcutBinding(cmd.id);
@@ -1092,7 +1044,7 @@ const AppSettings: Component = () => {
           )}
         </For>
 
-        {/* 无命令时的空状态 */}
+        {/* Empty state when there are no commands */}
         <Show when={allCommands().length === 0}>
           <div
             class="text-center py-8 text-[13px]"

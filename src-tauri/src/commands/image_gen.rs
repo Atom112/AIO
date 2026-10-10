@@ -1,17 +1,19 @@
-//! 专用图像生成端点 `/images/generations`（dall-e-2/3 等）。
+//! Dedicated image-generation endpoint `/images/generations` (dall-e-2/3 etc.).
 //!
-//! 与 chat/completions 内嵌图像不同，这些模型没有 chat 模式，只能走专用非流式端点。
-//! 返回的 `b64_json`/`url` 统一经 [`crate::utils::generated_images`] 落盘并重写为
-//! `aio-image://` 标记，随后以 `llm-chunk` done 载荷回传，前端渲染逻辑与流式一致。
+//! Unlike images embedded in chat/completions, these models have no chat mode and only
+//! work through the dedicated non-streaming endpoint. Returned `b64_json`/`url` values are
+//! uniformly persisted by [`crate::utils::generated_images`] and rewritten into
+//! `aio-image://` markers, then sent back via the `llm-chunk` done payload; the frontend renders them the same way as streaming.
 
+use crate::core::events as ev;
 use crate::core::models::StreamPayload;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Window};
 
-/// 把 chat completions 基址推导为 images/generations 地址。
+/// Derive the images/generations URL from a chat completions base URL.
 ///
-/// - `…/chat/completions` → 去掉该后缀后追加 `/images/generations`（保留 `/v1` 等路径前缀）
-/// - 其它 → 追加 `/images/generations`
+/// - `…/chat/completions` -> strip that suffix and append `/images/generations` (keeps path prefixes such as `/v1`)
+/// - otherwise -> append `/images/generations`
 fn images_generations_url(api_url: &str) -> String {
     let trimmed = api_url.trim_end_matches('/');
     if let Some(base) = trimmed.strip_suffix("/chat/completions") {
@@ -21,17 +23,17 @@ fn images_generations_url(api_url: &str) -> String {
     }
 }
 
-/// 调用专用图像生成端点并把结果落盘、重写为本地标记后回传前端。
+/// Call the dedicated image-generation endpoint, persist results, rewrite them into local markers, and return them to the frontend.
 ///
-/// # 参数
-/// - `api_url`：Provider base URL（chat completions 形态或 v1 形态，自动推导 images 地址）
-/// - `api_key`：Provider API key
-/// - `model`：图像模型 id（如 dall-e-2 / dall-e-3）
-/// - `prompt`：图像生成提示词
-/// - `assistant_id` / `topic_id`：用于匹配前端消息与 `llm-chunk` done 载荷
+/// # Parameters
+/// - `api_url`: Provider base URL (chat completions form or v1 form; the images URL is derived automatically)
+/// - `api_key`: Provider API key
+/// - `model`: image model id (e.g. dall-e-2 / dall-e-3)
+/// - `prompt`: image generation prompt
+/// - `assistant_id` / `topic_id`: used to match the frontend message and the `llm-chunk` done payload
 ///
-/// 成功时 `llm-chunk(done)` 携带重写后的内容与图像元数据；任何错误先 emit
-/// `llm-chunk(done, error)` 再返回 `Err`（镜像 run_agent_turn epilogue 契约）。
+/// On success `llm-chunk(done)` carries the rewritten content and image metadata; on any error an
+/// `llm-chunk(done, error)` is emitted first, then `Err` is returned (mirroring the run_agent_turn epilogue contract).
 #[tauri::command]
 #[allow(
     clippy::too_many_arguments,
@@ -47,7 +49,7 @@ pub async fn generate_image(
     assistant_id: String,
     topic_id: String,
 ) -> Result<(), String> {
-    // SSRF 防护（与流式路径同款，允许 localhost）
+    // SSRF protection (same as the streaming path; localhost allowed)
     crate::utils::url_validation::validate_http_url(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
@@ -57,7 +59,7 @@ pub async fn generate_image(
                      error: Option<String>,
                      images: Option<Vec<crate::core::models::GeneratedImage>>| {
         let _ = window.emit(
-            "llm-chunk",
+            ev::LLM_CHUNK,
             StreamPayload {
                 assistant_id: assistant_id.clone(),
                 topic_id: topic_id.clone(),
@@ -67,6 +69,7 @@ pub async fn generate_image(
                 input_tokens: None,
                 output_tokens: None,
                 context_tokens: None,
+                cached_input_tokens: None,
                 images,
             },
         );
@@ -76,7 +79,7 @@ pub async fn generate_image(
         e
     };
 
-    // 专用非流式 client：图像生成可超过 60s，放宽到 180s
+    // Dedicated non-streaming client: image generation can exceed 60s, so the timeout is relaxed to 180s
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(180))
@@ -117,7 +120,7 @@ pub async fn generate_image(
         .and_then(|d| d.get(0))
         .ok_or_else(|| emit_error("图像生成响应缺少 data[0]".to_string()))?;
 
-    // b64_json（首选）→ data URI；否则回退 url 字段
+    // b64_json (preferred) -> data URI; otherwise fall back to the url field
     let data_or_url = if let Some(b64) = item.get("b64_json").and_then(|v| v.as_str()) {
         format!("data:image/png;base64,{}", b64)
     } else if let Some(u) = item.get("url").and_then(|v| v.as_str()) {

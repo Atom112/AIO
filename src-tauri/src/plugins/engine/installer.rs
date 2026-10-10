@@ -1,13 +1,13 @@
-/// 引擎安装路径管理
-/// 仅保留路径解析工具（安装/下载功能已移除）
+/// Engine install path management
+/// Path resolution utilities only (no install/download logic)
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-/// 引擎安装状态（供插件查询）
+/// Engine installation status (queried by plugins)
 pub struct EngineInstaller;
 
 impl EngineInstaller {
-    /// 获取引擎安装目录（app data 下）
+    /// Get the engine install directory (under app data)
     pub fn get_engine_dir(app: &AppHandle) -> PathBuf {
         let data_dir = app
             .path()
@@ -16,7 +16,7 @@ impl EngineInstaller {
         data_dir.join("engines").join("llama-cpp")
     }
 
-    /// 获取引擎可执行文件路径
+    /// Get the engine executable path
     pub fn get_exe_path(app: &AppHandle) -> PathBuf {
         let dir = Self::get_engine_dir(app);
         #[cfg(target_os = "windows")]
@@ -29,7 +29,7 @@ impl EngineInstaller {
         }
     }
 
-    /// 检查引擎是否已安装（可执行文件存在）
+    /// Check whether the engine is installed (executable exists)
     pub fn is_installed(app: &AppHandle) -> bool {
         Self::get_exe_path(app).exists()
     }

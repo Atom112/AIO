@@ -27,13 +27,18 @@ AIO 使用 Tauri 提供的应用数据目录和系统配置目录，应用标识
 
 `config.json` 当前持久化：
 
-| 字段               | 行为                                 |
-| ------------------ | ------------------------------------ |
-| `api_url`          | 兼容旧版的默认 API URL               |
-| `default_model`    | 兼容旧版的默认模型                   |
-| `local_model_path` | 兼容旧版的本地模型路径               |
-| `knowledgeEnabled` | 是否启用项目跨会话记忆，默认 `false` |
-| `autoStartEnabled` | 是否随系统启动，默认 `false`         |
+| 字段                          | 行为                                                                                                                                                                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_url`                     | 兼容旧版的默认 API URL                                                                                                                                                                                                                                        |
+| `default_model`               | 兼容旧版的默认模型                                                                                                                                                                                                                                            |
+| `local_model_path`            | 兼容旧版的本地模型路径                                                                                                                                                                                                                                        |
+| `memoryEnabled`               | 项目级语义记忆（RAG）的全局默认，默认 `false`；每项目可在项目设置中覆盖                                                                                                                                                                                       |
+| `memoryEmbedding`             | 遗留全局嵌入配置（仅作迁移源）：实际嵌入模型现在按项目配置，存在各项目记忆库 meta 中，在项目「记忆面板 → 切换模型」中管理；默认 `local`（all-MiniLM-L6-v2，384 维，开箱即用、离线可用），切换会清空该项目全部向量并重新嵌入。仅支持本地模型（在线嵌入已移除） |
+| `embeddingModelsDir`          | 全局嵌入模型安装目录（默认 `<app_data_dir>/models/embed`；设置页「Embedding 模型管理」可自定义）                                                                                                                                                              |
+| `embeddingModels`             | 全局嵌入模型启停注册表（`[{id, enabled}]`；缺省条目视为启用，设置页「Embedding 模型管理」维护）                                                                                                                                                               |
+| `memoryMaxFacts`              | 每项目活跃事实上限，默认 `2000`                                                                                                                                                                                                                               |
+| `memoryInjectionBudgetTokens` | 记忆注入系统提示词的 token 预算，默认 `3000`                                                                                                                                                                                                                  |
+| `autoStartEnabled`            | 是否随系统启动，默认 `false`                                                                                                                                                                                                                                  |
 
 后端 `AppConfig` 还包含以下运行字段：
 
@@ -84,7 +89,6 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 | 左右侧栏状态与宽度               | 聊天布局              |
 | `aio_ignored_update_version`     | 忽略的更新版本        |
 | `aio-local-auto-start-confirmed` | 本地引擎启动确认      |
-| `user-avatar-path`               | 用户头像文件路径      |
 
 清理 WebView 数据会恢复这些界面偏好，但不会删除 SQLite 聊天记录、Provider 配置或项目 `.aio/`。
 
@@ -108,6 +112,7 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 
 - `permissions.json`：项目工具的允许、询问和拒绝规则，详见[权限系统参考](permissions.md)；
 - `knowledge.json`：跨会话知识，类别为 `decision`、`pattern`、`convention` 或 `note`，最多保留 50 条。
+- `memory/`：项目级语义记忆库（`memory.sqlite`：facts、版本审计、FTS5、向量索引），建议加入 `.gitignore`。
 
 ## 附件白名单
 

@@ -1,9 +1,10 @@
 //! LSP agent tools — goto definition, find references, hover, document symbols.
 //!
-//! 为 AI Agent 提供 LSP 驱动的代码智能工具：
-//! 跳转到定义、查找引用、悬浮类型信息、文档符号列表。
+//! LSP-driven code intelligence tools for the AI agent:
+//! go-to-definition, find references, hover info, and document symbols.
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::ierr;
 use crate::plugins::lsp::{LspClient, LspManager};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -116,7 +117,7 @@ pub fn lsp_symbols_tool_spec() -> ToolSpec {
     }
 }
 
-/// 返回所有 LSP 工具 spec（包含已有 `read_lints` 及新增 4 个工具）。
+/// Returns every LSP tool spec (the existing `read_lints` plus the four tools above).
 pub fn get_all_lsp_tool_specs() -> Vec<ToolSpec> {
     vec![
         super::lsp_tools::tool_spec(),
@@ -129,17 +130,10 @@ pub fn get_all_lsp_tool_specs() -> Vec<ToolSpec> {
 
 // ====== Helpers ======
 
-fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
+// tool_ok is provided centrally by utils::tool_result (single source repo-wide)
+use crate::utils::tool_result::tool_ok;
 
-/// 根据文件扩展名映射到语言服务器 ID。
+/// Maps a file extension to a language server ID.
 fn extension_to_language_id(ext: &str) -> Option<&str> {
     match ext {
         "rs" => Some("rust"),
@@ -151,19 +145,30 @@ fn extension_to_language_id(ext: &str) -> Option<&str> {
     }
 }
 
-/// 相对文件路径 → file:// URI（仿照 client.rs 中同名私有函数）。
+/// Relative file path → file:// URI (mirrors the same-named private helper in client.rs).
 fn file_path_to_uri(project_root: &Path, file_path: &str) -> Result<String, String> {
     let full = project_root.join(file_path);
-    let canonical = std::fs::canonicalize(&full)
-        .map_err(|e| format!("无法解析路径 {}: {}", full.display(), e))?;
-    let url = url::Url::from_file_path(&canonical)
-        .map_err(|_| format!("路径转 URI 失败: {}", canonical.display()))?;
+    let canonical = std::fs::canonicalize(&full).map_err(|e| {
+        ierr!(
+            "无法解析路径 {}: {}",
+            "Failed to resolve path {}: {}",
+            full.display(),
+            e
+        )
+    })?;
+    let url = url::Url::from_file_path(&canonical).map_err(|_| {
+        ierr!(
+            "路径转 URI 失败: {}",
+            "Failed to convert path to URI: {}",
+            canonical.display()
+        )
+    })?;
     Ok(url.to_string())
 }
 
-/// 为给定的文件路径解析 `LspClient`。
+/// Resolves the `LspClient` for a given file path.
 ///
-/// 返回 `(client, relative_path)`；当没有匹配的语言服务器时返回友好错误。
+/// Returns `(client, relative_path)`; a friendly error when no language server matches.
 fn resolve_lsp_client(
     app: &tauri::AppHandle,
     project_root: &str,
@@ -171,30 +176,35 @@ fn resolve_lsp_client(
 ) -> Result<(LspClient, String), String> {
     let lsp_mgr = app.state::<LspManager>();
 
-    // 提取扩展名并映射到 language_id
+    // Extract the extension and map it to a language_id
     let ext = std::path::Path::new(file_path)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
     let language_id = extension_to_language_id(ext).ok_or_else(|| {
-        format!(
-            "不支持的文件类型 .{ext}：无法找到对应的语言服务器。支持的类型: .rs, .ts, .tsx, .js, .jsx, .py, .go。请使用 auto_detect_ls 工具启动语言服务器。"
+        ierr!(
+            "不支持的文件类型 .{}：无法找到对应的语言服务器。支持的类型: .rs, .ts, .tsx, .js, .jsx, .py, .go。请使用 auto_detect_ls 工具启动语言服务器。",
+            "Unsupported file type .{}: no matching language server. Supported types: .rs, .ts, .tsx, .js, .jsx, .py, .go. Use the auto_detect_ls tool to start a language server.",
+            ext
         )
     })?;
 
-    // 构造客户端 key（"{project_root}/{language_id}"）
+    // Build the client key ("{project_root}/{language_id}")
     let client_key = format!("{}/{}", project_root, language_id);
     let client = lsp_mgr
         .clients
         .get(&client_key)
         .map(|entry| entry.value().clone())
         .ok_or_else(|| {
-            format!(
-                "未找到 {language_id} 语言服务器客户端 (key={client_key})。请先使用 auto_detect_ls 工具启动语言服务器。"
+            ierr!(
+                "未找到 {} 语言服务器客户端 (key={})。请先使用 auto_detect_ls 工具启动语言服务器。",
+                "No {} language server client found (key={}). Start a language server first with the auto_detect_ls tool.",
+                language_id,
+                client_key
             )
         })?;
 
-    // 规范化相对路径（去 project_root 前缀 + 前导分隔符）
+    // Normalize the relative path (strip the project_root prefix and leading separators)
     let normalized = file_path
         .strip_prefix(project_root)
         .unwrap_or(file_path)
@@ -205,20 +215,20 @@ fn resolve_lsp_client(
     Ok((client, normalized))
 }
 
-/// 从 args 中提取 (line, character)。
+/// Extracts (line, character) from args.
 fn extract_position(args: &Value) -> Result<(u32, u32), String> {
     let line = args
         .get("line")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| "缺少 'line' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'line' 参数", "Missing 'line' argument"))?;
     let character = args
         .get("character")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| "缺少 'character' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'character' 参数", "Missing 'character' argument"))?;
     Ok((line as u32, character as u32))
 }
 
-/// 将 file:// URI 转为可读的相对路径字符串。
+/// Converts a file:// URI to a readable path string.
 fn format_uri(uri: &str) -> String {
     if let Ok(parsed) = url::Url::parse(uri) {
         parsed
@@ -230,7 +240,7 @@ fn format_uri(uri: &str) -> String {
     }
 }
 
-/// 格式化 Position JSON 值为 "行:列"。
+/// Formats a Position JSON value as "line:col".
 fn format_position(pos: &Value) -> String {
     let line = pos.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
     let character = pos.get("character").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -247,7 +257,7 @@ pub async fn execute_lsp_definition(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
@@ -265,7 +275,13 @@ pub async fn execute_lsp_definition(
             Duration::from_secs(10),
         )
         .await
-        .map_err(|e| format!("LSP definition 请求失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "LSP definition 请求失败: {}",
+                "LSP definition request failed: {}",
+                e
+            )
+        })?;
 
     if response.is_null() {
         return Ok(tool_ok(format!(
@@ -273,7 +289,7 @@ pub async fn execute_lsp_definition(
         )));
     }
 
-    // 优先解析为 Location 数组
+    // Prefer parsing as an array of Locations
     if let Some(arr) = response.as_array() {
         if arr.is_empty() {
             return Ok(tool_ok(format!(
@@ -288,12 +304,12 @@ pub async fn execute_lsp_definition(
         )));
     }
 
-    // 再尝试解析为单条 Location
+    // Then try a single Location object
     if response.get("uri").and_then(|u| u.as_str()).is_some() {
         return Ok(tool_ok(format!("定义位置: {}", format_location(&response))));
     }
 
-    // 兜底：直接输出原始结果
+    // Fallback: emit the raw result
     Ok(tool_ok(format!(
         "定义查询结果: {}",
         serde_json::to_string_pretty(&response).unwrap_or_else(|_| "(无法序列化)".into())
@@ -308,7 +324,7 @@ pub async fn execute_lsp_references(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
@@ -327,7 +343,13 @@ pub async fn execute_lsp_references(
             Duration::from_secs(10),
         )
         .await
-        .map_err(|e| format!("LSP references 请求失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "LSP references 请求失败: {}",
+                "LSP references request failed: {}",
+                e
+            )
+        })?;
 
     if response.is_null() {
         return Ok(tool_ok(format!(
@@ -335,9 +357,13 @@ pub async fn execute_lsp_references(
         )));
     }
 
-    let arr = response
-        .as_array()
-        .ok_or_else(|| format!("LSP references 返回了意外的响应格式: {response}"))?;
+    let arr = response.as_array().ok_or_else(|| {
+        ierr!(
+            "LSP references 返回了意外的响应格式: {}",
+            "LSP references returned an unexpected response format: {}",
+            response
+        )
+    })?;
 
     if arr.is_empty() {
         return Ok(tool_ok(format!(
@@ -361,7 +387,7 @@ pub async fn execute_lsp_hover(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
@@ -375,7 +401,7 @@ pub async fn execute_lsp_hover(
     let response = client
         .request("textDocument/hover", Some(params), Duration::from_secs(10))
         .await
-        .map_err(|e| format!("LSP hover 请求失败: {e}"))?;
+        .map_err(|e| ierr!("LSP hover 请求失败: {}", "LSP hover request failed: {}", e))?;
 
     if response.is_null() {
         return Ok(tool_ok(format!(
@@ -402,7 +428,7 @@ pub async fn execute_lsp_symbols(
     let file_path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "缺少 'path' 参数".to_string())?;
+        .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
 
     let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
     let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
@@ -418,15 +444,25 @@ pub async fn execute_lsp_symbols(
             Duration::from_secs(10),
         )
         .await
-        .map_err(|e| format!("LSP documentSymbol 请求失败: {e}"))?;
+        .map_err(|e| {
+            ierr!(
+                "LSP documentSymbol 请求失败: {}",
+                "LSP documentSymbol request failed: {}",
+                e
+            )
+        })?;
 
     if response.is_null() {
         return Ok(tool_ok(format!("文件中无符号: {file_path}")));
     }
 
-    let arr = response
-        .as_array()
-        .ok_or_else(|| format!("LSP documentSymbol 返回了意外的响应格式: {response}"))?;
+    let arr = response.as_array().ok_or_else(|| {
+        ierr!(
+            "LSP documentSymbol 返回了意外的响应格式: {}",
+            "LSP documentSymbol returned an unexpected response format: {}",
+            response
+        )
+    })?;
 
     if arr.is_empty() {
         return Ok(tool_ok(format!("文件中无符号: {file_path}")));
@@ -443,9 +479,82 @@ pub async fn execute_lsp_symbols(
     )))
 }
 
+/// Fetches a file's symbol ranges (for symbol-aware code chunking): (symbol name, start_line, end_line) (LSP lines are 0-based).
+/// Returns Err when LSP is not running or the request fails; callers fall back to line-window chunking.
+pub async fn fetch_document_symbol_ranges(
+    app: &tauri::AppHandle,
+    project_root: &str,
+    file_path: &str,
+) -> Result<Vec<(String, i64, i64)>, String> {
+    let (client, relative_path) = resolve_lsp_client(app, project_root, file_path)?;
+    let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
+    let params = json!({ "textDocument": { "uri": uri } });
+    let response = client
+        .request(
+            "textDocument/documentSymbol",
+            Some(params),
+            Duration::from_secs(10),
+        )
+        .await
+        .map_err(|e| {
+            ierr!(
+                "LSP documentSymbol 请求失败: {}",
+                "LSP documentSymbol request failed: {}",
+                e
+            )
+        })?;
+    if response.is_null() {
+        return Ok(Vec::new());
+    }
+    let arr = response.as_array().ok_or_else(|| {
+        ierr!(
+            "LSP documentSymbol 返回了意外的响应格式: {}",
+            "LSP documentSymbol returned an unexpected response format: {}",
+            response
+        )
+    })?;
+    let mut out: Vec<(String, i64, i64)> = Vec::new();
+    fn collect_symbol(symbol: &Value, out: &mut Vec<(String, i64, i64)>) {
+        let name = symbol
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("?")
+            .to_string();
+        // DocumentSymbol uses range{start,end}; SymbolInformation uses location.range
+        let range = symbol
+            .get("range")
+            .or_else(|| symbol.get("location").and_then(|l| l.get("range")));
+        let (sl, el) = match range {
+            Some(r) => (
+                r.get("start")
+                    .and_then(|s| s.get("line"))
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0),
+                r.get("end")
+                    .and_then(|e| e.get("line"))
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0),
+            ),
+            None => (0, 0),
+        };
+        if el > sl {
+            out.push((name, sl, el));
+        }
+        if let Some(children) = symbol.get("children").and_then(|c| c.as_array()) {
+            for child in children {
+                collect_symbol(child, out);
+            }
+        }
+    }
+    for symbol in arr {
+        collect_symbol(symbol, &mut out);
+    }
+    Ok(out)
+}
+
 // ====== Formatting helpers ======
 
-/// 格式化单个 Location JSON 对象为 "文件:行:列"。
+/// Formats a single Location JSON object as "file:line:col".
 fn format_location(loc: &Value) -> String {
     let uri_str = loc.get("uri").and_then(|u| u.as_str()).unwrap_or("?");
     let start = loc.get("range").and_then(|r| r.get("start"));
@@ -453,7 +562,7 @@ fn format_location(loc: &Value) -> String {
     format!("  {}:{}", format_uri(uri_str), pos)
 }
 
-/// 从 hover contents 中提取可读文本（支持 MarkupContent、MarkedString、数组）。
+/// Extracts readable text from hover contents (MarkupContent, MarkedString, or array).
 fn extract_hover_text(contents: &Value) -> String {
     // MarkupContent: { kind: "markdown" | "plaintext", value: "..." }
     if let Some(value) = contents.get("value").and_then(|v| v.as_str()) {
@@ -487,8 +596,8 @@ fn extract_hover_text(contents: &Value) -> String {
     serde_json::to_string_pretty(contents).unwrap_or_else(|_| "(无法解析)".into())
 }
 
-/// 展开层级 DocumentSymbol 为缩进文本行。
-/// 同时兼容扁平的 SymbolInformation（无 children）。
+/// Flattens hierarchical DocumentSymbols into indented text lines.
+/// Also handles flat SymbolInformation (no children).
 fn flatten_symbol(symbol: &Value, depth: usize, out: &mut Vec<String>) {
     let indent = "  ".repeat(depth);
     let name = symbol.get("name").and_then(|n| n.as_str()).unwrap_or("?");
@@ -498,7 +607,7 @@ fn flatten_symbol(symbol: &Value, depth: usize, out: &mut Vec<String>) {
         .map(symbol_kind_name)
         .unwrap_or("?");
 
-    // DocumentSymbol 用 selectionRange.start；SymbolInformation 用 location.range.start
+    // DocumentSymbol uses selectionRange.start; SymbolInformation uses location.range.start
     let pos = symbol
         .get("selectionRange")
         .or_else(|| symbol.get("range"))
@@ -514,7 +623,7 @@ fn flatten_symbol(symbol: &Value, depth: usize, out: &mut Vec<String>) {
 
     out.push(format!("{indent}{name} {pos} ({kind})"));
 
-    // 递归子节点（DocumentSymbol 才有 children）
+    // Recurse into children (only DocumentSymbol has them)
     if let Some(children) = symbol.get("children").and_then(|c| c.as_array()) {
         for child in children {
             flatten_symbol(child, depth + 1, out);
@@ -522,7 +631,7 @@ fn flatten_symbol(symbol: &Value, depth: usize, out: &mut Vec<String>) {
     }
 }
 
-/// SymbolKind 数值 → 名称。
+/// SymbolKind number → name.
 fn symbol_kind_name(kind: u64) -> &'static str {
     match kind {
         1 => "File",

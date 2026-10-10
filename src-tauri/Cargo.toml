@@ -1,6 +1,6 @@
 [package]
 name = "aio"
-version = "0.7.6"
+version = "0.8.0"
 description = "A lightweight cross-platform AI assistant desktop client"
 authors = ["Loch"]
 edition = "2021"
@@ -20,7 +20,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.3", features = ["protocol-asset"] }
+tauri = { version = "2.11.3", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
@@ -59,3 +59,6 @@ tokio-util = { version = "0.7", features = ["rt"] }
 lsp-types = "0.97"
 tiktoken-rs = "0.6"
 auto-launch = "0.6"
+sqlite-vec = "0.1.9"
+sysinfo = "0.33"
+fastembed = { version = "4", default-features = false, features = ["ort-download-binaries"] }

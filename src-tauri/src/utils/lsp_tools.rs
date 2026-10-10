@@ -1,14 +1,14 @@
-//! LSP 诊断工具 — 供 AI Agent 调用的工具定义和执行
+//! LSP diagnostics tool — tool definition and execution for the AI Agent
 //!
-//! 提供 `read_lints` 工具，让 Agent 可以查询项目中的 LSP 诊断信息。
+//! Provides the `read_lints` tool so the Agent can query LSP diagnostics for the project.
 
-use crate::core::models::{ToolFunctionSpec, ToolResult, ToolResultContent, ToolSpec};
+use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::plugins::lsp::LspManager;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tauri::Manager;
 
-/// 工具 `read_lints` 的 spec（供注册到 Agent 工具列表）
+/// Spec of the `read_lints` tool (registered into the Agent tool list)
 pub fn tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".to_string(),
@@ -35,17 +35,10 @@ pub fn tool_spec() -> ToolSpec {
     }
 }
 
-fn tool_ok(text: String) -> ToolResult {
-    ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: json!({"text": text}),
-        }],
-        is_error: false,
-    }
-}
+// tool_ok is provided by utils::tool_result (single source of truth repo-wide)
+use crate::utils::tool_result::tool_ok;
 
-/// 执行 `read_lints` 工具调用
+/// Execute the `read_lints` tool call
 pub async fn execute(
     app: &tauri::AppHandle,
     project_path: &str,
@@ -69,7 +62,7 @@ pub async fn execute(
         })
         .unwrap_or_default();
 
-    // 如果没有活跃的语言服务器客户端，返回友好提示
+    // If no active language-server client exists, return a friendly hint
     let project_prefix = project_root.to_string_lossy().to_string();
     let active_clients: Vec<String> = lsp_mgr
         .clients
@@ -93,7 +86,7 @@ pub async fn execute(
         )));
     }
 
-    // 构建输出
+    // Build the output
     let output = build_diagnostics_output(&lsp_mgr, &project_root, &file_paths, severity);
 
     Ok(tool_ok(output))
@@ -110,7 +103,7 @@ fn build_diagnostics_output(
     let mut total_warnings = 0u32;
 
     if !file_paths.is_empty() {
-        // 指定文件路径
+        // Specified file paths
         for fp in file_paths {
             let diags_map = lsp_mgr.get_all_diagnostics(project_root, Some(fp));
             for (uri, diags) in &diags_map {
@@ -122,7 +115,7 @@ fn build_diagnostics_output(
             }
         }
     } else {
-        // 所有文件
+        // All files
         let diags_map = lsp_mgr.get_all_diagnostics(project_root, None);
         for (uri, diags) in &diags_map {
             let (text, errs, warns) =
@@ -189,7 +182,7 @@ fn format_diagnostics_for_file(
             })
             .unwrap_or_default();
 
-        // 使用 1-based 行号（LSP 是 0-based）
+        // Use 1-based line numbers (LSP is 0-based)
         let line = d.range.start.line + 1;
         let col = d.range.start.character + 1;
 
@@ -208,7 +201,7 @@ fn format_diagnostics_for_file(
     (text, errs, warns)
 }
 
-/// 将 file:// URI 转为相对路径
+/// Convert a file:// URI to a relative path
 fn uri_to_relative(project_root: &PathBuf, uri: &str) -> String {
     let path = if let Ok(url) = url::Url::parse(uri) {
         url.to_file_path().ok()

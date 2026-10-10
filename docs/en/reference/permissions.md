@@ -52,6 +52,7 @@ Overview of the default rules for each Agent mode:
 - Git read operations (`git_status`, `git_diff`, `git_log`) &rarr; Allow
 - Write operations, make directory, delete &rarr; Deny
 - Git write operations &rarr; Deny
+- Command execution (`execute_command`) &rarr; Deny
 - Web tools &rarr; Deny
 - Other tools &rarr; Ask
 
@@ -64,6 +65,25 @@ Overview of the default rules for each Agent mode:
 - Other tools &rarr; Allow
 
 > The full rule list can be found in the source at `permission.rs:default_rules_for_mode`.
+
+### Workflow Step Permission Mode
+
+Workflow (`create_workflow`) steps **inherit the Agent mode they were started with** by default: a workflow started in Normal mode still prompts for each write operation inside its steps. Set `workflowStepMode` to `"auto"` in the app config to restore the legacy behavior (steps auto-approved, for fully trusted automation).
+
+## Command Sandbox and Network Egress
+
+`execute_command` runs inside an OS-level sandbox with **no network by default**:
+
+| Platform | Sandbox                                                              | File-write scope                                                  | Network (default)             |
+| -------- | -------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------- |
+| Linux    | bubblewrap (fail-closed per `sandboxRequired` when missing)          | project root + private /tmp only                                  | blocked via `--unshare-net`   |
+| macOS    | sandbox-exec (SBPL)                                                  | project root only                                                 | blocked via `(deny network*)` |
+| Windows  | AppContainer (per-project profile; disable via `sandboxWindows=off`) | project root + private temp dir + configured toolchain dirs (R+X) | blocked (no capability)       |
+
+- Commands needing network (dependency downloads, API calls, localhost services) must declare `network: true` explicitly (Windows injects the internetClient capability; the approval dialog is annotated).
+- **Fail-closed**: when the sandbox is unavailable on Linux/macOS, Auto/Workflow mode refuses execution (`sandboxRequired` defaults on); Normal mode annotates the approval dialog with a sandbox-unavailable warning.
+- Windows toolchain dirs (cargo/scoop user paths) are granted R+X via `sandboxWindowsToolchainDirs`; system dirs rely on built-in ALL APPLICATION PACKAGES ACEs.
+- The lexical dangerous-command check is a defense-in-depth advisory layer (Critical always hard-blocked); OS sandboxing is the enforcement boundary.
 
 ## `.aio/permissions.json` File Format
 

@@ -21,8 +21,8 @@ jobs:
             target: ''
           - platform: ubuntu-22.04
             target: ''
-          - platform: macos-15
-            target: x86_64-apple-darwin
+          # Intel macOS builds ended with v0.8.0: Apple dropped Intel Mac
+          # support in macOS 27 (Tahoe 26 was the last Intel release).
           - platform: macos-15
             target: aarch64-apple-darwin
 

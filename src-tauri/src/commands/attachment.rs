@@ -1,3 +1,6 @@
+//! Chat attachment commands (attachment_*): storage, association, content extraction, cleanup.
+//! Attachment file bodies are parsed in utils/file_parser.rs; this file only handles persistence and IPC.
+
 use crate::core::models::{FileMeta, StoredAttachment};
 use crate::core::state::DbState;
 use crate::utils::file_parser::{
@@ -201,7 +204,7 @@ pub fn cleanup_attachment_ids(conn: &Connection, attachment_ids: &[String]) -> R
     Ok(())
 }
 
-/// 批量加载多个消息的附件，返回 message_id → files 的映射。
+/// Load attachments for multiple messages in one batch, returning a message_id -> files map.
 pub fn load_message_attachments_batch(
     conn: &Connection,
     msg_ids: &[String],
@@ -212,7 +215,7 @@ pub fn load_message_attachments_batch(
         return Ok(map);
     }
 
-    // 构建 IN 子句的占位符
+    // Build the IN-clause placeholders
     let placeholders: Vec<String> = msg_ids
         .iter()
         .enumerate()

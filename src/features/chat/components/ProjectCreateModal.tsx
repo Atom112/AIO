@@ -1,12 +1,12 @@
 /**
  * @file ProjectCreateModal.tsx
- * @description 新建项目弹窗：输入名称 + 选择目录。支持入场/退场过渡动画。
+ * @description New-project modal: name input + directory picker. Supports enter/exit transition animations.
  */
 import { createSignal, onMount } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { createProject, validateProjectPath } from '../../../core/api/project';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { Project } from '../../../core/store/store';
 import { reportError, t } from '../../../core/i18n';
+import { btnGhost, btnPrimary, btnSecondary } from '../../../shared/components/buttonStyles';
 
 interface Props {
   onClose: () => void;
@@ -21,7 +21,7 @@ export default function ProjectCreateModal(props: Props) {
   const [isExiting, setIsExiting] = createSignal(false);
   const [isEntering, setIsEntering] = createSignal(true);
 
-  // 入场动画：下一帧移除 entering 状态
+  // Enter animation: drop the entering state on the next frame
   onMount(() => {
     requestAnimationFrame(() => setIsEntering(false));
   });
@@ -39,16 +39,13 @@ export default function ProjectCreateModal(props: Props) {
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
         setPath(selected);
-        // 自动填充名称为目录名
+        // Auto-fill the name with the directory name
         const dirName = selected.split(/[/\\]/).filter(Boolean).pop() || '';
         if (!name()) setName(dirName);
 
-        // 验证路径
+        // Validate the path
         try {
-          const result = await invoke<{ valid: boolean; reason: string; canonicalPath: string }>(
-            'validate_project_path',
-            { path: selected },
-          );
+          const result = await validateProjectPath(selected);
           if (!result.valid) {
             console.warn('[project] invalid path:', result.reason);
             setError(t('project.invalidPath'));
@@ -77,10 +74,7 @@ export default function ProjectCreateModal(props: Props) {
     setLoading(true);
     setError('');
     try {
-      const project = await invoke<Project>('create_project', {
-        name: name().trim(),
-        path: path(),
-      });
+      const project = await createProject(name().trim(), path());
       props.onCreated(project.id);
     } catch (e) {
       setError(reportError('error.save', e));
@@ -103,62 +97,50 @@ export default function ProjectCreateModal(props: Props) {
           'scale-95 opacity-0': isExiting() || isEntering(),
           'scale-100 opacity-100': !isExiting() && !isEntering(),
         }}
-        class="bg-[#1a2540] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
+        class="bg-[var(--color-dark-700)] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 class="text-lg font-semibold text-white mb-4">{t('project.new')}</h2>
 
-        {/* 项目名称 */}
+        {/* Project name */}
         <label class="block text-sm text-white/60 mb-1.5">{t('project.name')}</label>
         <input
           type="text"
           class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white
-                           text-sm placeholder-white/30 focus:outline-none focus:border-[#7c9abf] mb-4"
+                           text-sm placeholder-white/30 focus:outline-none focus:border-[var(--color-pri)] mb-4"
           placeholder={t('project.namePlaceholder')}
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
         />
 
-        {/* 项目目录 */}
+        {/* Project directory */}
         <label class="block text-sm text-white/60 mb-1.5">{t('project.path')}</label>
         <div class="flex gap-2 mb-1">
           <input
             type="text"
             class="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white
-                               text-sm placeholder-white/30 focus:outline-none focus:border-[#7c9abf]"
+                               text-sm placeholder-white/30 focus:outline-none focus:border-[var(--color-pri)]"
             placeholder={t('project.pathPlaceholder')}
             value={path()}
             readOnly
           />
-          <button
-            class="px-3 py-2 bg-white/10 hover:bg-white/20 text-white/80 text-sm
-                               rounded-lg transition-colors border border-white/10 shrink-0"
-            onClick={handleSelectDir}
-          >
+          <button class={btnSecondary} onClick={handleSelectDir}>
             {t('project.browse')}
           </button>
         </div>
 
-        {/* 错误信息 */}
+        {/* Error message */}
         {error() && <p class="text-red-400 text-xs mb-3">{error()}</p>}
 
         <p class="text-white/30 text-xs mb-4">{t('project.aioFolderNotice')}</p>
 
-        {/* 按钮 */}
+        {/* Buttons */}
         <div class="flex justify-end gap-3">
-          <button
-            class="px-4 py-2 text-sm text-white/60 hover:text-white/90 transition-colors"
-            onClick={handleClose}
-          >
+          <button class={'px-4 py-2 text-sm ' + btnGhost} onClick={handleClose}>
             {t('common.cancel')}
           </button>
-          <button
-            class="px-5 py-2 text-sm bg-[#7c9abf] hover:bg-[#6b8aaf] text-white
-                               rounded-lg transition-colors disabled:opacity-50"
-            onClick={handleCreate}
-            disabled={loading()}
-          >
+          <button class={btnPrimary} onClick={handleCreate} disabled={loading()}>
             {loading() ? t('project.creating') : t('project.create')}
           </button>
         </div>

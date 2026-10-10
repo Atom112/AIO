@@ -1,6 +1,7 @@
 import { Component, Show } from 'solid-js';
 import Markdown from '../../../shared/components/Markdown';
 import Icon from '../../../shared/components/Icon';
+import { btnIcon } from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 
 export interface BtwOverlayItem {
@@ -47,8 +48,7 @@ const BtwResponseBox: Component<BtwResponseBoxProps> = (props) => {
         </span>
         <button
           onClick={() => props.onDismiss(props.item.id)}
-          class="flex items-center justify-center w-5 h-5 rounded hover:bg-white/10 transition-colors"
-          style={{ color: 'rgba(var(--text-base-rgb),0.3)' }}
+          class={'w-5 h-5 text-white/40 hover:text-white hover:bg-white/10 ' + btnIcon}
           title={t('chat.btw.close')}
         >
           <Icon name="x" class="w-3 h-3" />

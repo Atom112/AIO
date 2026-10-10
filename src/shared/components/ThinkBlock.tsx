@@ -1,26 +1,26 @@
 /**
- * 思考过程块 (reasoning / chain-of-thought)
+ * Thinking block (reasoning / chain-of-thought)
  *
- * 渲染模型输出的 <think>...</think> 思考内容。
- * - 流式生成中: 自动展开，header 显示"正在思考" + 动画点
- * - 生成完成: 默认折叠，header 显示"已思考 X.Xs"
- * - 亚克力主题: 微妙透明背景 + 斜体文本 + 软边框
+ * Renders the model's <think>...</think> reasoning content.
+ * - While streaming: auto-expanded, header shows "thinking" + animated dots
+ * - Once complete: collapsed by default, header shows "thought for X.Xs"
+ * - Acrylic theme: subtle translucent background + italic text + soft border
  */
 import { Component, createSignal, onCleanup, createEffect } from 'solid-js';
 import Icon from './Icon';
 import { t } from '../../core/i18n';
 
 interface ThinkBlockProps {
-  /** 思考过程纯文本 (不含 <think> 标签) */
+  /** Plain-text reasoning content (without the <think> tags) */
   content: string;
-  /** 是否仍在流式生成 */
+  /** Whether the stream is still generating */
   isStreaming?: boolean;
 }
 
 const ThinkBlock: Component<ThinkBlockProps> = (props) => {
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null);
 
-  /** 流式时强制展开，完成后允许用户控制 */
+  /** Force expanded while streaming; user-controlled after completion */
   const isExpanded = () => {
     if (props.isStreaming) return true;
     return userExpanded() ?? false;

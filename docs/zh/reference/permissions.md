@@ -52,6 +52,7 @@ AIO 的权限系统基于三态决策模型：
 - Git 读操作（`git_status`、`git_diff`、`git_log`）→ Allow
 - 写操作、建目录、删除 → Deny
 - Git 写操作 → Deny
+- 命令执行（`execute_command`）→ Deny
 - Web 工具 → Deny
 - 其他工具 → Ask
 
@@ -64,6 +65,25 @@ AIO 的权限系统基于三态决策模型：
 - 其他工具 → Allow
 
 > 具体规则列表可在源码 `permission.rs:default_rules_for_mode` 查看。
+
+### 工作流步骤的权限模式
+
+工作流（`create_workflow`）的步骤默认**继承启动时的 Agent 模式**：从 Normal 模式启动的工作流，其步骤内的写操作仍会逐次弹出审批。可在应用配置中设置 `workflowStepMode` 为 `"auto"` 恢复旧行为（步骤自动放行，适合完全信任的自动化场景）。
+
+## 命令沙箱与网络出口
+
+`execute_command` 在 OS 级沙箱内执行，**默认无网络**：
+
+| 平台    | 沙箱机制                                                    | 文件写范围                                      | 网络（默认）           |
+| ------- | ----------------------------------------------------------- | ----------------------------------------------- | ---------------------- |
+| Linux   | bubblewrap（缺失时按 `sandboxRequired` fail-closed）        | 仅项目根 + 专用 /tmp                            | `--unshare-net` 阻断   |
+| macOS   | sandbox-exec（SBPL）                                        | 仅项目根                                        | `(deny network*)` 阻断 |
+| Windows | AppContainer（每项目 profile；`sandboxWindows=off` 可关闭） | 仅项目根 + 专用临时目录 + 配置的工具链 R+X 目录 | 无 capability = 阻断   |
+
+- 命令需要联网（下载依赖、API 调用、访问 localhost 服务）时，模型须显式声明 `network: true`（Windows 注入 internetClient capability；审批弹窗标注"需要网络访问"）。
+- **fail-closed**：Linux/macOS 沙箱不可用时，Auto/Workflow 模式直接拒绝执行（`sandboxRequired` 默认开）；Normal 模式审批弹窗附带沙箱不可用警示。
+- Windows 工具链目录（cargo/scoop 等用户安装路径）经 `sandboxWindowsToolchainDirs` 配置追加 R+X；系统目录依赖内置 ALL APPLICATION PACKAGES ACE。
+- 危险命令词法检测是 defense-in-depth 预警层（Critical 级无条件硬阻断），安全强制以 OS 沙箱为准。
 
 ## `.aio/permissions.json` 文件格式
 

@@ -1,7 +1,7 @@
-//! 项目 CRUD 命令。
+//! Project CRUD commands.
 //!
-//! 项目是绑定到文件系统目录的逻辑分组单元，每个项目在 `<project_dir>/.aio/` 下
-//! 存放专属的 skills.json 和 mcp-servers.json。
+//! A project is a logical grouping unit bound to a filesystem directory; each project
+//! stores its own skills.json and mcp-servers.json under `<project_dir>/.aio/`.
 
 use crate::core::models::{AgentMode, Project, ProjectsFile};
 use crate::core::state::DbState;
@@ -9,25 +9,12 @@ use crate::utils::file_tools::strip_windows_extended_prefix;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-const PROJECTS_FILE: &str = "projects.json";
+use crate::ierr;
+
 const AIO_DIR: &str = ".aio";
 
-fn projects_file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|dir| dir.join(PROJECTS_FILE))
-        .map_err(|e| e.to_string())
-}
-
-fn load_projects_file(app: &AppHandle) -> ProjectsFile {
-    let Ok(path) = projects_file_path(app) else {
-        return ProjectsFile::default();
-    };
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default()
-}
+// projects.json path and reads are provided solely by utils::project_index (single source of truth repo-wide)
+use crate::utils::project_index::{load_projects_file, projects_file_path};
 
 fn save_projects_file(app: &AppHandle, file: &ProjectsFile) -> Result<(), String> {
     let path = projects_file_path(app)?;
@@ -47,15 +34,21 @@ fn now_timestamp() -> String {
     secs.to_string()
 }
 
-/// 初始化项目的 .aio/ 目录结构。
+/// Initialize the project's .aio/ directory structure.
 fn init_project_dir(project_path: &str) -> Result<(), String> {
     let aio_dir = PathBuf::from(project_path).join(AIO_DIR);
-    std::fs::create_dir_all(&aio_dir).map_err(|e| format!("创建 .aio 目录失败: {}", e))?;
+    std::fs::create_dir_all(&aio_dir).map_err(|e| {
+        ierr!(
+            "创建 .aio 目录失败: {}",
+            "Failed to create .aio directory: {}",
+            e
+        )
+    })?;
 
-    // 写入项目元数据
+    // Project metadata file
     let _project_json = aio_dir.join("project.json");
 
-    // 初始化空的 skills.json
+    // Initialize an empty skills.json
     let skills_path = aio_dir.join("skills.json");
     if !skills_path.exists() {
         let empty_skills = serde_json::json!({
@@ -67,47 +60,64 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
             &skills_path,
             serde_json::to_string_pretty(&empty_skills).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| format!("创建 skills.json 失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "创建 skills.json 失败: {}",
+                "Failed to create skills.json: {}",
+                e
+            )
+        })?;
     }
 
-    // 初始化 mcp-servers.json（包含内置文件系统 MCP server）
+    // Initialize mcp-servers.json (includes the built-in filesystem MCP server)
     let mcp_path = aio_dir.join("mcp-servers.json");
     if !mcp_path.exists() {
-        // 获取当前可执行文件路径，作为 --fs-server 的 command
+        // Use the current executable path as the --fs-server command
         let exe_path = std::env::current_exe()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "aio".to_string());
 
+        // Built-in server id comes from a constant (historical aliases live in core::ids; never change the string value)
+        let fs_id = crate::core::ids::BUILTIN_FS_SERVER_ID;
+        let mut servers = serde_json::Map::new();
+        servers.insert(
+            fs_id.to_string(),
+            serde_json::json!({
+                "id": fs_id,
+                "displayName": "项目文件系统 (AIO 内置)",
+                "transport": {
+                    "transport": "stdio",
+                    "command": exe_path,
+                    "args": ["--fs-server", project_path],
+                    "env": {}
+                },
+                "enabledTools": [],
+                "autoStart": true,
+                "hasStoredSecret": false
+            }),
+        );
         let mcp_config = serde_json::json!({
             "version": 1,
             "updatedAt": "",
-            "servers": {
-                "__aio-filesystem__": {
-                    "id": "__aio-filesystem__",
-                    "displayName": "项目文件系统 (AIO 内置)",
-                    "transport": {
-                        "transport": "stdio",
-                        "command": exe_path,
-                        "args": ["--fs-server", project_path],
-                        "env": {}
-                    },
-                    "enabledTools": [],
-                    "autoStart": true,
-                    "hasStoredSecret": false
-                }
-            }
+            "servers": servers,
         });
         std::fs::write(
             &mcp_path,
             serde_json::to_string_pretty(&mcp_config).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| format!("创建 mcp-servers.json 失败: {}", e))?;
+        .map_err(|e| {
+            ierr!(
+                "创建 mcp-servers.json 失败: {}",
+                "Failed to create mcp-servers.json: {}",
+                e
+            )
+        })?;
     }
 
     Ok(())
 }
 
-/// 创建新项目。
+/// Create a new project.
 #[tauri::command]
 pub fn create_project(
     app: AppHandle,
@@ -116,22 +126,26 @@ pub fn create_project(
     path: String,
 ) -> Result<Project, String> {
     if name.trim().is_empty() {
-        return Err("项目名称不能为空".into());
+        return Err(ierr!("项目名称不能为空", "Project name must not be empty"));
     }
     let path_clean = path.trim().to_string();
     if path_clean.is_empty() {
-        return Err("项目路径不能为空".into());
+        return Err(ierr!("项目路径不能为空", "Project path must not be empty"));
     }
-    let canonical = std::fs::canonicalize(&path_clean).map_err(|e| format!("路径无效: {}", e))?;
+    let canonical = std::fs::canonicalize(&path_clean)
+        .map_err(|e| ierr!("路径无效: {}", "Invalid path: {}", e))?;
     let canonical_str = strip_windows_extended_prefix(&canonical.to_string_lossy());
 
-    // 检查路径是否已被其他项目使用
+    // Check whether the path is already used by another project
     let mut file = load_projects_file(&app);
     if file.projects.values().any(|p| p.path == canonical_str) {
-        return Err("该目录已绑定到其他项目".into());
+        return Err(ierr!(
+            "该目录已绑定到其他项目",
+            "This directory is already bound to another project"
+        ));
     }
 
-    // 初始化 .aio/ 目录
+    // Initialize the .aio/ directory
     init_project_dir(&canonical_str)?;
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -146,17 +160,20 @@ pub fn create_project(
         assistant_id: assistant_id.clone(),
     };
 
-    // 创建对应助理记录
+    // Create the corresponding assistant record
     {
         let conn = state.0.lock();
         let agent_mode_str = serde_json::to_string(&AgentMode::Normal)
             .unwrap_or_else(|_| "\"normal\"".to_string())
             .trim_matches('"')
             .to_string();
+        // mcp_server_ids is pre-seeded with the built-in filesystem server (id from a constant, avoiding magic strings)
+        let default_mcp_ids = serde_json::to_string(&vec![crate::core::ids::BUILTIN_FS_SERVER_ID])
+            .unwrap_or_else(|_| "[]".to_string());
         conn.execute(
-            "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, '', NULL, '[\"__aio-filesystem__\"]', '[]', ?3, ?4, 'project')",
-            rusqlite::params![assistant_id, project.name, project.id, agent_mode_str],
-        ).map_err(|e| format!("创建项目助理失败: {}", e))?;
+            "INSERT INTO assistants (id, name, prompt, model_id, mcp_server_ids, skill_ids, project_id, agent_mode, assistant_type) VALUES (?1, ?2, '', NULL, ?5, '[]', ?3, ?4, 'project')",
+            rusqlite::params![assistant_id, project.name, project.id, agent_mode_str, default_mcp_ids],
+        ).map_err(|e| ierr!("创建项目助理失败: {}", "Failed to create project assistant: {}", e))?;
     }
 
     file.projects.insert(id, project.clone());
@@ -166,7 +183,7 @@ pub fn create_project(
     Ok(project)
 }
 
-/// 列出所有项目。
+/// List all projects.
 #[tauri::command]
 pub fn list_projects(app: AppHandle) -> Result<Vec<Project>, String> {
     let file = load_projects_file(&app);
@@ -175,11 +192,11 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<Project>, String> {
     Ok(projects)
 }
 
-/// 更新项目名称。
+/// Update a project's name.
 #[tauri::command]
 pub fn update_project(app: AppHandle, id: String, name: String) -> Result<(), String> {
     if name.trim().is_empty() {
-        return Err("项目名称不能为空".into());
+        return Err(ierr!("项目名称不能为空", "Project name must not be empty"));
     }
     let mut file = load_projects_file(&app);
     match file.projects.get_mut(&id) {
@@ -189,23 +206,26 @@ pub fn update_project(app: AppHandle, id: String, name: String) -> Result<(), St
             file.updated_at = now_timestamp();
             save_projects_file(&app, &file)
         }
-        None => Err("项目不存在".into()),
+        None => Err(ierr!("项目不存在", "Project not found")),
     }
 }
 
-/// 删除项目记录（.aio/ 目录保留不删，保护用户数据）。
+/// Delete a project record (the .aio/ directory is kept to protect user data).
 #[tauri::command]
 pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
     let mut file = load_projects_file(&app);
-    if file.projects.remove(&id).is_some() {
+    if let Some(project) = file.projects.remove(&id) {
         file.updated_at = now_timestamp();
+        // Evict the memory store connection cache when a project is deleted (cascade directory deletion is left to the user)
+        app.state::<crate::services::memory::MemoryStoreManager>()
+            .remove(&project.path);
         save_projects_file(&app, &file)
     } else {
-        Err("项目不存在".into())
+        Err(ierr!("项目不存在", "Project not found"))
     }
 }
 
-/// 用系统文件管理器打开项目目录。
+/// Open the project directory in the system file manager.
 #[tauri::command]
 pub fn open_project_directory(_app: AppHandle, path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -213,29 +233,30 @@ pub fn open_project_directory(_app: AppHandle, path: String) -> Result<(), Strin
         std::process::Command::new("explorer")
             .arg(&path)
             .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
+            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
             .arg(&path)
             .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
+            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
             .arg(&path)
             .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
+            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     }
     Ok(())
 }
 
-/// 通过路径查找项目 ID（用于从 .aio/ 目录反向定位）。
+/// Find a project by path (used to reverse-locate a project from its .aio/ directory).
 #[tauri::command]
 pub fn get_project_by_path(app: AppHandle, path: String) -> Result<Option<Project>, String> {
-    let canonical = std::fs::canonicalize(&path).map_err(|e| format!("路径无效: {}", e))?;
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| ierr!("路径无效: {}", "Invalid path: {}", e))?;
     let canonical_str = strip_windows_extended_prefix(&canonical.to_string_lossy());
     let file = load_projects_file(&app);
     Ok(file
@@ -244,7 +265,7 @@ pub fn get_project_by_path(app: AppHandle, path: String) -> Result<Option<Projec
         .find(|p| p.path == canonical_str))
 }
 
-/// 检查目录是否可绑定为项目（目录是否存在、是否已被绑定）。
+/// Check whether a directory can be bound as a project (must exist and not be already bound).
 #[tauri::command]
 pub fn validate_project_path(app: AppHandle, path: String) -> Result<serde_json::Value, String> {
     let canonical = match std::fs::canonicalize(&path) {
@@ -252,7 +273,7 @@ pub fn validate_project_path(app: AppHandle, path: String) -> Result<serde_json:
         Err(e) => {
             return Ok(serde_json::json!({
                 "valid": false,
-                "reason": format!("路径无效: {}", e)
+                "reason": ierr!("路径无效: {}", "Invalid path: {}", e)
             }));
         }
     };
@@ -260,19 +281,19 @@ pub fn validate_project_path(app: AppHandle, path: String) -> Result<serde_json:
     if !is_dir {
         return Ok(serde_json::json!({
             "valid": false,
-            "reason": "路径不是目录"
+            "reason": ierr!("路径不是目录", "Path is not a directory")
         }));
     }
     let file = load_projects_file(&app);
     let existing = file.projects.values().find(|p| p.path == canonical);
     Ok(serde_json::json!({
         "valid": existing.is_none(),
-        "reason": existing.map(|p| format!("该目录已绑定到项目: {}", p.name)).unwrap_or_default(),
+        "reason": existing.map(|p| ierr!("该目录已绑定到项目: {}", "This directory is already bound to project: {}", p.name)).unwrap_or_default(),
         "canonicalPath": canonical,
     }))
 }
 
-/// 返回 .aio/ 目录下的 skill 文件路径（供 skill.rs 使用）。
+/// Return the skill file path under the .aio/ directory (used by skill.rs).
 pub fn project_skills_path(project_path: &str) -> PathBuf {
     PathBuf::from(project_path)
         .join(AIO_DIR)

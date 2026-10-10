@@ -27,13 +27,18 @@ The repository retains legacy read/write paths for `activated_models.json` and `
 
 `config.json` currently persists:
 
-| Field              | Behavior                                                         |
-| ------------------ | ---------------------------------------------------------------- |
-| `api_url`          | Default API URL for backward compatibility                       |
-| `default_model`    | Default model for backward compatibility                         |
-| `local_model_path` | Local model path for backward compatibility                      |
-| `knowledgeEnabled` | Whether cross-session project memory is enabled, default `false` |
-| `autoStartEnabled` | Whether to launch at system startup, default `false`             |
+| Field                         | Behavior                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_url`                     | Default API URL for backward compatibility                                                                                                                                                                                                                                                                                                              |
+| `default_model`               | Default model for backward compatibility                                                                                                                                                                                                                                                                                                                |
+| `local_model_path`            | Local model path for backward compatibility                                                                                                                                                                                                                                                                                                             |
+| `memoryEnabled`               | Global default for project-level semantic memory (RAG), default `false`; can be overridden per project in project settings                                                                                                                                                                                                                              |
+| `memoryEmbedding`             | Legacy global embedding config (migration source only): embedding is now configured per project in the project memory store meta (Project memory panel → Switch model), default `local` (all-MiniLM-L6-v2, 384 dims, out-of-the-box & offline); switching clears that project's vectors and re-embeds. Local-only since v0.8 (online embedding removed) |
+| `embeddingModelsDir`          | Global embedding model install directory (default `<app_data_dir>/models/embed`; customizable in Settings → Embedding models)                                                                                                                                                                                                                           |
+| `embeddingModels`             | Global embedding model enable/disable registry (`[{id, enabled}]`; missing entries default to enabled; maintained in Settings → Embedding models)                                                                                                                                                                                                       |
+| `memoryMaxFacts`              | Max active facts per project, default `2000`                                                                                                                                                                                                                                                                                                            |
+| `memoryInjectionBudgetTokens` | Token budget for injecting memory into the system prompt, default `3000`                                                                                                                                                                                                                                                                                |
+| `autoStartEnabled`            | Whether to launch at system startup, default `false`                                                                                                                                                                                                                                                                                                    |
 
 The backend `AppConfig` also includes the following runtime fields:
 
@@ -84,7 +89,6 @@ The following UI preferences are stored in WebView `localStorage` and are not pa
 | Left/right sidebar state and width | Chat layout                       |
 | `aio_ignored_update_version`       | Ignored update version            |
 | `aio-local-auto-start-confirmed`   | Local engine startup confirmation |
-| `user-avatar-path`                 | User avatar file path             |
 
 Clearing WebView data will reset these UI preferences but will not delete SQLite chat history, Provider configurations, or project `.aio/` directories.
 
@@ -103,11 +107,13 @@ Additional files may appear after feature usage:
 ```text
 .aio/
 ├── permissions.json
-└── knowledge.json
+├── knowledge.json
+└── memory/memory.sqlite
 ```
 
 - `permissions.json`: Allow, ask, and deny rules for project tools. See [Permissions System Reference](permissions.md);
 - `knowledge.json`: Cross-session knowledge, with categories `decision`, `pattern`, `convention`, or `note`, retaining up to 50 entries.
+- `memory/`: Project-level semantic memory store (`memory.sqlite`: facts, version audit, FTS5, vector indexes); consider adding it to `.gitignore`.
 
 ## Attachment Whitelist
 

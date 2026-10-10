@@ -1,8 +1,8 @@
 /**
- * ProblemsPanel — LSP 诊断面板组件
+ * ProblemsPanel - LSP diagnostics panel component
  *
- * 显示语言服务器报告的错误、警告、信息和提示。
- * 位于聊天页面的底部面板或侧边栏区域。
+ * Shows errors, warnings, info, and hints reported by language servers.
+ * Rendered in the bottom panel or sidebar area of the chat page.
  */
 
 import { Component, For, Show, createMemo } from 'solid-js';
@@ -16,12 +16,13 @@ import {
   setProblemsPanelVisible,
   hasDiagnostics,
 } from '../../../core/store/diagnostics';
-import { invoke } from '@tauri-apps/api/core';
+import { openProjectDirectory } from '../../../core/api/project';
 
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import { formatNumber, t, type TranslationKey } from '../../../core/i18n';
+import { btnTabXs, tabActive, tabInactive, btnIcon } from '../../../shared/components/buttonStyles';
 
-/** 诊断严重级别对应的图标和颜色 */
+/** Icon and color per diagnostic severity level */
 const SEVERITY_CONFIG: Record<string, { icon: IconName; color: string; bgColor: string }> = {
   error: { icon: 'x-circle', color: 'text-red-500', bgColor: 'bg-red-500/10' },
   warning: { icon: 'alert-triangle', color: 'text-yellow-500', bgColor: 'bg-yellow-500/10' },
@@ -29,7 +30,7 @@ const SEVERITY_CONFIG: Record<string, { icon: IconName; color: string; bgColor: 
   hint: { icon: 'lightbulb', color: 'text-gray-400', bgColor: 'bg-gray-500/10' },
 };
 
-/** 过滤器选项 */
+/** Filter options */
 const FILTER_OPTIONS: { value: string; labelKey: TranslationKey }[] = [
   { value: 'all', labelKey: 'chat.problemAll' },
   { value: 'error', labelKey: 'common.error' },
@@ -39,13 +40,13 @@ const FILTER_OPTIONS: { value: string; labelKey: TranslationKey }[] = [
 ];
 
 /**
- * 尝试使用系统应用打开指定文件
+ * Try to open the given file with the system default application
  */
 async function openFileInEditor(filePath: string) {
   try {
-    await invoke('open_project_directory', { path: filePath });
+    await openProjectDirectory(filePath);
   } catch {
-    // 静默失败
+    // Fail silently
   }
 }
 
@@ -56,7 +57,7 @@ const ProblemsPanel: Component = () => {
   return (
     <Show when={problemsPanelVisible()}>
       <div class="border-t border-gray-700/50 bg-gray-900/80 backdrop-blur-sm">
-        {/* 标题栏 */}
+        {/* Header bar */}
         <div class="flex items-center justify-between px-4 py-2 border-b border-gray-700/30">
           <div class="flex items-center gap-3">
             <span class="text-sm font-medium text-gray-200 inline-flex items-center gap-1">
@@ -76,16 +77,12 @@ const ProblemsPanel: Component = () => {
           </div>
 
           <div class="flex items-center gap-2">
-            {/* 过滤器 */}
+            {/* Filters */}
             <div class="flex rounded-md overflow-hidden border border-gray-600/50">
               <For each={FILTER_OPTIONS}>
                 {(opt) => (
                   <button
-                    class={`text-xs px-2 py-1 transition-colors ${
-                      activeFilter() === opt.value
-                        ? 'bg-blue-600/40 text-blue-300'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
-                    }`}
+                    class={`${btnTabXs} ${activeFilter() === opt.value ? tabActive : tabInactive}`}
                     onClick={() => setSeverityFilter(opt.value as any)}
                   >
                     {t(opt.labelKey)}
@@ -94,9 +91,9 @@ const ProblemsPanel: Component = () => {
               </For>
             </div>
 
-            {/* 关闭按钮 */}
+            {/* Close button */}
             <button
-              class="text-gray-400 hover:text-gray-200 p-1 rounded hover:bg-gray-700/50"
+              class={'p-1 text-white/50 hover:text-white hover:bg-white/10 ' + btnIcon}
               onClick={() => setProblemsPanelVisible(false)}
               title={t('chat.closePanel')}
             >
@@ -105,7 +102,7 @@ const ProblemsPanel: Component = () => {
           </div>
         </div>
 
-        {/* 诊断列表 */}
+        {/* Diagnostics list */}
         <div class="max-h-64 overflow-y-auto">
           <Show
             when={filteredFiles().length > 0}
@@ -120,7 +117,7 @@ const ProblemsPanel: Component = () => {
             <For each={filteredFiles()}>
               {(file) => (
                 <div class="border-b border-gray-700/20 last:border-b-0">
-                  {/* 文件名标题 */}
+                  {/* File name header */}
                   <button
                     class="w-full flex items-center gap-2 px-4 py-1.5 text-xs font-mono text-gray-300 hover:bg-gray-800/50 transition-colors cursor-pointer"
                     onClick={() => openFileInEditor(file.filePath)}
@@ -131,12 +128,12 @@ const ProblemsPanel: Component = () => {
                     <span class="text-gray-500 ml-auto">{file.diagnostics.length}</span>
                   </button>
 
-                  {/* 诊断项列表 */}
+                  {/* Diagnostic items */}
                   <div>
                     <For each={file.diagnostics}>
                       {(diag) => {
                         const sev = SEVERITY_CONFIG[diag.severity] || SEVERITY_CONFIG.error;
-                        const lineNum = diag.range.start.line + 1; // LSP 是 0-based，显示 1-based
+                        const lineNum = diag.range.start.line + 1; // LSP is 0-based; display 1-based
                         const colNum = diag.range.start.character + 1;
 
                         return (

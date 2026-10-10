@@ -1,14 +1,14 @@
 /**
- * LSP 诊断状态管理
+ * LSP diagnostics state management
  *
- * 管理来自语言服务器的诊断信息（错误、警告、提示），
- * 按文件 URI 分组存储，支持按严重级别过滤和统计。
+ * Manages diagnostics from language servers (errors, warnings, hints),
+ * grouped by file URI, with severity-level filtering and stats.
  */
 
 import { createStore, produce } from 'solid-js/store';
 import { createSignal } from 'solid-js';
 
-// ====== 类型定义 ======
+// ====== Type definitions ======
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint';
 
@@ -26,11 +26,11 @@ export interface DiagnosticItem {
 }
 
 export interface FileDiagnostics {
-  /** 文件完整 URI (file:///...) */
+  /** Full file URI (file:///...) */
   uri: string;
-  /** 相对于项目根目录的路径 */
+  /** Path relative to the project root */
   filePath: string;
-  /** 该文件的诊断项列表 */
+  /** Diagnostic items for this file */
   diagnostics: DiagnosticItem[];
 }
 
@@ -42,12 +42,12 @@ export interface LspDiagnosticsUpdatePayload {
   };
 }
 
-// ====== 状态 Store ======
+// ====== State store ======
 
 interface DiagnosticsState {
   /** key: file:// URI */
   diagnostics: Record<string, FileDiagnostics>;
-  /** 最后更新时对应的语言服务器 */
+  /** Language server that produced the last update */
   languageId: string;
 }
 
@@ -56,29 +56,29 @@ const [diagnosticsState, setDiagnosticsState] = createStore<DiagnosticsState>({
   languageId: '',
 });
 
-// ====== 派生信号 ======
+// ====== Derived signals ======
 
-/** 错误总数 */
+/** Total error count */
 export const [totalErrors, setTotalErrors] = createSignal(0);
 
-/** 警告总数 */
+/** Total warning count */
 export const [totalWarnings, setTotalWarnings] = createSignal(0);
 
-/** 诊断面板是否可见 */
+/** Whether the diagnostics panel is visible */
 export const [problemsPanelVisible, setProblemsPanelVisible] = createSignal(false);
 
-/** 当前严重级别过滤器 */
+/** Current severity-level filter */
 export const [severityFilter, setSeverityFilter] = createSignal<DiagnosticSeverity | 'all'>('all');
 
-// ====== 操作函数 ======
+// ====== Operations ======
 
 /**
- * 更新来自语言服务器的诊断数据
+ * Update diagnostics data from a language server
  */
 export function updateDiagnostics(payload: LspDiagnosticsUpdatePayload) {
   const { uri, diagnostics } = payload.params;
 
-  // 如果诊断为空的数组 → 清除该文件的诊断
+  // An empty diagnostics array → clear that file's diagnostics
   if (!diagnostics || diagnostics.length === 0) {
     setDiagnosticsState(
       produce((s) => {
@@ -86,7 +86,7 @@ export function updateDiagnostics(payload: LspDiagnosticsUpdatePayload) {
       }),
     );
   } else {
-    // 将 URI 转为相对路径（提取 path 部分）
+    // Convert the URI to a relative path (extract the path part)
     const filePath = uriToFilePath(uri);
 
     setDiagnosticsState(
@@ -101,12 +101,12 @@ export function updateDiagnostics(payload: LspDiagnosticsUpdatePayload) {
     );
   }
 
-  // 更新统计
+  // Update stats
   recalculateStats();
 }
 
 /**
- * 清除所有诊断
+ * Clear all diagnostics
  */
 export function clearAllDiagnostics() {
   setDiagnosticsState({ diagnostics: {}, languageId: '' });
@@ -115,19 +115,7 @@ export function clearAllDiagnostics() {
 }
 
 /**
- * 清除指定文件的诊断
- */
-export function clearFileDiagnostics(uri: string) {
-  setDiagnosticsState(
-    produce((s) => {
-      delete s.diagnostics[uri];
-    }),
-  );
-  recalculateStats();
-}
-
-/**
- * 获取所有文件诊断（应用过滤器）
+ * Get all file diagnostics (with the filter applied)
  */
 export function getFilteredDiagnostics(): FileDiagnostics[] {
   const filter = severityFilter();
@@ -146,27 +134,13 @@ export function getFilteredDiagnostics(): FileDiagnostics[] {
 }
 
 /**
- * 获取指定文件的最严重级别（用于文件树标记）
- */
-export function getFileMaxSeverity(uri: string): DiagnosticSeverity | null {
-  const file = diagnosticsState.diagnostics[uri];
-  if (!file || file.diagnostics.length === 0) return null;
-
-  const severities = file.diagnostics.map((d) => d.severity);
-  if (severities.includes('error')) return 'error';
-  if (severities.includes('warning')) return 'warning';
-  if (severities.includes('info')) return 'info';
-  return 'hint';
-}
-
-/**
- * 是否有任何诊断
+ * Whether any diagnostics exist
  */
 export function hasDiagnostics(): boolean {
   return Object.keys(diagnosticsState.diagnostics).length > 0;
 }
 
-// ====== 内部辅助 ======
+// ====== Internal helpers ======
 
 function recalculateStats() {
   let errors = 0;
@@ -184,13 +158,13 @@ function recalculateStats() {
 }
 
 /**
- * 将 file:// URI 转为可读的相对路径
+ * Convert a file:// URI to a readable relative path
  */
 function uriToFilePath(uri: string): string {
   try {
     const url = new URL(uri);
     if (url.protocol === 'file:') {
-      // Windows 路径: /C:/... → C:/...
+      // Windows path: /C:/... → C:/...
       let path = decodeURIComponent(url.pathname);
       if (/^\/[a-zA-Z]:/.test(path)) {
         path = path.slice(1);

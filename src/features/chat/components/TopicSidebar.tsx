@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, onMount, onCleanup } from 'solid-js';
+import { Component, For, Show, createEffect, createSignal, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   Assistant,
@@ -23,7 +23,7 @@ interface TopicSidebarProps {
   isCollapsed: boolean;
   onToggle: (e: MouseEvent) => void;
   isResizing: boolean;
-  /** 打开指定话题的导出弹窗 */
+  /** Opens the export dialog for the given topic */
   onExportTopic: (topicId: string) => void;
 }
 
@@ -38,7 +38,7 @@ const createTopic = (name?: string): Topic => ({
   summary: '',
 });
 
-/** 根据 parentTopicId 构建话题树。返回 [根话题列表, 子话题映射(parentId → children)] */
+/** Build a topic tree from parentTopicId. Returns [root topic list, children map (parentId → children)] */
 const buildTopicTree = (topics: Topic[]): { roots: Topic[]; children: Map<string, Topic[]> } => {
   const children = new Map<string, Topic[]>();
   const roots: Topic[] = [];
@@ -54,6 +54,43 @@ const buildTopicTree = (topics: Topic[]): { roots: Topic[]; children: Map<string
   return { roots, children };
 };
 
+// ---- Branch fold state (module scope, persisted) ----
+// Module-level so the fold state survives sidebar remounts: window/view
+// switches (e.g. entering/leaving the subagent conversation view) unmount the
+// whole chat column, and component-local state reset every fold to expanded.
+// Additionally persisted to localStorage per assistant (a single global key
+// would be wiped by assistant switches): { [assistantId]: [topicId, ...] }.
+// Stale ids (deleted topics) never match and are harmless.
+const [collapsedTopicIds, setCollapsedTopicIds] = createSignal<Set<string>>(new Set());
+let prevChildCounts = new Map<string, number>();
+let foldAssistantId: string | undefined;
+
+const FOLD_STORAGE_KEY = 'topic-fold-state';
+
+const loadFoldState = (assistantId: string): Set<string> => {
+  try {
+    const raw = localStorage.getItem(FOLD_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as Record<string, string[]>;
+    const ids = parsed[assistantId];
+    return new Set(Array.isArray(ids) ? ids : []);
+  } catch {
+    // Storage unavailable or corrupted: fall back to session-only folds
+    return new Set();
+  }
+};
+
+const saveFoldState = (assistantId: string, ids: Set<string>) => {
+  try {
+    const raw = localStorage.getItem(FOLD_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, string[]>) : {};
+    parsed[assistantId] = Array.from(ids);
+    localStorage.setItem(FOLD_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    // Restricted storage context: keep working session-only
+  }
+};
+
 const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
   const [isTopicMenuAnimatingOut, setIsTopicMenuAnimatingOut] = createSignal(false);
@@ -62,6 +99,47 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     x: 0,
     y: 0,
     targetTopicId: null as string | null,
+  });
+
+  // Auto-expand: a folded topic that gains a new child (e.g. branching from a
+  // message while the subtree is folded) unfolds so the new branch is visible.
+  // Switching assistants restores that assistant's persisted fold state (and
+  // refreshes the counters). The restore branch deliberately FALLS THROUGH to
+  // snapshot counts in the same run — an early return left prevChildCounts
+  // empty, so the first fold click after a remount/switch read as a
+  // child-count increase and auto-expanded the very topic the user had just
+  // collapsed (the "click twice to fold" bug).
+  createEffect(() => {
+    const asst = props.currentAssistant;
+    if (!asst) return;
+    if (asst.id !== foldAssistantId) {
+      foldAssistantId = asst.id;
+      prevChildCounts = new Map();
+      setCollapsedTopicIds(loadFoldState(asst.id));
+    }
+    const counts = new Map<string, number>();
+    for (const tp of asst.topics) {
+      if (tp.parentTopicId) counts.set(tp.parentTopicId, (counts.get(tp.parentTopicId) ?? 0) + 1);
+    }
+    const next = new Set(collapsedTopicIds());
+    let changed = false;
+    for (const [pid, n] of counts) {
+      if (n > (prevChildCounts.get(pid) ?? 0) && next.has(pid)) {
+        next.delete(pid);
+        changed = true;
+      }
+    }
+    prevChildCounts = counts;
+    if (changed) setCollapsedTopicIds(next);
+  });
+  // Write-through persistence: every fold mutation (toggle, auto-expand,
+  // assistant restore) lands in localStorage. foldAssistantId is a plain
+  // module variable updated by the effect above before any signal write it
+  // triggers, so the save always targets the right assistant bucket.
+  createEffect(() => {
+    const id = foldAssistantId;
+    if (!id) return;
+    saveFoldState(id, collapsedTopicIds());
   });
 
   onMount(() => {
@@ -74,7 +152,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
   const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
     if (!newName.trim()) return props.setEditingTopicId(null);
-    // 用户手动重命名时也标记为已重命名，避免首次对话后又自动覆盖
+    // Mark manual renames as renamed so the auto title won't overwrite them later
     setDatas(
       'assistants',
       (a) => a.id === asstId,
@@ -135,9 +213,9 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   };
 
   /**
-   * 手动重新生成话题标题。
-   * 仅对非默认话题可用（默认话题永远不重命名）。
-   * 通过 `requestRenameTopic` 通知 ChatPage 执行实际的 LLM 调用。
+   * Manually regenerate the topic title.
+   * Only available for non-default topics (the default topic is never renamed).
+   * Notifies ChatPage via `requestRenameTopic` to perform the actual LLM call.
    */
   const handleRegenerateTitle = () => {
     const asst = props.currentAssistant;
@@ -147,15 +225,15 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     if (!target) return;
     const ok = requestRenameTopic(asst.id, target.id);
     if (!ok) {
-      // 默认话题：理论上菜单项已隐藏，这里是防御性提示
+      // Default topic: the menu item should already be hidden; this is a defensive warning
       console.warn('默认话题不支持重新生成标题');
     }
     closeTopicMenu();
   };
 
   /**
-   * 当前右键菜单指向的话题是否为默认话题。
-   * 默认话题不显示"重新生成标题"菜单项。
+   * Whether the context-menu target topic is the default topic.
+   * The default topic hides the "regenerate title" menu item.
    */
   const isMenuTargetDefault = (): boolean => {
     const asst = props.currentAssistant;
@@ -172,20 +250,22 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
       style={{
         width: props.isCollapsed ? '0%' : `${props.width}%`,
         padding: props.isCollapsed ? '0' : '15px',
-        background: props.isCollapsed ? 'none' : 'rgba(var(--surface-bg), 0.15)',
-        'backdrop-filter': props.isCollapsed ? 'none' : 'blur(16px)',
-        border: props.isCollapsed ? 'none' : '1px solid var(--border-dim)',
-        'border-radius': '12px',
-        'box-shadow': props.isCollapsed
-          ? 'none'
-          : 'inset 0 0 1px rgba(var(--text-base-rgb),0.06), 0 8px 32px rgba(0, 0, 0, 0.2)',
         transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 调整大小把手（左侧） */}
+      {/* Faint divider between the three columns: sits on the panel edge (+/-0.5px), centered exactly with the resize handle below; hidden when collapsed */}
+      <Show when={!props.isCollapsed}>
+        <span
+          aria-hidden="true"
+          class="absolute top-0 bottom-0 w-px pointer-events-none"
+          style={{ left: '-0.5px', background: 'rgba(var(--text-base-rgb),0.12)' }}
+        />
+      </Show>
+
+      {/* Resize handle (left): 6px grab strip centered on the panel edge (concentric with the divider line) */}
       <div
-        class="absolute top-0 bottom-0 left-[-4px] w-1 flex items-center justify-center cursor-ew-resize z-[1000] group"
+        class="absolute top-0 bottom-0 left-[-3px] w-[6px] flex items-center justify-center cursor-ew-resize z-[1000] group"
         onMouseDown={(e) => props.onResize(e as MouseEvent)}
       >
         <div
@@ -232,28 +312,90 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
               <div class="mt-[15px] space-y-1">
                 {(() => {
                   const { roots, children } = buildTopicTree(asst().topics);
-                  // 递归渲染话题树
-                  const renderTopic = (topic: Topic, depth: number): any => {
+                  // Render the topic tree recursively. Connector geometry bridges the
+                  // list gaps so the vertical rail reads as one continuous line:
+                  // - isLast / isFirst: sibling position in the parent's child list;
+                  // - railBelowInherited: the rail continues past this whole subtree
+                  //   (a parent's next sibling exists somewhere up the chain). Root
+                  //   subtrees are hard-cut — never bridge across root topics.
+                  // - folded: this topic's children are collapsed; the rail treats
+                  //   it as a leaf and the children block animates to zero height.
+                  const renderTopic = (
+                    topic: Topic,
+                    depth: number,
+                    isLast = true,
+                    isFirst = false,
+                    railBelowInherited = false,
+                  ): any => {
                     const isChild = depth > 0;
+                    const kids = children.get(topic.id) ?? [];
+                    const hasKids = kids.length > 0;
+                    // Gap between this topic's children block and the rows
+                    // above/below it (root children get space-y-1's 4px, deeper
+                    // nesting space-y-0.5's 2px).
+                    const childGap = depth === 0 ? 4 : 2;
+                    // upExt: the first child reaches up to the parent row's bottom
+                    // edge. Non-first siblings also extend 2px up: the fold wrapper
+                    // clips the previous sibling's 2px stem overhang below its own
+                    // row, so each next row re-draws that strip from its side and
+                    // the rail stays continuous under clipping.
+                    const parentGap = depth === 1 ? 4 : 2;
+                    const upExt = isChild ? (isFirst ? parentGap : 2) : 0;
+                    const midY = upExt + 14;
+                    // Fold state must be read ONLY inside the closures / JSX
+                    // attribute expressions below, never directly in this body:
+                    // the whole IIFE is a memo, so a body-level signal read would
+                    // rebuild the entire subtree on every toggle — fresh DOM nodes
+                    // carry no transition, which is why the fold animation never
+                    // played. Closure reads compile to fine-grained per-attribute
+                    // effects that update the SAME nodes in place, letting the
+                    // grid-template-rows / opacity transitions actually run.
+                    const isFolded = () => hasKids && collapsedTopicIds().has(topic.id);
+                    // stemOn: the rail continues below this row — toward the next
+                    // sibling, into this row's own (expanded) children, or toward
+                    // an uncle (inherited). Folded children do not continue the
+                    // rail; without a stem the line ends at the row's elbow (L).
+                    const stemOn = () =>
+                      isChild && (!isLast || (hasKids && !isFolded()) || railBelowInherited);
+                    const railH = () => 28 + upExt + (stemOn() ? 2 : 0);
+                    const connectorPath = () =>
+                      stemOn()
+                        ? `M5 0 V${railH()} M5 ${upExt + 10} Q5 ${midY} 9 ${midY} H22`
+                        : `M5 0 V${upExt + 10} Q5 ${midY} 9 ${midY} H22`;
                     return (
                       <>
                         <div
-                          class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent border-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
+                          class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
                           classList={{
-                            '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
+                            // Active: keep the resting border/background untouched;
+                            // only the themed inner glow marks the state. Child rows
+                            // (28px stadium) use the size-scaled variant so the glow
+                            // reaches the text instead of ringing it.
+                            [isChild ? 'active-glow-sm' : 'active-glow']:
                               topic.id === currentTopicId(),
                           }}
                           onClick={() => setCurrentTopicId(topic.id)}
                         >
-                          {/* 子话题分支标记 */}
+                          {/* Branch marker for child topics: rounded elbow connector.
+                              The SVG may overflow the row box (margin-top negative /
+                              extra height) so the vertical rail spans the list gaps
+                              and connects with the rows above and below. */}
                           {isChild && (
-                            <span
-                              class="mr-1 shrink-0 leading-none"
-                              style={{ color: 'rgba(var(--primary-rgb),0.5)', 'font-size': '9px' }}
-                              title={t('chat.branchTopic')}
+                            <svg
+                              viewBox={`0 0 22 ${railH()}`}
+                              width="22"
+                              height={railH()}
+                              class="shrink-0 self-start"
+                              style={upExt ? { 'margin-top': `-${upExt}px` } : undefined}
+                              fill="none"
+                              stroke="rgba(var(--text-base-rgb),0.35)"
+                              stroke-width="1.5"
+                              stroke-linecap="round"
+                              aria-hidden="true"
                             >
-                              └
-                            </span>
+                              <title>{t('chat.branchTopic')}</title>
+                              <path d={connectorPath()} />
+                            </svg>
                           )}
                           <Show
                             when={props.editingTopicId === topic.id}
@@ -297,28 +439,104 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                               onClick={(e) => e.stopPropagation()}
                             />
                           </Show>
-                          <button
-                            class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                          <div class="flex items-center gap-0.5 shrink-0">
+                            {/* Fold toggle: only for topics with children, hover-only
+                                visibility (same as the more button). Caret icons
+                                indicate the click action: v (caret-down) when
+                                folded (click expands downward), ^ (caret-up) when
+                                expanded (click folds up). */}
+                            <Show when={hasKids}>
+                              <button
+                                type="button"
+                                class="flex items-center justify-center border-none bg-transparent cursor-pointer rounded-md text-white/40 hover:text-white/85 transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100"
+                                style={{
+                                  width: isChild ? '18px' : '24px',
+                                  height: isChild ? '18px' : '24px',
+                                }}
+                                title={
+                                  isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
+                                }
+                                aria-expanded={!isFolded()}
+                                aria-label={
+                                  isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCollapsedTopicIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(topic.id)) next.delete(topic.id);
+                                    else next.add(topic.id);
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <Icon
+                                  name={isFolded() ? 'caret-down' : 'caret-up'}
+                                  size={isChild ? 13 : 15}
+                                />
+                              </button>
+                            </Show>
+                            <button
+                              class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                              style={{
+                                width: isChild ? '22px' : '30px',
+                                height: isChild ? '22px' : '30px',
+                              }}
+                              onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
+                            >
+                              <Icon
+                                src="/icons/app-logo/dot-menu.svg"
+                                class={isChild ? 'w-[13px] h-[13px]' : 'w-[18px] h-[18px]'}
+                              />
+                            </button>
+                          </div>
+                        </div>
+                        {/* Render child topics recursively. The grid wrapper animates the
+                            fold via grid-template-rows 0fr↔1fr; its negative top margin
+                            cancels the list gap and the inner padding restores it, so the
+                            connector bridge stays inside the clipped box and rows land
+                            exactly where they did before the wrapper existed. */}
+                        <Show when={hasKids}>
+                          <div
+                            class="grid transition-[grid-template-rows] duration-200 ease-out"
                             style={{
-                              width: isChild ? '22px' : '30px',
-                              height: isChild ? '22px' : '30px',
+                              'margin-top': `-${childGap}px`,
+                              'grid-template-rows': isFolded() ? '0fr' : '1fr',
                             }}
-                            onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
                           >
-                            <Icon
-                              src="/icons/app-logo/dot-menu.svg"
-                              class={isChild ? 'w-[13px] h-[13px]' : 'w-[18px] h-[18px]'}
-                            />
-                          </button>
-                        </div>
-                        {/* 递归渲染子话题 — 更紧凑的间距 */}
-                        <div class="space-y-0.5">
-                          {
-                            <For each={children.get(topic.id)}>
-                              {(child) => renderTopic(child, depth + 1)}
-                            </For>
-                          }
-                        </div>
+                            <div class="overflow-hidden min-h-0">
+                              <div
+                                class="space-y-0.5 transition-opacity duration-200"
+                                style={{
+                                  'padding-top': `${childGap}px`,
+                                  opacity: isFolded() ? '0' : '1',
+                                }}
+                              >
+                                <For each={children.get(topic.id)}>
+                                  {(child) => {
+                                    const siblings = children.get(topic.id) ?? [];
+                                    const isLastSibling =
+                                      siblings[siblings.length - 1]?.id === child.id;
+                                    const isFirstSibling = siblings[0]?.id === child.id;
+                                    // Children inherit the rail-below flag: the rail
+                                    // continues past this subtree when this topic has a
+                                    // next sibling, or when the flag was inherited from
+                                    // above. Root subtrees never bridge across roots.
+                                    const kidsRailBelow =
+                                      depth === 0 ? false : !isLast || railBelowInherited;
+                                    return renderTopic(
+                                      child,
+                                      depth + 1,
+                                      isLastSibling,
+                                      isFirstSibling,
+                                      kidsRailBelow,
+                                    );
+                                  }}
+                                </For>
+                              </div>
+                            </div>
+                          </div>
+                        </Show>
                       </>
                     );
                   };

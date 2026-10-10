@@ -1,19 +1,19 @@
 /**
  * @file CommandPalette.tsx
- * @description 命令面板组件 — VS Code 风格的全局命令搜索与执行入口
+ * @description Command palette component — VS Code-style global command search and execution entry
  *
- * 触发方式：默认 Ctrl+K（可在设置中自定义）
+ * Trigger: Ctrl+K by default (customizable in settings)
  *
- * 功能：
- * - 模糊搜索所有已注册命令
- * - 按类别分组显示
- * - 键盘导航（↑↓ 选择，Enter 执行，Escape 关闭）
- * - 显示每个命令的当前快捷键
+ * Features:
+ * - Fuzzy search over all registered commands
+ * - Grouped display by category
+ * - Keyboard navigation (↑↓ to select, Enter to run, Escape to close)
+ * - Shows each command's current shortcut
  *
- * 过滤算法：
- * - 中文/英文子串匹配（不区分大小写）
- * - 首字母缩写匹配（如 "ts" 匹配 "Toggle Sidebar"）
- * - 多关键词空格分隔（每个关键词都必须匹配）
+ * Filtering algorithm:
+ * - Chinese/English substring match (case-insensitive)
+ * - Initialism match (e.g. "ts" matches "Toggle Sidebar")
+ * - Multi-keyword, space-separated (every keyword must match)
  */
 
 import {
@@ -42,7 +42,7 @@ import {
 } from '../../core/shortcuts';
 import { t, type TranslationKey } from '../../core/i18n';
 
-// ---- 类别显示配置 ----
+// ---- Category display config ----
 
 const CATEGORY_LABELS: Record<CommandCategory, TranslationKey> = {
   navigation: 'command.category.navigation',
@@ -58,18 +58,18 @@ const CATEGORY_COLORS: Record<CommandCategory, string> = {
   global: 'rgba(180, 140, 200, 0.6)',
 };
 
-// ---- 模糊匹配工具 ----
+// ---- Fuzzy matching helpers ----
 
-/** 检查单个关键词是否匹配命令 */
+/** Check whether a single keyword matches a command. */
 function matchWord(word: string, cmd: CommandAction): boolean {
   const w = word.toLowerCase();
   const label = getCommandDisplayLabel(cmd).toLowerCase();
   const desc = getCommandDisplayDescription(cmd).toLowerCase();
 
-  // 子串匹配
+  // Substring match.
   if (label.includes(w) || desc.includes(w)) return true;
 
-  // 首字母缩写匹配（取 label 中每个单词的首字母）
+  // Initialism match (first letter of each word in the label).
   const initials = label
     .split(/\s+/)
     .map((s) => s[0])
@@ -77,7 +77,7 @@ function matchWord(word: string, cmd: CommandAction): boolean {
     .toLowerCase();
   if (initials.includes(w)) return true;
 
-  // 中文拼音首字母（取 label 每个字符 — 对中文有效）
+  // Chinese pinyin initials (first letter of each label character — effective for Chinese).
   if (/^[a-z]+$/.test(w) && label.length >= w.length) {
     const pyAbbr = Array.from(label)
       .map((ch) => ch[0]?.toLowerCase() ?? '')
@@ -88,14 +88,14 @@ function matchWord(word: string, cmd: CommandAction): boolean {
   return false;
 }
 
-/** 检查查询字符串是否匹配命令（空格分隔多关键词，全部匹配） */
+/** Check whether a query matches a command (space-separated keywords, all must match). */
 function matchesQuery(query: string, cmd: CommandAction): boolean {
   if (!query.trim()) return true;
   const words = query.trim().split(/\s+/);
   return words.every((w) => matchWord(w, cmd));
 }
 
-// ---- 组件 ----
+// ---- Component ----
 
 const CommandPalette: Component = () => {
   const [query, setQuery] = createSignal('');
@@ -103,16 +103,16 @@ const CommandPalette: Component = () => {
   let inputRef: HTMLInputElement | undefined;
   let listRef: HTMLDivElement | undefined;
 
-  // 获取所有注册命令
+  // All registered commands.
   const allCommands = createMemo(() => getRegisteredCommands());
 
-  // 过滤结果
+  // Filtered results.
   const filteredCommands = createMemo(() => {
     const q = query();
     return allCommands().filter((cmd) => !cmd.isSlashCommand && matchesQuery(q, cmd));
   });
 
-  // 分组结果
+  // Grouped results.
   const groupedCommands = createMemo(() => {
     const groups: {
       category: CommandCategory;
@@ -124,23 +124,32 @@ const CommandPalette: Component = () => {
     const cmds = filteredCommands();
 
     for (const cmd of cmds) {
-      if (!seen.has(cmd.category)) {
-        seen.add(cmd.category);
+      // Defensive: the registry may hold commands without category metadata (registerCommand
+      // does not fill it for unknown ids). Fall back to global and warn so t(undefined) cannot crash the render tree.
+      if (!CATEGORY_LABELS[cmd.category]) {
+        console.warn(
+          `[commands] 命令 ${cmd.id} 缺少元数据注册（shortcuts.ts 内置表），已兜底到 global 分组`,
+        );
+      }
+      const category: CommandCategory =
+        cmd.category && CATEGORY_LABELS[cmd.category] ? cmd.category : 'global';
+      if (!seen.has(category)) {
+        seen.add(category);
         groups.push({
-          category: cmd.category,
-          label: t(CATEGORY_LABELS[cmd.category]),
-          color: CATEGORY_COLORS[cmd.category] || 'rgba(var(--text-base-rgb),0.4)',
+          category,
+          label: t(CATEGORY_LABELS[category]),
+          color: CATEGORY_COLORS[category] || 'rgba(var(--text-base-rgb),0.4)',
           items: [],
         });
       }
-      const group = groups.find((g) => g.category === cmd.category)!;
+      const group = groups.find((g) => g.category === category)!;
       group.items.push(cmd);
     }
 
     return groups;
   });
 
-  // 扁平化索引（用于键盘导航）
+  // Flattened index (for keyboard navigation).
   const flatIndex = createMemo(() => {
     const result: CommandAction[] = [];
     for (const g of groupedCommands()) {
@@ -151,12 +160,12 @@ const CommandPalette: Component = () => {
     return result;
   });
 
-  // 面板打开时重置状态并聚焦输入框
+  // Reset state and focus the input when the palette opens.
   createEffect(() => {
     if (commandPaletteOpen()) {
       setQuery('');
       setSelectedIndex(0);
-      // DOM 还未渲染时，等待一帧再聚焦
+      // The DOM may not be rendered yet; wait a frame before focusing.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           inputRef?.focus();
@@ -165,24 +174,24 @@ const CommandPalette: Component = () => {
     }
   });
 
-  // 搜索词变化时重置选中索引
+  // Reset the selected index when the query changes.
   createEffect(() => {
-    query(); // 追踪依赖
+    query(); // track dependency
     setSelectedIndex(0);
   });
 
-  // 关闭面板
+  // Close the palette.
   const close = () => {
     setCommandPaletteOpen(false);
   };
 
-  // 执行命令并关闭
+  // Execute a command and close.
   const execute = (actionId: string) => {
     close();
     setTimeout(() => executeCommand(actionId), 50);
   };
 
-  // 滚动到选中项
+  // Scroll the selected item into view.
   const scrollToSelected = () => {
     requestAnimationFrame(() => {
       const selected = listRef?.querySelector(
@@ -192,7 +201,7 @@ const CommandPalette: Component = () => {
     });
   };
 
-  // 键盘导航
+  // Keyboard navigation.
   const onKeyDown = (e: KeyboardEvent) => {
     const flat = flatIndex();
 
@@ -226,14 +235,14 @@ const CommandPalette: Component = () => {
     }
   };
 
-  // 点击遮罩关闭
+  // Close on overlay click.
   const onOverlayClick = (e: MouseEvent) => {
     if (e.target === e.currentTarget) {
       close();
     }
   };
 
-  // ---- 生命周期：注册 command-palette 命令自身 ----
+  // ---- Lifecycle: register the command-palette command itself ----
 
   onMount(() => {
     registerCommand({
@@ -252,11 +261,11 @@ const CommandPalette: Component = () => {
     unregisterCommand('command-palette');
   });
 
-  // ---- 渲染 ----
+  // ---- Render ----
 
   return (
     <Show when={commandPaletteOpen()}>
-      {/* 遮罩 */}
+      {/* Overlay */}
       <div
         class="fixed inset-0 z-[9999] flex items-start justify-center pt-[18vh] bg-black/50"
         style={{
@@ -265,7 +274,7 @@ const CommandPalette: Component = () => {
         }}
         onClick={onOverlayClick}
       >
-        {/* 卡片 */}
+        {/* Card */}
         <div
           class="w-[600px] max-h-[460px] flex flex-col border border-white/[0.08] rounded-[14px] overflow-hidden"
           style={{
@@ -276,7 +285,7 @@ const CommandPalette: Component = () => {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* 搜索框 */}
+          {/* Search input */}
           <div class="flex items-center gap-2.5 px-4 py-3.5 border-b border-b-white/[0.06]">
             <svg
               class="text-white/25 shrink-0"
@@ -305,7 +314,7 @@ const CommandPalette: Component = () => {
             />
           </div>
 
-          {/* 命令列表 */}
+          {/* Command list */}
           <div ref={listRef} class="flex-1 overflow-y-auto p-2 max-h-[340px]">
             <Show
               when={flatIndex().length > 0}
@@ -359,7 +368,7 @@ const CommandPalette: Component = () => {
             </Show>
           </div>
 
-          {/* 底部提示 */}
+          {/* Footer hints */}
           <div class="flex items-center justify-center gap-4 px-4 pt-2 pb-2.5 border-t border-t-white/[0.04] text-[10px] text-white/20">
             <span>
               <kbd>↑↓</kbd> {t('command.palette.hintNavigate')}

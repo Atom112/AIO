@@ -31,7 +31,8 @@ src/
 ├── Layout.tsx           # Root layout with NavBar
 ├── index.css            # Tailwind v4 CSS + theme CSS variables (light/dark mode)
 ├── core/
-│   ├── store/           # store.ts: global reactive state AND core interfaces (Message, Topic, Assistant, ActivatedModel, AgentStep...); diagnostics.ts
+│   ├── store/           # 域模块：types/models/chat/engine/project/profiles/ui-prefs/update/workflow（store.ts 仅作 barrel 再导出；接口在 types.ts）；diagnostics.ts
+│   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers）+ events.ts（事件名常量）—— 组件不得裸 invoke
 │   ├── types/           # Backend mirror types: mcp.ts, skill.ts
 │   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog), mcp.ts, exportConversation.ts
 │   ├── i18n/            # index.ts (t(), locale) + locales/zh-CN.json + locales/en-US.json
@@ -39,10 +40,10 @@ src/
 │   ├── agent-prompts.ts # Agent system-prompt presets
 │   └── assets/
 ├── features/
-│   ├── chat/            # ChatPage.tsx + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, ...) + hooks/
-│   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, UsageSettings + usage chart components)
+│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, ...)
+│   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
-    └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, UserDropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification, AvatarCropModel
+    └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
 ```
 
 ### Backend (`src-tauri/src/`)
@@ -53,16 +54,22 @@ src-tauri/src/
 ├── lib.rs               # Bootstrap: tracing init, managed state, invoke handler registration, engine cleanup on window destroy
 ├── mcp_fs_server.rs     # Built-in stdio filesystem MCP server (invoked with --fs-server)
 ├── core/
-│   ├── models.rs        # Shared data structures (ActivatedModel, StreamPayload, ToolResultPayload, ...)
-│   ├── db.rs            # SQLite initialization and schema
+│   ├── models/          # Shared data structures (chat/config/mcp/skill/project/agent/engine 域拆分)
+│   ├── db.rs            # SQLite initialization（走 core/migrate.rs 版本化迁移）
 │   ├── state.rs         # Tauri managed state (StreamManager, DbState, LocalEngineState, SubagentHandles)
+│   ├── config.rs        # AppConfig 持久化（save_app_config/load_app_config；命令层仅存薄包装）
+│   ├── events.rs        # 后端→前端事件名常量注册表（kebab-case 守门测试；新事件须登记）
+│   ├── ids.rs           # 内置 ID 常量（BUILTIN_SERVER_ID / BUILTIN_FS_SERVER_ID）
+│   ├── migrate.rs       # 版本化 SQLite 迁移运行器（PRAGMA user_version；chat 库与记忆库共用）
+│   ├── model_registry.rs # 嵌入/重排模型注册表（MANIFEST）与目录解析
+│   ├── paths.rs         # 应用数据目录 / 包 ID
 │   ├── permission.rs    # Agent tool permission model (allowed/denied rules per agent mode)
 │   ├── secure_store.rs  # OS keychain-backed secret storage (API keys, MCP server secrets)
-│   └── subagent.rs      # Subagent profile definitions (9 built-in) + tool specs
+│   └── subagent.rs      # Subagent profile definitions (10 built-in, incl. toolless vision) + tool specs
 ├── commands/
 │   ├── mod.rs
-│   ├── config.rs        # Assistants, app config, avatars, profile model overrides, custom subagent profiles, auto-start, topic branching
-│   ├── llm/             # mod.rs: streaming, agent loop, subagents, summarization, usage, token counting; btw.rs: "By The Way" Q&A
+│   ├── config.rs        # Assistants, app config, profile model overrides, custom subagent profiles, auto-start, topic branching
+│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/titles/tool_specs/usage；btw.rs: "By The Way" 侧问
 │   ├── engine.rs        # Local engine lifecycle: start/stop/status, engine scan, model listing
 │   ├── attachment.rs    # Chat attachments + file content extraction command
 │   ├── provider_config.rs # Provider configs (LobeHub-shaped), connection tests, model fetching, API key management
@@ -73,11 +80,37 @@ src-tauri/src/
 │   ├── skill.rs         # Skills CRUD, market browsing/download, npx import
 │   ├── lsp.rs           # LSP server lifecycle, diagnostics, auto-detect
 │   ├── catalog.rs       # Models catalog (bundled @aio/models-data / models.dev)
+│   ├── local_model_market.rs  # 本地 GGUF 模型市场：HF/ModelScope 搜索合并 + 硬件档案 + HF Token
+│   ├── local_model_download.rs # 本地 GGUF 下载器：多源回退/断点续传/空间预检/目录迁移
+│   ├── embedding.rs     # 嵌入模型：测试 / 列表 / 下载 / 启停 / 目录
+│   ├── rerank.rs        # 重排模型：测试 / 保存 API Key
+│   ├── memory.rs        # 项目记忆命令（memory_*：CRUD/混合检索/统计/开关）
+│   ├── export.rs        # 会话导出（Markdown/HTML/PDF 素材）
+│   ├── image_gen.rs     # 图像生成命令
 │   └── update.rs        # App update check/install/restart
+├── services/            # 领域服务层（被命令层调用；不得反向依赖 commands）
+│   └── memory/          # 项目级记忆/RAG 服务
+│       ├── mod.rs       # 域入口 + collect_rows_warn（行级错误可见化）+ 迁移/读取拆分（migrate_* 显式写、resolve_* 纯读）
+│       ├── manager.rs   # 每项目 SQLite 连接 LRU 缓存
+│       ├── store/       # 记忆库存储层（mod/search/config/graph/stats）：facts + 版本审计 + FTS5 全文 + 向量打分 + 代码符号索引
+│       ├── code.rs      # 代码库索引与向量检索（async + spawn_blocking）
+│       ├── retrieve.rs  # 检索后处理：二阶段精排（rerank）+ 查询改写 + 多查询 RRF 融合（fail-open）
+│       ├── extract.rs   # LLM 后台事实抽取
+│       ├── judge.rs     # 事实判重/仲裁（余弦相似度阈值）
+│       ├── consolidate.rs # sleep-time 合并整理（每日自动 + 手动）
+│       ├── graph.rs     # 关系图谱抽取
+│       ├── llm.rs       # 记忆管线专用的 LLM 调用薄封装
+│       ├── tools.rs     # Agent 记忆工具（remember/recall/search_memory）
+│       ├── vec0.rs      # SQLite vec0 向量扩展适配
+│       ├── vector.rs    # 向量工具（bytes_to_f32/brute_force_topk）
+│       └── eval.rs      # RAG 评测（数据集 src-tauri/tests/rag_eval）
 ├── plugins/
 │   ├── engine/          # LocalEnginePlugin trait + llama_cpp, ollama, vllm, installer
 │   ├── provider/        # ProviderPlugin trait + openai_compat (fallback, registered last), anthropic, google, ollama
-│   ├── mcp/             # MCP transports (stdio, http), connection lifecycle, error types
+│   ├── llm.rs           # LLM HTTP 客户端（post_chat_completion/chat_text_content 等，命令层已下沉至此）
+│   ├── embed/           # 嵌入 provider 插件（local_onnx + cache）
+│   ├── rerank/          # 重排 provider 插件（local_onnx + openai_compat）
+│   ├── mcp/             # MCP transports (stdio, http), connection lifecycle, convert（协议转换单实现）, error types
 │   └── lsp/             # LSP client, transport, error types
 └── utils/
     ├── file_parser.rs   # Attachment content extraction (PDF, Office, images, text) + model path validation
@@ -89,10 +122,16 @@ src-tauri/src/
     ├── lsp_agent_tools.rs # LSP tool adapters for the agent loop
     ├── knowledge.rs     # Project knowledge (.aio/knowledge.json)
     ├── project_map.rs   # Project structure mapping
-    ├── sandbox.rs       # Shell sandboxing (H-rule path checks)
+    ├── sandbox.rs       # Shell sandboxing（路径白名单/黑名单校验）
     ├── think.rs         # Reasoning tool
     ├── url_validation.rs # SSRF/URL safety checks
-    └── token_counter.rs # Token counting
+    ├── token_counter.rs # Token counting
+    ├── tool_result.rs   # 工具结果统一封装（tool_ok/tool_err/tool_ok_mcp/tool_err_mcp）
+    ├── time.rs          # 时间辅助（now_iso/now_unix_secs/days_from_civil 等）
+    ├── truncate.rs      # 截断辅助（字符/字节头尾截断、truncate_tool_result）
+    ├── diff.rs          # diff 预览（compute_diff_preview/simple_diff，含 char-boundary 安全）
+    ├── jsonrpc.rs       # JSON-RPC pending 请求表（PendingMap；MCP 与 LSP 客户端共用）
+    └── project_index.rs # 项目索引辅助（projects 文件解析）
 ```
 
 ## Coding Conventions
@@ -119,6 +158,7 @@ src-tauri/src/
 - **样式统一使用 Tailwind CSS 工具类编写**，避免内联样式或自定义 CSS 文件，除非确有必要。Tailwind v4 无 `tailwind.config`；主题令牌是 `src/index.css` 中的 CSS 变量（`--primary-rgb`、`--surface-bg`、`--text-base-rgb`、`--border-dim` 等），暗色模式由 `isDarkMode` 信号切换，新颜色必须走 CSS 变量，禁止硬编码 `rgba(...)` 字面量。
 - **严禁在代码中使用 Emoji 字符（包括 JSX 文本、模板字符串、配置对象）。一律使用 `<Icon name="..." />` 组件替换。对于字符串上下文（`confirm()`、`alert()`），使用纯文本等价符号（`✓` / `✗` / `[!]`）。**
 - **i18n**：所有面向用户的字符串必须通过 `t()`（`core/i18n`）取词；每个 key 必须同时存在于 `locales/zh-CN.json` 与 `locales/en-US.json`，且 `{{placeholder}}` 集合一致（`npm run check:i18n` 强制校验）。禁止在 JSX/模板字符串中硬编码 UI 文案。
+- **UI 文案克制**：界面上只放功能性文字（标签、状态、操作结果、错误提示、一句话占位符）。开发/设计阶段的解释性描述——功能介绍、原理说明、使用教程、配置字段的长说明——一律不写入 UI，它们属于 `docs/`。新增 UI 文案时先问：删掉这句话用户会不会用不了这个功能？会才留。操作状态反馈优先用控件自身的状态变化表达（如按钮文字短暂切换为「已取消/已下载」一秒后恢复、列表项消失、布局切换），而不是新增常驻状态文字行；错误信息（含失败原因）除外。
 
 ### Naming & Strings
 
@@ -137,10 +177,16 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 
 ## State Management Rules
 
-### Global State (`core/store/store.ts`)
+### Global State (`core/store/`)
 
-- `datas` (Store): `assistants`, `activatedModels`.
-- Signals: `config` (apiUrl/apiKey), `selectedModel`, `currentAssistantId`, `currentTopicId`, `projects`/`currentProjectId` (+ Git branch signals: `gitBranch`, `gitBranches`), `mcpServers`/`mcpServerStatus`/`mcpToolsCache`, `skills`, `providerConfigs`, `modelsCatalog` (+ status/source), `profileModelOverrides`, `customSubagentProfiles`, `engineScanResults`, `workflowState`, `appUpdate*`; UI-preference signals (`themeColor`, `isDarkMode`, `reasoningLevel`, `webSearchEnabled`) persist to localStorage.
+全局状态拆分为域模块（`store.ts` 仅作 barrel 再导出，外部导入路径不变；接口在 `types.ts`）：
+
+- `chat.ts`：`datas`（助手/话题/消息）+ 应用配置 + MCP 状态 + Skills + 标题重命名
+- `models.ts`：选中模型 / 模型目录 / 供应商配置 / modelKey / isLocalModel
+- `engine.ts`：本地引擎启动 / 进度 / 连接 / 扫描缓存
+- `project.ts` / `profiles.ts` / `ui-prefs.ts` / `update.ts` / `workflow.ts`：各自域
+
+关键信号：`datas`（Store: assistants/activatedModels）、`config`（apiUrl/apiKey）、`selectedModel`、`currentAssistantId`、`currentTopicId`、`projects`/`currentProjectId`（+ `gitBranch`/`gitBranches`）、`mcpServers`/`mcpServerStatus`/`mcpToolsCache`、`skills`、`providerConfigs`、`modelsCatalog*`、`profileModelOverrides`、`customSubagentProfiles`、`engineScanResults`、`workflowState`、`appUpdate*`；UI 偏好（`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`）持久化到 localStorage。
 
 ### Backend State (`core/state.rs` + `lib.rs`)
 
@@ -172,7 +218,7 @@ npm run tauri build
 npm run format
 
 # Full frontend and Rust quality baseline:
-#   check:frontend = check:i18n (locale key parity) + check:docs (markdown links) + prettier --check + eslint --max-warnings 0 + tsc --noEmit + vite build
+#   check:frontend = check:i18n (locale key parity) + check:docs (markdown links) + check:gates (架构/样式门禁) + prettier --check + eslint --max-warnings 0 + tsc --noEmit + vite build
 #   check:rust     = cargo fmt --check + clippy --all-targets -D warnings + cargo test
 npm run verify
 ```
@@ -187,3 +233,6 @@ Before submitting changes, verify:
 - [ ] `npm run verify` passes without warnings or errors.
 - [ ] New UI strings are i18n'd: keys exist in BOTH `locales/zh-CN.json` and `locales/en-US.json` with matching `{{placeholders}}`.
 - [ ] No hardcoded color literals; theme colors go through CSS variables in `src/index.css`.
+- [ ] 新后端→前端事件名：在 `src-tauri/src/core/events.rs` 与 `src/core/api/events.ts` 两端登记（kebab-case）。
+- [ ] 新 Tauri 命令：前端经 `core/api/<域>.ts` 封装调用，组件不得裸 `invoke`。
+- [ ] `npm run check:gates` 全过（裸中文 JSX / 颜色 / any 闸门 / 分层 / 文件规模 / 命令注册）。

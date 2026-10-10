@@ -57,7 +57,20 @@ The settings interface currently provides llama.cpp:
 - First launch: automatically downloads the engine if missing;
 - Process management: stops the old process before starting a new model, cleans up child processes on application exit.
 
-Model files are selected by the user and are not copied to the application data directory. After deleting or moving the original file, the path must be re-selected.
+Model files can be selected by the user (they are not copied to the application data directory; after deleting or moving the original file, the path must be re-selected), or downloaded in one click from the built-in model market (see the next section).
+
+## Local Model Market
+
+The settings page ships a standalone "Local Model Market" sub-page (with a llama.cpp / Ollama engine selector) embedding GGUF model search and download, so local models can be fetched without opening a browser:
+
+- **Two-source discovery**: GGUF models from HuggingFace and ModelScope are merged in Auto mode and ranked by download counts (following the sites' own default rankings); search is the primary entry point, querying live. The list switches with the download-source selection (ModelScope / HuggingFace show that platform's models only), each source keeps an independent 6-hour list cache, and the refresh button refreshes both platforms' lists and caches at once.
+- **Parameter-size segments**: the list is classified by parameter count (≤1B / 1-3B / 3-7B / 7-14B / 14-32B / 32B+) for hardware-oriented filtering.
+- **Hardware recommendation**: the app probes CPU / RAM / GPU (NVIDIA VRAM) at startup, estimates a VRAM or RAM budget at Q4_K_M (~0.62 byte per parameter), shows the recommended parameter size in a top banner, and floats fitting models to the top of the list.
+- **Download experience**: single-file and multi-shard GGUFs (`-00001-of-00002`, ...) download fully; pause (checkpoint kept) / resume (HTTP Range) / cancel; free disk space is verified before downloading; per-file, per-source progress.
+- **Download source**: selectable (Auto / ModelScope / HuggingFace); Auto falls back per source in the order ModelScope → hf-mirror.com → huggingface.co (mainland-China networks work via ModelScope by default), and a per-provider proxy is honored too. Gated repos (e.g. Llama) require accepting the license on the website first, then entering a HuggingFace token in the market card (stored in the OS keychain).
+- **Auto wiring**: finished models are registered as local models of the selected engine automatically (visible in that provider's "local model files" list, one click to start); llama.cpp uses the first shard as the entry file, Ollama imports via `ollama create` at start.
+- **Directory and migration**: the download directory defaults to `<app data dir>/models/local` and can be changed in the market card; on change, downloaded models are migrated (cross-volume falls back to copying) and provider model-path references are rewritten.
+- **List caching**: market query results are cached locally for 6 hours (stale-while-revalidate: render the cache first, refresh silently in the background) so reopening the settings page is instant.
 
 ## Engine Scanning and Auto-Discovery
 

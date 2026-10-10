@@ -1,14 +1,14 @@
 /**
- * Agent 工作过程折叠块
+ * Collapsible block for the agent work process.
  *
- * 两种渲染模式：
- * - 新模式（有 agentSteps）：按时间线卡片展示每个步骤（思考 / 工具调用 / 阶段性总结）
- * - 旧模式（无 agentSteps）：兼容旧数据，显示 reasoning + interimContent + toolCalls 三块
+ * Two render modes:
+ * - New mode (with agentSteps): timeline cards, one per step (thinking / tool call / interim summary)
+ * - Old mode (no agentSteps): legacy-data fallback, shows the reasoning + interimContent + toolCalls blocks
  *
- * 交互：
- * - 工作中步骤：自动展开，左边框脉动
- * - 已完成步骤：默认折叠（仅显示 header），可单独点击展开
- * - 外层折叠按钮：整体收起 / 展开所有步骤
+ * Interaction:
+ * - Running steps: auto-expanded with a pulsing left border
+ * - Completed steps: collapsed by default (header only), click to expand individually
+ * - Outer toggle button: collapse / expand the whole step list
  */
 import DiffView from '../../../shared/components/DiffView';
 import {
@@ -23,29 +23,31 @@ import {
   untrack,
 } from 'solid-js';
 import type { AgentStep, ToolCallDisplay } from '../../../core/store/store';
-import Icon from '../../../shared/components/Icon';
+import { setActiveSubagentView } from '../../../core/store/store';
+import Icon, { type IconName } from '../../../shared/components/Icon';
 import ToolCallBubble from './ToolCallBubble';
 import Markdown from '../../../shared/components/Markdown';
-import SubagentBlock from './SubagentBlock';
+import { getSubagentProfileStyle, subagentProfileLabel } from './SubagentConversationView';
+import { stopSubagent } from '../../../core/api/chat';
 import { t } from '../../../core/i18n';
 
 interface AgentProcessBlockProps {
-  /** 模型原生思维链文本（旧模式） */
+  /** Native chain-of-thought text from the model (old mode) */
   reasoning?: string;
-  /** 该轮次产生的工具调用列表（旧模式） */
+  /** Tool calls produced during this round (old mode) */
   toolCalls?: ToolCallDisplay[];
-  /** 中间轮次的阶段性总结文本累积（旧模式） */
+  /** Accumulated interim summary text from intermediate rounds (old mode) */
   interimContent?: string;
-  /** 是否仍在工作中 */
+  /** Whether the agent is still working */
   isActive: boolean;
-  /** Agent 轮次开始时间戳（ms） */
+  /** Agent round start timestamp (ms) */
   startTime?: number;
-  /** Agent 工作过程时间线（新模式） */
+  /** Agent work-process timeline (new mode) */
   agentSteps?: AgentStep[];
 }
 
-// ---- 步骤类型配置 ----
-const STEP_CONFIG: Record<AgentStep['type'], { icon: string; borderColor: string }> = {
+// ---- Step type configuration ----
+const STEP_CONFIG: Record<AgentStep['type'], { icon: IconName; borderColor: string }> = {
   thinking: { icon: 'brain', borderColor: 'rgba(var(--primary-rgb),0.55)' },
   tool_call: { icon: 'wrench', borderColor: 'rgba(240,160,64,0.55)' },
   content: { icon: 'document', borderColor: 'rgba(156,163,175,0.35)' },
@@ -65,25 +67,26 @@ function stepTypeLabel(type: AgentStep['type']): string {
   }
 }
 
-// 已播放入场动画的步骤 ID 集合，避免 agentSteps 数组重建时重复触发动画
+// Step IDs that have already played their entrance animation; prevents replaying when the agentSteps array is rebuilt
 const animatedStepIds = new Set<string>();
 
-// 缓冲池状态（按会话轮次 startTime 索引）。
-// store 流式更新 agentSteps 时会产生新的消息对象引用，父组件 <For> 按引用比较会销毁并重建
-// AgentProcessBlock —— 每个工具事件触发一次重挂载。因此渲染进度、待出队队列、出队定时器
-// 都必须持久化在模块级，否则重挂载时队列状态丢失，新步骤会被立即渲染（缓冲区被旁路）。
+// Render-buffer state (indexed by round startTime).
+// Streaming updates to agentSteps create new message object references; the parent <For> compares by
+// reference and destroys/recreates AgentProcessBlock — every tool event triggers a remount. So render
+// progress, the pending-dequeue queue and the dequeue timer must live at module level; otherwise queue
+// state is lost on remount and new steps render immediately (bypassing the buffer).
 interface RoundRenderQueue {
-  /** 已出队（已渲染）的步骤 id */
+  /** Step ids already dequeued (rendered) */
   renderedIds: Set<string>;
-  /** 等待出队的步骤 id（保持到达顺序） */
+  /** Step ids waiting to be dequeued (arrival order preserved) */
   pendingIds: string[];
-  /** 出队定时器；非 null 表示队列正在逐个出队中 */
+  /** Dequeue timer; non-null means the queue is dequeuing one by one */
   dequeueTimer: number | null;
 }
 const perRoundQueue = new Map<string, RoundRenderQueue>();
 
-// 出队通知订阅者（按轮次索引）：出队定时器存活期间组件可能已重挂载，
-// 定时器通过此 Map 只通知当前活跃实例，避免向已销毁实例的信号写入。
+// Dequeue-notification subscribers (indexed by round): the component may remount while the dequeue
+// timer is alive; the timer notifies only the active instance via this Map, never destroyed ones.
 const queueSubscribers = new Map<string, (id: string) => void>();
 
 function getRoundQueue(roundKey: string): RoundRenderQueue {
@@ -114,20 +117,20 @@ function formatDuration(ms: number): string {
 function stepToolLabel(step: AgentStep): string {
   if (step.type === 'subagent') return step.subagentProfile || 'subagent';
   const name = step.toolCall?.function?.name || 'unknown';
-  // 截断过长的工具名
+  // Truncate overly long tool names
   return name.length > 28 ? name.slice(0, 26) + '…' : name;
 }
 
-function stepStatusIcon(step: AgentStep): string {
+function stepStatusIcon(step: AgentStep): IconName | null {
   if (step.type === 'subagent')
     return step.status === 'running' ? 'spinner' : step.status === 'error' ? 'x' : 'check';
-  if (step.type !== 'tool_call') return '';
+  if (step.type !== 'tool_call') return null;
   if (step.status === 'running') return 'spinner';
   if (step.status === 'error') return 'x';
   return 'check';
 }
 
-// ---- 单步骤卡片组件 ----
+// ---- Single step card component ----
 const StepCard: Component<{
   step: AgentStep;
   isActive: boolean;
@@ -141,30 +144,45 @@ const StepCard: Component<{
       (props.step.status === 'running' ? Date.now() - props.step.timestamp : undefined),
   );
 
-  // 入场动画去重：仅首次渲染该步骤时应用动画类
+  // Entrance-animation dedupe: apply the animation class only on the step's first render
   const stepId = untrack(() => props.step.id);
   const isNew = !animatedStepIds.has(stepId);
   if (isNew) {
     animatedStepIds.add(stepId);
   }
 
-  // 入场动画类首帧就渲染在元素上（animation backwards 从初始帧开始），
-  // 动画结束后移除该类，让 is-running 的 stepCardPulse 脉冲动画恢复（animation 简写会互相覆盖）
+  // The entrance-animation class is present from the first frame (animation "backwards" starts at
+  // the initial keyframe) and is removed afterwards so is-running stepCardPulse wins (shorthand
+  // animation properties override each other).
   let entranceRef: HTMLDivElement | undefined;
 
-  // 入场期间锁定展开状态：避免 running → complete 快速翻转时 body 高度塌缩与入场动画冲突，
-  // 导致视觉上动画被"压扁推走"。动画结束后才交还真实 expanded 状态。
+  // Lock the expanded state during the entrance animation: a fast running → complete flip would
+  // collapse the body height and visually squash the animation; real expanded returns once it ends.
   const [entranceDone, setEntranceDone] = createSignal(!isNew);
   const effectiveExpanded = () => !entranceDone() || props.expanded;
 
   onMount(() => {
     if (!isNew || !entranceRef) return;
-    // 入场动画总时长 ~0.9s（0.1s 延迟 + 0.8s expand-width），结束后移除类并解锁 expanded
+    // Total entrance duration ~0.9s (0.1s delay + 0.8s expand-width); unlock expanded afterwards
     const timer = setTimeout(() => {
       setEntranceDone(true);
     }, 920);
     onCleanup(() => clearTimeout(timer));
   });
+
+  // Stop a background subagent individually (only fire-and-forget ones are found in the registry;
+  // awaited subagents stop with the whole round, so this click is an idempotent no-op)
+  const [stopping, setStopping] = createSignal(false);
+  const handleStopSubagent = async () => {
+    const id = props.step.subagentId;
+    if (!id || stopping()) return;
+    setStopping(true);
+    try {
+      await stopSubagent(id);
+    } finally {
+      setStopping(false);
+    }
+  };
 
   return (
     <div
@@ -194,47 +212,101 @@ const StepCard: Component<{
           : {}),
       }}
     >
-      <button
-        type="button"
-        class="flex items-center w-full gap-1.5 px-2.5 py-1.5 cursor-pointer select-none bg-transparent border-none text-white/45 text-[11px] transition-colors duration-200 hover:text-white/70"
-        onClick={() => props.onToggle()}
-        disabled={props.step.status === 'running'}
-      >
-        <span class="flex items-center justify-center w-4 h-4 rounded bg-white/[0.05] shrink-0">
-          <Icon
-            name={cfg().icon as any}
-            size={12}
-            class="w-3 h-3"
-            classList={{ 'is-spinning': props.step.status === 'running' }}
-          />
-        </span>
-        <span class="font-medium flex-none">{stepTypeLabel(props.step.type)}</span>
-        {props.step.type === 'tool_call' && (
-          <span class="truncate text-white/55 flex-initial min-w-0">
-            · {stepToolLabel(props.step)}
-          </span>
-        )}
-        {props.step.type === 'tool_call' && stepStatusIcon(props.step) && (
-          <span class="flex items-center justify-center shrink-0">
+      <div class="flex items-center w-full">
+        <button
+          type="button"
+          class="flex items-center flex-1 min-w-0 gap-1.5 px-2.5 py-1.5 cursor-pointer select-none bg-transparent border-none text-white/45 text-[11px] transition-colors duration-200 hover:text-white/70"
+          onClick={() => {
+            if (props.step.type === 'subagent') {
+              // Subagent: the whole card is the entry point; clicking opens its standalone conversation view (inner steps are never expanded)
+              if (props.step.subagentId) setActiveSubagentView(props.step.subagentId);
+            } else {
+              props.onToggle();
+            }
+          }}
+          disabled={props.step.status === 'running' && props.step.type !== 'subagent'}
+        >
+          <span class="flex items-center justify-center w-4 h-4 rounded bg-white/[0.05] shrink-0">
             <Icon
-              name={stepStatusIcon(props.step) as any}
-              size={10}
-              classList={{ 'animate-spin': props.step.status === 'running' }}
+              name={cfg().icon}
+              size={12}
+              class="w-3 h-3"
+              classList={{ 'is-spinning': props.step.status === 'running' }}
+              style={
+                props.step.type === 'subagent'
+                  ? { color: getSubagentProfileStyle(props.step.subagentProfile).color }
+                  : undefined
+              }
             />
           </span>
-        )}
-        {durationMs() !== undefined && (
-          <span class="font-mono text-white/25 text-[10px] flex-none ml-auto">
-            {formatDuration(durationMs()!)}
+          <span class="font-medium flex-none">{stepTypeLabel(props.step.type)}</span>
+          {props.step.type === 'tool_call' && (
+            <span class="truncate text-white/55 flex-initial min-w-0">
+              · {stepToolLabel(props.step)}
+            </span>
+          )}
+          {props.step.type === 'subagent' && (
+            <span class="truncate text-white/55 flex-initial min-w-0">
+              · {subagentProfileLabel(props.step.subagentProfile)}
+            </span>
+          )}
+          {props.step.type === 'subagent' && props.step.subagentTask && (
+            <span class="truncate text-white/30 flex-1 min-w-0">{props.step.subagentTask}</span>
+          )}
+          {(props.step.type === 'tool_call' || props.step.type === 'subagent') &&
+            stepStatusIcon(props.step) && (
+              <span class="flex items-center justify-center shrink-0">
+                <Icon
+                  name={stepStatusIcon(props.step)!}
+                  size={10}
+                  classList={{ 'animate-spin': props.step.status === 'running' }}
+                />
+              </span>
+            )}
+          {durationMs() !== undefined && (
+            <span class="font-mono text-white/25 text-[10px] flex-none ml-auto">
+              {formatDuration(durationMs()!)}
+            </span>
+          )}
+          <span
+            class="flex items-center justify-center shrink-0 text-white/20 transition-[transform,color] duration-200"
+            aria-hidden="true"
+          >
+            <Show
+              when={props.step.type === 'subagent'}
+              fallback={
+                <Icon
+                  name="arrow-left"
+                  size={10}
+                  class="-rotate-90 transition-transform duration-200"
+                />
+              }
+            >
+              <Icon name="chevron-right" size={10} />
+            </Show>
           </span>
-        )}
-        <span
-          class="flex items-center justify-center shrink-0 text-white/20 transition-[transform,color] duration-200"
-          aria-hidden="true"
+        </button>
+        <Show
+          when={
+            props.step.type === 'subagent' &&
+            props.step.status === 'running' &&
+            props.step.subagentId
+          }
         >
-          <Icon name="arrow-left" size={10} class="-rotate-90 transition-transform duration-200" />
-        </span>
-      </button>
+          <button
+            type="button"
+            class="flex items-center justify-center w-6 h-6 mr-2 rounded shrink-0 bg-transparent border-none cursor-pointer text-white/40 hover:text-red-400/80 transition-colors"
+            title={t('agent.subagent.stop')}
+            aria-label={t('agent.subagent.stop')}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleStopSubagent();
+            }}
+          >
+            <Icon name="stop" size={10} classList={{ 'animate-pulse': stopping() }} />
+          </button>
+        </Show>
+      </div>
 
       {/* Body */}
       <div
@@ -242,7 +314,8 @@ const StepCard: Component<{
         style={(() => {
           const expanded = effectiveExpanded();
           const running = props.step.status === 'running';
-          const open = expanded || running;
+          // Subagent cards have no expandable body (clicking the card opens the standalone view), so it never expands
+          const open = (expanded || running) && props.step.type !== 'subagent';
           return {
             transition:
               'max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s, padding 0.25s',
@@ -252,14 +325,14 @@ const StepCard: Component<{
           };
         })()}
       >
-        {/* 思考步骤：原始文本 */}
+        {/* Thinking step: raw text */}
         {props.step.type === 'thinking' && props.step.thinkingText && (
           <div class="text-[12px] leading-relaxed italic whitespace-pre-wrap break-words text-white/50 px-2 py-1.5 rounded bg-black/[0.12] max-h-[300px] overflow-y-auto">
             {props.step.thinkingText}
           </div>
         )}
 
-        {/* 工具调用步骤：复用 ToolCallBubble */}
+        {/* Tool-call step: reuses ToolCallBubble */}
         {props.step.type === 'tool_call' && props.step.toolCall && (
           <div class="text-[12px]">
             <ToolCallBubble
@@ -276,7 +349,7 @@ const StepCard: Component<{
               error={props.step.toolCall.error}
             />
 
-            {/* 文件变更 diff 预览 */}
+            {/* File-change diff preview */}
             {props.step.type === 'tool_call' && props.step.toolCall?.fileChanges?.length && (
               <div class="mt-1.5">
                 <DiffView changes={props.step.toolCall.fileChanges} />
@@ -285,22 +358,10 @@ const StepCard: Component<{
           </div>
         )}
 
-        {/* Content 步骤：Markdown 渲染的阶段性总结 */}
+        {/* Content step: interim summary rendered as Markdown */}
         {props.step.type === 'content' && props.step.contentText && (
           <div class="text-[13px] leading-relaxed break-words text-white/65 p-1">
             <Markdown content={props.step.contentText} />
-          </div>
-        )}
-
-        {/* 子智能体步骤：嵌套 SubagentBlock */}
-        {props.step.type === 'subagent' && (
-          <div class="px-2 pb-2">
-            <SubagentBlock
-              step={props.step}
-              isActive={props.isActive}
-              expanded={props.expanded}
-              onToggle={props.onToggle}
-            />
           </div>
         )}
       </div>
@@ -308,16 +369,16 @@ const StepCard: Component<{
   );
 };
 
-// ---- 主组件 ----
+// ---- Main component ----
 const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
   const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null);
   const [expandedSteps, setExpandedSteps] = createSignal<Set<string>>(new Set());
 
-  // ---- 时间线自动滚动（复用 ChatInterface 模式） ----
+  // ---- Timeline auto-scroll (same pattern as ChatInterface) ----
   let stepsContainerRef: HTMLDivElement | undefined;
   const [autoScrollSteps, setAutoScrollSteps] = createSignal(true);
-  let userScrolledUpSteps = false; // 纯变量：ResizeObserver 回调需同步感知
-  let suppressScrollSteps = false; // 纯变量：抑制 programmatic scroll 事件
+  let userScrolledUpSteps = false; // Plain variable: ResizeObserver callback must see it synchronously
+  let suppressScrollSteps = false; // Plain variable: suppresses programmatic scroll events
 
   const isStepsAtBottom = () => {
     if (!stepsContainerRef) return true;
@@ -328,7 +389,11 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
   const snapStepsToBottom = () => {
     if (!stepsContainerRef) return;
     suppressScrollSteps = true;
-    stepsContainerRef.scrollTop = stepsContainerRef.scrollHeight;
+    const el = stepsContainerRef;
+    const target = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (el.scrollTop < target) {
+      el.scrollTop = target;
+    }
   };
 
   const handleStepsWheel = (e: WheelEvent) => {
@@ -349,16 +414,16 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     if (atBottom) userScrolledUpSteps = false;
   };
 
-  // 工作中强制展开整体，完成后允许用户控制
+  // Force-expand the whole block while working; let the user control it once done
   const isExpanded = () => {
     if (props.isActive) return true;
     return userExpanded() ?? false;
   };
 
-  // 实时计时器（整体耗时）
+  // Live timer for total elapsed time
   const [elapsedMs, setElapsedMs] = createSignal(0);
 
-  // 从 agentSteps 数据推导冻结耗时（不受 remount 影响，避免 Date.now() 漂移）
+  // Derive frozen elapsed time from agentSteps data (unaffected by remounts; avoids Date.now() drift)
   const frozenElapsed = (): number => {
     if (!props.startTime) return 0;
     const steps = props.agentSteps;
@@ -391,7 +456,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   onCleanup(() => {});
 
-  // 流式滚动：内容增长时贴底（ResizeObserver，仅在尺寸变化时触发）
+  // Streaming scroll: snap to bottom as content grows (ResizeObserver, fires only on size changes)
   createEffect(() => {
     if (props.isActive && stepsContainerRef) {
       const observer = new ResizeObserver(() => {
@@ -423,7 +488,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     return expandedSteps().has(step.id);
   };
 
-  // 判断使用哪种模式
+  // Decide which mode to use
   const hasSteps = () => !!(props.agentSteps && props.agentSteps.length > 0);
   const hasOldContent = () =>
     !!props.reasoning?.trim() ||
@@ -431,7 +496,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     !!(props.toolCalls && props.toolCalls.length > 0);
   const hasContent = () => hasSteps() || hasOldContent();
 
-  // 时间线步骤：排除最后一个 content 步骤（它是最终回复，已在下方 Markdown 气泡中显示）
+  // Timeline steps: exclude the last content step (it is the final reply, already shown in the Markdown bubble below)
   const timelineSteps = () => {
     const steps = props.agentSteps;
     if (!steps || steps.length === 0) return [];
@@ -440,17 +505,22 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     return steps;
   };
 
-  // ---- 缓冲池：agent 可能几乎同时创建 7-8 个工具调用步骤，直接渲染会导致动画互相推挤、视觉混乱。
-  // 新步骤先进入队列，按固定间隔逐个出队渲染，形成有序的流式进入效果。
+  // ---- Render buffer: the agent may create 7-8 tool-call steps nearly simultaneously; rendering
+  // them directly makes the animations push each other around into visual chaos. New steps enter a
+  // queue and are dequeued one by one at a fixed interval for an orderly streaming entrance.
   //
-  // 关键设计：store 流式更新 agentSteps 时产生新的消息对象引用，父组件 <For> 按引用比较会销毁
-  // 并重建 AgentProcessBlock —— 每个工具事件都触发一次重挂载。因此队列三要素（renderedIds /
-  // pendingIds / dequeueTimer）全部存放在模块级 perRoundQueue 中，重挂载后原样恢复：
-  // 已渲染的直接恢复 visibleIds（避免"从头渲染闪现"），待出队的继续排队，进行中的定时器
-  // 不被重挂载打断（onCleanup 不能清除它）。
+  // Key design: streaming updates to agentSteps create new message object references; the parent
+  // <For> compares by reference and destroys/recreates AgentProcessBlock — every tool event
+  // triggers a remount. Therefore the queue's three elements (renderedIds / pendingIds /
+  // dequeueTimer) all live in the module-level perRoundQueue and are restored as-is after a
+  // remount: already-rendered steps restore visibleIds directly (avoiding a flash of re-rendering
+  // from scratch), pending steps keep queuing, and an in-flight timer is not interrupted by the
+  // remount (onCleanup must not clear it).
   //
-  // 注意：定时器回调存活期间组件可能已重挂载多次，因此 setVisibleIds 不直接捕获组件实例的
-  // setter，而是记录到模块级 subscribers，由当前活跃实例注册/注销，定时器只通知最新实例。
+  // Note: the component may have been remounted several times while a timer callback is alive, so
+  // setVisibleIds does not capture the component instance's setter directly; it is recorded in the
+  // module-level subscribers, registered/deregistered by the currently active instance, and the
+  // timer notifies only the newest instance.
   const DEQUEUE_INTERVAL = 150;
   const roundKey = untrack(() => String(props.startTime ?? 0));
   const queue = getRoundQueue(roundKey);
@@ -459,12 +529,12 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   const stepById = (id: string): AgentStep | undefined => timelineSteps().find((s) => s.id === id);
 
-  // 出队渲染的订阅者：重挂载后只有最新实例接收出队通知，旧实例的 DOM 已被 <For> 销毁。
+  // Dequeue-render subscriber: after a remount only the newest instance receives dequeue notifications; the old DOM was already destroyed by <For>.
   const subscriber = (id: string) =>
     setVisibleIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
   queueSubscribers.set(roundKey, subscriber);
   onCleanup(() => {
-    // 仅当当前实例仍是订阅者时注销（重挂载后新实例已覆盖注册）
+    // Unregister only if this instance is still the subscriber (a newer instance overwrote it on remount)
     if (queueSubscribers.get(roundKey) === subscriber) queueSubscribers.delete(roundKey);
   });
 
@@ -479,11 +549,11 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     queue.dequeueTimer = window.setTimeout(flushQueue, DEQUEUE_INTERVAL);
   };
 
-  // 监听源步骤变化：工作中新步骤进队列逐个渲染；非工作中直接全量同步
+  // Watch source steps: while active, new steps enqueue and render one by one; when inactive, sync the full list directly
   createEffect(() => {
     const steps = timelineSteps();
     if (!props.isActive) {
-      // 非工作中（历史数据 / 已完成）：直接全量渲染，清空队列并释放该轮次的队列状态
+      // Inactive (historical data / finished): render everything at once, clear the queue and free this round's queue state
       if (queue.dequeueTimer) {
         clearTimeout(queue.dequeueTimer);
         queue.dequeueTimer = null;
@@ -495,10 +565,11 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
       setVisibleIds(steps.map((s) => s.id));
       return;
     }
-    // 工作中：找出未渲染且未排队的新步骤 id 加入队列（重挂载恢复后 pendingIds 仍有效，
-    // 不会因实例重置而重复入队或绕过排队直接渲染）。
-    // 首个元素同样延迟一个出队间隔再渲染：入队即启动定时器，由定时器统一驱动出队节奏，
-    // 保证所有元素（包括首个）的入场时机一致、动画完整。
+    // Active: find step ids neither rendered nor queued and enqueue them (after a remount restore,
+    // pendingIds remain valid — no duplicate enqueueing and no bypassing the queue on instance reset).
+    // The first element also waits one dequeue interval: enqueueing starts the timer, which drives
+    // the dequeue cadence uniformly, so every element (including the first) enters with consistent
+    // timing and an intact animation.
     const newIds = steps
       .filter((s) => !queue.renderedIds.has(s.id) && !queue.pendingIds.includes(s.id))
       .map((s) => s.id);
@@ -513,7 +584,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
   return (
     <Show when={hasContent()}>
       <div class="my-2" classList={{ 'is-open': isExpanded(), 'is-active': props.isActive }}>
-        {/* 外层 header */}
+        {/* Outer header */}
         <button
           type="button"
           class="flex items-center w-full gap-2 px-3 py-2 cursor-pointer select-none bg-transparent border-none text-white/50 text-xs transition-colors duration-200 hover:text-white/75"
@@ -539,7 +610,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
           </span>
         </button>
 
-        {/* Body：滚动放在外层，内部正常排列不压缩 */}
+        {/* Body: scrolling lives on the outer wrapper; inner content lays out normally without compression */}
         <div
           class="overflow-hidden transition-[max-height] duration-300 ease-in-out"
           style={isExpanded() ? 'max-height: 620px' : 'max-height: 0'}
@@ -551,13 +622,13 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
             onScroll={handleStepsScroll}
             onWheel={handleStepsWheel}
           >
-            {/* === 新模式：时间线卡片 === */}
+            {/* === New mode: timeline cards === */}
             <Show when={hasSteps()}>
               <div class="flex flex-col gap-2 px-3">
                 <For each={visibleIds()}>
                   {(id) => {
-                    // 用 memo 从源数据取最新步骤对象：状态更新（running→complete）实时反映，
-                    // 但 <For> 的 each 是稳定的 id 列表，DOM 不会因状态更新而重建
+                    // Use a memo to fetch the latest step object: status updates (running→complete)
+                    // show live, while <For>'s each is a stable id list so the DOM is not rebuilt
                     const step = createMemo(() => stepById(id));
                     return (
                       <Show when={step()}>
@@ -574,13 +645,13 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
               </div>
             </Show>
 
-            {/* === 旧模式（回退）：扁平三块 === */}
+            {/* === Old mode (fallback): flat three blocks === */}
             <Show when={!hasSteps() && hasOldContent()}>
               <Show when={props.reasoning && props.reasoning.trim()}>
                 <div class="mb-2">
                   <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
                     <Icon name="brain" size={11} class="mr-1.5 opacity-60" />
-                    思考过程
+                    {t('agent.step.thinking')}
                   </div>
                   <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
                     {props.reasoning}
@@ -592,7 +663,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                 <div class="mb-2">
                   <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
                     <Icon name="document" size={11} class="mr-1.5 opacity-60" />
-                    工作过程
+                    {t('agent.step.interim')}
                   </div>
                   <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
                     <Markdown content={props.interimContent!} />

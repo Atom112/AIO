@@ -1,7 +1,7 @@
 /**
- * ModelBreakdown — 按模型用量分布
+ * ModelBreakdown - usage distribution by model
  *
- * 水平条形图 + 每行显示模型名、token 用量、占比、预估费用
+ * Horizontal bars; each row shows model name, token usage, share, and estimated cost
  */
 import { Component, createMemo, Show, For } from 'solid-js';
 import type { UsageSummaryByModel } from './UsageSummaryCards';
@@ -50,7 +50,7 @@ const ModelBreakdown: Component<Props> = (props) => {
 
     const grandTotal = list.reduce((s, it) => s + it.total, 0);
 
-    // Top 8 + 其他
+    // Top 8 + "other"
     const top = list.slice(0, 8);
     const rest = list.slice(8);
     if (rest.length > 0) {
@@ -62,6 +62,7 @@ const ModelBreakdown: Component<Props> = (props) => {
         modelId: '__other__',
         inputTokens: otherInput,
         outputTokens: otherOutput,
+        cachedInputTokens: rest.reduce((s, it) => s + (it.cachedInputTokens || 0), 0),
         requestCount: rest.reduce((s, it) => s + it.requestCount, 0),
         total: otherTotal,
         displayName: t('usage.other'),
@@ -89,7 +90,7 @@ const ModelBreakdown: Component<Props> = (props) => {
               border: '1px solid var(--border-dim)',
             }}
           >
-            {/* 主行：模型名 + 占比 + 条形图 */}
+            {/* Main row: model name + share + bar */}
             <div class="flex items-center gap-3">
               <span
                 class="text-sm font-medium truncate min-w-0 flex-1"
@@ -103,7 +104,7 @@ const ModelBreakdown: Component<Props> = (props) => {
               >
                 {item.pct.toFixed(1)}%
               </span>
-              {/* 条形图 */}
+              {/* Bar */}
               <div
                 class="flex-1 h-2 rounded-full overflow-hidden"
                 style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
@@ -118,7 +119,7 @@ const ModelBreakdown: Component<Props> = (props) => {
               </div>
             </div>
 
-            {/* 次级行：input/output + 费用 */}
+            {/* Secondary row: input/output + cost */}
             <div
               class="flex items-center gap-3 mt-1.5 text-[10px] font-mono"
               style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}

@@ -1,7 +1,14 @@
 import { Component, createSignal, For, Show, onMount, untrack } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { listMcpTransports, saveMcpServerSecret } from '../../../core/api/mcp';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
 import { t } from '../../../core/i18n';
+import {
+  btnBadge,
+  btnDanger,
+  btnPrimarySm,
+  btnSecondarySm,
+  btnSuccess,
+} from '../../../shared/components/buttonStyles';
 
 interface Props {
   config: McpServerConfig;
@@ -23,10 +30,10 @@ const McpServerDetail: Component<Props> = (props) => {
   const [testing, setTesting] = createSignal(false);
   const [availableTools, setAvailableTools] = createSignal<ToolSpec[]>([]);
 
-  // 加载已注册 transports
+  // Load registered transports
   const [transports, setTransports] = createSignal<string[]>([]);
   onMount(() => {
-    void invoke<string[]>('list_mcp_transports')
+    void listMcpTransports()
       .then(setTransports)
       .catch(() => {
         // Keep the built-in transport choices when discovery is unavailable.
@@ -77,12 +84,7 @@ const McpServerDetail: Component<Props> = (props) => {
 
   const storeEnvSecret = async (key: string, value: string) => {
     if (!value || value.includes('${KEYRING:')) return;
-    const placeholder = await invoke<string>('save_mcp_server_secret', {
-      serverId: config().id,
-      target: 'env',
-      key,
-      value,
-    });
+    const placeholder = await saveMcpServerSecret(config().id, 'env', key, value);
     const t = config().transport;
     if (t.transport !== 'stdio') return;
     updateTransport({ ...t, env: { ...t.env, [key]: placeholder } });
@@ -143,7 +145,7 @@ const McpServerDetail: Component<Props> = (props) => {
           {props.isNew ? t('mcp.detail.titleAdd') : t('mcp.detail.titleEdit')}
         </h3>
 
-        {/* 名称 + 启用 */}
+        {/* Name + enable */}
         <div class="flex flex-col gap-1">
           <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.name')}
@@ -173,8 +175,21 @@ const McpServerDetail: Component<Props> = (props) => {
             {t('mcp.detail.autoStartHint')}
           </span>
         </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config().trusted ?? false}
+              onChange={(e) => updateField('trusted', e.currentTarget.checked)}
+            />
+            {t('mcp.detail.trusted')}
+          </label>
+          <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+            {t('mcp.detail.trustedHint')}
+          </span>
+        </div>
 
-        {/* 传输类型 */}
+        {/* Transport type */}
         <div class="flex flex-col gap-1">
           <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.transport')}
@@ -207,7 +222,7 @@ const McpServerDetail: Component<Props> = (props) => {
           </select>
         </div>
 
-        {/* stdio 字段 */}
+        {/* stdio fields */}
         <Show when={config().transport.transport === 'stdio'}>
           {(() => {
             const trans = () => config().transport as Extract<McpTransport, { transport: 'stdio' }>;
@@ -235,11 +250,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
                   >
                     {t('mcp.detail.args')}
-                    <button
-                      class="text-xs px-2 py-0.5 rounded"
-                      style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
-                      onClick={addStdioArg}
-                    >
+                    <button class={btnBadge} onClick={addStdioArg}>
                       {t('mcp.detail.add')}
                     </button>
                   </label>
@@ -256,14 +267,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           value={arg}
                           onInput={(e) => updateStdioArg(idx(), e.currentTarget.value)}
                         />
-                        <button
-                          class="px-2 py-1 rounded text-xs"
-                          style={{
-                            background: 'rgba(255,77,77,0.1)',
-                            color: 'rgba(255,107,107,0.9)',
-                          }}
-                          onClick={() => removeStdioArg(idx())}
-                        >
+                        <button class={btnDanger} onClick={() => removeStdioArg(idx())}>
                           ×
                         </button>
                       </div>
@@ -276,11 +280,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
                   >
                     {t('mcp.detail.env')}
-                    <button
-                      class="text-xs px-2 py-0.5 rounded"
-                      style={{ background: 'rgba(var(--primary-rgb),0.2)' }}
-                      onClick={addEnvEntry}
-                    >
+                    <button class={btnBadge} onClick={addEnvEntry}>
                       {t('mcp.detail.add')}
                     </button>
                   </label>
@@ -319,14 +319,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         >
                           {t('mcp.detail.saveToKeychain')}
                         </button>
-                        <button
-                          class="px-2 py-1 rounded text-xs"
-                          style={{
-                            background: 'rgba(255,77,77,0.1)',
-                            color: 'rgba(255,107,107,0.9)',
-                          }}
-                          onClick={() => removeEnvEntry(k)}
-                        >
+                        <button class={btnDanger} onClick={() => removeEnvEntry(k)}>
                           ×
                         </button>
                       </div>
@@ -338,7 +331,7 @@ const McpServerDetail: Component<Props> = (props) => {
           })()}
         </Show>
 
-        {/* http 字段 */}
+        {/* http fields */}
         <Show
           when={
             config().transport.transport === 'http' ||
@@ -374,7 +367,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     trans().url !== ''
                   }
                 >
-                  <span class="text-xs" style={{ color: '#ff8a8a' }}>
+                  <span class="text-xs" style={{ color: 'var(--color-danger)' }}>
                     {t('mcp.detail.urlValidate')}
                   </span>
                 </Show>
@@ -383,17 +376,9 @@ const McpServerDetail: Component<Props> = (props) => {
           })()}
         </Show>
 
-        {/* 测试连接 */}
+        {/* Test connection */}
         <div class="flex items-center gap-2">
-          <button
-            class="px-3 py-1.5 rounded text-sm cursor-pointer transition-colors"
-            style={{
-              background: 'rgba(var(--primary-rgb),0.2)',
-              border: '1px solid rgba(var(--primary-rgb),0.3)',
-            }}
-            disabled={testing()}
-            onClick={handleTest}
-          >
+          <button class={btnSuccess} disabled={testing()} onClick={handleTest}>
             {testing() ? t('mcp.detail.testing') : t('mcp.detail.testConnection')}
           </button>
           <Show when={testResult()}>
@@ -401,8 +386,8 @@ const McpServerDetail: Component<Props> = (props) => {
               class="text-xs px-2 py-1 rounded"
               style={
                 testResult()!.ok
-                  ? 'background: rgba(124,217,160,0.1); color: #7cd9a0;'
-                  : 'background: rgba(255,77,77,0.1); color: #ff8a8a;'
+                  ? 'background: rgba(124,217,160,0.1); color: var(--color-success);'
+                  : 'background: rgba(255,77,77,0.1); color: var(--color-danger);'
               }
             >
               {testResult()!.ok
@@ -412,7 +397,7 @@ const McpServerDetail: Component<Props> = (props) => {
           </Show>
         </div>
 
-        {/* 工具白名单 */}
+        {/* Tool whitelist */}
         <Show when={availableTools().length > 0}>
           <div class="flex flex-col gap-2">
             <div class="flex items-center justify-between">
@@ -471,26 +456,12 @@ const McpServerDetail: Component<Props> = (props) => {
           </div>
         </Show>
 
-        {/* 按钮 */}
+        {/* Buttons */}
         <div class="flex justify-end gap-2 mt-2">
-          <button
-            class="px-3 py-1.5 rounded text-sm cursor-pointer"
-            style={{
-              background: 'rgba(var(--text-base-rgb),0.05)',
-              border: '1px solid var(--border-dim)',
-            }}
-            onClick={() => props.onCancel()}
-          >
+          <button class={btnSecondarySm} onClick={() => props.onCancel()}>
             {t('common.cancel')}
           </button>
-          <button
-            class="px-3 py-1.5 rounded text-sm cursor-pointer"
-            style={{
-              background: 'rgba(124,217,160,0.2)',
-              border: '1px solid rgba(124,217,160,0.3)',
-            }}
-            onClick={() => props.onSave(config())}
-          >
+          <button class={btnPrimarySm} onClick={() => props.onSave(config())}>
             {t('common.save')}
           </button>
         </div>

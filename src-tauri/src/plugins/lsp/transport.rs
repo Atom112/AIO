@@ -1,6 +1,6 @@
-//! LSP 传输层 — Content-Length 帧编码/解码
+//! LSP transport - Content-Length frame encoding/decoding
 //!
-//! LSP 协议使用类似 HTTP 的帧格式，与 MCP 的换行分隔 JSON 不同：
+//! The LSP protocol uses an HTTP-like frame format, unlike MCP's newline-delimited JSON:
 //! ```text
 //! Content-Length: <byte_count>\r\n
 //! Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n
@@ -8,24 +8,24 @@
 //! <json body>
 //! ```
 //!
-//! 本模块提供：
-//! - `encode_message`: 将 JSON 字符串封装为 LSP 帧
-//! - `LspFrameReader`: 从 BufReader 中读取并解析 LSP 帧
+//! This module provides:
+//! - `encode_message`: wrap a JSON string into an LSP frame
+//! - `LspFrameReader`: read and parse LSP frames from a BufReader
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::ChildStdout;
 
-/// 将 JSON body 编码为 LSP Content-Length 帧
+/// Encode a JSON body as an LSP Content-Length frame
 pub fn encode_message(body: &str) -> String {
     let len = body.len();
     format!("Content-Length: {}\r\n\r\n{}", len, body)
 }
 
-/// 从 child stdout 读取单帧 LSP 消息
+/// Read a single LSP message frame from child stdout
 ///
-/// 返回完整的 JSON body 字符串，EOF 时返回 None。
+/// Returns the full JSON body string, or None on EOF.
 pub async fn read_frame(reader: &mut BufReader<ChildStdout>) -> std::io::Result<Option<String>> {
-    // 1. 读取头部行直到空行（\r\n\r\n）
+    // 1. Read header lines until the blank line (\r\n\r\n)
     let mut headers = String::new();
     let mut content_length: Option<usize> = None;
 
@@ -43,11 +43,11 @@ pub async fn read_frame(reader: &mut BufReader<ChildStdout>) -> std::io::Result<
                 ))
             };
         }
-        // 空行（\r\n 或 \n）表示头部结束
+        // A blank line (\r\n or \n) marks the end of the headers
         if line == "\r\n" || line == "\n" {
             break;
         }
-        // 解析 Content-Length: N
+        // Parse Content-Length: N
         if let Some(len_str) = line
             .to_lowercase()
             .strip_prefix("content-length:")
@@ -70,7 +70,7 @@ pub async fn read_frame(reader: &mut BufReader<ChildStdout>) -> std::io::Result<
         )
     })?;
 
-    // 2. 读取指定长度的 body
+    // 2. Read the body of the given length
     let mut body_buf = vec![0u8; len];
     reader.read_exact(&mut body_buf).await?;
     let body = String::from_utf8(body_buf).map_err(|e| {

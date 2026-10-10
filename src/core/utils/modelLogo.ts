@@ -1,12 +1,12 @@
 /**
- * 模型 / Provider logo 工具
- * @description 统一所有调用方对 logo 的获取逻辑
+ * Model / provider logo utilities
+ * @description Single entry point for logo lookups across all callers
  *
- * 来源：@lobehub/icons-static-svg (通过 Vite ?raw 嵌入 bundle)
- * 优先级：
- * 1. provider id 直接查表（最准确）
- * 2. model id 文本匹配（兜底，处理 custom provider + 未知来源）
- * 3. 通用 neutral 图标 (FALLBACK_LOGO)
+ * Source: @lobehub/icons-static-svg (inlined into the bundle via Vite ?raw)
+ * Priority:
+ * 1. provider id table lookup (most accurate)
+ * 2. model id text match (fallback for custom providers and unknown sources)
+ * 3. generic neutral icon (FALLBACK_LOGO)
  */
 import aihubmixColorSvg from '@lobehub/icons-static-svg/icons/aihubmix-color.svg?raw';
 import ai302ColorSvg from '@lobehub/icons-static-svg/icons/ai302-color.svg?raw';
@@ -73,19 +73,19 @@ import replitColorSvg from '@lobehub/icons-static-svg/icons/replit-color.svg?raw
 import llamacppIconSvg from '../assets/llamacpp-icon.svg?raw';
 import vllmColorSvg from '@lobehub/icons-static-svg/icons/vllm-color.svg?raw';
 
-/** SVG 字符串 → data URL（base64 编码, UTF-8 安全） */
+/** SVG string -> data URL (base64-encoded, UTF-8 safe) */
 function svgToDataUrl(svg: string): string {
   const b64 = btoa(unescape(encodeURIComponent(svg)));
   return `data:image/svg+xml;base64,${b64}`;
 }
 
 const PROVIDER_LOGOS: Record<string, string> = {
-  // ===== 一线大厂 =====
+  // ===== Major providers =====
   openai: svgToDataUrl(openaiSvg),
   anthropic: svgToDataUrl(claudeColorSvg), // Claude = Anthropic
   google: svgToDataUrl(geminiColorSvg),
   'google-vertex': svgToDataUrl(vertexaiColorSvg),
-  'google-vertex-anthropic': svgToDataUrl(claudeColorSvg), // Vertex 上的 Claude
+  'google-vertex-anthropic': svgToDataUrl(claudeColorSvg), // Claude on Vertex
   deepseek: svgToDataUrl(deepseekColorSvg),
   mistral: svgToDataUrl(mistralColorSvg),
   xai: svgToDataUrl(xaiSvg), // Grok
@@ -102,12 +102,12 @@ const PROVIDER_LOGOS: Record<string, string> = {
   'together-ai': svgToDataUrl(togetherColorSvg),
   fireworks: svgToDataUrl(fireworksColorSvg),
   'fireworks-ai': svgToDataUrl(fireworksColorSvg),
-  firepass: svgToDataUrl(fireworksColorSvg), // Fireworks Firepass 子产品
+  firepass: svgToDataUrl(fireworksColorSvg), // Fireworks Firepass sub-product
   deepinfra: svgToDataUrl(deepinfraColorSvg),
   huggingface: svgToDataUrl(huggingfaceColorSvg),
   replit: svgToDataUrl(replitColorSvg),
 
-  // ===== 中国大厂 =====
+  // ===== Chinese providers =====
   alibaba: svgToDataUrl(alibabaColorSvg),
   alibabacloud: svgToDataUrl(alibabacloudColorSvg),
   'alibaba-cn': svgToDataUrl(alibabacloudColorSvg),
@@ -115,36 +115,36 @@ const PROVIDER_LOGOS: Record<string, string> = {
   'alibaba-token-plan-cn': svgToDataUrl(alibabacloudColorSvg),
   'alibaba-coding-plan': svgToDataUrl(alibabacloudColorSvg),
   'alibaba-coding-plan-cn': svgToDataUrl(alibabacloudColorSvg),
-  qwen: svgToDataUrl(qwenColorSvg), // 通义千问
+  qwen: svgToDataUrl(qwenColorSvg), // Tongyi Qianwen
   qiniu: svgToDataUrl(qiniuSvg),
   'qiniu-ai': svgToDataUrl(qiniuSvg),
   modelscope: svgToDataUrl(modelscopeColorSvg),
   moonshot: svgToDataUrl(moonshotSvg), // Kimi
-  kimi: svgToDataUrl(kimiColorSvg), // 月之暗面
+  kimi: svgToDataUrl(kimiColorSvg), // Moonshot AI
   moonshotai: svgToDataUrl(moonshotSvg),
   'moonshotai-cn': svgToDataUrl(moonshotSvg),
   'kimi-for-coding': svgToDataUrl(kimiColorSvg),
-  zhipu: svgToDataUrl(zhipuColorSvg), // 智谱 GLM
+  zhipu: svgToDataUrl(zhipuColorSvg), // Zhipu GLM
   zhipuai: svgToDataUrl(zhipuColorSvg),
   'zhipuai-coding-plan': svgToDataUrl(zhipuColorSvg),
-  doubao: svgToDataUrl(doubaoColorSvg), // 字节豆包
-  bytedance: svgToDataUrl(doubaoColorSvg), // 字节 = 豆包母公司
+  doubao: svgToDataUrl(doubaoColorSvg), // ByteDance Doubao
+  bytedance: svgToDataUrl(doubaoColorSvg), // ByteDance = Doubao parent company
   stepfun: svgToDataUrl(stepfunColorSvg),
   'stepfun-ai': svgToDataUrl(stepfunColorSvg),
   minimax: svgToDataUrl(minimaxColorSvg),
   'minimax-cn': svgToDataUrl(minimaxColorSvg),
   'minimax-coding-plan': svgToDataUrl(minimaxColorSvg),
   'minimax-cn-coding-plan': svgToDataUrl(minimaxColorSvg),
-  tencent: svgToDataUrl(tencentcloudColorSvg), // 腾讯云
+  tencent: svgToDataUrl(tencentcloudColorSvg), // Tencent Cloud
   tencentcloud: svgToDataUrl(tencentcloudColorSvg),
   'tencent-tokenhub': svgToDataUrl(tencentcloudColorSvg),
   'tencent-coding-plan': svgToDataUrl(tencentcloudColorSvg),
-  zai: svgToDataUrl(zaiSvg), // 智谱 Z.AI
+  zai: svgToDataUrl(zaiSvg), // Zhipu Z.AI
   'zai-coding-plan': svgToDataUrl(zaiSvg),
-  bailing: svgToDataUrl(bailianColorSvg), // 百聆 = 阿里 Bailian
+  bailing: svgToDataUrl(bailianColorSvg), // Bailing = Alibaba Bailian
   '302ai': svgToDataUrl(ai302ColorSvg), // 302.AI
 
-  // ===== 云 / 基础设施 =====
+  // ===== Cloud / infrastructure =====
   aws: svgToDataUrl(awsSvg),
   'amazon-bedrock': svgToDataUrl(bedrockColorSvg),
   azure: svgToDataUrl(azureSvg),
@@ -183,10 +183,10 @@ const PROVIDER_LOGOS: Record<string, string> = {
   aihubmix: svgToDataUrl(aihubmixColorSvg),
   nova: svgToDataUrl(novaColorSvg),
 
-  // ===== 聚合 / 路由器 =====
+  // ===== Aggregators / routers =====
   openrouter: svgToDataUrl(openrouterSvg),
 
-  // ===== 2026-07 (8 official SVGs + 47 monogram fallback) =====
+  // ===== 8 official SVGs + 47 monogram fallback =====
   longcat: svgToDataUrl(longcatColorSvg),
   clarifai:
     'data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjMTk1NUZGIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+Q2xhcmlmYWk8L3RpdGxlPjxwYXRoIGQ9Ik0yLjc4IDE0Ljc3MkEyLjc2OCAyLjc2OCAwIDAgMSAwIDEyLjAwOGEyLjc4MSAyLjc4MSAwIDAgMSAyLjc4LTIuNzggMi43NjUgMi43NjUgMCAwIDEgMi43NjQgMi43NjRjMCAxLjUyLTEuMjMgMi43OC0yLjc2NCAyLjc4ek0xNy4xMTkgMS44M2MtMi4wNSAwLTIuMTQyIDEuNzMyLTUuMjcgMS43MzItMy4xNiAwLTMuNDE5LTEuNzMyLTUuMjg3LTEuNzMyYTIuNzY1IDIuNzY1IDAgMCAwLTIuNzY1IDIuNzY1IDIuNzc1IDIuNzc1IDAgMCAwIDIuNzY1IDIuNzY0YzIuMDY2IDAgMi4xNTctMS43MzEgNS4yODYtMS43MzEgMy4xNiAwIDMuNDE4IDEuNzMxIDUuMjg2IDEuNzMxQTIuNzY1IDIuNzY1IDAgMCAwIDE5LjkgNC41OTVhMi43NzggMi43NzggMCAwIDAtMi43OC0yLjc2NXptMCAxNC44MWMtMi4wNjYgMC0yLjE1NyAxLjczMi01LjI4NiAxLjczMi0zLjE2IDAtMy40MTgtMS43MzEtNS4yODYtMS43MzFhMi43NjUgMi43NjUgMCAwIDAtMi43NjUgMi43NjQgMi43NzUgMi43NzUgMCAwIDAgMi43NjUgMi43NjVjMi4wNjYgMCAyLjE1Ny0xLjczMiA1LjI4Ni0xLjczMiAzLjE2IDAgMy40MTggMS43MzIgNS4yODYgMS43MzJhMi43NjUgMi43NjUgMCAwIDAgMC01LjUzem00LjEwMS03LjM5N2MtMi4wOCAwLTIuMDA1IDEuODIzLTQuNjE3IDEuODIzLTIuNDE2LS4wMTUtMi40NDYtMS44MjMtNC43NTUtMS44MjMtMS40NDMgMC0yLjYyOCAxLjMyMi0yLjYyOCAyLjc2NXMxLjIgMi43NjQgMi43NjUgMi43NjRjMi4wOCAwIDIuMDA1LTEuODIzIDQuNjE4LTEuODIzIDIuNDE1IDAgMi40NDUgMS44MDggNC43NyAxLjgwOCAxLjQ0MiAwIDIuNjI3LTEuMzIyIDIuNjI3LTIuNzY1IDAtMS40MjctMS4yLTIuNzQ5LTIuNzgtMi43NDlaIi8+PC9zdmc+',
@@ -342,7 +342,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
     'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSJoc2woODAsIDU1JSwgNDUlKSIvPjx0ZXh0IHg9IjIwIiB5PSIyNyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWksLWFwcGxlLXN5c3RlbSxzYW5zLXNlcmlmIiBmb250LXNpemU9IjIyIiBmb250LXdlaWdodD0iNTAwIj5YUDwvdGV4dD48L3N2Zz4=',
   zeldoc:
     'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIj48cmVjdCB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHJ4PSI4IiBmaWxsPSJoc2woMzI2LCA1NSUsIDQ1JSkiLz48dGV4dCB4PSIyMCIgeT0iMjciIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IndoaXRlIiBmb250LWZhbWlseT0ic3lzdGVtLXVpLC1hcHBsZS1zeXN0ZW0sc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyMiIgZm9udC13ZWlnaHQ9IjUwMCI+WkQ8L3RleHQ+PC9zdmc+',
-  google_brand: svgToDataUrl(googleSvg), // 备用的 Google 文字 logo
+  google_brand: svgToDataUrl(googleSvg), // Backup Google wordmark
 };
 interface TextRule {
   match: (name: string) => boolean;
@@ -396,7 +396,7 @@ const TEXT_RULES: TextRule[] = [
   },
 ];
 
-/** 找不到 logo 时返回 undefined, UI 会自动渲染字母占位 */
+/** Returned when no logo is found; the UI renders a letter placeholder instead */
 export const FALLBACK_LOGO: string | undefined = undefined;
 
 export function getProviderLogo(providerId: string | null | undefined): string | undefined {

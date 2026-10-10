@@ -1,5 +1,27 @@
 import { Component, createSignal, onMount, onCleanup, createEffect, Show } from 'solid-js';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import {
+  appendMessage,
+  askBtwQuestion as askBtwQuestionCmd,
+  branchTopic,
+  callLlmStream,
+  generateImage,
+  generateTopicTitle,
+  getActiveCheckpoint,
+  llmCreds,
+  loadAssistants,
+  runAgentTurn,
+  stopLlmStream,
+  summarizeHistory,
+  archiveHistory,
+  visionAnalyzeImages,
+  type ActiveCheckpoint,
+} from '../../core/api/chat';
+import { storeChatAttachment } from '../../core/api/attachment';
+import { registerChatEventListeners } from './hooks/chatEventListeners';
+import { registerChatCommands } from './hooks/chatCommands';
+import { TOOL_INTERRUPTED } from './constants';
+import { autoDetectLsp, startLspServer } from '../../core/api/lsp';
 import { listen } from '@tauri-apps/api/event';
 import { useNavigate } from '@solidjs/router';
 import {
@@ -14,7 +36,6 @@ import {
   Topic,
   Message,
   PendingAttachment,
-  StoredAttachment,
   selectedModel,
   setSelectedModel,
   resolveAssistantModel,
@@ -33,27 +54,27 @@ import {
   customSubagentProfiles,
   workflowState,
   setWorkflowState,
-  type WorkflowState,
   isChatMode,
   projects,
   ensureProjectAssistant,
   setShowProjectCreateModal,
   getLastAgentProjectId,
   initMcpServers,
+  activeSubagentView,
+  setActiveSubagentView,
+  type CompactOutcome,
 } from '../../core/store/store';
+import { EVENTS } from '../../core/api/events';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
-import {
-  registerCommand,
-  unregisterCommand,
-  resolveSlashCommand,
-  getSlashCommands,
-  getCommandDisplayDescription,
-} from '../../core/shortcuts';
+import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
+import Icon from '../../shared/components/Icon';
 import { isImageGenModel } from '../../core/utils/models';
+import { modelSupportsVision, resolveVisionModel } from './vision';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ChatInterface from './components/ChatInterface';
+import SubagentConversationView from './components/SubagentConversationView';
 import TopicSidebar from './components/TopicSidebar';
 import { Portal } from 'solid-js/web';
 import ShareModal from './components/ShareModal';
@@ -66,126 +87,226 @@ function getReasoningPrompt(level: string): string | null {
   if (level === 'high') return t('agent.prompt.reasoningHigh');
   return null;
 }
+
+/**
+ * Get the context window size of the currently selected model (read from the model catalog, default 128k).
+ * Used for backend Agent loop token budgeting and frontend history compression thresholds.
+ */
+async function getModelContextWindow(): Promise<number> {
+  let maxContext = 128_000; // default 128K
+  try {
+    const { getCachedCatalog } = await import('../../core/utils/models');
+    const cat = getCachedCatalog();
+    const mdl = selectedModel();
+    if (cat && mdl) {
+      const modelMeta = cat.models?.find((m: any) => m.id === mdl.model_id);
+      if (modelMeta?.contextWindow && modelMeta.contextWindow > 0) {
+        maxContext = modelMeta.contextWindow;
+      }
+    }
+  } catch {
+    // keep the default when the model catalog is unavailable
+  }
+  return maxContext;
+}
+
+/**
+ * Build Skill system messages (token efficiency):
+ * - Chat mode (no read_skill tool): inject full skill content (previous behavior);
+ * - Agent mode: small skills (<= 800 chars) are always fully injected (avoids the
+ *   model missing them, keeps them usable); large skills inject only catalog lines
+ *   (name + description) and are read in full on demand via the read_skill tool,
+ *   so docx/pptx/xlsx-sized skills are not billed in full on every request.
+ */
+function buildSkillMessages(asst: any, fullInject: boolean): { role: 'system'; content: string }[] {
+  const skills = resolveAssistantSkills(asst);
+  if (skills.length === 0) return [];
+  if (fullInject) {
+    return skills.map((skill) => ({
+      role: 'system' as const,
+      content: '[Skill: ' + skill.name + ']\n' + skill.content,
+    }));
+  }
+  const SMALL_SKILL_MAX_CHARS = 800;
+  const small = skills.filter((s) => s.content.length <= SMALL_SKILL_MAX_CHARS);
+  const large = skills.filter((s) => s.content.length > SMALL_SKILL_MAX_CHARS);
+  const msgs = small.map((skill) => ({
+    role: 'system' as const,
+    content: '[Skill: ' + skill.name + ']\n' + skill.content,
+  }));
+  if (large.length > 0) {
+    msgs.push({
+      role: 'system' as const,
+      content:
+        t('chat.skillCatalogNotice') +
+        '\n' +
+        large.map((s) => '- ' + s.name + ': ' + (s.description || s.name)).join('\n'),
+    });
+  }
+  return msgs;
+}
 import type { PendingApproval } from './components/ToolApprovalBubble';
 import { clearAllDiagnostics } from '../../core/store/diagnostics';
 
 let isFirstAppLaunch = true;
 const DEFAULT_ASST_ID = 'default-assistant-id';
 
-// 跟踪当前正在进行的"标题生成"任务，用于在用户切换话题时取消未完成的回调
-// （Tauri invoke 暂不支持 AbortSignal，这里仅在 JS 侧跳过结果处理；
-//  服务端调用仍会完成但结果被忽略，避免不必要的 state 更新）
+// Tracks the in-flight "title generation" task so unfinished callbacks can be cancelled
+// when the user switches topics (Tauri invoke has no AbortSignal support yet; only result
+// handling is skipped on the JS side — the call still completes, its result is ignored)
 let activeTitleGen: { topicId: string; cancelled: boolean } | null = null;
 
 /**
- * 辅助函数：创建新话题对象
- * @param name - 可选的话题名称，默认生成带时间戳的名称
- * @returns Topic 对象，包含唯一 ID、名称、空历史记录和空摘要
+ * Helper: create a new topic object.
+ * @param name - optional topic name; defaults to a timestamped name
+ * @returns Topic with a unique ID, name, empty history, and empty summary
  */
 const createTopic = (name?: string): Topic => ({
-  id: Date.now().toString(), // 使用当前时间戳作为唯一标识符
-  name: name || t('chat.untitledTopic', { time: new Date().toLocaleTimeString(locale()) }), // 默认名称包含创建时间
-  history: [], // 消息历史记录数组
-  summary: '', // SQLite 存储方案新增：长期记忆摘要，用于压缩历史上下文
+  id: Date.now().toString(), // current timestamp used as the unique identifier
+  name: name || t('chat.untitledTopic', { time: new Date().toLocaleTimeString(locale()) }), // default name includes the creation time
+  history: [], // message history array
+  summary: '', // long-term memory summary (SQLite storage), used to compress history context
 });
 
 /**
- * 辅助函数：创建新助手对象
- * @param name - 可选的助手名称
- * @param id - 可选的指定 ID（用于从数据库恢复时使用已有 ID）
- * @returns Assistant 对象，包含 ID、名称、系统提示词和默认话题
+ * Helper: create a new assistant object.
+ * @param name - optional assistant name
+ * @param id - optional explicit ID (reuses the existing ID when restoring from the database)
+ * @returns Assistant with ID, name, system prompt, and a default topic
  */
 const createAssistant = (name?: string, id?: string): Assistant => ({
-  id: id ?? Date.now().toString(), // 若未提供 ID 则生成新的时间戳 ID
-  name: name || t('chat.newAssistant'), // 默认助手名称
-  prompt: t('chat.defaultAssistantPrompt'), // 默认系统提示词
-  modelId: selectedModel() ? modelKey(selectedModel()!) : undefined, // 继承当前生效模型（复合键）作为新助手默认模型
-  // 有项目上下文时自动启用内置文件系统 MCP，让 agent 开箱即用
+  id: id ?? Date.now().toString(), // generate a fresh timestamp ID when none is provided
+  name: name || t('chat.newAssistant'), // default assistant name
+  prompt: t('chat.defaultAssistantPrompt'), // default system prompt
+  modelId: selectedModel() ? modelKey(selectedModel()!) : undefined, // inherit the active model (composite key) as the default model
+  // with a project context, auto-enable the built-in filesystem MCP so agents work out of the box
   mcpServerIds: currentProjectId() ? ['__aio-filesystem__'] : [],
   skillIds: [],
-  projectId: currentProjectId() ?? undefined, // 关联当前项目
+  projectId: currentProjectId() ?? undefined, // linked project
   assistantType: id === DEFAULT_ASST_ID ? 'chat' : 'project',
-  topics: [createTopic(t('chat.defaultTopic'))], // 每个助手默认创建一个"默认话题"
+  topics: [createTopic(t('chat.defaultTopic'))], // every assistant starts with one "default topic"
 });
 
 /**
- * 聊天页面主组件
- * 管理三栏布局、所有业务逻辑和状态流转
+ * Chat page root component.
+ * Owns the three-column layout, all business logic, and state transitions.
  * @component
  */
 const ChatPage: Component = () => {
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
     Number(localStorage.getItem('chat-left-panel-width')) || 18,
-  ); // 左侧面板宽度百分比（助手列表），默认 18%，范围 15%-30%
+  ); // left panel width percentage (assistant list), default 18%, range 15%-30%
   const [rightPanelWidth, setRightPanelWidth] = createSignal(
     Number(localStorage.getItem('chat-right-panel-width')) || 18,
-  ); // 右侧面板宽度百分比（话题列表），默认 18%，范围 15%-30%
+  ); // right panel width percentage (topic list), default 18%, range 15%-30%
+  /**
+   * Left panel: width tracks the cursor 1:1 throughout the drag (both directions), snapping only
+   * on release; the narrowest tracking width equals the collapsed rail width, so the handle stays grabbable and content never overflows.
+   */
+  const LEFT_RAIL_WIDTH_PX = 54; // collapsed rail width, kept in sync with ProjectSidebar
+  const LEFT_MAX_WIDTH_PCT = 30;
+  /** Release deadzone (px): dragging out less than this counts as not really opened, so it still collapses on release */
+  const LEFT_RELEASE_DEADZONE_PX = 12;
   const [isResizing, setIsResizing] = createSignal(false);
+  /** Live width preview (%) while dragging: rendered during tracking, cleared on release to fall back to the remembered leftPanelWidth */
+  const [leftDragWidth, setLeftDragWidth] = createSignal<number | null>(null);
+  /**
+   * "Curtain" layout width of the expanded content (px, = content-box width of the 15% minimal panel).
+   * While narrowing, content neither reflows nor fades — it is progressively clipped by the panel's left
+   * edge (curtain reveal), avoiding an empty transition frame with both content sets invisible; recomputed on resize.
+   */
+  const [leftRevealMinPx, setLeftRevealMinPx] = createSignal(0);
+  /** rAF id of the release snap animation: cancelled when a new drag starts so it never fights the user's gesture */
+  let leftSnapRaf: number | undefined;
   const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(
     localStorage.getItem('left-collapsed') === 'true',
-  ); // 左右两侧面板宽度调整逻辑
+  ); // left/right panel width adjustment logic
   const [isRightCollapsed, setIsRightCollapsed] = createSignal(
     localStorage.getItem('right-collapsed') === 'true',
   );
-  const [inputMessage, setInputMessage] = createSignal(''); // 当前输入框中的消息文本
-  const [pendingFiles, setPendingFiles] = createSignal<PendingAttachment[]>([]); // 待发送的文件列表（已复制到应用附件目录但尚未关联消息）
-  const [isThinking, setIsThinking] = createSignal(false); // AI 是否正在思考/生成回复（控制加载动画和停止按钮）
-  const [isProcessing, setIsProcessing] = createSignal(false); // 是否正在处理文件（控制文件解析加载状态）
-  const [isDragging, setIsDragging] = createSignal(false); // 是否正在拖拽文件到窗口（控制拖拽状态样式）
-  const [typingIndex, setTypingIndex] = createSignal<number | null>(null); // 当前正在打字机效果显示的消息索引，null 表示无打字效果
-  // setTimeout 批量流式内容合并（50ms 窗口），避免逐 token UI 更新（消除打字机效果）
-  let streamBatch: {
-    assistant_id: string;
-    topic_id: string;
-    content: string;
-    agentStepsContent: string;
-    lastIdx: number;
-  } | null = null;
-  let streamBatchRAF: number | undefined;
-  const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null); // 当前正在编辑名称的话题 ID，null 表示无编辑中
-  const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null); // 当前打开设置弹窗的助手 ID，null 表示弹窗关闭
-  // 待用户审批的工具调用列表
-  /** 分享弹窗状态 */
+  const [inputMessage, setInputMessage] = createSignal(''); // message text currently in the input box
+  const [pendingFiles, setPendingFiles] = createSignal<PendingAttachment[]>([]); // files staged for sending (copied into the app attachment dir, not yet linked to a message)
+  const [isThinking, setIsThinking] = createSignal(false); // whether the AI is thinking/generating a reply (drives the loading animation and stop button)
+  const [isProcessing, setIsProcessing] = createSignal(false); // whether a file is being processed (drives the file-parsing loading state)
+  const [isDragging, setIsDragging] = createSignal(false); // whether files are being dragged over the window (drives drag-state styling)
+  const [typingIndex, setTypingIndex] = createSignal<number | null>(null); // index of the message currently shown with the typewriter effect; null means no effect
+  const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null); // ID of the topic whose name is being edited; null when not editing
+  const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null); // ID of the assistant whose settings modal is open; null when closed
+  // tool calls awaiting user approval
+  /** Share modal state */
   const [showShareModal, setShowShareModal] = createSignal(false);
   const [activeShareTopicId, setActiveShareTopicId] = createSignal<string | null>(null);
-  /** 消息级选择模式 */
+  /** Message-level selection mode */
   const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
   const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
   const [pendingApprovals, setPendingApprovals] = createSignal<PendingApproval[]>([]);
-  /** /btw 悬浮问答框列表（临时展示，不存历史） */
+  /** /btw floating Q&A overlay list (ephemeral, not stored in history) */
   const [btwOverlays, setBtwOverlays] = createSignal<
     Array<{ id: string; question: string; answer: string | null; loading: boolean }>
   >([]);
-  /** 页面根元素引用，用于计算拖拽调整面板宽度时的相对位置 */
+  /** Page root element ref, used to compute relative positions while resizing panels */
   let chatPageRef: HTMLDivElement | undefined;
   /**
-   * 计算左侧面板显示宽度
-   * @returns {number} 左侧面板宽度（存储值，折叠模式下由子组件自行处理）
+   * Compute the left panel display width.
+   * @returns {number} live tracking width while dragging, otherwise the remembered width (collapsed state is rendered as rail width by the child component)
    */
-  const displayLeftWidth = () => leftPanelWidth();
+  const displayLeftWidth = () => leftDragWidth() ?? leftPanelWidth();
   /**
-   * 计算右侧面板显示宽度
-   * @returns {number} 右侧面板宽度，如果折叠则返回0
+   * Whether the left panel currently renders as the collapsed rail.
+   * During tracking (leftDragWidth non-null) it always renders expanded, so dragging
+   * out from the rail is truly cursor-driven instead of popping open via CSS on release.
+   */
+  const leftPanelCollapsed = () => isLeftCollapsed() && leftDragWidth() === null;
+
+  // Legacy: old drag code could persist intermediate widths < 15% to localStorage; restore the default when expanded
+  createEffect(() => {
+    if (!isLeftCollapsed() && leftPanelWidth() < 15) setLeftPanelWidth(18);
+  });
+
+  // Curtain-reveal target width: content-box width of the 15% minimal panel (asymmetric padding 15 left
+  // + 21 right, plus a 2px safety margin so content never overflows at 15%); recomputed on resize; ProjectSidebar infers container width from -38
+  onMount(() => {
+    const updateRevealMin = () => {
+      const base = chatPageRef?.clientWidth ?? window.innerWidth;
+      setLeftRevealMinPx(Math.max(base * 0.15 - 38, 120));
+    };
+    updateRevealMin();
+    window.addEventListener('resize', updateRevealMin);
+    onCleanup(() => window.removeEventListener('resize', updateRevealMin));
+    onCleanup(() => {
+      if (leftSnapRaf !== undefined) cancelAnimationFrame(leftSnapRaf);
+    });
+  });
+  /**
+   * Compute the right panel display width.
+   * @returns {number} right panel width, or 0 when collapsed
    */
   const displayRightWidth = () => (isRightCollapsed() ? 0 : rightPanelWidth());
 
   /**
-   * 切换左侧面板的折叠状态
-   * @param {MouseEvent} e - 鼠标事件
+   * Set the left panel collapsed state and persist it (single entry point for collapse/expand, with width fallback).
+   * @param collapsed - target collapsed state
    */
-  const toggleLeft = (e: MouseEvent) => {
-    e.stopPropagation(); // 防止触发拖拽
-    const newState = !isLeftCollapsed();
-    setIsLeftCollapsed(newState);
-    localStorage.setItem('left-collapsed', String(newState));
-    if (!newState && leftPanelWidth() < 5) {
+  const setLeftCollapsed = (collapsed: boolean) => {
+    setIsLeftCollapsed(collapsed);
+    localStorage.setItem('left-collapsed', String(collapsed));
+    if (!collapsed && leftPanelWidth() < 5) {
       setLeftPanelWidth(18);
     }
   };
 
   /**
-   * 切换右侧面板的折叠状态
-   * @param {MouseEvent} e - 鼠标事件
+   * Toggle the left panel collapsed state.
+   * @param {MouseEvent} e - mouse event
+   */
+  const toggleLeft = (e: MouseEvent) => {
+    e.stopPropagation(); // prevent triggering the drag
+    setLeftCollapsed(!isLeftCollapsed());
+  };
+
+  /**
+   * Toggle the right panel collapsed state.
+   * @param {MouseEvent} e - mouse event
    */
   const toggleRight = (e: MouseEvent) => {
     e.stopPropagation();
@@ -198,13 +319,13 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 当前选中的助手对象
+   * Currently selected assistant object.
    * @returns Assistant | undefined
    */
   const currentAssistant = () => datas.assistants.find((a) => a.id === currentAssistantId());
 
   /**
-   * 当前激活的话题对象
+   * Currently active topic object.
    * @returns Topic | null
    */
   const activeTopic = () => {
@@ -213,7 +334,7 @@ const ChatPage: Component = () => {
     return asst.topics.find((t: Topic) => t.id === currentTopicId()) || asst.topics[0] || null;
   };
 
-  /** 分享弹窗展示的话题：优先使用来自 TopicSidebar 右键菜单指定的 ID，否则用当前活跃话题 */
+  /** Topic shown in the share modal: prefer the ID set from the TopicSidebar context menu, otherwise the active topic */
   const shareTopic = (): Topic | null => {
     const asst = currentAssistant();
     if (!asst) return null;
@@ -222,9 +343,9 @@ const ChatPage: Component = () => {
     return activeTopic();
   };
 
-  // -------- 消息级选择 --------
+  // -------- message-level selection --------
 
-  /** 进入选择模式 */
+  /** Enter selection mode */
   const enterSelectionMode = (topicId?: string | null) => {
     if (topicId) {
       setActiveShareTopicId(topicId);
@@ -234,7 +355,7 @@ const ChatPage: Component = () => {
     setIsSelectingMessages(true);
   };
 
-  /** 切换单条消息的选中状态 */
+  /** Toggle the selected state of one message */
   const handleToggleMessage = (msgId: string) => {
     setSelectedMessageIds((prev) => {
       const next = new Set<string>(prev);
@@ -244,7 +365,7 @@ const ChatPage: Component = () => {
     });
   };
 
-  /** 全选当前话题的可导出消息（排除 tool 消息） */
+  /** Select all exportable messages in the current topic (excluding tool messages) */
   const handleSelectAll = () => {
     const topic = activeTopic();
     if (!topic) return;
@@ -255,25 +376,25 @@ const ChatPage: Component = () => {
     setSelectedMessageIds(ids);
   };
 
-  /** 取消选择，退出选择模式 */
+  /** Cancel the selection and exit selection mode */
   const handleCancelSelection = () => {
     setIsSelectingMessages(false);
     setSelectedMessageIds(new Set<string>());
     setActiveShareTopicId(null);
   };
 
-  /** 确认选择，打开分享弹窗 */
+  /** Confirm the selection and open the share modal */
   const handleConfirmSelection = () => {
     setIsSelectingMessages(false);
     setShowShareModal(true);
   };
 
   /**
-   * 处理文件上传和解析
-   * 调用 Tauri 后端读取本地文件内容，支持文本文件和图片
-   * M7 加固：前端做扩展名白名单预校验，避免无效调用
-   * @param filePath - 文件的绝对路径
-   * @param fileType - 文件类型提示（'file' 或 'image'）
+   * Handle file upload and parsing.
+   * Calls the Tauri backend to read local file content; supports text files and images.
+   * Hardening: the frontend pre-validates the extension whitelist to avoid pointless calls.
+   * @param filePath - absolute path of the file
+   * @param fileType - file type hint ('file' or 'image')
    */
   const handleFileUpload = async (filePath: string, fileType: 'file' | 'image') => {
     const fileName = filePath.split(/[\\/]/).pop() || t('chat.unknownFile');
@@ -293,7 +414,7 @@ const ChatPage: Component = () => {
       'yml',
       'ini',
       'tsv',
-      // 源代码 / 文本
+      // source code / text
       'rs',
       'c',
       'h',
@@ -348,7 +469,7 @@ const ChatPage: Component = () => {
     }
     setIsProcessing(true);
     try {
-      const stored = await invoke<StoredAttachment>('store_chat_attachment', { path: filePath });
+      const stored = await storeChatAttachment(filePath);
       setPendingFiles((prev) =>
         prev.some((file) => file.id === stored.id)
           ? prev
@@ -370,71 +491,88 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * 检查并总结对话历史（Token-based）
-   * 当会话累计 token 数超过模型上下文窗口的 75% 时，触发压缩。
+   * Check and summarize conversation history (token-based).
+   * Automatic path (conversation-end event): compress when usage exceeds 75% of the model context window;
+   * manual path (/compact, force=true): skips the threshold guard and compresses immediately (mainstream agent behavior).
+   * On summarize failure, falls back to local archiving (snapcompact-style): early context is not lost and can be read back via read_artifact.
    */
-  const checkAndSummarize = async () => {
+  const checkAndSummarize = async (
+    keepBudgetOverride?: number,
+    opts?: { force?: boolean },
+  ): Promise<CompactOutcome> => {
     const topic = activeTopic();
     const currentMdl = selectedModel();
-    if (!topic || !currentMdl) return;
+    if (!topic || !currentMdl) return { kind: 'skipped', reason: 'nothing-to-compact' };
 
-    // 获取当前模型的上下文窗口大小
-    let maxContext = 128_000; // 默认 128K
-    try {
-      const { getCachedCatalog } = await import('../../core/utils/models');
-      const cat = getCachedCatalog();
-      if (cat) {
-        const modelMeta = cat.models?.find((m: any) => m.id === currentMdl.model_id);
-        if (modelMeta?.contextWindow && modelMeta.contextWindow > 0) {
-          maxContext = modelMeta.contextWindow;
-        }
-      }
-    } catch {
-      // The default context size remains valid when the catalog is unavailable.
-    }
+    // get the current model's context window size
+    const maxContext = await getModelContextWindow();
 
-    // 统计实际上下文占用（使用最后一条 assistant 消息的 contextTokens，不跨消息累加）
+    // Measure context usage: prefer the context peak of the last assistant message
+    // (contextTokens already includes all history + system prefix + output; do not double-count user messages)
     let totalUsed = 0;
-    // 找到最后一条 assistant 消息，取其上下文峰值
+    let hasAssistantCtx = false;
     for (let i = topic.history.length - 1; i >= 0; i--) {
       const msg = topic.history[i];
       if (msg.role === 'assistant') {
         totalUsed = (msg.contextTokens || msg.inputTokens || 0) + (msg.outputTokens || 0);
+        hasAssistantCtx = true;
         break;
       }
     }
-    // 补充 user 消息的粗略估算（最后一条 assistant 未覆盖的部分）
-    for (const msg of topic.history) {
-      if (msg.role === 'user') {
+    // fall back to character estimation when there is no assistant reply yet (no completed turn)
+    if (!hasAssistantCtx) {
+      for (const msg of topic.history) {
         const text = typeof msg.content === 'string' ? msg.content : msg.displayText || '';
         totalUsed += Math.ceil(text.length / 4);
       }
     }
 
     const usageRatio = maxContext > 0 ? totalUsed / maxContext : 0;
-    if (usageRatio < 0.75 || topic.history.length <= 10) return;
+    // automatic path keeps the threshold and minimum-history guards; manual /compact always passes (summarizeCount decides whether anything is compressible)
+    if (!opts?.force && (usageRatio < 0.75 || topic.history.length <= 10)) {
+      return {
+        kind: 'skipped',
+        reason: usageRatio < 0.75 ? 'below-threshold' : 'short-history',
+      };
+    }
 
-    console.log(
-      `[Context] 触发压缩: ${(usageRatio * 100).toFixed(0)}% (${totalUsed}/${maxContext} tokens, ${topic.history.length} 条消息)`,
-    );
+    if (hasAssistantCtx) {
+      console.log(
+        `[Context] 触发压缩: ${(usageRatio * 100).toFixed(0)}% (${totalUsed}/${maxContext} tokens, ${topic.history.length} 条消息)`,
+      );
+    }
 
-    const keepCount = Math.max(4, Math.floor(topic.history.length * 0.3));
+    // Token-budget retention: by default keep ~20k tokens accumulated from the tail (at least the
+    // last 4 messages, i.e. one full turn); `/compact <n>` overrides the keep budget for this run
+    const KEEP_TOKEN_BUDGET =
+      keepBudgetOverride && keepBudgetOverride > 0 ? keepBudgetOverride : 20_000;
+    const estimateMsgTokens = (m: any): number => {
+      const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
+      return Math.ceil(text.length / 4) + 8;
+    };
+    let keepCount = 0;
+    let acc = 0;
+    for (let i = topic.history.length - 1; i >= 0; i--) {
+      acc += estimateMsgTokens(topic.history[i]);
+      keepCount = topic.history.length - i;
+      if (acc >= KEEP_TOKEN_BUDGET) break;
+    }
+    keepCount = Math.max(keepCount, 4);
     const summarizeCount = topic.history.length - keepCount;
-    const messagesToSummarize = topic.history.slice(0, summarizeCount);
+    if (summarizeCount <= 0) return { kind: 'skipped', reason: 'nothing-to-compact' };
+    // Overwriting summary: the old summary is injected as input context and replaced wholesale by the new one, avoiding concatenation bloat
+    const messagesToSummarize = topic.summary
+      ? [
+          { role: 'system' as const, content: t('chat.historyBackground') + topic.summary },
+          ...topic.history.slice(0, summarizeCount),
+        ]
+      : topic.history.slice(0, summarizeCount);
 
-    try {
-      const newSummarySnippet = await invoke<string>('summarize_history', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        messagesJson: JSON.stringify(messagesToSummarize),
-      });
+    // Persist: trim the history and replace topic.summary with the new summary or archive placeholder
+    const persistCompactedTopic = async (newSummary: string): Promise<CompactOutcome> => {
       const latestTopic = activeTopic();
-      if (!latestTopic) return;
+      if (!latestTopic) return { kind: 'skipped', reason: 'nothing-to-compact' };
       const updatedHistory = latestTopic.history.slice(summarizeCount);
-      const combinedSummary = latestTopic.summary
-        ? `[历史背景]: ${latestTopic.summary}\n[近期增补]: ${newSummarySnippet}`
-        : newSummarySnippet;
       setDatas(
         'assistants',
         (a) => a.id === currentAssistantId(),
@@ -442,20 +580,48 @@ const ChatPage: Component = () => {
         (t) => t.id === latestTopic.id,
         {
           history: updatedHistory,
-          summary: combinedSummary,
+          summary: newSummary,
         },
       );
       await saveSingleAssistantToBackend(currentAssistantId()!);
       console.log('[Context] 压缩完成');
+      return {
+        kind: 'compressed',
+        summarizedCount: summarizeCount,
+        keptCount: updatedHistory.length,
+      };
+    };
+
+    try {
+      const newSummarySnippet = await summarizeHistory(
+        llmCreds(currentMdl),
+        JSON.stringify(messagesToSummarize),
+        locale(),
+      );
+      return await persistCompactedTopic(newSummarySnippet);
     } catch (e) {
-      console.error('生成总结失败:', e);
+      // summarize failed -> local archive fallback (zero API cost; in Agent mode the read_artifact tool can read the original back via the placeholder ID)
+      try {
+        const placeholder = await archiveHistory(
+          JSON.stringify(messagesToSummarize),
+          currentMdl.model_id,
+          locale(),
+        );
+        const outcome = await persistCompactedTopic(placeholder);
+        return outcome.kind === 'compressed'
+          ? { kind: 'archived', count: summarizeCount }
+          : outcome;
+      } catch (archiveErr) {
+        console.error('生成总结失败:', e, '归档亦失败:', archiveErr);
+        return { kind: 'failed', error: String(e) };
+      }
     }
   };
 
   /**
-   * 启发式后备方案：从历史中提取一段文本作为标题。
-   * 用于 LLM 标题生成失败时保证至少能给出有意义的命名。
-   * 取第一条 user 消息的前 12 个字符。
+   * Heuristic fallback: derive a title from the history text.
+   * Guarantees at least a meaningful name when LLM title generation fails.
+   * Uses the first 12 characters of the first user message.
    */
   const fallbackTitle = (history: Message[]): string => {
     const firstUser = history.find((m) => m.role === 'user');
@@ -466,7 +632,7 @@ const ChatPage: Component = () => {
     } else if (firstUser.displayText) {
       text = firstUser.displayText;
     } else {
-      // 多模态：尝试提取 text 片段
+      // multimodal: try extracting text parts
       try {
         text = (firstUser.content as any[])
           .filter((p: any) => p?.type === 'text' && p?.text)
@@ -476,23 +642,23 @@ const ChatPage: Component = () => {
         text = '';
       }
     }
-    // 去掉换行避免标题跨行
+    // strip newlines so the title stays on one line
     const cleaned = text.trim().replace(/\s+/g, ' ');
     return cleaned.length > 12 ? cleaned.slice(0, 12) : cleaned;
   };
 
   /**
-   * 为"非默认话题"在首次对话后自动重命名。
-   * 规则：
-   *   1. 跳过默认话题（每个助手的话题列表第一项）
-   *   2. 跳过已重命名过的话题（topic.renamed === true）
-   *   3. 跳过 AI 回复为空/为错误的情况
-   *   4. 优先调用 LLM 生成标题；LLM 失败时回退到启发式（取首条 user 消息前 12 字）
-   *   5. 成功后更新 topic.name 并置 renamed=true，持久化到后端
-   *   6. 用户切换到其他话题时通过 activeTitleGen 取消未完成的回调处理
+   * Auto-rename non-default topics after the first conversation turn.
+   * Rules:
+   *   1. Skip the default topic (first entry in each assistant's topic list)
+   *   2. Skip already-renamed topics (topic.renamed === true)
+   *   3. Skip empty or errored AI replies
+   *   4. Prefer LLM-generated titles; fall back to the heuristic on failure (first 12 chars of the first user message)
+   *   5. On success update topic.name, set renamed=true, and persist to the backend
+   *   6. Cancel unfinished callback handling via activeTitleGen when the user switches topics
    */
   const checkAndRename = async (eventAsstId: string, eventTopicId: string) => {
-    // 取消之前未完成的标题生成任务（用户切换话题或触发了新的重命名）
+    // cancel any unfinished title-generation task (the user switched topics or triggered a new rename)
     if (activeTitleGen) {
       activeTitleGen.cancelled = true;
       activeTitleGen = null;
@@ -505,30 +671,30 @@ const ChatPage: Component = () => {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
-    // 必须用事件中的 topicId 重新定位（用户可能已切换话题）
+    // must re-locate via the event's topicId (the user may have switched topics)
     const topic = (asst.topics as Topic[]).find((t: Topic) => t.id === eventTopicId);
     if (!topic) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
 
-    // 1. 默认话题不重命名
+    // 1. never rename the default topic
     if (asst.topics[0]?.id === topic.id) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
-    // 2. 已经重命名过的话题不再重命名
+    // 2. never rename an already-renamed topic
     if (topic.renamed) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
-    // 3. 没有可参考的对话内容
+    // 3. no conversation content to reference
     if (topic.history.length < 2) {
       if (activeTitleGen === task) activeTitleGen = null;
       return;
     }
 
-    // 4. 检查最后一条 AI 消息是否有效（避免错误响应触发重命名）
+    // 4. check the last AI message is valid (avoid error responses triggering a rename)
     const lastMsg = topic.history[topic.history.length - 1];
     if (lastMsg?.role !== 'assistant') {
       if (activeTitleGen === task) activeTitleGen = null;
@@ -546,20 +712,15 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 截断到前 2 条消息：业界标准做法（user + assistant 即可概括主题，省 token）
+    // truncate to the first 2 messages: standard practice (user + assistant is enough to summarize the topic, saves tokens)
     const sample = topic.history.slice(0, 2);
 
-    // 第一阶段：尝试 LLM 生成
+    // phase 1: try LLM generation
     let newName: string | null = null;
     let llmError: unknown = null;
     try {
-      const result = await invoke<string>('generate_topic_title', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        messagesJson: JSON.stringify(sample),
-      });
-      // 用户中途切换了话题或触发了新任务：放弃本次结果
+      const result = await generateTopicTitle(llmCreds(currentMdl), JSON.stringify(sample));
+      // user switched topics or started a new task mid-flight: discard this result
       if (task.cancelled) return;
       if (result && result.trim()) {
         newName = result.trim();
@@ -569,10 +730,10 @@ const ChatPage: Component = () => {
       llmError = e;
     }
 
-    // 用户在 LLM 调用期间切换了话题：放弃处理
+    // user switched topics during the LLM call: abandon processing
     if (task.cancelled) return;
 
-    // 第二阶段：LLM 失败时用启发式后备
+    // phase 2: heuristic fallback when the LLM fails
     if (!newName) {
       newName = fallbackTitle(topic.history);
       if (newName) {
@@ -580,7 +741,7 @@ const ChatPage: Component = () => {
       }
     }
 
-    // 二次校验：状态可能在异步期间被改变
+    // re-validate: state may have changed during the async work
     const latestAsst = datas.assistants.find((a: any) => a.id === eventAsstId);
     const latestTopic = latestAsst?.topics.find((t: Topic) => t.id === eventTopicId);
     if (!latestAsst || !latestTopic) {
@@ -596,7 +757,7 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 实在拿不到任何名字：仅标记为已重命名，避免下次再尝试
+    // no name obtainable at all: just mark as renamed to avoid retrying
     if (!newName) {
       setDatas(
         'assistants',
@@ -612,7 +773,7 @@ const ChatPage: Component = () => {
       return;
     }
 
-    // 与旧名相同则视为无效，但仍标记为已重命名
+    // same as the old name: treat as invalid but still mark as renamed
     if (newName === latestTopic.name) {
       setDatas(
         'assistants',
@@ -642,32 +803,45 @@ const ChatPage: Component = () => {
     console.log(`话题已自动重命名: ${latestTopic.name} → ${newName}`);
   };
 
-  /** 中断/取消导致的工具调用占位结果文本（标记给模型看，保证上下文可理解） */
-  const TOOL_INTERRUPTED = '[Interrupted by user]';
-
-  /** 截断过长的工具返回内容，防止 LLM 上下文膨胀。完整内容保留在 agentSteps 中供用户查看。 */
+  /**
+   * Truncate oversized tool results (head+tail retention, aligned with the backend truncate_tool_result:
+   * 60% head + 40% tail, 20k chars), preventing LLM context bloat while preserving the file head/tail
+   * that read_file already kept. Full content stays in agentSteps for the user.
+   */
   const truncateToolResult = (content: string): string => {
-    const MAX_LEN = 10000;
+    const MAX_LEN = 20000;
     if (content.length <= MAX_LEN) return content;
-    return content.slice(0, MAX_LEN) + `\n\n... [已截断: 共${content.length}字符]`;
+    const head = Math.floor((MAX_LEN * 6) / 10);
+    const tail = MAX_LEN - head;
+    const headEnd = head;
+    const tailStart = content.length - tail;
+    if (tailStart > headEnd) {
+      return (
+        content.slice(0, headEnd) +
+        `\n\n${t('chat.truncatedHeadTail', { total: content.length })}\n\n` +
+        content.slice(tailStart)
+      );
+    }
+    return content.slice(0, MAX_LEN) + `\n\n${t('chat.truncatedTail', { total: content.length })}`;
   };
 
   /**
-   * 把一条历史消息展开为 API 载荷消息（可能 1 条或多条：assistant + 其 tool 结果）。
+   * Expand one history message into API payload messages (one or more: assistant + its tool results).
    *
-   * 关键防御：state 停留在 'calling' 的孤儿 toolCall（用户中断 / 应用被杀 / 旧版本遗留），
-   * 就地合成为中断错误的 tool 结果消息，保证每个 tool_calls 都有配对的 role:tool 响应。
-   * 否则严格校验的 API 会返回 400（missing field tool_call_id / insufficient tool messages）。
+   * Key defense: orphan toolCalls stuck in state 'calling' (user interrupt / app killed / legacy data)
+   * are synthesized in place as interrupted-error tool results so every tool_calls has a paired
+   * role:tool response; otherwise strictly-validated APIs return 400 (missing field
+   * tool_call_id / insufficient tool messages).
    */
   function buildApiMessages(m: any): any[] {
     const obj: any = { role: m.role, content: m.content };
-    if (m.images?.length) obj.images = m.images; // 后端据此剥离 aio-image 标记并展开 image_url 块
-    if (m.displayFiles?.length) obj.displayFiles = m.displayFiles; // 携带附件（含图片），后端据此读取并展开 image_url 块
+    if (m.images?.length) obj.images = m.images; // the backend strips the aio-image marker from this and expands image_url blocks
+    if (m.displayFiles?.length) obj.displayFiles = m.displayFiles; // attachments (incl. images); the backend reads these and expands image_url blocks
     if (m.toolCallId) obj.toolCallId = m.toolCallId;
     if (m.name) obj.name = m.name;
     if (!m.toolCalls || m.toolCalls.length === 0) return [obj];
 
-    // 缺 id 的条目无法配对，直接剔除（避免 JSON.stringify 丢弃 undefined 字段导致 400）
+    // entries without an ID cannot be paired; drop them (avoids JSON.stringify dropping undefined fields and causing 400)
     const validCalls = m.toolCalls.filter((tc: any) => tc.id != null);
     if (validCalls.length === 0) return [obj];
 
@@ -677,7 +851,7 @@ const ChatPage: Component = () => {
       function: { name: tc.function?.name, arguments: tc.function?.arguments },
     }));
     const toolMsgs = validCalls.map((tc: any) => {
-      // 孤儿（calling / 无状态）：视为中断，合成错误结果
+      // orphan (calling / no state): treat as interrupted, synthesize an error result
       const interrupted = tc.state !== 'success' && tc.state !== 'error';
       const raw = interrupted
         ? TOOL_INTERRUPTED
@@ -695,15 +869,15 @@ const ChatPage: Component = () => {
   }
 
   /**
-   * 确保 messagesForAI 中的所有 assistant(tool_calls) 都有对应的 role:tool 消息。
-   * 如果缺少某个 tool_call_id 的 tool 响应，自动补全占位消息，
-   * 防止 API 400 "insufficient tool messages" 错误。
+   * Ensure every assistant(tool_calls) in messagesForAI has matching role:tool messages.
+   * If the tool response for a tool_call_id is missing, auto-fill a placeholder message
+   * to prevent the API 400 "insufficient tool messages" error.
    */
   function ensureToolMessagesComplete(msgs: any[]): any[] {
     const result: any[] = [];
     let pendingToolCallIds: string[] = [];
 
-    // 补全 pending 中所有未配对 toolCallId 的占位 tool 消息
+    // fill placeholder tool messages for all unpaired toolCallIds in pending
     const flushPending = (target: any[]) => {
       for (const id of pendingToolCallIds) {
         console.warn(`[ensureToolMessages] 补全缺失的 tool 响应: ${id}`);
@@ -718,8 +892,8 @@ const ChatPage: Component = () => {
     };
 
     for (const msg of msgs) {
-      // 遇到新的 assistant(toolCalls) 时，先补全前一组未配对的 toolCallId，
-      // 避免连续多个 tool 调用回合时前一组 pending 被直接覆盖丢失
+      // on a new assistant(toolCalls), flush the previous unpaired toolCallIds first so the
+      // previous pending set is not silently overwritten across consecutive tool-call turns
       if (msg.role === 'assistant' && msg.toolCalls?.length && pendingToolCallIds.length > 0) {
         flushPending(result);
       }
@@ -727,16 +901,16 @@ const ChatPage: Component = () => {
       result.push(msg);
 
       if (msg.role === 'assistant' && msg.toolCalls?.length) {
-        // 收集这条 assistant 消息声明的所有 toolCallId
+        // collect all toolCallIds declared by this assistant message
         pendingToolCallIds = msg.toolCalls.map((tc: any) => tc.id);
       } else if (msg.role === 'tool' && msg.toolCallId) {
-        // 匹配到对应的 tool 响应，移除
+        // a matching tool response was found; remove it
         const idx = pendingToolCallIds.indexOf(msg.toolCallId);
         if (idx !== -1) pendingToolCallIds.splice(idx, 1);
       }
 
-      // 遇到 user 或 assistant(无 toolCalls) 消息时，如果还有未匹配的 toolCallId，
-      // 说明之前 assistant 的 toolCalls 缺少足够 tool 响应——补全占位消息
+      // on a user or assistant (no toolCalls) message, any unmatched toolCallId means the
+      // previous assistant toolCalls lack sufficient tool responses — fill placeholder messages
       if (
         (msg.role === 'user' || (msg.role === 'assistant' && !msg.toolCalls?.length)) &&
         pendingToolCallIds.length > 0
@@ -745,16 +919,16 @@ const ChatPage: Component = () => {
       }
     }
 
-    // 收尾：如果数组结束时仍有未匹配的 toolCallId，补全占位消息
+    // final flush: fill placeholders for toolCallIds still unmatched at the end of the array
     if (pendingToolCallIds.length > 0) flushPending(result);
 
     return result;
   }
 
   /**
-   * /btw 侧问：基于已有对话上下文流式回答（无工具、不修改对话历史）。
-   * 监听 `btw-chunk` 事件逐 chunk 更新 overlay。
-   * unlisten 在收到 done/error 事件时触发，避免 invoke resolve 与事件交付的竞态。
+   * /btw side question: streams an answer over the existing conversation context (no tools, no history changes).
+   * Listens to the `btw-chunk` event and updates the overlay chunk by chunk.
+   * unlisten fires on the done/error event, avoiding a race between invoke resolve and event delivery.
    */
   const askBtwQuestion = async (question: string, overlayId: string) => {
     const currentMdl = selectedModel();
@@ -764,13 +938,13 @@ const ChatPage: Component = () => {
 
     let resolved = false;
 
-    // 在 invoke 之前注册监听，确保不丢失首个 chunk
+    // register the listener before invoke so the first chunk is never lost
     const unlisten = await listen<{
       overlay_id: string;
       content: string;
       done: boolean;
       error?: string;
-    }>('btw-chunk', (e) => {
+    }>(EVENTS.btwChunk, (e) => {
       const { overlay_id, content, done, error } = e.payload;
       if (overlay_id !== overlayId) return;
 
@@ -798,7 +972,7 @@ const ChatPage: Component = () => {
     });
 
     try {
-      // 使用 BTW 专用 system prompt：禁止模型继续执行主任务，仅基于上下文回答
+      // dedicated BTW system prompt: forbid continuing the main task, answer from context only
       const btwSystemPrompt = `[SIDE QUESTION — DO NOT CONTINUE THE MAIN TASK]
 You are answering a brief side question about the conversation above.
 Do NOT continue, repeat, or redo any work from the conversation.
@@ -812,13 +986,7 @@ ${asstObj.prompt}`;
         { role: 'user', content: question },
       ];
 
-      await invoke('ask_btw_question', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
-        overlayId,
-        messagesJson: JSON.stringify(messagesForAI),
-      });
+      await askBtwQuestionCmd(llmCreds(currentMdl), overlayId, JSON.stringify(messagesForAI));
     } catch (err) {
       if (!resolved) {
         setBtwOverlays((prev) =>
@@ -832,8 +1000,8 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 斜杠命令 — promptBody 类型（/review、/explain 等）
-   * 聊天显示原始命令文本，后台发送解析后的 promptBody 给 LLM
+   * Slash command — promptBody type (/review, /explain, etc.)
+   * Chat shows the raw command text; the resolved promptBody is sent to the LLM
    */
   const handleSlashPromptMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
     if (!resolved) return;
@@ -849,7 +1017,7 @@ ${asstObj.prompt}`;
     const displayText = resolved.command.label + (resolved.args ? ` ${resolved.args}` : '');
     let content = resolved.resolvedBody || resolved.command.label;
 
-    // 无参数时自动注入当前项目路径，给 LLM 提供上下文
+    // with no args, inject the current project path to give the LLM context
     if (!resolved.args) {
       const project = currentProject();
       if (project) {
@@ -864,7 +1032,7 @@ ${asstObj.prompt}`;
       displayText,
     };
 
-    // 构建完整消息数组（与普通发送流程一致）
+    // build the full message array (same as the normal send flow)
     const reasoningPrompt = getReasoningPrompt(reasoningLevel());
 
     const agentMode = currentAsst?.agentMode || 'off';
@@ -883,10 +1051,9 @@ ${asstObj.prompt}`;
 
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
-      ...resolveAssistantSkills(currentAsst).map((skill) => ({
-        role: 'system',
-        content: `[Skill: ${skill.name}]\n${skill.content}`,
-      })),
+      // output style constraints (emoji avoidance etc., mirroring mainstream agent system-prompt style sections)
+      { role: 'system', content: t('chat.prompt.style') },
+      ...buildSkillMessages(currentAsst, agentMode === 'off'),
       ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
@@ -903,16 +1070,16 @@ ${asstObj.prompt}`;
     ];
     messagesForAI = ensureToolMessagesComplete(messagesForAI);
 
-    // 持久化用户消息
+    // persist the user message
     try {
-      await invoke('append_message', { topicId, message: newUserMsg });
+      await appendMessage(topicId, newUserMsg);
     } catch (err) {
       console.error('[chat] save message failed:', err);
       alert(t('error.save'));
       return;
     }
 
-    // 更新本地状态
+    // update local state
     setDatas(
       'assistants',
       (a: any) => a.id === asstId,
@@ -922,21 +1089,23 @@ ${asstObj.prompt}`;
       (h: any[]) => [...h, newUserMsg],
     );
 
-    // 调用 LLM
+    // call the LLM
     try {
       setIsThinking(true);
-      await invoke('run_agent_turn', {
-        apiUrl: currentMdl.api_url,
-        apiKey: currentMdl.api_key,
-        model: currentMdl.model_id,
+      await runAgentTurn({
+        ...llmCreds(currentMdl),
         assistantId: asstId,
-        topicId: topicId,
+        topicId,
         messages: messagesForAI,
         mcpServerIds: currentAsst?.mcpServerIds ?? [],
-        agentMode: agentMode,
+        agentMode,
         projectId: currentProjectId() ?? null,
         webSearchEnabled: webSearchEnabled(),
+        profileModelOverrides: [],
+        customSubagentProfiles: [],
         locale: locale(),
+        contextWindow: await getModelContextWindow(),
+        skills: agentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
       });
     } catch (err) {
       alert(err);
@@ -945,9 +1114,59 @@ ${asstObj.prompt}`;
     }
   };
 
+  // ===== Checkpoint resume: "continue unfinished turn" entry for crash-orphaned turns =====
+  const [activeCheckpoint, setActiveCheckpoint] = createSignal<ActiveCheckpoint | null>(null);
+  createEffect(() => {
+    const tid = currentTopicId();
+    setActiveCheckpoint(null);
+    if (!tid) return;
+    void (async () => {
+      try {
+        const cp = await getActiveCheckpoint(tid);
+        // race guard: apply only if the topic has not switched again
+        if (currentTopicId() === tid) setActiveCheckpoint(cp);
+      } catch {
+        /* silent on query failure: the entry point is not shown */
+      }
+    })();
+  });
+
+  const handleResumeTurn = async () => {
+    const cp = activeCheckpoint();
+    const tid = currentTopicId();
+    const asstId = currentAssistantId();
+    const currentMdl = selectedModel();
+    if (!cp || !tid || !asstId || !currentMdl || isThinking()) return;
+    const currentAsst = datas.assistants.find((a: Assistant) => a.id === asstId);
+    const resumeAgentMode = currentAsst?.agentMode || 'off';
+    setActiveCheckpoint(null);
+    setIsThinking(true);
+    try {
+      await runAgentTurn({
+        ...llmCreds(currentMdl),
+        assistantId: asstId,
+        topicId: tid,
+        messages: [], // on resume the backend substitutes the checkpoint snapshot; frontend messages are unused
+        mcpServerIds: currentAsst?.mcpServerIds ?? [],
+        agentMode: resumeAgentMode,
+        projectId: currentProjectId() ?? null,
+        webSearchEnabled: webSearchEnabled(),
+        profileModelOverrides: [],
+        customSubagentProfiles: [],
+        locale: locale(),
+        contextWindow: await getModelContextWindow(),
+        skills: resumeAgentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
+        resumeTurnId: cp.turnId,
+      });
+    } catch (err) {
+      alert(err);
+      setIsThinking(false);
+    }
+  };
+
   /**
-   * 斜杠命令 — 纯操作类型（/compact、/clear、/search、/settings、/help）
-   * 聊天显示命令 + 执行 handler + 简短反馈
+   * Slash command — pure action type (/compact, /clear, /search, /settings, /help)
+   * Chat shows the command, runs the handler, then shows brief feedback
    */
   const handleSlashActionMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
     if (!resolved) return;
@@ -958,7 +1177,7 @@ ${asstObj.prompt}`;
     const cmd = resolved.command;
     const displayText = cmd.label;
 
-    // 添加用户消息
+    // append the user message
     setDatas(
       'assistants',
       (a: any) => a.id === asstId,
@@ -976,31 +1195,35 @@ ${asstObj.prompt}`;
       ],
     );
 
-    // 执行 handler
-    await cmd.handler();
+    // run the handler (action commands may take args, e.g. `/compact 10000` sets the keep-token budget);
+    // a string return value is used as custom feedback (/compact distinguishes compressed / skipped / failed)
+    const handlerResult = await cmd.handler(resolved.args);
 
-    // 根据命令类型给出反馈消息
+    // produce a feedback message per command type
     let feedback = '';
     if (cmd.id === 'slash-compact') {
-      feedback = `✓ /compact — ${t('slash.feedback.compacted')}`;
+      feedback =
+        typeof handlerResult === 'string'
+          ? handlerResult
+          : `✓ /compact — ${t('slash.feedback.compactSkipped')}`;
     } else if (cmd.id === 'slash-clear') {
-      // /clear handler 已清空历史，无需额外反馈
+      // the /clear handler already emptied the history; no extra feedback needed
       return;
     } else if (cmd.id === 'slash-search') {
       feedback = webSearchEnabled()
         ? `✓ ${t('slash.feedback.searchOn')}`
         : `✓ ${t('slash.feedback.searchOff')}`;
     } else if (cmd.id === 'slash-help') {
-      // /help handler 已添加帮助信息，无需额外反馈
+      // the /help handler already appended help info; no extra feedback needed
       return;
     } else if (cmd.id === 'slash-settings') {
-      // /settings handler 已跳转页面
+      // the /settings handler already navigated away
       return;
     } else {
       feedback = `✓ ${t('slash.feedback.executed', { command: cmd.label })}`;
     }
 
-    // 添加反馈消息
+    // append the feedback message
     setDatas(
       'assistants',
       (a: any) => a.id === asstId,
@@ -1020,29 +1243,29 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 处理发送消息的逻辑
-   * 包括文件处理、API调用和状态更新
+   * Send-message flow.
+   * Covers file handling, API calls, and state updates
    */
   const handleSendMessage = async () => {
     const currentMdl = selectedModel();
     const topicObj = activeTopic();
     const asstObj = currentAssistant();
 
-    // 前置条件检查：必须有模型、话题、助手，且 AI 不在生成中
+    // precondition check: model, topic, and assistant must exist, and the AI must not be generating
     if (!currentMdl || !topicObj || !asstObj) return;
 
     const userInput = inputMessage().trim();
     const files = pendingFiles();
-    // isThinking 时阻止普通消息发送（/btw 由下方独立处理）
+    // block normal message sends while isThinking (/btw is handled separately below)
     if (isThinking() && !userInput.startsWith('/btw')) return;
-    // 必须满足：有文本输入或有文件附件
+    // require text input or file attachments
     if (!userInput && files.length === 0) return;
 
-    // ---- 斜杠命令拦截 ----
+    // ---- slash command interception ----
     if (userInput.startsWith('/')) {
       const resolved = resolveSlashCommand(userInput);
       if (resolved) {
-        // /btw 独立处理：立即基于当前上下文回答，不中断主 agent
+        // /btw handled separately: answer immediately from the current context without interrupting the main agent
         if (resolved.command.id === 'slash-btw') {
           const question = resolved.args || '';
           const id = crypto.randomUUID();
@@ -1061,7 +1284,7 @@ ${asstObj.prompt}`;
         setPendingFiles([]);
         return;
       }
-      // 未识别的斜杠命令 — 给出反馈，阻止发送给 LLM
+      // unrecognized slash command — show feedback and do not send to the LLM
       const unknownAsstId = currentAssistantId();
       const unknownTopicId = currentTopicId();
       if (unknownAsstId && unknownTopicId) {
@@ -1096,11 +1319,47 @@ ${asstObj.prompt}`;
     const topicId = currentTopicId();
     if (!asstId || !topicId) return;
 
+    // ---- auto vision analysis ----
+    // When the selected model cannot see images, the vision agent looks at
+    // them first: its structured description replaces the raw image parts
+    // (a non-vision model would ignore or reject the base64 payloads). The
+    // image attachments are unlinked (id stripped) so later turns never
+    // re-embed them; the history bubbles still show the thumbnails (they
+    // render from storagePath, not the id).
+    let outgoingText = userInput;
+    // Stripped image entries carry an optional id (AttachmentMeta-level):
+    // message_for_api skips id-less files, so later turns never re-embed them.
+    let outgoingFiles: Array<Omit<PendingAttachment, 'id'> & { id?: string }> = files;
+    if (files.some((f) => f.type === 'image') && !modelSupportsVision(currentMdl)) {
+      const visionModel = resolveVisionModel(currentMdl);
+      if (visionModel) {
+        setIsThinking(true);
+        try {
+          const imageIds = files.filter((f) => f.type === 'image').map((f) => f.id);
+          const description = await visionAnalyzeImages(
+            llmCreds(visionModel),
+            imageIds,
+            outgoingText,
+            locale(),
+          );
+          outgoingFiles = files.map((f) => (f.type === 'image' ? { ...f, id: undefined } : f));
+          outgoingText = `${outgoingText}\n\n${t('chat.visionAnalysisPrefix')}\n${description}`;
+        } catch (err) {
+          // Vision analysis failed — fall back to sending the images as-is
+          console.warn('[vision] analysis failed, sending images unchanged:', err);
+        } finally {
+          setIsThinking(false);
+        }
+      } else {
+        console.warn('[vision] no vision-capable model available; sending images unchanged');
+      }
+    }
+
     const newUserMsg = {
       id: crypto.randomUUID(),
       role: 'user' as const,
-      content: userInput,
-      displayFiles: files.map((f) => ({
+      content: outgoingText,
+      displayFiles: outgoingFiles.map((f) => ({
         id: f.id,
         name: f.name,
         mimeType: f.mimeType,
@@ -1114,7 +1373,7 @@ ${asstObj.prompt}`;
     const currentTopic = activeTopic();
     if (!currentAsst || !currentTopic) return;
 
-    /** 根据推理强度注入对应的 system 提示, 让模型使用 <think>...</think> 输出思考过程 */
+    /** Inject the system prompt matching the reasoning level so the model uses <think>...</think> to emit its thinking output */
     const reasoningPrompt = getReasoningPrompt(reasoningLevel());
 
     const agentMode = currentAsst?.agentMode || 'off';
@@ -1132,10 +1391,9 @@ ${asstObj.prompt}`;
       : [];
     let messagesForAI: any[] = [
       { role: 'system', content: currentAsst.prompt },
-      ...resolveAssistantSkills(currentAsst).map((skill) => ({
-        role: 'system',
-        content: `[Skill: ${skill.name}]\n${skill.content}`,
-      })),
+      // output style constraints (emoji avoidance etc., mirroring mainstream agent system-prompt style sections)
+      { role: 'system', content: t('chat.prompt.style') },
+      ...buildSkillMessages(currentAsst, isChatMode()),
       ...agentSystemPrompt,
       ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
       ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
@@ -1150,7 +1408,7 @@ ${asstObj.prompt}`;
       ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
       { role: 'user', content: newUserMsg.content, displayFiles: newUserMsg.displayFiles },
     ];
-    // 安全网：确保每个 assistant(tool_calls) 都有对应的 role:tool 消息
+    // safety net: ensure every assistant(tool_calls) has matching role:tool messages
     messagesForAI = ensureToolMessagesComplete(messagesForAI);
 
     const lastMsg = messagesForAI[messagesForAI.length - 1];
@@ -1159,20 +1417,17 @@ ${asstObj.prompt}`;
       return;
     }
 
-    // 先持久化用户消息和附件关联，避免流式请求期间退出或重复上传导致附件成为孤儿。
+    // persist the user message and attachment links first so exiting during streaming or duplicate uploads does not orphan attachments.
     try {
-      await invoke('append_message', {
-        topicId,
-        message: newUserMsg,
-      });
+      await appendMessage(topicId, newUserMsg);
     } catch (err) {
       console.error('save_message_with_attachments failed:', err);
       alert(t('error.save'));
       return;
     }
 
-    // 更新本地 Store：添加用户消息，聊天模式下同时创建空 assistant 占位消息
-    // （项目/Agent 模式下占位消息由 llm-round-start 事件创建）
+    // update the local Store: append the user message; in chat mode also create an empty assistant placeholder
+    // (in project/Agent mode the placeholder is created by the llm-round-start event)
     if (isChatMode()) {
       setDatas(
         'assistants',
@@ -1205,12 +1460,12 @@ ${asstObj.prompt}`;
       );
     }
 
-    // 清空输入状态和文件列表，设置生成中状态
+    // clear input state and file list, mark as generating
     setInputMessage('');
     setPendingFiles([]);
     setIsThinking(true);
 
-    // 设置打字机索引（聊天模式下刚创建的 assistant 占位消息位置）
+    // set the typewriter index (position of the assistant placeholder just created in chat mode)
     if (isChatMode()) {
       const asst = datas.assistants.find((a) => a.id === asstId);
       const topic = asst?.topics.find((t: Topic) => t.id === topicId);
@@ -1218,29 +1473,15 @@ ${asstObj.prompt}`;
     }
 
     try {
-      // 聊天模式：纯对话，直接调用 call_llm_stream（无 agent 循环、无工具调用）
-      // 项目模式/Agent 模式：调用 run_agent_turn（含工具调用、子智能体等）
+      // chat mode: plain conversation, calls call_llm_stream directly (no agent loop, no tools)
+      // project/Agent mode: calls run_agent_turn (with tool calls, subagents, etc.)
       if (isChatMode() && isImageGenModel(currentMdl.model_id, currentMdl.api_url)) {
-        // 专用端点（dall-e-2/3 等）：非流式生成，结果经 llm-chunk(done) 回传
-        await invoke('generate_image', {
-          apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key ?? '',
-          model: currentMdl.model_id,
-          assistantId: asstId,
-          topicId: topicId,
-          prompt: userInput,
-        });
+        // dedicated endpoints (dall-e-2/3 etc.): non-streaming generation, the result comes back via llm-chunk(done)
+        await generateImage(llmCreds(currentMdl), asstId, topicId, userInput);
       } else if (isChatMode()) {
-        await invoke('call_llm_stream', {
-          apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key ?? '',
-          model: currentMdl.model_id,
-          assistantId: asstId,
-          topicId: topicId,
-          messages: messagesForAI,
-        });
+        await callLlmStream(llmCreds(currentMdl), asstId, topicId, messagesForAI);
       } else {
-        // 解析 per-profile 模型覆盖（仅 agent 模式需要）
+        // resolve per-profile model overrides (only needed in agent mode)
         const resolvedOverrides: Array<{
           profileId: string;
           modelId: string;
@@ -1260,20 +1501,20 @@ ${asstObj.prompt}`;
           }
         }
 
-        await invoke('run_agent_turn', {
-          apiUrl: currentMdl.api_url,
-          apiKey: currentMdl.api_key ?? '',
-          model: currentMdl.model_id,
+        await runAgentTurn({
+          ...llmCreds(currentMdl),
           assistantId: asstId,
-          topicId: topicId,
+          topicId,
           messages: messagesForAI,
           mcpServerIds: currentAsst?.mcpServerIds ?? [],
-          agentMode: agentMode,
+          agentMode,
           projectId: currentProjectId() ?? null,
           webSearchEnabled: webSearchEnabled(),
           profileModelOverrides: resolvedOverrides,
           customSubagentProfiles: customSubagentProfiles(),
           locale: locale(),
+          contextWindow: await getModelContextWindow(),
+          skills: isChatMode() ? [] : resolveAssistantSkills(currentAsst),
         });
       }
     } catch (err) {
@@ -1284,21 +1525,18 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 停止当前的AI生成过程
+   * Stop the current AI generation.
    */
   const handleStopGeneration = async () => {
     try {
-      await invoke('stop_llm_stream', {
-        assistantId: currentAssistantId(),
-        topicId: currentTopicId(),
-      });
+      await stopLlmStream(currentAssistantId() ?? '', currentTopicId() ?? '');
     } catch (err) {
       console.error('stop_llm_stream 失败:', err);
     }
     setPendingApprovals([]);
   };
 
-  /** 切换到聊天模式 */
+  /** Switch to chat mode */
   const switchToChat = () => {
     setCurrentAssistantId(DEFAULT_ASST_ID);
     const asst = datas.assistants.find((a) => a.id === DEFAULT_ASST_ID);
@@ -1307,7 +1545,7 @@ ${asstObj.prompt}`;
     }
   };
 
-  /** 切换到指定项目 */
+  /** Switch to the given project */
   const switchToProject = async (projectId: string) => {
     try {
       const asstId = await ensureProjectAssistant(projectId);
@@ -1322,8 +1560,8 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 添加新的话题到当前助手
-   * 创建新话题并设置为当前选中话题
+   * Add a new topic to the current assistant.
+   * Creates the topic and makes it the selected one
    */
   const addTopic = async () => {
     const asstId = currentAssistantId();
@@ -1340,19 +1578,16 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 从指定消息处分叉出新话题（会话分支）。
-   * 将当前话题中该消息及之前的所有消息复制到新话题，并导航过去。
-   * @param sourceMessageId - 分支点的消息 ID
+   * Branch a new topic from the given message (conversation branching).
+   * Copies that message and everything before it into a new topic, then navigates to it.
+   * @param sourceMessageId - message ID at the branch point
    */
   const branchFromMessage = async (sourceMessageId: string) => {
     const asstId = currentAssistantId();
     const topicId = currentTopicId();
     if (!asstId || !topicId) return;
     try {
-      const newTopic: Topic = await invoke('branch_topic', {
-        sourceTopicId: topicId,
-        sourceMessageId,
-      });
+      const newTopic: Topic = await branchTopic(topicId, sourceMessageId);
       setDatas(
         'assistants',
         (a: any) => a.id === asstId,
@@ -1367,28 +1602,20 @@ ${asstObj.prompt}`;
   };
 
   /**
-   * 拖拽调整面板宽度
-   * @param e - MouseEvent 鼠标事件
-   * @param type - 'left' 调整左面板，'right' 调整右面板
+   * Generic drag-to-resize: binds mousemove/mouseup and updates width via a percentage callback.
+   * @param e - MouseEvent mouse event
+   * @param onDragMove - callback per mouse move, receives the percentage of the cursor across the full page width
    */
-  const startResize = (e: MouseEvent, type: 'left' | 'right') => {
+  const attachResizeDrag = (e: MouseEvent, onDragMove: (pct: number) => void) => {
     e.preventDefault();
-    // 2. 开始拖拽时，设为 true
     setIsResizing(true);
 
+    const totalW = chatPageRef?.offsetWidth ?? window.innerWidth;
     const handleMove = (moveEvent: MouseEvent) => {
-      const totalW = chatPageRef!.offsetWidth;
-      if (type === 'left') {
-        setLeftPanelWidth(Math.min(Math.max((moveEvent.clientX / totalW) * 100, 15), 30));
-      } else {
-        setRightPanelWidth(
-          Math.min(Math.max(((totalW - moveEvent.clientX) / totalW) * 100, 15), 30),
-        );
-      }
+      onDragMove((moveEvent.clientX / totalW) * 100);
     };
 
     const stopResize = () => {
-      // 3. 停止拖拽时，设为 false
       setIsResizing(false);
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', stopResize);
@@ -1398,309 +1625,146 @@ ${asstObj.prompt}`;
     document.addEventListener('mouseup', stopResize);
   };
 
+  /**
+   * Drag-resize the left panel: strict 1:1 cursor tracking in both expand and collapse directions; snap only on release.
+   *
+   * - Tracking origin: map the panel's "currently occupied pixel width" onto the cursor axis — the rail
+   *   width when collapsed, the DOM-measured rendered width when expanded (the handle sits at the
+   *   panel's right edge, so measuring guarantees zero first-frame displacement and no jump).
+   *   Width delta = cursor delta, strictly 1:1;
+   * - Percentage conversion uses `clientWidth` (content width), matching how CSS `width:%` resolves;
+   * - Minimum width: tracking width never drops below the collapsed rail width, so the handle cannot
+   *   be dragged to the far left and content never overflows;
+   * - Release snap: pinned at the minimum or still inside the deadzone -> collapse; otherwise land at >= 15% and remember.
+   *
+   * @param e - MouseEvent mouse event
+   */
+  const startLeftResize = (e: MouseEvent) => {
+    // user re-grabbed the handle: cancel the in-flight snap animation, the gesture takes over
+    if (leftSnapRaf !== undefined) {
+      cancelAnimationFrame(leftSnapRaf);
+      leftSnapRaf = undefined;
+    }
+    const cssBase = chatPageRef?.clientWidth ?? window.innerWidth;
+    const wasCollapsed = isLeftCollapsed();
+    const doCollapse = LEFT_RAIL_WIDTH_PX / cssBase; // narrowest tracking width (%)
+    // panel's current occupied pixel width: rail width when collapsed; measured when expanded (falls back to the remembered width if unmeasurable)
+    const handleEl = e.currentTarget instanceof Element ? e.currentTarget : null;
+    const measuredPx = handleEl?.parentElement?.getBoundingClientRect().width ?? 0;
+    const basePx = wasCollapsed
+      ? LEFT_RAIL_WIDTH_PX
+      : measuredPx > 0
+        ? measuredPx
+        : (leftPanelWidth() / 100) * cssBase;
+    // cursor axis zero point: cursor X minus this equals the width the panel should occupy
+    const anchorX = e.clientX - basePx;
+    setIsResizing(true);
+    e.preventDefault();
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      const pct = ((moveEvent.clientX - anchorX) / cssBase) * 100;
+      setLeftDragWidth(Math.min(Math.max(pct, doCollapse), LEFT_MAX_WIDTH_PCT));
+    };
+
+    const stopResize = () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', stopResize);
+      const dragged = leftDragWidth();
+      if (dragged === null) {
+        setIsResizing(false);
+        return; // pressed without dragging: keep as-is
+      }
+      const draggedPx = (dragged / 100) * cssBase;
+      if (draggedPx <= LEFT_RAIL_WIDTH_PX + LEFT_RELEASE_DEADZONE_PX) {
+        // pinned at the minimum / never really opened: snap back to the collapsed rail (via the CSS collapse transition)
+        setLeftDragWidth(null);
+        setIsResizing(false);
+        setLeftCollapsed(true);
+        return;
+      }
+      // Opened: ease the preview width to the snap target (>= 15%) with rAF.
+      // Mask/padding/opacity follow each frame's width, so the ending has no hard clip or jump;
+      // isResizing stays true (CSS transitions disabled) during it to avoid double smoothing.
+      const target = Math.max(dragged, 15);
+      const durationMs = 250;
+      const start = performance.now();
+      const step = (now: number) => {
+        const t = Math.min((now - start) / durationMs, 1);
+        const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+        setLeftDragWidth(dragged + (target - dragged) * eased);
+        if (t < 1) {
+          leftSnapRaf = requestAnimationFrame(step);
+          return;
+        }
+        leftSnapRaf = undefined;
+        setLeftPanelWidth(target);
+        setLeftCollapsed(false);
+        setLeftDragWidth(null);
+        setIsResizing(false);
+      };
+      leftSnapRaf = requestAnimationFrame(step);
+    };
+
+    document.addEventListener('mousemove', handleMove);
+    // listen for mouseup immediately: a press-and-release on the handle without any mousemove still completes the snap
+    document.addEventListener('mouseup', stopResize);
+  };
+
+  /**
+   * Drag-resize the right panel (original behavior: only available when expanded).
+   * @param e - MouseEvent mouse event
+   */
+  const startResizeRight = (e: MouseEvent) => {
+    attachResizeDrag(e, (pct) => {
+      setRightPanelWidth(Math.min(Math.max(100 - pct, 15), 30));
+    });
+  };
+
   onMount(() => {
     const navigate = useNavigate();
 
-    // ---- 注册快捷键命令 ----
-    const cmdToggleLeft = registerCommand({
-      id: 'toggle-left-sidebar',
-      label: '切换左侧边栏',
-      description: '显示或隐藏助手列表侧边栏',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+B',
-      handler: () => {
-        const newState = !isLeftCollapsed();
-        setIsLeftCollapsed(newState);
-        localStorage.setItem('left-collapsed', String(newState));
-        if (!newState && leftPanelWidth() < 5) setLeftPanelWidth(18);
-      },
+    // register all keyboard/slash commands (19 registerCommand calls, extracted to hooks/chatCommands.ts).
+    const commandIds = registerChatCommands({
+      isLeftCollapsed,
+      setLeftCollapsed,
+      isRightCollapsed,
+      setIsRightCollapsed,
+      rightPanelWidth,
+      setRightPanelWidth,
+      addTopic,
+      setShowProjectCreateModal,
+      switchToChat,
+      switchToProject,
+      isThinking,
+      setIsThinking,
+      handleStopGeneration,
+      reasoningLevel,
+      setReasoningLevel,
+      webSearchEnabled,
+      setWebSearchEnabled,
+      datas,
+      setDatas,
+      projects,
+      currentAssistant,
+      currentAssistantId,
+      currentTopicId,
+      setCurrentTopicId,
+      saveSingleAssistantToBackend,
+      checkAndSummarize,
+      navigate,
     });
 
-    const cmdToggleRight = registerCommand({
-      id: 'toggle-right-sidebar',
-      label: '切换右侧边栏',
-      description: '显示或隐藏话题列表侧边栏',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+Alt+B',
-      handler: () => {
-        const newState = !isRightCollapsed();
-        setIsRightCollapsed(newState);
-        localStorage.setItem('right-collapsed', String(newState));
-        if (!newState && rightPanelWidth() < 5) setRightPanelWidth(18);
-      },
-    });
-
-    const cmdNewTopic = registerCommand({
-      id: 'new-topic',
-      label: '新建话题',
-      description: '在当前助手中创建新的话题',
-      category: 'chat',
-      defaultKeys: 'Ctrl+N',
-      handler: () => {
-        addTopic();
-      },
-    });
-
-    const cmdNewProject = registerCommand({
-      id: 'new-project',
-      label: '新建项目',
-      description: '创建新的项目',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+N',
-      handler: () => {
-        setShowProjectCreateModal(true);
-      },
-    });
-
-    const cmdStopGen = registerCommand({
-      id: 'stop-generation',
-      label: '停止生成',
-      description: '停止当前 AI 回复的生成',
-      category: 'chat',
-      defaultKeys: 'Escape',
-      handler: () => {
-        if (isThinking()) handleStopGeneration();
-      },
-    });
-
-    const cmdPrevAsst = registerCommand({
-      id: 'prev-assistant',
-      label: '上一个',
-      description: '切换到上一个聊天或项目',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+[',
-      handler: () => {
-        // 构建顺序: [chat, ...projects]
-        const projList = projects();
-        const currentProjId = currentAssistant()?.projectId;
-        if (!currentProjId) {
-          // 当前是聊天模式，上一个 = 最后一个项目
-          if (projList.length > 0) {
-            const lastProj = projList[projList.length - 1];
-            void switchToProject(lastProj.id);
-          }
-        } else {
-          const idx = projList.findIndex((p) => p.id === currentProjId);
-          if (idx > 0) {
-            void switchToProject(projList[idx - 1].id);
-          } else {
-            // 第一个项目，上一个 = 聊天
-            switchToChat();
-          }
-        }
-      },
-    });
-
-    const cmdNextAsst = registerCommand({
-      id: 'next-assistant',
-      label: '下一个',
-      description: '切换到下一个聊天或项目',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+]',
-      handler: () => {
-        const projList = projects();
-        const currentProjId = currentAssistant()?.projectId;
-        if (!currentProjId) {
-          // 当前是聊天模式，下一个 = 第一个项目
-          if (projList.length > 0) {
-            void switchToProject(projList[0].id);
-          }
-        } else {
-          const idx = projList.findIndex((p) => p.id === currentProjId);
-          if (idx >= 0 && idx < projList.length - 1) {
-            void switchToProject(projList[idx + 1].id);
-          } else {
-            // 最后一个项目，下一个 = 聊天
-            switchToChat();
-          }
-        }
-      },
-    });
-
-    const cmdPrevTopic = registerCommand({
-      id: 'prev-topic',
-      label: '上一个话题',
-      description: '切换到上一个话题',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+Shift+[',
-      handler: () => {
-        const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
-        if (!asst) return;
-        const idx = asst.topics.findIndex((t: any) => t.id === currentTopicId());
-        if (idx > 0) setCurrentTopicId(asst.topics[idx - 1].id);
-      },
-    });
-
-    const cmdNextTopic = registerCommand({
-      id: 'next-topic',
-      label: '下一个话题',
-      description: '切换到下一个话题',
-      category: 'sidebar',
-      defaultKeys: 'Ctrl+Shift+]',
-      handler: () => {
-        const asst = datas.assistants.find((a: any) => a.id === currentAssistantId());
-        if (!asst) return;
-        const idx = asst.topics.findIndex((t: any) => t.id === currentTopicId());
-        if (idx >= 0 && idx < asst.topics.length - 1) setCurrentTopicId(asst.topics[idx + 1].id);
-      },
-    });
-
-    const cmdGoSettings = registerCommand({
-      id: 'go-to-settings',
-      label: '打开设置',
-      description: '导航到应用设置页面',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+,',
-      handler: () => {
-        navigate('/settings/app');
-      },
-    });
-
-    const cmdGoChat = registerCommand({
-      id: 'go-to-chat',
-      label: '回到聊天',
-      description: '导航到聊天页面',
-      category: 'navigation',
-      defaultKeys: 'Ctrl+1',
-      handler: () => {
-        navigate('/chat');
-      },
-    });
-
-    const cmdToggleSearch = registerCommand({
-      id: 'toggle-web-search',
-      label: '切换联网搜索',
-      description: '开启或关闭联网搜索功能',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+S',
-      handler: () => {
-        const next = !webSearchEnabled();
-        setWebSearchEnabled(next);
-        localStorage.setItem('chat-web-search', String(next));
-      },
-    });
-
-    const cmdCycleReasoning = registerCommand({
-      id: 'cycle-reasoning',
-      label: '切换推理强度',
-      description: '循环切换推理深度：关闭 → 低 → 中 → 高',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+R',
-      handler: () => {
-        const levels: Array<'off' | 'low' | 'medium' | 'high'> = ['off', 'low', 'medium', 'high'];
-        const current = reasoningLevel();
-        const idx = levels.indexOf(current);
-        const next = levels[(idx + 1) % levels.length];
-        setReasoningLevel(next);
-        localStorage.setItem('chat-reasoning-level', next);
-      },
-    });
-
-    const cmdCycleAgent = registerCommand({
-      id: 'cycle-agent-mode',
-      label: '切换 Agent 模式',
-      description: '循环切换 Agent 执行模式：对话 → 普通 → 自动 → 计划',
-      category: 'chat',
-      defaultKeys: 'Ctrl+Shift+M',
-      handler: async () => {
-        const id = currentAssistantId();
-        if (!id) return;
-        const asst = datas.assistants.find((a: any) => a.id === id);
-        const current = (asst?.agentMode || 'off') as string;
-        const modes = ['off', 'normal', 'auto', 'plan'];
-        const idx = modes.indexOf(current);
-        const next = modes[(idx + 1) % modes.length];
-        setDatas('assistants', (a: any) => a.id === id, 'agentMode', next);
-        await saveSingleAssistantToBackend(id);
-      },
-    });
-
-    // ---- 斜杠命令处理器（覆盖 shortcuts.ts 中的 no-op） ----
-    const cmdSlashClear = registerCommand({
-      id: 'slash-clear',
-      handler: () => {
-        const asstId = currentAssistantId();
-        const topicId = currentTopicId();
-        if (!asstId || !topicId) return;
-        if (!confirm(t('chat.clearConfirm'))) return;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === asstId,
-          'topics',
-          (t: any) => t.id === topicId,
-          'history',
-          [],
-        );
-        saveSingleAssistantToBackend(asstId);
-      },
-    });
-
-    const cmdSlashCompact = registerCommand({
-      id: 'slash-compact',
-      handler: async () => {
-        setIsThinking(true);
-        try {
-          await checkAndSummarize();
-        } finally {
-          setIsThinking(false);
-        }
-      },
-    });
-
-    const cmdSlashSearch = registerCommand({
-      id: 'slash-search',
-      handler: () => {
-        const next = !webSearchEnabled();
-        setWebSearchEnabled(next);
-        localStorage.setItem('chat-web-search', String(next));
-      },
-    });
-
-    const cmdSlashSettings = registerCommand({
-      id: 'slash-settings',
-      handler: () => {
-        navigate('/settings/app');
-      },
-    });
-
-    const cmdSlashHelp = registerCommand({
-      id: 'slash-help',
-      handler: () => {
-        const asstId = currentAssistantId();
-        const topicId = currentTopicId();
-        if (!asstId || !topicId) return;
-        const allSlash = getSlashCommands();
-        const lines = allSlash.map((c) => `- **${c.label}** — ${getCommandDisplayDescription(c)}`);
-        const helpText = `## ${t('slash.help.title')}\n\n${lines.join('\n')}`;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === asstId,
-          'topics',
-          (t: any) => t.id === topicId,
-          'history',
-          (h: any[]) => [
-            ...h,
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant' as const,
-              content: helpText,
-            },
-          ],
-        );
-      },
-    });
-
-    // ---- 原有初始化逻辑 ----
-    // 首次进入：从 SQLite 加载所有助手数据
-    invoke<Assistant[]>('load_assistants')
+    // ---- pre-existing initialization logic ----
+    // first entry: load all assistant data from SQLite
+    loadAssistants()
       .then(async (loaded) => {
         let finalAssistants = [...loaded];
 
-        // 1. 确保默认助手存在
+        // 1. ensure the default assistant exists
         let defaultAsst = finalAssistants.find((a) => a.id === DEFAULT_ASST_ID);
         if (!defaultAsst) {
-          // createAssistant 内部已经带了一个“默认话题”
-          defaultAsst = createAssistant('默认助手', DEFAULT_ASST_ID);
+          // createAssistant already includes one "default topic"
+          defaultAsst = createAssistant(t('chat.defaultAssistant'), DEFAULT_ASST_ID);
           finalAssistants = [defaultAsst, ...finalAssistants];
           setDatas('assistants', finalAssistants);
           await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
@@ -1708,9 +1772,9 @@ ${asstObj.prompt}`;
           setDatas('assistants', finalAssistants);
         }
 
-        // 2. 处理应用启动时的默认选中（仅冷启动触发）
+        // 2. apply the default selection on app startup (cold start only)
         if (isFirstAppLaunch) {
-          // 尝试恢复上次的项目选择，否则默认选中对话
+          // try to restore the last project selection; otherwise default to the chat assistant
           const lastProjectId = getLastAgentProjectId();
           const lastProjectValid = lastProjectId && projects().find((p) => p.id === lastProjectId);
           if (lastProjectValid) {
@@ -1734,738 +1798,39 @@ ${asstObj.prompt}`;
         console.log('成功加载数据');
       })
       .catch((err) => {
-        // 如果后端报错，这里会打印出来
+        // backend errors are logged here
         console.error('加载助手列表失败:', err);
         console.error('load_all_assistants failed:', err);
         alert(t('error.load'));
       });
 
-    // 设置多个事件监听器，存储 unlisten 函数用于清理
-    const unlistens = [
-      listen('tauri://drag-enter', () => setIsDragging(true)),
-      listen('tauri://drag-leave', () => setIsDragging(false)),
-      listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
-        setIsDragging(false);
-        for (const p of e.payload.paths) await handleFileUpload(p, 'file');
-      }),
-      // 新一轮 LLM 调用开始：多轮 Agent 工作时复用同一条 assistant 消息
-      listen<any>('llm-round-start', (e) => {
-        const { assistant_id, topic_id, round } = e.payload;
+    // register all event listeners (18 listen() calls, extracted to hooks/chatEventListeners.ts;
+    // the unlisten functions are stored for cleanup on unmount).
+    const unlistens = registerChatEventListeners({
+      setDatas,
+      setIsDragging,
+      setIsThinking,
+      setPendingApprovals,
+      setTypingIndex,
+      setWorkflowState,
+      handleFileUpload,
+      datas,
+      selectedModel,
+      saveSingleAssistantToBackend,
+      checkAndRename,
+      checkAndSummarize,
+    });
 
-        // 后续轮次：关闭上一轮的步骤，准备新轮次（不再整体压扁到 interimContent）
-        if (round > 1) {
-          const asst = datas.assistants.find((a) => a.id === assistant_id);
-          const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-          if (topic) {
-            const lastIdx = topic.history.length - 1;
-            const lastMsg = topic.history[lastIdx];
-            if (lastMsg?.role === 'assistant') {
-              // 关闭当前运行的步骤
-              const now = Date.now();
-              setDatas(
-                'assistants',
-                (a) => a.id === assistant_id,
-                'topics',
-                (t) => t.id === topic_id,
-                'history',
-                lastIdx,
-                'agentSteps',
-                (steps: any[] = []) => {
-                  if (steps.length === 0) return steps;
-                  const last = steps[steps.length - 1];
-                  if (last.status !== 'running') return steps;
-                  return [
-                    ...steps.slice(0, -1),
-                    { ...last, status: 'complete', duration: now - last.timestamp },
-                  ];
-                },
-              );
-              // 重置 content / reasoning，准备接收新轮次输出
-              setDatas(
-                'assistants',
-                (a) => a.id === assistant_id,
-                'topics',
-                (t) => t.id === topic_id,
-                'history',
-                lastIdx,
-                {
-                  content: '',
-                  reasoning: '',
-                },
-              );
-              // 打字机索引保持不变（仍指向同一条消息）
-              return;
-            }
-          }
-        }
-
-        // 第一轮：创建新 assistant 占位消息
-        const currentMdl = selectedModel();
-        setDatas(
-          'assistants',
-          (a) => a.id === assistant_id,
-          'topics',
-          (t) => t.id === topic_id,
-          'history',
-          (h) => [
-            ...h,
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant' as const,
-              content: '',
-              modelId: currentMdl?.model_id,
-              reasoning: '',
-              agentStartTime: Date.now(),
-              agentSteps: [],
-            },
-          ],
-        );
-        // 设置打字机索引为新 assistant 消息位置
-        const asst = datas.assistants.find((a) => a.id === assistant_id);
-        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-        if (topic) setTypingIndex(topic.history.length - 1);
-      }),
-      listen<any>('llm-chunk', async (e) => {
-        const {
-          assistant_id,
-          topic_id,
-          content,
-          done,
-          error,
-          input_tokens,
-          output_tokens,
-          context_tokens,
-          images,
-        } = e.payload;
-        if (done) {
-          // 刷新可能残余的 rAF 批量内容
-          if (streamBatchRAF !== undefined) {
-            clearTimeout(streamBatchRAF);
-            streamBatchRAF = undefined;
-          }
-          if (streamBatch) {
-            const batch = streamBatch;
-            streamBatch = null;
-            setDatas(
-              'assistants',
-              (a) => a.id === batch.assistant_id,
-              'topics',
-              (t) => t.id === batch.topic_id,
-              'history',
-              batch.lastIdx,
-              'content',
-              (old: string) => old + batch.content,
-            );
-          }
-          // 整轮真正结束（后端 run_agent_turn epilogue 唯一发出 done）
-          if (error) {
-            // 错误：追加错误文本到最后一条 assistant 消息
-            const asst = datas.assistants.find((a) => a.id === assistant_id);
-            const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-            if (topic) {
-              const lastIdx = topic.history.length - 1;
-              if (lastIdx >= 0) {
-                setDatas(
-                  'assistants',
-                  (a) => a.id === assistant_id,
-                  'topics',
-                  (t) => t.id === topic_id,
-                  'history',
-                  lastIdx,
-                  'content',
-                  (old: string) => (old ?? '') + content,
-                );
-              }
-            }
-          }
-          // 关闭未完结状态：最后一个 running 步骤、以及中断产生的孤儿 toolCalls。
-          // 用户点停止时后端 cancel 直接 break，不会为在途工具发 llm-tool-result，
-          // 导致 msg.toolCalls 中残留 state==='calling' 的条目。下一次请求重建 API 载荷时，
-          // 这些条目会被 filter 跳过，assistant.tool_calls 失去配对的 role:tool 消息，
-          // 触发 API 400（missing field tool_call_id）。这里统一标记为 error 并写明中断原因，
-          // 重建逻辑会自动为它们生成配对的 tool 消息，模型也能感知“上次操作被中断”。
-          const finishTime = Date.now();
-          setDatas(
-            'assistants',
-            (a: any) => a.id === assistant_id,
-            'topics',
-            (t: any) => t.id === topic_id,
-            'history',
-            (h: any[]) => {
-              const lastIdx = h.length - 1;
-              if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-              const msg = h[lastIdx];
-              const steps: any[] = msg.agentSteps || [];
-              const toolCalls: any[] = msg.toolCalls || [];
-              const updatedMsg: any = { ...msg };
-              // 保存 token 用量
-              if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
-              if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
-              if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
-              // 模型生成的图像元数据（下载按钮）+ 后端重写（去 token 标记）后的最终文本
-              if (images) updatedMsg.images = images;
-              if (!error && content) updatedMsg.content = content;
-              // 孤儿 toolCalls：仍为 calling 的条目标记为中断错误
-              if (toolCalls.some((tc: any) => tc.state === 'calling')) {
-                updatedMsg.toolCalls = toolCalls.map((tc: any) =>
-                  tc.state === 'calling' ? { ...tc, state: 'error', error: TOOL_INTERRUPTED } : tc,
-                );
-              }
-              if (steps.length === 0) {
-                return [...h.slice(0, lastIdx), updatedMsg];
-              }
-              return [
-                ...h.slice(0, lastIdx),
-                {
-                  ...updatedMsg,
-                  agentSteps: steps.map((s: any, i: number) => {
-                    if (s.status !== 'running') return s;
-                    // 中断的 tool_call 步骤与其 toolCall 状态保持一致（标记 error）；
-                    // 其余 running 步骤（含最后一个）按完成关闭
-                    if (s.type === 'tool_call' && s.toolCall?.state === 'calling') {
-                      return {
-                        ...s,
-                        status: 'error',
-                        duration: finishTime - s.timestamp,
-                        toolCall: { ...s.toolCall, state: 'error', error: TOOL_INTERRUPTED },
-                      };
-                    }
-                    return i === steps.length - 1
-                      ? { ...s, status: 'complete', duration: finishTime - s.timestamp }
-                      : s;
-                  }),
-                },
-              ];
-            },
-          );
-          setIsThinking(false);
-          saveSingleAssistantToBackend(assistant_id);
-          setTypingIndex(null);
-          // 串行执行：先尝试自动重命名（非默认话题的首次对话），再触发历史压缩总结
-          setTimeout(async () => {
-            await checkAndRename(assistant_id, topic_id);
-            await checkAndSummarize();
-          }, 500);
-          return;
-        }
-
-        // 流式数据追加：rAF 批量合并，避免逐 token 的打字机效果
-        const asst = datas.assistants.find((a) => a.id === assistant_id);
-        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-        if (topic) {
-          const lastIdx = topic.history.length - 1;
-          if (lastIdx >= 0) {
-            if (!streamBatch) {
-              streamBatch = {
-                assistant_id,
-                topic_id,
-                content,
-                agentStepsContent: content,
-                lastIdx,
-              };
-              streamBatchRAF = window.setTimeout(() => {
-                const batch = streamBatch!;
-                streamBatch = null;
-                streamBatchRAF = undefined;
-                // 一次性应用批量内容（50ms 窗口内累积的所有 token）
-                setDatas(
-                  'assistants',
-                  (a) => a.id === batch.assistant_id,
-                  'topics',
-                  (t) => t.id === batch.topic_id,
-                  'history',
-                  batch.lastIdx,
-                  'content',
-                  (old: string) => old + batch.content,
-                );
-                if (batch.agentStepsContent) {
-                  const batchStepsContent = batch.agentStepsContent;
-                  setDatas(
-                    'assistants',
-                    (a) => a.id === batch.assistant_id,
-                    'topics',
-                    (t) => t.id === batch.topic_id,
-                    'history',
-                    batch.lastIdx,
-                    'agentSteps',
-                    (steps: any[] = []) => {
-                      const lastStep = steps[steps.length - 1];
-                      if (
-                        lastStep &&
-                        lastStep.type === 'content' &&
-                        lastStep.status === 'running'
-                      ) {
-                        return [
-                          ...steps.slice(0, -1),
-                          {
-                            ...lastStep,
-                            contentText: (lastStep.contentText || '') + batchStepsContent,
-                          },
-                        ];
-                      }
-                      const now = Date.now();
-                      const closed =
-                        lastStep && lastStep.status === 'running'
-                          ? [
-                              ...steps.slice(0, -1),
-                              {
-                                ...lastStep,
-                                status: 'complete',
-                                duration: now - lastStep.timestamp,
-                              },
-                            ]
-                          : steps;
-                      return [
-                        ...closed,
-                        {
-                          id: crypto.randomUUID(),
-                          type: 'content',
-                          timestamp: now,
-                          status: 'running',
-                          contentText: batchStepsContent,
-                        },
-                      ];
-                    },
-                  );
-                }
-              }, 80) as unknown as number;
-            } else {
-              streamBatch.content += content;
-              streamBatch.agentStepsContent += content;
-            }
-          }
-        }
-      }),
-      // 思维链片段追加：原生 reasoning_content 流式累积到对应消息的 reasoning 字段
-      // 同时构建 agentSteps 时间线中的 thinking 步骤
-      listen<any>('llm-reasoning', (e) => {
-        if (reasoningLevel() === 'off') return;
-        const { assistant_id, topic_id, content } = e.payload;
-        const asst = datas.assistants.find((a) => a.id === assistant_id);
-        const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-        if (topic) {
-          const lastIdx = topic.history.length - 1;
-          if (lastIdx >= 0) {
-            // 追加到 reasoning 字段（保持向后兼容）
-            setDatas(
-              'assistants',
-              (a) => a.id === assistant_id,
-              'topics',
-              (t) => t.id === topic_id,
-              'history',
-              lastIdx,
-              'reasoning',
-              (old: string) => (old ?? '') + content,
-            );
-            // 构建 agentSteps 时间线：若最后一步不是 thinking 则新建，否则追加
-            setDatas(
-              'assistants',
-              (a) => a.id === assistant_id,
-              'topics',
-              (t) => t.id === topic_id,
-              'history',
-              lastIdx,
-              'agentSteps',
-              (steps: any[] = []) => {
-                const lastStep = steps[steps.length - 1];
-                if (lastStep && lastStep.type === 'thinking' && lastStep.status === 'running') {
-                  // 追加到当前 thinking 步骤
-                  return [
-                    ...steps.slice(0, -1),
-                    {
-                      ...lastStep,
-                      thinkingText: (lastStep.thinkingText || '') + content,
-                    },
-                  ];
-                }
-                // 关闭上一步（如果仍在运行），新建 thinking 步骤
-                const now = Date.now();
-                const closed =
-                  lastStep && lastStep.status === 'running'
-                    ? [
-                        ...steps.slice(0, -1),
-                        { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
-                      ]
-                    : steps;
-                return [
-                  ...closed,
-                  {
-                    id: crypto.randomUUID(),
-                    type: 'thinking',
-                    timestamp: now,
-                    status: 'running',
-                    thinkingText: content,
-                  },
-                ];
-              },
-            );
-          }
-        }
-      }),
-      // LLM 工具调用事件：展示"调用中"气泡并构建 agentSteps 时间线
-      listen<any>('llm-tool-call', (e) => {
-        const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
-        const newTc = {
-          id: tool_call_id,
-          type: 'function',
-          function: { name, arguments: argsJson },
-          state: 'calling',
-        };
-        setDatas(
-          'assistants',
-          (a: any) => a.id === assistant_id,
-          'topics',
-          (t: Topic) => t.id === topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx >= 0 && h[lastIdx]?.role === 'assistant') {
-              const msg = h[lastIdx];
-              // 保持 toolCalls 数组（消息重建用）
-              const existing = msg.toolCalls || [];
-              if (existing.find((tc: any) => tc.id === tool_call_id)) return h;
-              const newToolCalls = [...existing, newTc];
-              // 构建 agentSteps：关闭上一步，新建 tool_call 步骤
-              const now = Date.now();
-              const steps: any[] = msg.agentSteps || [];
-              const lastStep = steps[steps.length - 1];
-              const closed =
-                lastStep && lastStep.status === 'running'
-                  ? [
-                      ...steps.slice(0, -1),
-                      { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
-                    ]
-                  : steps;
-              const newSteps = [
-                ...closed,
-                {
-                  id: crypto.randomUUID(),
-                  type: 'tool_call',
-                  timestamp: now,
-                  status: 'running',
-                  toolCall: newTc,
-                },
-              ];
-              return [
-                ...h.slice(0, lastIdx),
-                { ...msg, toolCalls: newToolCalls, agentSteps: newSteps },
-              ];
-            }
-            return h;
-          },
-        );
-      }),
-      // 工具执行结果：更新 assistant 消息中对应 toolCall 的状态与 agentSteps 时间线
-      listen<any>('llm-tool-result', (e) => {
-        const {
-          assistant_id,
-          topic_id,
-          tool_call_id,
-          content,
-          result,
-          is_error,
-          file_changes,
-          full_content,
-        } = e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === assistant_id,
-          'topics',
-          (t: Topic) => t.id === topic_id,
-          'history',
-          (h: any[]) =>
-            h.map((m: any) => {
-              if (m.role !== 'assistant' || !m.toolCalls) return m;
-              const newToolCalls = m.toolCalls.map((tc: any) =>
-                tc.id === tool_call_id
-                  ? {
-                      ...tc,
-                      state: is_error ? 'error' : 'success',
-                      result,
-                      content,
-                      fullContent: full_content ?? content,
-                      error: is_error ? content : undefined,
-                      fileChanges: file_changes,
-                    }
-                  : tc,
-              );
-              // 同步更新 agentSteps 中对应 tool_call 步骤
-              const now = Date.now();
-              const newSteps = (m.agentSteps || []).map((s: any) => {
-                if (s.type === 'tool_call' && s.toolCall?.id === tool_call_id) {
-                  return {
-                    ...s,
-                    status: is_error ? 'error' : 'complete',
-                    fullResult: full_content ?? s.fullResult,
-                    duration: now - s.timestamp,
-                    toolCall: {
-                      ...s.toolCall,
-                      state: is_error ? 'error' : 'success',
-                      result,
-                      content,
-                      fullContent: full_content ?? content,
-                      error: is_error ? content : undefined,
-                      fileChanges: file_changes,
-                    },
-                  };
-                }
-                return s;
-              });
-              return { ...m, toolCalls: newToolCalls, agentSteps: newSteps };
-            }),
-        );
-      }),
-      // 工具调用审批请求事件：后端需要用户确认才能执行工具（字段 snake_case 与后端对齐）
-      listen<any>('tool-approval-requested', (e) => {
-        const {
-          approval_id,
-          server_id,
-          tool_name,
-          arguments: args,
-          reason,
-          preview_diff,
-          file_path,
-        } = e.payload;
-        setPendingApprovals((prev) => [
-          ...prev,
-          {
-            approvalId: approval_id,
-            serverId: server_id,
-            toolName: tool_name,
-            arguments: args,
-            reason,
-            previewDiff: preview_diff,
-            filePath: file_path,
-          },
-        ]);
-      }),
-
-      // ===== 子智能体事件监听 =====
-
-      // 子智能体启动：在当前 assistant 消息的 agentSteps 中推入一个 subagent 步骤
-      listen<any>('subagent-start', (e) => {
-        const {
-          parent_assistant_id,
-          parent_topic_id,
-          subagent_id,
-          profile_id,
-          profile_name,
-          task_summary,
-        } = e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const newStep = {
-              id: `subagent-${subagent_id}`,
-              type: 'subagent',
-              timestamp: Date.now(),
-              status: 'running',
-              subagentId: subagent_id,
-              subagentProfile: profile_id,
-              subagentName: profile_name,
-              subagentTask: task_summary,
-              subagentSteps: [],
-              subagentResult: '',
-            };
-            return [...h.slice(0, lastIdx), { ...msg, agentSteps: [...steps, newStep] }];
-          },
-        );
-      }),
-
-      // 子智能体步骤更新：追加子 Agent 内部步骤
-      listen<any>('subagent-step', (e) => {
-        const { parent_assistant_id, parent_topic_id, subagent_id, round, step_type, summary } =
-          e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
-            if (subIdx < 0) return h;
-            const subStep = steps[subIdx];
-            const newSubStep = {
-              id: `substep-${round}-${Date.now()}`,
-              type: (step_type || '').startsWith('tool_result')
-                ? ('tool_call' as const)
-                : (step_type as any),
-              timestamp: Date.now(),
-              status: 'complete' as const,
-              summary: summary || '',
-              toolName: (step_type || '').startsWith('tool_result')
-                ? (step_type as string).replace('tool_result:', '')
-                : undefined,
-            };
-            const updatedSub = {
-              ...subStep,
-              subagentSteps: [...(subStep.subagentSteps || []), newSubStep],
-            };
-            return [
-              ...h.slice(0, lastIdx),
-              {
-                ...msg,
-                agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
-              },
-            ];
-          },
-        );
-      }),
-
-      // 子智能体完成：标记 subagent 步骤为完成，记录结果
-      listen<any>('subagent-done', (e) => {
-        const { parent_assistant_id, parent_topic_id, subagent_id, result } = e.payload;
-        const finishTime = Date.now();
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
-            if (subIdx < 0) return h;
-            const subStep = steps[subIdx];
-            const updatedSub = {
-              ...subStep,
-              status: 'complete',
-              duration: finishTime - subStep.timestamp,
-              subagentResult: result || '',
-            };
-            return [
-              ...h.slice(0, lastIdx),
-              {
-                ...msg,
-                agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
-              },
-            ];
-          },
-        );
-      }),
-
-      // 子智能体出错
-      listen<any>('subagent-error', (e) => {
-        const { parent_assistant_id, parent_topic_id, subagent_id, error } = e.payload;
-        setDatas(
-          'assistants',
-          (a: any) => a.id === parent_assistant_id,
-          'topics',
-          (t: any) => t.id === parent_topic_id,
-          'history',
-          (h: any[]) => {
-            const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-            const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
-            if (subIdx < 0) return h;
-            const subStep = steps[subIdx];
-            const updatedSub = {
-              ...subStep,
-              status: 'error',
-              duration: Date.now() - subStep.timestamp,
-              subagentResult: error || '子智能体执行出错',
-            };
-            return [
-              ...h.slice(0, lastIdx),
-              {
-                ...msg,
-                agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
-              },
-            ];
-          },
-        );
-      }),
-      // ---- 工作流事件 ----
-      listen<WorkflowState>('workflow-start', (e) => {
-        setWorkflowState({
-          workflowId: e.payload.workflowId,
-          title: e.payload.title,
-          steps: e.payload.steps.map((s) => ({ ...s, status: 'pending' as const })),
-          active: true,
-        });
-      }),
-      listen<{ stepId: string }>('workflow-step-start', (e) => {
-        setWorkflowState((prev) =>
-          prev
-            ? {
-                ...prev,
-                steps: prev.steps.map((s) =>
-                  s.stepId === e.payload.stepId
-                    ? { ...s, status: 'running' as const, startedAt: Date.now() }
-                    : s,
-                ),
-              }
-            : null,
-        );
-      }),
-      listen<{ stepId: string; status: 'completed' | 'failed'; duration?: number }>(
-        'workflow-step-complete',
-        (e) => {
-          setWorkflowState((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  steps: prev.steps.map((s) =>
-                    s.stepId === e.payload.stepId
-                      ? { ...s, status: e.payload.status, duration: e.payload.duration }
-                      : s,
-                  ),
-                }
-              : null,
-          );
-        },
-      ),
-      listen<{ workflowId: string }>('workflow-complete', () => {
-        setWorkflowState((prev) => (prev ? { ...prev, active: false } : null));
-        setTimeout(() => setWorkflowState(null), 5000);
-      }),
-    ];
-
-    // 组件卸载时清理所有事件监听和命令注册
+    // clean up all event listeners and command registrations on unmount
     onCleanup(() => {
       unlistens.forEach((u) => u.then((fn) => fn()));
-      unregisterCommand(cmdToggleLeft);
-      unregisterCommand(cmdToggleRight);
-      unregisterCommand(cmdNewTopic);
-      unregisterCommand(cmdNewProject);
-      unregisterCommand(cmdStopGen);
-      unregisterCommand(cmdPrevAsst);
-      unregisterCommand(cmdNextAsst);
-      unregisterCommand(cmdPrevTopic);
-      unregisterCommand(cmdNextTopic);
-      unregisterCommand(cmdGoSettings);
-      unregisterCommand(cmdGoChat);
-      unregisterCommand(cmdToggleSearch);
-      unregisterCommand(cmdCycleReasoning);
-      unregisterCommand(cmdCycleAgent);
-      unregisterCommand(cmdSlashClear);
-      unregisterCommand(cmdSlashCompact);
-      unregisterCommand(cmdSlashSearch);
-      unregisterCommand(cmdSlashSettings);
-      unregisterCommand(cmdSlashHelp);
+      // unregister all registered commands (IDs are returned by registerChatCommands)
+      commandIds.forEach(unregisterCommand);
     });
   });
 
-  // 监听手动触发的"重新生成标题"请求（来自 TopicSidebar 右键菜单）
-  // 消费后立即清空信号，避免后续误触发
+  // watch for manually triggered "regenerate title" requests (from the TopicSidebar context menu);
+  // the signal is cleared right after consumption to avoid accidental re-triggering
   createEffect(() => {
     const req = pendingRenameRequest();
     if (req) {
@@ -2474,12 +1839,18 @@ ${asstObj.prompt}`;
     }
   });
 
-  // 监听 currentTopicId 变化：若用户切换到与正在生成标题的话题不同的话题，
-  // 取消该任务的结果处理（abort）
+  // exit the subagent conversation view when the topic switches (or the assistant switches, which implies a topic switch), returning to the main agent conversation
+  createEffect(() => {
+    currentTopicId();
+    setActiveSubagentView(null);
+  });
+
+  // watch currentTopicId changes: if the user switches to a topic other than the one whose title
+  // is being generated, abort that task's result handling
   let prevTitleGenTopicId: string | null = null;
   createEffect(() => {
     const tId = currentTopicId();
-    // 首次运行时不处理（仅记录）
+    // skip processing on first run (record only)
     if (prevTitleGenTopicId === null && activeTitleGen === null) {
       prevTitleGenTopicId = tId;
       return;
@@ -2497,11 +1868,11 @@ ${asstObj.prompt}`;
     localStorage.setItem('chat-right-panel-width', rightPanelWidth().toString());
   });
 
-  // 项目切换时自动检测并启动语言服务器
+  // auto-detect and start language servers when the project switches
   createEffect(() => {
     const pid = currentProjectId();
     if (!pid) {
-      // 没有打开项目，清除诊断
+      // no project open; clear diagnostics
       clearAllDiagnostics();
       return;
     }
@@ -2510,21 +1881,16 @@ ${asstObj.prompt}`;
 
     void (async () => {
       try {
-        // 自动检测语言
-        const result: any = await invoke('auto_detect_ls', {
-          projectPath: project.path,
-        });
+        // auto-detect languages
+        const result = await autoDetectLsp(project.path);
         const languages: Array<{ languageId: string }> = result?.languages || [];
 
-        // 为检测到的每种语言启动语言服务器
+        // start a language server for each detected language
         for (const lang of languages) {
           try {
-            await invoke('start_lsp_server', {
-              projectPath: project.path,
-              languageId: lang.languageId,
-            });
+            await startLspServer(project.path, lang.languageId);
           } catch (e) {
-            // 静默失败（语言服务器可能未安装）
+            // fail silently (the language server may not be installed)
             console.debug(`[LSP] 无法启动 ${lang.languageId} 服务器:`, e);
           }
         }
@@ -2534,8 +1900,8 @@ ${asstObj.prompt}`;
     })();
   });
 
-  // 项目切换时初始化 MCP 服务器（含内置文件系统 MCP 的自动连接）
-  // 必须等 projects 加载完毕，否则 currentProject 为 null，MCP config 读不到
+  // initialize MCP servers when the project switches (incl. auto-connect of the built-in
+  // filesystem MCP); must wait for projects to load or currentProject is null and the MCP config is unreadable
   createEffect(() => {
     const pid = currentProjectId();
     const loaded = projects().length > 0 || !pid;
@@ -2545,16 +1911,17 @@ ${asstObj.prompt}`;
   });
 
   /**
-   * 模型跟随当前助手：
-   * 切换助手 / 助手绑定模型变化 / 可用模型列表变化时，
-   * 把全局 selectedModel 同步为该助手解析出的有效模型。
-   * 助手未绑定 modelId 时 resolveAssistantModel 会回退到当前 selectedModel，跳过覆盖。
-   * resolved 为 null（尚无可用模型）时不覆盖，避免启动早期清空。
+   * Model follows the current assistant:
+   * on assistant switch, assistant model binding change, or available model list change,
+   * sync the global selectedModel to the assistant's resolved model.
+   * When the assistant has no bound modelId, resolveAssistantModel falls back to the current
+   * selectedModel, so no override happens. A null resolved value (no available models yet)
+   * is skipped to avoid clearing it early at startup.
    */
   createEffect(() => {
     const id = currentAssistantId();
     const asst = datas.assistants.find((a: any) => a.id === id) as Assistant | undefined;
-    // 触发依赖：助手 modelId 与可用模型列表（providerConfigs / activatedModels 在 store 内驱动）
+    // trigger deps: assistant modelId and the available model list (providerConfigs / activatedModels drive it in the store)
     void asst?.modelId;
     const resolved = resolveAssistantModel(asst ?? null);
     if (resolved && resolved.model_id !== selectedModel()?.model_id) {
@@ -2571,54 +1938,74 @@ ${asstObj.prompt}`;
     >
       <ProjectSidebar
         width={displayLeftWidth()}
-        isCollapsed={isLeftCollapsed()}
+        isCollapsed={leftPanelCollapsed()}
+        revealMinPx={leftRevealMinPx()}
         onToggle={toggleLeft}
-        onResize={(e) => !isLeftCollapsed() && startResize(e, 'left')}
+        onResize={(e) => startLeftResize(e as MouseEvent)}
         isResizing={isResizing()}
         onOpenSettings={(id) => setSettingsAsstId(id)}
       />
 
       <div class="flex-1 flex flex-col min-w-0 min-h-0">
-        <Show when={workflowState()}>
-          <WorkflowVisualization />
-        </Show>
+        {/* Subagent standalone conversation view: replaces the whole chat column (incl. status bar and input); the back button top-left returns to the main conversation */}
+        <Show
+          when={!activeSubagentView()}
+          fallback={<SubagentConversationView topic={activeTopic()} />}
+        >
+          <Show when={workflowState()}>
+            <WorkflowVisualization />
+          </Show>
 
-        <ChatInterface
-          activeTopic={activeTopic()}
-          isThinking={isThinking()}
-          isProcessing={isProcessing()}
-          isDragging={isDragging()}
-          typingIndex={typingIndex()}
-          inputMessage={inputMessage()}
-          setInputMessage={setInputMessage}
-          pendingFiles={pendingFiles()}
-          setPendingFiles={setPendingFiles}
-          handleSendMessage={handleSendMessage}
-          handleStopGeneration={handleStopGeneration}
-          handleFileUpload={handleFileUpload}
-          pendingApprovals={pendingApprovals()}
-          onResolveApproval={(id) =>
-            setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== id))
-          }
-          canShare={!!activeTopic()}
-          onOpenShare={() => enterSelectionMode(null)}
-          isSelectingMessages={isSelectingMessages()}
-          selectedMessageIds={selectedMessageIds()}
-          onToggleMessage={handleToggleMessage}
-          onSelectAll={handleSelectAll}
-          onCancelSelection={handleCancelSelection}
-          onConfirmSelection={handleConfirmSelection}
-          onBranchFromMessage={branchFromMessage}
-          btwOverlays={btwOverlays()}
-          onDismissBtw={(id) => setBtwOverlays((prev) => prev.filter((o) => o.id !== id))}
-        />
+          {/* Checkpoint resume entry: banner for crash-orphaned turns */}
+          <Show when={activeCheckpoint() && !isThinking()}>
+            <button
+              type="button"
+              class="flex items-center gap-2 px-4 py-1.5 text-xs border-b cursor-pointer bg-transparent hover:bg-white/[0.03] transition-colors"
+              style={{ color: 'rgb(var(--primary-rgb))', 'border-color': 'var(--border-dim)' }}
+              onClick={() => void handleResumeTurn()}
+            >
+              <Icon name="refresh" size={12} />
+              <span>{t('agent.checkpoint.resume')}</span>
+            </button>
+          </Show>
+
+          <ChatInterface
+            activeTopic={activeTopic()}
+            isThinking={isThinking()}
+            isProcessing={isProcessing()}
+            isDragging={isDragging()}
+            typingIndex={typingIndex()}
+            inputMessage={inputMessage()}
+            setInputMessage={setInputMessage}
+            pendingFiles={pendingFiles()}
+            setPendingFiles={setPendingFiles}
+            handleSendMessage={handleSendMessage}
+            handleStopGeneration={handleStopGeneration}
+            handleFileUpload={handleFileUpload}
+            pendingApprovals={pendingApprovals()}
+            onResolveApproval={(id) =>
+              setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== id))
+            }
+            canShare={!!activeTopic()}
+            onOpenShare={() => enterSelectionMode(null)}
+            isSelectingMessages={isSelectingMessages()}
+            selectedMessageIds={selectedMessageIds()}
+            onToggleMessage={handleToggleMessage}
+            onSelectAll={handleSelectAll}
+            onCancelSelection={handleCancelSelection}
+            onConfirmSelection={handleConfirmSelection}
+            onBranchFromMessage={branchFromMessage}
+            btwOverlays={btwOverlays()}
+            onDismissBtw={(id) => setBtwOverlays((prev) => prev.filter((o) => o.id !== id))}
+          />
+        </Show>
       </div>
 
       <TopicSidebar
         width={displayRightWidth()}
         isCollapsed={isRightCollapsed()}
         onToggle={toggleRight}
-        onResize={(e) => !isRightCollapsed() && startResize(e, 'right')}
+        onResize={(e) => !isRightCollapsed() && startResizeRight(e)}
         currentAssistant={currentAssistant()}
         editingTopicId={editingTopicId()}
         setEditingTopicId={setEditingTopicId}

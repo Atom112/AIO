@@ -1,16 +1,15 @@
-//! OpenAI 兼容 provider plugin (兜底)
+//! OpenAI-compatible provider plugin (fallback)
 //!
-//! 覆盖: OpenAI / DeepSeek / Groq / Mistral / xAI / Cohere / OpenRouter / 自定义 OpenAI-兼容
+//! Covers: OpenAI / DeepSeek / Groq / Mistral / xAI / Cohere / OpenRouter / custom OpenAI-compatible
 //!
-//! 端点规范:
-//! - URL: 智能拼接 `/v1/models` 或 `/models`
+//! Endpoint spec:
+//! - URL: smartly appends `/v1/models` or `/models`
 //! - Auth: `Authorization: Bearer <key>`
 //! - Response: `{data: [{id, owned_by}]}`
 //!
-//! 必须是最后一个注册 —— 兜底插件。
+//! Must be registered last - it is the fallback plugin.
 
-use reqwest::{Client, RequestBuilder};
-use std::time::Duration;
+use reqwest::RequestBuilder;
 
 use super::ProviderPlugin;
 use crate::core::models::LiveModel;
@@ -22,28 +21,9 @@ impl ProviderPlugin for OpenAICompatProvider {
         "openai_compat"
     }
 
-    fn name(&self) -> &'static str {
-        "OpenAI Compatible"
-    }
-
     fn matches(&self, _api_url: &str) -> bool {
-        // 永远不主动匹配，仅作为 manager 兜底
+        // Never matches on its own; serves only as the manager's fallback
         false
-    }
-
-    fn build_client(&self, proxy_url: Option<&str>, timeout_secs: u64) -> Result<Client, String> {
-        let mut b = Client::builder()
-            .user_agent("AIO-Desktop/0.4 (openai-compat-provider)")
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(timeout_secs));
-        if let Some(p) = proxy_url {
-            if !p.trim().is_empty() {
-                let proxy = reqwest::Proxy::all(p).map_err(|e| format!("代理 URL 非法: {}", e))?;
-                b = b.proxy(proxy);
-            }
-        }
-        b.build()
-            .map_err(|e| format!("构造 HTTP 客户端失败: {}", e))
     }
 
     fn models_url(&self, api_url: &str) -> String {
@@ -81,7 +61,7 @@ impl ProviderPlugin for OpenAICompatProvider {
                     .and_then(|x| x.as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                // OpenAI `created` 是 Unix 秒，转换为 YYYY-MM-DD
+                // OpenAI `created` is Unix seconds; convert to YYYY-MM-DD
                 let released_at = m
                     .get("created")
                     .and_then(|x| x.as_i64())

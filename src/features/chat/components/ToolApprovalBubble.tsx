@@ -1,13 +1,14 @@
 /**
- * 工具调用审批气泡组件
+ * Tool-call approval bubble component
  *
- * 当 agent 处于 normal/plan 模式，工具调用需要用户确认时，
- * 在 chat 中内联显示此气泡，提供批准/拒绝操作。
+ * When an agent in normal/plan mode needs user confirmation for a tool call,
+ * this bubble is shown inline in the chat with approve/deny actions.
  */
 import { Component, Show } from 'solid-js';
-import { invoke } from '@tauri-apps/api/core';
+import { respondToolApproval } from '../../../core/api/mcp';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
+import { btnDanger, btnSuccess } from '../../../shared/components/buttonStyles';
 
 export interface PendingApproval {
   approvalId: string;
@@ -15,9 +16,9 @@ export interface PendingApproval {
   toolName: string;
   arguments: any;
   reason: string;
-  /** 文件变更预览（unified diff） */
+  /** File-change preview (unified diff) */
   previewDiff?: string;
-  /** 受影响的文件路径 */
+  /** Path of the affected file */
   filePath?: string;
 }
 
@@ -29,10 +30,7 @@ interface ToolApprovalBubbleProps {
 const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
   const handleApprove = async () => {
     try {
-      await invoke('respond_tool_approval', {
-        approvalId: props.approval.approvalId,
-        approved: true,
-      });
+      await respondToolApproval(props.approval.approvalId, true);
     } catch (e) {
       console.error('发送批准结果失败:', e);
     } finally {
@@ -40,12 +38,21 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     }
   };
 
+  // Always allow for this session — the rule is auto-derived from the approval context
+  // (execute_command → first command token; file writes → same directory; MCP → same server and tool)
+  const handleAlwaysAllow = async () => {
+    try {
+      await respondToolApproval(props.approval.approvalId, true, 'session');
+    } catch (e) {
+      console.error('发送会话放行结果失败:', e);
+    } finally {
+      props.onResolved(props.approval.approvalId);
+    }
+  };
+
   const handleReject = async () => {
     try {
-      await invoke('respond_tool_approval', {
-        approvalId: props.approval.approvalId,
-        approved: false,
-      });
+      await respondToolApproval(props.approval.approvalId, false);
     } catch (e) {
       console.error('发送拒绝结果失败:', e);
     } finally {
@@ -53,12 +60,12 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     }
   };
 
-  // 格式化参数显示
+  // Format arguments for display
   const formatArgs = () => {
     const args = props.approval.arguments;
     if (!args || Object.keys(args).length === 0) return t('agent.approval.noArguments');
     const parts: string[] = [];
-    // path 参数放最前面
+    // Put the path argument first
     if (args.path) {
       parts.push(`path: "${args.path}"`);
     }
@@ -74,7 +81,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     return parts.join(', ');
   };
 
-  // 根据工具名选择图标
+  // Choose an icon based on the tool name
   const toolIcon = () => {
     const name = props.approval.toolName;
     if (name === 'write_file') return 'edit';
@@ -85,7 +92,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     return 'wrench';
   };
 
-  // 根据工具名判断危险等级
+  // Determine danger level from the tool name
   const isDangerous = () => {
     const name = props.approval.toolName;
     return name === 'delete_file';
@@ -98,12 +105,12 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
       style={{ animation: 'tool-approval-in 0.2s ease-out' }}
     >
       <div class="flex items-center gap-1.5 mb-1.5">
-        <Icon name={toolIcon() as any} size={15} class="text-[#7c9abf]/60 shrink-0" />
+        <Icon name={toolIcon() as any} size={15} class="text-[var(--color-pri)]/60 shrink-0" />
         <span class="text-[13px] font-semibold text-white/85 font-mono">
           {props.approval.toolName}
         </span>
         <Show when={isDangerous()}>
-          <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[#ff4d4d]/15 text-[#ff4d4d]/80 uppercase tracking-[0.3px]">
+          <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[var(--color-danger)]/15 text-[var(--color-danger)]/80 uppercase tracking-[0.3px]">
             {t('agent.approval.dangerous')}
           </span>
         </Show>
@@ -135,19 +142,15 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
         </div>
       </Show>
       <div class="flex gap-2 justify-end">
-        <button
-          type="button"
-          class="flex items-center gap-1 px-3 py-[5px] rounded-md text-xs font-medium border-none cursor-pointer transition-all duration-150 bg-white/[0.06] text-white/60 hover:bg-[#ff4d4d]/15 hover:text-[#ff4d4d]/80"
-          onClick={handleReject}
-        >
+        <button type="button" class={btnDanger} onClick={handleReject}>
           <Icon name="x" size={13} />
           <span>{t('agent.approval.deny')}</span>
         </button>
-        <button
-          type="button"
-          class="flex items-center gap-1 px-3 py-[5px] rounded-md text-xs font-medium border-none cursor-pointer transition-all duration-150 bg-[#4af908]/10 text-[#4af908]/70 hover:bg-[#4af908]/20 hover:text-[#4af908]/90"
-          onClick={handleApprove}
-        >
+        <button type="button" class={btnSuccess} onClick={handleAlwaysAllow}>
+          <Icon name="check" size={13} />
+          <span>{t('agent.approval.allowAlways')}</span>
+        </button>
+        <button type="button" class={btnSuccess} onClick={handleApprove}>
           <Icon name="check" size={13} />
           <span>{t('agent.approval.approve')}</span>
         </button>

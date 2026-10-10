@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window. fs scopes intentionally narrowed: only $APPDATA/avatars and $APPDATA/models-catalog. $HOME read is restricted to user-picked model files via dialog + Rust read_avatar command.",
+  "description": "Capability for the main window. fs scopes intentionally narrowed: only $APPDATA/models-catalog and $APPDATA/engines. $HOME read is restricted to user-picked model files via dialog.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -28,27 +28,15 @@
     },
     {
       "identifier": "fs:scope-appdata-recursive",
-      "allow": [
-        { "path": "$APPDATA/avatars/**" },
-        { "path": "$APPDATA/models-catalog.json" },
-        { "path": "$APPDATA/engines/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/models-catalog.json" }, { "path": "$APPDATA/engines/**" }]
     },
     {
       "identifier": "fs:allow-read-file",
-      "allow": [
-        { "path": "$APPDATA/avatars/**" },
-        { "path": "$APPDATA/models-catalog.json" },
-        { "path": "$APPDATA/engines/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/models-catalog.json" }, { "path": "$APPDATA/engines/**" }]
     },
     {
       "identifier": "fs:allow-exists",
-      "allow": [
-        { "path": "$APPDATA/avatars/**" },
-        { "path": "$APPDATA/models-catalog.json" },
-        { "path": "$APPDATA/engines/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/models-catalog.json" }, { "path": "$APPDATA/engines/**" }]
     },
     {
       "identifier": "fs:allow-write-file",

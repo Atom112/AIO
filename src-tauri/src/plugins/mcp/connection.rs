@@ -1,20 +1,17 @@
-//! MCP 连接抽象 + JSON-RPC 2.0 编解码
+//! MCP connection abstraction + JSON-RPC 2.0 codec
 //!
-//! 设计要点：
-//! - McpConnection 不关心底层传输（stdio / http+sse / streamable-http）
-//! - 每个连接内部维护一个 `DashMap<u64, oneshot::Sender>`，将 JSON-RPC request 的
-//!   id 关联到对应的 response 接收端
-//! - request/notify 共用 `send_raw`；request 会返回 Future<Output=Response>
+//! Design notes:
+//! - McpConnection is agnostic of the underlying transport (stdio / http+sse / streamable-http)
+//! - Each connection internally keeps a `DashMap<u64, oneshot::Sender>` that maps a JSON-RPC
+//!   request's id to the corresponding response receiver
+//! - request/notify share `send_raw`; request returns Future<Output=Response>
 
 use super::error::{McpError, McpResult};
-use dashmap::DashMap;
+use crate::utils::jsonrpc::{PendingMap, WaitError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::oneshot;
-use tokio::time::timeout;
 
 /// JSON-RPC 2.0 Request
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -56,7 +53,7 @@ pub struct JsonRpcErrorPayload {
     pub data: Option<Value>,
 }
 
-/// JSON-RPC 2.0 Notification（无 id，无需响应）
+/// JSON-RPC 2.0 Notification (no id, no response expected)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JsonRpcNotification {
     pub jsonrpc: &'static str,
@@ -65,7 +62,7 @@ pub struct JsonRpcNotification {
     pub params: Option<Value>,
 }
 
-/// 内部：解析一行 JSON 后返回的中间结果
+/// Internal: intermediate result after parsing one JSON line
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum Incoming {
@@ -73,28 +70,28 @@ pub(crate) enum Incoming {
     Notification(JsonRpcNotification),
 }
 
-/// 通用 MCP 连接抽象。传输层只需实现 [`McpTransport`] trait。
+/// Generic MCP connection abstraction. Transports only need to implement the [`McpTransport`] trait.
 #[derive(Clone)]
 pub struct McpConnection {
     pub server_id: String,
     pub transport_kind: String,
-    /// 内部状态（传输层句柄、id 关联表等）
+    /// Internal state (transport handle, id correlation table, etc.)
     pub(crate) inner: Arc<McpConnectionInner>,
 }
 
-// 显式 Send + Sync 标记：所有内部字段都是 Send + Sync
-unsafe impl Send for McpConnection {}
-unsafe impl Sync for McpConnection {}
+// Note: McpConnection's fields (String + Arc<McpConnectionInner>) are Send + Sync, so
+// auto-derivation suffices; a hand-written unsafe impl would mask compiler checks and
+// silently accept future non-Send fields. Rely on the type system instead.
 
 pub(crate) struct McpConnectionInner {
-    pub pending: DashMap<u64, oneshot::Sender<JsonRpcResponse>>,
-    pub next_id: AtomicU64,
-    /// 传输层抽象
+    /// Pending JSON-RPC request table (utils::jsonrpc::PendingMap, shared with the LSP client)
+    pub pending: PendingMap<JsonRpcResponse>,
+    /// Transport abstraction
     pub transport: Box<dyn McpTransport>,
 }
 
 impl McpConnection {
-    /// 由传输层调用：构造一个 McpConnection
+    /// Called by the transport layer: constructs a McpConnection
     pub fn new(
         server_id: impl Into<String>,
         transport_kind: impl Into<String>,
@@ -104,46 +101,39 @@ impl McpConnection {
             server_id: server_id.into(),
             transport_kind: transport_kind.into(),
             inner: Arc::new(McpConnectionInner {
-                pending: DashMap::new(),
-                next_id: AtomicU64::new(1),
+                pending: PendingMap::new(),
                 transport,
             }),
         }
     }
 
-    /// 发送 JSON-RPC request 并等待响应（带超时）
+    /// Send a JSON-RPC request and await the response (with timeout)
     pub async fn request(
         &self,
         method: impl Into<String>,
         params: Option<Value>,
         dur: Duration,
     ) -> McpResult<Value> {
-        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        let (id, rx) = self.inner.pending.register();
         let req = JsonRpcRequest::new(id, method, params);
-        let (tx, rx) = oneshot::channel();
-        self.inner.pending.insert(id, tx);
-        // 序列化失败也不留 pending
+        // Do not leave a pending entry behind on serialization failure
         let payload = serde_json::to_string(&req)?;
         let send_res = self.inner.transport.send(&payload).await;
         if let Err(e) = send_res {
-            self.inner.pending.remove(&id);
+            self.inner.pending.cancel(id);
             return Err(e);
         }
-        let resp = match timeout(dur, rx).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_canceled)) => {
-                self.inner.pending.remove(&id);
+        let resp = match self.inner.pending.wait(id, rx, dur).await {
+            Ok(r) => r,
+            Err(WaitError::Canceled) => {
                 return Err(McpError::JsonRpc(
                     "oneshot canceled (sender dropped)".into(),
-                ));
+                ))
             }
-            Err(_) => {
-                self.inner.pending.remove(&id);
-                return Err(McpError::Timeout(dur));
-            }
+            Err(WaitError::Timeout(d)) => return Err(McpError::Timeout(d)),
         };
         if let Some(err) = resp.error {
-            // JSON-RPC -32601 = Method not found；-32000 ~ -32099 = server error
+            // JSON-RPC -32601 = Method not found; -32000 ~ -32099 = server error
             if err.code == -32601 {
                 return Err(McpError::MethodNotFound(err.message));
             }
@@ -155,7 +145,7 @@ impl McpConnection {
         Ok(resp.result.unwrap_or(Value::Null))
     }
 
-    /// 发送 JSON-RPC notification（无 id，不等响应）
+    /// Send a JSON-RPC notification (no id, does not wait for a response)
     pub async fn notify(&self, method: impl Into<String>, params: Option<Value>) -> McpResult<()> {
         let n = JsonRpcNotification {
             jsonrpc: "2.0",
@@ -166,34 +156,41 @@ impl McpConnection {
         self.inner.transport.send(&payload).await
     }
 
-    /// 主动处理一行来自 server 的 JSON（由传输层在收到数据时调用）
-    /// 若是 Response → 投递给 pending；若是 Notification → 忽略（MCP v1 暂不处理）
-    pub(crate) fn dispatch_line(&self, line: &str) {
+    /// Handle one line of JSON received from the server (called by the transport on incoming data).
+    /// Response → delivered to pending; Notification → returns (method, params)
+    /// for the caller to consume (e.g. tools/list_changed must not be dropped silently).
+    pub(crate) fn dispatch_line(&self, line: &str) -> Option<(String, Value)> {
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => return,
+            Err(_) => return None,
         };
         if v.get("id").is_some() && v.get("method").is_none() {
             if let Ok(resp) = serde_json::from_value::<JsonRpcResponse>(v) {
-                if let Some((_, tx)) = self.inner.pending.remove(&resp.id) {
+                if let Some(tx) = self.inner.pending.take(resp.id) {
                     let _ = tx.send(resp);
                 }
             }
+            return None;
         }
-        // Notifications 暂不消费
+        // Notification: has method, no id
+        if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
+            let params = v.get("params").cloned().unwrap_or(Value::Null);
+            return Some((method.to_string(), params));
+        }
+        None
     }
 
-    /// 关闭连接
+    /// Close the connection
     pub async fn close(&self) -> McpResult<()> {
         self.inner.transport.close().await
     }
 }
 
-/// 传输层抽象
+/// Transport abstraction
 #[async_trait::async_trait]
 pub trait McpTransport: Send + Sync {
-    /// 发送一行 JSON（自动附加换行）
+    /// Send one line of JSON (newline appended automatically)
     async fn send(&self, payload: &str) -> McpResult<()>;
-    /// 关闭连接（kill 子进程 / 关闭 HTTP 连接）
+    /// Close the connection (kill the child process / close the HTTP connection)
     async fn close(&self) -> McpResult<()>;
 }

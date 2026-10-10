@@ -114,14 +114,14 @@ If the download completes but installation fails, keep the current version and m
 
 System auto-start only launches AIO and will not bypass the local engine's first-start confirmation.
 
-## Cross-Session Memory Not Taking Effect
+## Project Memory Not Taking Effect
 
-1. In "Settings &rarr; App Settings", confirm that "Cross-Session Memory" is enabled.
+1. In the project settings dialog, confirm that "Project Memory" (semantic RAG) is enabled.
 2. Confirm the current assistant is bound to a project, not a normal chat assistant.
-3. Check that the project directory is writable and that `.aio/knowledge.json` contains entries.
-4. Have the Agent explicitly remember an architecture decision, then retrieve it in a new topic.
+3. Check that `.aio/memory/memory.sqlite` exists and that the memory panel shows entries.
+4. Have the Agent explicitly remember a fact, then retrieve it in a new topic.
 
-Disabling the feature does not delete old knowledge. Corrupted JSON is treated as empty knowledge; back up the file before repairing it.
+A legacy `.aio/knowledge.json` is auto-migrated the first time memory is opened; the old file is kept afterwards and can be deleted manually.
 
 ## Sub-Agent Waiting or Partial Failure
 

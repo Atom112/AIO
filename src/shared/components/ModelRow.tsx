@@ -1,7 +1,7 @@
 /**
- * 单行模型展示 (仿 LobeHub v2 风格, 亚克力主题)
- * 数据源: catalog `ModelMeta` (含 displayName, releaseDate, contextWindow, capabilities, pricing, status)
- * 启用状态: 由调用方通过 `enabled` prop 传入
+ * Single-row model display (LobeHub v2 style, acrylic theme)
+ * Data source: catalog `ModelMeta` (displayName, releaseDate, contextWindow, capabilities, pricing, status)
+ * Enabled state: passed in by the caller via the `enabled` prop
  */
 import { Component, Show } from 'solid-js';
 import type { ModelMeta } from '@aio/models-data';
@@ -13,7 +13,7 @@ const ModelRow: Component<{
   meta: ModelMeta;
   enabled: boolean;
   onToggle: () => void;
-  /** 隐藏价格（详情页默认显示，列表/孤儿行可隐藏） */
+  /** Hide pricing (shown by default on detail pages; list/orphan rows may hide it) */
   showPricing?: boolean;
 }> = (props) => {
   const m = () => props.meta;
@@ -22,14 +22,13 @@ const ModelRow: Component<{
     <div class="transition-all duration-200 hover:bg-pri-5 hover:border-pri relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5">
       <div class="grow min-w-0">
         <div class="text-sm text-white truncate font-medium">{m().displayName || m().id}</div>
-        <div class="flex items-center gap-1.5 text-[10px] text-[#888] font-mono mt-1 flex-wrap">
+        <div class="flex items-center gap-1.5 text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono mt-1 flex-wrap">
           <Show when={m().releaseDate}>
             <span>{t('model.released', { date: formatReleaseDate(m().releaseDate) })}</span>
           </Show>
           <Show when={m().contextWindow > 0}>
             <span class="inline-flex items-center gap-0.5">
-              <Icon name="bolt" size={10} class="text-pri" />{' '}
-              {formatContextWindow(m().contextWindow)}
+              <Icon name="bolt" size={10} /> {formatContextWindow(m().contextWindow)}
             </span>
           </Show>
           <Show when={caps().vision}>
@@ -89,9 +88,9 @@ const ModelRow: Component<{
                   };
                 if (m().status === 'experimental' || m().status === 'alpha')
                   return {
-                    background: 'rgba(168, 85, 247, 0.15)',
-                    color: '#d8b4fe',
-                    border: '1px solid rgba(168, 85, 247, 0.25)',
+                    background: 'rgba(var(--color-experimental-rgb), 0.15)',
+                    color: 'var(--color-experimental)',
+                    border: '1px solid rgba(var(--color-experimental-rgb), 0.25)',
                     borderRadius: '4px',
                   };
                 return undefined;
@@ -102,14 +101,18 @@ const ModelRow: Component<{
           </Show>
         </div>
         <Show when={props.showPricing !== false && m().pricing}>
-          <div class="text-[10px] text-[#aaa] mt-1.5 font-mono">
-            <span class="text-[#888]">{t('model.price.input')}</span> ${m().pricing!.input}/M
-            <span class="text-[#666] mx-1.5">·</span>
-            <span class="text-[#888]">{t('model.price.output')}</span> ${m().pricing!.output}/M
+          <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.65)] mt-1.5 font-mono">
+            <span class="text-[rgba(var(--text-base-rgb),0.55)]">{t('model.price.input')}</span> $
+            {m().pricing!.input}/M
+            <span class="text-[rgba(var(--text-base-rgb),0.4)] mx-1.5">·</span>
+            <span class="text-[rgba(var(--text-base-rgb),0.55)]">{t('model.price.output')}</span> $
+            {m().pricing!.output}/M
             <Show when={m().pricing!.cacheRead != null}>
-              <span class="text-[#666] mx-1.5">·</span>
-              <span class="text-[#888]">{t('model.price.cacheRead')}</span> $
-              {m().pricing!.cacheRead}/M
+              <span class="text-[rgba(var(--text-base-rgb),0.4)] mx-1.5">·</span>
+              <span class="text-[rgba(var(--text-base-rgb),0.55)]">
+                {t('model.price.cacheRead')}
+              </span>{' '}
+              ${m().pricing!.cacheRead}/M
             </Show>
           </div>
         </Show>

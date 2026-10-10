@@ -968,15 +968,17 @@ const LocalModelMarket: Component = () => {
         </div>
       </Show>
 
-      {/* Config block: engine multi-select (one download serves all selected engines),
-          download source, download directory and optional HF token; all action buttons
-          share one height */}
-      <div
-        class="flex flex-col gap-2.5 shrink-0 animate-row-in text-[11px]"
-        style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
-      >
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.engineLabel')}</span>
+      {/* Config card: engine multi-select (one download serves all selected engines),
+          download source, optional HF token — embedding-page card style. The stored token
+          is never cleared when its row hides; switching back restores it. */}
+      <div class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 shrink-0 animate-row-in">
+        <div class="flex items-center gap-3 flex-wrap">
+          <span
+            class="text-[11px] w-[80px] shrink-0"
+            style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+          >
+            {t('provider.localModelMarket.engineLabel')}
+          </span>
           <div
             class="flex items-center gap-1 p-1 rounded-lg"
             style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
@@ -997,8 +999,13 @@ const LocalModelMarket: Component = () => {
             </For>
           </div>
         </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.sourceLabel')}</span>
+        <div class="flex items-center gap-3 flex-wrap mt-2.5">
+          <span
+            class="text-[11px] w-[80px] shrink-0"
+            style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+          >
+            {t('provider.localModelMarket.sourceLabel')}
+          </span>
           <div
             class="flex items-center gap-1 p-1 rounded-lg"
             style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
@@ -1024,15 +1031,17 @@ const LocalModelMarket: Component = () => {
             </For>
           </div>
         </div>
-        {/* HF token: relevant only when the download source can hit HuggingFace
-            (auto / huggingface). The stored token itself is never cleared when the
-            row hides — switching back to a HF-capable source restores it. */}
         <Show when={dlSource() !== 'modelscope'}>
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="shrink-0">{t('provider.localModelMarket.tokenLabel')}</span>
+          <div class="flex items-center gap-3 flex-wrap mt-2.5">
+            <span
+              class="text-[11px] w-[80px] shrink-0"
+              style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+            >
+              {t('provider.localModelMarket.tokenLabel')}
+            </span>
             <input
               type="password"
-              class="grow min-w-[120px] bg-black/25 border border-white/[0.08] rounded-md text-white placeholder:text-white/30 focus:outline-none px-2 py-1.5 text-[11px] font-mono"
+              class="grow min-w-[120px] px-3 py-2 bg-black/25 border border-white/[0.08] rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-xs placeholder:text-white/25 focus:outline-none focus:border-pri-50 font-mono"
               value={tokenInput()}
               onInput={(e) => setTokenInput(e.currentTarget.value)}
               placeholder={t('provider.localModelMarket.tokenPlaceholder')}
@@ -1054,8 +1063,8 @@ const LocalModelMarket: Component = () => {
         </Show>
       </div>
 
-      {/* Download directory: embedding-page install-dir card style, without the border */}
-      <div class="bg-white/[0.03] rounded-xl p-4 shrink-0 animate-row-in">
+      {/* Download directory: embedding-page install-dir card style */}
+      <div class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 shrink-0 animate-row-in">
         <div class="flex items-center justify-between gap-3 mb-2">
           <div class="text-sm text-white font-medium">
             {t('provider.localModelMarket.dirLabel')}

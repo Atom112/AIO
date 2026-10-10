@@ -54,14 +54,42 @@ const buildTopicTree = (topics: Topic[]): { roots: Topic[]; children: Map<string
   return { roots, children };
 };
 
-// ---- Branch fold state (module scope) ----
+// ---- Branch fold state (module scope, persisted) ----
 // Module-level so the fold state survives sidebar remounts: window/view
 // switches (e.g. entering/leaving the subagent conversation view) unmount the
 // whole chat column, and component-local state reset every fold to expanded.
-// Scoped to the current assistant via the reset branch of the effect below.
+// Additionally persisted to localStorage per assistant (a single global key
+// would be wiped by assistant switches): { [assistantId]: [topicId, ...] }.
+// Stale ids (deleted topics) never match and are harmless.
 const [collapsedTopicIds, setCollapsedTopicIds] = createSignal<Set<string>>(new Set());
 let prevChildCounts = new Map<string, number>();
 let foldAssistantId: string | undefined;
+
+const FOLD_STORAGE_KEY = 'topic-fold-state';
+
+const loadFoldState = (assistantId: string): Set<string> => {
+  try {
+    const raw = localStorage.getItem(FOLD_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as Record<string, string[]>;
+    const ids = parsed[assistantId];
+    return new Set(Array.isArray(ids) ? ids : []);
+  } catch {
+    // Storage unavailable or corrupted: fall back to session-only folds
+    return new Set();
+  }
+};
+
+const saveFoldState = (assistantId: string, ids: Set<string>) => {
+  try {
+    const raw = localStorage.getItem(FOLD_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, string[]>) : {};
+    parsed[assistantId] = Array.from(ids);
+    localStorage.setItem(FOLD_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    // Restricted storage context: keep working session-only
+  }
+};
 
 const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
@@ -75,18 +103,19 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
 
   // Auto-expand: a folded topic that gains a new child (e.g. branching from a
   // message while the subtree is folded) unfolds so the new branch is visible.
-  // Switching assistants resets fold state and counters. The reset branch
-  // deliberately FALLS THROUGH to snapshot counts in the same run — an early
-  // return left prevChildCounts empty, so the first fold click after a
-  // remount/switch read as a child-count increase and auto-expanded the very
-  // topic the user had just collapsed (the "click twice to fold" bug).
+  // Switching assistants restores that assistant's persisted fold state (and
+  // refreshes the counters). The restore branch deliberately FALLS THROUGH to
+  // snapshot counts in the same run — an early return left prevChildCounts
+  // empty, so the first fold click after a remount/switch read as a
+  // child-count increase and auto-expanded the very topic the user had just
+  // collapsed (the "click twice to fold" bug).
   createEffect(() => {
     const asst = props.currentAssistant;
     if (!asst) return;
     if (asst.id !== foldAssistantId) {
       foldAssistantId = asst.id;
       prevChildCounts = new Map();
-      if (collapsedTopicIds().size > 0) setCollapsedTopicIds(new Set<string>());
+      setCollapsedTopicIds(loadFoldState(asst.id));
     }
     const counts = new Map<string, number>();
     for (const tp of asst.topics) {
@@ -102,6 +131,15 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     }
     prevChildCounts = counts;
     if (changed) setCollapsedTopicIds(next);
+  });
+  // Write-through persistence: every fold mutation (toggle, auto-expand,
+  // assistant restore) lands in localStorage. foldAssistantId is a plain
+  // module variable updated by the effect above before any signal write it
+  // triggers, so the save always targets the right assistant bucket.
+  createEffect(() => {
+    const id = foldAssistantId;
+    if (!id) return;
+    saveFoldState(id, collapsedTopicIds());
   });
 
   onMount(() => {

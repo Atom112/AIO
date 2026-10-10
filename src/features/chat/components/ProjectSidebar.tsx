@@ -268,8 +268,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
             <div
               class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
               classList={{
-                '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
-                  isChatActive(),
+                '!border-[rgba(var(--primary-rgb),0.55)] active-glow': isChatActive(),
               }}
               onClick={switchToChat}
             >
@@ -300,8 +299,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
                   <div
                     class="group flex items-center justify-between px-3 h-12 cursor-pointer rounded-3xl transition-all duration-200 bg-white/[0.03] border border-white/[0.04] text-white/75 hover:bg-white/[0.06] my-1"
                     classList={{
-                      '!bg-[rgba(var(--primary-rgb),0.22)] !border-[rgba(var(--primary-rgb),0.22)]':
-                        isActive(),
+                      '!border-[rgba(var(--primary-rgb),0.55)] active-glow': isActive(),
                     }}
                     onContextMenu={(e) => openMenu(e as MouseEvent, project.id, true)}
                     onClick={() => switchToProject(project.id)}

@@ -99,7 +99,9 @@ pub fn run() {
         .manage(PendingApprovals::new())
         .manage(SubagentHandles::new())
         .manage(SubagentCompletions::new())
-        .manage(core::file_locks::FileLockRegistry::new())
+        .manage(std::sync::Arc::new(
+            core::file_locks::FileLockRegistry::new(),
+        ))
         .manage(core::state::AgentTaskBoard::new())
         .manage(core::state::PendingAgentQuestions::new())
         .manage(MemoryStoreManager::new())

@@ -40,22 +40,59 @@ pub(crate) fn is_parallel_safe(tool_name: &str) -> bool {
     )
 }
 
+/// Policy for tools coming from the built-in filesystem MCP server (`BUILTIN_FS_SERVER_ID`).
+///
+/// Why filtering is mandatory: the fs server runs as a separate stdio subprocess rooted
+/// at the main project directory. Its tool calls therefore bypass the per-file write-lock
+/// choke point (`execute_locked_file_tool`), the last-writer/hashline bookkeeping, and
+/// worktree isolation — injecting them would let agents sidestep the whole multi-agent
+/// write-coordination layer (the server itself remains for external MCP clients).
+pub(crate) enum FsServerPolicy {
+    /// Subagent assembly: drop every fs-server tool. The builtin file tools are always
+    /// injected per profile (with locking), so every fs-server variant is a redundant,
+    /// lock-free duplicate that would also escape the subagent's worktree.
+    DropAll,
+    /// Main-agent assembly: drop mutating file tools unconditionally (they bypass the
+    /// write-lock choke point; hybrid/full provide locked builtin equivalents and the
+    /// orchestrator design delegates mutations); drop read tools only when the builtin
+    /// set already provides the same name (dedupe — the strict orchestrator keeps its
+    /// legacy direct read access through the server).
+    DropMutatingAndDuplicates,
+}
+
 /// Merge MCP tools into (tool set, tool-to-server map), handling name conflicts.
 ///
 /// On a conflict (name already taken by a builtin tool or another server) the tool is
 /// renamed to mcp__<server>__<tool> (Claude Code convention); if the renamed name still
-/// conflicts it is skipped with a warning. Pure function, shared by the main loop
-/// (build_main_tool_set) and subagent (build_subagent_tools) tool-set assembly.
+/// conflicts it is skipped with a warning. Tools from the built-in filesystem server are
+/// filtered per `fs_policy` BEFORE the rename logic (a lock-free `write_file` variant
+/// must never shadow or duplicate the locked builtin path). Pure function, shared by the
+/// main loop (build_main_tool_set) and subagent (build_subagent_tools) tool-set assembly.
 pub(crate) fn merge_mcp_tools(
     tools: &mut Vec<ToolSpec>,
     tool_server_map: &mut std::collections::HashMap<String, String>,
     mcp: &crate::core::models::AssistantTools,
+    fs_policy: FsServerPolicy,
 ) {
     for mut spec in mcp.tools.clone() {
         let original = spec.function.name.clone();
         let Some(server_id) = mcp.tool_server_map.get(&original).cloned() else {
             continue;
         };
+        if server_id == crate::core::ids::BUILTIN_FS_SERVER_ID {
+            match fs_policy {
+                FsServerPolicy::DropAll => continue,
+                FsServerPolicy::DropMutatingAndDuplicates => {
+                    if file_tools::is_mutating_file_tool(&original) {
+                        continue;
+                    }
+                    // Read variant duplicates the locked builtin tool -> dedupe, no rename
+                    if tool_server_map.contains_key(&original) {
+                        continue;
+                    }
+                }
+            }
+        }
         let mut exposed = original.clone();
         if tool_server_map.contains_key(&exposed) {
             exposed = format!("mcp__{}__{}", server_id, original);
@@ -287,7 +324,12 @@ pub(crate) fn build_main_tool_set(
     // or another server) the tool is renamed to mcp__<server>__<tool>, keeping routing deterministic.
     if is_agent_mode && *agent_mode != AgentMode::Plan {
         if let Some(mcp) = mcp {
-            merge_mcp_tools(&mut tools, &mut tool_server_map, mcp);
+            merge_mcp_tools(
+                &mut tools,
+                &mut tool_server_map,
+                mcp,
+                FsServerPolicy::DropMutatingAndDuplicates,
+            );
         }
     }
     // Memory tools: global default + per-project override decide enablement; when enabled the memory tools are injected, otherwise the legacy knowledge tools are used
@@ -426,7 +468,12 @@ mod tests {
         let mut tools = vec![spec_named("read_file")];
         let mut map =
             std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
-        merge_mcp_tools(&mut tools, &mut map, &mcp_set(&[("mcp_query", "srv1")]));
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[("mcp_query", "srv1")]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
         assert_eq!(tools.len(), 2);
         assert_eq!(map.get("mcp_query").map(String::as_str), Some("srv1"));
         assert_eq!(tools[1].function.name, "mcp_query");
@@ -438,7 +485,12 @@ mod tests {
         let mut tools = vec![spec_named("read_file")];
         let mut map =
             std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
-        merge_mcp_tools(&mut tools, &mut map, &mcp_set(&[("read_file", "srv1")]));
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[("read_file", "srv1")]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
         assert_eq!(
             map.get("mcp__srv1__read_file").map(String::as_str),
             Some("srv1")
@@ -452,8 +504,18 @@ mod tests {
     fn merge_mcp_tools_two_servers_same_name() {
         let mut tools = Vec::new();
         let mut map = std::collections::HashMap::new();
-        merge_mcp_tools(&mut tools, &mut map, &mcp_set(&[("search", "srv1")]));
-        merge_mcp_tools(&mut tools, &mut map, &mcp_set(&[("search", "srv2")]));
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[("search", "srv1")]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[("search", "srv2")]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
         assert_eq!(map.get("search").map(String::as_str), Some("srv1"));
         assert_eq!(
             map.get("mcp__srv2__search").map(String::as_str),
@@ -469,7 +531,12 @@ mod tests {
             "mcp__srv1__search".to_string(),
             "other".to_string(),
         )]);
-        merge_mcp_tools(&mut tools, &mut map, &mcp_set(&[("search", "srv1")]));
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[("search", "srv1")]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
         // "search" is absent (unclaimed) -> no conflict, the original name is kept
         assert_eq!(map.get("search").map(String::as_str), Some("srv1"));
 
@@ -479,8 +546,126 @@ mod tests {
             ("mcp__srv1__search".to_string(), "other".to_string()),
         ]);
         let mut tools2 = Vec::new();
-        merge_mcp_tools(&mut tools2, &mut map2, &mcp_set(&[("search", "srv1")]));
+        merge_mcp_tools(
+            &mut tools2,
+            &mut map2,
+            &mcp_set(&[("search", "srv1")]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
         assert_eq!(tools2.len(), 0);
         assert_eq!(map2.len(), 2, "映射不应新增");
+    }
+
+    /// P0-1 regression: the built-in fs server's MUTATING tools must never enter the
+    /// main agent's tool set under any tool_access mode — they run in a subprocess rooted
+    /// at the main project and would bypass the per-file write-lock choke point.
+    #[test]
+    fn fs_server_mutating_tools_never_reach_the_main_agent() {
+        for (tool_access, builtin_mutating_injected) in
+            [("hybrid", false), ("full", true), ("orchestrator", false)]
+        {
+            // Mirror the three modes' builtin mutating-tool presence
+            let mut map = std::collections::HashMap::new();
+            let mut tools = Vec::new();
+            if builtin_mutating_injected {
+                map.insert("write_file".to_string(), "builtin".to_string());
+                tools.push(spec_named("write_file"));
+            }
+            merge_mcp_tools(
+                &mut tools,
+                &mut map,
+                &mcp_set(&[
+                    ("write_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                    ("replace_in_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                    ("delete_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                    ("make_directory", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                ]),
+                FsServerPolicy::DropMutatingAndDuplicates,
+            );
+            assert!(
+                map.values()
+                    .all(|v| v.as_str() != crate::core::ids::BUILTIN_FS_SERVER_ID),
+                "{tool_access}: 变更类文件工具不得路由到 fs server"
+            );
+            if builtin_mutating_injected {
+                assert_eq!(
+                    map.get("write_file").map(String::as_str),
+                    Some("builtin"),
+                    "{tool_access}: 内置 write_file 不得被覆盖"
+                );
+            }
+        }
+    }
+
+    /// Main policy dedupes fs-server read tools against their locked builtin equivalents
+    /// (hybrid/full) but keeps them when only the server provides reads (orchestrator).
+    #[test]
+    fn fs_server_read_tools_dedupe_only_when_builtin_provides() {
+        // hybrid/full: builtin read present -> fs variant dropped, NOT renamed
+        let mut map =
+            std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
+        let mut tools = vec![spec_named("read_file")];
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[("read_file", crate::core::ids::BUILTIN_FS_SERVER_ID)]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
+        assert_eq!(tools.len(), 1, "重复读工具应去重");
+        assert_eq!(map.len(), 1, "不应产生 mcp__ 改名条目");
+
+        // orchestrator: no builtin read -> legacy direct read through the server is kept
+        let mut map2 = std::collections::HashMap::new();
+        let mut tools2 = Vec::new();
+        merge_mcp_tools(
+            &mut tools2,
+            &mut map2,
+            &mcp_set(&[("read_file", crate::core::ids::BUILTIN_FS_SERVER_ID)]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
+        assert_eq!(
+            map2.get("read_file").map(String::as_str),
+            Some(crate::core::ids::BUILTIN_FS_SERVER_ID)
+        );
+    }
+
+    /// P1-3 regression: subagent assembly drops EVERY fs-server tool — the server runs
+    /// rooted at the main project, so its calls would escape the subagent's worktree
+    /// isolation and the write locks.
+    #[test]
+    fn fs_server_tools_never_reach_subagents() {
+        let mut map =
+            std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
+        let mut tools = vec![spec_named("read_file")];
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[
+                ("read_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                ("write_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                ("search_files", crate::core::ids::BUILTIN_FS_SERVER_ID),
+            ]),
+            FsServerPolicy::DropAll,
+        );
+        assert_eq!(tools.len(), 1, "fs server 工具应全部被丢弃");
+        assert_eq!(map.len(), 1, "映射不应新增");
+    }
+
+    /// The filter is scoped to the built-in fs server: a USER server offering a
+    /// write_file tool follows the normal rename rules untouched.
+    #[test]
+    fn user_server_write_tools_are_not_filtered() {
+        let mut map = std::collections::HashMap::new();
+        let mut tools = Vec::new();
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[("write_file", "my-git-helper")]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
+        assert_eq!(
+            map.get("write_file").map(String::as_str),
+            Some("my-git-helper")
+        );
     }
 }

@@ -27,11 +27,23 @@ fn sha256_hex(content: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Whether the tool is a mutating single-path file tool. Such tools MUST be dispatched
+/// in-process (execute_file_tool) via the write-lock choke point; their MCP variants
+/// (built-in fs server) are filtered out of agent tool sets for exactly this reason.
+pub(crate) fn is_mutating_file_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "write_file" | "replace_in_file" | "delete_file" | "make_directory"
+    )
+}
+
 /// Atomic file replace: write a temp sibling, then rename over the target, so concurrent
 /// readers never observe a torn file and a crash mid-write cannot leave the target half
-/// written. Windows AV/indexer may briefly hold the target, making rename fail; retries,
-/// then falls back to an in-place write (writers are still serialized by the per-file
-/// write lock at the `execute_builtin_tool` choke point).
+/// written. The target's permissions (mode bits / readonly) are copied onto the temp file
+/// before the rename so an edit does not silently drop the executable bit or the
+/// readonly attribute. Windows AV/indexer may briefly hold the target, making rename
+/// fail; retries, then falls back to an in-place write (writers are still serialized by
+/// the per-file write lock at the `execute_builtin_tool` choke point).
 fn atomic_write(target: &std::path::Path, content: &str) -> Result<(), String> {
     let Some(dir) = target.parent() else {
         return Err(ierr!(
@@ -40,11 +52,23 @@ fn atomic_write(target: &std::path::Path, content: &str) -> Result<(), String> {
             target.display()
         ));
     };
+    // Permission preservation is Unix-scoped: fs::permissions only carries mode bits
+    // (exec bit included) there. On Windows it carries only the readonly flag — copying
+    // it onto the tmp file would make the rename-over-target fail (readonly targets
+    // cannot be replaced), and true ACL preservation needs ReplaceFile, so the swap
+    // accepts directory-inherited ACLs there (documented limitation).
+    #[cfg(not(windows))]
+    let target_perms = std::fs::metadata(target).ok().map(|m| m.permissions());
+    #[cfg(windows)]
+    let target_perms: Option<std::fs::Permissions> = None;
     for _ in 0..3 {
         let tmp = dir.join(format!(".aio-tmp-{}", uuid::Uuid::new_v4().simple()));
         if let Err(e) = std::fs::write(&tmp, content) {
             let _ = std::fs::remove_file(&tmp);
             return Err(ierr!("写入失败: {}", "Write failed: {}", e));
+        }
+        if let Some(p) = &target_perms {
+            let _ = std::fs::set_permissions(&tmp, p.clone());
         }
         match std::fs::rename(&tmp, target) {
             Ok(_) => return Ok(()),
@@ -54,7 +78,12 @@ fn atomic_write(target: &std::path::Path, content: &str) -> Result<(), String> {
             }
         }
     }
-    // Fallback: in-place write (still serialized by the per-file write lock)
+    // Fallback: in-place write (still serialized by the per-file write lock). Atomicity
+    // is knowingly traded away here — leave a trace for post-mortem torn-write debugging.
+    tracing::warn!(
+        "[atomic_write] rename 反复失败，回退就地写入（放弃原子性）: {}",
+        target.display()
+    );
     std::fs::write(target, content).map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))
 }
 
@@ -67,10 +96,7 @@ pub(crate) fn mutating_tool_target(
     tool_name: &str,
     arguments: &Value,
 ) -> Option<(PathBuf, bool)> {
-    if !matches!(
-        tool_name,
-        "write_file" | "replace_in_file" | "delete_file" | "make_directory"
-    ) {
+    if !is_mutating_file_tool(tool_name) {
         return None;
     }
     let path = arguments["path"].as_str().unwrap_or("");
@@ -303,13 +329,17 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Ok(m) => m,
                 Err(e) => return tool_err(&e.to_string()),
             };
-            // Read all bytes at once (1MB hard cap) and compute the file's SHA-256 (used by the hashline protocol)
+            // Read all bytes at once (display is capped at 1MB, the hash is NOT) and compute
+            // the SHA-256 of the COMPLETE file (hashline protocol: the digest must match the
+            // full-content digest computed by replace_in_file's anchor_hash / write_file's
+            // expect_hash validation — a truncated digest would permanently break edits of
+            // files > MAX_R under the cross-writer gate)
             let bytes = match std::fs::read(&t) {
                 Ok(b) => b,
                 Err(e) => return tool_err(&e.to_string()),
             };
             let hash_len = bytes.len().min(MAX_R as usize);
-            let file_hash = sha256_hex(&bytes[..hash_len]);
+            let file_hash = sha256_hex(&bytes);
             let raw = String::from_utf8_lossy(&bytes[..hash_len]).into_owned();
             let over_size = meta.len() > MAX_R;
             let total_lines = raw.lines().count();
@@ -673,12 +703,16 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     "old_string must not be empty (to prepend/append content, include surrounding context lines)"
                 ));
             }
-            // Count old_string occurrences and their line numbers
+            // Count old_string occurrences and their line numbers.
+            // Linear scan: the newline counter advances with the cursor (a per-match
+            // prefix re-scan made this quadratic — catastrophic on large files with many
+            // matches); the listed lines are capped so the error stays readable and cheap.
             let mut matches: Vec<usize> = Vec::new();
             let mut pos = 0;
+            let mut line = 1usize;
             while let Some(found) = content[pos..].find(old_s.as_str()) {
                 let abs_pos = pos + found;
-                let line = content[..abs_pos].chars().filter(|&c| c == '\n').count() + 1;
+                line += content[pos..abs_pos].matches('\n').count();
                 matches.push(line);
                 pos = abs_pos + 1;
             }
@@ -710,10 +744,18 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     }
                 }
                 n => {
-                    let lines_str = matches.iter()
+                    const MAX_LISTED_LINES: usize = 20;
+                    let lines_str = matches
+                        .iter()
+                        .take(MAX_LISTED_LINES)
                         .map(|l| l.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
+                    let lines_str = if n > MAX_LISTED_LINES {
+                        format!("{lines_str}… 共 {n} 处")
+                    } else {
+                        lines_str
+                    };
                     tool_err(&ierr!(
                         "old_string 在文件中出现了 {} 次（行 {}）。请增加更多周围的上下文行使匹配唯一，然后重试。",
                         "old_string appears {} times in the file (lines {}). Add more surrounding context lines to make the match unique, then retry.",
@@ -954,6 +996,117 @@ mod safe_path_tests {
             fs::read_to_string(base.join("r.txt")).unwrap(),
             "alpha\nBETA\ngamma\n"
         );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (P0-2): read_file's [HASH] must be the digest of the COMPLETE file —
+    /// files > 1MB must remain editable through anchor_hash (the digest previously
+    /// covered only the first MAX_R bytes, making cross-writer edits a permanent
+    /// mismatch-retry loop).
+    #[test]
+    fn read_file_hash_covers_files_over_one_mb() {
+        let base = fresh_base("big-hash");
+        let base_s = base.to_string_lossy().to_string();
+        // 1.2MB body: > MAX_R (1MB) but < MAX_W (5MB), so write_file/replace_in_file accept it
+        let body = format!("{}UNIQUE_MARKER", "a".repeat(1_199_990));
+        fs::write(base.join("big.txt"), &body).unwrap();
+
+        let r = execute_file_tool(
+            "read_file",
+            &serde_json::json!({"path": "big.txt", "max_bytes": 1024, "with_hash": true}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        let expected = super::sha256_hex(body.as_bytes());
+        assert!(
+            text.contains(&format!("[HASH sha256:{expected}]")),
+            "返回的摘要必须覆盖完整文件: {text}"
+        );
+
+        // anchor_hash validation uses the full-content digest — must pass with the read hash
+        let r = execute_file_tool(
+            "replace_in_file",
+            &serde_json::json!({"path": "big.txt", "old_string": "UNIQUE_MARKER", "new_string": "REPLACED", "anchor_hash": expected}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            text.contains("✓ 替换"),
+            "大文件 anchor_hash 应校验通过: {text}"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Perf regression: the multi-match scan must stay linear on large files — an
+    /// old_string matching ~every position of a 1.2MB file must resolve quickly as a
+    /// capped multi-match error instead of re-scanning the prefix per match (quadratic).
+    #[test]
+    fn multi_match_scan_stays_linear_on_large_files() {
+        let base = fresh_base("multimatch");
+        let base_s = base.to_string_lossy().to_string();
+        let body = "a".repeat(1_200_000);
+        fs::write(base.join("many.txt"), &body).unwrap();
+
+        let start = std::time::Instant::now();
+        let r = execute_file_tool(
+            "replace_in_file",
+            &serde_json::json!({"path": "many.txt", "old_string": "aaa", "new_string": "bbb"}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            text.contains("出现了") && text.contains("共 1199998 处"),
+            "应报多匹配错误（含总数）: {text}"
+        );
+        assert!(text.matches(" 1").count() < 40, "列出的匹配行号必须截断");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "扫描必须保持线性（实际 {:?}）",
+            start.elapsed()
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (P1-4): an edit must preserve the target's mode bits on Unix (the
+    /// executable flag) — the tmp+rename swap used to reset them to the default mode.
+    /// Windows carries only the readonly flag in fs::permissions (copying it would block
+    /// the swap entirely); there the write itself is the smoke assertion.
+    #[test]
+    fn atomic_write_preserves_permissions() {
+        let base = fresh_base("perm");
+        let base_s = base.to_string_lossy().to_string();
+        let target = base.join("script.sh");
+        fs::write(&target, "#!/bin/sh\necho v1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        execute_file_tool(
+            "write_file",
+            &serde_json::json!({"path": "script.sh", "content": "#!/bin/sh\necho v2\n"}),
+            &base_s,
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&target).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "可执行位必须保留");
+            assert_eq!(
+                fs::read_to_string(&target).unwrap(),
+                "#!/bin/sh\necho v2\n",
+                "内容必须更新"
+            );
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                fs::read_to_string(&target).unwrap(),
+                "#!/bin/sh\necho v2\n",
+                "写入必须成功"
+            );
+        }
         let _ = fs::remove_dir_all(&base);
     }
 }

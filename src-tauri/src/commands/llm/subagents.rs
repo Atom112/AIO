@@ -176,7 +176,12 @@ pub(crate) fn build_subagent_tools(
                     .collect(),
                 tool_server_map: mcp.tool_server_map.clone(),
             };
-            merge_mcp_tools(&mut tools, &mut server_map, &filtered);
+            merge_mcp_tools(
+                &mut tools,
+                &mut server_map,
+                &filtered,
+                FsServerPolicy::DropAll,
+            );
         }
     }
 
@@ -350,6 +355,8 @@ pub(crate) struct PendingWorkspace {
     pub path: std::path::PathBuf,
     /// Branch checked out in the worktree (commits land here).
     pub branch: String,
+    /// Creation base commit (task diff bookkeeping).
+    pub base_commit: String,
     /// Commit stat summary (approval display).
     pub summary: String,
     /// Changed files relative to the main checkout's HEAD.
@@ -421,7 +428,14 @@ async fn resolve_task_workspace(
     .await
     .unwrap_or_else(|_| Err("worktree 创建线程 panic".to_string()));
     match created {
-        Ok((path, branch)) => (TaskWorkspace::Worktree { path, branch }, notes),
+        Ok((path, branch, base_commit)) => (
+            TaskWorkspace::Worktree {
+                path,
+                branch,
+                base_commit,
+            },
+            notes,
+        ),
         Err(e) => {
             notes.push(format!(
                 "[工作区] worktree 创建失败，回退共享目录（有文件锁保护）: {e}"
@@ -544,6 +558,21 @@ async fn merge_pending_workspaces(
         .unwrap_or_else(|_| Err("worktree 合并线程 panic".to_string()));
         match merged {
             Ok(crate::utils::worktree::MergeOutcome::Merged { summary }) => {
+                // P1-2: git merge writes the files directly, bypassing the per-file locks;
+                // refresh last-writer so the next agent write onto any merged file is
+                // forced to re-anchor (preventing a stale-context overwrite from silently
+                // discarding the just-merged content).
+                {
+                    let registry =
+                        app.state::<std::sync::Arc<crate::core::file_locks::FileLockRegistry>>();
+                    let writer = format!("merge:{}", p.branch);
+                    for rel in &p.files {
+                        let full = std::path::Path::new(main_root).join(rel);
+                        if let Ok(canon) = std::fs::canonicalize(&full) {
+                            registry.mark_writer(&canon.to_string_lossy(), &writer);
+                        }
+                    }
+                }
                 spawn_remove_worktree(main_root, &p.path, &p.branch);
                 if summary.is_empty() {
                     notes.push(format!(
@@ -685,15 +714,20 @@ pub(crate) async fn execute_single_delegate(
             // Collect the worktree's changes onto its branch (system bookkeeping commit on
             // the throwaway branch; bypasses the model-facing git tool approval)
             let pending = match &workspace {
-                crate::utils::worktree::TaskWorkspace::Worktree { path, branch } => {
+                crate::utils::worktree::TaskWorkspace::Worktree {
+                    path,
+                    branch,
+                    base_commit,
+                } => {
                     let wt_s = path.to_string_lossy().to_string();
                     let commit_msg = format!(
                         "AIO subagent({}): {}",
                         profile.id,
                         truncate_chars_head(task_desc, 60)
                     );
+                    let base_c = base_commit.clone();
                     let commit = tokio::task::spawn_blocking(move || {
-                        crate::utils::worktree::commit_all(&wt_s, &commit_msg)
+                        crate::utils::worktree::commit_all(&wt_s, &base_c, &commit_msg)
                     })
                     .await
                     .unwrap_or_else(|_| Err("worktree 提交线程 panic".to_string()));
@@ -714,6 +748,7 @@ pub(crate) async fn execute_single_delegate(
                             Some(PendingWorkspace {
                                 path: path.clone(),
                                 branch: branch.clone(),
+                                base_commit: base_commit.clone(),
                                 summary,
                                 files,
                             })
@@ -734,10 +769,30 @@ pub(crate) async fn execute_single_delegate(
             })
         }
         Err(e) => {
-            // Failed / cancelled: partial work in the throwaway worktree is discarded
-            // (documented policy; the main checkout stays untouched either way)
-            if let crate::utils::worktree::TaskWorkspace::Worktree { path, branch } = &workspace {
-                spawn_remove_worktree(&project_root, path, branch);
+            // Failed / cancelled: an EMPTY worktree's partial work is discarded (documented
+            // policy; the main checkout stays untouched either way) — but a branch that
+            // already carries subagent commits is real work and must be preserved for
+            // manual recovery instead of force-deleted (P0-3).
+            if let crate::utils::worktree::TaskWorkspace::Worktree {
+                path,
+                branch,
+                base_commit,
+            } = &workspace
+            {
+                let wt_s = path.to_string_lossy().to_string();
+                let base_c = base_commit.clone();
+                let committed = tokio::task::spawn_blocking(move || {
+                    crate::utils::worktree::has_commits(&wt_s, &base_c)
+                })
+                .await
+                .unwrap_or(false);
+                if committed {
+                    tracing::warn!(
+                        "[worktree] 子任务失败但分支已有提交，保留工作区与分支待人工合并: {branch}"
+                    );
+                } else {
+                    spawn_remove_worktree(&project_root, path, branch);
+                }
             }
             Err(e)
         }
@@ -966,6 +1021,7 @@ pub(crate) async fn handle_delegate_tasks(
         .map(|p| PendingWorkspace {
             path: p.path.clone(),
             branch: p.branch.clone(),
+            base_commit: p.base_commit.clone(),
             summary: p.summary.clone(),
             files: p.files.clone(),
         })

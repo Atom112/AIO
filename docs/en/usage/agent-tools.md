@@ -424,7 +424,7 @@ When multiple agents modify files concurrently, AIO combines two layers of prote
 - **Merging**: Auto mode merges automatically; Normal mode asks one batch approval (listing branches, changed files and diff summaries). On a **conflict** the merge aborts safely, the worktree is kept, and the result reports the conflicted files — redo that task serially on the latest code or resolve manually.
 - **Shared-mode protection**: `write_file` / `replace_in_file` / `delete_file` / `make_directory` take a per-file exclusive lock (120-second wait timeout reporting the holder); after another agent modified a file, `replace_in_file` must carry `anchor_hash` and an overwriting `write_file` must carry `expect_hash` — a mismatch errors out and requires a re-read, turning lost updates into recoverable re-read errors.
 - **Scope**: `wait=false` background subagents and workflow steps always run shared (file locks still apply). Worktrees are based on the main checkout's HEAD and do NOT include its uncommitted changes — pass `isolation: "shared"` when a task must build on uncommitted work.
-- **Recommendations**: partition parallel write tasks by file set; files written by shell commands bypass the file locks (consistent with the industry) — prefer file tools for critical files.
+- **Recommendations**: partition parallel write tasks by file set; files written by shell commands and git write operations (`git_add` / `git_commit` / `checkout_branch`) bypass the file locks (consistent with the industry) — prefer file tools for critical files; avoid switching branches in the main checkout while worktree tasks run — the task merges land on whatever branch is current at merge time.
 
 ### `read_skill`
 

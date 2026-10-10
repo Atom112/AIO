@@ -229,6 +229,18 @@ const LocalModelMarket: Component = () => {
   >({});
   const [downloading, setDownloading] = createSignal<Record<string, boolean>>({});
   const [pausedIds, setPausedIds] = createSignal<Record<string, boolean>>({});
+  /** One-second button flashes replacing status text lines (cancel / download done) */
+  const [flashIds, setFlashIds] = createSignal<Record<string, 'cancelled' | 'done'>>({});
+  const flash = (id: string, kind: 'cancelled' | 'done') => {
+    setFlashIds((prev) => ({ ...prev, [id]: kind }));
+    setTimeout(() => {
+      setFlashIds((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }, 1000);
+  };
   const [installed, setInstalled] = createSignal<InstalledLocalModel[]>([]);
   const [installDir, setInstallDir] = createSignal('');
   const [tokenInput, setTokenInput] = createSignal('');
@@ -480,12 +492,12 @@ const LocalModelMarket: Component = () => {
       await refreshInstalled();
       if (outcome.status === 'ok' && outcome.entryPath) {
         await registerModel(id, outcome.entryPath);
-        setNotice(t('provider.localModelMarket.downloaded', { name: id }));
+        flash(id, 'done');
       } else if (outcome.status === 'paused') {
+        // The row already switches to the [resume][cancel] layout: a visible state change
         setPausedIds((prev) => ({ ...prev, [id]: true }));
-        setNotice(t('provider.localModelMarket.downloadPaused', { name: id }));
       } else {
-        setNotice(t('provider.localModelMarket.downloadCancelled', { name: id }));
+        flash(id, 'cancelled');
       }
     } catch (e) {
       setNotice(t('provider.localModelMarket.downloadFail', { error: String(e) }));
@@ -525,7 +537,7 @@ const LocalModelMarket: Component = () => {
     }
     if (!wasActive) {
       setPausedIds((prev) => ({ ...prev, [id]: false }));
-      setNotice(t('provider.localModelMarket.downloadCancelled', { name: id }));
+      flash(id, 'cancelled');
     }
   };
 
@@ -534,7 +546,6 @@ const LocalModelMarket: Component = () => {
     try {
       await localModelDelete(m.id);
       await refreshInstalled();
-      setNotice(t('provider.localModelMarket.deleted', { name: m.id }));
     } catch (e) {
       setNotice(t('provider.localModelMarket.deleteFail', { error: String(e) }));
     }
@@ -546,7 +557,6 @@ const LocalModelMarket: Component = () => {
       if (dir && typeof dir === 'string') {
         const effective = await localModelsSetDir(dir);
         setInstallDir(effective);
-        setNotice(t('provider.localModelMarket.dirSaved'));
         await refreshInstalled();
       }
     } catch {
@@ -558,7 +568,6 @@ const LocalModelMarket: Component = () => {
     try {
       const effective = await localModelsSetDir('');
       setInstallDir(effective);
-      setNotice(t('provider.localModelMarket.dirSaved'));
       await refreshInstalled();
     } catch {
       /* ignore */
@@ -569,7 +578,6 @@ const LocalModelMarket: Component = () => {
     try {
       await localModelHfTokenSet(tokenInput().trim());
       setTokenSaved(true);
-      setNotice(t('provider.localModelMarket.tokenSaved'));
       setTimeout(() => setTokenSaved(false), 2000);
     } catch (e) {
       setNotice(t('provider.localModelMarket.tokenSaveFail', { error: String(e) }));
@@ -582,6 +590,7 @@ const LocalModelMarket: Component = () => {
     const filesErr = () => filesError()[m.id];
     // Row-level download state: the active quant-family download of this model
     const activeId = () => activeDownload()[m.id];
+    const rowFlash = () => (activeId() ? flashIds()[activeId()!] : undefined);
     const isDownloading = () => (activeId() ? !!downloading()[activeId()!] : false);
     const isPaused = () => (activeId() ? !!pausedIds()[activeId()!] : false);
     const dlProgress = () => (activeId() ? progress()[activeId()!] : undefined);
@@ -676,7 +685,8 @@ const LocalModelMarket: Component = () => {
               <Icon name="spinner" size={12} class="animate-spin shrink-0" />
             </Show>
           </button>
-          {/* Right: download controls (one download per row at a time) */}
+          {/* Right: download controls (one download per row at a time); status outcomes are
+              expressed as one-second button flashes instead of status text lines */}
           <div class="flex items-center gap-1.5 shrink-0">
             <Show
               when={!isDownloading()}
@@ -696,7 +706,9 @@ const LocalModelMarket: Component = () => {
                     onClick={() => activeId() && void cancelDownload(activeId()!)}
                   >
                     <Icon name="x" size={12} />
-                    {t('common.cancel')}
+                    {rowFlash() === 'cancelled'
+                      ? t('provider.localModelMarket.flashCancelled')
+                      : t('common.cancel')}
                   </button>
                 </>
               }
@@ -704,13 +716,21 @@ const LocalModelMarket: Component = () => {
               <button
                 type="button"
                 class={btnSecondarySm}
+                classList={{ 'text-green-400/80': rowFlash() === 'done' }}
                 disabled={isDownloading()}
                 onClick={() => void (isPaused() ? resumeRow() : downloadDefault(m))}
               >
-                <Icon name={isPaused() ? 'play' : 'download'} size={12} />
-                {isPaused()
-                  ? t('provider.localModelMarket.resume')
-                  : t('provider.localModelMarket.download')}
+                <Show
+                  when={rowFlash() !== 'done'}
+                  fallback={<Icon name="check-circle" size={12} />}
+                >
+                  <Icon name={isPaused() ? 'play' : 'download'} size={12} />
+                </Show>
+                {rowFlash() === 'done'
+                  ? t('provider.localModelMarket.flashDone')
+                  : isPaused()
+                    ? t('provider.localModelMarket.resume')
+                    : t('provider.localModelMarket.download')}
               </button>
               <Show when={isPaused()}>
                 <button
@@ -719,7 +739,9 @@ const LocalModelMarket: Component = () => {
                   onClick={() => activeId() && void cancelDownload(activeId()!)}
                 >
                   <Icon name="x" size={12} />
-                  {t('common.cancel')}
+                  {rowFlash() === 'cancelled'
+                    ? t('provider.localModelMarket.flashCancelled')
+                    : t('common.cancel')}
                 </button>
               </Show>
             </Show>

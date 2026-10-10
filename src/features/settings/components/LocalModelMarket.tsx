@@ -183,10 +183,13 @@ function buildFileGroups(files: MarketFile[]): FileGroup[] {
   return groups;
 }
 
-/** Parameter-size segments (total params, memory-fit oriented); labels are literal i18n keys. */
+/** Parameter-size segments (total params, memory-fit oriented); labels are literal i18n
+ *  keys. The leading "installed" segment shows the downloaded-models list instead of the
+ *  market list (its test never matches market rows). */
 const SEGMENTS: ReadonlyArray<{
   id: string;
   label:
+    | 'provider.localModelMarket.segInstalled'
     | 'provider.localModelMarket.segAll'
     | 'provider.localModelMarket.segU1'
     | 'provider.localModelMarket.seg1to3'
@@ -196,6 +199,11 @@ const SEGMENTS: ReadonlyArray<{
     | 'provider.localModelMarket.seg32plus';
   test: (b: number | null) => boolean;
 }> = [
+  {
+    id: 'installed',
+    label: 'provider.localModelMarket.segInstalled',
+    test: () => false,
+  },
   { id: 'all', label: 'provider.localModelMarket.segAll', test: () => true },
   { id: 'u1', label: 'provider.localModelMarket.segU1', test: (b) => b !== null && b <= 1 },
   {
@@ -1084,28 +1092,36 @@ const LocalModelMarket: Component = () => {
         <div class="text-[11px] text-green-400/70">{notice()}</div>
       </Show>
 
-      {/* Model list (fills the remaining height; rows expand inline) */}
+      {/* Model list (fills the remaining height): the "installed" segment renders the
+          downloaded-models list; other segments render market rows that expand inline */}
       <Show
-        when={visibleModels().length > 0}
+        when={segment() === 'installed'}
         fallback={
-          <div class="text-xs text-[rgba(var(--text-base-rgb),0.45)] py-4 text-center">
-            {loading()
-              ? t('provider.localModelMarket.loading')
-              : t('provider.localModelMarket.empty')}
-          </div>
+          <Show
+            when={visibleModels().length > 0}
+            fallback={
+              <div class="text-xs text-[rgba(var(--text-base-rgb),0.45)] py-4 text-center">
+                {loading()
+                  ? t('provider.localModelMarket.loading')
+                  : t('provider.localModelMarket.empty')}
+              </div>
+            }
+          >
+            <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
+              <For each={visibleModels()}>{renderModelRow}</For>
+            </div>
+          </Show>
         }
       >
-        <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
-          <For each={visibleModels()}>{renderModelRow}</For>
-        </div>
-      </Show>
-
-      {/* Installed models */}
-      <Show when={installed().length > 0}>
-        <div class="shrink-0">
-          <div class="border-t mb-3" style={{ 'border-color': 'var(--border-dim)' }} />
-          <div class="section-label mb-2">{t('provider.localModelMarket.installedTitle')}</div>
-          <div class="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+        <Show
+          when={installed().length > 0}
+          fallback={
+            <div class="text-xs text-[rgba(var(--text-base-rgb),0.45)] py-4 text-center">
+              {t('provider.localModelMarket.installedEmpty')}
+            </div>
+          }
+        >
+          <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
             <For each={installed()}>
               {(m) => (
                 <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
@@ -1124,7 +1140,7 @@ const LocalModelMarket: Component = () => {
               )}
             </For>
           </div>
-        </div>
+        </Show>
       </Show>
     </div>
   );

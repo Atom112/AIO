@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第1项（子目标4/5）：主循环闭包 → AgentTurnRunner
+
+- **主循环闭包结构化（阶段4 第1项子目标）**：`run_agent_turn_inner` 内的 ~1230 行 `async move` 闭包此前隐式捕获 **24 个自由变量**（22 行 let-clone 捕获列表：窗口/应用句柄、取消令牌、流管理器、身份键、代次号、模型连接参数、预算……）——捕获集不可见、无结构、每加一个字段悄悄变长。新建 `commands/llm/turn_runner.rs`：`AgentTurnRunner` 结构体显式化全部 24 个捕获（字段即契约，带文档）；`run()` 顶部按原局部名解构重命名（`app: app_c`、`token: token_inner`、`turn_gen_id: turn_id_c`……），**1230 行循环体原样迁入零改动**；mod.rs 构造一次 runner 取代捕获列表。mod.rs **2285 → 1055 行**（较阶段起点 2755 已 -70%）；panic 兜底 epilogue（LOOP-6）与 StreamManager 注册侧所需的 `_g` 克隆保留在 mod.rs 并改从原参数取源；后续子目标（subagents 与主循环抽公共 agent_loop）以此为收敛面
+- **顺手清理**：mod.rs 仅为循环体服务的 9 项子模块导入与 6 项工具导入随迁删除
+
 ### 🧹 P3 性能杂项（记忆检索）：暴力回退评分流式化
 
 - **vector_search 回退路径流式评分（P3 性能杂项，索引 MEM-17/18 无详情、按代码热点核实）**：vec0 不可用时的暴力余弦回退此前先**整料化**全部解码向量（`Vec<(String, Vec<f32>)>`：n 次 id 克隆 + n 个堆向量），再交给 `brute_force_topk` 评分时**再克隆一次**全部 id、排序后只留 k 条——两轮全量分配/克隆仅为了取 top-k。改为行循环内直接解码评分（每行解码作用域化、id 只触一次），行错误保持 `collect_rows` 同款跳过+告警语义；`brute_force_topk`/`bytes_to_f32` 的失用导入随删（topk 本体保留供代码检索共用）

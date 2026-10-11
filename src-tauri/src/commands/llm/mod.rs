@@ -620,13 +620,13 @@ pub async fn call_llm_stream(
     //    waiting at all — the old epilogue's keyed remove could then delete the NEW
     //    task's entry. Now it waits like run_agent_turn, and the removal below is
     //    identity-matched (turn_id) so an outliving old task is harmless.
-    if let Some((_, (old_handle, old_token, _))) = state.0.remove(&task_key) {
-        old_token.cancel();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), old_handle).await;
-    }
+    // 阶段5: the replacement protocol lives on StreamManager (single source, tested).
+    state
+        .replace_generation(&task_key, std::time::Duration::from_secs(10))
+        .await;
 
     // 3. Clone variables for the async task (move closure)
-    let state_inner = state.0.clone();
+    let state_inner = state.inner().clone();
     let task_key_inner = task_key.clone();
     let assistant_id_c = assistant_id.clone();
     let topic_id_c = topic_id.clone();
@@ -738,14 +738,13 @@ pub async fn call_llm_stream(
             }
         }
 
-        // Remove the task from global state once it finishes (identity-matched, LOOP-1)
-        state_inner.remove_if(&task_key_inner, |_, (_, _, entry_turn)| {
-            entry_turn == &stream_turn_id_inner
-        });
+        // Remove the task from global state once it finishes (identity-matched, LOOP-1;
+        // 阶段5: protocol on StreamManager)
+        state_inner.remove_own(&task_key_inner, &stream_turn_id_inner);
     });
 
     // 5. Store the running task handle and cancellation token in global state
-    state.0.insert(task_key, (handle, token, stream_turn_id));
+    state.register(task_key, handle, token, stream_turn_id);
     Ok(())
 }
 
@@ -796,9 +795,8 @@ pub async fn stop_llm_stream(
 
     // Take the cancellation token and cancel; the task itself emits done and removes itself from state.
     // Note: cancel only, never abort, so the epilogue is guaranteed.
-    if let Some(entry) = state.0.get(&task_key) {
-        entry.1.cancel();
-    }
+    // 阶段5: the stop protocol lives on StreamManager (single source, tested).
+    state.cancel(&task_key);
     Ok(())
 }
 
@@ -1328,10 +1326,10 @@ pub(crate) async fn run_agent_turn_inner(
     // could run after the new insert and wrongly delete the new task's entry, leaving the new task orphaned.
     // (LOOP-1: the remove is now identity-matched, so even a task that outlives this 10s window —
     // e.g. stuck in a 300s command — can no longer corrupt the replacement's entry.)
-    if let Some((_, (old_handle, old_token, _))) = stream_mgr.0.remove(&task_key) {
-        old_token.cancel();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), old_handle).await;
-    }
+    // 阶段5: the replacement protocol lives on StreamManager (single source, tested).
+    stream_mgr
+        .replace_generation(&task_key, std::time::Duration::from_secs(10))
+        .await;
 
     // Convert messages to API format up front (incl. attachment image expansion) so synchronous I/O finishes while the lock is held
     let mut messages_for_api: Vec<serde_json::Value> = {
@@ -1406,7 +1404,7 @@ pub(crate) async fn run_agent_turn_inner(
 
     let token = CancellationToken::new();
     let token_inner = token.clone();
-    let state_inner = stream_mgr.0.clone();
+    let state_inner = stream_mgr.inner().clone();
     let task_key_inner = task_key.clone();
     let assistant_id_c = assistant_id.clone();
     let topic_id_c = topic_id.clone();
@@ -2702,9 +2700,8 @@ pub(crate) async fn run_agent_turn_inner(
         // Remove self from global state (LOOP-1: identity-matched remove — after a
         // replacement raced past the 10s wait, this entry may already belong to the
         // NEW task, and a keyed remove would orphan it)
-        state_inner.remove_if(&task_key_inner, |_, (_, _, entry_turn)| {
-            entry_turn == &turn_id_c
-        });
+        // 阶段5: protocol on StreamManager
+        state_inner.remove_own(&task_key_inner, &turn_id_c);
     };
 
     let handle = tokio::spawn(async move {
@@ -2743,15 +2740,12 @@ pub(crate) async fn run_agent_turn_inner(
                         images: None,
                     },
                 );
-                state_inner_g.remove_if(&task_key_g, |_, (_, _, entry_turn)| {
-                    entry_turn == &turn_id_g
-                });
+                // 阶段5: protocol on StreamManager (identity-matched panic epilogue)
+                state_inner_g.remove_own(&task_key_g, &turn_id_g);
             }
         }
     });
 
-    stream_mgr
-        .0
-        .insert(task_key, (handle, token, turn_id_public));
+    stream_mgr.register(task_key, handle, token, turn_id_public);
     Ok(())
 }

@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧪 阶段5 第4批：并发 run_agent_turn 换代测试（阶段5第3项全部完成）
+
+- **换代协议收敛 + 并发换代集成测试（报告阶段5第3项）**：流任务换代协议（注册 / replace_generation 取旧代→cancel→限时等待收尾 / remove_own 身份注销 / stop 取消）此前内联在 call_llm_stream 与 run_agent_turn 两处调用点（各一份 remove→cancel→wait + insert + remove_if，含 LOOP-6 panic 兜底 epilogue 的第三份 remove_if）——收进 `StreamManager` 成为单一来源（`state.rs`），六处调用点随迁。三个真实 spawn 任务 + CancellationToken 驱动的并发测试：**A** 协作旧代在等待窗口内完成收尾与自注销，新代注册后 stop 可找到并取消；**B** 旧代越窗滞留（卡在长命令）后补跑收尾——身份注销不腐蚀新代条目、stop 仍能找到新代（LOOP-1 核心回归：历史按键注销会把新代删成孤儿）；**C** 身份注销矩阵：持有者注销命中、他人 turn_id 注销零效果
+- **tokio test-util dev-dependency**：`start_paused` 暂停时钟使睡眠时序自动推进——换代窗口时序测试确定且瞬时（3 测试共 0.02s）；仅测试构建合入特性，发布构建运行时不变
+
 ### 🧪 阶段5 第3批：下载中途 kill 恢复集成测试（共享下载引擎）
 
 - **kill 恢复五场景集成测试（报告阶段5第3项）**：用 `http::Response` 合成 206/200 响应（`reqwest::Response: From<http::Response>`，`http` 声明为 dev-dependency——已在依赖树内零新增编译）直接驱动共享下载引擎，无需真实 HTTP 服务器。**A** 进程 kill 后重试：`.part` 检查点 + ETag sidecar 落盘 → 206 续传 → 追加 → 终长核对 → 原子 rename 出完整文件（kill 的字节一分不丢）；**B** 服务器中途断流（`wrap_stream` 未知长度 + Content-Length 虚高头，忠实模拟"头已声明、body 未送完"）：报"下载不完整"且检查点保留前缀+已收字节，绝不 rename 半截文件；**C** 取消：`.part` 与 `.etag` 一并清理；**D** 暂停：检查点保留全部已收字节供下次续传；**E** 全新下载（服务器忽略 Range 回 200）：truncate 分支，陈旧检查点被整体覆盖不与响应拼接

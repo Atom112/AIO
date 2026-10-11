@@ -4,17 +4,20 @@
 
 ## [Unreleased]
 
-### 🧱 阶段4 第1项（子目标5/5 首切片）：轮次产物构造收敛（round_artifacts）
+### 🧱 阶段4 第1项（子目标5/5 切片3）：工具结果展示三元组收敛
 
-- **两循环共享轮次产物（公共 agent_loop 地基）**：主循环（turn_runner.rs）与子代理循环（subagents.rs）各自手搓同一套轮次产物构造——assistant 消息追加（role/content/tool_calls）两处逐字段相同；role:tool 消息 4 字段构造在主循环内联重复 **3 次**、子代理 1 次变体；`[Error] {e}` 文本映射两循环各 2-3 处。全部收敛到新模块 `commands/llm/round_artifacts.rs`（assistant 追加 / tool_calls JSON / tool 消息推送 / 错误文本四个共享函数）+ 5 个形状回归测试；两循环 9 处内联构造改走共享实现（null_content 参数保留主循环的空串→JSON null 约定）——后续完整 agent_loop 引擎抽取的地基
-- **截断续写守卫共享（次切片）**：两循环的 `finish_reason="length"` 截断续写块（同一条续写指令 + 有界重试 + continue）逐字段相同、仅重试上限不同（主循环 MAX_LENGTH_RETRIES / 子代理 1）——收敛为 `try_length_continuation`（含续写预算与条件判定），两处接入；+2 测试（预算耗尽不续写 / 非 length 或有工具调用不续写）
-- **截断续写守卫共享（次切片）**：两循环的 `finish_reason="length"` 截断续写块（同一条续写指令 + 有界重试 + continue）逐字段相同、仅重试上限不同（主循环 MAX_LENGTH_RETRIES / 子代理 1）——收敛为 `try_length_continuation`（含续写预算与条件判定），两处接入；+2 测试（预算耗尽不续写 / 非 length 或有工具调用不续写）
-
+- **工具结果归一化共享（agent_loop 切片 3）**：`ToolResult → (前端文本, 结构化 JSON 值, is_error)` 的三元组转换在主循环内联重复 **3 处**（串行 MCP 分支 / 串行内建分支 / 并行 Phase-2 各 ~18 行）+ 子代理私有同构 `tool_result_text`（8 行文本提取）。全部收敛到 `round_artifacts.rs` 的 `tool_result_display` / `tool_result_text` 单一实现（含 serde 序列化形状回归测试）；两循环改走共享实现——共享构造面累计 **14 处内联消除，8 个回归测试**
 
 ### 🧱 阶段4 第2项（收官）：MessageBubble 拆分（ChatInterface 2057→1118，-46%）
 
 - **消息气泡抽出（阶段4 第2项最后切片，报告点名的 MessageBubble 路径）**：ChatInterface 的 732 行 per-message JSX（头像/气泡/附件/agent 过程块/生成图像/token 尾注/操作按钮（复制/分支/重发/编辑/删除/批量撤销）/文件变更 diff 面板）verbatim 抽至 `components/MessageBubble.tsx`（795 行，<900 达标）。约 20 个原组件作用域依赖全部经 `MessageBubbleProps`（24 字段惰性访问器接口）注入——Solid 响应式语义零变化（JSX 内读取本就惰性）；工具名聚合/行号统计（aggregateFileChanges/aggregateDiffStats）与 `as any` 冗余转型（5 处——msg 本就是 any）随迁清理；ChatInterface **2057 → 1118 行**（-46%，本阶段起点 2058）
 - **any 棘轮 97 → 93（净降 4）**：5 处 `as any` 转型（msg 已是 any，转型纯噪音）删除；新组件按门禁纪律全程类型化
+
+### 🧱 阶段4 第1项（子目标5/5 首切片）：轮次产物构造收敛（round_artifacts）
+
+- **两循环共享轮次产物（公共 agent_loop 地基）**：主循环（turn_runner.rs）与子代理循环（subagents.rs）各自手搓同一套轮次产物构造——assistant 消息追加（role/content/tool_calls）两处逐字段相同；role:tool 消息 4 字段构造在主循环内联重复 **3 次**、子代理 1 次变体；`[Error] {e}` 文本映射两循环各 2-3 处。全部收敛到新模块 `commands/llm/round_artifacts.rs`（assistant 追加 / tool_calls JSON / tool 消息推送 / 错误文本四个共享函数）+ 5 个形状回归测试；两循环 9 处内联构造改走共享实现（null_content 参数保留主循环的空串→JSON null 约定）——后续完整 agent_loop 引擎抽取的地基
+- **截断续写守卫共享（次切片）**：两循环的 `finish_reason="length"` 截断续写块（同一条续写指令 + 有界重试 + continue）逐字段相同、仅重试上限不同（主循环 MAX_LENGTH_RETRIES / 子代理 1）——收敛为 `try_length_continuation`（含续写预算与条件判定），两处接入；+2 测试（预算耗尽不续写 / 非 length 或有工具调用不续写）
+- **截断续写守卫共享（次切片）**：两循环的 `finish_reason="length"` 截断续写块（同一条续写指令 + 有界重试 + continue）逐字段相同、仅重试上限不同（主循环 MAX_LENGTH_RETRIES / 子代理 1）——收敛为 `try_length_continuation`（含续写预算与条件判定），两处接入；+2 测试（预算耗尽不续写 / 非 length 或有工具调用不续写）
 
 ### 🧱 阶段4 第2项（拆分切片6）：主发送路径接入 useChatSend + CHAT-10 清理抽出（+6 单测）
 

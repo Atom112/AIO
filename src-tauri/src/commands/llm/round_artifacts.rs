@@ -9,7 +9,37 @@
 //! 本模块是单一来源；两循环消费它，后续的完整 agent_loop 引擎抽取以此为地基。
 
 use super::streaming::{RoundResult, ToolCallAccum};
+use crate::core::models::ToolResult;
 use serde_json::{json, Value};
+
+/// Extracts a tool result's first text content (serializes the whole content when
+/// no text part exists). Shared by both loops — the main loop previously inlined
+/// this 8-line extraction at its serial and parallel dispatch sites, the subagent
+/// loop under a private helper of the identical body.
+pub(crate) fn tool_result_text(tr: &ToolResult) -> String {
+    tr.content
+        .iter()
+        .find(|c| c.kind == "text")
+        .and_then(|c| c.data.get("text"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default())
+}
+
+/// Normalizes a tool outcome to the display triple both loops consume:
+/// (frontend text, structured JSON value, is_error). Errors map to the shared
+/// `[Error] {e}` text + `{ "error": e }` value + `true` — the main loop previously
+/// duplicated this triple-conversion at both dispatch sites.
+pub(crate) fn tool_result_display(result: &Result<ToolResult, String>) -> (String, Value, bool) {
+    match result {
+        Ok(tr) => {
+            let text = tool_result_text(tr);
+            let result_value = serde_json::to_value(&tr.content).unwrap_or(json!([]));
+            (text, result_value, tr.is_error)
+        }
+        Err(e) => (tool_error_text(e), json!({ "error": e }), true),
+    }
+}
 
 /// Appends the round's assistant message (`role/content[/tool_calls]`) to the context.
 ///
@@ -228,5 +258,41 @@ mod tests {
         ));
         assert!(msgs.is_empty());
         assert_eq!(retries, 0);
+    }
+
+    /// Shared display-triple: text part wins over serialization; error maps to [Error].
+    #[test]
+    fn tool_result_display_normalizes_both_loops() {
+        use crate::core::models::{ToolResult, ToolResultContent};
+        let tr = ToolResult {
+            content: vec![ToolResultContent {
+                kind: "text".into(),
+                data: json!({ "text": "hello" }),
+            }],
+            is_error: false,
+        };
+        let (text, value, is_err) = tool_result_display(&Ok(tr));
+        assert_eq!(text, "hello");
+        // ToolResultContent serializes with its serde field names ({type, text}), not the Rust struct fields
+        assert_eq!(value, json!([{ "type": "text", "text": "hello" }]));
+        assert!(!is_err);
+
+        // No text part -> whole-content serialization
+        let tr2 = ToolResult {
+            content: vec![ToolResultContent {
+                kind: "image".into(),
+                data: json!({"url": "u"}),
+            }],
+            is_error: true,
+        };
+        let (text2, _, is_err2) = tool_result_display(&Ok(tr2));
+        assert!(text2.contains("image"));
+        assert!(is_err2);
+
+        // Error -> shared [Error] text
+        let (text3, value3, is_err3) = tool_result_display(&Err("boom".into()));
+        assert_eq!(text3, "[Error] boom");
+        assert_eq!(value3, json!({ "error": "boom" }));
+        assert!(is_err3);
     }
 }

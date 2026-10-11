@@ -32,15 +32,12 @@ pub(crate) fn non_streaming_http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// Normalizes the chat completions URL via the provider plugin system.
-/// For Ollama (port 11434 / localhost / ollama keyword), the /v1 prefix is inserted automatically.
-pub(crate) fn normalize_chat_url(api_url: &str) -> String {
-    let mgr = crate::plugins::provider::ProviderManager::new();
-    let plugin = mgr.for_url(api_url);
-    plugin.chat_completions_url(api_url)
-}
-
-/// Sends a chat completion request, auto-adapting to the native Anthropic protocol (URL / auth / request body conversion).
+/// Sends a chat completion request — 阶段4 第5项（聊天路径统一出口）: the provider
+/// plugin system owns the whole request shape. `chat_completions_url` builds the
+/// endpoint, `apply_chat_auth` attaches auth (Bearer by default; Anthropic its
+/// native headers; Ollama none — the historic two hardcoded branches and the
+/// second host-matching call are gone), and the Anthropic native protocol adapts
+/// the body when the dispatched plugin is Anthropic.
 /// Returns (response, is_anthropic); the caller parses the response accordingly.
 pub(crate) async fn post_chat_completion(
     client: &reqwest::Client,
@@ -48,32 +45,23 @@ pub(crate) async fn post_chat_completion(
     api_key: &str,
     body: &serde_json::Value,
 ) -> Result<(reqwest::Response, bool), String> {
-    let endpoint = normalize_chat_url(api_url);
-    let is_anthropic = crate::plugins::provider::anthropic::is_anthropic_url(api_url);
-    if is_anthropic {
-        let anthropic_body = crate::plugins::provider::anthropic::to_anthropic_body(body)?;
-        let res = client
-            .post(&endpoint)
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&anthropic_body)
-            .send()
-            .await
-            // PROV-11: reqwest's Display carries the full URL (Gemini-style auth puts
-            // the key in ?key=...) — redact before the text reaches toasts/logs.
-            // The "error sending request …" prefix is preserved for retry detection.
-            .map_err(|e| crate::plugins::provider::redact_urls_in(&e.to_string()))?;
-        Ok((res, true))
+    let plugin = crate::plugins::provider::ProviderManager::new().for_url(api_url);
+    let endpoint = plugin.chat_completions_url(api_url);
+    let is_anthropic = plugin.identifier() == "anthropic";
+    let request_body = if is_anthropic {
+        crate::plugins::provider::anthropic::to_anthropic_body(body)?
     } else {
-        let res = client
-            .post(&endpoint)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| crate::plugins::provider::redact_urls_in(&e.to_string()))?;
-        Ok((res, false))
-    }
+        body.clone()
+    };
+    let req = plugin.apply_chat_auth(client.post(&endpoint).json(&request_body), api_key);
+    let res = req
+        .send()
+        .await
+        // PROV-11: reqwest's Display carries the full URL (Gemini-style auth puts
+        // the key in ?key=...) — redact before the text reaches toasts/logs.
+        // The "error sending request …" prefix is preserved for retry detection.
+        .map_err(|e| crate::plugins::provider::redact_urls_in(&e.to_string()))?;
+    Ok((res, is_anthropic))
 }
 
 /// Whether an HTTP status is worth retrying (rate limiting + transient gateway/server faults).

@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第5项：ProviderPlugin 聊天路径统一出口 + 双注册表消除
+
+- **聊天路径统一出口（阶段4 第5项）**：`post_chat_completion` 此前在 Anthropic 分支硬编码 `x-api-key`/`anthropic-version` 头、else 分支硬编码 Bearer，并用 `is_anthropic_url` 做第二套 host 匹配（与插件注册表重复）。现在整个请求形状全部走插件系统：`chat_completions_url` 构端点（原有）、新增 trait 方法 **`apply_chat_auth`** 挂认证（默认 Bearer——OpenAI 兼容约定，空 key 不发头；Anthropic 覆写为其原生双头；Ollama 覆写为无认证）、Anthropic 判定改为 `plugin.identifier()` 注册表分发。Google 特殊性显式化：models 走原生端点（x-goog-api-key）而 chat 走 OpenAI 兼容端点（Bearer 文档形式）——apply_auth/apply_chat_auth 两方法分离使两个 API 面的差异成为类型系统内的一等公民，Google chat 行为零变化
+- **boxed_for_url 双注册表消除（阶段4 第5项）**：Manager 改持 `Vec<Arc<dyn ProviderPlugin>>`，`for_url` 返回 **Arc 克隆**（插件自然超越管理器存活）——旧 `boxed_for_url` 按 identifier 重建 Box 的第二注册表整体删除（加新插件曾要同时登记两处，且对"已注册但未重建映射"的插件会静默误分发到兜底）；`provider_config.rs` 两处调用点随迁
+- **回归测试**：新注册插件经 `for_url` 即刻生效且 Arc 超越管理器存活——旧双注册表对同一 URL 会错误重建出 openai_compat，该缺陷随测试固化为历史注记
+
 ### 🧱 阶段4 第6项（续）：core/utils/cache.ts SWR 缓存工厂
 
 - **共享 localStorage JSON 缓存工厂（阶段4 第6项收尾）**：新建 `core/utils/cache.ts` 的 `createJsonCache`——读（惰性 getItem + JSON.parse + 形状校验降级 null + **解析备忘**：每次加载只解析一次，write 后刷新）、写（stringify + setItem，配额/禁用错误吞掉——缓存尽力而为不阻塞功能）、`isFresh`（三市场共用的 6h TTL 判定）。三个市场页各持的手写 readCache/writeCache 副本全部收敛：SkillList（多桶 + 桶时间戳 + 模式演进回填）、McpServerList（单对象）、LocalModelMarket（FE-17 手搓解析备忘被工厂取代）；5 个单测覆盖读写回路/损坏降级/备忘语义/配额吞错/TTL 边界（Node 环境注入内存 localStorage stub）

@@ -16,6 +16,9 @@ import { Component, createSignal, For, Show, onMount, createMemo } from 'solid-j
 import { useNavigate } from '@solidjs/router';
 import { saveProviderMap } from '../../../core/api/providers';
 import Icon from '../../../shared/components/Icon';
+import Switch from '../../../shared/components/Switch';
+// 阶段4（设置样板收敛）: shared toast state + bubble
+import { ToastBubble, useToast } from '../../../shared/components/Toast';
 import {
   btnBadge,
   btnDanger,
@@ -108,7 +111,8 @@ const ProviderList: Component = () => {
   const navigate = useNavigate();
 
   const [search, setSearch] = createSignal('');
-  const [toast, setToast] = createSignal<{ msg: string; ok: boolean } | null>(null);
+  // 阶段4（设置样板收敛）: shared toast state
+  const { toast, showToast } = useToast();
 
   const [showAddCustom, setShowAddCustom] = createSignal(false);
   const [newCustomName, setNewCustomName] = createSignal('');
@@ -167,12 +171,10 @@ const ProviderList: Component = () => {
       await saveProviderMap(next);
       setProviderConfigs(next);
       if (okMsg) {
-        setToast({ msg: okMsg, ok: true });
-        setTimeout(() => setToast(null), 2000);
+        showToast(okMsg, true, 2000);
       }
     } catch (e) {
-      setToast({ msg: reportError('error.save', e), ok: false });
-      setTimeout(() => setToast(null), 3000);
+      showToast(reportError('error.save', e), false);
     }
   };
 
@@ -228,8 +230,7 @@ const ProviderList: Component = () => {
         setShowAddCustom(false);
         setNewCustomName('');
         setNewCustomUrl('');
-        setToast({ msg: t('provider.customAdded', { name }), ok: true });
-        setTimeout(() => setToast(null), 2000);
+        showToast(t('provider.customAdded', { name }), true, 2000);
       })
       .catch((e) => alert(reportError('error.save', e)));
   };
@@ -456,31 +457,13 @@ const ProviderList: Component = () => {
                         count: formatNumber(cfg.enabledModels.length),
                       })}
                     </span>
-                    <button
-                      type="button"
-                      class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-                      style={{
-                        transition:
-                          'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-                        ...(cfg.enabled
-                          ? {
-                              background: 'rgba(var(--primary-rgb), 0.7)',
-                              'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                              'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                            }
-                          : {}),
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleEnabled(cfg.id, cfg.enabled);
-                      }}
-                      title={cfg.enabled ? t('common.disable') : t('common.enable')}
-                    >
-                      <span
-                        class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-                        style={{ transform: cfg.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-                      />
-                    </button>
+                    <Switch
+                      variant="glow"
+                      checked={cfg.enabled}
+                      onChange={() => toggleEnabled(cfg.id, cfg.enabled)}
+                      stopPropagation
+                      label={cfg.enabled ? t('common.disable') : t('common.enable')}
+                    />
                     <button
                       type="button"
                       class={btnDanger}
@@ -533,31 +516,13 @@ const ProviderList: Component = () => {
                         count: formatNumber(cfg.enabledModels.length),
                       })}
                     </span>
-                    <button
-                      type="button"
-                      class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-                      style={{
-                        transition:
-                          'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-                        ...(cfg.enabled
-                          ? {
-                              background: 'rgba(var(--primary-rgb), 0.7)',
-                              'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                              'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                            }
-                          : {}),
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleEnabled(cfg.id, cfg.enabled);
-                      }}
-                      title={cfg.enabled ? t('common.disable') : t('common.enable')}
-                    >
-                      <span
-                        class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-                        style={{ transform: cfg.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-                      />
-                    </button>
+                    <Switch
+                      variant="glow"
+                      checked={cfg.enabled}
+                      onChange={() => toggleEnabled(cfg.id, cfg.enabled)}
+                      stopPropagation
+                      label={cfg.enabled ? t('common.disable') : t('common.enable')}
+                    />
                     <button
                       type="button"
                       class={btnDanger}
@@ -576,23 +541,8 @@ const ProviderList: Component = () => {
         </Show>
       </Show>
 
-      {/* Toast notification */}
-      <Show when={toast()}>
-        <div
-          class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"
-          classList={{
-            'text-green-300': toast()!.ok,
-            'text-red-300': !toast()!.ok,
-          }}
-          style={{
-            background: 'rgba(var(--surface-bg), 0.88)',
-            'backdrop-filter': 'blur(20px) saturate(150%)',
-            animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
-          }}
-        >
-          {toast()!.msg}
-        </div>
-      </Show>
+      {/* 阶段4（设置样板收敛）: shared toast bubble */}
+      <ToastBubble toast={toast()} />
     </div>
   );
 };
@@ -679,31 +629,13 @@ const ProviderRow: Component<{
           </Show>
         </div>
       </div>
-      <button
-        type="button"
-        class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-        style={{
-          transition:
-            'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-          ...(isEnabled()
-            ? {
-                background: 'rgba(var(--primary-rgb), 0.7)',
-                'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-              }
-            : {}),
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          props.onToggleEnabled(props.provider.id, isEnabled());
-        }}
-        title={isEnabled() ? t('mcp.detail.clickToDisable') : t('mcp.detail.clickToEnable')}
-      >
-        <span
-          class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-          style={{ transform: isEnabled() ? 'translateX(21px)' : 'translateX(3px)' }}
-        />
-      </button>
+      <Switch
+        variant="glow"
+        checked={isEnabled()}
+        onChange={() => props.onToggleEnabled(props.provider.id, isEnabled())}
+        stopPropagation
+        label={isEnabled() ? t('mcp.detail.clickToDisable') : t('mcp.detail.clickToEnable')}
+      />
       <span class="text-[rgba(var(--text-base-rgb),0.4)] text-lg transition-transform duration-200 group-hover:translate-x-0.5">
         ›
       </span>

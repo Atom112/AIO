@@ -36,6 +36,9 @@ import { getProviderLogo } from '../../core/utils/modelLogo';
 import ModelRow from '../../shared/components/ModelRow';
 import Icon from '../../shared/components/Icon';
 import Dropdown from '../../shared/components/Dropdown';
+// 阶段4（设置样板收敛）: shared glow switch + toast (was per-page inline copies)
+import Switch from '../../shared/components/Switch';
+import { ToastBubble, useToast } from '../../shared/components/Toast';
 import {
   btnDanger,
   btnIcon,
@@ -69,7 +72,8 @@ const ProviderDetail: Component = () => {
 
   // ===== catalog / state =====
   const [catalogReady, setCatalogReady] = createSignal(false);
-  const [toast, setToast] = createSignal<{ msg: string; ok: boolean } | null>(null);
+  // 阶段4（设置样板收敛）: shared toast state (timer auto-cleared on replace + dispose)
+  const { toast, showToast } = useToast();
 
   const [testState, setTestState] = createSignal<{
     status: 'idle' | 'testing' | 'ok' | 'fail';
@@ -194,8 +198,7 @@ const ProviderDetail: Component = () => {
           setProviderConfigs(map);
         })
         .catch((e) => {
-          setToast({ msg: reportError('error.save', e), ok: false });
-          setTimeout(() => setToast(null), 3000);
+          showToast(reportError('error.save', e), false);
         });
       return persistChain;
     };
@@ -283,8 +286,7 @@ const ProviderDetail: Component = () => {
       const paths = u?.localModelPaths ?? {};
       const modelPath = Object.values(paths)[0];
       if (!modelPath) {
-        setToast({ msg: t('provider.modelRequired'), ok: false });
-        setTimeout(() => setToast(null), 3000);
+        showToast(t('provider.modelRequired'), false);
         return;
       }
       const port = def.engineType === 'vllm' ? 8000 : def.engineType === 'ollama' ? 11434 : 8080;
@@ -296,14 +298,9 @@ const ProviderDetail: Component = () => {
         trustRemoteCode: false,
       });
       setIsServerAlive('alive');
-      setToast({
-        msg: t('provider.localStarted', { name: modelPath, engine: def.name }),
-        ok: true,
-      });
-      setTimeout(() => setToast(null), 3000);
+      showToast(t('provider.localStarted', { name: modelPath, engine: def.name }), true);
     } catch (e) {
-      setToast({ msg: t('provider.localFailed', { error: String(e) }), ok: false });
-      setTimeout(() => setToast(null), 3000);
+      showToast(t('provider.localFailed', { error: String(e) }), false);
     } finally {
       setEngineActionLoading(false);
     }
@@ -316,12 +313,10 @@ const ProviderDetail: Component = () => {
     try {
       await stopLocalServer(def.engineType);
       setIsServerAlive('dead');
-      setToast({ msg: t('provider.localStopped'), ok: true });
-      setTimeout(() => setToast(null), 3000);
+      showToast(t('provider.localStopped'), true);
     } catch (e) {
       // FE-9: raw String(e) echoed provider/transport internals; wrap in i18n
-      setToast({ msg: t('provider.stopFailed', { error: String(e) }), ok: false });
-      setTimeout(() => setToast(null), 3000);
+      showToast(t('provider.stopFailed', { error: String(e) }), false);
     } finally {
       setEngineActionLoading(false);
     }
@@ -702,38 +697,22 @@ const ProviderDetail: Component = () => {
 
           {/* Enable toggle + action buttons */}
           <div class="flex items-center gap-3 flex-wrap pt-3 border-t border-white/5">
-            <button
-              type="button"
-              class="flex items-center gap-2.5 cursor-pointer bg-transparent border-0 p-0"
-              onClick={() => toggleProviderEnabled(!(userCfg()?.enabled ?? false))}
-            >
-              <span
-                class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-                style={(() => {
-                  const on = userCfg()?.enabled ?? false;
-                  return {
-                    transition:
-                      'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-                    ...(on
-                      ? {
-                          background: 'rgba(var(--primary-rgb), 0.7)',
-                          'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                          'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                        }
-                      : {}),
-                  };
-                })()}
+            {/* 阶段4（设置样板收敛）: glow switch is the shared component; the label stays a
+                plain button (switch-in-button is invalid HTML) */}
+            <div class="flex items-center gap-2.5">
+              <Switch
+                variant="glow"
+                checked={userCfg()?.enabled ?? false}
+                onChange={(v) => toggleProviderEnabled(v)}
+              />
+              <button
+                type="button"
+                class="text-sm text-white bg-transparent border-0 p-0 cursor-pointer"
+                onClick={() => toggleProviderEnabled(!(userCfg()?.enabled ?? false))}
               >
-                <span
-                  class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-                  style={{
-                    transform:
-                      (userCfg()?.enabled ?? false) ? 'translateX(21px)' : 'translateX(3px)',
-                  }}
-                />
-              </span>
-              <span class="text-sm text-white">{t('provider.enableProvider')}</span>
-            </button>
+                {t('provider.enableProvider')}
+              </button>
+            </div>
             <button
               type="button"
               class={btnSecondarySm}
@@ -1175,23 +1154,8 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* Toast notification */}
-        <Show when={toast()}>
-          <div
-            class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"
-            classList={{
-              'text-green-300': toast()!.ok,
-              'text-red-300': !toast()!.ok,
-            }}
-            style={{
-              background: 'rgba(var(--surface-bg), 0.88)',
-              'backdrop-filter': 'blur(20px) saturate(150%)',
-              animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
-            }}
-          >
-            {toast()!.msg}
-          </div>
-        </Show>
+        {/* 阶段4（设置样板收敛）: shared toast bubble */}
+        <ToastBubble toast={toast()} />
       </div>
     </div>
   );

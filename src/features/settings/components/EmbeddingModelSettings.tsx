@@ -12,6 +12,7 @@ import { Component, createMemo, createSignal, For, Show, onMount } from 'solid-j
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon from '../../../shared/components/Icon';
+import Switch from '../../../shared/components/Switch';
 import { btnDangerBadge, btnSecondarySm } from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 import {
@@ -312,32 +313,16 @@ const EmbeddingModelSettings: Component = () => {
               </button>
             </Show>
           </Show>
-          <button
-            type="button"
-            class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none"
-            style={{
-              transition:
-                'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-              ...(m.enabled
-                ? {
-                    background: 'rgba(var(--primary-rgb), 0.7)',
-                    'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                    'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                  }
-                : {}),
-            }}
-            onClick={() => void toggleEnabled(m)}
-            title={
+          <Switch
+            variant="glow"
+            checked={m.enabled}
+            onChange={() => void toggleEnabled(m)}
+            label={
               m.enabled
                 ? t('settings.embeddingModels.disable')
                 : t('settings.embeddingModels.enable')
             }
-          >
-            <span
-              class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-              style={{ transform: m.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-            />
-          </button>
+          />
         </div>
       </div>
     );

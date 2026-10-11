@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🔧 Agent 工具链修复（web_search / LSP）
+
+- **web_search 换真实搜索引擎链**：原实现打的是 DuckDuckGo **Instant Answer API**（`api.duckduckgo.com`）——那是主题摘要查询接口而非搜索后端，绝大多数查询（尤其中文词）返回空载荷，导致 web_search 几乎每次都报「未找到相关结果」（工具可用性检查中暴露：连续 3 次不同查询均空）。现改为四级回退链：**Bing 结果页（主源，普通 HTTP 客户端即可用、国内免代理可达）→ DDG html 端点 → DDG lite 端点 → IA API 兜底**；搜索请求伪装成桌面浏览器形状（UA + Accept/Accept-Language，DDG html/lite 对非浏览器指纹会弹 JS 挑战页）；解析层支持三套标记（Bing `b_algo` 块 + DDG `result__a`/`result-link` 两种布局），统一解出 `uddg` 重定向与 Bing `/ck/a` base64url 重定向的真实 URL、过滤广告位（y.js/aclick/b_ad）、解码命名+数字 HTML 实体；响应 256KB 上限流式读取（SEC-08 同款）；+4 解析单测 + 真实端到端冒烟验证（「python 官方文档」返回带标题/URL/摘要的真结果）
+- **LSP 工具按需启动语言服务器**：`lsp_definition/references/hover/symbols` 此前在服务器未运行时报「请先使用 auto_detect_ls 工具启动语言服务器」——但那是前端 Tauri 命令，Agent 工具集中不存在，整条链路死胡同（检查中确认 python 链不可用）。现改为按需懒启动：首次调用对应语言文件的 LSP 工具时自动 spawn 并完成握手（per-(项目,语言) 互斥锁防并发双启、启动成功上报 `lsp-server-status` 事件与前端自动启动路径对齐）；启动失败（典型：服务器未安装）报错附各服务器安装指引（pyright/rust-analyzer/tsserver/gopls）。后台记忆代码索引路径保持被动不拉起服务器；read_lints 空态提示同步修正为可行动指引
+- **docs**：agent-tools（zh/en）LSP 段落更新为按需启动语义、web_search 描述更新为 Bing 优先
+
 ### 🎨 设置页 UI 微调
 
 - **并行写入隔离下拉样式统一**：原生 `<select>`（黑底内联样式、与卡片风格脱节）替换为与上方语言选择一致的自定义下拉（同按钮/面板/选中项样式、选中项 check 图标、点击外部关闭、ARIA listbox 语义）

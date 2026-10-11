@@ -222,7 +222,7 @@ Create a commit.
 
 Source: `src-tauri/src/utils/lsp_tools.rs`, `src-tauri/src/utils/lsp_agent_tools.rs`
 
-Requires a language server for the corresponding file type to be running in the project. LSP startup failure does not affect other tools.
+If the language server for the file type is not running, it is started on demand when an LSP tool is called (the server must be installed locally, e.g. `pyright-langserver`, `rust-analyzer`, `typescript-language-server`, `gopls`). LSP startup failure does not affect other tools.
 
 ### `read_lints`
 
@@ -305,7 +305,7 @@ Search the web.
 
 | Item            | Value                                                                                                             |
 | --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Description** | Search the web via DuckDuckGo, returning result snippets and links.                                               |
+| **Description** | Search the web (Bing first, DuckDuckGo fallback), returning result snippets and links.                            |
 | **Parameters**  | `query` (string, required) -- search query; `count` (integer, optional) -- number of results to return, default 5 |
 | **Return**      | Result snippets + link list                                                                                       |
 | **Limits**      | 3-second rate limit interval (same process); HTTPS only                                                           |

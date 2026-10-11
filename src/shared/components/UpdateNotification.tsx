@@ -54,7 +54,7 @@ const UpdateNotification: Component = () => {
       setAppUpdateProgress(1);
       setAppUpdateReady(true);
     } catch (e) {
-      console.error('下载更新失败:', e);
+      console.error('Update download failed:', e);
       setError(t('update.downloadFailed'));
     } finally {
       setAppUpdateDownloading(false);
@@ -79,7 +79,7 @@ const UpdateNotification: Component = () => {
     try {
       await restartApp();
     } catch (e) {
-      console.error('重启失败:', e);
+      console.error('Restart failed:', e);
       setError(t('update.restartFailed'));
     }
   };
@@ -92,7 +92,7 @@ const UpdateNotification: Component = () => {
         setAppUpdateProgress(Math.max(0, Math.min(1, pct)));
       });
     } catch (e) {
-      console.warn('监听 app-update-progress 失败:', e);
+      console.warn('Failed to listen to app-update-progress:', e);
     }
   });
 

@@ -229,7 +229,7 @@ const SkillList: Component = () => {
           const list = await listSkills(pid);
           setSkills(Object.fromEntries(list.map((skill) => [skill.id, skill])));
         } catch (e) {
-          console.warn('切换 Skill 范围失败:', e);
+          console.warn('Failed to switch skill scope:', e);
         }
       },
       { defer: true },

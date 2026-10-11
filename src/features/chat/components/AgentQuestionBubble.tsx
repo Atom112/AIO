@@ -62,7 +62,7 @@ const AgentQuestionBubble: Component<AgentQuestionBubbleProps> = (props) => {
     try {
       await respondAgentQuestion(props.question.requestId, false, answers);
     } catch (e) {
-      console.error('发送回答失败:', e);
+      console.error('Failed to send answer:', e);
     } finally {
       setSubmitting(false);
       props.onResolved(props.question.requestId);
@@ -75,7 +75,7 @@ const AgentQuestionBubble: Component<AgentQuestionBubbleProps> = (props) => {
     try {
       await respondAgentQuestion(props.question.requestId, true, []);
     } catch (e) {
-      console.error('发送跳过结果失败:', e);
+      console.error('Failed to send skip result:', e);
     } finally {
       setSubmitting(false);
       props.onResolved(props.question.requestId);

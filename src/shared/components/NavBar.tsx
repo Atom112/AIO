@@ -49,7 +49,7 @@ const NavBar: Component = () => {
             trustRemoteCode: false,
           });
         } catch (e) {
-          console.error('自动启动本地模型失败:', e);
+          console.error('Failed to auto-start the local model:', e);
         }
       }
       return;
@@ -90,7 +90,7 @@ const NavBar: Component = () => {
         }
       }
     } catch (e) {
-      console.error('初始化数据失败:', e);
+      console.error('Failed to initialize data:', e);
     }
 
     setIsMaximized(await appWindow.isMaximized());

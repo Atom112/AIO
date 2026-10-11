@@ -74,7 +74,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
       const st = await memoryGetStatus(pid);
       setMemoryStatus(st);
     } catch (err) {
-      console.warn('切换项目记忆失败:', err);
+      console.warn('Failed to toggle project memory:', err);
     }
   };
 

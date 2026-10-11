@@ -41,7 +41,7 @@ const UsageSettings: Component = () => {
       setSummary(s);
       setByModel(m);
     } catch (e) {
-      console.error('获取用量数据失败:', e);
+      console.error('Failed to fetch usage data:', e);
       setError(reportError('error.load', e));
     } finally {
       setLoading(false);
@@ -54,7 +54,7 @@ const UsageSettings: Component = () => {
       const m = await getUsageSummaryByModel(range().days, date);
       setByModel(m);
     } catch (e) {
-      console.error('获取单日模型分布失败:', e);
+      console.error('Failed to fetch per-model day distribution:', e);
     }
   };
 

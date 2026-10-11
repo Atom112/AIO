@@ -155,7 +155,7 @@ export const initMcpServers = async (projectId?: string | null) => {
       await Promise.allSettled(autoStartIds.map((id) => startMcpServerAndRefresh(id, pid)));
     }
   } catch (e) {
-    console.warn('加载 MCP server 列表失败:', e);
+    console.warn('Failed to load MCP server list:', e);
   }
 };
 
@@ -176,7 +176,7 @@ export const confirmProjectMcpServer = async (cfg: McpServerConfig): Promise<voi
       // Start failure is surfaced via mcp-server-status; trust itself already succeeded
     });
   } catch (e) {
-    console.warn('信任项目 MCP server 失败:', e);
+    console.warn('Failed to trust project MCP server:', e);
   }
 };
 
@@ -229,7 +229,7 @@ export const refreshMcpToolsCache = async () => {
     const tools = await listMcpTools(currentProjectId());
     setMcpToolsCache(tools);
   } catch (e) {
-    console.warn('刷新 MCP 工具缓存失败:', e);
+    console.warn('Failed to refresh MCP tool cache:', e);
   }
 };
 
@@ -306,7 +306,7 @@ export const saveSingleAssistantToBackend = async (id: string) => {
     // Deep-clone to strip the SolidJS reactive proxy so the value is serializable
     await saveAssistantApi(JSON.parse(JSON.stringify(asst)));
   } catch (err) {
-    console.error('保存助手失败:', err);
+    console.error('Failed to save assistant:', err);
   }
 };
 
@@ -364,7 +364,7 @@ export const deleteAssistantFile = async (id: string) => {
   try {
     await deleteAssistantApi(id);
   } catch (err) {
-    console.error('物理删除失败:', err);
+    console.error('Failed to hard-delete:', err);
   }
 };
 
@@ -434,7 +434,7 @@ export const initSkills = async (projectId?: string | null) => {
     const list = await listSkills(projectId);
     setSkills(Object.fromEntries(list.map((skill) => [skill.id, skill])));
   } catch (e) {
-    console.warn('加载 Skill 列表失败:', e);
+    console.warn('Failed to load skill list:', e);
   }
 };
 

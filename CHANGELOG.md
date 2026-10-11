@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧹 P3 前端打磨（续）：console 中文硬编码清理（66 处）
+
+- **console 消息语言统一（P3）**：console.log/warn/error 的 66 处中文硬编码消息全部翻译为英文——console 是开发者日志非 UI 文案（i18n 不适用），项目既有约定即英文（`[shortcuts]`/`[models]`/`[openSafeUrl]` 等标签本为英文，混杂中文造成日志风格漂移）；逐条人工映射翻译（保留 `[tag]` 前缀、错误对象参数与模板变量），组件/核心/共享层覆盖 25 个文件；扫描器复核归零
+
 ### 🧱 阶段4 第1项（子目标3/5）：delegate 参数打包工厂（DelegateContext）
 
 - **继承执行上下文打包（阶段4 第1项子目标）**：`handle_delegate_task` / `handle_delegate_tasks` 各持 17 个独立参数，其中 15 个是主循环逐项克隆再按位传的"继承执行上下文"——主循环三处调用点（后台 fire-and-forget 委派 / 单任务并行委派 / 批量并行委派）各自维护一份 17 行克隆瀑布 + 参数瀑布，每加一个上下文字段要同步改 2 处函数签名 + 3 处调用点 + 1 处 workflow 转发。新建 `commands/llm/delegate_ctx.rs` 的 `DelegateContext`（owned、可 Clone/move 进 spawn）：两函数签名收敛为 `(ctx, arguments)`，函数体顶部一次性本地绑定（其余零改动）；三处调用点以单次 ctx 构造替代克隆瀑布；workflow 步骤转发同切——**新增上下文字段只改一个结构体定义**

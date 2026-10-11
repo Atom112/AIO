@@ -24,6 +24,7 @@ import { registerChatCommands } from './hooks/chatCommands';
 import { usePanelResize } from './hooks/usePanelResize';
 import { useBtwQuestion } from './hooks/useBtwQuestion';
 import { useAttachments } from './hooks/useAttachments';
+import { useChatSend } from './hooks/useChatSend';
 // 阶段4 第2项（拆分切片）：API 载荷消息构建三件套抽至 utils/apiMessages（纯函数 + 11 单测）
 import { buildApiMessages, ensureToolMessagesComplete } from './utils/apiMessages';
 import { TOOL_INTERRUPTED } from './constants';
@@ -279,6 +280,16 @@ const ChatPage: Component = () => {
     setPendingFiles,
     setIsProcessing,
   });
+  // 阶段4 第2项（拆分切片）：共享的 run_agent_turn 载荷组装 + thinking 生命周期
+  const { startAgentTurn } = useChatSend({
+    selectedModel,
+    currentAssistantId,
+    currentTopicId,
+    currentProjectId,
+    webSearchEnabled,
+    setIsThinking,
+    setTypingIndex,
+  });
 
   /** Topic shown in the share modal: prefer the ID set from the TopicSidebar context menu, otherwise the active topic */
   const shareTopic = (): Topic | null => {
@@ -427,29 +438,12 @@ const ChatPage: Component = () => {
       (h: any[]) => [...h, newUserMsg],
     );
 
-    // call the LLM
-    try {
-      setIsThinking(true);
-      await runAgentTurn({
-        ...llmCreds(currentMdl),
-        assistantId: asstId,
-        topicId,
-        messages: messagesForAI,
-        mcpServerIds: currentAsst?.mcpServerIds ?? [],
-        agentMode,
-        projectId: currentProjectId() ?? null,
-        webSearchEnabled: webSearchEnabled(),
-        profileModelOverrides: [],
-        customSubagentProfiles: [],
-        locale: locale(),
-        contextWindow: await getModelContextWindow(),
-        skills: agentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
-      });
-    } catch (err) {
-      alert(err);
-      setIsThinking(false);
-      setTypingIndex(null);
-    }
+    // call the LLM (shared payload + thinking lifecycle in useChatSend)
+    await startAgentTurn({
+      messages: messagesForAI,
+      agentMode,
+      skills: agentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
+    });
   };
 
   // ===== Checkpoint resume: "continue unfinished turn" entry for crash-orphaned turns =====
@@ -478,28 +472,14 @@ const ChatPage: Component = () => {
     const currentAsst = datas.assistants.find((a: Assistant) => a.id === asstId);
     const resumeAgentMode = currentAsst?.agentMode || 'off';
     setActiveCheckpoint(null);
-    setIsThinking(true);
-    try {
-      await runAgentTurn({
-        ...llmCreds(currentMdl),
-        assistantId: asstId,
-        topicId: tid,
-        messages: [], // on resume the backend substitutes the checkpoint snapshot; frontend messages are unused
-        mcpServerIds: currentAsst?.mcpServerIds ?? [],
-        agentMode: resumeAgentMode,
-        projectId: currentProjectId() ?? null,
-        webSearchEnabled: webSearchEnabled(),
-        profileModelOverrides: [],
-        customSubagentProfiles: [],
-        locale: locale(),
-        contextWindow: await getModelContextWindow(),
-        skills: resumeAgentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
-        resumeTurnId: cp.turnId,
-      });
-    } catch (err) {
-      alert(err);
-      setIsThinking(false);
-    }
+    // shared payload + thinking lifecycle in useChatSend; the backend substitutes
+    // the checkpoint snapshot on resume (frontend messages unused)
+    await startAgentTurn({
+      messages: [],
+      agentMode: resumeAgentMode,
+      skills: resumeAgentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
+      resumeTurnId: cp.turnId,
+    });
   };
 
   /**

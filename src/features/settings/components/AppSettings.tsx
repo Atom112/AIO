@@ -12,7 +12,7 @@ import {
 import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   loadAppConfig,
-  saveAppConfig,
+  patchAppConfig,
   setAutoStart as apiSetAutoStart,
 } from '../../../core/api/config';
 import { checkAppUpdate, type CheckUpdateResult } from '../../../core/api/update';
@@ -43,6 +43,7 @@ import {
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
 import NumberInput from '../../../shared/components/NumberInput';
+import Switch from '../../../shared/components/Switch';
 import {
   btnIcon,
   btnPrimary,
@@ -85,7 +86,24 @@ const AppSettings: Component = () => {
   const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // Reset-all confirmation state
   const [langOpen, setLangOpen] = createSignal(false); // Language dropdown open state
   let langRef: HTMLDivElement | undefined; // Language dropdown container
+
   let recordingCleanup: (() => void) | null = null; // Recording-mode cleanup function
+
+  // ---- FE-07: debounced single-IPC config patches ----
+  // A keystroke no longer triggers a full load→save round-trip: only the changed
+  // field is sent (backend merges it atomically in `patch_app_config`), debounced
+  // per field so fast typing collapses into one call.
+  const patchTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+  const schedulePatch = (field: string, run: () => Promise<void>, delayMs = 400) => {
+    clearTimeout(patchTimers[field]);
+    patchTimers[field] = setTimeout(() => {
+      delete patchTimers[field];
+      void run();
+    }, delayMs);
+  };
+  onCleanup(() => {
+    Object.values(patchTimers).forEach((id) => clearTimeout(id));
+  });
 
   onMount(() => {
     const onDocMouse = (e: MouseEvent) => {
@@ -597,24 +615,23 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.autoStart.description')}</p>
           </div>
 
-          <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
-            <input
-              class="opacity-0 w-0 h-0 peer"
-              type="checkbox"
-              checked={autoStart()}
-              onChange={async (e) => {
-                const val = e.currentTarget.checked;
-                setAutoStart(val);
+          {/* FE-10: shared Switch (last hand-copied toggle in the settings pages) */}
+          <Switch
+            checked={autoStart()}
+            onChange={(val) => {
+              setAutoStart(val);
+              void (async () => {
                 try {
                   await apiSetAutoStart(val);
                 } catch (err) {
                   console.warn('Failed to set auto-start:', err);
                   setAutoStart(!val); // Roll back
                 }
-              }}
-            />
-            <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
-          </label>
+              })();
+            }}
+            variant="glow"
+            label={t('app.autoStart.title')}
+          />
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
@@ -632,16 +649,13 @@ const AppSettings: Component = () => {
             fallback={25}
             onInput={(clamped) => {
               setMaxToolRounds(clamped);
-              void (async () => {
+              schedulePatch('maxToolRounds', async () => {
                 try {
-                  const cfg = await loadAppConfig().catch(() => null);
-                  if (cfg) {
-                    await saveAppConfig({ ...cfg, maxToolRounds: clamped });
-                  }
+                  await patchAppConfig({ maxToolRounds: clamped });
                 } catch (err) {
                   console.warn('Failed to save max-tool-rounds config:', err);
                 }
-              })();
+              });
             }}
           />
         </div>
@@ -661,16 +675,13 @@ const AppSettings: Component = () => {
             fallback={5}
             onInput={(clamped) => {
               setMaxConcurrentSubagents(clamped);
-              void (async () => {
+              schedulePatch('maxConcurrentSubagents', async () => {
                 try {
-                  const cfg = await loadAppConfig().catch(() => null);
-                  if (cfg) {
-                    await saveAppConfig({ ...cfg, maxConcurrentSubagents: clamped });
-                  }
+                  await patchAppConfig({ maxConcurrentSubagents: clamped });
                 } catch (err) {
                   console.warn('Failed to save concurrent-subagent cap config:', err);
                 }
-              })();
+              });
             }}
           />
         </div>
@@ -694,16 +705,17 @@ const AppSettings: Component = () => {
             onChange={(e) => {
               const mode = e.currentTarget.value;
               setSubagentIsolation(mode);
-              void (async () => {
-                try {
-                  const cfg = await loadAppConfig().catch(() => null);
-                  if (cfg) {
-                    await saveAppConfig({ ...cfg, subagentIsolationMode: mode });
+              schedulePatch(
+                'subagentIsolationMode',
+                async () => {
+                  try {
+                    await patchAppConfig({ subagentIsolationMode: mode });
+                  } catch (err) {
+                    console.warn('Failed to save parallel-write isolation config:', err);
                   }
-                } catch (err) {
-                  console.warn('Failed to save parallel-write isolation config:', err);
-                }
-              })();
+                },
+                0,
+              );
             }}
           >
             <option value="auto">{t('app.subagentIsolation.auto')}</option>

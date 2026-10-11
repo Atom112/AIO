@@ -141,14 +141,52 @@ impl super::McpServerPlugin for StdioPlugin {
         );
 
         // stderr → log events (frontend can subscribe to `mcp-server-stderr` for debugging)
-        // MCP-9: 行长上限（一条超长 stderr 行不再无界膨胀事件载荷）
+        // MCP-9: 行长上限 + 批量节流——一条超长 stderr 行不再无界膨胀事件载荷；
+        // 连续输出按 300ms 窗口合并为单事件（逐行 emit 在服务器刷屏时会形成
+        // 事件风暴，前端只做 DEV 调试打印，合并行不损失信息）。窗口积压达
+        // 32 行或 16KB 提前冲刷。
         const STDERR_LINE_LIMIT: usize = 2_000;
+        const STDERR_COALESCE_WINDOW: Duration = Duration::from_millis(300);
+        const STDERR_COALESCE_MAX_LINES: usize = 32;
+        const STDERR_COALESCE_MAX_BYTES: usize = 16_000;
         if let Some(stderr) = stderr {
             let app2 = app.clone();
             let sid = config.id.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
+                let mut pending: Vec<String> = Vec::new();
+                let mut pending_bytes = 0usize;
+                let flush = |pending: &mut Vec<String>, pending_bytes: &mut usize| {
+                    if pending.is_empty() {
+                        return;
+                    }
+                    let joined = pending.join("\n");
+                    pending.clear();
+                    *pending_bytes = 0;
+                    let _ = app2.emit(ev::MCP_SERVER_STDERR, json!({ "id": sid, "line": joined }));
+                };
+                loop {
+                    // Idle (nothing buffered): plain read. Buffering: bounded wait,
+                    // so the window always closes even if the server goes quiet.
+                    let line = if pending.is_empty() {
+                        match lines.next_line().await {
+                            Ok(Some(l)) => Some(l),
+                            _ => {
+                                break;
+                            }
+                        }
+                    } else {
+                        match tokio::time::timeout(STDERR_COALESCE_WINDOW, lines.next_line()).await
+                        {
+                            Ok(Ok(Some(l))) => Some(l),
+                            _ => {
+                                // Window elapsed (or stream hiccup) — flush and retry idle.
+                                flush(&mut pending, &mut pending_bytes);
+                                continue;
+                            }
+                        }
+                    };
+                    let line = line.expect("read returned Some");
                     let capped: String = if line.len() > STDERR_LINE_LIMIT {
                         format!(
                             "{}…[+{} chars]",
@@ -158,8 +196,16 @@ impl super::McpServerPlugin for StdioPlugin {
                     } else {
                         line
                     };
-                    let _ = app2.emit(ev::MCP_SERVER_STDERR, json!({ "id": sid, "line": capped }));
+                    pending_bytes += capped.len();
+                    pending.push(capped);
+                    if pending.len() >= STDERR_COALESCE_MAX_LINES
+                        || pending_bytes >= STDERR_COALESCE_MAX_BYTES
+                    {
+                        flush(&mut pending, &mut pending_bytes);
+                    }
                 }
+                // EOF: emit whatever remains.
+                flush(&mut pending, &mut pending_bytes);
             });
         }
 

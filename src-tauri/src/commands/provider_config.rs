@@ -139,7 +139,19 @@ pub fn validate_api_url(input: &str) -> Result<String, String> {
 /// - File missing / parse failure / version mismatch: treated as first install, returns an empty map
 /// - No migration from legacy activated_models.json / config.json (v2 design)
 #[tauri::command]
-pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, String> {
+/// HOR-4: fs read + one keyring round-trip PER provider (plus legacy plaintext
+/// migration writes) — async + blocking pool.
+pub async fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, String> {
+    tokio::task::spawn_blocking(move || load_provider_configs_internal(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// HOR-4 body: shared with the local-models directory migration (which already
+/// runs on the blocking pool). Not a Tauri command itself.
+pub(crate) fn load_provider_configs_internal(
+    app: &AppHandle,
+) -> Result<ProviderConfigFile, String> {
     if let Some(p) = provider_path() {
         if let Ok(raw) = fs::read_to_string(&p) {
             match serde_json::from_str::<ProviderConfigFile>(&raw) {
@@ -147,7 +159,7 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
                     // Restore each provider's api_key: keyring first, falling back to plaintext (legacy configs)
                     for cfg in parsed.providers.values_mut() {
                         let key_name = secure_store::accounts::provider_key(&cfg.id);
-                        match secure_store::get(&app, &key_name) {
+                        match secure_store::get(app, &key_name) {
                             Ok(Some(v)) => {
                                 cfg.api_key = v;
                                 cfg.has_stored_key = true;
@@ -157,7 +169,7 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
                                     // Legacy plaintext present → migrate to secure storage; mark has_stored_key only on success
                                     // (persisted plaintext is stripped conditionally by save_provider_configs_internal;
                                     //  on failure the plaintext is kept and migration retries on next load)
-                                    if secure_store::set_reported(&app, &key_name, &cfg.api_key) {
+                                    if secure_store::set_reported(app, &key_name, &cfg.api_key) {
                                         cfg.has_stored_key = true;
                                     }
                                 }
@@ -181,7 +193,9 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
                             "provider-configs.json 解析失败，已备份为 {}",
                             bak.display()
                         ),
-                        Err(e) => tracing::warn!("provider-configs.json 解析失败，备份失败: {e}"),
+                        Err(e) => {
+                            tracing::warn!("provider-configs.json 解析失败，备份失败: {e}")
+                        }
                     }
                 }
             }
@@ -194,11 +208,12 @@ pub fn load_provider_configs(app: AppHandle) -> Result<ProviderConfigFile, Strin
         updated_at: now_unix_secs_str(),
         providers: BTreeMap::new(),
     };
-    let _ = save_provider_configs_internal(&app, &file);
+    let _ = save_provider_configs_internal(app, &file);
     Ok(file)
 }
 
-fn save_provider_configs_internal(
+/// HOR-4 body: shared with the local-models migration (blocking-pool caller).
+pub(crate) fn save_provider_configs_internal(
     _app: &AppHandle,
     file: &ProviderConfigFile,
 ) -> Result<(), String> {
@@ -226,43 +241,50 @@ fn save_provider_configs_internal(
 
 /// Save provider configs
 #[tauri::command]
-pub fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result<(), String> {
-    let mut f = file;
-    // Known local-engine provider IDs
-    const LOCAL_ENGINE_IDS: &[&str] = &["local-llamacpp", "local-vllm", "ollama"];
+/// HOR-4: validation is cheap but the save hits the keyring per non-empty key +
+/// an atomic disk write — async + blocking pool.
+pub async fn save_provider_configs(app: AppHandle, file: ProviderConfigFile) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let mut f = file;
+        // Known local-engine provider IDs
+        const LOCAL_ENGINE_IDS: &[&str] = &["local-llamacpp", "local-vllm", "ollama"];
 
-    // Validation: every provider's api_url must be a valid http/https URL
-    for (id, cfg) in f.providers.iter() {
-        let opts = if LOCAL_ENGINE_IDS.contains(&id.as_str()) {
-            crate::utils::url_validation::HttpUrlOptions::local_engine()
-        } else {
-            crate::utils::url_validation::HttpUrlOptions::default()
-        };
-        if !cfg.api_url.is_empty() {
-            if let Err(e) = crate::utils::url_validation::validate_http_url(&cfg.api_url, &opts) {
-                return Err(ierr!(
-                    "provider[{}].apiUrl 非法: {}",
-                    "provider[{}].apiUrl is invalid: {}",
-                    id,
-                    e
-                ));
-            }
-        }
-        if let Some(proxy) = &cfg.proxy_url {
-            if !proxy.is_empty() {
-                if let Err(e) = validate_api_url(proxy) {
+        // Validation: every provider's api_url must be a valid http/https URL
+        for (id, cfg) in f.providers.iter() {
+            let opts = if LOCAL_ENGINE_IDS.contains(&id.as_str()) {
+                crate::utils::url_validation::HttpUrlOptions::local_engine()
+            } else {
+                crate::utils::url_validation::HttpUrlOptions::default()
+            };
+            if !cfg.api_url.is_empty() {
+                if let Err(e) = crate::utils::url_validation::validate_http_url(&cfg.api_url, &opts)
+                {
                     return Err(ierr!(
-                        "provider[{}].proxyUrl 非法: {}",
-                        "provider[{}].proxyUrl is invalid: {}",
+                        "provider[{}].apiUrl 非法: {}",
+                        "provider[{}].apiUrl is invalid: {}",
                         id,
                         e
                     ));
                 }
             }
+            if let Some(proxy) = &cfg.proxy_url {
+                if !proxy.is_empty() {
+                    if let Err(e) = validate_api_url(proxy) {
+                        return Err(ierr!(
+                            "provider[{}].proxyUrl 非法: {}",
+                            "provider[{}].proxyUrl is invalid: {}",
+                            id,
+                            e
+                        ));
+                    }
+                }
+            }
         }
-    }
-    f.updated_at = now_unix_secs_str();
-    save_provider_configs_internal(&app, &f)
+        f.updated_at = now_unix_secs_str();
+        save_provider_configs_internal(&app, &f)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Test a provider connection (dispatches to the matching provider plugin by host; local engines use the OpenAI-compat endpoint)

@@ -42,6 +42,68 @@ pub struct ConsolidationReport {
     pub error: Option<String>,
 }
 
+/// MEM-02: the DB mutation plan derived from one judge verdict. `judge` is called
+/// as judge(existing=anchor, incoming=member), and this pure mapping makes the
+/// direction contract testable WITHOUT the LLM — the daily auto-consolidation
+/// once inverted Supersede (it archived the NEW fact and kept the stale one,
+/// making the store WORSE every night).
+#[derive(Debug)]
+pub(crate) enum ConsolidatePlan {
+    KeepSeparate,
+    /// Merge the two rows into `anchor_id` with the (possibly joined) content.
+    Merge {
+        anchor_id: String,
+        member_id: String,
+        content: String,
+    },
+    /// Overwrite `anchor_id` with the member's (more accurate) content; the
+    /// caller re-embeds the new content after `update_content`.
+    Update {
+        anchor_id: String,
+        content: String,
+    },
+    /// The OLD fact (anchor) steps down; the member row stays as the winner.
+    SupersedeLoser {
+        loser_id: String,
+    },
+}
+
+/// Map a judge verdict (existing=anchor, incoming=member) onto its execution
+/// plan. Pure: no DB, no LLM, no clock — see the MEM-02 tests for the direction
+/// symmetry against the tools.rs / extract.rs contract (both supersede existing).
+pub(crate) fn plan_from_judge(
+    action: JudgeAction,
+    anchor_id: &str,
+    anchor_content: &str,
+    member_id: &str,
+    member_content: &str,
+    merged: String,
+) -> ConsolidatePlan {
+    match action {
+        JudgeAction::KeepSeparate => ConsolidatePlan::KeepSeparate,
+        JudgeAction::Merge => {
+            let content = if merged.trim().is_empty() {
+                format!("{}；{}", anchor_content, member_content)
+            } else {
+                merged
+            };
+            ConsolidatePlan::Merge {
+                anchor_id: anchor_id.to_string(),
+                member_id: member_id.to_string(),
+                content,
+            }
+        }
+        JudgeAction::Update => ConsolidatePlan::Update {
+            anchor_id: anchor_id.to_string(),
+            content: member_content.to_string(),
+        },
+        JudgeAction::Supersede => ConsolidatePlan::SupersedeLoser {
+            // MEM-02: the loser is the EXISTING (anchor) fact — member wins.
+            loser_id: anchor_id.to_string(),
+        },
+    }
+}
+
 fn score(importance: f32, access: i64) -> f32 {
     importance * (1.0 + 0.1 * (access.min(20)) as f32)
 }
@@ -154,32 +216,33 @@ pub async fn consolidate(
                 crate::services::memory::judge::judge(&lcfg, &anchor_fact.1, &member.1).await;
             crate::services::memory::judge::bump_judge_stat(store, &action);
             report.arbitrated += 1;
-            match action {
-                JudgeAction::KeepSeparate => report.kept += 1,
-                JudgeAction::Merge => {
-                    let merged_content = if merged.trim().is_empty() {
-                        format!("{}；{}", anchor_fact.1, member.1)
-                    } else {
-                        merged
-                    };
-                    store.merge_facts(&anchor_fact.0, &member.0, &merged_content)?;
+            match plan_from_judge(
+                action,
+                &anchor_fact.0,
+                &anchor_fact.1,
+                &member.0,
+                &member.1,
+                merged,
+            ) {
+                ConsolidatePlan::KeepSeparate => report.kept += 1,
+                ConsolidatePlan::Merge {
+                    anchor_id,
+                    member_id,
+                    content,
+                } => {
+                    store.merge_facts(&anchor_id, &member_id, &content)?;
                     report.merged += 1;
                 }
-                JudgeAction::Update => {
-                    store.update_content(&anchor_fact.0, &member.1, "update")?;
+                ConsolidatePlan::Update { anchor_id, content } => {
+                    store.update_content(&anchor_id, &content, "update")?;
                     // Re-embed the anchor after its content is updated (failure does not block)
-                    if let Some(emb) = embed_one(app, store, &member.1).await {
-                        let _ = store.set_embedding(&anchor_fact.0, Some(emb));
+                    if let Some(emb) = embed_one(app, store, &content).await {
+                        let _ = store.set_embedding(&anchor_id, Some(emb));
                     }
                     report.updated += 1;
                 }
-                JudgeAction::Supersede => {
-                    // MEM-02: 语义对齐 judge 契约（existing=anchor, incoming=member）——
-                    // Supersede 表示 incoming（member）更准确、明确取代旧事实：让位的
-                    // 应是 anchor。历史实现反着 supersede member（新事实），每日自动
-                    // 整理持续把"更准确"的信息标记过时、保留过时内容——越整理越错。
-                    // （tools.rs / extract.rs 路径一直是 supersede existing，此处对齐。）
-                    store.supersede_fact(&anchor_fact.0, "被更准确的事实取代")?;
+                ConsolidatePlan::SupersedeLoser { loser_id } => {
+                    store.supersede_fact(&loser_id, "被更准确的事实取代")?;
                     report.superseded += 1;
                 }
             }
@@ -274,5 +337,88 @@ mod tests {
         let facts = vec![("a".into(), v(0)), ("b".into(), v(1))];
         let groups = cluster_components(&facts, 0.85);
         assert!(groups.is_empty(), "正交向量不应成簇");
+    }
+
+    /// MEM-02 对称性回归：judge(existing=anchor, incoming=member) 判 Supersede 时，
+    /// 让位的必须是 **anchor（旧事实）**——与 tools.rs / extract.rs 的
+    /// "supersede existing" 契约同向。历史实现反着归档 member（新事实），
+    /// 每日自动整理持续把"更准确"的信息标记过时、保留过时内容。
+    #[test]
+    fn supersede_direction_matches_tools_and_extract_contract() {
+        let plan = plan_from_judge(
+            JudgeAction::Supersede,
+            "fact-old",
+            "旧：服务器是 A 型",
+            "fact-new",
+            "新：服务器已换为 B 型",
+            String::new(),
+        );
+        match plan {
+            ConsolidatePlan::SupersedeLoser { loser_id } => {
+                assert_eq!(loser_id, "fact-old", "让位的应是旧事实 anchor");
+            }
+            other => panic!("Supersede 应映射为 SupersedeLoser，实际 {other:?} 不适用"),
+        }
+    }
+
+    /// MEM-02 契约面（纯函数，无 LLM）：Update 采用 member 的内容改写 anchor；
+    /// Merge 内容为空时回退拼接、非空保留模型产物；KeepSeparate 原样返回。
+    #[test]
+    fn judge_verdicts_map_to_their_db_plans() {
+        let update = plan_from_judge(
+            JudgeAction::Update,
+            "fact-old",
+            "旧内容",
+            "fact-new",
+            "更准确的内容",
+            String::new(),
+        );
+        match update {
+            ConsolidatePlan::Update {
+                anchor_id, content, ..
+            } => {
+                assert_eq!(anchor_id, "fact-old");
+                assert_eq!(
+                    content, "更准确的内容",
+                    "Update 应采用 member 内容改写 anchor"
+                );
+            }
+            other => panic!("Update 映射错误: {other:?}"),
+        }
+
+        let joined = plan_from_judge(
+            JudgeAction::Merge,
+            "fact-old",
+            "甲",
+            "fact-new",
+            "乙",
+            String::new(),
+        );
+        match joined {
+            ConsolidatePlan::Merge { content, .. } => {
+                assert_eq!(content, "甲；乙", "模型未产出合并内容时回退拼接");
+            }
+            other => panic!("Merge 映射错误: {other:?}"),
+        }
+
+        let authored = plan_from_judge(
+            JudgeAction::Merge,
+            "fact-old",
+            "甲",
+            "fact-new",
+            "乙",
+            "模型合并稿".to_string(),
+        );
+        match authored {
+            ConsolidatePlan::Merge { content, .. } => {
+                assert_eq!(content, "模型合并稿", "模型产物优先于拼接");
+            }
+            other => panic!("Merge 映射错误: {other:?}"),
+        }
+
+        assert!(matches!(
+            plan_from_judge(JudgeAction::KeepSeparate, "a", "x", "b", "y", String::new()),
+            ConsolidatePlan::KeepSeparate
+        ));
     }
 }

@@ -448,78 +448,92 @@ pub async fn local_model_market_files(
     let client = market_client()?;
     match source.as_str() {
         "modelscope" => {
-            let url = format!(
-                "https://modelscope.cn/api/v1/models/{}/repo/files?Revision=master&Root=%2F",
-                encode_repo_path(&repo)
-            );
-            let resp = client.get(&url).send().await.map_err(|e| {
-                ierr!(
-                    "访问 ModelScope 失败: {}",
-                    "Failed to reach ModelScope: {}",
-                    e
-                )
-            })?;
-            if !resp.status().is_success() {
-                return Err(ierr!(
-                    "获取文件列表失败（ModelScope {}）",
-                    "Failed to list files (ModelScope {})",
-                    resp.status()
-                ));
+            // ENG-18: revision fallback mirrors the downloader (["master","main"]):
+            // repos whose default branch is `main` used to 404 on the hardcoded master.
+            let mut last_err = String::new();
+            for rev in ["master", "main"] {
+                let url = format!(
+                    "https://modelscope.cn/api/v1/models/{}/repo/files?Revision={rev}&Root=%2F",
+                    encode_repo_path(&repo)
+                );
+                let resp = match client.get(&url).send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        last_err = e.to_string();
+                        continue;
+                    }
+                };
+                if !resp.status().is_success() {
+                    last_err = format!("HTTP {}", resp.status());
+                    continue;
+                }
+                let value: serde_json::Value = match resp.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        last_err = e.to_string();
+                        continue;
+                    }
+                };
+                let files: Vec<MarketFile> = value
+                    .pointer("/Data/Files")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|f| {
+                                let path = f.get("Path")?.as_str()?.to_string();
+                                if !path.to_lowercase().ends_with(".gguf") {
+                                    return None;
+                                }
+                                let size = f.get("Size").and_then(|s| s.as_u64()).unwrap_or(0);
+                                Some(MarketFile { name: path, size })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Ok(files);
             }
-            let value: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| ierr!("解析响应失败: {}", "Failed to parse response: {}", e))?;
-            let files: Vec<MarketFile> = value
-                .pointer("/Data/Files")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|f| {
-                            let path = f.get("Path")?.as_str()?.to_string();
-                            if !path.to_lowercase().ends_with(".gguf") {
-                                return None;
-                            }
-                            let size = f.get("Size").and_then(|s| s.as_u64()).unwrap_or(0);
-                            Some(MarketFile { name: path, size })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            Ok(files)
+            Err(ierr!(
+                "获取文件列表失败（ModelScope）: {}",
+                "Failed to list files (ModelScope): {}",
+                last_err
+            ))
         }
         "huggingface" => {
-            let path = format!("/api/models/{}/tree/main", encode_repo_path(&repo));
             let mut last_err = String::new();
             for base in HF_ENDPOINTS {
-                let mut req = client.get(format!("{base}{path}"));
-                // ENG-02: 用户 HF Token 只发给 huggingface.co 官方域
-                if let Some(t) = token.as_deref().filter(|_| base.contains("huggingface.co")) {
-                    req = req.bearer_auth(t);
-                }
-                match req.send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        match resp.json::<Vec<serde_json::Value>>().await {
-                            Ok(rows) => {
-                                let files: Vec<MarketFile> = rows
-                                    .iter()
-                                    .filter_map(|r| {
-                                        let path = r.get("path")?.as_str()?.to_string();
-                                        if !path.to_lowercase().ends_with(".gguf") {
-                                            return None;
-                                        }
-                                        let size =
-                                            r.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                                        Some(MarketFile { name: path, size })
-                                    })
-                                    .collect();
-                                return Ok(files);
-                            }
-                            Err(e) => last_err = e.to_string(),
-                        }
+                // ENG-18: try the repo's default branch candidates (main first, then
+                // master) — the hardcoded tree/main 404'd on master-only repos.
+                for rev in ["main", "master"] {
+                    let path = format!("/api/models/{}/tree/{rev}", encode_repo_path(&repo));
+                    let mut req = client.get(format!("{base}{path}"));
+                    // ENG-02: 用户 HF Token 只发给 huggingface.co 官方域
+                    if let Some(t) = token.as_deref().filter(|_| base.contains("huggingface.co")) {
+                        req = req.bearer_auth(t);
                     }
-                    Ok(resp) => last_err = format!("HTTP {}", resp.status()),
-                    Err(e) => last_err = e.to_string(),
+                    match req.send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            match resp.json::<Vec<serde_json::Value>>().await {
+                                Ok(rows) => {
+                                    let files: Vec<MarketFile> = rows
+                                        .iter()
+                                        .filter_map(|r| {
+                                            let path = r.get("path")?.as_str()?.to_string();
+                                            if !path.to_lowercase().ends_with(".gguf") {
+                                                return None;
+                                            }
+                                            let size =
+                                                r.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+                                            Some(MarketFile { name: path, size })
+                                        })
+                                        .collect();
+                                    return Ok(files);
+                                }
+                                Err(e) => last_err = e.to_string(),
+                            }
+                        }
+                        Ok(resp) => last_err = format!("HTTP {}", resp.status()),
+                        Err(e) => last_err = e.to_string(),
+                    }
                 }
             }
             Err(ierr!(

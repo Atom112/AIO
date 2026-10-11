@@ -454,54 +454,74 @@ fn parse_market_skills(html: &str) -> Vec<MarketSkill> {
 }
 
 /// Returns all skill configs. When project_id is present, global and project skills are merged (project wins).
+/// HOR-4: disk-backed skill files (global + project) — async + blocking pool, never the main thread.
 #[tauri::command]
-pub fn list_skills(app: AppHandle, project_id: Option<String>) -> Result<Vec<SkillConfig>, String> {
-    let global = load_file(&app).skills;
-    let project = match project_id {
-        Some(ref pid) => {
-            let project_path = resolve_project_path(&app, pid)?;
-            load_project_file(&project_path).skills
-        }
-        None => BTreeMap::new(),
-    };
-    Ok(merge_skills(global, project).into_values().collect())
+pub async fn list_skills(
+    app: AppHandle,
+    project_id: Option<String>,
+) -> Result<Vec<SkillConfig>, String> {
+    tokio::task::spawn_blocking(move || {
+        let global = load_file(&app).skills;
+        let project = match project_id {
+            Some(ref pid) => {
+                let project_path = resolve_project_path(&app, pid)?;
+                load_project_file(&project_path).skills
+            }
+            None => BTreeMap::new(),
+        };
+        Ok(merge_skills(global, project).into_values().collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Creates or updates a skill. When project_id is present, writes to the project-level file.
+/// HOR-4: fs read-modify-write — async + blocking pool.
 #[tauri::command]
-pub fn save_skill(
+pub async fn save_skill(
     app: AppHandle,
     skill: SkillConfig,
     project_id: Option<String>,
 ) -> Result<(), String> {
-    if skill.id.trim().is_empty() || skill.name.trim().is_empty() || skill.content.trim().is_empty()
-    {
-        return Err(ierr!(
-            "Skill id、名称和指令内容不能为空",
-            "Skill id, name, and instruction content must not be empty"
-        ));
-    }
-    match project_id {
-        Some(ref pid) => {
-            let project_path = resolve_project_path(&app, pid)?;
-            let mut file = load_project_file(&project_path);
-            file.skills.insert(skill.id.clone(), skill);
-            file.updated_at = now_timestamp();
-            save_project_file(&project_path, &file)
+    tokio::task::spawn_blocking(move || {
+        if skill.id.trim().is_empty()
+            || skill.name.trim().is_empty()
+            || skill.content.trim().is_empty()
+        {
+            return Err(ierr!(
+                "Skill id、名称和指令内容不能为空",
+                "Skill id, name, and instruction content must not be empty"
+            ));
         }
-        None => {
-            let mut file = load_file(&app);
-            file.skills.insert(skill.id.clone(), skill);
-            file.updated_at = now_timestamp();
-            save_file(&app, &file)
+        match project_id {
+            Some(ref pid) => {
+                let project_path = resolve_project_path(&app, pid)?;
+                let mut file = load_project_file(&project_path);
+                file.skills.insert(skill.id.clone(), skill);
+                file.updated_at = now_timestamp();
+                save_project_file(&project_path, &file)
+            }
+            None => {
+                let mut file = load_file(&app);
+                file.skills.insert(skill.id.clone(), skill);
+                file.updated_at = now_timestamp();
+                save_file(&app, &file)
+            }
         }
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Deletes the given skill config. When project_id is present, deletes from the project-level file.
+/// HOR-4: fs read-modify-write — async + blocking pool.
 #[tauri::command]
-pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> Result<(), String> {
-    match project_id {
+pub async fn delete_skill(
+    app: AppHandle,
+    id: String,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || match project_id {
         Some(ref pid) => {
             let project_path = resolve_project_path(&app, pid)?;
             let mut file = load_project_file(&project_path);
@@ -515,7 +535,9 @@ pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> R
             file.updated_at = now_timestamp();
             save_file(&app, &file)
         }
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Browses the skills.sh market. sort supports all, trending, hot.

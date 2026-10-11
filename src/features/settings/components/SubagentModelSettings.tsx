@@ -54,7 +54,13 @@ const BUILTIN_PROFILE_IDS = new Set([
   'vision',
 ]);
 
-const BUILTIN_PROFILES: ProfileInfo[] = [
+/**
+ * FE-06: built lazily per call so `t()` resolves against the live locale signal —
+ * the previous module-level array froze the startup locale for profile names
+ * (and would render the old language after a switch). The consuming `createMemo`
+ * re-runs on locale change because `t()` is tracked inside it.
+ */
+const builtinProfiles = (): ProfileInfo[] => [
   {
     id: 'explorer',
     name: t('subagent.profile.fileBrowser'),
@@ -187,7 +193,7 @@ const SubagentModelSettings: Component = () => {
 
   /** Combined profiles: built-in first, then custom */
   const allProfiles = createMemo<ProfileInfo[]>(() => [
-    ...BUILTIN_PROFILES,
+    ...builtinProfiles(),
     ...customSubagentProfiles().map((c) => ({
       id: c.id,
       name: c.name,

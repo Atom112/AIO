@@ -10,87 +10,126 @@ use base64::Engine as _;
 use rusqlite::params;
 use serde_json::json;
 
-pub(crate) fn message_for_api(
+/// LOOP-10: attachment metadata snapshot taken under the DB lock — exactly one
+/// SQLite row read per referenced attachment, NO disk I/O, NO base64. The file
+/// reads and encoding happen in [`finish_message_for_api`] after the lock is
+/// released (the historic single-pass version held the GLOBAL db lock across
+/// every image read of the whole history, every turn).
+pub(crate) struct AttachmentMeta {
+    /// Display name from the message's file entry (used in document headers).
+    display_name: String,
+    mime: String,
+    storage_path: String,
+    extracted_text: Option<String>,
+}
+
+/// LOOP-10: one message's conversion split into its locked phase (this job)
+/// and its lock-free phase ([`finish_message_for_api`]).
+pub(crate) struct MessageApiJob<'a> {
+    message: &'a Message,
+    attachments: Vec<AttachmentMeta>,
+}
+
+/// LOOP-10 phase 1 (lock-held): collect the metadata a message's expansion
+/// needs. Only SQLite work — disk reads are deferred to phase 2.
+pub(crate) fn message_metadata_for_api<'a>(
     conn: &rusqlite::Connection,
-    message: &Message,
-) -> Result<serde_json::Value, String> {
-    let mut content = message.content.clone();
+    message: &'a Message,
+) -> Result<MessageApiJob<'a>, String> {
+    let mut attachments = Vec::new();
     if let Some(files) = &message.display_files {
-        if files.iter().any(|file| file.id.is_some()) {
-            let base_text = match &message.content {
-                serde_json::Value::String(text) => text.clone(),
-                other => extract_text_content(other),
+        for file in files {
+            let Some(attachment_id) = file.id.as_deref() else {
+                continue;
             };
-            let mut document_sections = Vec::new();
-            let mut image_data_urls = Vec::new();
-
-            for file in files {
-                let Some(attachment_id) = file.id.as_deref() else {
-                    continue;
-                };
-                let attachment = conn
-                    .query_row(
-                        "SELECT file_name, mime_type, storage_path, extracted_text
-                         FROM attachments WHERE id = ?1",
-                        [attachment_id],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, String>(2)?,
-                                row.get::<_, Option<String>>(3)?,
-                            ))
-                        },
-                    )
-                    .map_err(|e| {
-                        ierr!(
-                            "读取附件 {} 失败: {}",
-                            "Failed to read attachment {}: {}",
-                            file.name,
-                            e
-                        )
-                    })?;
-
-                if attachment.1.starts_with("image/") {
-                    let bytes = std::fs::read(&attachment.2).map_err(|e| {
-                        ierr!(
-                            "读取图片附件 {} 失败: {}",
-                            "Failed to read image attachment {}: {}",
-                            attachment.0,
-                            e
-                        )
-                    })?;
-                    image_data_urls.push(format!(
-                        "data:{};base64,{}",
-                        attachment.1,
-                        general_purpose::STANDARD.encode(bytes)
-                    ));
-                } else if let Some(text) = attachment.3 {
-                    document_sections.push(format!("[{}]\n{}", file.name, text));
-                }
-            }
-
-            let expanded_text = if document_sections.is_empty() {
-                base_text
-            } else {
-                format!(
-                    "参考文件内容：\n{}\n---\n{}",
-                    document_sections.join("\n"),
-                    base_text
+            let row = conn
+                .query_row(
+                    "SELECT file_name, mime_type, storage_path, extracted_text
+                     FROM attachments WHERE id = ?1",
+                    [attachment_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    },
                 )
-            };
-            content = if image_data_urls.is_empty() {
-                json!(expanded_text)
-            } else {
-                let mut parts = vec![json!({ "type": "text", "text": expanded_text })];
-                parts.extend(
-                    image_data_urls
-                        .into_iter()
-                        .map(|url| json!({ "type": "image_url", "image_url": { "url": url } })),
-                );
-                serde_json::Value::Array(parts)
-            };
+                .map_err(|e| {
+                    ierr!(
+                        "读取附件 {} 失败: {}",
+                        "Failed to read attachment {}: {}",
+                        file.name,
+                        e
+                    )
+                })?;
+            attachments.push(AttachmentMeta {
+                display_name: file.name.clone(),
+                mime: row.1,
+                storage_path: row.2,
+                extracted_text: row.3,
+            });
         }
+    }
+    Ok(MessageApiJob {
+        message,
+        attachments,
+    })
+}
+
+/// LOOP-10 phase 2 (lock-free): disk reads + base64 + JSON assembly.
+pub(crate) fn finish_message_for_api(job: MessageApiJob<'_>) -> Result<serde_json::Value, String> {
+    let message = job.message;
+    let mut content = message.content.clone();
+    if !job.attachments.is_empty() {
+        let base_text = match &message.content {
+            serde_json::Value::String(text) => text.clone(),
+            other => extract_text_content(other),
+        };
+        let mut document_sections = Vec::new();
+        let mut image_data_urls = Vec::new();
+
+        for attachment in &job.attachments {
+            if attachment.mime.starts_with("image/") {
+                let bytes = std::fs::read(&attachment.storage_path).map_err(|e| {
+                    ierr!(
+                        "读取图片附件 {} 失败: {}",
+                        "Failed to read image attachment {}: {}",
+                        attachment.display_name,
+                        e
+                    )
+                })?;
+                image_data_urls.push(format!(
+                    "data:{};base64,{}",
+                    attachment.mime,
+                    general_purpose::STANDARD.encode(bytes)
+                ));
+            } else if let Some(text) = &attachment.extracted_text {
+                document_sections.push(format!("[{}]\n{}", attachment.display_name, text));
+            }
+        }
+
+        let expanded_text = if document_sections.is_empty() {
+            base_text
+        } else {
+            format!(
+                "参考文件内容：\n{}\n---\n{}",
+                document_sections.join("\n"),
+                base_text
+            )
+        };
+        content = if image_data_urls.is_empty() {
+            json!(expanded_text)
+        } else {
+            let mut parts = vec![json!({ "type": "text", "text": expanded_text })];
+            parts.extend(
+                image_data_urls
+                    .into_iter()
+                    .map(|url| json!({ "type": "image_url", "image_url": { "url": url } })),
+            );
+            serde_json::Value::Array(parts)
+        };
     }
 
     // Model-generated images: strip aio-image tokens and expand images metadata back into image_url blocks (history replay)
@@ -136,6 +175,17 @@ pub(crate) fn message_for_api(
         object.insert("tool_calls".into(), json!(tool_calls));
     }
     Ok(serde_json::Value::Object(object))
+}
+
+/// Convenience single-call form (metadata + finish back to back). Test-only:
+/// the agent-loop call sites use the two phases separately so the global DB
+/// lock never spans a disk read (LOOP-10).
+#[cfg(test)]
+pub(crate) fn message_for_api(
+    conn: &rusqlite::Connection,
+    message: &Message,
+) -> Result<serde_json::Value, String> {
+    finish_message_for_api(message_metadata_for_api(conn, message)?)
 }
 
 /// Append one message to a topic (the authoritative write path into storage).

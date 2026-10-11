@@ -132,7 +132,7 @@ pub async fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<Str
     let mut cfg = crate::core::config::load_app_config(&app)
         .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
     cfg.embedding_models_dir = dir.trim().to_string();
-    crate::commands::config::save_app_config(app.clone(), cfg)
+    crate::core::config::save_app_config(&app, &cfg)
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     let new = embed_models_dir(&app);
     if !same_path(&old, &new) {
@@ -165,7 +165,7 @@ pub fn embedding_model_set_enabled(
         enabled,
     });
     cfg.embedding_models = list;
-    crate::commands::config::save_app_config(app.clone(), cfg)
+    crate::core::config::save_app_config(&app, &cfg)
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     Ok(model_info(&app, entry))
 }
@@ -188,12 +188,26 @@ pub async fn embedding_model_download(
             info: model_info(&app, entry),
         });
     }
-    // Register the control flags (a duplicate download of the same id overwrites the old flags)
+    // Register the control flags.
+    // ENG-05 (embedding side, parity with the GGUF downloader): a concurrent
+    // download of the same id is rejected instead of overwriting the old flags —
+    // the overwrite let the second task cancel/pause the first's state and the
+    // first's exit-guard could drop the successor's entry.
     let control = DownloadControl {
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
     };
-    if let Ok(mut map) = crate::services::download::download_controls().lock() {
+    {
+        let mut map = crate::services::download::download_controls()
+            .lock()
+            .map_err(|e| e.to_string())?;
+        if map.contains_key(&id) {
+            return Err(ierr!(
+                "模型 {} 已有下载任务在进行中",
+                "A download is already in progress for model {}",
+                id
+            ));
+        }
         map.insert(id.clone(), control.clone());
     }
     // Unregister the control flags when the command ends (including if the frontend drops it).

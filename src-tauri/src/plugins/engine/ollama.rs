@@ -233,7 +233,15 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
     drop(f);
 
     // Run ollama create (async, to avoid blocking the runtime); use the resolved real path to survive PATH-less environments
-    let exe = resolve_ollama_exe().unwrap_or_else(|| PathBuf::from("ollama"));
+    // SEC-06: no bare-name fallback — a bare "ollama" spawn would consult the
+    // process cwd on Windows (CreateProcess search order), letting a planted
+    // executable win. When nothing resolves, fail explicitly.
+    let Some(exe) = resolve_ollama_exe() else {
+        return Err(ierr!(
+            "未找到 ollama 可执行文件（PATH 与常见安装目录均无）",
+            "ollama executable not found (neither on PATH nor in common install dirs)"
+        ));
+    };
     let output = tokio::process::Command::new(exe)
         .arg("create")
         .arg(&model_name)
@@ -382,7 +390,14 @@ impl LocalEnginePlugin for OllamaPlugin {
             if !already_running {
                 debug!("[ollama] 服务未在端口 {} 运行，尝试拉起 ollama serve", port);
                 // Use the resolved real path (falls back to common install dirs when PATH is missing)
-                let exe_path = resolve_ollama_exe().unwrap_or_else(|| PathBuf::from("ollama"));
+                // SEC-06: no bare-name fallback — a bare "ollama" spawn would consult
+                // the process cwd on Windows; fail explicitly when nothing resolves.
+                let Some(exe_path) = resolve_ollama_exe() else {
+                    return Err(ierr!(
+                        "未找到 ollama 可执行文件（PATH 与常见安装目录均无）",
+                        "ollama executable not found (neither on PATH nor in common install dirs)"
+                    ));
+                };
                 let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
                 let child = cmd.spawn().map_err(|e| {
                     ierr!(

@@ -21,8 +21,8 @@ impl ProviderPlugin for GoogleProvider {
     }
 
     fn matches(&self, api_url: &str) -> bool {
-        let u = api_url.to_lowercase();
-        u.contains("generativelanguage.googleapis.com")
+        // PROV-5: host-suffix match (look-alike hosts must not claim the native plugin)
+        super::url_host_matches(api_url, "generativelanguage.googleapis.com")
     }
 
     fn models_url(&self, api_url: &str) -> String {

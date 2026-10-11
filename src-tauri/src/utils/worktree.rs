@@ -301,7 +301,17 @@ pub(crate) fn sweep_stale(main_root: &str) {
     // each starting with `worktree <path>` and optionally carrying a `locked` line.
     // Substring matching over the raw output would misfire on prefix paths (P2-2).
     let mut registered: Vec<(PathBuf, bool /*locked*/)> = Vec::new();
-    if let Ok(out) = run_git(main_root, &["worktree", "list", "--porcelain"]) {
+    // SEC-17: without the registered list, EVERY old sibling directory would be
+    // classified as an unregistered orphan and plain-removed — a transient git
+    // failure must abort the sweep, not delete live worktrees as "orphans".
+    let out = match run_git(main_root, &["worktree", "list", "--porcelain"]) {
+        Ok(out) => out,
+        Err(e) => {
+            tracing::warn!("[worktree] worktree list 失败，跳过过期清理（防孤儿误删）: {e}");
+            return;
+        }
+    };
+    {
         let mut current: Option<PathBuf> = None;
         let mut locked = false;
         for line in out.lines() {

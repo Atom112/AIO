@@ -1,10 +1,13 @@
 use crate::ierr;
 /// Utility module: file content extraction and conversion.
 ///
-/// Hardening (arbitrary-path read protection):
-/// - `process_file_content` accepts a path only if: the extension is whitelisted + the parent directory is inside the user home or AppData
+/// Hardening (SEC-21: this doc now matches the actual checks — the historic comment
+/// claimed a home/AppData directory restriction that `validate_safe_path` never had;
+/// attachments are user-picked via the system dialog and may sit anywhere on disk):
+/// - `process_file_content` accepts a path only if: the extension is on the
+///   whitelist + the path is absolute and contains no `..` component + size limits
 /// - `start_local_server` accepts a `model_path` only for files inside the user home or AppData/engines
-/// - File size limits (images 10MB / documents 30MB) prevent OOM DoS
+/// - File size limits (images 10MB / documents 30MB / text 5MB) prevent OOM DoS
 use base64::{engine::general_purpose, Engine as _};
 use std::fs::File;
 use std::io::Read;

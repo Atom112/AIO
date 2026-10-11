@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Value};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use url::Url;
 
@@ -156,17 +157,23 @@ async fn resolve_validated_addr(
 
 // ====== HTML → text ======
 
+// SEC-20: strip_html's regexes were recompiled on every web_fetch call —
+// globally cached statics instead (regex compilation is ~100x the match cost).
+static RE_SCRIPT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap());
+static RE_STYLE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap());
+static RE_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
+static RE_BLANKS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+
 /// Simple HTML tag stripping that keeps the text content.
 /// No third-party HTML parser dependency; output suits LLM-readable plain text.
 fn strip_html(html: &str) -> String {
     // Remove script / style tags and their contents
-    let re_script = Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
-    let re_style = Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
-    let s = re_script.replace_all(html, "");
-    let s = re_style.replace_all(&s, "");
+    let s = RE_SCRIPT.replace_all(html, "");
+    let s = RE_STYLE.replace_all(&s, "");
     // Remove all HTML tags
-    let re_tag = Regex::new(r"<[^>]*>").unwrap();
-    let s = re_tag.replace_all(&s, "");
+    let s = RE_TAG.replace_all(&s, "");
     // Decode common HTML entities
     let s = s
         .replace("&amp;", "&")
@@ -176,8 +183,7 @@ fn strip_html(html: &str) -> String {
         .replace("&#39;", "'")
         .replace("&nbsp;", " ");
     // Collapse excess blank lines
-    let re_ws = Regex::new(r"\n{3,}").unwrap();
-    let result = re_ws.replace_all(&s, "\n\n").to_string();
+    let result = RE_BLANKS.replace_all(&s, "\n\n").to_string();
     result.trim().to_string()
 }
 

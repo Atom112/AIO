@@ -220,6 +220,11 @@ pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
         // Evict the memory store connection cache when a project is deleted (cascade directory deletion is left to the user)
         app.state::<crate::services::memory::MemoryStoreManager>()
             .remove(&project.path);
+        // SEC-14: best-effort reclaim of the project's AppContainer artifacts
+        // (registry profile + granted ACEs + AC temp dir) — the historic code
+        // created them per project but never revoked on deletion, leaking forever.
+        #[cfg(windows)]
+        crate::utils::sandbox::revoke_project_grants(&project.path);
         save_projects_file(&app, &file)
     } else {
         Err(ierr!("项目不存在", "Project not found"))

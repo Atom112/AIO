@@ -182,11 +182,15 @@ fn source_candidates(
     if source != "huggingface" {
         if let Some(repo) = req.ms_repo.as_deref().filter(|r| !r.trim().is_empty()) {
             let repo = crate::commands::local_model_market::encode_repo_path(repo.trim());
-            out.push(SourceCandidate {
-                name: "modelscope",
-                url: format!("https://modelscope.cn/models/{repo}/resolve/master/{encoded}"),
-                token: None,
-            });
+            // ENG-18: ModelScope's default branch is not always "master" (newer repos
+            // use "main") — the alternate-branch candidate retries instead of 404ing.
+            for branch in ["master", "main"] {
+                out.push(SourceCandidate {
+                    name: "modelscope",
+                    url: format!("https://modelscope.cn/models/{repo}/resolve/{branch}/{encoded}"),
+                    token: None,
+                });
+            }
         }
     }
     if source != "modelscope" {
@@ -196,12 +200,16 @@ fn source_candidates(
                 ("hf-mirror", "https://hf-mirror.com"),
                 ("huggingface", "https://huggingface.co"),
             ] {
-                out.push(SourceCandidate {
-                    name,
-                    url: format!("{base}/{repo}/resolve/main/{encoded}"),
-                    // ENG-02: Token 仅附于 huggingface.co 官方域；镜像候选匿名访问
-                    token: hf_token.clone().filter(|_| name == "huggingface"),
-                });
+                // ENG-18: most HF repos default to "main", but some still use
+                // "master" — try the alternate branch as a fallback candidate.
+                for branch in ["main", "master"] {
+                    out.push(SourceCandidate {
+                        name,
+                        url: format!("{base}/{repo}/resolve/{branch}/{encoded}"),
+                        // ENG-02: Token 仅附于 huggingface.co 官方域；镜像候选匿名访问
+                        token: hf_token.clone().filter(|_| name == "huggingface"),
+                    });
+                }
             }
         }
     }
@@ -614,9 +622,11 @@ pub async fn local_model_download(
 
 /// Pauses an in-flight local model download. `id`: install folder name. Returns whether a
 /// download was in flight.
+/// ENG-14: trim the id — the download task registers its control entry under the
+/// TRIMMED id, so untrimmed lookups (pause/cancel) silently missed active downloads.
 #[tauri::command]
 pub fn local_model_pause_download(id: String) -> bool {
-    signal_download(&id, |c| c.pause.store(true, Ordering::Relaxed))
+    signal_download(id.trim(), |c| c.pause.store(true, Ordering::Relaxed))
 }
 
 /// Cancels a local model download (deletes the checkpoint; with no active download,
@@ -624,7 +634,8 @@ pub fn local_model_pause_download(id: String) -> bool {
 /// HOR-4: the no-download cleanup walks the model dir — off the main thread.
 #[tauri::command]
 pub async fn local_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
-    let active = signal_download(&id, |c| c.cancel.store(true, Ordering::Relaxed));
+    // ENG-14: same trimmed-id lookup as the download task's registration
+    let active = signal_download(id.trim(), |c| c.cancel.store(true, Ordering::Relaxed));
     if !active {
         // P0-2：id 经 safe_join 校验后再定位目录
         let dir = crate::core::path_safety::safe_join(&local_models_dir(&app), id.trim())?;
@@ -718,7 +729,15 @@ fn installed_list_inner(root: PathBuf) -> Vec<InstalledLocalModel> {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if path.is_file() {
+        // ENG-19: never follow symlinks at the top level either — a linked model
+        // dir/file would alias/double-count the same shards (or loop).
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_file() {
             // Top-level loose GGUF: a single-file model
             if !name.to_lowercase().ends_with(".gguf") {
                 continue;
@@ -740,7 +759,7 @@ fn installed_list_inner(root: PathBuf) -> Vec<InstalledLocalModel> {
             });
             continue;
         }
-        if !path.is_dir() {
+        if !file_type.is_dir() {
             continue;
         }
         // Model directory: marker (market install, recursive) or direct GGUF files only
@@ -861,14 +880,23 @@ fn collect_gguf_files_shallow(dir: &Path, out: &mut Vec<MarketFile>) {
 
 /// Recursively collects `*.gguf` files under `root`, returning repo-relative names + sizes.
 /// Only used for market-managed directories (marker present).
+/// ENG-19: symlinked entries are skipped — `Path::is_dir()` follows symlinks, so a
+/// linked directory (or a symlink loop a user created inside a model dir) would be
+/// traversed endlessly / double-count aliased shards.
 fn collect_gguf_files(base: &Path, dir: &Path, out: &mut Vec<MarketFile>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             collect_gguf_files(base, &path, out);
         } else if entry
             .file_name()
@@ -888,14 +916,21 @@ fn collect_gguf_files(base: &Path, dir: &Path, out: &mut Vec<MarketFile>) {
 }
 
 /// Removes `*.part` checkpoint files (and their `.etag` sidecars) under `dir` (recursive).
+/// ENG-19: same symlink skip as collect_gguf_files (is_dir() follows links → loops).
 fn remove_part_files(dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             remove_part_files(&path);
         } else {
             let name = entry.file_name().to_string_lossy().to_lowercase();

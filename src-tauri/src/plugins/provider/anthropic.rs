@@ -272,6 +272,15 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
     {
         body.insert("stream".into(), json!(true));
     }
+    // PROV-14: forward sampling params — the historic conversion silently dropped
+    // temperature/top_p, so Anthropic turns always ran at the API default regardless
+    // of the configured value.
+    if let Some(t) = openai.get("temperature").and_then(|v| v.as_f64()) {
+        body.insert("temperature".into(), json!(t));
+    }
+    if let Some(p) = openai.get("top_p").and_then(|v| v.as_f64()) {
+        body.insert("top_p".into(), json!(p));
+    }
     // tool_choice: auto (default) omitted; none -> {type:"none"}; a specific function -> {type:"tool", name}
     if let Some(tc) = openai.get("tool_choice") {
         let tc_str = tc.as_str().unwrap_or("");
@@ -471,7 +480,12 @@ pub fn handle_anthropic_stream_event(
     match etype {
         "message_start" => {
             if let Some((inp, cached)) = anthropic_sse_message_usage(val) {
-                *input_tokens = inp;
+                // PROV-15: normalize to OpenAI prompt_tokens semantics, where cached
+                // tokens are a SUBSET of the prompt total. Anthropic reports
+                // input_tokens WITHOUT cache_read_input_tokens, so the unified
+                // input_tokens / context-window display and the cache-hit ratio
+                // used provider-inconsistent denominators before.
+                *input_tokens = inp.saturating_add(cached.unwrap_or(0));
                 // Keep the previous value when the event carries no cache-hit count (do not overwrite with 0)
                 if let Some(c) = cached {
                     *cached_input_tokens = c;
@@ -746,5 +760,52 @@ mod tests {
     fn detects_anthropic_url() {
         assert!(is_anthropic_url("https://api.anthropic.com"));
         assert!(!is_anthropic_url("https://api.openai.com"));
+    }
+
+    /// PROV-14: temperature/top_p must carry over — the historic conversion
+    /// silently dropped them, so Anthropic turns always ran at the API default.
+    #[test]
+    fn sampling_params_are_forwarded() {
+        let body = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.2,
+            "top_p": 0.9
+        }))
+        .unwrap();
+        assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["top_p"], 0.9);
+        // Absent params stay absent (Anthropic default applies)
+        let body2 = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .unwrap();
+        assert!(body2.get("temperature").is_none());
+        assert!(body2.get("top_p").is_none());
+    }
+
+    /// PROV-15: the unified input_tokens must follow OpenAI prompt_tokens
+    /// semantics (cached ⊂ total). Anthropic's input_tokens EXCLUDES
+    /// cache_read_input_tokens — the message_start handler adds them back so
+    /// the context-window display and cache-hit ratio use one denominator.
+    #[test]
+    fn message_start_input_tokens_include_cached() {
+        let ev = json!({
+            "type": "message_start",
+            "message": {"usage": {"input_tokens": 30, "cache_read_input_tokens": 70}}
+        });
+        let (inp, cached) = anthropic_sse_message_usage(&ev).expect("usage 应解析");
+        assert_eq!((inp, cached), (30, Some(70)));
+        // Normalized total = 100 (matches OpenAI prompt_tokens semantics)
+        assert_eq!(inp + cached.unwrap_or(0), 100);
+        // No cache-hit count: total stays the reported input
+        let ev2 = json!({
+            "type": "message_start",
+            "message": {"usage": {"input_tokens": 42}}
+        });
+        let (inp2, cached2) = anthropic_sse_message_usage(&ev2).expect("usage 应解析");
+        assert_eq!((inp2, cached2), (42, None));
+        assert_eq!(inp2 + cached2.unwrap_or(0), 42);
     }
 }

@@ -86,20 +86,62 @@ pub struct HttpTransportState {
     /// Streamable HTTP session: the Mcp-Session-Id from the initialize response,
     /// echoed back on subsequent requests (session expiry is a server-side error; the client just forwards it)
     pub session_id: Arc<parking_lot::Mutex<Option<String>>>,
+    /// MCP-22: which transport kind this state serves — `false` = legacy HTTP+SSE,
+    /// `true` = streamable HTTP. Drives the kind-appropriate endpoint suffix for
+    /// bare-host base URLs (`/sse` vs `/mcp`).
+    pub streamable: bool,
 }
 
 impl HttpTransportState {
+    /// MCP-22: endpoint derivation is kind-aware and never silent.
+    /// - an explicit path ending in `/mcp` or `/sse` is kept verbatim;
+    /// - a BARE host (no path) gets the kind-appropriate suffix — `/sse` for the
+    ///   legacy HTTP+SSE transport, `/mcp` for streamable HTTP — logged at debug;
+    /// - any other explicit path is used AS IS (the historic code silently rewrote
+    ///   `https://host/custom/endpoint` into `https://host/custom/endpoint/mcp`).
     fn endpoint(&self) -> String {
         let trimmed = self.base_url.trim_end_matches('/');
         if trimmed.ends_with("/mcp") || trimmed.ends_with("/sse") {
-            trimmed.to_string()
-        } else {
-            format!("{}/mcp", trimmed)
+            return trimmed.to_string();
         }
+        let has_explicit_path = url::Url::parse(trimmed)
+            .map(|u| !u.path().is_empty() && u.path() != "/")
+            .unwrap_or(true);
+        if has_explicit_path {
+            tracing::debug!(
+                "[mcp:http] 使用配置的完整端点（未追加路径后缀）: {}",
+                trimmed
+            );
+            return trimmed.to_string();
+        }
+        let suffix = if self.streamable { "/mcp" } else { "/sse" };
+        tracing::debug!(
+            "[mcp:http] 基础 URL 未含路径，按 {} transport 追加 {}: {}{}",
+            if self.streamable {
+                "Streamable HTTP"
+            } else {
+                "HTTP+SSE"
+            },
+            suffix,
+            trimmed,
+            suffix
+        );
+        format!("{trimmed}{suffix}")
     }
 
     fn next_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+/// MCP-19: our client generates u64 JSON-RPC ids, but some servers echo them back
+/// as strings ("1"). Correlation parses both encodings of the same number; any
+/// other shape yields None (missing-id leniency is preserved by the callers).
+fn rpc_id_as_u64(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.parse::<u64>().ok(),
+        _ => None,
     }
 }
 
@@ -152,6 +194,7 @@ impl super::McpServerPlugin for HttpPlugin {
             next_id: Arc::new(AtomicU64::new(1)),
             closed: Arc::new(AtomicBool::new(false)),
             session_id: Arc::new(parking_lot::Mutex::new(None)),
+            streamable: self.streamable,
         };
         let dummy_transport = Box::new(DummyHttpTransport {
             closed: state.closed.clone(),
@@ -180,7 +223,8 @@ impl super::McpServerPlugin for HttpPlugin {
             "id": id,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                // MCP-20: shared MCP_PROTOCOL_VERSION constant (two transports)
+                "protocolVersion": super::MCP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
             }
@@ -372,7 +416,8 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         return Err(McpError::Server("HTTP transport 已关闭".into()));
     }
     let url = state.endpoint();
-    let expect_id = body.get("id").and_then(|i| i.as_u64());
+    // MCP-19: accept numeric-string ids echoed by lenient servers
+    let expect_id = body.get("id").and_then(rpc_id_as_u64);
     let mut req = state
         .client
         .post(&url)
@@ -473,7 +518,7 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         if v.get("error").is_some() {
             return Err(rpc_error(&v));
         }
-        let resp_id = v.get("id").and_then(|i| i.as_u64());
+        let resp_id = v.get("id").and_then(rpc_id_as_u64);
         if resp_id.is_some() && resp_id != expect_id {
             return Err(McpError::Server(format!(
                 "MCP 响应 id ({resp_id:?}) 与请求 ({expect_id:?}) 不匹配"
@@ -540,7 +585,7 @@ fn classify_sse_data(data: &str, expect_id: Option<u64>) -> McpResult<Option<Val
     if v.get("error").is_some() {
         return Err(rpc_error(&v));
     }
-    let resp_id = v.get("id").and_then(|i| i.as_u64());
+    let resp_id = v.get("id").and_then(rpc_id_as_u64);
     if resp_id.is_none() || resp_id == expect_id {
         Ok(Some(v))
     } else {
@@ -629,5 +674,75 @@ mod tests {
         }
         // 畸形 JSON → 跳过不致命
         assert!(classify_sse_data("not json", Some(7)).unwrap().is_none());
+    }
+
+    /// MCP-19: servers that echo the request id back as a STRING ("7") must still
+    /// correlate — the historic u64-only parse dropped the id to None, and in the
+    /// SSE classifier None was treated as "ours" (mismatched string ids slipped
+    /// through as false hits).
+    #[test]
+    fn string_echoed_rpc_ids_correlate() {
+        assert_eq!(rpc_id_as_u64(&json!(7)), Some(7));
+        assert_eq!(rpc_id_as_u64(&json!("7")), Some(7));
+        assert_eq!(rpc_id_as_u64(&json!("x")), None);
+        assert_eq!(rpc_id_as_u64(&json!(null)), None);
+        // SSE classifier: matching string id → hit
+        let hit = "{\"jsonrpc\":\"2.0\",\"id\":\"7\",\"result\":{}}";
+        assert!(classify_sse_data(hit, Some(7)).unwrap().is_some());
+        // SSE classifier: OTHER request's string id → correctly skipped now
+        let other = "{\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{}}";
+        assert!(classify_sse_data(other, Some(7)).unwrap().is_none());
+    }
+
+    /// MCP-22: endpoint derivation is kind-aware and never silently rewrites an
+    /// explicit path; only a bare host gets the transport-appropriate suffix.
+    #[test]
+    fn endpoint_derivation_is_kind_aware_and_explicit_paths_kept() {
+        let mk = |streamable: bool, base: &str| HttpTransportState {
+            base_url: base.to_string(),
+            headers: Arc::new(BTreeMap::new()),
+            client: http_client(),
+            next_id: Arc::new(AtomicU64::new(1)),
+            closed: Arc::new(AtomicBool::new(false)),
+            session_id: Arc::new(parking_lot::Mutex::new(None)),
+            streamable,
+        };
+        // Explicit /sse and /mcp endpoints kept verbatim
+        assert_eq!(
+            mk(true, "https://s.example/mcp").endpoint(),
+            "https://s.example/mcp"
+        );
+        assert_eq!(
+            mk(false, "https://s.example/sse").endpoint(),
+            "https://s.example/sse"
+        );
+        // Bare host: streamable appends /mcp, legacy appends /sse
+        assert_eq!(
+            mk(true, "https://s.example").endpoint(),
+            "https://s.example/mcp"
+        );
+        assert_eq!(
+            mk(false, "https://s.example").endpoint(),
+            "https://s.example/sse"
+        );
+        // Bare host with trailing slash: normalized then suffixed
+        assert_eq!(
+            mk(false, "https://s.example/").endpoint(),
+            "https://s.example/sse"
+        );
+        // Explicit custom path: kept AS IS (historic code appended /mcp silently)
+        assert_eq!(
+            mk(true, "https://s.example/custom/endpoint").endpoint(),
+            "https://s.example/custom/endpoint"
+        );
+        // Localhost + port variants
+        assert_eq!(
+            mk(true, "http://127.0.0.1:3333").endpoint(),
+            "http://127.0.0.1:3333/mcp"
+        );
+        assert_eq!(
+            mk(false, "http://127.0.0.1:3333").endpoint(),
+            "http://127.0.0.1:3333/sse"
+        );
     }
 }

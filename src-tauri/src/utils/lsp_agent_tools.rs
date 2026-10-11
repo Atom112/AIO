@@ -146,16 +146,21 @@ fn extension_to_language_id(ext: &str) -> Option<&str> {
 }
 
 /// Relative file path → file:// URI (mirrors the same-named private helper in client.rs).
+/// SEC-11: the model-provided path is sandboxed through `file_tools::safe_path`
+/// before conversion — `Path::join` lets an absolute argument replace the base
+/// entirely and `..` walks out, which would hand the language server (and its
+/// hover/definition results) files outside the project.
 fn file_path_to_uri(project_root: &Path, file_path: &str) -> Result<String, String> {
-    let full = project_root.join(file_path);
-    let canonical = std::fs::canonicalize(&full).map_err(|e| {
-        ierr!(
-            "无法解析路径 {}: {}",
-            "Failed to resolve path {}: {}",
-            full.display(),
-            e
-        )
-    })?;
+    let canonical =
+        crate::utils::file_tools::safe_path(&project_root.to_string_lossy(), file_path, true)
+            .map_err(|e| {
+                ierr!(
+                    "文件路径校验失败（{}）: {}",
+                    "File path validation failed ({}): {}",
+                    file_path,
+                    e
+                )
+            })?;
     let url = url::Url::from_file_path(&canonical).map_err(|_| {
         ierr!(
             "路径转 URI 失败: {}",

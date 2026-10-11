@@ -81,16 +81,30 @@ function cacheKeyFor(source: DownloadSource, queryKey: string): string {
   return `${source}::${queryKey}`;
 }
 
+// FE-17: parsed-cache memo. readMarketCache() used to JSON.parse the ENTIRE
+// cache (every cached query) on every call — and currentEntry() is a reactive
+// accessor, so the full parse ran per render / per source-query keystroke.
+// The parsed object is now cached in memory and only re-parsed when the
+// storage key's content changes (writes go through writeMarketCache).
+let parsedMarketCache: MarketCache | null = null;
+let marketCacheLoaded = false;
+
 function readMarketCache(): MarketCache | null {
-  try {
-    const raw = localStorage.getItem(MARKET_CACHE_KEY);
-    if (!raw) return null;
-    const cache = JSON.parse(raw) as MarketCache;
-    if (!cache.updatedAt || !cache.queries) return null;
-    return cache;
-  } catch {
-    return null;
+  if (!marketCacheLoaded) {
+    marketCacheLoaded = true;
+    try {
+      const raw = localStorage.getItem(MARKET_CACHE_KEY);
+      if (raw) {
+        const cache = JSON.parse(raw) as MarketCache;
+        if (cache.updatedAt && cache.queries) {
+          parsedMarketCache = cache;
+        }
+      }
+    } catch {
+      parsedMarketCache = null;
+    }
   }
+  return parsedMarketCache;
 }
 
 function writeMarketCache(key: string, entry: MarketCacheEntry) {
@@ -98,6 +112,7 @@ function writeMarketCache(key: string, entry: MarketCacheEntry) {
     const cache = readMarketCache() ?? { updatedAt: 0, queries: {} };
     cache.queries[key] = entry;
     cache.updatedAt = Date.now();
+    parsedMarketCache = cache;
     localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
   } catch {
     /* storage full / disabled: cache is best-effort */

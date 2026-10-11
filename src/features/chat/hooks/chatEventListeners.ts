@@ -603,6 +603,13 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       ]);
     }),
 
+    // MCP-17: the backend approval wait timed out (or the channel closed) — drop the
+    // bubble instead of leaving it clickable until a press hits "does not exist".
+    listen<{ approval_id: string }>(EVENTS.toolApprovalExpired, (e) => {
+      const { approval_id } = e.payload;
+      setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== approval_id));
+    }),
+
     // Agent task board changed (create_tasks / update_task): mirror the snapshot (TaskBoardPanel
     // matches it against the current topic)
     listen<{ assistant_id: string; topic_id: string; tasks: AgentTaskState[] }>(

@@ -132,11 +132,65 @@ pub async fn add_mcp_server(
     match project_id {
         Some(ref pid) => {
             let project_path = resolve_project_path_mcp(&app, pid)?;
+            // MCP-23: the same-layer old entry is fully replaced by this save —
+            // clean its keyring accounts that the new entry no longer references.
+            let old = mcp::load_project_mcp_servers(&project_path)
+                .servers
+                .get(&config.id)
+                .cloned();
+            clean_orphaned_secrets_on_save(&app, old.as_ref(), &config);
             mcp::upsert_project_config(&project_path, config.clone()).map_err(|e| e.to_string())?;
             mcp::mark_project_server_trusted(&app, &project_path, &config);
             Ok(())
         }
-        None => mcp::upsert_config(&app, config).map_err(|e| e.to_string()),
+        None => {
+            let old = mcp::load_mcp_servers(&app).servers.get(&config.id).cloned();
+            clean_orphaned_secrets_on_save(&app, old.as_ref(), &config);
+            mcp::upsert_config(&app, config).map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// MCP-23: (target, entries) view of a transport's keyring-backed fields.
+fn transport_secret_bearers(
+    t: &McpTransport,
+) -> Vec<(&'static str, &std::collections::BTreeMap<String, String>)> {
+    match t {
+        McpTransport::Stdio { env, .. } => vec![("env", env)],
+        McpTransport::Http { headers, .. } | McpTransport::StreamableHttp { headers, .. } => {
+            vec![("header", headers)]
+        }
+    }
+}
+
+/// MCP-23: best-effort cleanup of keyring accounts orphaned by a config save.
+///
+/// The historic flow left secrets in the OS keyring FOREVER when a key was
+/// removed/renamed, or its `${KEYRING:...}` placeholder was replaced with a plain
+/// value: the removal-time cleanup only inspects the final config, which no longer
+/// names those accounts. This runs at the point where the OLD entry is still known
+/// — every account it referenced that the NEW entry does not is deleted.
+fn clean_orphaned_secrets_on_save(
+    app: &AppHandle,
+    old: Option<&McpServerConfig>,
+    new: &McpServerConfig,
+) {
+    let Some(old) = old else { return };
+    let mut kept: std::collections::HashSet<String> = Default::default();
+    for (_, entries) in transport_secret_bearers(&new.transport) {
+        for v in entries.values() {
+            kept.extend(mcp::keyring_accounts_in(v));
+        }
+    }
+    for (_, entries) in transport_secret_bearers(&old.transport) {
+        for v in entries.values() {
+            for account in mcp::keyring_accounts_in(v) {
+                if !kept.contains(&account) {
+                    tracing::info!("[mcp] 清理已被配置移除的 keyring 密钥: {account}");
+                    let _ = crate::core::secure_store::delete(app, &account);
+                }
+            }
+        }
     }
 }
 
@@ -203,20 +257,18 @@ pub async fn remove_mcp_server(
     // Delete all of this server's env secrets from the keyring
     let cfg = mcp::get_config_merged(&app, &id, project_id.as_deref());
     if let Some(cfg) = cfg {
-        let entries = match &cfg.transport {
-            crate::core::models::McpTransport::Stdio { env, .. } => Some(("env", env)),
-            crate::core::models::McpTransport::Http { headers, .. }
-            | crate::core::models::McpTransport::StreamableHttp { headers, .. } => {
-                Some(("header", headers))
-            }
-        };
-        if let Some((target, values)) = entries {
+        for (target, values) in transport_secret_bearers(&cfg.transport) {
             for (key, value) in values {
                 let legacy = secure_store::accounts::mcp_server_env(&id, key);
                 let _ = secure_store::delete(&app, &legacy);
-                if value.contains("${KEYRING:") {
-                    let account = format!("mcp-server-{}-{}-{}", id, target, key);
-                    let _ = secure_store::delete(&app, &account);
+                // MCP-23: delete the standard account for EVERY key (the account may
+                // hold a stale secret from an earlier placeholder round even when the
+                // current value is plain — keyring delete of a missing entry is a no-op),
+                // plus every account name the value still names.
+                let account = format!("mcp-server-{}-{}-{}", id, target, key);
+                let _ = secure_store::delete(&app, &account);
+                for named in mcp::keyring_accounts_in(value) {
+                    let _ = secure_store::delete(&app, &named);
                 }
             }
         }
@@ -959,14 +1011,29 @@ pub(crate) async fn request_tool_approval(
             "用户已拒绝此操作",
             "The user declined this operation"
         )),
-        Ok(Err(_)) => Err(ierr!(
-            "审批通道意外关闭",
-            "Approval channel closed unexpectedly"
-        )),
-        Err(_) => Err(ierr!(
-            "等待用户确认超时（60s）",
-            "Timed out waiting for user confirmation (60s)"
-        )),
+        Ok(Err(_)) => {
+            // MCP-17: tell the frontend the request is gone — without this the
+            // bubble lingered until a button press hit "does not exist".
+            let _ = app.emit(
+                ev::TOOL_APPROVAL_EXPIRED,
+                serde_json::json!({ "approval_id": approval_id }),
+            );
+            Err(ierr!(
+                "审批通道意外关闭",
+                "Approval channel closed unexpectedly"
+            ))
+        }
+        Err(_) => {
+            // MCP-17: same linkage for the timeout branch
+            let _ = app.emit(
+                ev::TOOL_APPROVAL_EXPIRED,
+                serde_json::json!({ "approval_id": approval_id }),
+            );
+            Err(ierr!(
+                "等待用户确认超时（60s）",
+                "Timed out waiting for user confirmation (60s)"
+            ))
+        }
     }
 }
 
@@ -1029,8 +1096,18 @@ fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            if let Some(first) = cmd.split_whitespace().next() {
-                rule.command_prefix = Some(first.to_string());
+            match cmd.split_whitespace().next() {
+                Some(first) => rule.command_prefix = Some(first.to_string()),
+                // MCP-18: an empty/missing command string cannot derive a prefix —
+                // skip the rule entirely. A prefix-less execute_command rule would
+                // match EVERY later command for the whole session (rule_matches
+                // only restricts when command_prefix is Some).
+                None => {
+                    tracing::warn!(
+                        "[permission] 空 command 无法派生 execute_command 会话规则，跳过"
+                    );
+                    return;
+                }
             }
         }
         "write_file" | "replace_in_file" | "delete_file" | "make_directory" => {

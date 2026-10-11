@@ -35,6 +35,9 @@ const STILL_ACTIVE: u32 = 259;
 const SE_FILE_OBJECT: u32 = 1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
 const GRANT_ACCESS: i32 = 1;
+/// accctrl.h: REVOKE_ACCESS removes all existing allow-ACEs for the trustee
+/// (used by the SEC-14 reclaim path — the grant direction uses GRANT_ACCESS).
+const REVOKE_ACCESS: i32 = 4;
 const SUB_CONTAINERS_AND_OBJECTS_INHERIT: u32 = 3;
 const TRUSTEE_IS_SID: i32 = 0;
 const TRUSTEE_IS_UNKNOWN: i32 = 0;
@@ -164,6 +167,7 @@ extern "system" {
         psz_app_container_name: *const u16,
         ppsid_app_container_sid: *mut *mut c_void,
     ) -> Hresult;
+    fn DeleteAppContainerProfile(psz_app_container_name: *const u16) -> Hresult;
 
     // kernel32.dll
     fn CreateProcessW(
@@ -270,6 +274,15 @@ fn grants_cache() -> &'static std::sync::Mutex<std::collections::HashSet<String>
 }
 
 // ---- profile / SID ----
+
+/// SEC-14: shared per-project profile-name derivation — spawn_in_appcontainer and
+/// revoke_project_grants MUST agree or the reclaim would target the wrong profile.
+pub fn profile_name_for_root(canon_root: &str) -> String {
+    format!(
+        "AIO.Agent.{}",
+        fnv1a_hex(canon_root.to_lowercase().as_bytes())
+    )
+}
 
 /// Get the project's AppContainer profile SID, creating the profile when needed.
 /// If the profile already exists, Create returns a failing HRESULT; fall back to Derive.
@@ -456,6 +469,134 @@ fn grant_dir_access(
     Ok(())
 }
 
+// ---- SEC-14: project-deletion reclaim ----
+
+/// SEC-14: best-effort reclaim of a deleted project's sandbox artifacts.
+///
+/// The historic code created a per-project AppContainer profile (registry) and
+/// granted ACEs on the project directory, but NEVER revoked either when the
+/// project was removed from AIO — profiles and AC write-ACEs leaked forever.
+/// This removes, in order: the project dir's ACEs for the profile SID, the
+/// registry profile itself, the AC-dedicated temp dir, and the in-process
+/// grants-cache entries (so a re-added project re-grants). Every step is
+/// best-effort with logging; failures never block project deletion.
+pub fn revoke_project_grants(project_root: &str) {
+    // The profile name derives from the CANONICAL path; when the directory is
+    // already gone, fall back to hashing the raw path (matches when the stored
+    // path was already canonical — the common case).
+    let canon = std::path::Path::new(project_root)
+        .canonicalize()
+        .map(|p| crate::utils::file_tools::strip_windows_extended_prefix(&p.to_string_lossy()))
+        .unwrap_or_else(|e| {
+            tracing::debug!(
+                "[appcontainer] 项目目录已不可解析，按原始路径计算档案哈希（{}）",
+                e
+            );
+            project_root.to_string()
+        });
+    let profile_name = profile_name_for_root(&canon);
+    let name_w = wide(&profile_name);
+
+    // 1) Remove the ACEs for the profile SID from the project directory (if it still exists)
+    let mut sid: *mut c_void = std::ptr::null_mut();
+    if unsafe { DeriveAppContainerSidFromAppContainerName(name_w.as_ptr(), &mut sid) } == 0
+        && !sid.is_null()
+    {
+        if std::path::Path::new(&canon).exists() {
+            let path_w = wide(&canon);
+            let mut dacl: *mut c_void = std::ptr::null_mut();
+            let mut sd: *mut c_void = std::ptr::null_mut();
+            let rc = unsafe {
+                GetNamedSecurityInfoW(
+                    path_w.as_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut dacl,
+                    std::ptr::null_mut(),
+                    &mut sd,
+                )
+            };
+            if rc == ERROR_SUCCESS {
+                if dacl_has_sid_ace(dacl, sid) {
+                    // REVOKE_ACCESS strips the allow-ACEs for this SID only
+                    let ea = ExplicitAccessW {
+                        grf_access_permissions: 0, // ignored for REVOKE_ACCESS
+                        grf_access_mode: REVOKE_ACCESS,
+                        grf_inheritance: 0,
+                        trustee: TrusteeW {
+                            p_multiple_trustee: std::ptr::null_mut(),
+                            multiple_trustee_operation: 0,
+                            trustee_form: TRUSTEE_IS_SID,
+                            trustee_type: TRUSTEE_IS_UNKNOWN,
+                            ptstr_name: sid as *mut u16,
+                        },
+                    };
+                    let mut new_dacl: *mut c_void = std::ptr::null_mut();
+                    if unsafe { SetEntriesInAclW(1, &ea, dacl, &mut new_dacl) } == ERROR_SUCCESS
+                        && !new_dacl.is_null()
+                    {
+                        let rc2 = unsafe {
+                            SetNamedSecurityInfoW(
+                                path_w.as_ptr(),
+                                SE_FILE_OBJECT,
+                                DACL_SECURITY_INFORMATION,
+                                std::ptr::null_mut(),
+                                std::ptr::null_mut(),
+                                new_dacl,
+                                std::ptr::null_mut(),
+                            )
+                        };
+                        if rc2 != ERROR_SUCCESS {
+                            tracing::warn!(
+                                "[appcontainer] SEC-14 ACE 回收失败（SetNamedSecurityInfoW={}）: {}",
+                                rc2,
+                                canon
+                            );
+                        }
+                    } else {
+                        tracing::warn!("[appcontainer] SEC-14 ACE 回收构建新 DACL 失败: {canon}");
+                    }
+                    if !new_dacl.is_null() {
+                        unsafe { LocalFree(new_dacl) };
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    "[appcontainer] SEC-14 读取项目 DACL 失败（rc={rc}），跳过 ACE 回收: {}",
+                    canon
+                );
+            }
+            if !sd.is_null() {
+                unsafe { LocalFree(sd) };
+            }
+        }
+        unsafe { LocalFree(sid) };
+    }
+
+    // 2) Delete the registry profile itself
+    let hr = unsafe { DeleteAppContainerProfile(name_w.as_ptr()) };
+    if hr != 0 {
+        tracing::debug!(
+            "[appcontainer] SEC-14 删除 profile 失败 hr=0x{hr:08X}（可能本来就不存在）: {profile_name}"
+        );
+    } else {
+        tracing::info!("[appcontainer] SEC-14 已回收 profile: {profile_name}");
+    }
+
+    // 3) Remove the AC-dedicated temp dir
+    let hash = fnv1a_hex(canon.to_lowercase().as_bytes());
+    let ac_temp = std::env::temp_dir().join("aio-ac").join(&hash);
+    let _ = std::fs::remove_dir_all(&ac_temp);
+
+    // 4) Drop the in-process grants-cache entries (a re-added project re-grants)
+    grants_cache()
+        .lock()
+        .unwrap()
+        .retain(|k| !k.starts_with(&hash));
+}
+
 // ---- environment block ----
 
 /// Build a Unicode environment block: inherit the parent environment, override TEMP/TMP to the
@@ -534,8 +675,8 @@ pub fn spawn_in_appcontainer(
         })?;
     let canon_s =
         crate::utils::file_tools::strip_windows_extended_prefix(&canon_root.to_string_lossy());
+    let profile_name = profile_name_for_root(&canon_s);
     let hash = fnv1a_hex(canon_s.to_lowercase().as_bytes());
-    let profile_name = format!("AIO.Agent.{hash}");
     let sid = ensure_profile_sid(&profile_name)?;
 
     // 2) ACLs: project root RW+X; AC-dedicated temp dir RW; toolchain dirs R+X

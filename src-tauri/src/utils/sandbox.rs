@@ -266,7 +266,9 @@ pub fn create_job_for_pid(pid: u32) -> Result<JobGuard, String> {
 #[cfg(windows)]
 pub(crate) mod win_appcontainer;
 #[cfg(windows)]
-pub use win_appcontainer::{spawn_in_appcontainer, terminate, wait_with_timeout};
+pub use win_appcontainer::{
+    revoke_project_grants, spawn_in_appcontainer, terminate, wait_with_timeout,
+};
 
 // ====== Linux / macOS command sandbox ======
 //

@@ -78,8 +78,10 @@ fn tokenize_command(command: &str) -> Vec<String> {
                 // toggle double-quote (inside single-quote = literal)
                 in_double = !in_double;
             }
-            ('\\', _, _) => {
-                // skip escaped characters inside quotes
+            ('\\', true, _) | ('\\', _, true) => {
+                // SEC-10 配套：反斜杠只在引号内作转义符；引号外它是 Windows 路径
+                // 分隔符，必须原样保留——原先无条件剥反斜杠使 `C:\Windows\Temp`
+                // 被切成 `c:windowstemp`，全部 `c:\` 前缀检查沦为死代码
                 if i + 1 < bytes.len() {
                     i += 1;
                     current.push(bytes[i] as char);
@@ -174,12 +176,44 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     let lower_tokens: Vec<String> = tokens.iter().map(|t| t.to_lowercase()).collect();
 
     // --- 1. System destruction: rm -rf + critical system paths ---
-    // detect `rm` immediately followed by `-rf`/`-fr`/`-r`/`-f` + a system path
-    let system_paths = [
-        "/", "/*", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/media", "/mnt",
-        "/opt", "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var", "~", "~/",
-        "/tmp", "/var/tmp",
+    // SEC-10: two-tier matching. (a) The directory ITSELF (exact) is always
+    // catastrophic — `rm -rf /etc`, `rm -rf /home`, `rm -rf ~`, `rm -rf /`.
+    // (b) Prefix matching applies ONLY to OS-critical trees (/etc, /usr, ...)
+    // where any depth IS the system. Paths under /home/<user>/..., /tmp/...,
+    // ~/..., /opt/... are USER data: the old prefix list hard-blocked e.g.
+    // `rm -rf /home/u/proj/build` and `rm -rf ~/build` in every mode (Critical
+    // bypasses approvals entirely) — those now go through the normal sandbox +
+    // approval flow instead.
+    let os_critical_prefixes: &[&str] = &[
+        "/etc",
+        "/bin",
+        "/boot",
+        "/dev",
+        "/lib",
+        "/lib64",
+        "/proc",
+        "/root",
+        "/run",
+        "/sbin",
+        "/sys",
+        "/usr",
+        "c:\\windows",
     ];
+    let exact_catastrophic: &[&str] = &[
+        "/", "/*", "/home", "/opt", "/mnt", "/media", "/srv", "/var", "/tmp", "/var/tmp", "~",
+        "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run", "/sbin",
+        "/sys", "/usr", "c:", "c:\\", "c:/",
+    ];
+    // SEC-10: normalize trailing slashes so `/etc/` and `~/` hit the exact list
+    // (`//` collapses to `/`); a leading-slash-only string normalizes to `/`.
+    let norm_path = |p: &str| -> String {
+        let n = p.trim_end_matches('/');
+        if n.is_empty() && p.starts_with('/') {
+            "/".to_string()
+        } else {
+            n.to_string()
+        }
+    };
 
     for i in 0..tokens.len() {
         if is_rm_command(&lower_tokens[i]) {
@@ -189,15 +223,20 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                 .any(|a| *a == "-rf" || *a == "-fr" || *a == "-r" || *a == "-f");
             if has_force {
                 for arg in &args {
-                    if !arg.starts_with('-') {
-                        for sp in &system_paths {
-                            if *arg == *sp || arg.starts_with(sp) && *arg != "/tmp/" {
-                                return Some(DangerInfo {
-                                    risk: "危险：递归删除系统关键路径",
-                                    category: DangerCategory::Critical,
-                                });
-                            }
-                        }
+                    if arg.starts_with('-') || arg.is_empty() {
+                        continue;
+                    }
+                    let norm = norm_path(arg);
+                    let is_system = exact_catastrophic.contains(&norm.as_str())
+                        || os_critical_prefixes.iter().any(|p| {
+                            norm.starts_with(&format!("{p}/"))
+                                || norm.starts_with(&format!("{p}\\"))
+                        });
+                    if is_system {
+                        return Some(DangerInfo {
+                            risk: "危险：递归删除系统关键路径",
+                            category: DangerCategory::Critical,
+                        });
                     }
                 }
             }
@@ -236,6 +275,9 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
 
     // PowerShell 递归删除：`Remove-Item -Recurse [-Force] <系统路径/~>`。
     // §11a 递归会把引号载荷送进本函数（SEC-07 旗标修复后可达），这里补 cmdlet 词法。
+    // SEC-10: same two-tier rule as the rm section — exact system-dir targets or
+    // OS-critical-tree prefixes are Critical; user subpaths (/home/u/..., ~/build,
+    // C:\Users\...) go through sandbox + approval instead of a hard block.
     for i in 0..lower_tokens.len() {
         if lower_tokens[i] == "remove-item" {
             let args = &tokens[i + 1..];
@@ -250,11 +292,12 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                     }
                     let lowered = arg.to_lowercase();
                     let target = lowered.trim_matches('"').trim_matches('\'');
-                    let is_system = target == "~"
-                        || target.starts_with("~/")
-                        || target.starts_with('/')
-                        || target.starts_with("c:\\")
-                        || target.starts_with("c:");
+                    let norm = norm_path(target);
+                    let is_system = exact_catastrophic.contains(&norm.as_str())
+                        || os_critical_prefixes.iter().any(|p| {
+                            norm.starts_with(&format!("{p}/"))
+                                || norm.starts_with(&format!("{p}\\"))
+                        });
                     if is_system {
                         return Some(DangerInfo {
                             risk: "危险：PowerShell 递归删除系统关键路径",
@@ -859,9 +902,16 @@ pub fn execute_command(
     let mut job_guard = match crate::utils::sandbox::assign_to_job(&child) {
         Ok(g) => Some(g),
         Err(e) => {
-            // sandbox assignment failure must not block execution, but log the error
-            tracing::warn!("[shell] 无法分配 Job Object 沙箱: {e}");
-            None
+            // SEC-15: fail-closed. The Job Object is the only process-tree containment
+            // on the native Windows path — without it, a timeout kill would take down
+            // only the direct child and leak every grandchild. Running unsandboxed
+            // after a failed assignment (the historic fail-open) silently dropped the
+            // tree-teardown guarantee. Kill the just-spawned child and error instead.
+            let _ = child.kill();
+            let _ = child.wait();
+            return tool_err(&format!(
+                "无法分配 Job Object 沙箱（fail-closed，命令未执行）: {e}"
+            ));
         }
     };
 
@@ -1211,6 +1261,54 @@ mod tests {
         let r = execute_command("echo aio_benign_check", &root, Some(10_000), false, None);
         assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
         assert!(text_of(&r).contains("aio_benign_check"));
+    }
+
+    /// SEC-10: user absolute paths under /home, /tmp, ~ are NOT system destruction —
+    /// the old prefix list hard-blocked them as Critical in every mode (Critical
+    /// bypasses approvals entirely), breaking legitimate `rm -rf` cleanup.
+    #[test]
+    fn rm_rf_user_subpaths_are_not_critical() {
+        for cmd in [
+            "rm -rf /home/user/project/build",
+            "rm -rf /tmp/cache-dir",
+            "rm -rf ~/build",
+            "rm -rf /opt/myapp/cache",
+            "rm -rf C:\\Users\\me\\proj\\target",
+            "Remove-Item -Recurse C:\\Users\\me\\proj\\node_modules",
+        ] {
+            assert!(
+                check_dangerous_command(cmd).is_none(),
+                "用户路径误判系统销毁: {cmd}"
+            );
+        }
+    }
+
+    /// SEC-10: the system directories themselves and OS-critical trees stay Critical.
+    #[test]
+    fn rm_rf_system_targets_stay_critical() {
+        for cmd in [
+            "rm -rf /",
+            "rm -rf /*",
+            "rm -rf /etc",
+            "rm -rf /etc/",
+            "rm -rf /etc/nginx",
+            "rm -rf /usr",
+            "rm -rf /usr/share/data",
+            "rm -rf /home",
+            "rm -rf /tmp",
+            "rm -rf /var",
+            "rm -rf ~",
+            "rm -rf ~/",
+            "rm -rf /",
+            "Remove-Item -Recurse C:\\Windows\\Temp",
+            "Remove-Item -Recurse ~",
+        ] {
+            let info = check_dangerous_command(cmd);
+            assert!(
+                info.is_some_and(|d| d.category == DangerCategory::Critical),
+                "系统路径应保持 Critical: {cmd}"
+            );
+        }
     }
 
     /// Large-output commands must not deadlock: stdout/stderr must be read before

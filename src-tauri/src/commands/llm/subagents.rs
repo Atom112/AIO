@@ -2,8 +2,6 @@
 
 // 阶段4 第1项（消 glob）：原 `use crate::commands::llm::*;` 同时吸入 mod.rs 的
 // 14 个子模块 glob 与其工具 use 头——替换为下述显式 use（符号 → 真实来源）。
-use crate::commands::llm::budget::is_context_overflow_error;
-use crate::commands::llm::compress::compress_context;
 use crate::commands::llm::handoff::build_subagent_progress_summary;
 use crate::commands::llm::tool_dispatch::{is_parallel_safe, merge_mcp_tools, FsServerPolicy};
 use crate::core::events as ev;
@@ -1444,6 +1442,22 @@ pub(crate) async fn execute_subagent(
     // Read-only tool concurrency toggle (shares the same config item as the main loop)
     let parallel_enabled = app_cfg.parallel_tool_execution;
 
+    // 阶段4 第1项（agent_loop 切片4）：共享压缩守卫上下文（预算门控 + 溢出恢复）。
+    // 子代理压缩归属于主会话（assistant_id/topic_id 传父级 ID），tag="subagent"。
+    let compress_ctx = super::round_artifacts::CompressCtx {
+        window,
+        client,
+        api_url,
+        api_key,
+        model: model_to_use,
+        assistant_id: parent_assistant_id,
+        topic_id: parent_topic_id,
+        token,
+        keep_recent_tokens: limits.keep_recent_tokens,
+        tag: "subagent",
+        locale,
+    };
+
     loop {
         round += 1;
         if token.is_cancelled() {
@@ -1723,47 +1737,27 @@ pub(crate) async fn execute_subagent(
                 )
                 .await;
                 if sub_est > limits.context_budget && sub_msgs.len() > 4 {
-                    let _ = compress_sub_context(
-                        window,
-                        client,
-                        api_url,
-                        api_key,
-                        model_to_use,
-                        &mut sub_msgs,
-                        parent_assistant_id,
-                        parent_topic_id,
-                        token,
-                        limits.keep_recent_tokens,
-                        locale,
-                    )
-                    .await;
+                    // 阶段4 第1项（agent_loop 切片4）：压缩调用经共享 CompressCtx
+                    let _ = compress_ctx.compress(&mut sub_msgs).await;
                 }
             }
             Err(e) => {
                 if e == "cancelled" {
                     break;
                 }
-                // Context-overflow auto-recovery: compress and retry once
-                if sub_overflow_retries < 1 && is_context_overflow_error(&e) && sub_msgs.len() > 4 {
-                    sub_overflow_retries += 1;
-                    let res = compress_sub_context(
-                        window,
-                        client,
-                        api_url,
-                        api_key,
-                        model_to_use,
+                // Context-overflow auto-recovery: compress and retry once (shared gate)
+                if compress_ctx
+                    .try_overflow_recovery(
+                        &e,
+                        sub_msgs.len(),
+                        &mut sub_overflow_retries,
+                        1,
                         &mut sub_msgs,
-                        parent_assistant_id,
-                        parent_topic_id,
-                        token,
-                        limits.keep_recent_tokens,
-                        locale,
                     )
-                    .await;
-                    if res.is_ok() {
-                        tracing::warn!("[subagent overflow] 上下文溢出，已压缩并重试: {}", e);
-                        continue;
-                    }
+                    .await
+                {
+                    tracing::warn!("[subagent overflow] 上下文溢出，已压缩并重试: {}", e);
+                    continue;
                 }
                 // API error: record and return
                 let _ = window.emit(
@@ -2350,42 +2344,4 @@ pub(crate) struct SubagentErrorPayload {
     parent_topic_id: String,
     subagent_id: String,
     error: String,
-}
-
-/// Compresses a subagent's earlier context: shared by the budget safety valve and the overflow retry (take out -> compress -> refill).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "subagent compression reuses the active stream request context"
-)]
-async fn compress_sub_context(
-    window: &Window,
-    client: &reqwest::Client,
-    api_url: &str,
-    api_key: &str,
-    model: &str,
-    sub_msgs: &mut Vec<serde_json::Value>,
-    parent_assistant_id: &str,
-    parent_topic_id: &str,
-    token: &CancellationToken,
-    keep_recent_tokens: usize,
-    locale: &str,
-) -> Result<(), String> {
-    let mut msgs = std::mem::take(sub_msgs);
-    let r = compress_context(
-        window,
-        client,
-        api_url,
-        api_key,
-        model,
-        &mut msgs,
-        parent_assistant_id,
-        parent_topic_id,
-        token,
-        keep_recent_tokens,
-        "subagent",
-        locale,
-    )
-    .await;
-    *sub_msgs = msgs;
-    r
 }

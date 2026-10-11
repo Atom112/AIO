@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第1项（子目标5/5 切片4）：压缩守卫收敛（CompressCtx）
+
+- **共享压缩上下文（agent_loop 切片 4）**：两循环 4 处同构的压缩调用模式（`std::mem::take` → `compress_context` 12 参调用 → 回填；主循环预算门 + 溢出门、子代理预算门 + 溢出门——后者还包着一层私有薄包装 `compress_sub_context`）收敛为 `round_artifacts.rs` 的 `CompressCtx`（借用式上下文：window/client/api_url/api_key/model/ids/token/keep_recent_tokens/tag/locale + `compress()` 单方法）。**溢出恢复门**（重试预算 + 错误分类 `is_context_overflow_error` + 最小长度 >4 三条件谓词）收敛为 `try_overflow_recovery` / `overflow_recoverable` 纯谓词（+1 测试覆盖三条件的全部反例）；子代理薄包装删除；主循环预算门的 8 变量 clone 块随之消失
+- **控制流层判定（收尾立场，写入模块文档）**：工具执行三阶段调度（collect futures → FuturesUnordered → 串行回填）两循环**结构同构但分支内容是域语义**——主循环的 delegation/ask_user/任务板/file-diff 捕获 vs 子代理的 profile 门控/worktree/心跳事件；强行统一需要数十个钩子的策略对象，抽象成本高于重复成本。产物构造层（切片1-3）+ 压缩守卫（切片4）已承载全部**真同构机器**（累计 18 处内联消除、9 测试）
+
 ### 🧱 阶段4 第1项（子目标5/5 切片3）：工具结果展示三元组收敛
 
 - **工具结果归一化共享（agent_loop 切片 3）**：`ToolResult → (前端文本, 结构化 JSON 值, is_error)` 的三元组转换在主循环内联重复 **3 处**（串行 MCP 分支 / 串行内建分支 / 并行 Phase-2 各 ~18 行）+ 子代理私有同构 `tool_result_text`（8 行文本提取）。全部收敛到 `round_artifacts.rs` 的 `tool_result_display` / `tool_result_text` 单一实现（含 serde 序列化形状回归测试）；两循环改走共享实现——共享构造面累计 **14 处内联消除，8 个回归测试**

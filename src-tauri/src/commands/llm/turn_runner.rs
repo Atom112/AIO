@@ -22,10 +22,9 @@ use tauri::{AppHandle, Emitter, Manager, Window};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-use super::budget::{estimate_context_tokens_offload, is_context_overflow_error};
+use super::budget::estimate_context_tokens_offload;
 use super::checkpoints::finalize_checkpoints;
 use super::client::streaming_http_client;
-use super::compress::compress_context;
 use super::handoff::{build_extract_transcript, consume_handoff_doc, write_handoff_doc};
 use super::subagents::{
     drain_pending_subagent_notices, execute_get_subagent_result, execute_workflow,
@@ -157,6 +156,21 @@ impl AgentTurnRunner {
         let tool_server_map = tool_set.tool_server_map;
         let memory_effective = tool_set.memory_effective;
         let tools_slice: Option<&[ToolSpec]> = if tools.is_empty() { None } else { Some(&tools) };
+
+        // 阶段4 第1项（agent_loop 切片4）：共享压缩守卫上下文（预算门控 + 溢出恢复）
+        let compress_ctx = super::round_artifacts::CompressCtx {
+            window: &window,
+            client: &client,
+            api_url: &api_url,
+            api_key: &api_key,
+            model: &model,
+            assistant_id: &assistant_id_c,
+            topic_id: &topic_id_c,
+            token: &token_inner,
+            keep_recent_tokens,
+            tag: "main",
+            locale: &locale_c,
+        };
 
         let mut round: u32 = 0;
         let mut final_error: Option<String> = None;
@@ -374,32 +388,19 @@ impl AgentTurnRunner {
                         break 'outer;
                     }
                     // Context overflow auto-recovery: compress earlier messages and retry once so long sessions don't fail outright
-                    if overflow_retries < MAX_OVERFLOW_RETRIES
-                        && is_context_overflow_error(&e)
-                        && messages_for_api.len() > 4
-                    {
-                        overflow_retries += 1;
-                        let mut msgs = std::mem::take(&mut messages_for_api);
-                        let res = compress_context(
-                            &window,
-                            &client,
-                            &api_url,
-                            &api_key,
-                            &model,
-                            &mut msgs,
-                            &assistant_id_c,
-                            &topic_id_c,
-                            &token_inner,
-                            keep_recent_tokens,
-                            "main",
-                            &locale_c,
+                    // (shared gate; on false the failure path below stands)
+                    if compress_ctx
+                        .try_overflow_recovery(
+                            &e,
+                            messages_for_api.len(),
+                            &mut overflow_retries,
+                            MAX_OVERFLOW_RETRIES,
+                            &mut messages_for_api,
                         )
-                        .await;
-                        messages_for_api = msgs;
-                        if res.is_ok() {
-                            tracing::warn!("[overflow] 上下文溢出，已压缩并重试: {}", e);
-                            continue;
-                        }
+                        .await
+                    {
+                        tracing::warn!("[overflow] 上下文溢出，已压缩并重试: {}", e);
+                        continue;
                     }
                     incomplete_stop = true;
                     final_error = Some(e);
@@ -1065,31 +1066,8 @@ impl AgentTurnRunner {
             let estimated_tokens: usize =
                 estimate_context_tokens_offload(&model, &messages_for_api, context_budget).await;
             if estimated_tokens > context_budget && messages_for_api.len() > 4 {
-                let window_c = window.clone();
-                let client_c = client.clone();
-                let api_url_c = api_url.clone();
-                let api_key_c = api_key.clone();
-                let model_c = model.clone();
-                let a_id = assistant_id_c.clone();
-                let t_id = topic_id_c.clone();
-                let tok = token_inner.clone();
-                let mut msgs = std::mem::take(&mut messages_for_api);
-                match compress_context(
-                    &window_c,
-                    &client_c,
-                    &api_url_c,
-                    &api_key_c,
-                    &model_c,
-                    &mut msgs,
-                    &a_id,
-                    &t_id,
-                    &tok,
-                    keep_recent_tokens,
-                    "main",
-                    &locale_c,
-                )
-                .await
-                {
+                // 阶段4 第1项（agent_loop 切片4）：压缩调用经共享 CompressCtx（事件仍在此发射——主循环专属）
+                match compress_ctx.compress(&mut messages_for_api).await {
                     Ok(_) => {
                         compressed_this_run = true;
                         let _ = window.emit(
@@ -1106,7 +1084,6 @@ impl AgentTurnRunner {
                         let _ = window.emit(ev::LLM_COMPRESSION_FAILED, json!({"error": e}));
                     }
                 }
-                messages_for_api = msgs;
             }
 
             // Checkpoint: persist a snapshot at the end of EACH round (LOOP-2: this

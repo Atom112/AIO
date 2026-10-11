@@ -1,12 +1,16 @@
-//! Shared round artifacts of the agent loop (阶段4 第1项子目标 5/5 首切片：subagents
-//! 与主循环抽公共 agent_loop——先收敛两循环逐字符重复的轮次产物构造).
+//! Shared machinery of the agent loop (阶段4 第1项子目标 5/5：subagents 与主循环
+//! 抽公共 agent_loop——收敛两循环逐字符重复的产物构造与压缩守卫).
 //!
-//! 主循环（turn_runner.rs）与子代理循环（subagents.rs）各自手搓同一套轮次产物：
-//! - assistant 消息追加（role/content + tool_calls 数组）——两处逐字段相同；
-//! - role:tool 消息构造（4 字段 Map）——主循环内联重复 **3 次**，子代理 1 次变体；
-//! - `[Error] {e}` 文本映射——两循环各 2 处。
+//! 切片 1（产物构造）：assistant 消息追加 / role:tool 消息（主循环内联 ×3 + 子代理
+//! ×1）/ `[Error]` 文本——收敛为单一实现。
+//! 切片 2（截断续写守卫）：`finish_reason="length"` 续写块。
+//! 切片 3（工具结果展示三元组）：文本/JSON 值/is_error 归一化（主循环 ×3 + 子代理私有）。
+//! 切片 4（压缩守卫）：`CompressCtx`——两循环 4 处 take/call/restore + 12 参
+//! 压缩调用 + 溢出恢复门（预算 + 错误分类 + 最小长度）收敛为单一实现。
 //!
-//! 本模块是单一来源；两循环消费它，后续的完整 agent_loop 引擎抽取以此为地基。
+//! 控制流层（工具执行三阶段调度）未强行统一：主循环的 delegation/ask_user/任务板
+//! 与子代理的 profile 门控/worktree 是**域语义**而非样板——强行抽取需要数十个
+//! 钩子的策略对象，抽象成本高于重复成本。本模块承载全部真同构机器。
 
 use super::streaming::{RoundResult, ToolCallAccum};
 use crate::core::models::ToolResult;
@@ -128,6 +132,88 @@ pub(crate) fn try_length_continuation(
     false
 }
 
+// ===== 压缩守卫（agent_loop 切片 4）：两循环的溢出恢复与预算门控 =====
+
+/// Borrowed compression-execution context shared by both loops.
+///
+/// The two loops invoke the same `compress_context` with different ids/tag
+/// ("main" vs "subagent"); the take/call/restore + 12-argument invocation
+/// pattern was previously duplicated at **4 sites** (main: budget gate +
+/// overflow gate; sub: budget gate + overflow gate via a private wrapper).
+pub(crate) struct CompressCtx<'a> {
+    pub window: &'a tauri::Window,
+    pub client: &'a reqwest::Client,
+    pub api_url: &'a str,
+    pub api_key: &'a str,
+    pub model: &'a str,
+    /// Owning agent/topic ids (the subagent loop passes its PARENT ids — the
+    /// compression events/summaries attribute to the main conversation).
+    pub assistant_id: &'a str,
+    pub topic_id: &'a str,
+    pub token: &'a tokio_util::sync::CancellationToken,
+    pub keep_recent_tokens: usize,
+    /// Compression source tag: "main" | "subagent" (drives event/summary semantics).
+    pub tag: &'a str,
+    pub locale: &'a str,
+}
+
+impl CompressCtx<'_> {
+    /// Runs the shared compression over `messages` in place (take/call/restore).
+    pub(crate) async fn compress(&self, messages: &mut Vec<Value>) -> Result<(), String> {
+        let mut msgs = std::mem::take(messages);
+        let r = super::compress::compress_context(
+            self.window,
+            self.client,
+            self.api_url,
+            self.api_key,
+            self.model,
+            &mut msgs,
+            self.assistant_id,
+            self.topic_id,
+            self.token,
+            self.keep_recent_tokens,
+            self.tag,
+            self.locale,
+        )
+        .await;
+        *messages = msgs;
+        r
+    }
+
+    /// Context-overflow auto-recovery gate (shared by both loops).
+    ///
+    /// When the round errored with a context-overflow classification and the retry
+    /// budget allows, compresses in place. Returns `true` when the caller should
+    /// `continue` the loop; `false` leaves the caller's failure path in charge.
+    pub(crate) async fn try_overflow_recovery(
+        &self,
+        error: &str,
+        message_count: usize,
+        retries: &mut u32,
+        max_retries: u32,
+        messages: &mut Vec<Value>,
+    ) -> bool {
+        if overflow_recoverable(error, message_count, *retries, max_retries) {
+            *retries += 1;
+            if self.compress(messages).await.is_ok() {
+                return true; // recovered -> caller continues the loop
+            }
+        }
+        false
+    }
+}
+
+/// Pure predicate of the overflow gate: retry budget + error classification +
+/// minimum-length floor (context of <=4 messages cannot shrink usefully).
+pub(crate) fn overflow_recoverable(
+    error: &str,
+    message_count: usize,
+    retries: u32,
+    max_retries: u32,
+) -> bool {
+    retries < max_retries && super::budget::is_context_overflow_error(error) && message_count > 4
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +293,27 @@ mod tests {
     #[test]
     fn error_text_convention() {
         assert_eq!(tool_error_text("boom"), "[Error] boom");
+    }
+
+    /// 溢出恢复谓词（agent_loop 切片 4）：预算 + 错误分类 + 最小长度三条件。
+    #[test]
+    fn overflow_recoverable_gates_on_all_three_conditions() {
+        // 典型溢出错误 + 预算可用 + 足够消息 -> 可恢复
+        assert!(overflow_recoverable("context length exceeded", 5, 0, 1));
+        assert!(overflow_recoverable(
+            "Maximum context window exceeded",
+            8,
+            0,
+            2
+        ));
+        // 预算耗尽 -> 不可恢复
+        assert!(!overflow_recoverable("context length exceeded", 5, 1, 1));
+        // 非溢出错误 -> 不可恢复
+        assert!(!overflow_recoverable("connection reset by peer", 5, 0, 1));
+        // 消息不足（<=4 无法有效收缩）-> 不可恢复
+        assert!(!overflow_recoverable("context length exceeded", 4, 0, 1));
+        // 组合：非溢出错误即使预算充足也不可恢复
+        assert!(!overflow_recoverable("rate limited", 20, 0, 1));
     }
 
     #[test]

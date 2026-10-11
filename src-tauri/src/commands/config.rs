@@ -573,8 +573,16 @@ pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, Strin
 
 ///
 /// Persist the subagent profile model overrides to disk.
+/// FE-12: the api_key field is stripped before writing — the file only needs
+/// profile → model identity on load (the live key is resolved fresh from the
+/// provider config each turn), so plaintext keys must not land in this file.
 #[tauri::command]
-pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Result<(), String> {
+pub fn save_profile_model_overrides(
+    mut overrides: Vec<ProfileModelOverride>,
+) -> Result<(), String> {
+    for o in overrides.iter_mut() {
+        o.api_key.clear();
+    }
     let path = crate::core::paths::app_config_file("profile-model-overrides.json")?;
     let file = ProfileModelOverridesFile {
         version: 1,

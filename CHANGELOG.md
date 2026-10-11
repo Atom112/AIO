@@ -4,6 +4,46 @@
 
 ## [Unreleased]
 
+### 🔒 审查复核收尾 · 批次 2-6（供应商安全 / MCP 传输 / 引擎 / 数据面 / 同步命令异步化）
+
+**批次 2 — 供应商安全与 SEC-06 残角**
+
+- **PROV-5 host 精确匹配**：provider 分发谓词从全串 `contains` 改为解析后 host 后缀匹配（新增 `url_host_matches`）——`api.anthropic.com.evil.io` 等仿冒域名不再命中原生插件（历史行为：x-api-key 照发给任意主机）；anthropic/google/ollama 三插件谓词全部收紧（ollama 的 11434/ollama 标记同步限定在解析后的 host/port 上）；`is_anthropic_url` 保留（stream_options 体形状判定专用）但同获精确匹配；+2 回归测试（lookalike 全落 openai_compat 兜底、真子域名仍匹配）
+- **SEC-06 残角清零**：vllm 的 `python3`/`python` 裸名候选改经 exec_resolve PATH-only 解析（cwd 植入 python.exe 劫持面消除）；ollama 两处「解析失败回退裸名 `ollama`」改为显式报错；2 个既有 vllm 测试断言随新语义更新（候选为 PATH 解析出的绝对路径）
+- **PROV-11 同型收口**：image_gen 传输错误经 `redact_urls_in` 脱敏后再进聊天消息（reqwest Display 含完整 URL 查询串）；btw 畸形 SSE 行补 tracing::warn（与主循环对齐，不再静默丢弃）
+- **SEC-18 补告警**：assistant 列表加载路径的 Off 回退（此前的静默分支）补 tracing::warn，与 load_assistant_agent_mode 主路径一致
+
+**批次 3 — MCP 传输三残角**
+
+- **MCP-5 buffer 上限**：HTTP SSE 缓冲 4MB 硬顶——不发块分隔符的流不再无界增长至 60s 超时
+- **PROV-1 同型（MCP SSE）**：逐 chunk `from_utf8_lossy` 改字节级缓冲 `push_sse_chunk`（完整 UTF-8 序列才解码、非法序列硬错误、跨 chunk 多字节字符零 U+FFFD）——MCP 工具结果/通知携带 CJK 载荷不再被 TCP 分段切坏；+2 测试（穷举字节边界两段切分、非法序列报错）
+- **MCP-9 批量节流**：stdio stderr 事件按 300ms 窗口合并（32 行/16KB 提前冲刷），服务器刷屏不再形成逐行事件风暴（前端监听本就只做 DEV 打印，合并行零信息损失）
+- **MCP-19 stdio 字符串 id**：`JsonRpcResponse.id` 反序列化接受数字字符串（"id":"7"）——真实服务器以字符串回显 id 时不再静默丢弃挂到超时；非数字字符串仍无法关联（保持丢弃）；+1 stdio 关联回归测试
+
+**批次 4 — 引擎与下载**
+
+- **ENG-03 端口预检**：start_local_server 在停完自家引擎后、spawn 前对 127.0.0.1:port 做连接探测——端口被无关进程占用时报明确错误，不再伪装成健康检查失败（或更糟：健康探测打到外来监听者误报"引擎就绪"）
+- **ENG-05 嵌入侧并发守卫**：embedding_model_download 同 id 并发下载拒绝（此前无条件 insert 覆盖旧控制项——第二个任务可取消/暂停第一个的状态，首个退出守卫又能误删继任者条目）
+- **ENG-18 市场列举 revision 回退**：HF `tree/main`→`tree/master`、ModelScope `Revision=master`→`Revision=main` 主备候选逐一回退（与下载器同策略）——master-only 仓库此前 404 无法列举文件
+
+**批次 5 — 数据面四残角**
+
+- **PROV-12 catalog 坏缓存回退**：AppData 目录缓存加形状校验（可解析 + providers/models 数组齐全才可用），损坏缓存跳过并回退 bundled 目录——可读但损坏的缓存不再每次启动永久遮蔽内置目录
+- **MEM-02 对称性测试补齐**：Supersede 执行计划抽为纯函数 `plan_from_judge`（ConsolidatePlan 枚举：KeepSeparate/Merge/Update/SupersedeLoser），无 LLM 即可测方向契约；+2 测试（Supersede 让位旧事实 anchor 与 tools/extract 契约同向；Update/Merge/KeepSeparate 映射面——含模型合并稿优先、空回退拼接）
+- **MEM-7 并发 miss 双开连接修复**：MemoryStoreManager.open 改 `DashMap::entry` 原子路径——并发未命中不再各自开一条 SQLite 连接（败者连接被静默弃置）；+1 同实例复用测试
+- **LOOP-10 锁外附件读取**：message_for_api 拆两阶段（`message_metadata_for_api` 锁内仅取附件元数据行 → 释放锁 → `finish_message_for_api` 锁外读盘+base64+组装）——run_agent_turn 与 call_llm_stream 两入口的全局 DB 锁不再横跨整个历史的图片读盘（每回合全历史附件重读期间其他 DB 使用者全部等待）
+
+**批次 6 — HOR-4 同步重 I/O 命令异步化（批次二，12 命令）**
+
+- **skill 族**：list_skills / save_skill / delete_skill（全局+项目级 skills.json 读改写）→ async + spawn_blocking
+- **memory 导入导出**：memory_export_file / memory_import_file（全量事实导出 / 16MB 导入）→ async + spawn_blocking
+- **provider_config 族**：load_provider_configs（每 provider 一次 keyring 往返+遗留明文迁移写回）/ save_provider_configs（每非空 key 一次 keyring 写+原子写）→ async + spawn_blocking（抽出 `load_provider_configs_internal` / `save_provider_configs_internal` pub(crate) 体，供本就跑 blocking 池的本地模型目录迁移复用——其调用点同步改走 internal，消除后续 future-未-await 隐患）
+- **config 族**：save_app_config / load_app_config（keyring+fs）/ save_activated_models / load_activated_models（每模型 keyring 往返）/ set_auto_start（注册表/launch-agent 写）/ is_auto_start_enabled → async + spawn_blocking（set_auto_start 长体抽 `_inner`）
+- 两处下载迁移调用点改直接调 core 层 `save_app_config`（原引用已变 async 的命令层包装）
+- 暂缓：scan_installed_engines 已是 `#[tauri::command(async)]`（不占主线程），其盘探测量为几次 exists() 检查；迁入 blocking 池需 EngineManager 插件 Box→Arc 化重构，收益不抵改动
+
+验证：cargo fmt/clippy -D warnings 0 / **cargo 312 passed**（+7 新测试）/ eslint 0 警告 / gates rgba=173≤173 any=77≤77
+
 ### 🔒 审查复核收尾 · 批次 1（前端 FE 项 + 门禁棘轮收紧）
 
 - **FE-06 模块级 t() 冻结消除**：DiffView 的 ACTION_LABELS 与 SubagentModelSettings 的 BUILTIN_PROFILES 原为模块加载期求值对象——切语言后"新增/修改/删除"标签与 10 个内置子代理档案名**永久停留旧语言**。改为渲染期惰性求值（`actionLabel(action)` 函数 / `builtinProfiles()` 工厂，消费方 createMemo 因 t() 在其内被追踪而随 locale 重算）

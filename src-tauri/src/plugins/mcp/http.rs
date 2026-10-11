@@ -470,9 +470,22 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         use futures_util::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
+        // PROV-1 family: raw bytes awaiting a complete UTF-8 sequence (a multibyte
+        // char split across chunk boundaries stays here until its tail arrives).
+        let mut raw: Vec<u8> = Vec::new();
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| McpError::Server(format!("SSE read: {}", e)))?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            push_sse_chunk(&mut raw, &mut buffer, &chunk)?;
+            // MCP-5: the undrained buffer must stay bounded — a stream that never
+            // sends a block delimiter used to grow it without limit (only the 60s
+            // request timeout stopped it).
+            if buffer.len() + raw.len() > MAX_SSE_BUFFER_BYTES {
+                return Err(McpError::Server(crate::ierr!(
+                    "MCP SSE 响应超过缓冲上限（{} 字节）——服务器未发送块分隔符或单块过大",
+                    "MCP SSE response exceeded the buffer cap ({} bytes) — no block delimiter or a single oversized block",
+                    MAX_SSE_BUFFER_BYTES
+                )));
+            }
             // 阶段5: the block-drain loop lives in drain_sse_blocks (exercised by
             // the malicious/edge-server transcript tests below).
             if let Some(v) = drain_sse_blocks(&mut buffer, expect_id)? {
@@ -557,6 +570,43 @@ pub(crate) fn drain_sse_blocks(
     Ok(None)
 }
 
+/// MCP-5: hard cap on the undrained SSE buffer (a stream with no block
+/// delimiters must fail fast instead of growing until the request timeout).
+const MAX_SSE_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+
+/// PROV-1 family: append a raw SSE chunk, decoding only complete UTF-8 sequences.
+/// A multibyte char split across chunk boundaries stays in `raw` until its tail
+/// arrives — the historic per-chunk `from_utf8_lossy` replaced it with U+FFFD and
+/// silently corrupted CJK payloads (MCP tool results/notifications carry them).
+/// A complete-but-invalid sequence anywhere is a hard error (never lossy).
+pub(crate) fn push_sse_chunk(
+    raw: &mut Vec<u8>,
+    buffer: &mut String,
+    chunk: &[u8],
+) -> McpResult<()> {
+    raw.extend_from_slice(chunk);
+    match std::str::from_utf8(raw) {
+        Ok(s) => {
+            buffer.push_str(s);
+            raw.clear();
+            Ok(())
+        }
+        Err(e) => {
+            if e.error_len().is_some() {
+                return Err(McpError::Server("SSE 流包含无效 UTF-8 序列".into()));
+            }
+            // Incomplete multibyte tail: decode the valid prefix, keep the rest.
+            let valid = e.valid_up_to();
+            let head = std::str::from_utf8(&raw[..valid])
+                .unwrap_or_default()
+                .to_string();
+            buffer.push_str(&head);
+            raw.drain(..valid);
+            Ok(())
+        }
+    }
+}
+
 /// 提取一个 SSE 块的 data 载荷（多行 `data:` 按 SSE 规范以 `\n` 拼接）。
 /// 无 data 行（心跳/注释/纯 event 行）返回 `None`。
 fn sse_block_data(block: &str) -> Option<String> {
@@ -621,6 +671,37 @@ impl super::connection::McpTransport for DummyHttpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PROV-1 family 回归：多字节 UTF-8 被切在 chunk 边界时不得产生 U+FFFD——
+    /// 逐 chunk from_utf8_lossy 会把被 TCP 分段切开的 CJK 字符变乱码。
+    #[test]
+    fn sse_multibyte_survives_chunk_boundaries() {
+        let full = "data: {\"text\":\"你好，世界\"}\n\n".to_string();
+        let bytes = full.as_bytes();
+        // 在每个字节边界两段切分，外加逐字节喂入
+        for k in 1..bytes.len() {
+            let mut raw: Vec<u8> = Vec::new();
+            let mut buffer = String::new();
+            push_sse_chunk(&mut raw, &mut buffer, &bytes[..k]).expect("前半段");
+            push_sse_chunk(&mut raw, &mut buffer, &bytes[k..]).expect("后半段");
+            assert!(raw.is_empty(), "切点 {k}：raw 应已清空");
+            assert_eq!(buffer, full, "切点 {k}：重组应与整段一致");
+        }
+        let mut raw: Vec<u8> = Vec::new();
+        let mut buffer = String::new();
+        for b in bytes {
+            push_sse_chunk(&mut raw, &mut buffer, &[*b]).expect("逐字节喂入不应失败");
+        }
+        assert_eq!(buffer, full);
+    }
+
+    /// 完整但非法的 UTF-8 序列是硬错误（绝不 lossy 替换后静默继续）。
+    #[test]
+    fn sse_invalid_utf8_is_a_hard_error() {
+        let mut raw: Vec<u8> = Vec::new();
+        let mut buffer = String::new();
+        assert!(push_sse_chunk(&mut raw, &mut buffer, b"data: \xff\xfe\n\n").is_err());
+    }
 
     /// MCP-5 回归：心跳/注释块先到时，块消费必须连同分隔符一起删除——
     /// 历史实现 drain(..pos) 留下 "\n\n"，之后 find 恒命中 0、缓冲只增不消，

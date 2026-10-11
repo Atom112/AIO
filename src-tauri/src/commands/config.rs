@@ -13,15 +13,21 @@ use std::fs;
 use tauri::{AppHandle, Manager};
 
 /// Save the general app configuration (business logic lives in core::config).
+/// HOR-4: keyring write + atomic disk write — async + blocking pool.
 #[tauri::command]
-pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
-    crate::core::config::save_app_config(&app, &config)
+pub async fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::core::config::save_app_config(&app, &config))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Load the general app configuration (business logic lives in core::config).
+/// HOR-4: keyring read + fs read (plus legacy plaintext migration writes) — async + blocking pool.
 #[tauri::command]
-pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
-    crate::core::config::load_app_config(&app)
+pub async fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
+    tokio::task::spawn_blocking(move || crate::core::config::load_app_config(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Partial app-config patch accepted by `patch_app_config` (FE-07).
@@ -88,9 +94,20 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                 .unwrap_or_default();
             let project_id: Option<String> = row.get(6)?;
             let agent_mode_str: Option<String> = row.get(7)?;
+            // SEC-18 (parity with load_assistant_agent_mode): an unparsable persisted
+            // mode falls back to Off fail-closed, with a visible log — the list path
+            // used to fall back silently.
             let agent_mode = agent_mode_str
+                .clone()
                 .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
-                .unwrap_or(crate::core::models::AgentMode::Off);
+                .unwrap_or_else(|| {
+                    if agent_mode_str.is_some() {
+                        tracing::warn!(
+                            "[sec-18] persisted agent_mode failed to parse; list entry falls back to Off (fail-closed)"
+                        );
+                    }
+                    crate::core::models::AgentMode::Off
+                });
             Ok(Assistant {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -484,7 +501,17 @@ fn attachment_ids_for_assistant(
 
 /// Save the activated-models list (api_key is stripped into the system keyring; no plaintext keys on disk)
 #[tauri::command]
-pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
+pub async fn save_activated_models(
+    app: AppHandle,
+    models: Vec<ActivatedModel>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || save_activated_models_inner(app, models))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// HOR-4: keyring writes per non-empty key + atomic disk write (blocking-pool body).
+fn save_activated_models_inner(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
     let path = crate::core::paths::app_config_file("activated_models.json")?;
 
     // Strip api_key into secure_store so persisted models contain no plaintext keys.
@@ -514,7 +541,14 @@ pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Res
 
 /// Load the activated-models list (api_key restored from the keyring)
 #[tauri::command]
-pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
+pub async fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
+    tokio::task::spawn_blocking(move || load_activated_models_inner(app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// HOR-4: fs read + per-model keyring reads and legacy migration writes (blocking-pool body).
+fn load_activated_models_inner(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
     let path = crate::core::paths::app_config_dir()?.join("activated_models.json");
 
     if !path.exists() {
@@ -771,7 +805,15 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
 /// - macOS: ~/Library/LaunchAgents/com.loch.aio.plist
 /// - Linux: ~/.config/autostart/aio.desktop
 #[tauri::command]
-pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub async fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || set_auto_start_inner(app, enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// HOR-4: spawns `reg` (Windows) / writes launch-agent plist or .desktop file
+/// (macOS/Linux) — subprocess + disk work (blocking-pool body).
+fn set_auto_start_inner(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let app_name = "AIO";
     // Resolve the current executable path
@@ -936,16 +978,21 @@ X-GNOME-Autostart-enabled=true"#,
     }
 
     // Persist the state
-    let mut config = load_app_config(app.clone())?;
+    let mut config = crate::core::config::load_app_config(&app)?;
     config.auto_start_enabled = enabled;
-    save_app_config(app, config)
+    crate::core::config::save_app_config(&app, &config)
 }
 
 /// Return whether system auto-start is enabled.
+/// HOR-4: keyring read + fs read — async + blocking pool.
 #[tauri::command]
-pub fn is_auto_start_enabled(app: AppHandle) -> Result<bool, String> {
-    let config = load_app_config(app)?;
-    Ok(config.auto_start_enabled)
+pub async fn is_auto_start_enabled(app: AppHandle) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = crate::core::config::load_app_config(&app)?;
+        Ok(config.auto_start_enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ====== Topic branching ======

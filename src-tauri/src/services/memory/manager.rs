@@ -31,12 +31,18 @@ impl MemoryStoreManager {
     /// Open (or reuse) the memory store for the given project; project_root is the project's absolute path.
     pub fn open(&self, project_root: &str) -> Result<Arc<MemoryStore>, String> {
         let key = project_root.to_string();
-        if let Some(store) = self.stores.get(&key) {
-            self.touched.insert(key, Instant::now());
-            return Ok(store.clone());
-        }
-        let store = Arc::new(MemoryStore::open(project_root)?);
-        self.stores.insert(key.clone(), store.clone());
+        // MEM-07: `entry()` is atomic per-key — the old get-then-insert raced on a
+        // concurrent miss: both threads saw "absent", both opened a SQLite
+        // connection, and the loser's Arc was silently dropped while its callers
+        // kept using the orphaned connection.
+        let store: Arc<MemoryStore> = match self.stores.entry(key.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(o) => o.get().clone(),
+            dashmap::mapref::entry::Entry::Vacant(v) => {
+                let s = Arc::new(MemoryStore::open(project_root)?);
+                v.insert(s.clone());
+                s
+            }
+        };
         self.touched.insert(key, Instant::now());
         self.evict_if_needed();
         Ok(store)
@@ -83,6 +89,20 @@ impl MemoryStoreManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MEM-7: concurrent-miss hardening — `entry()` makes the open path atomic
+    /// per key; a repeated open must always return the SAME Arc (the old
+    /// get-then-insert could create two live SQLite connections on a racing miss).
+    #[test]
+    fn repeated_open_returns_the_same_store() {
+        let mgr = MemoryStoreManager::new();
+        let dir = std::env::temp_dir().join(format!("aio-memmgr-same-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = mgr.open(&dir.to_string_lossy()).unwrap();
+        let b = mgr.open(&dir.to_string_lossy()).unwrap();
+        assert!(Arc::ptr_eq(&a, &b), "同一项目必须复用同一连接实例");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// MEM-07: the cache must be bounded even when every entry was touched recently
     /// (the old TTL-only policy let an all-hot cache grow forever). True LRU: the

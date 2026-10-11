@@ -97,10 +97,11 @@ impl ProviderPlugin for AnthropicProvider {
 
 // ===== Anthropic Messages API conversion layer =====
 
-/// Returns whether the URL is a real Anthropic API endpoint (not a compatible proxy).
+/// Returns whether the URL points at the real Anthropic API host (not a compatible proxy).
+/// PROV-5: host-suffix match — the historic whole-string `contains` check let
+/// `api.anthropic.com.evil.io` claim the native plugin and receive x-api-key.
 pub fn is_anthropic_url(api_url: &str) -> bool {
-    let u = api_url.to_lowercase();
-    u.contains("api.anthropic.com")
+    super::url_host_matches(api_url, "api.anthropic.com")
 }
 
 /// Converts an OpenAI-compatible request body into an Anthropic Messages API request body.
@@ -766,6 +767,16 @@ mod tests {
     fn detects_anthropic_url() {
         assert!(is_anthropic_url("https://api.anthropic.com"));
         assert!(!is_anthropic_url("https://api.openai.com"));
+        // PROV-5: host-suffix dispatch — the historic whole-string contains check
+        // let these look-alikes claim the native plugin (x-api-key sent to a foreign host).
+        assert!(!is_anthropic_url("https://api.anthropic.com.evil.io"));
+        assert!(!is_anthropic_url("https://evil.io/proxy/api.anthropic.com"));
+        assert!(!is_anthropic_url("https://notanthropic.com"));
+        // Real subdomains of the official host still match.
+        assert!(is_anthropic_url("https://proxy.api.anthropic.com"));
+        assert!(is_anthropic_url("https://api.anthropic.com/v1/messages"));
+        // Schemeless input is parsed against https://.
+        assert!(is_anthropic_url("api.anthropic.com/v1"));
     }
 
     /// PROV-14: temperature/top_p must carry over — the historic conversion

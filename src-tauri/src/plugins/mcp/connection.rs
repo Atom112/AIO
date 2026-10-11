@@ -34,10 +34,34 @@ impl JsonRpcRequest {
     }
 }
 
+/// MCP-19: JSON-RPC ids are typed `u64` internally, but real servers echo them
+/// back as JSON strings ("id":"7"). Deserializing strictly as u64 made stdio
+/// drop those responses silently (the request then hung until its timeout).
+/// Numeric strings are accepted and parsed; anything else stays a hard parse
+/// error (an unparseable id cannot correlate to any pending request anyway).
+fn deserialize_rpc_id<'de, D>(d: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Value::deserialize(d)?;
+    match v {
+        Value::Number(n) => n
+            .as_u64()
+            .ok_or_else(|| serde::de::Error::custom("JSON-RPC id must be a u64")),
+        Value::String(s) => s
+            .parse::<u64>()
+            .map_err(|_| serde::de::Error::custom("JSON-RPC string id is not numeric")),
+        _ => Err(serde::de::Error::custom(
+            "JSON-RPC id must be a number or a numeric string",
+        )),
+    }
+}
+
 /// JSON-RPC 2.0 Response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
+    #[serde(deserialize_with = "deserialize_rpc_id")]
     pub id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
@@ -201,4 +225,40 @@ pub trait McpTransport: Send + Sync {
     async fn send(&self, payload: &str) -> McpResult<()>;
     /// Close the connection (kill the child process / close the HTTP connection)
     async fn close(&self) -> McpResult<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoopTransport;
+    #[async_trait::async_trait]
+    impl McpTransport for NoopTransport {
+        async fn send(&self, _payload: &str) -> McpResult<()> {
+            Ok(())
+        }
+        async fn close(&self) -> McpResult<()> {
+            Ok(())
+        }
+    }
+
+    /// MCP-19 回归：服务器以 JSON 字符串回显 id（"id":"1"）时必须能关联到
+    /// pending 请求——历史上严格 u64 反序列化失败后该行被静默丢弃，
+    /// 请求挂到超时。非数字字符串 id 仍然无法关联（保持丢弃语义）。
+    #[tokio::test]
+    async fn string_echoed_rpc_ids_are_correlated_on_stdio() {
+        let conn = McpConnection::new("test", "stdio", Box::new(NoopTransport));
+        let (id, rx) = conn.inner.pending.register();
+        conn.dispatch_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"ok":true}}}}"#
+        ));
+        let resp = conn
+            .inner
+            .pending
+            .wait(id, rx, std::time::Duration::from_millis(100))
+            .await
+            .expect("string-echoed id must reach the pending entry");
+        assert_eq!(resp.id, id);
+        assert!(resp.result.is_some());
+    }
 }

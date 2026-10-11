@@ -50,7 +50,7 @@ use checkpoints::load_checkpoint_messages;
 use client::{non_streaming_http_client, streaming_http_client};
 use delegate_ctx::DelegateContext;
 use locked_tools::execute_locked_file_tool;
-use messages::message_for_api;
+use messages::{finish_message_for_api, message_metadata_for_api, MessageApiJob};
 use turn_runner::AgentTurnRunner;
 use usage::insert_usage_log;
 
@@ -195,13 +195,20 @@ pub async fn call_llm_stream(
     let task_key_inner = task_key.clone();
     let assistant_id_c = assistant_id.clone();
     let topic_id_c = topic_id.clone();
+    // LOOP-10: two-phase conversion — the lock spans ONLY the SQLite metadata
+    // pass; image disk reads + base64 run after release (the old single pass
+    // held the global DB lock across every image read of the whole history).
     let messages_for_api = {
         let conn = db_state.0.lock();
         messages
             .iter()
-            .map(|message| message_for_api(&conn, message))
+            .map(|message| message_metadata_for_api(&conn, message))
             .collect::<Result<Vec<_>, _>>()?
     };
+    let messages_for_api = messages_for_api
+        .into_iter()
+        .map(finish_message_for_api)
+        .collect::<Result<Vec<_>, _>>()?;
     let tools_slice = tools; // kept for as_slice()
 
     // Defensive validation (debug builds only): checks tool_calls match tool responses.
@@ -897,14 +904,21 @@ pub(crate) async fn run_agent_turn_inner(
         .replace_generation(&task_key, std::time::Duration::from_secs(10))
         .await;
 
-    // Convert messages to API format up front (incl. attachment image expansion) so synchronous I/O finishes while the lock is held
-    let mut messages_for_api: Vec<serde_json::Value> = {
+    // Convert messages to API format up front (incl. attachment image expansion).
+    // LOOP-10: the lock covers ONLY the SQLite metadata pass — the image disk
+    // reads + base64 used to run inside it (every turn re-read the whole history's
+    // attachments while every other DB user waited).
+    let message_jobs: Vec<MessageApiJob<'_>> = {
         let conn = db_state.0.lock();
         messages
             .iter()
-            .map(|m| message_for_api(&conn, m))
+            .map(|m| message_metadata_for_api(&conn, m))
             .collect::<Result<Vec<_>, _>>()?
     };
+    let mut messages_for_api: Vec<serde_json::Value> = message_jobs
+        .into_iter()
+        .map(finish_message_for_api)
+        .collect::<Result<Vec<_>, _>>()?;
     // Checkpoint resume: replace with the full context snapshot of the last round before the crash (continue instead of restarting from scratch).
     // turn_id persists across this turn: resume reuses the original turn_id (snapshot continuation); a new turn generates a new id.
     let turn_id = resume_turn_id

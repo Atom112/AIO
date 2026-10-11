@@ -179,6 +179,13 @@ pub async fn ask_btw_question(
                             json!({ "overlay_id": overlay_id, "content": content, "done": false }),
                         );
                     }
+                } else {
+                    // PROV-1 companion (parity with the main loop): malformed SSE
+                    // data lines are logged, never silently dropped.
+                    tracing::warn!(
+                        "[btw] 无法解析的 SSE 数据行: {}",
+                        json_str.chars().take(120).collect::<String>()
+                    );
                 }
             }
         }

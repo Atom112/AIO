@@ -73,8 +73,13 @@ fn python_candidates() -> Vec<String> {
     let mut candidates: Vec<String> = Vec::new();
 
     // 1. PATH names
+    // SEC-06: bare names resolve through the PATH-only resolver — a bare
+    // "python3"/"python" spawn would consult the process cwd on Windows
+    // (CreateProcess search order), letting a planted interpreter win.
     for name in ["python3", "python"] {
-        candidates.push(name.to_string());
+        if let Some(p) = crate::utils::exec_resolve::resolve_executable(name) {
+            candidates.push(p.display().to_string());
+        }
     }
 
     // 2. VIRTUAL_ENV (user virtual env)
@@ -489,8 +494,23 @@ mod tests {
 
     #[test]
     fn find_python_prefers_path_name_when_working() {
-        let result = find_python_impl(|c| c == "python3");
-        assert_eq!(result, Ok("python3".to_string()));
+        // SEC-06: bare "python3"/"python" candidates are resolved through the
+        // PATH-only resolver before entering the list — the winning candidate
+        // is the absolute path of the first python3 on PATH (when one exists).
+        let result = find_python_impl(|c| c.ends_with("python3"));
+        match crate::utils::exec_resolve::resolve_executable("python3") {
+            Some(_) => {
+                let picked = result.expect("PATH 上存在 python3 时必须命中");
+                assert!(
+                    picked.ends_with("python3"),
+                    "命中项应为 PATH 上的 python3: {picked}"
+                );
+            }
+            None => assert!(
+                result.is_err(),
+                "PATH 无 python3 时不应伪造候选: {result:?}"
+            ),
+        }
     }
 
     #[test]
@@ -552,15 +572,27 @@ mod tests {
     #[test]
     fn python_candidates_starts_with_path_names() {
         let _guard = ENV_LOCK.lock().unwrap();
-        // Verify the first two entries of the candidate list are PATH names
+        // SEC-06: the PATH segment no longer holds bare names — each name is
+        // resolved to its absolute PATH hit first (a bare spawn would consult
+        // the process cwd on Windows). Resolution order (python3, python) is kept.
         let old_conda = std::env::var_os("CONDA_PREFIX");
         let old_venv = std::env::var_os("VIRTUAL_ENV");
         std::env::remove_var("CONDA_PREFIX");
         std::env::remove_var("VIRTUAL_ENV");
 
         let candidates = python_candidates();
-        assert_eq!(candidates[0], "python3", "第一个候选应为 python3");
-        assert_eq!(candidates[1], "python", "第二个候选应为 python");
+        let resolved: Vec<String> = ["python3", "python"]
+            .iter()
+            .filter_map(|n| crate::utils::exec_resolve::resolve_executable(n))
+            .map(|p| p.display().to_string())
+            .collect();
+        for (i, expect) in resolved.iter().enumerate() {
+            assert_eq!(
+                candidates.get(i),
+                Some(expect),
+                "PATH 段候选必须按解析序（python3 → python）排列"
+            );
+        }
 
         restore_env("CONDA_PREFIX", old_conda);
         restore_env("VIRTUAL_ENV", old_venv);

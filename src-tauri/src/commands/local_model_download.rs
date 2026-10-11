@@ -722,7 +722,7 @@ pub async fn local_models_set_dir(app: AppHandle, dir: String) -> Result<String,
     let mut cfg = crate::core::config::load_app_config(&app)
         .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
     cfg.local_models_dir = dir.trim().to_string();
-    crate::commands::config::save_app_config(app.clone(), cfg)
+    crate::core::config::save_app_config(&app, &cfg)
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     let new = local_models_dir(&app);
     if !same_path(&old, &new) {
@@ -961,7 +961,7 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
     // Rewrite provider localModelPaths entries pointing into the old directory —
     // ENG-10: only entries whose model actually migrated; the old unconditional
     // rewrite stranded references to models that stayed behind at the old path.
-    if let Ok(mut file) = crate::commands::provider_config::load_provider_configs(app.clone()) {
+    if let Ok(mut file) = crate::commands::provider_config::load_provider_configs_internal(app) {
         let mut changed = false;
         for cfg in file.providers.values_mut() {
             if let Some(map) = cfg.local_model_paths.as_mut() {
@@ -987,7 +987,7 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
         }
         if changed {
             if let Err(e) =
-                crate::commands::provider_config::save_provider_configs(app.clone(), file)
+                crate::commands::provider_config::save_provider_configs_internal(app, &file)
             {
                 tracing::warn!("[local-models] 迁移后保存供应商配置失败: {e}");
             }

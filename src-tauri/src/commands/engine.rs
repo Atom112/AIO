@@ -98,6 +98,30 @@ pub async fn start_local_server(
         stop_engine_internal(&state, &engine_id);
         sleep(Duration::from_millis(500)).await;
     }
+    // ENG-03: port preflight — AFTER our own engines are stopped (a same-port
+    // restart must not trip over itself), but BEFORE the new spawn. A port
+    // already claimed by an unrelated process used to surface later as a
+    // confusing health-check failure — or worse, the health probe hit the
+    // foreign listener and reported a bogus "engine ready".
+    {
+        let addr = format!("127.0.0.1:{port}");
+        // A successful connect means something is already listening on the port.
+        let occupied = matches!(
+            tokio::time::timeout(
+                Duration::from_millis(300),
+                tokio::net::TcpStream::connect(&addr)
+            )
+            .await,
+            Ok(Ok(_))
+        );
+        if occupied {
+            return Err(ierr!(
+                "端口 {} 已被其他进程占用，请更换端口或释放该端口",
+                "Port {} is already in use by another process; pick a different port or free it",
+                port
+            ));
+        }
+    }
     // Start via the plugin
     let url = plugin
         .start(

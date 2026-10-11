@@ -169,6 +169,36 @@ mod manager_tests {
         );
     }
 
+    /// PROV-5 regression: look-alike hosts must NOT claim the native plugins —
+    /// the historic whole-string `contains` dispatch sent x-api-key (Anthropic)
+    /// and Bearer credentials to foreign hosts like `api.anthropic.com.evil.io`.
+    /// They must fall through to the openai_compat fallback (whose auth is
+    /// whatever the user configured for that URL, never a native header set).
+    #[test]
+    fn lookalike_hosts_do_not_claim_native_plugins() {
+        let mgr = ProviderManager::new();
+        assert_eq!(
+            mgr.for_url("https://api.anthropic.com.evil.io/v1")
+                .identifier(),
+            "openai_compat"
+        );
+        assert_eq!(
+            mgr.for_url("https://generativelanguage.googleapis.com.evil.io/v1beta")
+                .identifier(),
+            "openai_compat"
+        );
+        // The genuine hosts still dispatch to their native plugins.
+        assert_eq!(
+            mgr.for_url("https://api.anthropic.com/v1").identifier(),
+            "anthropic"
+        );
+        assert_eq!(
+            mgr.for_url("https://generativelanguage.googleapis.com/v1beta")
+                .identifier(),
+            "google"
+        );
+    }
+
     /// 阶段4 第5项回归：新注册的插件经 for_url 即刻生效，返回的 Arc 超越管理器存活。
     /// 旧 boxed_for_url 的 identifier→重建第二注册表对新插件一无所知——同一个 URL
     /// 会静默重建出 openai_compat 兜底（错误分发），这是双注册表结构的固有缺陷。
@@ -208,6 +238,27 @@ mod manager_tests {
             plugin.chat_completions_url("https://test.example.com/v1"),
             "https://test.example.com/v1/chat/completions"
         );
+    }
+}
+
+/// PROV-5: host-suffix match against the URL authority.
+/// The historic whole-string `contains` dispatch let look-alike hosts
+/// (`api.anthropic.com.evil.io`) claim the native plugin and receive its auth
+/// headers (x-api-key / Bearer) — credential leakage to a foreign host. The
+/// host must equal `host` or be a subdomain of it; a URL that cannot be parsed
+/// claims no dedicated plugin (falls through to openai_compat).
+pub fn url_host_matches(api_url: &str, host: &str) -> bool {
+    let parsed = if api_url.contains("://") {
+        url::Url::parse(api_url)
+    } else {
+        url::Url::parse(&format!("https://{api_url}"))
+    };
+    match parsed
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+    {
+        Some(h) => h == host || h.ends_with(&format!(".{host}")),
+        None => false,
     }
 }
 

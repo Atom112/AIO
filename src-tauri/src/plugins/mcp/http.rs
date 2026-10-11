@@ -1,9 +1,10 @@
 //! MCP HTTP+SSE transport
 //!
-//! Design decision: the HTTP plugin does **not** use McpConnection's pending-map
-//! abstraction (HTTP is request-response and needs no background reader task).
-//! The McpConnection returned by `start()` is merely a handle satisfying the trait
-//! shape (its transport is a no-op implementation); real calls go directly through reqwest.
+//! 阶段4 第3项：请求统一走 [`HttpPlugin::rpc_call`]——与 stdio 的
+//! `McpConnection::request` 同语义的单一 JSON-RPC 出口（共享
+//! `JsonRpcRequest`/`JsonRpcNotification` 编解码、id 关联、超时、result
+//! 剥壳、错误映射——MCP-4/5/19 类两传输分叉的温床从结构上收敛）。
+//! 传输层的 HTTP 循环（重定向拒绝 / SSE 块消费 / 会话头）仍在 `post_json`。
 //!
 //! Per-server transport state (URL/headers/client/id counter) lives in the states
 //! map of **this plugin instance**, whose lifecycle is managed by McpServerManager;
@@ -51,6 +52,67 @@ impl HttpPlugin {
             states: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
             streamable: true,
         }
+    }
+
+    /// 阶段4 第3项：HTTP 传输的统一 JSON-RPC 出口（与 stdio 的
+    /// `McpConnection::request` 同语义）。此前 7 个方法各持一份手搓
+    /// json! 请求体 + 各自的 envelope 拆包——正是 MCP-4/5/19 类分叉的
+    /// 温床。收敛后单一实现负责：state 查找、id 生成、**共享
+    /// `JsonRpcRequest` 编解码**（两传输线格式单一来源）、超时、result
+    /// 剥壳（缺 result → Null，同 stdio）。错误语义在 [`rpc_error`]
+    /// 对齐（-32601 → MethodNotFound，此前 http 一律 Remote）。
+    async fn rpc_call(
+        &self,
+        conn: &super::connection::McpConnection,
+        method: &str,
+        params: Value,
+        dur: Duration,
+    ) -> McpResult<Value> {
+        let state = self
+            .states
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let id = state.next_id();
+        // Shared codec with stdio: JsonRpcRequest serializes to the identical wire shape
+        // the hand-built json! bodies used to approximate per call site.
+        let body = serde_json::to_value(super::connection::JsonRpcRequest::new(
+            id,
+            method,
+            Some(params),
+        ))
+        .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        let v = tokio::time::timeout(dur, post_json(&state, &body))
+            .await
+            .map_err(|_| McpError::Timeout(dur))??;
+        Ok(v.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    /// 阶段4 第3项：HTTP 通知出口——与 [`rpc_call`] 同享编解码单一来源
+    /// （`JsonRpcNotification`），此前 initialize 的 notifications/initialized
+    /// 是手搓 json!。
+    async fn rpc_notify(
+        &self,
+        conn: &super::connection::McpConnection,
+        method: &str,
+    ) -> McpResult<()> {
+        let state = self
+            .states
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let n = super::connection::JsonRpcNotification {
+            jsonrpc: "2.0",
+            method: method.to_string(),
+            params: None,
+        };
+        let body = serde_json::to_value(&n).map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        // Servers answer notifications with 202/empty or an SSE stream of zero
+        // response blocks; post_json errors here are expected and non-fatal.
+        let _ = post_json(&state, &body).await;
+        Ok(())
     }
 }
 
@@ -211,36 +273,23 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<McpServerInfo> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "initialize",
-            "params": {
-                // MCP-20: shared MCP_PROTOCOL_VERSION constant (two transports)
-                "protocolVersion": super::MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
-            }
-        });
-        let v = post_json(&state, &body).await?;
-        // send notifications/initialized
-        let _ = post_json(
-            &state,
-            &json!({
-                "jsonrpc": "2.0", "method": "notifications/initialized"
-            }),
-        )
-        .await;
+        let result = self
+            .rpc_call(
+                conn,
+                "initialize",
+                json!({
+                    // MCP-20: shared MCP_PROTOCOL_VERSION constant (two transports)
+                    "protocolVersion": super::MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
+                }),
+                Duration::from_secs(60),
+            )
+            .await?;
+        // notifications/initialized completes the handshake
+        let _ = self.rpc_notify(conn, "notifications/initialized").await;
         // 阶段4: initialize 解析并入 convert——HTTP 传输的响应多一层 JSON-RPC
-        // envelope，先剥 result 再走共享实现（stdio/http 不再各持一份解析）
-        let result = v.get("result").cloned().unwrap_or(json!({}));
+        // envelope，rpc_call 已剥 result（stdio/http 不再各持一份解析）
         Ok(super::convert::parse_server_info(&result))
     }
 
@@ -248,20 +297,11 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<ToolSpec>> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}
-        });
-        let v = post_json(&state, &body).await?;
-        let tools = v
-            .get("result")
-            .and_then(|r| r.get("tools"))
+        let result = self
+            .rpc_call(conn, "tools/list", json!({}), Duration::from_secs(60))
+            .await?;
+        let tools = result
+            .get("tools")
             .and_then(|t| t.as_array())
             .cloned()
             .unwrap_or_default();
@@ -276,23 +316,14 @@ impl super::McpServerPlugin for HttpPlugin {
         arguments: Value,
         timeout: Duration,
     ) -> McpResult<ToolResult> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": { "name": name, "arguments": arguments }
-        });
-        let v = tokio::time::timeout(timeout, post_json(&state, &body))
-            .await
-            .map_err(|_| McpError::Timeout(timeout))??;
-        let result = v.get("result").cloned().unwrap_or(json!({}));
+        let result = self
+            .rpc_call(
+                conn,
+                "tools/call",
+                json!({ "name": name, "arguments": arguments }),
+                timeout,
+            )
+            .await?;
         Ok(super::convert::parse_call_tool_result(&result))
     }
 
@@ -300,18 +331,11 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<McpResource>> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({ "jsonrpc": "2.0", "id": id, "method": "resources/list", "params": {} });
-        let v = post_json(&state, &body).await?;
-        let resources = v
-            .get("result")
-            .and_then(|r| r.get("resources"))
+        let result = self
+            .rpc_call(conn, "resources/list", json!({}), Duration::from_secs(60))
+            .await?;
+        let resources = result
+            .get("resources")
             .and_then(|a| a.as_array())
             .cloned()
             .unwrap_or_default();
@@ -323,19 +347,14 @@ impl super::McpServerPlugin for HttpPlugin {
         conn: &super::connection::McpConnection,
         uri: &str,
     ) -> McpResult<ReadResourceResult> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0", "id": id, "method": "resources/read",
-            "params": { "uri": uri }
-        });
-        let v = post_json(&state, &body).await?;
-        let result = v.get("result").cloned().unwrap_or(json!({}));
+        let result = self
+            .rpc_call(
+                conn,
+                "resources/read",
+                json!({ "uri": uri }),
+                Duration::from_secs(60),
+            )
+            .await?;
         serde_json::from_value(result).map_err(McpError::from)
     }
 
@@ -343,18 +362,11 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<McpPrompt>> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({ "jsonrpc": "2.0", "id": id, "method": "prompts/list", "params": {} });
-        let v = post_json(&state, &body).await?;
-        let prompts = v
-            .get("result")
-            .and_then(|r| r.get("prompts"))
+        let result = self
+            .rpc_call(conn, "prompts/list", json!({}), Duration::from_secs(60))
+            .await?;
+        let prompts = result
+            .get("prompts")
             .and_then(|a| a.as_array())
             .cloned()
             .unwrap_or_default();
@@ -367,22 +379,13 @@ impl super::McpServerPlugin for HttpPlugin {
         name: &str,
         arguments: Option<Value>,
     ) -> McpResult<GetPromptResult> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
         let mut params = json!({ "name": name });
         if let Some(args) = arguments {
             params["arguments"] = args;
         }
-        let body = json!({
-            "jsonrpc": "2.0", "id": id, "method": "prompts/get", "params": params
-        });
-        let v = post_json(&state, &body).await?;
-        let result = v.get("result").cloned().unwrap_or(json!({}));
+        let result = self
+            .rpc_call(conn, "prompts/get", params, Duration::from_secs(60))
+            .await?;
         serde_json::from_value(result).map_err(McpError::from)
     }
 
@@ -501,7 +504,10 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     }
 }
 
-/// MCP-4: 把 JSON-RPC 响应中的 error 对象转成 [`McpError::Remote`]。
+/// MCP-4: 把 JSON-RPC 响应中的 error 对象转成 [`McpError`]。
+/// 阶段4 第3项：错误语义与 stdio 的 `McpConnection::request` 对齐——
+/// -32601 → [`McpError::MethodNotFound`]（此前 http 一律映射 Remote，
+/// 是两传输间的活语义分叉）；其余错误码 → `Remote`。
 fn rpc_error(v: &Value) -> McpError {
     let err = v.get("error").cloned().unwrap_or(json!({}));
     let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(-32603) as i32;
@@ -510,6 +516,9 @@ fn rpc_error(v: &Value) -> McpError {
         .and_then(|m| m.as_str())
         .unwrap_or("unknown error")
         .to_string();
+    if code == -32601 {
+        return McpError::MethodNotFound(message);
+    }
     McpError::Remote { code, message }
 }
 
@@ -748,6 +757,41 @@ mod tests {
             other => panic!("应为 Remote 错误: {other:?}"),
         }
         assert!(buffer.is_empty(), "错误块应被完整消费");
+    }
+
+    /// 阶段4 第3项回归：错误语义与 stdio 对齐——-32601 (Method not found)
+    /// 映射 [`McpError::MethodNotFound`]，其余错误码仍是 Remote。
+    /// 此前 http 一律 Remote，是两传输间的活语义分叉。
+    #[test]
+    fn rpc_error_maps_32601_to_method_not_found_like_stdio() {
+        let method_missing = json!({
+            "jsonrpc": "2.0", "id": 7,
+            "error": { "code": -32601, "message": "resources/list not supported" }
+        });
+        match rpc_error(&method_missing) {
+            McpError::MethodNotFound(msg) => assert_eq!(msg, "resources/list not supported"),
+            other => panic!("-32601 应映射 MethodNotFound: {other:?}"),
+        }
+        // 其他错误码保持 Remote
+        let server_err = json!({
+            "jsonrpc": "2.0", "id": 8,
+            "error": { "code": -32000, "message": "boom" }
+        });
+        match rpc_error(&server_err) {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "boom");
+            }
+            other => panic!("非 -32601 应保持 Remote: {other:?}"),
+        }
+        // 缺 code/message 的畸形 error 对象：默认 -32603/unknown error
+        match rpc_error(&json!({ "error": {} })) {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32603);
+                assert_eq!(message, "unknown error");
+            }
+            other => panic!("畸形 error 应降级默认值: {other:?}"),
+        }
     }
 
     /// 阶段5 集成测试：流在我方响应到来前结束 → drain 返回 Ok(None)（调用方

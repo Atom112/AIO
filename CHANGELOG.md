@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第3项主体：MCP HTTP 请求统一 JSON-RPC 出口（与 stdio 同语义）
+
+- **HTTP `rpc_call`/`rpc_notify` 统一出口（阶段4 第3项，根除 MCP-4/5 类分叉）**：HTTP 传输此前 7 个方法（initialize / list_tools / call_tool / list_resources / read_resource / list_prompts / get_prompt）各持一份手搓 `json!` 请求体 + 各自的 envelope 拆包——正是 MCP-4/5/19 类两传输语义分叉的温床。收敛为与 stdio `McpConnection::request` 同语义的单一出口：state 查找、id 生成、**共享 `JsonRpcRequest`/`JsonRpcNotification` 编解码**（两传输线格式单一来源）、超时包装、result 剥壳（缺 result → Null 同 stdio）全部单点实现
+- **错误语义对齐**：`rpc_error` 补 -32601 → `MethodNotFound` 映射（stdio 已有；http 此前一律 `Remote`——两传输间的活语义分叉），其余错误码保持 `Remote`；畸形 error 对象降级默认值（-32603/unknown error）
+- **回归测试**：-32601 → MethodNotFound / 非 -32601 → Remote / 畸形 error 默认值三态断言
+
 ### 🧱 阶段4 第5项：ProviderPlugin 聊天路径统一出口 + 双注册表消除
 
 - **聊天路径统一出口（阶段4 第5项）**：`post_chat_completion` 此前在 Anthropic 分支硬编码 `x-api-key`/`anthropic-version` 头、else 分支硬编码 Bearer，并用 `is_anthropic_url` 做第二套 host 匹配（与插件注册表重复）。现在整个请求形状全部走插件系统：`chat_completions_url` 构端点（原有）、新增 trait 方法 **`apply_chat_auth`** 挂认证（默认 Bearer——OpenAI 兼容约定，空 key 不发头；Anthropic 覆写为其原生双头；Ollama 覆写为无认证）、Anthropic 判定改为 `plugin.identifier()` 注册表分发。Google 特殊性显式化：models 走原生端点（x-goog-api-key）而 chat 走 OpenAI 兼容端点（Bearer 文档形式）——apply_auth/apply_chat_auth 两方法分离使两个 API 面的差异成为类型系统内的一等公民，Google chat 行为零变化

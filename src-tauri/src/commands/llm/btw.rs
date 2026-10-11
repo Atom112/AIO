@@ -90,7 +90,12 @@ pub async fn ask_btw_question(
     }
 
     let mut stream = res.bytes_stream();
-    let mut line_buffer = String::new();
+    // PROV-1/LOOP-9: byte-level line buffering with a hard cap — shared with the
+    // main agent stream (sse_lines module). The historic per-chunk
+    // `from_utf8_lossy` corrupted multi-byte UTF-8 split across chunks (Chinese
+    // BTW answers garbled) and had no runaway-line cap.
+    const BTW_LINE_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
+    let mut line_buffer = super::sse_lines::SseLineBuffer::new(BTW_LINE_BUFFER_LIMIT);
 
     loop {
         let next = tokio::select! {
@@ -120,12 +125,15 @@ pub async fn ask_btw_question(
             None => break,
         };
 
-        line_buffer.push_str(&String::from_utf8_lossy(&chunk));
+        if let Err(e) = line_buffer.push(&chunk) {
+            let _ = window.emit(
+                ev::BTW_CHUNK,
+                json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": e }),
+            );
+            return Err(e);
+        }
 
-        while let Some(pos) = line_buffer.find('\n') {
-            let line = line_buffer[..pos].trim().to_string();
-            line_buffer.drain(..pos + 1);
-
+        while let Some(line) = line_buffer.next_line() {
             if line.is_empty() {
                 continue;
             }

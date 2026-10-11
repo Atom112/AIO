@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🧪 阶段5 第2批：SSE/恶意 server 集成测试 + BTW 乱码修复
+
+- **SSE 跨 chunk UTF-8 切割流测试（报告阶段5第3项）**：新增 `commands/llm/sse_lines.rs`——把主循环内联的字节级行缓冲抽为 `SseLineBuffer` 纯模块；穷举回归测试把含中文与 4 字节 emoji 的多行流按**每个字节边界**两段切分（外加逐字节喂入），重组行必须与整段喂入一致——任何边界产生 U+FFFD 即失败（PROV-1 的穷举防线）；另补 LOOP-9 超限与 CRLF/trim 行为测试
+- **BTW 侧问乱码修复（PROV-1 漏网实例）**：`btw.rs` 此前仍逐 chunk `from_utf8_lossy`——中文 BTW 回答被 TCP 切开即乱码且无行长上限；改用共享 `SseLineBuffer`（同修双实现漂移）
+- **恶意/边缘 MCP server 台本测试（报告阶段5第3项）**：http 传输的块消费循环抽为 `drain_sse_blocks` 纯函数，新增三个台本测试按真实消费模式（逐 chunk 喂入、块跨分段边界）演练：心跳先行→通知块→他人数字/字符串 id→我方响应命中且尾部不完整块留缓冲不误消费；我方 id 的 error 块穿透心跳浮出为 Remote 错误；流提前结束返回 None
+
 ### 🧱 阶段4/5 推进：记忆统计批量化 + MCP initialize 解析统一（P3 性能杂项 MEM-14 + 阶段4 同构收敛）
 
 - **记忆统计批量化（MEM-14）**：`stats()` 的 5 条独立 COUNT 合并为单条条件聚合查询；8 个滚动计数器读取合并到单次锁持有（新增 `rolling_get_with` 连接内读取助手）；`bump_access` 的逐 id UPDATE 循环改为分块 `IN (...)` 批量更新（每次检索命中列表从 N 条语句降为 N/100 条）

@@ -66,6 +66,7 @@ import {
 import AgentModeSelector from './AgentModeSelector';
 import WelcomeScreen from './WelcomeScreen';
 import DiffView from '../../../shared/components/DiffView';
+import { useChatAutoScroll } from '../hooks/useChatAutoScroll';
 import BtwResponseBox from './BtwResponseBox';
 import { formatSize } from '../../../core/utils/format';
 import {
@@ -165,7 +166,14 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   // content growth changes scrollHeight but not its box size (RO on it only fires once, at
   // observe()); the wrapper grows with content, so each streaming expansion triggers RO.
   let streamContentRef: HTMLDivElement | undefined;
-  const [autoScroll, setAutoScroll] = createSignal(true);
+  // 阶段4 第2项（拆分切片）：滚动跟随引擎抽至 useChatAutoScroll（报告点名路径）
+  const { autoScroll, handleWheel, handleScroll, scrollBackToBottom } = useChatAutoScroll({
+    scrollContainerRef: () => scrollContainerRef,
+    streamContentRef: () => streamContentRef,
+    topicId: () => props.activeTopic?.id,
+    isThinking: () => props.isThinking,
+    historyLength: () => props.activeTopic?.history?.length ?? 0,
+  });
   // Filesystem tool readiness indicator.
   // Agent file tools run in-process (injected via file_tools::get_file_tool_specs in
   // commands/llm/mod.rs, under __builtin__); there is no __aio-filesystem__ stdio
@@ -193,22 +201,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       await new Promise((r) => setTimeout(r, 50));
     }
   };
-  // Pending programmatic scrolls: +1 before each programmatic scrollTop assignment,
-  // consumed by one scroll event; events run real logic (at-bottom check) only when the
-  // count is 0, so multiple scroll events per assignment cannot spuriously disable auto-follow.
-  let pendingSnaps = 0;
-  // Expected value of the last programmatic scrollTop assignment; scroll events compare it
-  // with the current scrollTop: match = programmatic echo (consume the count); mismatch =
-  // the user dragged the bar mid-programmatic-scroll, treated as user scrolling even when
-  // count > 0 (snaps fire per 50ms content batch; count-masking alone would swallow them).
-  let lastProgrammaticTop = -1;
-  // rAF id of the smooth-scroll animation
-  let smoothScrollRAF: number | undefined;
-  // Last observed history length, used to detect newly added messages
-  let lastHistoryLen = 0;
-  // Latest id of the streaming rAF loop; always points at the last scheduled frame so it can be cancelled
-  // Manual user scroll-up flag: a plain mutable variable bypasses SolidJS reactivity latency so rAF callbacks see it synchronously
-  let userScrolledUp = false;
   // Skip message animations on resend/edit (no exit + no entrance animation)
   const [skipMessageAnimation, setSkipMessageAnimation] = createSignal(false);
   // Git branch dropdown state
@@ -315,217 +307,20 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     }
   };
 
-  /** Whether the container is scrolled to the bottom (50px threshold) */
-  const isAtBottom = () => {
-    if (!scrollContainerRef) return true;
-    const el = scrollContainerRef;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-  };
-
-  /** Wheel scroll up: stop auto-scroll immediately and cancel any in-flight smooth scroll */
-  const handleWheel = (e: WheelEvent) => {
-    if (e.deltaY < 0) {
-      // Plain mutable flag: the next rAF frame sees it immediately, stopping follow-bottom with zero latency
-      userScrolledUp = true;
-      if (smoothScrollRAF !== undefined) {
-        cancelAnimationFrame(smoothScrollRAF);
-        smoothScrollRAF = undefined;
-      }
-      pendingSnaps = 0;
-      setAutoScroll(false);
-    }
-  };
-
-  /** Scroll event: distinguish user scrolling from programmatic scrolling (position-echo comparison; see lastProgrammaticTop) */
-  const handleScroll = () => {
-    if (pendingSnaps > 0) {
-      pendingSnaps -= 1;
-      if (scrollContainerRef && Math.abs(scrollContainerRef.scrollTop - lastProgrammaticTop) < 2) {
-        return;
-      }
-      // Position mismatch: user drag between programmatic scrolls; falls through to the user logic below (count already decremented)
-    }
-    const atBottom = isAtBottom();
-    setAutoScroll(atBottom);
-    // User manually scrolled back to the bottom: clear the scroll-up flag and resume auto-follow
-    if (atBottom) {
-      userScrolledUp = false;
-    }
-  };
-
-  /** Snap to the bottom instantly (used during streaming; scrolls down only) */
-  const snapToBottom = () => {
-    if (!scrollContainerRef) return;
-    const el = scrollContainerRef;
-    const target = Math.max(0, el.scrollHeight - el.clientHeight);
-    if (el.scrollTop < target) {
-      pendingSnaps += 1;
-      el.scrollTop = target;
-      lastProgrammaticTop = target;
-    }
-  };
-
-  /** Smooth-scroll to the bottom (rAF animation, for non-streaming cases) */
-  const smoothScrollToBottom = () => {
-    if (!scrollContainerRef) return;
-    const el = scrollContainerRef;
-    const target = Math.max(0, el.scrollHeight - el.clientHeight);
-    const start = el.scrollTop;
-    const distance = target - start;
-    // Target not above the current position: never scroll upward (prevents a brief content collapse from snapping the view back to the top)
-    if (target <= start) {
-      el.scrollTop = target;
-      lastProgrammaticTop = target;
-      return;
-    }
-    if (Math.abs(distance) < 2) {
-      el.scrollTop = target;
-      lastProgrammaticTop = target;
-      return;
-    }
-    if (smoothScrollRAF !== undefined) cancelAnimationFrame(smoothScrollRAF);
-    const duration = 300;
-    const startTime = performance.now();
-    const animate = (now: number) => {
-      if (!scrollContainerRef || !autoScroll()) {
-        smoothScrollRAF = undefined;
-        return;
-      }
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      pendingSnaps += 1;
-      scrollContainerRef.scrollTop = start + distance * eased;
-      lastProgrammaticTop = scrollContainerRef.scrollTop;
-      if (progress < 1) {
-        smoothScrollRAF = requestAnimationFrame(animate);
-      } else {
-        smoothScrollRAF = undefined;
-      }
-    };
-    smoothScrollRAF = requestAnimationFrame(animate);
-  };
-
-  /** Snap to the latest conversation after a topic switch or component remount.
-   *  Message rows use content-visibility: auto (contain-intrinsic-size: auto 100px); unrendered
-   *  rows lay out as 100px placeholders, so one scrollTop assignment only reaches the placeholder
-   *  bottom. Progressive rendering expands about one viewport per frame, so correction continues
-   *  over multiple frames until the position settles (cap 40 ≈ 200+ messages; short ones settle
-   *  in 2-3). Aborts on user scroll-up; the first snap runs in a microtask (DOM committed, not
-   *  yet painted), avoiding a one-frame flash at the wrong position. */
-  const snapToLatestOnTopicSwitch = () => {
-    queueMicrotask(() => {
-      if (!scrollContainerRef || userScrolledUp) return;
-      snapToBottom();
-      let lastTop = -1;
-      let guard = 0;
-      const step = () => {
-        if (!scrollContainerRef || userScrolledUp || guard >= 40) return;
-        snapToBottom();
-        const cur = scrollContainerRef.scrollTop;
-        if (cur !== lastTop) {
-          lastTop = cur;
-          guard += 1;
-          requestAnimationFrame(step);
-        }
-      };
-      requestAnimationFrame(step);
-    });
-  };
-
   /** On topic switch: reset auto-scroll and the history-length baseline, then snap to the latest conversation */
+  // 阶段4 第2项（拆分切片）：滚动跟随逻辑已抽至 useChatAutoScroll；此处只保留
+  // 动画记忆的清理（入场动画去重，非滚动职责）。
   createEffect(
     on(
       () => props.activeTopic?.id,
       (id) => {
-        setAutoScroll(true);
-        userScrolledUp = false;
-        // Clear animation memory (module-level set) only on real topic switches; remounting on
-        // return from a subagent view re-runs this effect, and unconditional clearing replays all animations.
         if (id !== lastAnimatedTopicId) {
           animatedMessageIds.clear();
           lastAnimatedTopicId = id;
         }
-        lastHistoryLen = props.activeTopic?.history?.length ?? 0;
-        // Show the latest conversation right after a topic switch / remount (return from a
-        // subagent view): the length-watching effect only scrolls when len > lastHistoryLen,
-        // never on the switch path; without a snap the view stays clamped at the topic's start.
-        snapToLatestOnTopicSwitch();
       },
     ),
   );
-
-  /** Generation state change: reset auto-scroll on start; do one final smooth scroll on end */
-  createEffect(
-    on(
-      () => props.isThinking,
-      (thinking, prev) => {
-        if (thinking && !prev) {
-          // User sent a new message; generation starting
-          setAutoScroll(true);
-          userScrolledUp = false;
-        } else if (!thinking && prev) {
-          // Generation just ended: content may have just finished rendering; one final scroll, then stop
-          if (autoScroll() && scrollContainerRef) {
-            requestAnimationFrame(() => {
-              if (autoScroll() && scrollContainerRef && !props.isThinking) {
-                smoothScrollToBottom();
-              }
-            });
-          }
-        }
-      },
-    ),
-  );
-
-  /** Non-streaming case: smooth-scroll only when the message count grows (new messages), avoiding repeated re-snapping from post-generation reflow */
-  createEffect(() => {
-    const history = props.activeTopic?.history;
-    const len = history?.length ?? 0;
-    const tid = props.activeTopic?.id;
-    void tid;
-
-    if (props.isThinking) {
-      lastHistoryLen = len;
-      return;
-    }
-    if (!autoScroll() || !scrollContainerRef) {
-      lastHistoryLen = len;
-      return;
-    }
-    if (len > lastHistoryLen) {
-      requestAnimationFrame(() => {
-        if (autoScroll() && !props.isThinking && scrollContainerRef) {
-          smoothScrollToBottom();
-        }
-      });
-    }
-    lastHistoryLen = len;
-  });
-
-  /** While streaming: ResizeObserver follows content growth to keep the view at the bottom.
-   *  Observes the content wrapper (streamContentRef) because the scroll container is a
-   *  fixed-height flex-grow box: content growth changes scrollHeight but not its box size, so
-   *  RO on the container never fires past the initial observe() callback and streaming growth
-   *  goes unfollowed (one snap at start and end only). The wrapper grows with content, firing
-   *  on every expansion; the container is observed too (window resize / input-area height). */
-  createEffect(() => {
-    if (!props.isThinking || !streamContentRef) return;
-    const observer = new ResizeObserver(() => {
-      if (!userScrolledUp && autoScroll()) {
-        snapToBottom();
-      }
-    });
-    observer.observe(streamContentRef);
-    if (scrollContainerRef) observer.observe(scrollContainerRef);
-    onCleanup(() => observer.disconnect());
-  });
-  /** Cancel the smooth-scroll animation on component teardown */
-  onCleanup(() => {
-    if (smoothScrollRAF !== undefined) {
-      cancelAnimationFrame(smoothScrollRAF);
-    }
-  });
 
   /** Index of the last user message, used to show buttons such as "resend" */
   const lastUserMsgIndex = createMemo(() => {
@@ -1404,11 +1199,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             color: 'rgba(var(--primary-rgb),0.7)',
             'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
           }}
-          onClick={() => {
-            userScrolledUp = false;
-            setAutoScroll(true);
-            smoothScrollToBottom();
-          }}
+          onClick={scrollBackToBottom}
           title={t('chat.scrollLatest')}
         >
           <svg

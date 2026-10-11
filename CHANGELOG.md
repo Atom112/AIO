@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（<900 目标达成）：ChatPage 845 行（选择模式/Checkpoint/Topic 生命周期三模块抽出）
+
+- **ChatPage 达标 <900（1746 → 845，-52%）**，本批三模块抽出（1026→845）：
+  - **`hooks/useMessageSelection.ts`（106 行）**：选择模式家族——4 个信号（选择中/已选集合/分享弹窗/分享源话题）+ shareTopic 解析 + 5 个 handler（进入/切换/全选/取消/确认）随钩子走；ShareModal 的三行 onClose 收敛为 `closeShareModal`
+  - **`hooks/useCheckpointResume.ts`（65 行）**：崩溃遗留回合的"继续未完成"入口——activeCheckpoint 信号 + 话题切换竞态守卫效果 + handleResumeTurn（后端恢复时代换快照）
+  - **`utils/topicActions.ts`（124 行）**：五个生命周期动作（停止生成[CHAT-4 流归属键]/切聊天/切项目[CHAT-3 五步同步]/加话题/从消息分支）——依赖全为模块级 store 单例，纯函数零组件依赖；`DEFAULT_ASST_ID` + `createTopic` 工厂随迁为导出（onMount 的默认助手引导继续引用）
+- **any 棘轮 78 → 77**：branchFromMessage 的 `(a: any)` 注解经 setDatas 泛型推断消除
+- **过程修正**：createTopic 首版与原实现不符（臆造 id/name 生成方式）——经 git 原文核对后按 verbatim 修正（`Date.now().toString()` + `t('chat.untitledTopic')` 本地化默认名）
+
 ### 🧱 阶段4 第2项（<900 目标切片）：slash 处理器抽出（slashHandlers）
 
 - **slash 双 handler 抽出（ChatPage 1202→1026）**：prompt 型（/review、/explain 等——resolvedBody 发往 LLM）与 action 型（/compact、/clear、/search、/settings、/help——命令气泡 + handler 执行 + 逐命令反馈）verbatim 抽至 `utils/slashHandlers.ts`（195 行）；响应式依赖几乎全为模块级 store 单例直接导入，组件级依赖仅 3 项（currentAssistant/activeTopic/startAgentTurn）经 `SlashHandlerDeps` 传递

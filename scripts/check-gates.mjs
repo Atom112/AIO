@@ -131,8 +131,8 @@ const RGBA_BASELINE = 179;
 // New code must not add `any`; lower the baseline as the backlog is cleaned up.
 // 2026-10 阶段5（FE-21）：流事件载荷类型化（streamPayloads.ts）+ chatEventListeners
 // 全量收编后 163 → 100；主发送路径迁移 + CHAT-10 清理抽出（阶段4 第2项切片6，
-// PR #73）净降 → 97；MessageBubble 拆分 5 处 as-any 删除 → 93；sendMessagePrep 抽出（messagesForAI 类型化 as Message[]，flatMap/agentMode as any 消除）→ 90。
-const ANY_BASELINE = 90;
+// PR #73）净降 → 97；MessageBubble 拆分 5 处 as-any 删除 → 93；sendMessagePrep 抽出 → 90；slashHandlers 抽出（prompt 型复用 buildOutgoingMessages，两 handler 的 any 注解经 setDatas 泛型推断消除）→ 78。
+const ANY_BASELINE = 78;
 let anyCount = 0;
 const anyFiles = [];
 for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {

@@ -22,13 +22,8 @@ import { usePanelResize } from './hooks/usePanelResize';
 import { useBtwQuestion } from './hooks/useBtwQuestion';
 import { useAttachments } from './hooks/useAttachments';
 import { useChatSend } from './hooks/useChatSend';
-// 阶段4 第2项（拆分切片）：API 载荷消息构建三件套抽至 utils/apiMessages（纯函数 + 11 单测）
-import { buildApiMessages, ensureToolMessagesComplete } from './utils/apiMessages';
-import {
-  buildOutgoingMessages,
-  getReasoningPrompt,
-  resolveOutgoingContent,
-} from './utils/sendMessagePrep';
+import { buildOutgoingMessages, resolveOutgoingContent } from './utils/sendMessagePrep';
+import { handleSlashActionMessage, handleSlashPromptMessage } from './utils/slashHandlers';
 import { cleanupFailedPlaceholder } from './utils/failedTurnCleanup';
 import { autoDetectLsp, startLspServer } from '../../core/api/lsp';
 import { useNavigate } from '@solidjs/router';
@@ -85,7 +80,6 @@ import {
   savePanelCollapsed,
   savePanelWidth,
 } from '../../core/store/layout';
-import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
 import Icon from '../../shared/components/Icon';
@@ -107,7 +101,6 @@ import WorkflowVisualization from './components/WorkflowVisualization';
 // module-level singletons instead of page-scope closures.
 
 import TaskBoardPanel from './components/TaskBoardPanel';
-import { buildSkillMessages } from './utils/skillMessages';
 import { clearAllDiagnostics } from '../../core/store/diagnostics';
 
 let isFirstAppLaunch = true;
@@ -285,6 +278,13 @@ const ChatPage: Component = () => {
   });
 
   /** Topic shown in the share modal: prefer the ID set from the TopicSidebar context menu, otherwise the active topic */
+  // 阶段4 第2项（<900 目标切片）：slash 处理器抽至 utils/slashHandlers（组件级依赖经此传递）
+  const slashDeps = {
+    currentAssistant,
+    activeTopic,
+    startAgentTurn,
+  };
+
   const shareTopic = (): Topic | null => {
     const asst = currentAssistant();
     if (!asst) return null;
@@ -341,104 +341,6 @@ const ChatPage: Component = () => {
 
   // checkAndSummarize / fallbackTitle / checkAndRename moved to hooks/chatTurnEffects.ts (CHAT-12)
 
-  /**
-   * Slash command — promptBody type (/review, /explain, etc.)
-   * Chat shows the raw command text; the resolved promptBody is sent to the LLM
-   */
-  const handleSlashPromptMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
-    if (!resolved) return;
-    const asstId = currentAssistantId();
-    const topicId = currentTopicId();
-    if (!asstId || !topicId) return;
-
-    const currentMdl = selectedModel();
-    const currentAsst = currentAssistant();
-    const currentTopic = activeTopic();
-    if (!currentMdl || !currentAsst || !currentTopic) return;
-
-    const displayText = resolved.command.label + (resolved.args ? ` ${resolved.args}` : '');
-    let content = resolved.resolvedBody || resolved.command.label;
-
-    // with no args, inject the current project path to give the LLM context
-    if (!resolved.args) {
-      const project = currentProject();
-      if (project) {
-        content = `${content}\n\n${t('agent.prompt.projectContext', { path: project.path })}`;
-      }
-    }
-
-    const newUserMsg = {
-      id: crypto.randomUUID(),
-      role: 'user' as const,
-      content,
-      displayText,
-    };
-
-    // build the full message array (same as the normal send flow)
-    const reasoningPrompt = getReasoningPrompt(reasoningLevel());
-
-    const agentMode = currentAsst?.agentMode || 'off';
-    const pid = currentProjectId();
-    const projectInfo =
-      pid && currentProject()
-        ? { path: currentProject()!.path, name: currentProject()!.name }
-        : null;
-    const agentPromptContent =
-      agentMode !== 'off' && projectInfo
-        ? buildAgentSystemPrompt(agentMode as any, projectInfo)
-        : null;
-    const agentSystemPrompt = agentPromptContent
-      ? [{ role: 'system' as const, content: agentPromptContent }]
-      : [];
-
-    let messagesForAI: any[] = [
-      { role: 'system', content: currentAsst.prompt },
-      // output style constraints (emoji avoidance etc., mirroring mainstream agent system-prompt style sections)
-      { role: 'system', content: t('chat.prompt.style') },
-      ...buildSkillMessages(currentAsst, agentMode === 'off'),
-      ...agentSystemPrompt,
-      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
-      ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
-      ...(currentTopic.summary
-        ? [
-            {
-              role: 'system',
-              content: t('agent.prompt.summary', { summary: currentTopic.summary }),
-            },
-          ]
-        : []),
-      ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
-      { role: 'user', content: newUserMsg.content },
-    ];
-    messagesForAI = ensureToolMessagesComplete(messagesForAI);
-
-    // persist the user message
-    try {
-      await appendMessage(topicId, newUserMsg);
-    } catch (err) {
-      console.error('[chat] save message failed:', err);
-      alert(t('error.save'));
-      return;
-    }
-
-    // update local state
-    setDatas(
-      'assistants',
-      (a: any) => a.id === asstId,
-      'topics',
-      (t: any) => t.id === topicId,
-      'history',
-      (h: any[]) => [...h, newUserMsg],
-    );
-
-    // call the LLM (shared payload + thinking lifecycle in useChatSend)
-    await startAgentTurn({
-      messages: messagesForAI,
-      agentMode,
-      skills: agentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
-    });
-  };
-
   // ===== Checkpoint resume: "continue unfinished turn" entry for crash-orphaned turns =====
   const [activeCheckpoint, setActiveCheckpoint] = createSignal<ActiveCheckpoint | null>(null);
   createEffect(() => {
@@ -476,84 +378,6 @@ const ChatPage: Component = () => {
   };
 
   /**
-   * Slash command — pure action type (/compact, /clear, /search, /settings, /help)
-   * Chat shows the command, runs the handler, then shows brief feedback
-   */
-  const handleSlashActionMessage = async (resolved: ReturnType<typeof resolveSlashCommand>) => {
-    if (!resolved) return;
-    const asstId = currentAssistantId();
-    const topicId = currentTopicId();
-    if (!asstId || !topicId) return;
-
-    const cmd = resolved.command;
-    const displayText = cmd.label;
-
-    // append the user message
-    setDatas(
-      'assistants',
-      (a: any) => a.id === asstId,
-      'topics',
-      (t: any) => t.id === topicId,
-      'history',
-      (h: any[]) => [
-        ...h,
-        {
-          id: crypto.randomUUID(),
-          role: 'user' as const,
-          content: displayText,
-          displayText,
-        },
-      ],
-    );
-
-    // run the handler (action commands may take args, e.g. `/compact 10000` sets the keep-token budget);
-    // a string return value is used as custom feedback (/compact distinguishes compressed / skipped / failed)
-    const handlerResult = await cmd.handler(resolved.args);
-
-    // produce a feedback message per command type
-    let feedback = '';
-    if (cmd.id === 'slash-compact') {
-      feedback =
-        typeof handlerResult === 'string'
-          ? handlerResult
-          : `✓ /compact — ${t('slash.feedback.compactSkipped')}`;
-    } else if (cmd.id === 'slash-clear') {
-      // the /clear handler already emptied the history; no extra feedback needed
-      return;
-    } else if (cmd.id === 'slash-search') {
-      feedback = webSearchEnabled()
-        ? `✓ ${t('slash.feedback.searchOn')}`
-        : `✓ ${t('slash.feedback.searchOff')}`;
-    } else if (cmd.id === 'slash-help') {
-      // the /help handler already appended help info; no extra feedback needed
-      return;
-    } else if (cmd.id === 'slash-settings') {
-      // the /settings handler already navigated away
-      return;
-    } else {
-      feedback = `✓ ${t('slash.feedback.executed', { command: cmd.label })}`;
-    }
-
-    // append the feedback message
-    setDatas(
-      'assistants',
-      (a: any) => a.id === asstId,
-      'topics',
-      (t: any) => t.id === topicId,
-      'history',
-      (h: any[]) => [
-        ...h,
-        {
-          id: crypto.randomUUID(),
-          role: 'assistant' as const,
-          content: feedback,
-          displayText: feedback,
-        },
-      ],
-    );
-  };
-
-  /**
    * Send-message flow.
    * Covers file handling, API calls, and state updates
    */
@@ -585,7 +409,7 @@ const ChatPage: Component = () => {
           return;
         }
         if (resolved.resolvedBody) {
-          handleSlashPromptMessage(resolved);
+          handleSlashPromptMessage(slashDeps, resolved);
         } else {
           handleSlashActionMessage(resolved);
         }

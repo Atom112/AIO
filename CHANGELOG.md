@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第1项（子目标3/5）：delegate 参数打包工厂（DelegateContext）
+
+- **继承执行上下文打包（阶段4 第1项子目标）**：`handle_delegate_task` / `handle_delegate_tasks` 各持 17 个独立参数，其中 15 个是主循环逐项克隆再按位传的"继承执行上下文"——主循环三处调用点（后台 fire-and-forget 委派 / 单任务并行委派 / 批量并行委派）各自维护一份 17 行克隆瀑布 + 参数瀑布，每加一个上下文字段要同步改 2 处函数签名 + 3 处调用点 + 1 处 workflow 转发。新建 `commands/llm/delegate_ctx.rs` 的 `DelegateContext`（owned、可 Clone/move 进 spawn）：两函数签名收敛为 `(ctx, arguments)`，函数体顶部一次性本地绑定（其余零改动）；三处调用点以单次 ctx 构造替代克隆瀑布；workflow 步骤转发同切——**新增上下文字段只改一个结构体定义**
+
 ### 🧱 阶段4 第1项（子目标2/5）：stream_one_round → streaming.rs
 
 - **SSE 流轮次搬家（阶段4 第1项子目标）**：`stream_one_round`（请求构造 → POST → SSE 累积 → 事件下发，含 Anthropic 适配、工具调用累积、token usage 提取、图像生成收集）连同其累积产物 `RoundResult` / `ToolCallAccum` 从 mod.rs 整体搬到新文件 `commands/llm/streaming.rs`（442 行）——mod.rs 只留主循环编排，**2755 → 2325 行**（file-size 门禁 2770 内余量扩大）；字段 `pub(crate)` 化（主循环/subagents 直接读取）；subagents 复用入口随之切到 `super::streaming::stream_one_round`

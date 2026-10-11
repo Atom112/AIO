@@ -212,29 +212,33 @@ pub(crate) fn build_subagent_tools(
 /// Handles the delegate_task tool call (invoked from the main agent loop).
 ///
 /// Parses arguments, checks permissions, resolves the profile, then delegates to execute_subagent.
+/// 阶段4 第1项（子目标 3/5）：继承执行上下文经 `DelegateContext` 打包传入——
+/// 签名从 17 参收敛为 (ctx, arguments)；每加一个上下文字段只改一个结构体。
 #[allow(
     clippy::too_many_arguments,
     reason = "agent delegation keeps inherited execution context explicit"
 )]
 pub(crate) async fn handle_delegate_task(
-    window: &Window,
-    app: &AppHandle,
-    client: &reqwest::Client,
-    api_url: &str,
-    api_key: &str,
-    model: &str,
-    parent_assistant_id: &str,
-    parent_topic_id: &str,
+    ctx: &super::delegate_ctx::DelegateContext,
     arguments: &serde_json::Value,
-    project_id: Option<&str>,
-    agent_mode: &AgentMode,
-    semaphore: Arc<Semaphore>,
-    token: &CancellationToken,
-    profile_model_overrides: &[ProfileModelOverride],
-    custom_profiles: &[crate::core::models::CustomSubagentProfile],
-    mcp_server_ids: &[String],
-    locale: &str,
 ) -> Result<ToolResult, String> {
+    // 本地绑定：函数体其余部分按原变量名零改动继续工作
+    let window = &ctx.window;
+    let app = &ctx.app;
+    let client = &ctx.client;
+    let api_url = ctx.api_url.as_str();
+    let api_key = ctx.api_key.as_str();
+    let model = ctx.model.as_str();
+    let parent_assistant_id = ctx.parent_assistant_id.as_str();
+    let parent_topic_id = ctx.parent_topic_id.as_str();
+    let project_id = ctx.project_id.as_deref();
+    let agent_mode = &ctx.agent_mode;
+    let token = &ctx.token;
+    let profile_model_overrides = ctx.profile_model_overrides.as_slice();
+    let custom_profiles = ctx.custom_profiles.as_slice();
+    let mcp_server_ids = ctx.mcp_server_ids.as_slice();
+    let locale = ctx.locale.as_str();
+    let semaphore = ctx.semaphore.clone();
     // Single/background delegate_task is also bound by the global concurrency cap (shares the same semaphore as batch delegate_tasks).
     // LOOP-5: waiting for a permit must honor cancellation — a queued delegation
     // parked on the semaphore releases instantly when the user stops the turn.
@@ -827,29 +831,31 @@ pub(crate) async fn execute_single_delegate(
 /// Parses the tasks array and optional context, checks permissions once for the whole
 /// batch, then runs all subagents in parallel with FuturesUnordered.
 /// Returns an aggregated report of all subtask results.
+/// 阶段4 第1项（子目标 3/5）：同 handle_delegate_task——上下文打包传入。
 #[allow(
     clippy::too_many_arguments,
     reason = "parallel delegation keeps inherited execution context explicit"
 )]
 pub(crate) async fn handle_delegate_tasks(
-    window: &Window,
-    app: &AppHandle,
-    client: &reqwest::Client,
-    api_url: &str,
-    api_key: &str,
-    model: &str,
-    parent_assistant_id: &str,
-    parent_topic_id: &str,
+    ctx: &super::delegate_ctx::DelegateContext,
     arguments: &serde_json::Value,
-    project_id: Option<&str>,
-    agent_mode: &AgentMode,
-    token: &CancellationToken,
-    profile_model_overrides: &[ProfileModelOverride],
-    custom_profiles: &[crate::core::models::CustomSubagentProfile],
-    mcp_server_ids: &[String],
-    semaphore: Arc<Semaphore>,
-    locale: &str,
 ) -> Result<ToolResult, String> {
+    let window = &ctx.window;
+    let app = &ctx.app;
+    let client = &ctx.client;
+    let api_url = ctx.api_url.as_str();
+    let api_key = ctx.api_key.as_str();
+    let model = ctx.model.as_str();
+    let parent_assistant_id = ctx.parent_assistant_id.as_str();
+    let parent_topic_id = ctx.parent_topic_id.as_str();
+    let project_id = ctx.project_id.as_deref();
+    let agent_mode = &ctx.agent_mode;
+    let token = &ctx.token;
+    let profile_model_overrides = ctx.profile_model_overrides.as_slice();
+    let custom_profiles = ctx.custom_profiles.as_slice();
+    let mcp_server_ids = ctx.mcp_server_ids.as_slice();
+    let locale = ctx.locale.as_str();
+    let semaphore = ctx.semaphore.clone();
     // Parse the tasks array
     let tasks_array = arguments["tasks"].as_array().ok_or_else(|| {
         ierr!(
@@ -1227,27 +1233,27 @@ pub(crate) async fn execute_workflow(
             "isolation": "shared",
         });
 
-        // Call handle_delegate_task to run this step
-        let result = handle_delegate_task(
-            window,
-            app,
-            client,
-            api_url,
-            api_key,
-            model,
-            parent_assistant_id,
-            parent_topic_id,
-            &arguments,
-            project_id,
-            &step_mode, // step permission mode: inherits the parent turn by default (see resolve_workflow_step_mode)
-            semaphore.clone(),
-            token,
-            profile_model_overrides,
-            custom_profiles,
-            mcp_server_ids,
-            locale,
-        )
-        .await;
+        // Call handle_delegate_task to run this step.
+        // 阶段4 第1项（子目标 3/5）：步骤转发也走打包上下文（借用→owned 一次性克隆）。
+        let step_ctx = super::delegate_ctx::DelegateContext {
+            window: window.clone(),
+            app: app.clone(),
+            client: client.clone(),
+            api_url: api_url.to_string(),
+            api_key: api_key.to_string(),
+            model: model.to_string(),
+            parent_assistant_id: parent_assistant_id.to_string(),
+            parent_topic_id: parent_topic_id.to_string(),
+            project_id: project_id.map(|s| s.to_string()),
+            agent_mode: step_mode.clone(), // step permission mode: inherits the parent turn by default (see resolve_workflow_step_mode)
+            token: token.clone(),
+            profile_model_overrides: profile_model_overrides.to_vec(),
+            custom_profiles: custom_profiles.to_vec(),
+            mcp_server_ids: mcp_server_ids.to_vec(),
+            semaphore: semaphore.clone(),
+            locale: locale.to_string(),
+        };
+        let result = handle_delegate_task(&step_ctx, &arguments).await;
 
         let duration_ms = start.elapsed().as_millis() as u64;
 

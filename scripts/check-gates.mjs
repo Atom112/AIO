@@ -85,7 +85,8 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
 // colors must come from CSS variables), but the codebase carries a large legacy
 // stock — a ratchet (like the `any` gate) instead of an instant red. var()-driven
 // forms — rgba(var(--primary-rgb),0.5) — are compliant and excluded by the regex.
-const RGBA_BASELINE = 179;
+// 2026-10 阶段4第5项批次后存量 173，棘轮随实际存量收紧 179 → 173。
+const RGBA_BASELINE = 173;
 {
   let rgbaCount = 0;
   const rgbaFiles = [];
@@ -131,7 +132,7 @@ const RGBA_BASELINE = 179;
 // New code must not add `any`; lower the baseline as the backlog is cleaned up.
 // 2026-10 阶段5（FE-21）：流事件载荷类型化（streamPayloads.ts）+ chatEventListeners
 // 全量收编后 163 → 100；主发送路径迁移 + CHAT-10 清理抽出（阶段4 第2项切片6，
-// PR #73）净降 → 97；MessageBubble 拆分 5 处 as-any 删除 → 93；sendMessagePrep 抽出 → 90；slashHandlers 抽出（prompt 型复用 buildOutgoingMessages，两 handler 的 any 注解经 setDatas 泛型推断消除）→ 78。
+// PR #73）净降 → 97；MessageBubble 拆分 5 处 as-any 删除 → 93；sendMessagePrep 抽出 → 90；slashHandlers 抽出（prompt 型复用 buildOutgoingMessages，两 handler 的 any 注解经 setDatas 泛型推断消除）→ 78；branchFromMessage 的 (a: any) 注解经泛型推断消除 → 77。
 const ANY_BASELINE = 77;
 let anyCount = 0;
 const anyFiles = [];

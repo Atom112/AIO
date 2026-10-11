@@ -114,6 +114,7 @@ pub fn run() {
             commands::config::set_locale,
             commands::config::save_app_config,
             commands::config::load_app_config,
+            commands::config::patch_app_config,
             commands::config::save_activated_models,
             commands::config::load_activated_models,
             commands::config::save_fetched_models,

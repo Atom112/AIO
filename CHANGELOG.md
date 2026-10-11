@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 🔒 审查复核收尾 · 批次 1（前端 FE 项 + 门禁棘轮收紧）
+
+- **FE-06 模块级 t() 冻结消除**：DiffView 的 ACTION_LABELS 与 SubagentModelSettings 的 BUILTIN_PROFILES 原为模块加载期求值对象——切语言后"新增/修改/删除"标签与 10 个内置子代理档案名**永久停留旧语言**。改为渲染期惰性求值（`actionLabel(action)` 函数 / `builtinProfiles()` 工厂，消费方 createMemo 因 t() 在其内被追踪而随 locale 重算）
+- **FE-07 AppSettings 逐键击全量样板消除**：新增后端命令 `patch_app_config`（load→merge→原子 save 单次后端完成，跑 blocking 池）——设置页三个字段（最大工具轮数/并发子代理上限/并行写入隔离）原为每键击 load→改→save **两次 IPC** 且有读改写竞态，现改单次 patch IPC + 每字段 400ms 防抖合批（select 即时）+ 卸载清理挂起定时器
+- **FE-10 收尾**：AppSettings 自启动开关（最后一个手写 peer-checked 复制件）收敛到 shared `Switch`（variant="glow"）
+- **门禁棘轮随实际存量收紧**：RGBA_BASELINE 179 → 173（存量实为 173）；any 注释链补 77 终值
+- 复核说明：本批出自对 CODE_REVIEW_REPORT.md 181 条的全量复核（13 路分板块核查代理 + 抽验），本批为复核发现的漏项/残角收尾第一批
+
 ### 🧱 阶段4 第2项（<900 目标全线达成）：ChatInterface 893 行（三组件抽出）
 
 - **ChatInterface <900 达标（1118 → 893，-20%），本批三组件 verbatim 抽出**：

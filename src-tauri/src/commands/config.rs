@@ -24,6 +24,42 @@ pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
     crate::core::config::load_app_config(&app)
 }
 
+/// Partial app-config patch accepted by `patch_app_config` (FE-07).
+/// Only the fields the settings page edits per keystroke are patchable;
+/// `None` fields keep their stored value.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchAppConfig {
+    max_tool_rounds: Option<u32>,
+    max_concurrent_subagents: Option<u32>,
+    subagent_isolation_mode: Option<String>,
+}
+
+/// Atomically merge a partial app-config update: load → merge `Some` fields → save,
+/// all inside one backend call (FE-07). The settings page previously ran a full
+/// load→modify→save round-trip from the UI on every keystroke (2 IPC calls plus a
+/// read-modify-write race); it now sends only the changed field, debounced.
+/// Runs on the blocking pool: it touches the OS keychain and the config file.
+#[tauri::command]
+pub async fn patch_app_config(app: AppHandle, patch: PatchAppConfig) -> Result<AppConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cfg = crate::core::config::load_app_config(&app)?;
+        if let Some(v) = patch.max_tool_rounds {
+            cfg.max_tool_rounds = Some(v);
+        }
+        if let Some(v) = patch.max_concurrent_subagents {
+            cfg.max_concurrent_subagents = Some(v);
+        }
+        if let Some(v) = patch.subagent_isolation_mode {
+            cfg.subagent_isolation_mode = v;
+        }
+        crate::core::config::save_app_config(&app, &cfg)?;
+        Ok(cfg)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Sync the frontend locale to the backend (language of user-visible text such as error messages).
 /// Called once at frontend startup and once per language switch; missing/unknown values fall back to Chinese.
 #[tauri::command]

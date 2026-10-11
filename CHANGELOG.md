@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧪 阶段5 第3批：下载中途 kill 恢复集成测试（共享下载引擎）
+
+- **kill 恢复五场景集成测试（报告阶段5第3项）**：用 `http::Response` 合成 206/200 响应（`reqwest::Response: From<http::Response>`，`http` 声明为 dev-dependency——已在依赖树内零新增编译）直接驱动共享下载引擎，无需真实 HTTP 服务器。**A** 进程 kill 后重试：`.part` 检查点 + ETag sidecar 落盘 → 206 续传 → 追加 → 终长核对 → 原子 rename 出完整文件（kill 的字节一分不丢）；**B** 服务器中途断流（`wrap_stream` 未知长度 + Content-Length 虚高头，忠实模拟"头已声明、body 未送完"）：报"下载不完整"且检查点保留前缀+已收字节，绝不 rename 半截文件；**C** 取消：`.part` 与 `.etag` 一并清理；**D** 暂停：检查点保留全部已收字节供下次续传；**E** 全新下载（服务器忽略 Range 回 200）：truncate 分支，陈旧检查点被整体覆盖不与响应拼接
+- **引擎 emit 参数化**：`stream_to_checkpoint` 的 `&tauri::Window` 改为 `impl Fn(&str, Value)` emit 闭包——无 Tauri app 也可测试引擎（测试驱动正是此次集成测试的前提）；命令层两处调用点以闭包包装 window
+
 ### 🧱 阶段4 第3项主体：MCP HTTP 请求统一 JSON-RPC 出口（与 stdio 同语义）
 
 - **HTTP `rpc_call`/`rpc_notify` 统一出口（阶段4 第3项，根除 MCP-4/5 类分叉）**：HTTP 传输此前 7 个方法（initialize / list_tools / call_tool / list_resources / read_resource / list_prompts / get_prompt）各持一份手搓 `json!` 请求体 + 各自的 envelope 拆包——正是 MCP-4/5/19 类两传输语义分叉的温床。收敛为与 stdio `McpConnection::request` 同语义的单一出口：state 查找、id 生成、**共享 `JsonRpcRequest`/`JsonRpcNotification` 编解码**（两传输线格式单一来源）、超时包装、result 剥壳（缺 result → Null 同 stdio）全部单点实现

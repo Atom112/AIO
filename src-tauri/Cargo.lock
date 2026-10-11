@@ -90,6 +90,7 @@ dependencies = [
  "futures-util",
  "glob",
  "hex",
+ "http",
  "keyring",
  "lsp-types",
  "once_cell",

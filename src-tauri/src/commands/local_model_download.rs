@@ -478,7 +478,11 @@ pub async fn local_model_download(
         // is removed on cancel and after the atomic rename) and the ENG-04 GGUF
         // magic verify below.
         match stream_to_checkpoint(
-            &window,
+            // 阶段5: the engine takes an emit closure (testable without a Tauri app);
+            // the command layer wraps its window here.
+            |event, payload| {
+                let _ = window.emit(event, payload);
+            },
             ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
             &serde_json::json!({ "id": request.id, "source": source }),
             &file.name,

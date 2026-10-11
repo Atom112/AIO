@@ -280,7 +280,11 @@ pub async fn embedding_model_download(
         // final-length check and the atomic rename. Embedding/rerank models carry
         // no ETag sidecar.
         match stream_to_checkpoint(
-            &window,
+            // 阶段5: the engine takes an emit closure (testable without a Tauri app);
+            // the command layer wraps its window here.
+            |event, payload| {
+                let _ = window.emit(event, payload);
+            },
             ev::MODEL_DOWNLOAD_PROGRESS,
             &serde_json::json!({ "id": entry.id }),
             file.name,

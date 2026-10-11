@@ -210,13 +210,32 @@ pub async fn run_daily_consolidation(app: &AppHandle) {
         if !enabled {
             continue;
         }
-        match consolidate(app, &store, budget).await {
-            Ok(report) => {
+        // MEM-15: per-project panic containment. A panic inside one project's
+        // consolidation used to unwind through the whole loop, silently skipping
+        // every remaining project's daily pass until the next day. Errors were
+        // already contained per project; panics now are too.
+        let outcome = futures_util::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(
+            consolidate(app, &store, budget),
+        ))
+        .await;
+        match outcome {
+            Ok(Ok(report)) => {
                 if report.arbitrated > 0 {
                     tracing::info!("[memory] 每日合并整理 {}：{:?}", project.path, report);
                 }
             }
-            Err(e) => tracing::warn!("[memory] 每日合并整理失败 {}: {e}", project.path),
+            Ok(Err(e)) => tracing::warn!("[memory] 每日合并整理失败 {}: {e}", project.path),
+            Err(panic) => {
+                let reason = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                tracing::error!(
+                    "[memory] 每日合并整理 panic（已隔离） {}: {reason}",
+                    project.path
+                );
+            }
         }
     }
 }

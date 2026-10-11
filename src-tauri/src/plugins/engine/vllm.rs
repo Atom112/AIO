@@ -262,14 +262,31 @@ impl LocalEnginePlugin for VllmPlugin {
 
     fn build_command(
         &self,
-        _exe_path: &Path,
-        _model_path: &str,
-        _port: u16,
+        exe_path: &Path,
+        model_path: &str,
+        port: u16,
         _gpu_layers: i32,
     ) -> std::process::Command {
-        // SEC-06: PATH-only resolution; unresolvable falls back to the bare name so the
-        // OS reports the native error (vLLM start surfaces a clear message either way).
-        std::process::Command::new(crate::utils::exec_resolve::resolve_or_keep("python"))
+        // ENG-16: builds the REAL server argv — the historic stub returned a bare
+        // `Command::new(python)` that start() never executed (dead trait code while
+        // the actual argv lived inline in start); start() now consumes this method.
+        create_progress_cmd(
+            &exe_path.to_string_lossy(),
+            &[
+                "-m",
+                "vllm.entrypoints.openai.api_server",
+                "--model",
+                model_path,
+                "--port",
+                &port.to_string(),
+                "--host",
+                "127.0.0.1",
+                "--dtype",
+                "auto",
+                "--max-model-len",
+                "4096",
+            ],
+        )
     }
 
     fn start<'a>(
@@ -311,12 +328,10 @@ impl LocalEnginePlugin for VllmPlugin {
                     return Err(ierr!(
                         "未找到已安装 vllm 的 Python 解释器。\n\
                          请执行: pip install --user vllm\n\
-                         或: pip install vllm\n\n\
-                         注意：vLLM 仅支持 Linux/macOS，需要 CUDA 工具链支持。",
+                         或: pip install vllm",
                         "No Python interpreter with vllm installed.\n\
                          Run: pip install --user vllm\n\
-                         Or: pip install vllm\n\n\
-                         Note: vLLM supports Linux/macOS only and requires the CUDA toolchain."
+                         Or: pip install vllm"
                     ));
                 }
             };
@@ -325,23 +340,9 @@ impl LocalEnginePlugin for VllmPlugin {
 
             let _ = app.emit(self.progress_event_name(), 0.15);
 
-            let mut cmd = create_progress_cmd(
-                &python,
-                &[
-                    "-m",
-                    "vllm.entrypoints.openai.api_server",
-                    "--model",
-                    model_path,
-                    "--port",
-                    &port.to_string(),
-                    "--host",
-                    "127.0.0.1",
-                    "--dtype",
-                    "auto",
-                    "--max-model-len",
-                    "4096",
-                ],
-            );
+            // ENG-16: the argv is owned by build_command (single source — it was a
+            // dead stub while start() kept a diverging inline copy).
+            let mut cmd = self.build_command(Path::new(&python), model_path, port, gpu_layers);
             // ENG-07: 服务进程 stdout piped 从无人读——64KB 管道填满后引擎静默
             // 挂死；stderr 有人读保持 piped，stdout 改 null
             cmd.stdout(std::process::Stdio::null());

@@ -1603,7 +1603,8 @@ pub(crate) async fn run_agent_turn_inner(
             );
         }
         // Context budget tracking: token-level and model-aware (threshold/reserve budgets derived from the window before task start)
-        // Configurable max tool-call rounds per turn (default 25, min 1)
+        // Configurable max tool-call rounds per turn (LOOP-15: default 50 per
+        // DEFAULT_MAX_TOOL_ROUNDS — the historic comment claimed 25), min 1
         let max_rounds = app_config
             .max_tool_rounds
             .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS)

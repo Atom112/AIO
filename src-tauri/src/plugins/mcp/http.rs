@@ -470,18 +470,10 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| McpError::Server(format!("SSE read: {}", e)))?;
             buffer.push_str(&String::from_utf8_lossy(&chunk));
-            // MCP-5: consume EVERY complete block in the buffer, delimiter included
-            // (the historic drain(..pos) left the "\n\n" separator in place, so the
-            // next find hit 0 forever and a server that opens with a heartbeat/
-            // comment block hung with a never-draining buffer).
-            while let Some((block, consumed)) = next_sse_block(&buffer) {
-                let block = block.to_string();
-                buffer.drain(..consumed);
-                if let Some(data) = sse_block_data(&block) {
-                    if let Some(v) = classify_sse_data(&data, expect_id)? {
-                        return Ok(v);
-                    }
-                }
+            // 阶段5: the block-drain loop lives in drain_sse_blocks (exercised by
+            // the malicious/edge-server transcript tests below).
+            if let Some(v) = drain_sse_blocks(&mut buffer, expect_id)? {
+                return Ok(v);
             }
         }
         Err(McpError::Server("SSE 流意外关闭".into()))
@@ -530,6 +522,30 @@ fn next_sse_block(buffer: &str) -> Option<(&str, usize)> {
     } else {
         buffer.find("\n\n").map(|p| (&buffer[..p], p + 2))
     }
+}
+
+/// 阶段5: drains every complete SSE block currently buffered and returns the
+/// response for `expect_id` when one arrives. Extracted from post_json so the
+/// full MCP-4/MCP-5/MCP-19 consumption pattern (heartbeat-first servers,
+/// notifications, foreign/absent/string ids, error blocks) is testable against
+/// hostile transcripts without a live HTTP server.
+///
+/// Consumed bytes — delimiter included, the MCP-5 regression — are drained from
+/// `buffer`; `Ok(None)` = nothing more to do (stream ended / awaiting more bytes).
+pub(crate) fn drain_sse_blocks(
+    buffer: &mut String,
+    expect_id: Option<u64>,
+) -> McpResult<Option<Value>> {
+    while let Some((block, consumed)) = next_sse_block(buffer) {
+        let block = block.to_string();
+        buffer.drain(..consumed);
+        if let Some(data) = sse_block_data(&block) {
+            if let Some(v) = classify_sse_data(&data, expect_id)? {
+                return Ok(Some(v));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// 提取一个 SSE 块的 data 载荷（多行 `data:` 按 SSE 规范以 `\n` 拼接）。
@@ -673,6 +689,77 @@ mod tests {
         // SSE classifier: OTHER request's string id → correctly skipped now
         let other = "{\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{}}";
         assert!(classify_sse_data(other, Some(7)).unwrap().is_none());
+    }
+
+    /// 阶段5 集成测试：恶意/边缘 server 台本。按 post_json 的真实消费模式——
+    /// 逐 chunk 喂入 drain_sse_blocks（跨 TCP 分段边界），台本依次包含：
+    /// 心跳块（MCP-4：先发心跳的服务器必须能连上）→ 日志通知块（跳过）→
+    /// 他人数字 id 响应（跳过）→ 他人字符串 id 响应（MCP-19：跳过）→
+    /// 我方响应（命中返回）。结尾带一个不完整块，验证它留在缓冲不被误消费。
+    #[test]
+    fn malicious_edge_server_transcript_drains_correctly() {
+        let transcript = concat!(
+            ": keep-alive\r\n\r\n",
+            "event: log\r\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":98,\"result\":{\"noise\":true}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{\"noise\":true}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"tools\":[{\"name\":\"read\"}]}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":\"partial-bl",
+        );
+        // Feed in 7-byte chunks: blocks straddle chunk boundaries repeatedly.
+        // The whole transcript is fed (draining stops after the first hit) so the
+        // trailing partial block lands in the buffer exactly as in production.
+        let mut buffer = String::new();
+        let mut found = None;
+        for chunk in transcript.as_bytes().chunks(7) {
+            buffer.push_str(&String::from_utf8_lossy(chunk));
+            if found.is_none() {
+                if let Some(v) = drain_sse_blocks(&mut buffer, Some(7)).unwrap() {
+                    found = Some(v);
+                }
+            }
+        }
+        let v = found.expect("台本中我方响应必须被命中");
+        assert_eq!(v["id"], 7, "命中我方数字 id 响应");
+        assert_eq!(v["result"]["tools"][0]["name"], "read");
+        // The trailing partial block must remain buffered (not consumed).
+        assert!(
+            buffer.contains("partial-bl"),
+            "不完整块应留在缓冲: {buffer:?}"
+        );
+    }
+
+    /// 阶段5 集成测试：我方 id 的 error 块浮出为 Remote 错误（PROV-2 类语义），
+    /// 即使前面隔着多个心跳块——截断/失败不得被当成功吞掉。
+    #[test]
+    fn error_block_surfaces_through_heartbeats() {
+        let transcript = concat!(
+            ": ping\r\n\r\n: ping\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32000,\"message\":\"boom\"}}\r\n\r\n",
+        );
+        let mut buffer = String::new();
+        buffer.push_str(transcript);
+        let err = drain_sse_blocks(&mut buffer, Some(7)).unwrap_err();
+        match err {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "boom");
+            }
+            other => panic!("应为 Remote 错误: {other:?}"),
+        }
+        assert!(buffer.is_empty(), "错误块应被完整消费");
+    }
+
+    /// 阶段5 集成测试：流在我方响应到来前结束 → drain 返回 Ok(None)（调用方
+    /// 以"SSE 流意外关闭"报错）；全部完整块均已消费、缓冲只剩无 data 的残留。
+    #[test]
+    fn drain_returns_none_when_stream_ends_without_our_response() {
+        let transcript =
+            ": only heartbeats\r\n\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}\r\n\r\n";
+        let mut buffer = String::new();
+        buffer.push_str(transcript);
+        assert!(drain_sse_blocks(&mut buffer, Some(7)).unwrap().is_none());
+        assert!(buffer.is_empty(), "所有完整块（含他人 id）都应被消费");
     }
 
     /// MCP-22: endpoint derivation is kind-aware and never silently rewrites an

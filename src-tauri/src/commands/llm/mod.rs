@@ -36,6 +36,7 @@ pub(crate) mod compress;
 pub(crate) mod handoff;
 pub(crate) mod locked_tools;
 pub(crate) mod messages;
+pub(crate) mod sse_lines;
 pub(crate) mod subagents;
 pub(crate) mod tasks;
 pub(crate) mod titles;
@@ -242,13 +243,11 @@ pub(crate) async fn stream_one_round(
     .await?;
 
     let mut stream = response.bytes_stream();
-    // PROV-1: 字节级行缓冲——只在完整行上解码。历史实现逐 chunk
-    // `from_utf8_lossy`，把被 TCP 分段切开的多字节 UTF-8 字符替换成 U+FFFD
-    // （中文流式随机乱码且写入会话历史）。`\n` 不会出现在多字节序列中间，
-    // 因此按 `\n` 切出的行总是完整的 UTF-8。
-    let mut line_buffer: Vec<u8> = Vec::new();
-    // LOOP-9: 无换行的超长数据行不再无界增长（超限即报错中断本轮）
+    // PROV-1/LOOP-9: byte-level line buffering with a hard cap — single
+    // implementation shared with the BTW stream (sse_lines module, exhaustively
+    // tested across every chunk boundary incl. multi-byte UTF-8 splits).
     const SSE_LINE_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
+    let mut line_buffer = sse_lines::SseLineBuffer::new(SSE_LINE_BUFFER_LIMIT);
     // tool_call accumulator: index -> (id, name, arguments); BTreeMap keeps flush ordered by index
     let mut tc_accum: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
 
@@ -283,20 +282,9 @@ pub(crate) async fn stream_one_round(
             Some(Err(e)) => return Err(e.to_string()),
             None => break, // stream ended naturally
         };
-        line_buffer.extend_from_slice(&chunk);
-        if line_buffer.len() > SSE_LINE_BUFFER_LIMIT {
-            return Err(ierr!(
-                "SSE 行缓冲超限（4MB）：服务器发送了无换行的超长数据行",
-                "SSE line buffer exceeded 4MB: the server sent an overlong line without a newline"
-            ));
-        }
+        line_buffer.push(&chunk)?;
 
-        while let Some(pos) = line_buffer.iter().position(|&b| b == b'\n') {
-            let line = String::from_utf8_lossy(&line_buffer[..pos])
-                .trim()
-                .to_string();
-            line_buffer.drain(..pos + 1);
-
+        while let Some(line) = line_buffer.next_line() {
             if line.is_empty() {
                 continue;
             }

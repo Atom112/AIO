@@ -1,14 +1,10 @@
 import { Component, createSignal, onMount, onCleanup, createEffect, Show } from 'solid-js';
 import {
   appendMessage,
-  branchTopic,
   callLlmStream,
   generateImage,
-  getActiveCheckpoint,
   llmCreds,
   loadAssistants,
-  stopActiveLlmStream,
-  type ActiveCheckpoint,
 } from '../../core/api/chat';
 import { registerChatUiListeners } from './hooks/chatEventListeners';
 import {
@@ -22,6 +18,17 @@ import { usePanelResize } from './hooks/usePanelResize';
 import { useBtwQuestion } from './hooks/useBtwQuestion';
 import { useAttachments } from './hooks/useAttachments';
 import { useChatSend } from './hooks/useChatSend';
+import {
+  DEFAULT_ASST_ID,
+  createTopic,
+  handleStopGeneration,
+  switchToChat,
+  switchToProject,
+  addTopic,
+  branchFromMessage,
+} from './utils/topicActions';
+import { useMessageSelection } from './hooks/useMessageSelection';
+import { useCheckpointResume } from './hooks/useCheckpointResume';
 import { buildOutgoingMessages, resolveOutgoingContent } from './utils/sendMessagePrep';
 import { handleSlashActionMessage, handleSlashPromptMessage } from './utils/slashHandlers';
 import { cleanupFailedPlaceholder } from './utils/failedTurnCleanup';
@@ -49,7 +56,6 @@ import {
   setPendingRenameRequest,
   resolveAssistantSkills,
   currentProjectId,
-  setCurrentProjectId,
   currentProject,
   profileModelOverrides,
   allAvailableModels,
@@ -57,7 +63,6 @@ import {
   workflowState,
   isChatMode,
   projects,
-  ensureProjectAssistant,
   setShowProjectCreateModal,
   getLastAgentProjectId,
   initMcpServers,
@@ -81,7 +86,7 @@ import {
   savePanelWidth,
 } from '../../core/store/layout';
 import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
-import { locale, t } from '../../core/i18n';
+import { t } from '../../core/i18n';
 import Icon from '../../shared/components/Icon';
 import { isImageGenModel } from '../../core/utils/models';
 import ProjectSidebar from './components/ProjectSidebar';
@@ -104,19 +109,6 @@ import TaskBoardPanel from './components/TaskBoardPanel';
 import { clearAllDiagnostics } from '../../core/store/diagnostics';
 
 let isFirstAppLaunch = true;
-const DEFAULT_ASST_ID = 'default-assistant-id';
-
-/**
- * Helper: create a new topic object.
- * @param name - optional topic name; defaults to a timestamped name
- * @returns Topic with a unique ID, name, empty history, and empty summary
- */
-const createTopic = (name?: string): Topic => ({
-  id: Date.now().toString(), // current timestamp used as the unique identifier
-  name: name || t('chat.untitledTopic', { time: new Date().toLocaleTimeString(locale()) }), // default name includes the creation time
-  history: [], // message history array
-  summary: '', // long-term memory summary (SQLite storage), used to compress history context
-});
 
 /**
  * Helper: create a new assistant object.
@@ -156,12 +148,6 @@ const ChatPage: Component = () => {
   const [editingTopicId, setEditingTopicId] = createSignal<string | null>(null); // ID of the topic whose name is being edited; null when not editing
   const [settingsAsstId, setSettingsAsstId] = createSignal<string | null>(null); // ID of the assistant whose settings modal is open; null when closed
   // tool calls awaiting user approval
-  /** Share modal state */
-  const [showShareModal, setShowShareModal] = createSignal(false);
-  const [activeShareTopicId, setActiveShareTopicId] = createSignal<string | null>(null);
-  /** Message-level selection mode */
-  const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
-  const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
   /** Page root element ref, used to compute relative positions while resizing panels */
   let chatPageRef: HTMLDivElement | undefined;
   /**
@@ -285,97 +271,21 @@ const ChatPage: Component = () => {
     startAgentTurn,
   };
 
-  const shareTopic = (): Topic | null => {
-    const asst = currentAssistant();
-    if (!asst) return null;
-    const sid = activeShareTopicId();
-    if (sid) return asst.topics.find((t: Topic) => t.id === sid) || null;
-    return activeTopic();
-  };
-
-  // -------- message-level selection --------
-
-  /** Enter selection mode */
-  const enterSelectionMode = (topicId?: string | null) => {
-    if (topicId) {
-      setActiveShareTopicId(topicId);
-      setCurrentTopicId(topicId);
-    }
-    setSelectedMessageIds(new Set<string>());
-    setIsSelectingMessages(true);
-  };
-
-  /** Toggle the selected state of one message */
-  const handleToggleMessage = (msgId: string) => {
-    setSelectedMessageIds((prev) => {
-      const next = new Set<string>(prev);
-      if (next.has(msgId)) next.delete(msgId);
-      else next.add(msgId);
-      return next;
-    });
-  };
-
-  /** Select all exportable messages in the current topic (excluding tool messages) */
-  const handleSelectAll = () => {
-    const topic = activeTopic();
-    if (!topic) return;
-    const ids = new Set<string>();
-    for (const msg of topic.history) {
-      if (msg.role !== 'tool' && msg.id) ids.add(msg.id);
-    }
-    setSelectedMessageIds(ids);
-  };
-
-  /** Cancel the selection and exit selection mode */
-  const handleCancelSelection = () => {
-    setIsSelectingMessages(false);
-    setSelectedMessageIds(new Set<string>());
-    setActiveShareTopicId(null);
-  };
-
-  /** Confirm the selection and open the share modal */
-  const handleConfirmSelection = () => {
-    setIsSelectingMessages(false);
-    setShowShareModal(true);
-  };
-
-  // checkAndSummarize / fallbackTitle / checkAndRename moved to hooks/chatTurnEffects.ts (CHAT-12)
-
-  // ===== Checkpoint resume: "continue unfinished turn" entry for crash-orphaned turns =====
-  const [activeCheckpoint, setActiveCheckpoint] = createSignal<ActiveCheckpoint | null>(null);
-  createEffect(() => {
-    const tid = currentTopicId();
-    setActiveCheckpoint(null);
-    if (!tid) return;
-    void (async () => {
-      try {
-        const cp = await getActiveCheckpoint(tid);
-        // race guard: apply only if the topic has not switched again
-        if (currentTopicId() === tid) setActiveCheckpoint(cp);
-      } catch {
-        /* silent on query failure: the entry point is not shown */
-      }
-    })();
-  });
-
-  const handleResumeTurn = async () => {
-    const cp = activeCheckpoint();
-    const tid = currentTopicId();
-    const asstId = currentAssistantId();
-    const currentMdl = selectedModel();
-    if (!cp || !tid || !asstId || !currentMdl || isThinking()) return;
-    const currentAsst = datas.assistants.find((a: Assistant) => a.id === asstId);
-    const resumeAgentMode = currentAsst?.agentMode || 'off';
-    setActiveCheckpoint(null);
-    // shared payload + thinking lifecycle in useChatSend; the backend substitutes
-    // the checkpoint snapshot on resume (frontend messages unused)
-    await startAgentTurn({
-      messages: [],
-      agentMode: resumeAgentMode,
-      skills: resumeAgentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
-      resumeTurnId: cp.turnId,
-    });
-  };
+  // 阶段4 第2项（<900 目标切片）：选择模式家族 → useMessageSelection；
+  // checkpoint 恢复入口 → useCheckpointResume（信号与效果随钩子走）
+  const {
+    isSelectingMessages,
+    selectedMessageIds,
+    showShareModal,
+    shareTopic,
+    enterSelectionMode,
+    handleToggleMessage,
+    handleSelectAll,
+    handleCancelSelection,
+    handleConfirmSelection,
+    closeShareModal,
+  } = useMessageSelection({ currentAssistant, activeTopic });
+  const { activeCheckpoint, handleResumeTurn } = useCheckpointResume({ startAgentTurn });
 
   /**
    * Send-message flow.
@@ -615,93 +525,6 @@ const ChatPage: Component = () => {
 
   /**
    * Stop the current AI generation.
-   */
-  const handleStopGeneration = async () => {
-    try {
-      // CHAT-4: 按流归属键停止——切话题后当前视图 ID 打不到流（后端按键控
-      // 静默 no-op），用户被迫切回原话题才能停止
-      await stopActiveLlmStream();
-    } catch (err) {
-      console.error('stop_llm_stream failed:', err);
-    }
-    setPendingApprovals([]);
-  };
-
-  /** Switch to chat mode */
-  const switchToChat = () => {
-    setCurrentAssistantId(DEFAULT_ASST_ID);
-    const asst = datas.assistants.find((a) => a.id === DEFAULT_ASST_ID);
-    if (asst?.topics?.length) {
-      setCurrentTopicId(asst.topics[0].id);
-    }
-  };
-
-  /** Switch to the given project */
-  const switchToProject = async (projectId: string) => {
-    try {
-      // CHAT-3: 必须同步 currentProjectId——Agent 工具按 currentProjectId 解析
-      // 项目根（runAgentTurn 的 projectId 参数取自它）；漏同步时冷启动恢复
-      // （localStorage 两键不一致）会让 agent 在错误工作区操作文件。
-      // 与 ProjectSidebar 的同名实现保持五步一致。
-      setCurrentProjectId(projectId);
-      const asstId = await ensureProjectAssistant(projectId);
-      setCurrentAssistantId(asstId);
-      initMcpServers(projectId);
-      const asst = datas.assistants.find((a) => a.id === asstId);
-      if (asst?.topics?.length) {
-        setCurrentTopicId(asst.topics[0].id);
-      }
-    } catch (e) {
-      console.error('Failed to switch project:', e);
-    }
-  };
-
-  /**
-   * Add a new topic to the current assistant.
-   * Creates the topic and makes it the selected one
-   */
-  const addTopic = async () => {
-    const asstId = currentAssistantId();
-    if (!asstId) return;
-    const newT = createTopic();
-    setDatas(
-      'assistants',
-      (a) => a.id === asstId,
-      'topics',
-      (prev) => [...prev, newT],
-    );
-    setCurrentTopicId(newT.id);
-    await saveSingleAssistantToBackend(asstId);
-  };
-
-  /**
-   * Branch a new topic from the given message (conversation branching).
-   * Copies that message and everything before it into a new topic, then navigates to it.
-   * @param sourceMessageId - message ID at the branch point
-   */
-  const branchFromMessage = async (sourceMessageId: string) => {
-    const asstId = currentAssistantId();
-    const topicId = currentTopicId();
-    if (!asstId || !topicId) return;
-    try {
-      const newTopic: Topic = await branchTopic(topicId, sourceMessageId);
-      setDatas(
-        'assistants',
-        (a: any) => a.id === asstId,
-        'topics',
-        (prev: Topic[]) => [...prev, newTopic],
-      );
-      setCurrentTopicId(newTopic.id);
-      await saveSingleAssistantToBackend(asstId);
-    } catch (e) {
-      console.error('Failed to create branch:', e);
-    }
-  };
-
-  /**
-   * Generic drag-to-resize: binds mousemove/mouseup and updates width via a percentage callback.
-   * @param e - MouseEvent mouse event
-   * @param onDragMove - callback per mouse move, receives the percentage of the cursor across the full page width
    */
   onMount(() => {
     const navigate = useNavigate();
@@ -997,11 +820,7 @@ const ChatPage: Component = () => {
       <Portal>
         <ShareModal
           open={showShareModal()}
-          onClose={() => {
-            setShowShareModal(false);
-            setActiveShareTopicId(null);
-            setSelectedMessageIds(new Set<string>());
-          }}
+          onClose={closeShareModal}
           topic={shareTopic()}
           selectedMessageIds={selectedMessageIds().size > 0 ? selectedMessageIds() : undefined}
         />

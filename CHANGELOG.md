@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（拆分切片6）：主发送路径接入 useChatSend + CHAT-10 清理抽出（+6 单测）
+
+- **主发送路径迁移（阶段4 第2项 useChatSend 路径收尾）**：handleSendMessage 的 agent 分支（模型覆盖解析 + 14 字段载荷）迁至 `startAgentTurn` 原语；CHAT-10 占位气泡清理经 `onInvokeError` 回调注入（失败语义零变化：alert + thinking/typing 复位 + 清理，由原语统一执行）；chat 模式的 `callLlmStream`/`generateImage` 分支保留原 catch（同一清理函数复用）
+- **CHAT-10 清理抽出 + 6 单测**：空占位符丢弃 / 部分流保留（running 步骤收口 complete + 时长补记 / 调用中工具步收口 error / 孤儿 calling 工具补中断标记 / 非助手末条与空历史恒等返回）——`utils/failedTurnCleanup.ts` 纯历史数组变换，此前内联于 catch 块零测试
+- **any 棘轮 100 → 97（净降 3）**：清理模块与测试全程类型化（`ToolCallDisplay`/`AgentStep` 索引类型），迁移走出的内联 any 大于新增
+
 ### 🧱 阶段4 第2项（拆分切片5）：useChatSend 共享发送原语（slash-prompt/resume 接入）
 
 - **run_agent_turn 载荷组装收敛（阶段4 第2项 useChatSend 路径）**：三条发送路径各重复一份 14 字段载荷组装（凭证+ID+模式+项目+联网+locale+上下文窗口+技能）+ thinking 生命周期（前置置位 / 失败 alert+复位）。新建 `hooks/useChatSend.ts` 的 `startAgentTurn` 原语：载荷组装与生命周期单点化，调用方只传各自差异项（messages/agentMode/skills + 可选 overrides/profiles/resumeTurnId/onInvokeError 清理回调）；**两个干净调用点先接入**（斜杠 prompt 发送、检查点续跑——后者失败路径顺带补上 typingIndex 复位）；主发送路径（含占位气泡清理的差异化 catch）留待下一批迁移；接口全程无 any（类型取自 `RunAgentTurnArgs`），any 棘轮保持 100

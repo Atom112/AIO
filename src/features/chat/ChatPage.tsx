@@ -7,7 +7,6 @@ import {
   getActiveCheckpoint,
   llmCreds,
   loadAssistants,
-  runAgentTurn,
   stopActiveLlmStream,
   visionAnalyzeImages,
   type ActiveCheckpoint,
@@ -18,7 +17,6 @@ import {
   cancelActiveTitleGen,
   checkAndRename,
   checkAndSummarize,
-  getModelContextWindow,
 } from './hooks/chatTurnEffects';
 import { registerChatCommands } from './hooks/chatCommands';
 import { usePanelResize } from './hooks/usePanelResize';
@@ -27,7 +25,7 @@ import { useAttachments } from './hooks/useAttachments';
 import { useChatSend } from './hooks/useChatSend';
 // 阶段4 第2项（拆分切片）：API 载荷消息构建三件套抽至 utils/apiMessages（纯函数 + 11 单测）
 import { buildApiMessages, ensureToolMessagesComplete } from './utils/apiMessages';
-import { TOOL_INTERRUPTED } from './constants';
+import { cleanupFailedPlaceholder } from './utils/failedTurnCleanup';
 import { autoDetectLsp, startLspServer } from '../../core/api/lsp';
 import { useNavigate } from '@solidjs/router';
 import {
@@ -75,7 +73,6 @@ import {
   setPendingApprovals,
   pendingQuestions,
   setPendingQuestions,
-  type AgentStep,
 } from '../../core/store/store';
 // P3（localStorage 裸调收编）：面板布局持久化经 core/store/layout 域 API
 import {
@@ -820,75 +817,39 @@ const ChatPage: Component = () => {
           }
         }
 
-        await runAgentTurn({
-          ...llmCreds(currentMdl),
-          assistantId: asstId,
-          topicId,
+        // 阶段4 第2项（拆分切片）：共享载荷经 useChatSend 原语；CHAT-10 占位
+        // 气泡清理经 onInvokeError（实现抽至 utils/failedTurnCleanup，含 6 单测）
+        await startAgentTurn({
           messages: messagesForAI,
-          mcpServerIds: currentAsst?.mcpServerIds ?? [],
           agentMode,
-          projectId: currentProjectId() ?? null,
-          webSearchEnabled: webSearchEnabled(),
+          skills: isChatMode() ? [] : resolveAssistantSkills(currentAsst),
           profileModelOverrides: resolvedOverrides,
           customSubagentProfiles: customSubagentProfiles(),
-          locale: locale(),
-          contextWindow: await getModelContextWindow(),
-          skills: isChatMode() ? [] : resolveAssistantSkills(currentAsst),
+          onInvokeError: () => {
+            setDatas(
+              'assistants',
+              (a) => a.id === asstId,
+              'topics',
+              (t) => t.id === topicId,
+              'history',
+              (h: Message[]) => cleanupFailedPlaceholder(h),
+            );
+          },
         });
+        return; // the primitive owns the failure teardown; skip the shared catch below
       }
     } catch (err) {
       alert(err);
       setIsThinking(false);
       setTypingIndex(null);
-      // CHAT-10: the invoke failed after the placeholder was created (chat mode creates
-      // it locally; agent mode creates it on llm-round-start). Without cleanup the
-      // empty assistant bubble sat in a "thinking" state forever — no done event ever
-      // arrives for a stream that never started.
+      // CHAT-10 (chat-mode callLlmStream/generateImage paths): same cleanup
       setDatas(
         'assistants',
         (a) => a.id === asstId,
         'topics',
         (t) => t.id === topicId,
         'history',
-        (h: Message[]) => {
-          const lastIdx = h.length - 1;
-          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-          const msg = h[lastIdx] as Message & {
-            toolCalls?: unknown[];
-            reasoning?: string;
-            images?: unknown;
-          };
-          const steps = msg.agentSteps || [];
-          const toolCalls = msg.toolCalls || [];
-          const empty =
-            !msg.content &&
-            !msg.reasoning &&
-            steps.length === 0 &&
-            toolCalls.length === 0 &&
-            !msg.images;
-          if (empty) return h.slice(0, lastIdx); // drop the untouched placeholder
-          // Partial stream preserved: close running steps / orphaned calling tools as interrupted
-          const now = Date.now();
-          const closedMsg = {
-            ...msg,
-            agentSteps: steps.map((s: AgentStep) => {
-              if (s.status !== 'running') return s;
-              const isCallingTool =
-                s.type === 'tool_call' && (s as any).toolCall?.state === 'calling';
-              return {
-                ...s,
-                status: isCallingTool ? ('error' as const) : ('complete' as const),
-                duration: now - s.timestamp,
-              };
-            }),
-            toolCalls: toolCalls.some((tc: any) => tc.state === 'calling')
-              ? toolCalls.map((tc: any) =>
-                  tc.state === 'calling' ? { ...tc, state: 'error', error: TOOL_INTERRUPTED } : tc,
-                )
-              : toolCalls,
-          };
-          return [...h.slice(0, lastIdx), closedMsg];
-        },
+        (h: Message[]) => cleanupFailedPlaceholder(h),
       );
     }
   };

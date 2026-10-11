@@ -1,6 +1,10 @@
 //! Token usage statistics and counting commands (usage_log table writes/queries, count_tokens).
 
-use crate::commands::llm::*;
+// 阶段4 第1项（消 glob）：显式 use 取代原父模块 glob。
+use crate::core::models::{UsageSummary, UsageSummaryByModel};
+use tauri::AppHandle;
+use tauri::Manager;
+
 use crate::core::state::DbState;
 
 /// Write the token usage of a single LLM call into the usage_log table (immutable append-only records).
@@ -41,7 +45,7 @@ pub(crate) fn insert_usage_log(
 /// Return daily input/output tokens and request counts ordered by date descending.
 /// Used by the frontend usage panel (e.g. "last 7 / 30 days usage").
 #[tauri::command]
-pub(crate) fn get_usage_summary(
+pub fn get_usage_summary(
     db_state: tauri::State<'_, DbState>,
     days: u32,
 ) -> Result<Vec<UsageSummary>, String> {
@@ -82,7 +86,7 @@ pub(crate) fn get_usage_summary(
 ///
 /// Returns per-model usage ordered by total tokens descending, for the frontend model-distribution panel.
 #[tauri::command]
-pub(crate) fn get_usage_summary_by_model(
+pub fn get_usage_summary_by_model(
     db_state: tauri::State<'_, DbState>,
     days: u32,
     date: Option<String>,
@@ -155,14 +159,16 @@ pub(crate) fn get_usage_summary_by_model(
 /// Estimate the token count of a text (for live preview in the frontend input box).
 /// Thin wrapper over the pure `utils::token_counter::count_tokens_cmd`.
 #[tauri::command]
-pub(crate) fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
+pub fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
     crate::utils::token_counter::count_tokens_cmd(model, text)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // 阶段4 第1项（消 glob）：父模块 glob 已移除——测试用符号经下方显式 use。
+    use crate::commands::llm::messages::message_for_api;
     use crate::core::models::GeneratedImage;
+    use crate::core::models::Message;
 
     fn conn() -> rusqlite::Connection {
         rusqlite::Connection::open_in_memory().unwrap()

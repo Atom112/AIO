@@ -47,12 +47,12 @@ pub async fn ask_btw_question(
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
 
-    let client = super::streaming_http_client();
+    let client = super::client::streaming_http_client();
     let body = json!({ "model": model, "messages": messages, "stream": true });
 
     let (res, is_anthropic) = match tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        super::post_chat_completion(&client, &api_url, &api_key, &body),
+        super::client::post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
     {

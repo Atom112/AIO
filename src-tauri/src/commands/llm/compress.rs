@@ -1,9 +1,12 @@
 //! Automatic context compression (runtime compression inside the Agent loop, shared by the main loop and sub-agents).
 
-use crate::commands::llm::*;
+use crate::commands::llm::budget::estimate_message_tokens;
+use crate::commands::llm::client::{chat_error_message, chat_text_content, post_chat_completion};
+use crate::commands::llm::handoff::archive_early_messages;
 use crate::core::events as ev;
 use crate::ierr;
 use serde_json::json;
+use tauri::Manager as _;
 use tauri::{Emitter, Window};
 use tokio_util::sync::CancellationToken;
 

@@ -1,6 +1,11 @@
 //! Topic title and history summary commands (generate_topic_title, summarize_history, archive_history).
 
-use crate::commands::llm::*;
+use crate::commands::llm::client::{
+    chat_error_message, chat_finish_reason, chat_text_content, non_streaming_http_client,
+    post_chat_completion,
+};
+use crate::commands::llm::handoff::archive_early_messages;
+use crate::commands::llm::messages::extract_text_content;
 use crate::ierr;
 use serde_json::json;
 
@@ -15,7 +20,7 @@ use serde_json::json;
 /// Validates the URL, then issues one non-streaming completion request and returns the
 /// summary text; on failure a Chinese error string is raised.
 #[tauri::command]
-pub(crate) async fn summarize_history(
+pub async fn summarize_history(
     api_url: String,
     api_key: String,
     model: String,
@@ -109,7 +114,7 @@ pub(crate) async fn summarize_history(
 /// returns a locale-dependent `[Archive #id]`-style placeholder; the model can call
 /// read_artifact with that placeholder ID to read the original content back.
 #[tauri::command]
-pub(crate) fn archive_history(
+pub fn archive_history(
     app: tauri::AppHandle,
     messages_json: String,
     model: String,
@@ -234,7 +239,7 @@ pub(crate) fn clean_topic_title(raw: &str) -> String {
 /// If the LLM returns empty content (finish_reason=stop with empty content), the error carries
 /// the model name and raw length for diagnosis; the frontend should use its heuristic fallback.
 #[tauri::command]
-pub(crate) async fn generate_topic_title(
+pub async fn generate_topic_title(
     api_url: String,
     api_key: String,
     model: String,

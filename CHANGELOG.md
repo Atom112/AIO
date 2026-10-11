@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第1项（子目标1/5）：消 14 模块 glob re-export（commands/llm）
+
+- **消除“同一符号两条路径”（阶段4 第1项子目标）**：`commands/llm/mod.rs` 的 14 个 `pub(crate) use <module>::*;` glob re-export 全部移除——它们使每个子模块符号同时存在于 `llm::X` 与 `llm::<module>::X` 两条路径，且 8 个子模块又以 `use crate::commands::llm::*;` **glob 引回父模块**（连带吸入 mod.rs 的全部工具 use 头与 trait 导入），构成父⇄子循环吸入结构——正是同构漂移与遮蔽的温床
+- **lib.rs**：9 个经 glob 注册的命令改全路径（`llm::titles::summarize_history`、`llm::usage::count_tokens_cmd` 等，与 checkpoints/tasks 既有风格一致）；对应 9 个命令函数 `pub(crate)` → `pub`
+- **子模块显式 use 化**：8 个子模块的父 glob 替换为逐符号显式 use（真实来源模块路径）；mod.rs 自身使用的子模块符号改为头部显式 use 块；btw.rs 的 `super::streaming_http_client` 等改 `super::client::`；`is_git_repo` 升 `pub(crate)`（subagents 复用）；顺手清理各文件被 glob 掩蔽的 unused 导入
+
 ### 🧪 阶段5 第4批：并发 run_agent_turn 换代测试（阶段5第3项全部完成）
 
 - **换代协议收敛 + 并发换代集成测试（报告阶段5第3项）**：流任务换代协议（注册 / replace_generation 取旧代→cancel→限时等待收尾 / remove_own 身份注销 / stop 取消）此前内联在 call_llm_stream 与 run_agent_turn 两处调用点（各一份 remove→cancel→wait + insert + remove_if，含 LOOP-6 panic 兜底 epilogue 的第三份 remove_if）——收进 `StreamManager` 成为单一来源（`state.rs`），六处调用点随迁。三个真实 spawn 任务 + CancellationToken 驱动的并发测试：**A** 协作旧代在等待窗口内完成收尾与自注销，新代注册后 stop 可找到并取消；**B** 旧代越窗滞留（卡在长命令）后补跑收尾——身份注销不腐蚀新代条目、stop 仍能找到新代（LOOP-1 核心回归：历史按键注销会把新代删成孤儿）；**C** 身份注销矩阵：持有者注销命中、他人 turn_id 注销零效果

@@ -1,9 +1,12 @@
 //! Message domain: Message-to-API-JSON conversion plus topic-message append/delete commands.
 
-use crate::commands::llm::*;
+// 阶段4 第1项（消 glob）：显式 use 取代原父模块 glob。
+use crate::commands::attachment::sync_message_attachments;
+use crate::core::models::Message;
 use crate::core::state::DbState;
 use crate::ierr;
 use base64::engine::general_purpose;
+use base64::Engine as _;
 use rusqlite::params;
 use serde_json::json;
 
@@ -145,7 +148,7 @@ pub(crate) fn message_for_api(
 /// # Behavior
 /// Single INSERT (never overwrites existing messages); returns an error string on write failure.
 #[tauri::command]
-pub(crate) async fn append_message(
+pub async fn append_message(
     state: tauri::State<'_, DbState>,
     topic_id: String,
     message: Message,
@@ -202,7 +205,7 @@ pub(crate) async fn append_message(
 /// # Behavior
 /// Plain DELETE; silently succeeds when the target is missing (idempotent).
 #[tauri::command]
-pub(crate) async fn delete_topic_message(
+pub async fn delete_topic_message(
     state: tauri::State<'_, DbState>,
     topic_id: String,
     message_id: String,

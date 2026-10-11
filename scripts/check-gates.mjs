@@ -122,15 +122,17 @@ for await (const p of walk(path.join(root, 'src-tauri/src'), ['.rs'])) {
 
 // ---------- Gate 5: file-size caps ----------
 // Size caps are growth gates (they pin the current state and ratchet down as components get split):
-//   .tsx current max ChatPage 2016 -> cap 2050 (split target <900)
-//   .rs  current max llm/mod.rs 2708 -> cap 2750 (target <1100; 2026-10 审查修复批次
-//   为 mod.rs 增加了 panic 兜底 epilogue / SSE 字节缓冲 / SEC-19 fail-closed 等
-//   ~190 行安全代码，棘轮随本次调整，拆分目标不变)
+//   .tsx current max ChatInterface 2058 -> cap 2060 (split target <900; 2026-10 审查修复批次
+//   为 ChatInterface 增加了 CHAT-11 重发停止等待辅助 +13 行，棘轮随本次调整，拆分目标不变)
+//   .rs  current max llm/mod.rs 2763 -> cap 2770 (target <1100; 2026-10 审查修复批次
+//   为 mod.rs 增加了 panic 兜底 epilogue / SSE 字节缓冲 / SEC-19 fail-closed / SEC-09
+//   命令触碰标记接线 / LOOP-5 Phase-2 取消响应 / LOOP-7 锁外序列化 / LOOP-8 计数
+//   下沉 ~270 行安全与修复代码，棘轮随批次调整，拆分目标不变)
 const SIZE_LIMITS = [
-  { dir: 'src/features', ext: ['.tsx'], max: 2050 },
+  { dir: 'src/features', ext: ['.tsx'], max: 2060 },
   { dir: 'src/core', ext: ['.ts'], max: 900 },
   { dir: 'src/shared', ext: ['.tsx'], max: 900 },
-  { dir: 'src-tauri/src', ext: ['.rs'], max: 2750 },
+  { dir: 'src-tauri/src', ext: ['.rs'], max: 2770 },
 ];
 for (const { dir, ext, max } of SIZE_LIMITS) {
   for await (const p of walk(path.join(root, dir), ext)) {

@@ -1002,11 +1002,36 @@ pub(crate) async fn execute_builtin_tool(
         #[cfg(not(windows))]
         let ac_dirs: Option<Vec<String>> = None;
         let root = tools_root.clone();
-        Ok(tokio::task::spawn_blocking(move || {
+        let started = std::time::SystemTime::now();
+        let result = tokio::task::spawn_blocking(move || {
             shell_tools::execute_command(&command, &root, timeout, allow_network, ac_dirs)
         })
         .await
-        .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic")))
+        .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic"));
+        // SEC-09: a successful command may have modified project files outside the
+        // hashline protocol. Mark files changed during its window so the next agent
+        // write to them is forced through the cross-writer gate (re-read first) —
+        // without this, a formatter/build/codegen command silently invalidates the
+        // model's stale file context and the next write clobbers its output.
+        if !result.is_error {
+            let registry: std::sync::Arc<crate::core::file_locks::FileLockRegistry> = app
+                .state::<std::sync::Arc<crate::core::file_locks::FileLockRegistry>>()
+                .inner()
+                .clone();
+            let scan_root = tools_root.clone();
+            let marked = tokio::task::spawn_blocking(move || {
+                registry.mark_command_touched_files(std::path::Path::new(&scan_root), started)
+            })
+            .await
+            .unwrap_or(0);
+            if marked > 0 {
+                tracing::debug!(
+                    "[sec-09] 命令窗口内 {} 个项目文件被触碰，已标记需重读",
+                    marked
+                );
+            }
+        }
+        Ok(result)
     } else if tool_name == "web_fetch" {
         let url = arguments["url"].as_str().unwrap_or("");
         let max_bytes = arguments["max_bytes"].as_u64();
@@ -2079,10 +2104,21 @@ pub(crate) async fn run_agent_turn_inner(
                 {
                     // Workflow creation: parse arguments and run all steps sequentially
                     workflow_called = true;
+                    const MAX_WORKFLOW_STEPS: usize = 20;
                     let title = args_val["title"].as_str().unwrap_or("Workflow").to_string();
                     let steps_raw = args_val["steps"].as_array();
                     let tool_result = if let Some(steps_arr) = steps_raw {
-                        if steps_arr.is_empty() {
+                        // LOOP-12: step count must stay bounded — every step is a full
+                        // subagent turn, so an unbounded workflow silently bypasses the
+                        // main-loop round budget (a 200-step workflow = 200 subagent runs).
+                        if steps_arr.len() > MAX_WORKFLOW_STEPS {
+                            Err(ierr!(
+                                "create_workflow: 步骤数超过上限 {}（当前 {}）。请精简步骤或拆分为多个工作流",
+                                "create_workflow: step count exceeds the cap of {} (got {}). Reduce the steps or split into multiple workflows",
+                                MAX_WORKFLOW_STEPS,
+                                steps_arr.len()
+                            ))
+                        } else if steps_arr.is_empty() {
                             Err(ierr!(
                                 "create_workflow: 'steps' 数组不能为空",
                                 "create_workflow: 'steps' array must not be empty"
@@ -2368,7 +2404,22 @@ pub(crate) async fn run_agent_turn_inner(
                     });
                 }
 
-                while let Some((i, result)) = unordered.next().await {
+                // LOOP-5: the wait itself must honor cancellation — a queued
+                // delegation (or any slow parallel tool) must not pin the turn open
+                // for minutes after the user pressed stop. On cancel the remaining
+                // futures are dropped; their inner tasks share the token and wind
+                // down, and the round's bookkeeping below still runs.
+                loop {
+                    let (i, result) = tokio::select! {
+                        _ = token_inner.cancelled() => {
+                            was_cancelled = true;
+                            break;
+                        }
+                        next = unordered.next() => match next {
+                            Some(pair) => pair,
+                            None => break,
+                        },
+                    };
                     let (content_text, result_value, is_error) = match result {
                         Ok(tr) => {
                             let text = tr
@@ -2449,8 +2500,9 @@ pub(crate) async fn run_agent_turn_inner(
             }
 
             // Context budget check (token-level, model-aware): estimate the context, compress past the threshold
+            // LOOP-8: the estimate (near-budget: exact tiktoken over the whole context) runs on the blocking pool.
             let estimated_tokens: usize =
-                estimate_context_tokens(&model, &messages_for_api, context_budget);
+                estimate_context_tokens_offload(&model, &messages_for_api, context_budget).await;
             if estimated_tokens > context_budget && messages_for_api.len() > 4 {
                 let window_c = window.clone();
                 let client_c = client.clone();
@@ -2501,14 +2553,17 @@ pub(crate) async fn run_agent_turn_inner(
             // checkpoint and resume always restarted the turn from scratch, despite
             // the module doc and retention policy promising per-round snapshots).
             // The turn's context is settled here: tool backfill + compression done.
+            // LOOP-7: serialize BEFORE taking the global SQLite lock — serializing
+            // a multi-MB context under `DbState` blocked every other database user.
             {
+                let messages_json = serde_json::to_string(&messages_for_api).unwrap_or_default();
                 let conn = app_c.state::<crate::core::state::DbState>();
-                save_checkpoint(
+                crate::commands::llm::checkpoints::save_checkpoint_json(
                     &conn.0.lock(),
                     &topic_id_c,
                     &turn_id,
                     round,
-                    &messages_for_api,
+                    &messages_json,
                 );
             }
         }

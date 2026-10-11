@@ -134,6 +134,28 @@ impl MemoryStore {
         self.meta_put_inner(&conn, key, value)
     }
 
+    /// MEM-9 atomic expiring-lock claim: one statement does the whole check-and-set
+    /// (INSERT … ON CONFLICT DO UPDATE … WHERE old value <= cutoff), so two
+    /// concurrent claimants cannot both pass a separate read-then-write sequence.
+    /// ISO 8601 timestamps in one format sort lexicographically, making the
+    /// comparison valid directly in SQL. Returns true when this caller holds the lock.
+    pub fn meta_try_lock(
+        &self,
+        key: &str,
+        cutoff_iso: &str,
+        now_value: &str,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let claimed = conn
+            .execute(
+                "INSERT INTO meta (k, v) VALUES (?1, ?2)
+                 ON CONFLICT(k) DO UPDATE SET v = ?2 WHERE meta.v <= ?3",
+                params![key, now_value, cutoff_iso],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(claimed > 0)
+    }
+
     pub(crate) fn meta_put_inner(
         &self,
         conn: &Connection,

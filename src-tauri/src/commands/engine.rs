@@ -23,6 +23,15 @@ use crate::ierr;
 /// Declared once here so the literal is not scattered across command bodies.
 const DEFAULT_ENGINE_ID: &str = "llama_cpp";
 
+/// ENG-8: serializes engine starts process-wide. The "stop other engines, then start
+/// this one" sequence is not atomic — two concurrent `start_local_server` calls both
+/// observed "no other engine running" and both spawned, leaving two engines up in
+/// violation of the one-active-engine invariant.
+fn engine_start_mutex() -> &'static tokio::sync::Mutex<()> {
+    static M: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    M.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 /// Starts the local LLM server.
 ///
 /// # Arguments
@@ -67,6 +76,9 @@ pub async fn start_local_server(
     } else {
         validate_model_path(&model_path)?
     };
+    // ENG-8: hold the start mutex across the whole stop-others-then-start sequence;
+    // a concurrent starter waits here and then observes (and replaces) our engine.
+    let _start_guard = engine_start_mutex().lock().await;
     // Pre-start cleanup: stop engines of all other types (only one local engine may run at a time)
     {
         let engines = state.lock();

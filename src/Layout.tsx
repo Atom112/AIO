@@ -33,6 +33,7 @@ import {
   setProviderConfigs,
 } from './core/store/store';
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
+import { registerChatStreamListeners } from './features/chat/hooks/chatEventListeners';
 
 /**
  * Layout component
@@ -74,6 +75,14 @@ const Layout: Component<ParentProps> = (props) => {
         updateDiagnostics(event.payload);
       },
     );
+
+    // CHAT-12: register the chat stream listeners once at the root — they must
+    // outlive every page component. They used to be registered inside ChatPage, so
+    // leaving the chat page mid-generation destroyed them: the backend kept
+    // streaming but chunks never reached the store and the final `done` handler
+    // (which persists the assistant) never ran, losing the whole turn. The Layout
+    // never unmounts, so these listeners stay for the whole app lifetime.
+    registerChatStreamListeners();
 
     // Load the models catalog asynchronously (non-blocking for first paint; consumed on demand by the settings page)
     setModelsCatalogStatus('loading');

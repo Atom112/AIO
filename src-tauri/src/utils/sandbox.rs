@@ -304,16 +304,6 @@ const HOME_TOOLCHAIN_SUBDIRS: &[&str] = &[
 /// $HOME 下需要只读回绑的单个文件（git 全局配置）。
 const HOME_TOOLCHAIN_FILES: &[&str] = &[".gitconfig"];
 
-/// Looks up an executable in PATH (Unix only).
-#[cfg(unix)]
-fn find_in_path(bin: &str) -> bool {
-    let path = match std::env::var_os("PATH") {
-        Some(p) => p,
-        None => return false,
-    };
-    std::env::split_paths(&path).any(|d| d.join(bin).is_file())
-}
-
 /// Builds the Linux bubblewrap wrapper argv (fully replaces the "sh -c cmd" launch argv). Pure function, unit-testable cross-platform.
 ///
 /// Network egress control: `allow_network=false` (default) appends `--unshare-net` —
@@ -454,17 +444,27 @@ pub fn sandbox_command_prefix(
 ) -> Option<Vec<String>> {
     #[cfg(target_os = "linux")]
     {
-        if !find_in_path("bwrap") {
+        // SEC-06: resolve the sandbox wrapper PATH-only — spawning a bare `bwrap`
+        // would consult untrusted lookup rules; the resolved absolute path is the
+        // binary that the existence check validated.
+        let Some(bwrap) = crate::utils::exec_resolve::resolve_executable("bwrap") else {
             return None;
-        }
-        build_bwrap_argv(project_root, shell, shell_arg, command, allow_network)
+        };
+        let mut argv = build_bwrap_argv(project_root, shell, shell_arg, command, allow_network)?;
+        argv[0] = bwrap.to_string_lossy().into_owned();
+        Some(argv)
     }
     #[cfg(target_os = "macos")]
     {
-        if !find_in_path("sandbox-exec") {
+        // SEC-06: same PATH-only resolution for the macOS wrapper.
+        let Some(sandbox_exec) = crate::utils::exec_resolve::resolve_executable("sandbox-exec")
+        else {
             return None;
-        }
-        build_sandbox_exec_argv(project_root, shell, shell_arg, command, allow_network)
+        };
+        let mut argv =
+            build_sandbox_exec_argv(project_root, shell, shell_arg, command, allow_network)?;
+        argv[0] = sandbox_exec.to_string_lossy().into_owned();
+        Some(argv)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -473,17 +473,17 @@ pub fn sandbox_command_prefix(
 }
 
 /// Whether the sandbox is available (fail-closed check):
-/// - Linux: bwrap exists in PATH
-/// - macOS: sandbox-exec exists in PATH (system-provided)
+/// - Linux: bwrap resolvable via PATH (SEC-06: same PATH-only lookup the launcher uses)
+/// - macOS: sandbox-exec resolvable via PATH (system-provided)
 /// - Windows: always true (Job Object has no external dependency; AppContainer is covered separately)
 pub fn sandbox_available() -> bool {
     #[cfg(target_os = "linux")]
     {
-        find_in_path("bwrap")
+        crate::utils::exec_resolve::resolve_executable("bwrap").is_some()
     }
     #[cfg(target_os = "macos")]
     {
-        find_in_path("sandbox-exec")
+        crate::utils::exec_resolve::resolve_executable("sandbox-exec").is_some()
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {

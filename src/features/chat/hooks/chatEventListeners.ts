@@ -1,6 +1,14 @@
-// Event listener registration set for ChatPage (21 listen calls) — extracted from ChatPage.onMount.
+// Event listener registration set for the chat UI.
 //
-// Every dep comes from the ChatPage component scope (Solid setters/signals are stable references, safe to pass along).
+// CHAT-12: the STREAM listeners (llm-chunk / reasoning / tool events / subagents /
+// workflow / approvals …) register from the root Layout for the whole app lifetime —
+// they used to live in ChatPage, so leaving the page mid-generation destroyed them
+// while the backend kept streaming: chunks never reached the store, the `done`
+// handler (which persists the assistant) never ran, and the turn was lost.
+// Only the drag-and-drop UI trio stays page-scoped (registerChatUiListeners).
+//
+// Every state piece these listeners touch is a module-level store singleton
+// (core/store/store + core/store/stream), so no page component needs to outlive them.
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { EVENTS } from '../../../core/api/events';
@@ -8,84 +16,181 @@ import { t } from '../../../core/i18n';
 import type { Setter } from 'solid-js';
 import { reasoningLevel } from '../../../core/store/store';
 import {
-  setDatas as storeSetDatas,
-  type ActivatedModel,
+  datas,
+  saveSingleAssistantToBackend,
+  selectedModel,
+  setAgentTaskBoard,
+  setDatas,
+  setPendingApprovals,
+  setPendingQuestions,
+  setIsThinking,
+  setTypingIndex,
+  setWorkflowState,
   type AgentStep,
-  type AgentTaskBoardState,
   type AgentTaskState,
-  type CompactOutcome,
   type DatasState,
   type Message,
   type SubagentStep,
   type Topic,
   type WorkflowState,
 } from '../../../core/store/store';
-import type { PendingApproval } from '../components/ToolApprovalBubble';
-import type { PendingQuestion } from '../components/AgentQuestionBubble';
+import { checkAndRename, checkAndSummarize } from './chatTurnEffects';
 import { TOOL_INTERRUPTED } from '../constants';
 
-/** Deps the ChatPage component provides to the listener set (concrete types: setDatas callback params are type-checked too). */
-export interface ChatEventDeps {
-  setDatas: typeof storeSetDatas;
-  datas: DatasState;
-  setIsDragging: Setter<boolean>;
-  setIsThinking: Setter<boolean>;
-  setPendingApprovals: Setter<PendingApproval[]>;
-  setTypingIndex: Setter<number | null>;
-  setWorkflowState: Setter<WorkflowState | null>;
-  setAgentTaskBoard: Setter<AgentTaskBoardState | null>;
-  setPendingQuestions: Setter<PendingQuestion[]>;
-  handleFileUpload: (path: string, kind: 'file' | 'image') => Promise<void>;
-  selectedModel: () => ActivatedModel | null;
-  saveSingleAssistantToBackend: (id: string) => Promise<void>;
-  checkAndRename: (eventAsstId: string, eventTopicId: string) => Promise<void>;
-  /** Auto path (called after the conversation ends, without force, honoring the 75% threshold guard); the result is consumed only by the manual path */
-  checkAndSummarize: (
-    keepBudgetOverride?: number,
-    opts?: { force?: boolean },
-  ) => Promise<CompactOutcome>;
-}
-
 /**
- * Registers all ChatPage event listeners; returns an array of unlisten Promises (each called from onCleanup).
- * Note: listeners register before any invoke call, to avoid the race of losing the first chunk.
+ * Stream listeners: registered once from the root Layout, alive for the whole app.
+ * Returns the unlisten promises (Layout never unmounts; kept for symmetry).
  */
-export function registerChatEventListeners(deps: ChatEventDeps): Promise<UnlistenFn>[] {
-  // Destructure deps so the names match those used in the listener bodies
-  const {
-    setDatas,
-    setIsDragging,
-    setIsThinking,
-    setPendingApprovals,
-    setTypingIndex,
-    setWorkflowState,
-    setAgentTaskBoard,
-    setPendingQuestions,
-    handleFileUpload,
-    datas,
-    selectedModel,
-    saveSingleAssistantToBackend,
-    checkAndRename,
-    checkAndSummarize,
-  } = deps;
-
-  // Stream content batching state (50ms window) — used only by listeners in this module.
-  let streamBatch: {
-    assistant_id: string;
-    topic_id: string;
+export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
+  // ===== Stream content batching (CHAT-7 / CHAT-9) =====
+  // Keyed per stream (assistant::topic): interleaved streams previously shared ONE
+  // batch slot, so a second stream's tokens appended into the first stream's message.
+  // The target message is captured by ID and re-resolved at flush time — a snapshot
+  // array index could silently redirect the append after a compression trim.
+  // Reasoning chunks (CHAT-9) share the same batch: one flush applies content +
+  // reasoning + the agentSteps timeline instead of per-chunk setDatas storms.
+  interface StreamBatch {
+    assistantId: string;
+    topicId: string;
+    messageId: string;
     content: string;
     agentStepsContent: string;
-    lastIdx: number;
-  } | null = null;
-  let streamBatchRAF: number | undefined;
+    reasoning: string;
+    timer: number;
+  }
+  const streamBatches = new Map<string, StreamBatch>();
+  const FLUSH_MS = 80;
+  const streamKey = (assistantId: string, topicId: string) => `${assistantId}::${topicId}`;
+
+  // CHAT-9: shared timeline appender (thinking/content step runs)
+  const appendTimelineStep = (
+    steps: any[],
+    type: 'thinking' | 'content',
+    textField: 'thinkingText' | 'contentText',
+    text: string,
+  ) => {
+    const lastStep = steps[steps.length - 1];
+    if (lastStep && lastStep.type === type && lastStep.status === 'running') {
+      return [
+        ...steps.slice(0, -1),
+        { ...lastStep, [textField]: (lastStep[textField] || '') + text },
+      ];
+    }
+    const now = Date.now();
+    const closed =
+      lastStep && lastStep.status === 'running'
+        ? [
+            ...steps.slice(0, -1),
+            { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
+          ]
+        : steps;
+    return [
+      ...closed,
+      { id: crypto.randomUUID(), type, timestamp: now, status: 'running', [textField]: text },
+    ];
+  };
+
+  const flushStreamBatch = (key: string) => {
+    const batch = streamBatches.get(key);
+    if (!batch) return;
+    streamBatches.delete(key);
+    window.clearTimeout(batch.timer);
+    // CHAT-7: resolve the target message FRESH by id at flush time (the history may
+    // have been trimmed/shifted since the chunk arrived)
+    const asst = datas.assistants.find((a) => a.id === batch.assistantId);
+    const topic = asst?.topics.find((tp) => tp.id === batch.topicId);
+    const idx = topic?.history.findIndex((m) => m.id === batch.messageId) ?? -1;
+    if (!topic || idx < 0) return; // message gone (mid-window compaction) — drop
+    if (batch.content) {
+      setDatas(
+        'assistants',
+        (a) => a.id === batch.assistantId,
+        'topics',
+        (tp) => tp.id === batch.topicId,
+        'history',
+        idx,
+        'content',
+        (old) => (typeof old === 'string' ? old : '') + batch.content,
+      );
+    }
+    if (batch.reasoning) {
+      setDatas(
+        'assistants',
+        (a) => a.id === batch.assistantId,
+        'topics',
+        (tp) => tp.id === batch.topicId,
+        'history',
+        idx,
+        'reasoning',
+        (old) => (typeof old === 'string' ? old : '') + batch.reasoning,
+      );
+    }
+    if (batch.agentStepsContent || batch.reasoning) {
+      setDatas(
+        'assistants',
+        (a) => a.id === batch.assistantId,
+        'topics',
+        (tp) => tp.id === batch.topicId,
+        'history',
+        idx,
+        'agentSteps',
+        (steps: any[] = []) => {
+          let out = steps;
+          if (batch.reasoning)
+            out = appendTimelineStep(out, 'thinking', 'thinkingText', batch.reasoning);
+          if (batch.agentStepsContent)
+            out = appendTimelineStep(out, 'content', 'contentText', batch.agentStepsContent);
+          return out;
+        },
+      );
+    }
+  };
+
+  // Append one chunk (content or reasoning) to the stream's batch, creating the batch
+  // (and its flush timer) when absent. If the target message changed mid-window (new
+  // round/turn reset the message), the stale batch flushes first.
+  const pushToBatch = (
+    assistantId: string,
+    topicId: string,
+    piece: 'content' | 'reasoning',
+    text: string,
+  ) => {
+    const asst = datas.assistants.find((a) => a.id === assistantId);
+    const topic = asst?.topics.find((tp) => tp.id === topicId);
+    if (!topic) return;
+    const lastIdx = topic.history.length - 1;
+    if (lastIdx < 0) return;
+    const messageId = topic.history[lastIdx]?.id;
+    if (!messageId) return;
+    const key = streamKey(assistantId, topicId);
+    let batch = streamBatches.get(key);
+    if (batch && batch.messageId !== messageId) {
+      flushStreamBatch(key);
+      batch = undefined;
+    }
+    if (batch) {
+      if (piece === 'content') {
+        batch.content += text;
+        batch.agentStepsContent += text;
+      } else {
+        batch.reasoning += text;
+      }
+      return;
+    }
+    const fresh: StreamBatch = {
+      assistantId,
+      topicId,
+      messageId,
+      content: piece === 'content' ? text : '',
+      agentStepsContent: piece === 'content' ? text : '',
+      reasoning: piece === 'reasoning' ? text : '',
+      timer: 0,
+    };
+    fresh.timer = window.setTimeout(() => flushStreamBatch(key), FLUSH_MS) as unknown as number;
+    streamBatches.set(key, fresh);
+  };
 
   return [
-    listen('tauri://drag-enter', () => setIsDragging(true)),
-    listen('tauri://drag-leave', () => setIsDragging(false)),
-    listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
-      setIsDragging(false);
-      for (const p of e.payload.paths) await handleFileUpload(p, 'file');
-    }),
     // A new LLM round starts: multi-round agent work reuses the same assistant message
     listen<any>(EVENTS.llmRoundStart, (e) => {
       const { assistant_id, topic_id, round } = e.payload;
@@ -98,6 +203,8 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
           const lastIdx = topic.history.length - 1;
           const lastMsg = topic.history[lastIdx];
           if (lastMsg?.role === 'assistant') {
+            // Flush anything still batched for this stream before resetting the message
+            flushStreamBatch(streamKey(assistant_id, topic_id));
             // Close the currently running step
             const now = Date.now();
             setDatas(
@@ -177,25 +284,8 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         images,
       } = e.payload;
       if (done) {
-        // Flush any residual rAF-batched content
-        if (streamBatchRAF !== undefined) {
-          clearTimeout(streamBatchRAF);
-          streamBatchRAF = undefined;
-        }
-        if (streamBatch) {
-          const batch = streamBatch;
-          streamBatch = null;
-          setDatas(
-            'assistants',
-            (a) => a.id === batch.assistant_id,
-            'topics',
-            (t) => t.id === batch.topic_id,
-            'history',
-            batch.lastIdx,
-            'content',
-            (old) => (typeof old === 'string' ? old : '') + batch.content,
-          );
-        }
+        // Flush this stream's residual batched content (CHAT-7: per-stream keying)
+        flushStreamBatch(streamKey(assistant_id, topic_id));
         // The whole round is truly over (only the backend run_agent_turn epilogue emits done)
         if (error) {
           // Error: append the error text to the last assistant message
@@ -289,154 +379,17 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         return;
       }
 
-      // Streaming append: batched via rAF to avoid a per-token typewriter effect
-      const asst = datas.assistants.find((a) => a.id === assistant_id);
-      const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-      if (topic) {
-        const lastIdx = topic.history.length - 1;
-        if (lastIdx >= 0) {
-          if (!streamBatch) {
-            streamBatch = {
-              assistant_id,
-              topic_id,
-              content,
-              agentStepsContent: content,
-              lastIdx,
-            };
-            streamBatchRAF = window.setTimeout(() => {
-              const batch = streamBatch!;
-              streamBatch = null;
-              streamBatchRAF = undefined;
-              // Apply the batched content in one shot (all tokens accumulated within the 50ms window)
-              setDatas(
-                'assistants',
-                (a) => a.id === batch.assistant_id,
-                'topics',
-                (t) => t.id === batch.topic_id,
-                'history',
-                batch.lastIdx,
-                'content',
-                (old) => (typeof old === 'string' ? old : '') + batch.content,
-              );
-              if (batch.agentStepsContent) {
-                const batchStepsContent = batch.agentStepsContent;
-                setDatas(
-                  'assistants',
-                  (a) => a.id === batch.assistant_id,
-                  'topics',
-                  (t) => t.id === batch.topic_id,
-                  'history',
-                  batch.lastIdx,
-                  'agentSteps',
-                  (steps: any[] = []) => {
-                    const lastStep = steps[steps.length - 1];
-                    if (lastStep && lastStep.type === 'content' && lastStep.status === 'running') {
-                      return [
-                        ...steps.slice(0, -1),
-                        {
-                          ...lastStep,
-                          contentText: (lastStep.contentText || '') + batchStepsContent,
-                        },
-                      ];
-                    }
-                    const now = Date.now();
-                    const closed =
-                      lastStep && lastStep.status === 'running'
-                        ? [
-                            ...steps.slice(0, -1),
-                            {
-                              ...lastStep,
-                              status: 'complete',
-                              duration: now - lastStep.timestamp,
-                            },
-                          ]
-                        : steps;
-                    return [
-                      ...closed,
-                      {
-                        id: crypto.randomUUID(),
-                        type: 'content',
-                        timestamp: now,
-                        status: 'running',
-                        contentText: batchStepsContent,
-                      },
-                    ];
-                  },
-                );
-              }
-            }, 80) as unknown as number;
-          } else {
-            streamBatch.content += content;
-            streamBatch.agentStepsContent += content;
-          }
-        }
-      }
+      // Streaming append: batched per stream (CHAT-7) and applied via rAF-like windows
+      // (CHAT-9: one setDatas per flush instead of per chunk)
+      pushToBatch(assistant_id, topic_id, 'content', content);
     }),
-    // Chain-of-thought chunk append: raw reasoning_content accumulates into the message's reasoning field
-    // while also building thinking steps in the agentSteps timeline
+    // Chain-of-thought chunk: accumulated into the message's reasoning field and the
+    // agentSteps timeline. CHAT-9: batched through the same per-stream flush window —
+    // previously each reasoning chunk cost two setDatas plus a full steps rebuild.
     listen<any>(EVENTS.llmReasoning, (e) => {
       if (reasoningLevel() === 'off') return;
       const { assistant_id, topic_id, content } = e.payload;
-      const asst = datas.assistants.find((a) => a.id === assistant_id);
-      const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
-      if (topic) {
-        const lastIdx = topic.history.length - 1;
-        if (lastIdx >= 0) {
-          // Append to the reasoning field (kept for backward compatibility)
-          setDatas(
-            'assistants',
-            (a) => a.id === assistant_id,
-            'topics',
-            (t) => t.id === topic_id,
-            'history',
-            lastIdx,
-            'reasoning',
-            (old) => (typeof old === 'string' ? old : '') + content,
-          );
-          // Build the agentSteps timeline: create a new step if the last is not thinking, otherwise append
-          setDatas(
-            'assistants',
-            (a) => a.id === assistant_id,
-            'topics',
-            (t) => t.id === topic_id,
-            'history',
-            lastIdx,
-            'agentSteps',
-            (steps: any[] = []) => {
-              const lastStep = steps[steps.length - 1];
-              if (lastStep && lastStep.type === 'thinking' && lastStep.status === 'running') {
-                // Append to the current thinking step
-                return [
-                  ...steps.slice(0, -1),
-                  {
-                    ...lastStep,
-                    thinkingText: (lastStep.thinkingText || '') + content,
-                  },
-                ];
-              }
-              // Close the previous step (if still running) and create a new thinking step
-              const now = Date.now();
-              const closed =
-                lastStep && lastStep.status === 'running'
-                  ? [
-                      ...steps.slice(0, -1),
-                      { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
-                    ]
-                  : steps;
-              return [
-                ...closed,
-                {
-                  id: crypto.randomUUID(),
-                  type: 'thinking',
-                  timestamp: now,
-                  status: 'running',
-                  thinkingText: content,
-                },
-              ];
-            },
-          );
-        }
-      }
+      pushToBatch(assistant_id, topic_id, 'reasoning', content);
     }),
     // LLM tool-call event: show the "calling" bubble and build the agentSteps timeline
     listen<any>(EVENTS.llmToolCall, (e) => {
@@ -451,7 +404,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         'assistants',
         (a: any) => a.id === assistant_id,
         'topics',
-        (t: Topic) => t.id === topic_id,
+        (t: any) => t.id === topic_id,
         'history',
         (h: any[]) => {
           const lastIdx = h.length - 1;
@@ -507,7 +460,7 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
         'assistants',
         (a: any) => a.id === assistant_id,
         'topics',
-        (t: Topic) => t.id === topic_id,
+        (t: any) => t.id === topic_id,
         'history',
         (h: any[]) =>
           h.map((m: any) => {
@@ -896,6 +849,28 @@ export function registerChatEventListeners(deps: ChatEventDeps): Promise<Unliste
     // carries on, so this is a non-fatal notice; log it so failures are never invisible.
     listen<{ error: string }>(EVENTS.llmCompressionFailed, (e) => {
       console.warn('[compression] 后端上下文压缩失败（已保持原上下文继续）:', e.payload.error);
+    }),
+  ];
+}
+
+/** Deps the ChatPage component provides to the page-scoped drag listeners. */
+export interface ChatUiDeps {
+  setIsDragging: Setter<boolean>;
+  handleFileUpload: (path: string, kind: 'file' | 'image') => Promise<void>;
+}
+
+/**
+ * Page-scoped UI listeners (drag-and-drop only): they touch nothing but the chat
+ * surface's local state, so they stay owned by ChatPage and tear down with it.
+ */
+export function registerChatUiListeners(deps: ChatUiDeps): Promise<UnlistenFn>[] {
+  const { setIsDragging, handleFileUpload } = deps;
+  return [
+    listen('tauri://drag-enter', () => setIsDragging(true)),
+    listen('tauri://drag-leave', () => setIsDragging(false)),
+    listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
+      setIsDragging(false);
+      for (const p of e.payload.paths) await handleFileUpload(p, 'file');
     }),
   ];
 }

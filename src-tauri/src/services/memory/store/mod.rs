@@ -1127,6 +1127,34 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    /// MEM-9: the expiring meta lock is claimed atomically — a fresh lock blocks the
+    /// second claimant; a lock older than the cutoff is re-claimable.
+    #[test]
+    fn test_meta_try_lock_is_atomic_and_expiring() {
+        let root = temp_project("metalock");
+        let s = MemoryStore::open(&root).unwrap();
+        let t0 = crate::utils::time::now_unix_secs();
+        let cutoff = |now: u64| crate::utils::time::secs_to_iso(now.saturating_sub(60));
+        // 首次认领成功
+        assert!(s
+            .meta_try_lock("lock_t", &cutoff(t0), &crate::utils::time::secs_to_iso(t0))
+            .unwrap());
+        // 持锁期内（TTL 内）再次认领必须失败
+        assert!(!s
+            .meta_try_lock("lock_t", &cutoff(t0), &crate::utils::time::secs_to_iso(t0))
+            .unwrap());
+        // 70 秒后的视角：cutoff = t0+10 > 已存的 t0 → 锁已过期，可重新认领
+        let later = t0 + 70;
+        assert!(s
+            .meta_try_lock(
+                "lock_t",
+                &cutoff(later),
+                &crate::utils::time::secs_to_iso(later)
+            )
+            .unwrap());
+        fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn test_upsert_and_get() {
         let root = temp_project("upsert");

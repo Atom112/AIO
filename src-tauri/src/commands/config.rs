@@ -573,8 +573,16 @@ pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, Strin
 
 ///
 /// Persist the subagent profile model overrides to disk.
+/// FE-12: the api_key field is stripped before writing — the file only needs
+/// profile → model identity on load (the live key is resolved fresh from the
+/// provider config each turn), so plaintext keys must not land in this file.
 #[tauri::command]
-pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Result<(), String> {
+pub fn save_profile_model_overrides(
+    mut overrides: Vec<ProfileModelOverride>,
+) -> Result<(), String> {
+    for o in overrides.iter_mut() {
+        o.api_key.clear();
+    }
     let path = crate::core::paths::app_config_file("profile-model-overrides.json")?;
     let file = ProfileModelOverridesFile {
         version: 1,
@@ -729,8 +737,12 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        // SEC-06: PATH-only resolution — a bare "reg" spawn would consult the process
+        // cwd before PATH; reg.exe lives in System32 and always resolves.
+        let reg = crate::utils::exec_resolve::resolve_executable("reg")
+            .ok_or_else(|| ierr!("未找到 reg.exe（System32）", "reg.exe not found (System32)"))?;
         if enabled {
-            let output = Command::new("reg")
+            let output = Command::new(reg)
                 .args([
                     "add",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -759,7 +771,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 ));
             }
         } else {
-            let output = Command::new("reg")
+            let output = Command::new(reg)
                 .args([
                     "delete",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",

@@ -18,42 +18,11 @@ use std::time::Duration;
 use tauri::AppHandle;
 use tracing::{debug, warn};
 
-/// Locate the `ollama` executable via PATH (Windows `where` / Unix `which`), returning the first hit.
+/// Locate the `ollama` executable via PATH, returning the first hit.
 fn ollama_on_path() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        let output = std::process::Command::new("where")
-            .arg("ollama")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(0x08000000)
-            .output()
-            .ok()?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let p = PathBuf::from(stdout.lines().next()?.trim());
-            if p.exists() {
-                return Some(p);
-            }
-        }
-        None
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let output = std::process::Command::new("which")
-            .arg("ollama")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        if output.status.success() {
-            let p = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
-            if p.exists() {
-                return Some(p);
-            }
-        }
-        None
-    }
+    // SEC-06: canonical PATH-only resolver (replaces the `where`/`which` subprocess
+    // probe, whose bare-name spawn also consulted the cwd on Windows).
+    crate::utils::exec_resolve::resolve_executable("ollama")
 }
 
 /// Search common install directories for the `ollama` executable.
@@ -117,7 +86,11 @@ fn resolve_ollama_exe() -> Option<PathBuf> {
 /// Windows: the Ollama installer registers a user service named `ollama`; its existence counts as installed (even when stopped).
 #[cfg(target_os = "windows")]
 fn ollama_service_exists() -> bool {
-    std::process::Command::new("sc")
+    // SEC-06: PATH-only resolution — sc.exe lives in System32.
+    let Some(sc) = crate::utils::exec_resolve::resolve_executable("sc") else {
+        return false;
+    };
+    std::process::Command::new(sc)
         .args(["query", "ollama"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

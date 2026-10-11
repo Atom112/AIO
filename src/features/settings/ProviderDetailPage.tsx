@@ -46,6 +46,18 @@ import { formatNumber, reportError, t } from '../../core/i18n';
 
 type SortKey = 'releaseDesc' | 'nameAsc';
 
+/**
+ * FE-4: order-insensitive content equality for fetched model lists, used by the
+ * Ollama liveness poll to skip no-op disk writes (the poll fires every 5s).
+ */
+const sameFetchedModels = (a: FetchedModel[] | undefined, b: FetchedModel[]): boolean => {
+  if (!a || a.length !== b.length) return false;
+  const key = (m: FetchedModel) =>
+    `${m.id}|${m.ownedBy ?? ''}|${m.displayName ?? ''}|${m.releasedAt ?? ''}`;
+  const sa = new Set(a.map(key));
+  return b.every((m) => sa.has(key(m)));
+};
+
 const ProviderDetail: Component = () => {
   const params = useParams<{ providerId: string }>();
   const navigate = useNavigate();
@@ -102,6 +114,12 @@ const ProviderDetail: Component = () => {
   /** The user's current config for this provider (from the store) */
   const userCfg = () => providerConfigs()[providerId()] ?? null;
 
+  // FE-4: persistence serialization + typing-burst debounce state
+  const DEBOUNCE_MS = 400;
+  let persistChain: Promise<void> = Promise.resolve();
+  let pendingOverrides: Partial<ProviderConfig> | null = null;
+  let persistTimer: number | undefined;
+
   /** Provider metadata from the catalog; falls back (e.g. local engine) when not found */
   const providerMeta = createMemo(() => {
     const c = cat();
@@ -132,44 +150,76 @@ const ProviderDetail: Component = () => {
     return null;
   });
 
-  /** Persists to disk and updates the store. overrides supports partial updates (e.g. toggling enabledModels) */
-  const persist = async (overrides: Partial<ProviderConfig> = {}) => {
-    const cur = userCfg();
-    const meta = providerMeta();
-    const localDef = localEngineDef();
-    const next: ProviderConfig = {
-      id: providerId(),
-      enabled: cur?.enabled ?? false,
-      displayName: cur?.displayName ?? localDef?.name ?? meta?.name ?? providerId(),
-      apiUrl: cur?.apiUrl ?? localDef?.defaultApiUrl ?? defaultApiUrl(providerId()),
-      apiKey: cur?.apiKey ?? '',
-      proxyUrl: cur?.proxyUrl,
-      enabledModels: cur?.enabledModels ?? [],
-      isCustom: isCustom() || isLocalEngine(),
-      customModelIds: cur?.customModelIds ?? [],
-      fetchedModels: cur?.fetchedModels,
-      localModelPaths: cur?.localModelPaths,
-      ...overrides,
+  /**
+   * Persists to disk and updates the store. `overrides` supports partial updates
+   * (e.g. toggling enabledModels).
+   *
+   * FE-4: writes are SERIALIZED (one in-flight save; each queued job re-reads the
+   * current config at execution time, so two quick toggles can no longer race the
+   * read-modify-write and silently drop one of them). Callers that pass
+   * `debounce: true` (text-field keystrokes) coalesce through a 400ms window.
+   */
+  const persist = (overrides: Partial<ProviderConfig> = {}, opts?: { debounce?: boolean }) => {
+    // The write job re-reads the store at execution time (FE-4 serialization); the
+    // reads intentionally happen outside tracked scopes (async chain + setTimeout).
+    const doWrite = (merged: Partial<ProviderConfig>) => {
+      persistChain = persistChain
+        // eslint-disable-next-line solid/reactivity -- deliberate: the queued write re-resolves the current config when it actually runs
+        .then(async () => {
+          const cur = providerConfigs()[providerId()] ?? null;
+          const meta = providerMeta();
+          const localDef = localEngineDef();
+          const next: ProviderConfig = {
+            id: providerId(),
+            enabled: cur?.enabled ?? false,
+            displayName: cur?.displayName ?? localDef?.name ?? meta?.name ?? providerId(),
+            apiUrl: cur?.apiUrl ?? localDef?.defaultApiUrl ?? defaultApiUrl(providerId()),
+            apiKey: cur?.apiKey ?? '',
+            proxyUrl: cur?.proxyUrl,
+            enabledModels: cur?.enabledModels ?? [],
+            isCustom: isCustom() || isLocalEngine(),
+            customModelIds: cur?.customModelIds ?? [],
+            fetchedModels: cur?.fetchedModels,
+            localModelPaths: cur?.localModelPaths,
+            ...merged,
+          };
+          const map = { ...providerConfigs() };
+          if (next.enabled || next.apiKey || next.enabledModels.length > 0 || next.isCustom) {
+            map[next.id] = next;
+          } else {
+            delete map[next.id];
+          }
+          const file = { version: 2, updatedAt: String(Date.now()), providers: map };
+          await saveProviderConfigs(file);
+          setProviderConfigs(map);
+        })
+        .catch((e) => {
+          setToast({ msg: reportError('error.save', e), ok: false });
+          setTimeout(() => setToast(null), 3000);
+        });
+      return persistChain;
     };
-    const map = { ...providerConfigs() };
-    if (next.enabled || next.apiKey || next.enabledModels.length > 0 || next.isCustom) {
-      map[next.id] = next;
-    } else {
-      delete map[next.id];
+
+    if (!opts?.debounce) {
+      return doWrite(overrides);
     }
-    const file = { version: 2, updatedAt: String(Date.now()), providers: map };
-    try {
-      await saveProviderConfigs(file);
-      setProviderConfigs(map);
-    } catch (e) {
-      setToast({ msg: reportError('error.save', e), ok: false });
-      setTimeout(() => setToast(null), 3000);
+    // Debounced path: merge pending overrides and flush once the typing settles
+    pendingOverrides = { ...(pendingOverrides ?? {}), ...overrides };
+    if (persistTimer !== undefined) {
+      clearTimeout(persistTimer);
     }
+    persistTimer = window.setTimeout(() => {
+      persistTimer = undefined;
+      const merged = pendingOverrides;
+      pendingOverrides = null;
+      if (merged) void doWrite(merged);
+    }, DEBOUNCE_MS);
+    return persistChain;
   };
 
-  /** Form field onInput: auto-save the whole cfg immediately */
+  /** Form field onInput: FE-4 — debounced save (one disk write per typing burst, not per keystroke) */
   const updateField = <K extends keyof ProviderConfig>(key: K, value: ProviderConfig[K]) => {
-    persist({ [key]: value } as Partial<ProviderConfig>);
+    persist({ [key]: value } as Partial<ProviderConfig>, { debounce: true });
   };
 
   /** Model enable toggle: persists immediately */
@@ -269,7 +319,8 @@ const ProviderDetail: Component = () => {
       setToast({ msg: t('provider.localStopped'), ok: true });
       setTimeout(() => setToast(null), 3000);
     } catch (e) {
-      setToast({ msg: String(e), ok: false });
+      // FE-9: raw String(e) echoed provider/transport internals; wrap in i18n
+      setToast({ msg: t('provider.stopFailed', { error: String(e) }), ok: false });
       setTimeout(() => setToast(null), 3000);
     } finally {
       setEngineActionLoading(false);
@@ -379,7 +430,11 @@ const ProviderDetail: Component = () => {
                   displayName: m.display_name,
                   releasedAt: m.released_at,
                 }));
-                persist({ fetchedModels: incoming });
+                // FE-4: the 5s poll used to persist unconditionally — one disk write
+                // every tick even when nothing changed. Only write on a real change.
+                if (!sameFetchedModels(userCfg()?.fetchedModels, incoming)) {
+                  persist({ fetchedModels: incoming });
+                }
                 setFetchState({
                   status: 'ok',
                   msg: t('provider.fetchResult', { count: formatNumber(r.models.length) }),
@@ -390,7 +445,10 @@ const ProviderDetail: Component = () => {
               /* silence auto-fetch failures; next tick will retry */
             }
           } else {
-            persist({ fetchedModels: [] });
+            // FE-4: same diff-check on the dead path (clear only when it held data)
+            if ((userCfg()?.fetchedModels?.length ?? 0) > 0) {
+              persist({ fetchedModels: [] });
+            }
           }
         } else {
           const r = await testProviderConnection({
@@ -410,6 +468,15 @@ const ProviderDetail: Component = () => {
   });
   onCleanup(() => {
     clearInterval(alivePoll);
+    // FE-4: flush any debounced (still unsaved) field edits so leaving the page
+    // cannot lose the last keystroke burst
+    if (persistTimer !== undefined) {
+      clearTimeout(persistTimer);
+      persistTimer = undefined;
+      const merged = pendingOverrides;
+      pendingOverrides = null;
+      if (merged) void persist(merged);
+    }
   });
 
   const handleFetchModels = async () => {

@@ -59,7 +59,10 @@ pub(crate) async fn post_chat_completion(
             .json(&anthropic_body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            // PROV-11: reqwest's Display carries the full URL (Gemini-style auth puts
+            // the key in ?key=...) — redact before the text reaches toasts/logs.
+            // The "error sending request …" prefix is preserved for retry detection.
+            .map_err(|e| crate::plugins::provider::redact_urls_in(&e.to_string()))?;
         Ok((res, true))
     } else {
         let res = client
@@ -68,7 +71,7 @@ pub(crate) async fn post_chat_completion(
             .json(body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| crate::plugins::provider::redact_urls_in(&e.to_string()))?;
         Ok((res, false))
     }
 }

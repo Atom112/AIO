@@ -229,27 +229,26 @@ pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
 /// Open the project directory in the system file manager.
 #[tauri::command]
 pub fn open_project_directory(_app: AppHandle, path: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
-    }
+    // SEC-06: resolve the file-manager binary PATH-only (bare-name spawns consult the
+    // process cwd before PATH on Windows).
+    let opener_name = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let opener = crate::utils::exec_resolve::resolve_executable(opener_name).ok_or_else(|| {
+        ierr!(
+            "未找到系统文件管理器命令（PATH 中无 {}）",
+            "System file-manager command not found ({} is not on PATH)",
+            opener_name
+        )
+    })?;
+    std::process::Command::new(opener)
+        .arg(&path)
+        .spawn()
+        .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     Ok(())
 }
 

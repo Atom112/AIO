@@ -24,6 +24,10 @@ pub struct ActiveCheckpoint {
 }
 
 /// Persist a round snapshot (older snapshots of the same turn are pruned per the retention policy).
+/// Test/back-compat convenience: serializes then delegates to [`save_checkpoint_json`].
+/// Production call sites hold a global SQLite lock and use `save_checkpoint_json`
+/// directly (LOOP-7: serialize outside the lock).
+#[cfg(test)]
 pub(crate) fn save_checkpoint(
     conn: &Connection,
     topic_id: &str,
@@ -32,6 +36,21 @@ pub(crate) fn save_checkpoint(
     messages: &[serde_json::Value],
 ) {
     let messages_json = serde_json::to_string(messages).unwrap_or_default();
+    save_checkpoint_json(conn, topic_id, turn_id, round, &messages_json);
+}
+
+/// LOOP-7: checkpoint write taking a PRE-SERIALIZED context.
+/// Callers that hold a global SQLite lock must serialize outside the lock —
+/// serializing a multi-MB agent context while holding `DbState` blocks every
+/// other database user (memory tools, usage tracking, checkpoint reads) for the
+/// whole duration. The two SQL statements here are the only lock-held work.
+pub(crate) fn save_checkpoint_json(
+    conn: &Connection,
+    topic_id: &str,
+    turn_id: &str,
+    round: u32,
+    messages_json: &str,
+) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

@@ -86,8 +86,11 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
+        // HOR-2: opener registered (the frontend openSafeUrl path targets
+        // plugin:opener|open_url, which was never registered — the call failed at
+        // runtime). The fs and shell plugins are gone: the frontend never invokes
+        // fs, and the single shell open() usage now goes through opener.
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(StreamManager(Arc::new(dashmap::DashMap::new())))
         .manage(LocalEngineState::new())

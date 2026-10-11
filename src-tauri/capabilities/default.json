@@ -1,11 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window. fs scopes intentionally narrowed: only $APPDATA/models-catalog and $APPDATA/engines. $HOME read is restricted to user-picked model files via dialog.",
+  "description": "Capability for the main window. HOR-2: the fs and shell plugins are unused by the frontend (all file and shell operations go through AIO's own Tauri commands with their own validation), so their permissions are removed entirely; the asset protocol scope matches tauri.conf.json (APPDATA/attachments only) instead of the previous blanket grant.",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default",
     "core:window:default",
     "core:window:allow-start-dragging",
     "core:window:allow-close",
@@ -15,32 +14,16 @@
     "core:window:allow-hide",
     "core:window:allow-show",
     "core:path:default",
+    "opener:default",
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-save",
-    "shell:allow-open",
     "updater:default",
     "updater:allow-check",
     "updater:allow-download-and-install",
     {
       "identifier": "core:default",
-      "allow": [{ "protocol": "asset", "path": "**" }]
-    },
-    {
-      "identifier": "fs:scope-appdata-recursive",
-      "allow": [{ "path": "$APPDATA/models-catalog.json" }, { "path": "$APPDATA/engines/**" }]
-    },
-    {
-      "identifier": "fs:allow-read-file",
-      "allow": [{ "path": "$APPDATA/models-catalog.json" }, { "path": "$APPDATA/engines/**" }]
-    },
-    {
-      "identifier": "fs:allow-exists",
-      "allow": [{ "path": "$APPDATA/models-catalog.json" }, { "path": "$APPDATA/engines/**" }]
-    },
-    {
-      "identifier": "fs:allow-write-file",
-      "allow": [{ "path": "$APPDATA/**" }]
+      "allow": [{ "protocol": "asset", "path": "$APPDATA/attachments/**" }]
     }
   ]
 }

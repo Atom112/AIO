@@ -157,8 +157,44 @@ mod manager_tests {
     }
 }
 
-/// Classifies a reqwest error into a user-friendly message (locale-aware)
+/// Strips the query string and fragment from a URL (PROV-11): Gemini-style auth puts
+/// the API key in `?key=…`, and full URLs otherwise end up verbatim in toasts and
+/// logs when errors are echoed. Non-URL input is returned unchanged.
+pub fn redact_url(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            let mut out = format!(
+                "{}://{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or("host")
+            );
+            if let Some(port) = parsed.port() {
+                out = format!("{out}:{port}");
+            }
+            out.push_str(parsed.path());
+            out
+        }
+        Err(_) => url.to_string(),
+    }
+}
+
+/// Replaces every URL embedded in free-form text (error bodies, reqwest Display
+/// strings) with its redacted form (PROV-11) — credentials in query strings never
+/// reach the UI or the logs.
+pub fn redact_urls_in(text: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r#"https?://[^\s'"<>()\[\]]+"#).expect("固定 URL 正则必然编译成功")
+    });
+    re.replace_all(text, |caps: &regex::Captures| redact_url(&caps[0]))
+        .into_owned()
+}
+
+/// Classifies a reqwest error into a user-friendly message (locale-aware).
+/// PROV-11: `host` may actually be a full request URL (callers pass api_url), and
+/// reqwest's Display carries the complete URL — both are redacted before display.
 pub fn classify_reqwest_error(err: &reqwest::Error, host: &str) -> String {
+    let host = redact_url(host);
     if err.is_timeout() {
         ierr!(
             "请求超时 ({}): 请检查网络或代理设置",
@@ -172,9 +208,18 @@ pub fn classify_reqwest_error(err: &reqwest::Error, host: &str) -> String {
             host
         )
     } else if err.is_request() {
-        ierr!("请求错误 ({}): {}", "Request error ({}): {}", host, err)
+        ierr!(
+            "请求错误 ({}): {}",
+            "Request error ({}): {}",
+            host,
+            redact_urls_in(&err.to_string())
+        )
     } else {
-        ierr!("HTTP 客户端错误: {}", "HTTP client error: {}", err)
+        ierr!(
+            "HTTP 客户端错误: {}",
+            "HTTP client error: {}",
+            redact_urls_in(&err.to_string())
+        )
     }
 }
 
@@ -201,5 +246,36 @@ mod tests {
         assert_eq!(unix_to_ymd(946_684_800), Some("2000-01-01".to_string()));
         // 1970-01-01 00:00:00 UTC = 0
         assert_eq!(unix_to_ymd(0), Some("1970-01-01".to_string()));
+    }
+
+    /// PROV-11: URLs echoed in error text are redacted before display — the
+    /// query string (Gemini `?key=…`) never reaches toasts or logs.
+    #[test]
+    fn url_redaction_strips_credentials() {
+        assert_eq!(
+            redact_url(
+                "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyVERYSECRET"
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert_eq!(
+            redact_url("http://localhost:8080/v1/chat"),
+            "http://localhost:8080/v1/chat"
+        );
+        // Non-URL input passes through unchanged
+        assert_eq!(redact_url("api.example.com"), "api.example.com");
+        // Embedded URLs inside free-form error text are redacted in place
+        let text =
+            "error sending request for url (https://x.example.com/v1?q=SECRET) after 3 tries";
+        assert_eq!(
+            redact_urls_in(text),
+            "error sending request for url (https://x.example.com/v1) after 3 tries"
+        );
+        assert!(
+            redact_urls_in(text).contains("error sending request"),
+            "重试逻辑依赖的错误子串必须保留"
+        );
+        // Text without URLs is untouched
+        assert_eq!(redact_urls_in("plain error"), "plain error");
     }
 }

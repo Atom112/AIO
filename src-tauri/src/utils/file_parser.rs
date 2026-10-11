@@ -15,6 +15,11 @@ use zip::ZipArchive;
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_DOC_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 5 * 1024 * 1024;
+/// INFRA-3: decompressed zip-entry cap (Office XML parts) — a 30MB docx can still
+/// carry a multi-GB decompressed payload; real document.xml parts stay well below this.
+const MAX_ZIP_ENTRY_TEXT_BYTES: u64 = 64 * 1024 * 1024;
+/// INFRA-3: aggregate cap across all extracted parts of one document.
+const MAX_ZIP_TEXT_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Image extensions
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
@@ -229,7 +234,7 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
     let mut full_text = String::new();
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let file = archive.by_index(i).map_err(|e| e.to_string())?;
         let name = file.name().to_string();
 
         let is_target = if file_type == "docx" {
@@ -239,11 +244,36 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
         };
 
         if is_target {
+            // INFRA-3: zip-bomb guard. The declared uncompressed size is checked first,
+            // then the actual read is capped via take() — a lying header (small declared,
+            // huge actual) is caught when the capped read still yields a full buffer.
+            if file.size() > MAX_ZIP_ENTRY_TEXT_BYTES {
+                return Err(ierr!(
+                    "zip 条目解压后超过上限（{}B，疑似 zip 炸弹）",
+                    "zip entry exceeds the decompression cap ({}B; possible zip bomb)",
+                    file.size()
+                ));
+            }
+            let mut limited = file.take(MAX_ZIP_ENTRY_TEXT_BYTES);
             let mut content = String::new();
-            file.read_to_string(&mut content)
+            limited
+                .read_to_string(&mut content)
                 .map_err(|e| e.to_string())?;
+            if content.len() as u64 >= MAX_ZIP_ENTRY_TEXT_BYTES {
+                return Err(ierr!(
+                    "zip 条目实际解压超过上限，已中止（疑似 zip 炸弹）",
+                    "zip entry actually decompressed past the cap; aborted (possible zip bomb)"
+                ));
+            }
             full_text.push_str(&extract_text_from_xml(&content));
             full_text.push('\n');
+            if full_text.len() as u64 > MAX_ZIP_TEXT_TOTAL_BYTES {
+                return Err(ierr!(
+                    "文档文本总量超过上限（{}B），已中止",
+                    "Total document text exceeds the cap ({}B); aborted",
+                    MAX_ZIP_TEXT_TOTAL_BYTES
+                ));
+            }
         }
     }
     Ok(full_text)

@@ -11,3 +11,4 @@ export * from './ui-prefs';
 export * from './update';
 export * from './workflow';
 export * from './subagent-view';
+export * from './stream';

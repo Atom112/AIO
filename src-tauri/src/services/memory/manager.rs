@@ -3,10 +3,9 @@
 use crate::services::memory::store::MemoryStore;
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const MAX_STORES: usize = 32;
-const IDLE_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// MemoryStoreManager: an LRU cache mapping project_root to Arc<MemoryStore>.
 pub struct MemoryStoreManager {
@@ -49,27 +48,69 @@ impl MemoryStoreManager {
         self.touched.remove(project_root);
     }
 
-    /// Cache size governance: evict entries idle beyond the TTL once the cap is exceeded.
+    /// Cache size governance (MEM-07: real LRU). Once the cap is exceeded the
+    /// least-recently-touched entries are evicted — TTL alone never bound the cache:
+    /// with everything touched recently, nothing expired and the cache grew forever.
     fn evict_if_needed(&self) {
         if self.stores.len() <= MAX_STORES {
             return;
         }
-        let now = Instant::now();
-        let mut candidates: Vec<(String, Instant)> = Vec::new();
-        for entry in self.touched.iter() {
-            if now.duration_since(*entry.value()) > IDLE_TTL {
-                candidates.push((entry.key().clone(), *entry.value()));
-            }
+        self.evict_over_cap(MAX_STORES);
+    }
+
+    /// True-LRU eviction down to `cap`: evicts the oldest-touched entries regardless
+    /// of TTL (`cap` is a parameter for testability; production uses [`MAX_STORES`]).
+    /// Dropping the cached Arc closes the SQLite connection only after in-flight
+    /// users finish with it (graceful).
+    pub(crate) fn evict_over_cap(&self, cap: usize) {
+        if self.stores.len() <= cap {
+            return;
         }
-        candidates.sort_by_key(|a| a.1);
-        let mut to_remove = self.stores.len().saturating_sub(MAX_STORES);
-        for (key, _) in candidates {
-            if to_remove == 0 {
-                break;
-            }
+        let to_remove = self.stores.len() - cap;
+        let mut order: Vec<(String, Instant)> = self
+            .touched
+            .iter()
+            .map(|e| (e.key().clone(), *e.value()))
+            .collect();
+        order.sort_by_key(|(_, t)| *t);
+        order.into_iter().take(to_remove).for_each(|(key, _)| {
             self.stores.remove(&key);
             self.touched.remove(&key);
-            to_remove -= 1;
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MEM-07: the cache must be bounded even when every entry was touched recently
+    /// (the old TTL-only policy let an all-hot cache grow forever). True LRU: the
+    /// least-recently-touched entry is evicted once the cap is exceeded.
+    #[test]
+    fn lru_eviction_is_real_even_when_all_hot() {
+        let mgr = MemoryStoreManager::new();
+        let base = std::env::temp_dir().join(format!("aio-memmgr-{}", std::process::id()));
+        let mut paths = Vec::new();
+        for i in 0..3 {
+            let dir = base.join(format!("p{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            mgr.open(&dir.to_string_lossy()).unwrap();
+            paths.push(dir);
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
+        assert_eq!(mgr.stores.len(), 3);
+        mgr.evict_over_cap(2);
+        assert_eq!(mgr.stores.len(), 2, "超上限必须真实淘汰");
+        let key_of = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        assert!(
+            mgr.stores.get(&key_of(&paths[0])).is_none(),
+            "最久未触的条目应被淘汰"
+        );
+        assert!(
+            mgr.stores.get(&key_of(&paths[2])).is_some(),
+            "最近触达的条目应保留"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

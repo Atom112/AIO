@@ -13,27 +13,15 @@ import { respondAgentQuestion, type QuestionAnswerPayload } from '../../../core/
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
 import { btnPrimary, btnSecondary } from '../../../shared/components/buttonStyles';
+import type {
+  PendingQuestion,
+  QuestionOptionPayload,
+  QuestionPayload,
+} from '../../../core/store/store';
 
-/** One option of a question (snake_case payload from the backend). */
-export interface QuestionOptionPayload {
-  label: string;
-  description?: string;
-  recommended?: boolean;
-}
-
-/** One question of a pending ask_user request (snake_case payload from the backend). */
-export interface QuestionPayload {
-  questionId: string;
-  question: string;
-  options: QuestionOptionPayload[];
-  allowCustom: boolean;
-}
-
-/** One pending ask_user request. */
-export interface PendingQuestion {
-  requestId: string;
-  questions: QuestionPayload[];
-}
+// Types moved to core/store/stream.ts (CHAT-12: global stream state); re-exported
+// here for existing importers of this module.
+export type { PendingQuestion, QuestionOptionPayload, QuestionPayload };
 
 interface AgentQuestionBubbleProps {
   question: PendingQuestion;

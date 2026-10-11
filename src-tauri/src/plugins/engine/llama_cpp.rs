@@ -25,42 +25,10 @@ impl LlamaCppPlugin {
     /// Search order: PATH → per-platform package manager install directories.
     fn find_llama_server() -> Option<std::path::PathBuf> {
         // ── 1. PATH lookup ──
-        #[cfg(target_os = "windows")]
-        {
-            let output = std::process::Command::new("where")
-                .arg("llama-server")
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .creation_flags(0x08000000)
-                .output()
-                .ok()?;
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(line) = stdout.lines().next() {
-                    let p = std::path::PathBuf::from(line.trim());
-                    if p.exists() {
-                        return Some(p);
-                    }
-                }
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let output = std::process::Command::new("which")
-                .arg("llama-server")
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .output()
-                .ok()?;
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(line) = stdout.lines().next() {
-                    let p = std::path::PathBuf::from(line.trim());
-                    if p.exists() {
-                        return Some(p);
-                    }
-                }
-            }
+        // SEC-06: PATH-only resolution via the canonical resolver (replaces the
+        // previous `where`/`which` subprocess probe, which also searched the cwd).
+        if let Some(p) = crate::utils::exec_resolve::resolve_executable("llama-server") {
+            return Some(p);
         }
 
         let exe_name = if cfg!(target_os = "windows") {

@@ -65,13 +65,15 @@ const COMMAND_TRANSLATIONS: Record<string, CommandTranslation> = {
   },
   'go-to-chat': { label: 'command.goToChat.label', description: 'command.goToChat.description' },
   'new-topic': { label: 'command.newTopic.label', description: 'command.newTopic.description' },
-  'new-assistant': {
-    label: 'command.newAssistant.label',
-    description: 'command.newAssistant.description',
-  },
+  // FE-6: previously missing — the palette fell back to the module-baked label,
+  // which froze the startup locale for this one command until restart
   'new-project': {
     label: 'command.newProject.label',
     description: 'command.newProject.description',
+  },
+  'new-assistant': {
+    label: 'command.newAssistant.label',
+    description: 'command.newAssistant.description',
   },
   'toggle-web-search': {
     label: 'command.toggleWebSearch.label',

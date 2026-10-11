@@ -6,20 +6,20 @@ AIO is a lightweight, cross-platform AI assistant desktop client built with **Ta
 
 ## Tech Stack & Versions
 
-| Layer             | Technology                                                               | Version                   |
-| ----------------- | ------------------------------------------------------------------------ | ------------------------- |
-| Frontend          | SolidJS                                                                  | ^1.9.13                   |
-| Routing           | @solidjs/router                                                          | ^0.16.1                   |
-| Styling           | Tailwind CSS (v4, via `@tailwindcss/postcss`, no tailwind.config)        | ^4.0.0                    |
-| Build Tool        | Vite                                                                     | ^8.0.16                   |
-| Desktop Framework | Tauri                                                                    | 2.11.x                    |
-| Tauri Plugins     | dialog, fs, shell, opener, updater                                       | 2.x                       |
-| Backend Language  | Rust (pinned in `src-tauri/rust-toolchain.toml`; use `cargo +1.97.1`)    | 1.97.1                    |
-| Database          | SQLite (rusqlite)                                                        | bundled                   |
-| i18n              | @solid-primitives/i18n (locales: zh-CN, en-US)                           | ^2.2.1                    |
-| State Management  | SolidJS Store + Signals                                                  | built-in                  |
-| Models Catalog    | @aio/models-data (sibling local package; JSON bundled as tauri resource) | `file:../aio-models-data` |
-| Provider Icons    | @lobehub/icons-static-svg                                                | ^1.91.0                   |
+| Layer             | Technology                                                                            | Version                   |
+| ----------------- | ------------------------------------------------------------------------------------- | ------------------------- |
+| Frontend          | SolidJS                                                                               | ^1.9.13                   |
+| Routing           | @solidjs/router                                                                       | ^0.16.1                   |
+| Styling           | Tailwind CSS (v4, via `@tailwindcss/postcss`, no tailwind.config)                     | ^4.0.0                    |
+| Build Tool        | Vite                                                                                  | ^8.0.16                   |
+| Desktop Framework | Tauri                                                                                 | 2.11.x                    |
+| Tauri Plugins     | dialog, opener, updater（fs/shell 已移除——前端零使用，全部文件/命令操作走自有命令层） | 2.x                       |
+| Backend Language  | Rust (pinned in `src-tauri/rust-toolchain.toml`; use `cargo +1.97.1`)                 | 1.97.1                    |
+| Database          | SQLite (rusqlite)                                                                     | bundled                   |
+| i18n              | @solid-primitives/i18n (locales: zh-CN, en-US)                                        | ^2.2.1                    |
+| State Management  | SolidJS Store + Signals                                                               | built-in                  |
+| Models Catalog    | @aio/models-data (sibling local package; JSON bundled as tauri resource)              | `file:../aio-models-data` |
+| Provider Icons    | @lobehub/icons-static-svg                                                             | ^1.91.0                   |
 
 ## Directory Structure
 
@@ -40,7 +40,7 @@ src/
 │   ├── agent-prompts.ts # Agent system-prompt presets
 │   └── assets/
 ├── features/
-│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：21 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
+│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个流监听器在根 Layout 全局注册 + 3 个拖放监听器页面级；chatTurnEffects.ts：回合收尾效果）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
@@ -127,6 +127,7 @@ src-tauri/src/
     ├── knowledge.rs     # Project knowledge (.aio/knowledge.json)
     ├── project_map.rs   # Project structure mapping
     ├── sandbox.rs       # Shell sandboxing（路径白名单/黑名单校验）
+    ├── exec_resolve.rs  # PATH-only 可执行文件解析（全部裸名 spawn 的唯一入口；Windows PATHEXT 顺序归一）
     ├── think.rs         # Reasoning tool
     ├── url_validation.rs # SSRF/URL safety checks
     ├── token_counter.rs # Token counting

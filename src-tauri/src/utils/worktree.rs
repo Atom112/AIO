@@ -365,13 +365,17 @@ mod tests {
     use std::fs;
 
     fn git_available() -> bool {
-        std::process::Command::new("git")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        // SEC-06: PATH-only resolution, matching the production run_git path
+        match crate::utils::exec_resolve::resolve_executable("git") {
+            Some(git) => std::process::Command::new(git)
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false),
+            None => false,
+        }
     }
 
     /// Fresh git repo with one committed file, config set for committing.

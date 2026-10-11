@@ -541,7 +541,8 @@ pub fn create_workflow_tool_spec() -> ToolSpec {
                 "- explorer → coder（探索 + 实现）\n",
                 "- debugger → coder（诊断 + 修复）\n",
                 "- explorer → writer（探索 + 文档化）\n\n",
-                "注意：每个步骤是**顺序执行**的（非并行），前一步完成后下一步才开始。",
+                "注意：每个步骤是**顺序执行**的（非并行），前一步完成后下一步才开始；",
+                "步骤数上限 20，超出会被拒绝，复杂任务请拆分为多个工作流。",
             )
             .into(),
             parameters: serde_json::json!({

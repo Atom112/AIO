@@ -38,9 +38,13 @@ impl BundledModel {
         include_bytes!("../../../resources/models/all-MiniLM-L6-v2/tokenizer_config.json");
 }
 
-type ModelCache = HashMap<String, Result<Arc<TextEmbedding>, String>>;
+type ModelCache = HashMap<String, Arc<TextEmbedding>>;
 
-/// In-process model instance cache (keyed by model id; load results are cached, failures are not retried until restart).
+/// In-process model instance cache (keyed by model id).
+/// PROV-8: only successful loads are cached — a failure (model not downloaded yet,
+/// corrupt file, …) must be retried on the next call, never frozen until restart
+/// (the historic error-caching made a freshly downloaded model unusable until the
+/// app restarted; re-checking a missing file is a few cheap stats).
 static INSTANCES: OnceLock<Mutex<ModelCache>> = OnceLock::new();
 
 fn instances() -> &'static Mutex<ModelCache> {
@@ -58,11 +62,13 @@ fn pooling_of(id: &str) -> Pooling {
 }
 
 /// Loads (or fetches from cache) a model instance. Bundled models use include_bytes; downloaded models read from the install directory.
+/// PROV-9: reads and graph-builds a multi-hundred-MB ONNX — callers must run this on
+/// the blocking pool, never on an async worker thread.
 fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> {
     {
         let map = instances().lock().map_err(|e| e.to_string())?;
         if let Some(hit) = map.get(id) {
-            return hit.clone();
+            return Ok(hit.clone());
         }
     }
     let entry = crate::core::model_registry::find_entry(id).ok_or_else(|| {
@@ -121,22 +127,24 @@ fn load_model(embed_dir: &Path, id: &str) -> Result<Arc<TextEmbedding>, String> 
         )
     };
     let user_model = UserDefinedEmbeddingModel::new(onnx, tokenizer).with_pooling(pooling_of(id));
-    let result = TextEmbedding::try_new_from_user_defined(
-        user_model,
-        InitOptionsUserDefined::default().with_max_length(256),
-    )
-    .map(Arc::new)
-    .map_err(|e| {
-        ierr!(
-            "本地嵌入模型加载失败（{}）: {}",
-            "Failed to load local embedding model ({}): {}",
-            id,
-            e
+    let instance = Arc::new(
+        TextEmbedding::try_new_from_user_defined(
+            user_model,
+            InitOptionsUserDefined::default().with_max_length(256),
         )
-    });
+        .map_err(|e| {
+            ierr!(
+                "本地嵌入模型加载失败（{}）: {}",
+                "Failed to load local embedding model ({}): {}",
+                id,
+                e
+            )
+        })?,
+    );
+    // PROV-8: cache the success only (see INSTANCES doc)
     let mut map = instances().lock().map_err(|e| e.to_string())?;
-    map.insert(id.to_string(), result.clone());
-    result
+    map.insert(id.to_string(), instance.clone());
+    Ok(instance)
 }
 
 /// Removes a model from the in-process instance cache (called after model files are deleted, so stale instances do not remain usable).
@@ -208,7 +216,13 @@ impl Embedder for LocalEmbedder {
             }
         }
         if !pending.is_empty() {
-            let m = load_model(&self.embed_dir, &self.id)?;
+            // PROV-9: reading + graph-building a multi-hundred-MB ONNX must not run
+            // on an async worker thread.
+            let dir = self.embed_dir.clone();
+            let id = self.id.clone();
+            let m = tokio::task::spawn_blocking(move || load_model(&dir, &id))
+                .await
+                .map_err(|e| e.to_string())??;
             let cfg = self.cfg.clone();
             let pending_texts: Vec<String> = pending.iter().map(|(_, t)| t.clone()).collect();
             let out = tokio::task::spawn_blocking(move || m.embed(pending_texts, None))

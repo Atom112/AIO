@@ -534,7 +534,9 @@ pub async fn local_model_market_files(
 
 /// Probes an NVIDIA GPU via nvidia-smi (name + VRAM); None when absent or non-NVIDIA.
 fn probe_nvidia_gpu() -> Option<(String, u64)> {
-    let out = std::process::Command::new("nvidia-smi")
+    // SEC-06: PATH-only resolution — a missing nvidia-smi means "no NVIDIA GPU".
+    let nvidia_smi = crate::utils::exec_resolve::resolve_executable("nvidia-smi")?;
+    let out = std::process::Command::new(nvidia_smi)
         .args([
             "--query-gpu=name,memory.total",
             "--format=csv,noheader,nounits",
@@ -561,8 +563,16 @@ fn probe_nvidia_gpu() -> Option<(String, u64)> {
 /// 85% of VRAM when an NVIDIA GPU with >= 4GB is present (GPU offload), otherwise 45% of
 /// system RAM (CPU inference also caps the recommendation at 9B for usable speed).
 /// Apple Silicon (no discrete VRAM) follows the RAM path with unified memory.
+/// HOR-4: probes an nvidia-smi subprocess + a full system scan — off the main thread.
 #[tauri::command]
-pub fn local_model_hardware_profile() -> Result<HardwareProfile, String> {
+pub async fn local_model_hardware_profile() -> Result<HardwareProfile, String> {
+    tokio::task::spawn_blocking(hardware_profile_inner)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Synchronous body of [`local_model_hardware_profile`] (runs on the blocking pool).
+fn hardware_profile_inner() -> Result<HardwareProfile, String> {
     let sys = sysinfo::System::new_all();
     let cpu_brand = sys
         .cpus()

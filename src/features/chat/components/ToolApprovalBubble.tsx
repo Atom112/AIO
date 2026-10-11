@@ -9,18 +9,11 @@ import { respondToolApproval } from '../../../core/api/mcp';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
 import { btnDanger, btnSuccess } from '../../../shared/components/buttonStyles';
+import type { PendingApproval } from '../../../core/store/store';
 
-export interface PendingApproval {
-  approvalId: string;
-  serverId: string;
-  toolName: string;
-  arguments: any;
-  reason: string;
-  /** File-change preview (unified diff) */
-  previewDiff?: string;
-  /** Path of the affected file */
-  filePath?: string;
-}
+// Type moved to core/store/stream.ts (CHAT-12: global stream state); re-exported
+// here for existing importers of this module.
+export type { PendingApproval };
 
 interface ToolApprovalBubbleProps {
   approval: PendingApproval;

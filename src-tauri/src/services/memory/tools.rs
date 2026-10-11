@@ -5,6 +5,8 @@
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::ierr;
+// MEM-06: canonical single-text embedding (dimension-drift guard included)
+use crate::services::memory::embed_one;
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::manager::MemoryStoreManager;
 use crate::services::memory::store::{MemoryStore, NewFact, SearchOptions};
@@ -257,34 +259,6 @@ async fn execute_search_code(
         ));
     }
     Ok(tool_ok(out))
-}
-
-/// Embed a single text (per the project-level embedding config; None on failure degrades to keyword search).
-/// Returns None with a warning when the dimension mismatches existing store vectors (avoids writing/searching mismatched-dimension vectors).
-async fn embed_one(
-    app: &AppHandle,
-    store: &MemoryStore,
-    text: &str,
-) -> Option<(String, usize, Vec<f32>)> {
-    let cfg = crate::services::memory::resolve_project_embedding(app, store);
-    let embedder = crate::plugins::embed::resolve(app, &cfg).ok()?;
-    let v = embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()?;
-    if let Some(lib_dim) = store.embedding_dim_meta() {
-        if lib_dim != v.len() {
-            tracing::warn!(
-                "记忆库向量维度 {} 与当前嵌入模型维度 {} 不一致，跳过向量化（请检查嵌入模型配置）",
-                lib_dim,
-                v.len()
-            );
-            return None;
-        }
-    }
-    Some((embedder.model_key(), v.len(), v))
 }
 
 async fn execute_remember(

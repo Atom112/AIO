@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（收官）：MessageBubble 拆分（ChatInterface 2057→1118，-46%）
+
+- **消息气泡抽出（阶段4 第2项最后切片，报告点名的 MessageBubble 路径）**：ChatInterface 的 732 行 per-message JSX（头像/气泡/附件/agent 过程块/生成图像/token 尾注/操作按钮（复制/分支/重发/编辑/删除/批量撤销）/文件变更 diff 面板）verbatim 抽至 `components/MessageBubble.tsx`（795 行，<900 达标）。约 20 个原组件作用域依赖全部经 `MessageBubbleProps`（24 字段惰性访问器接口）注入——Solid 响应式语义零变化（JSX 内读取本就惰性）；工具名聚合/行号统计（aggregateFileChanges/aggregateDiffStats）与 `as any` 冗余转型（5 处——msg 本就是 any）随迁清理；ChatInterface **2057 → 1118 行**（-46%，本阶段起点 2058）
+- **any 棘轮 97 → 93（净降 4）**：5 处 `as any` 转型（msg 已是 any，转型纯噪音）删除；新组件按门禁纪律全程类型化
+
 ### 🧱 阶段4 第2项（拆分切片6）：主发送路径接入 useChatSend + CHAT-10 清理抽出（+6 单测）
 
 - **主发送路径迁移（阶段4 第2项 useChatSend 路径收尾）**：handleSendMessage 的 agent 分支（模型覆盖解析 + 14 字段载荷）迁至 `startAgentTurn` 原语；CHAT-10 占位气泡清理经 `onInvokeError` 回调注入（失败语义零变化：alert + thinking/typing 复位 + 清理，由原语统一执行）；chat 模式的 `callLlmStream`/`generateImage` 分支保留原 catch（同一清理函数复用）

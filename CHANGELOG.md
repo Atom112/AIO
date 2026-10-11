@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（<900 目标切片）：slash 处理器抽出（slashHandlers）
+
+- **slash 双 handler 抽出（ChatPage 1202→1026）**：prompt 型（/review、/explain 等——resolvedBody 发往 LLM）与 action 型（/compact、/clear、/search、/settings、/help——命令气泡 + handler 执行 + 逐命令反馈）verbatim 抽至 `utils/slashHandlers.ts`（195 行）；响应式依赖几乎全为模块级 store 单例直接导入，组件级依赖仅 3 项（currentAssistant/activeTopic/startAgentTurn）经 `SlashHandlerDeps` 传递
+- **prompt 型复用 buildOutgoingMessages**：slash handler 内联的系统栈与主发送路径逐字段相同——直接复用上批抽出的 sendMessagePrep，顺带消灭其残留的 `any[]` messagesForAI 与 `agentMode as any`
+- **any 棘轮 90 → 78（净降 12）**：两 handler 的 setDatas `(a: any)`/`(t: any)`/`(h: any[])` 注解经泛型推断全部消除
+- **+6 反馈矩阵测试**：/clear、/help、/settings 静默返回（仅命令气泡）；/compact 自定义反馈优先 + 回退文案；/search 反映开关态；未知命令通用反馈
+
 ### 🧱 阶段4 第2项（<900 目标切片）：出站消息组装抽出（sendMessagePrep）
 
 - **视觉预处理 + 消息组装抽出（ChatPage 1267→1202）**：handleSendMessage 中段（自动视觉分析——非视觉模型先由视觉 agent 生成结构化图像描述替换原始 base64 附件；系统栈组装——助手提示词 + 输出风格 + 技能 + agent 提示词 + 推理级别 + 联网 + 话题摘要 → 历史 → 新用户消息 + 工具配对安全网）verbatim 抽至 `utils/sendMessagePrep.ts`（174 行，两个入口 `resolveOutgoingContent` / `buildOutgoingMessages` 全参数显式化便于测试）+ **6 个组装顺序回归测试**（无条件系统栈顺序 / 条件段（推理/联网/摘要/agent 提示词）的含入与排除 / 持久化用户消息形状）

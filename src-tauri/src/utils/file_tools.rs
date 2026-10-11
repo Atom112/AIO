@@ -7,6 +7,7 @@
 //! Called directly by `run_agent_turn` during tool dispatch, bypassing the MCP channel.
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::core::tool_names;
 use crate::ierr;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -81,7 +82,10 @@ fn too_large_error(actual: u64) -> String {
 pub(crate) fn is_mutating_file_tool(name: &str) -> bool {
     matches!(
         name,
-        "write_file" | "replace_in_file" | "delete_file" | "make_directory"
+        tool_names::WRITE_FILE
+            | tool_names::REPLACE_IN_FILE
+            | tool_names::DELETE_FILE
+            | tool_names::MAKE_DIRECTORY
     )
 }
 
@@ -286,7 +290,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "read_file".into(),
+                name: tool_names::READ_FILE.into(),
                 description: "读取项目目录内的文件内容，输出带 1-based 行号（格式 \"    1| 内容\"，可直接用于 replace_in_file 的 start_line/end_line）。默认最多读取 300 行 / 32KB，超出时返回头部+尾部并标注省略的行号区间；如需完整内容请显式传入更大的 max_lines 或 max_bytes。with_hash=true 时返回文件 SHA-256 摘要（hashline 协议：编辑时用 anchor_hash 锚定防漂移，写/替换工具会返回新 hash 供链式使用）".into(),
                 parameters: json!({
                     "type":"object",
@@ -303,7 +307,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "write_file".into(),
+                name: tool_names::WRITE_FILE.into(),
                 description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）；文件被其他智能体修改过后，覆盖时必须携带 expect_hash（当前内容哈希），不匹配会报错".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容"},"expect_hash":{"type":"string","description":"写入前校验的文件当前 SHA-256（read_file(with_hash=true) 获取）。文件被其他智能体修改过后为必填；不匹配则报错，需重新读取最新内容"}},"required":["path","content"]}),
             },
@@ -311,7 +315,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "list_directory".into(),
+                name: tool_names::LIST_DIRECTORY.into(),
                 description: "列出目录内容（名称 + 类型标记 + 大小，单目录上限 10000 条）。探索项目结构时先用本工具或 search_files 定位目标，再 read_file，避免盲读大文件浪费上下文".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"目录路径, 默认项目根目录"}}}),
             },
@@ -327,7 +331,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "search_content".into(),
+                name: tool_names::SEARCH_CONTENT.into(),
                 description: "在文件内容中搜索正则表达式并返回命中行（含文件路径与行号）。找符号定义/调用点/配置项时优先用本工具定位到具体文件与行号，再 read_file 精读该区域，避免通读整个文件".into(),
                 parameters: json!({"type":"object","properties":{"pattern":{"type":"string","description":"正则表达式"},"path":{"type":"string","description":"目标路径"}},"required":["pattern"]}),
             },
@@ -335,7 +339,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "delete_file".into(),
+                name: tool_names::DELETE_FILE.into(),
                 description: "删除文件（不可恢复）。删除前应确认路径正确且该文件确实不再需要；目录无法用本工具删除（仅文件）。删除属于变更类操作，在需要确认的模式下会请求用户批准".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"}},"required":["path"]}),
             },
@@ -343,7 +347,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "make_directory".into(),
+                name: tool_names::MAKE_DIRECTORY.into(),
                 description: "创建目录（含缺失的父级目录，递归创建；已存在时直接成功）。新建嵌套路径的文件可直接用 write_file（父目录自动创建），本工具用于显式建目录结构".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"目录路径"}},"required":["path"]}),
             },
@@ -351,7 +355,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "replace_in_file".into(),
+                name: tool_names::REPLACE_IN_FILE.into(),
                 description: "在文件中执行替换。两种模式（二选一）：1) old_string 精确替换——old_string 必须恰好出现一次；2) 行范围锚定——old_string 留空并传 start_line/end_line（1-based），工具按当前文件内容取该行范围替换为 new_string，大段修改时无需回传整段旧代码，更省 token；若行号已过期会报错，请重新 read_file".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"old_string":{"type":"string","description":"要被替换的原始字符串（必须与文件内容精确匹配）；行范围模式下留空"},"new_string":{"type":"string","description":"替换后的新字符串（可含换行）"},"start_line":{"type":"integer","description":"行范围锚定模式：起始行号（1-based）"},"end_line":{"type":"integer","description":"行范围锚定模式：结束行号（1-based，默认等于 start_line）"},"anchor_hash":{"type":"string","description":"hashline 协议：read_file(with_hash=true) 或上次写/替换返回的文件 SHA-256 摘要。提供时先校验文件未被修改，防止按过期上下文误改"}},"required":["path","new_string"]}),
             },
@@ -366,7 +370,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
 /// `project_root` is the absolute path of the project root; all path operations are confined to that directory.
 pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> ToolResult {
     match name {
-        "read_file" => {
+        tool_names::READ_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
@@ -480,7 +484,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 tool_ok(c)
             }
         }
-        "write_file" => {
+        tool_names::WRITE_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
             let content = arguments["content"].as_str().unwrap_or("");
             if path.is_empty() {
@@ -540,7 +544,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Err(e) => tool_err(&e),
             }
         }
-        "list_directory" => {
+        tool_names::LIST_DIRECTORY => {
             let p = arguments["path"].as_str().unwrap_or(".");
             let t = match safe_path(project_root, p, true) {
                 Ok(t) => t,
@@ -612,7 +616,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 if d.is_empty() { "(无匹配)" } else { &d }
             ))
         }
-        "search_content" => {
+        tool_names::SEARCH_CONTENT => {
             let pattern = arguments["pattern"].as_str().unwrap_or("");
             if pattern.is_empty() {
                 return tool_err(&ierr!("缺少 pattern", "Missing pattern"));
@@ -691,7 +695,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 if d.is_empty() { "(无匹配)" } else { &d }
             ))
         }
-        "delete_file" => {
+        tool_names::DELETE_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
@@ -715,7 +719,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Err(e) => tool_err(&format!("{e}")),
             }
         }
-        "make_directory" => {
+        tool_names::MAKE_DIRECTORY => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
@@ -736,7 +740,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Err(e) => tool_err(&format!("{e}")),
             }
         }
-        "replace_in_file" => {
+        tool_names::REPLACE_IN_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
             let mut old_s = arguments["old_string"].as_str().unwrap_or("").to_string();
             let new_s = arguments["new_string"].as_str().unwrap_or("");
@@ -920,6 +924,7 @@ pub fn strip_windows_extended_prefix(path: &str) -> String {
 #[cfg(test)]
 mod safe_path_tests {
     use super::{execute_file_tool, safe_path};
+    use crate::core::tool_names;
     use std::fs;
     use std::path::PathBuf;
 
@@ -1002,7 +1007,7 @@ mod safe_path_tests {
         fs::write(base.join("ten.txt"), body).unwrap();
 
         let args = serde_json::json!({"path": "ten.txt", "max_lines": 5, "max_bytes": -1});
-        let r = execute_file_tool("read_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
         let text = text_of(&r);
         assert!(text.contains("    1| line1"), "首行应带行号: {text}");
         assert!(text.contains("    3| line3"), "头部末行: {text}");
@@ -1022,7 +1027,7 @@ mod safe_path_tests {
         let base_s = base.to_string_lossy().to_string();
         fs::write(base.join("h.txt"), "hello\nworld\n").unwrap();
         let args = serde_json::json!({"path": "h.txt", "with_hash": true});
-        let r = execute_file_tool("read_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
         let text = text_of(&r);
         assert!(text.contains("    1| hello"));
         assert!(text.contains("    2| world"));
@@ -1039,7 +1044,7 @@ mod safe_path_tests {
         fs::write(base.join("a.txt"), "hello").unwrap();
         let args =
             serde_json::json!({"path": "a.txt", "content": "NEW", "expect_hash": "deadbeef"});
-        let r = execute_file_tool("write_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
         let text = text_of(&r);
         assert!(text.contains("[HASH MISMATCH]"), "应报哈希不匹配: {text}");
         assert_eq!(fs::read_to_string(base.join("a.txt")).unwrap(), "hello");
@@ -1054,7 +1059,7 @@ mod safe_path_tests {
         fs::write(base.join("a.txt"), "hello").unwrap();
         let hash = super::sha256_hex(b"hello");
         let args = serde_json::json!({"path": "a.txt", "content": "NEW", "expect_hash": hash});
-        let r = execute_file_tool("write_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
         let text = text_of(&r);
         assert!(text.contains("✓ 写入"), "应写入成功: {text}");
         assert_eq!(fs::read_to_string(base.join("a.txt")).unwrap(), "NEW");
@@ -1068,7 +1073,7 @@ mod safe_path_tests {
         let base_s = base.to_string_lossy().to_string();
         let args =
             serde_json::json!({"path": "n.txt", "content": "first", "expect_hash": "whatever"});
-        let r = execute_file_tool("write_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
         assert!(text_of(&r).contains("✓ 写入"));
         assert_eq!(fs::read_to_string(base.join("n.txt")).unwrap(), "first");
         let _ = fs::remove_dir_all(&base);
@@ -1080,17 +1085,17 @@ mod safe_path_tests {
         let base = fresh_base("atomic");
         let base_s = base.to_string_lossy().to_string();
         execute_file_tool(
-            "write_file",
+            tool_names::WRITE_FILE,
             &serde_json::json!({"path": "sub/dir/f.txt", "content": "v1"}),
             &base_s,
         );
         execute_file_tool(
-            "write_file",
+            tool_names::WRITE_FILE,
             &serde_json::json!({"path": "sub/dir/f.txt", "content": "v2"}),
             &base_s,
         );
         execute_file_tool(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &serde_json::json!({"path": "sub/dir/f.txt", "old_string": "v2", "new_string": "v3"}),
             &base_s,
         );
@@ -1113,7 +1118,7 @@ mod safe_path_tests {
         let base_s = base.to_string_lossy().to_string();
         fs::write(base.join("r.txt"), "alpha\nbeta\ngamma\n").unwrap();
         let args = serde_json::json!({"path": "r.txt", "old_string": "beta", "new_string": "BETA"});
-        let r = execute_file_tool("replace_in_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
         let text = text_of(&r);
         assert!(text.contains("✓ 替换"), "应替换成功: {text}");
         assert!(text.contains("[HASH sha256:"), "应返回新哈希: {text}");
@@ -1137,7 +1142,7 @@ mod safe_path_tests {
         fs::write(base.join("big.txt"), &body).unwrap();
 
         let r = execute_file_tool(
-            "read_file",
+            tool_names::READ_FILE,
             &serde_json::json!({"path": "big.txt", "max_bytes": 1024, "with_hash": true}),
             &base_s,
         );
@@ -1150,7 +1155,7 @@ mod safe_path_tests {
 
         // anchor_hash validation uses the full-content digest — must pass with the read hash
         let r = execute_file_tool(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &serde_json::json!({"path": "big.txt", "old_string": "UNIQUE_MARKER", "new_string": "REPLACED", "anchor_hash": expected}),
             &base_s,
         );
@@ -1174,7 +1179,7 @@ mod safe_path_tests {
 
         let start = std::time::Instant::now();
         let r = execute_file_tool(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &serde_json::json!({"path": "many.txt", "old_string": "aaa", "new_string": "bbb"}),
             &base_s,
         );
@@ -1209,7 +1214,7 @@ mod safe_path_tests {
         }
 
         execute_file_tool(
-            "write_file",
+            tool_names::WRITE_FILE,
             &serde_json::json!({"path": "script.sh", "content": "#!/bin/sh\necho v2\n"}),
             &base_s,
         );

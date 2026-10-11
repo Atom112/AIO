@@ -3,6 +3,8 @@
 //! Serves approval previews for the Agent file-modification tools: precomputes a
 //! Git-style unified diff for write_file / replace_in_file / delete_file for user confirmation.
 
+use crate::core::tool_names;
+
 /// Preview source cap (SEC-04): only the head of oversized files feeds the preview —
 /// a multi-GB text file must not be read whole to render an 8000-byte diff.
 const PREVIEW_SOURCE_CAP: u64 = 2 * 1024 * 1024;
@@ -32,7 +34,7 @@ pub fn compute_diff_preview(
     };
 
     match tool_name {
-        "write_file" => {
+        tool_names::WRITE_FILE => {
             let new_content = arguments["content"].as_str().unwrap_or("");
             let old_content = full_path()
                 .map(|p| read_preview_source(&p))
@@ -44,7 +46,7 @@ pub fn compute_diff_preview(
             );
             (Some(diff), file_path)
         }
-        "replace_in_file" => {
+        tool_names::REPLACE_IN_FILE => {
             let old_s = arguments["old_string"].as_str().unwrap_or("");
             let new_s = arguments["new_string"].as_str().unwrap_or("");
             let old_content = full_path()
@@ -62,7 +64,7 @@ pub fn compute_diff_preview(
                 (None, file_path)
             }
         }
-        "delete_file" => {
+        tool_names::DELETE_FILE => {
             let old_content = full_path()
                 .map(|p| read_preview_source(&p))
                 .unwrap_or_default();

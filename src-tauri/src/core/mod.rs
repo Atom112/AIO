@@ -15,3 +15,4 @@ pub mod permission;
 pub mod secure_store;
 pub mod state;
 pub mod subagent;
+pub mod tool_names;

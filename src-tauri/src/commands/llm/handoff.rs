@@ -1,6 +1,7 @@
 //! Compression archives and handoff documents (snapcompact-style archives, handoff docs, subagent progress summaries).
 
 use crate::commands::llm::budget::estimate_message_tokens;
+use crate::core::tool_names;
 use crate::ierr;
 use crate::utils::truncate::truncate_chars_head_tail;
 use tauri::AppHandle;
@@ -186,11 +187,11 @@ pub(crate) fn write_handoff_doc(
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 if [
-                    "read_file",
-                    "write_file",
-                    "replace_in_file",
-                    "delete_file",
-                    "make_directory",
+                    tool_names::READ_FILE,
+                    tool_names::WRITE_FILE,
+                    tool_names::REPLACE_IN_FILE,
+                    tool_names::DELETE_FILE,
+                    tool_names::MAKE_DIRECTORY,
                 ]
                 .contains(&name)
                 {

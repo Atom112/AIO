@@ -42,6 +42,7 @@ pub(crate) mod vision;
 // `llm::<module>::<command>` 全路径注册（同 checkpoints/tasks 的既有风格），
 // 消除“同一符号两条路径”带来的漂移面。子模块间引用本就走全路径。
 // mod.rs 自身使用的子模块符号改为下方显式 use（符号 → 真实来源模块）。
+use crate::core::tool_names;
 use budget::is_retryable_error;
 use checkpoints::load_checkpoint_messages;
 use client::{non_streaming_http_client, streaming_http_client};
@@ -400,7 +401,7 @@ pub(crate) async fn execute_builtin_tool(
     // Fail-closed: when the sandbox is unavailable (no bwrap/sandbox-exec), autonomous modes
     // refuse command execution per config. Normal/Plan modes still go through permission
     // approval (Ask), whose reason carries a sandbox-unavailable warning (see the Ask branch below).
-    if tool_name == "execute_command"
+    if tool_name == tool_names::EXECUTE_COMMAND
         && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
         && !crate::utils::sandbox::sandbox_available()
         && crate::core::config::load_app_config(app)
@@ -435,7 +436,7 @@ pub(crate) async fn execute_builtin_tool(
     // SEC-01: network=true was previously auto-allowed in Auto/Workflow (permission
     // Allow) — one prompt injection could exfiltrate any user-readable file
     // silently. Network-declaring commands now require confirmation in every mode.
-    let network_auto = tool_name == "execute_command"
+    let network_auto = tool_name == tool_names::EXECUTE_COMMAND
         && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
         && arguments["network"].as_bool().unwrap_or(false)
         && action == PermissionAction::Allow;
@@ -461,7 +462,7 @@ pub(crate) async fn execute_builtin_tool(
                 tool_name
             );
             // Command execution: dangerous-command annotation
-            if tool_name == "execute_command" {
+            if tool_name == tool_names::EXECUTE_COMMAND {
                 if let Some(cmd) = arguments["command"].as_str() {
                     if let Some(danger) = shell_tools::check_dangerous_command(cmd) {
                         let prefix = match danger.category {
@@ -487,7 +488,7 @@ pub(crate) async fn execute_builtin_tool(
                 }
             }
             // Network declaration and sandbox availability annotations: the approval info presents the full risk surface
-            if tool_name == "execute_command" {
+            if tool_name == tool_names::EXECUTE_COMMAND {
                 if network_auto {
                     reason.insert_str(
                         0,
@@ -532,7 +533,7 @@ pub(crate) async fn execute_builtin_tool(
     }
 
     // Dispatch and execute
-    if tool_name == "execute_command" {
+    if tool_name == tool_names::EXECUTE_COMMAND {
         let command = arguments["command"].as_str().unwrap_or("").to_string();
         let timeout = arguments["timeout"].as_u64();
         // Network egress control: declared explicitly by the model; default false = no network inside the sandbox
@@ -580,11 +581,11 @@ pub(crate) async fn execute_builtin_tool(
             }
         }
         Ok(result)
-    } else if tool_name == "web_fetch" {
+    } else if tool_name == tool_names::WEB_FETCH {
         let url = arguments["url"].as_str().unwrap_or("");
         let max_bytes = arguments["max_bytes"].as_u64();
         Ok(web_tools::execute_web_fetch(url, max_bytes).await)
-    } else if tool_name == "web_search" {
+    } else if tool_name == tool_names::WEB_SEARCH {
         let query = arguments["query"].as_str().unwrap_or("");
         let count = arguments["count"].as_u64();
         Ok(web_tools::execute_web_search(query, count).await)
@@ -614,9 +615,9 @@ pub(crate) async fn execute_builtin_tool(
             &root_c,
         )
         .await
-    } else if tool_name == "think" {
+    } else if tool_name == tool_names::THINK {
         Ok(crate::utils::think::execute(arguments))
-    } else if tool_name == "project_map" {
+    } else if tool_name == tool_names::PROJECT_MAP {
         // SEC-20: the tree walk is synchronous FS traversal — run it on the
         // blocking pool instead of stalling the async worker thread.
         let root_c = tools_root.clone();
@@ -635,14 +636,14 @@ pub(crate) async fn execute_builtin_tool(
         .unwrap_or_else(|_| git_tools::tool_err("Git 工具执行线程 panic")))
     } else if matches!(
         tool_name,
-        "read_file"
-            | "write_file"
-            | "replace_in_file"
+        tool_names::READ_FILE
+            | tool_names::WRITE_FILE
+            | tool_names::REPLACE_IN_FILE
             | "search_files"
-            | "search_content"
-            | "list_directory"
-            | "delete_file"
-            | "make_directory"
+            | tool_names::SEARCH_CONTENT
+            | tool_names::LIST_DIRECTORY
+            | tool_names::DELETE_FILE
+            | tool_names::MAKE_DIRECTORY
     ) {
         // File tools run under the multi-agent write-coordination policy: mutating
         // single-path tools take the per-file exclusive lock and cross-writer edits must

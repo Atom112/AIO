@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::models::AgentMode;
+use crate::core::tool_names;
 
 // ====== Permission actions ======
 
@@ -158,13 +159,13 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // Read operations: auto-allowed.
             r(
                 "builtin-normal-allow-read",
-                "read_file",
+                tool_names::READ_FILE,
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-normal-allow-list-dir",
-                "list_directory",
+                tool_names::LIST_DIRECTORY,
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
@@ -177,13 +178,13 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // Write operations: require confirmation.
             r(
                 "builtin-normal-ask-write",
-                "write_file",
+                tool_names::WRITE_FILE,
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
             r(
                 "builtin-normal-ask-replace",
-                "replace_in_file",
+                tool_names::REPLACE_IN_FILE,
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
@@ -221,33 +222,33 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
             r(
                 "builtin-normal-ask-mkdir",
-                "make_directory",
+                tool_names::MAKE_DIRECTORY,
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
             // Delete operations: require confirmation.
             r(
                 "builtin-normal-ask-delete",
-                "delete_file",
+                tool_names::DELETE_FILE,
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
             // Memory tools: reads and writes allowed (low-risk in-project metadata; users can override via permissions.json).
             r(
                 "builtin-normal-allow-memory-read",
-                "recall",
+                tool_names::RECALL,
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-normal-allow-memory-search",
-                "search_memory",
+                tool_names::SEARCH_MEMORY,
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-normal-allow-memory-write",
-                "remember",
+                tool_names::REMEMBER,
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
@@ -279,13 +280,13 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // All built-in filesystem operations: auto-allowed.
             r(
                 "builtin-auto-allow-fs-read",
-                "read_file",
+                tool_names::READ_FILE,
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-fs-list",
-                "list_directory",
+                tool_names::LIST_DIRECTORY,
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
@@ -297,13 +298,13 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
             r(
                 "builtin-auto-allow-fs-write",
-                "write_file",
+                tool_names::WRITE_FILE,
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-fs-replace",
-                "replace_in_file",
+                tool_names::REPLACE_IN_FILE,
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
@@ -340,21 +341,21 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
             r(
                 "builtin-auto-allow-fs-mkdir",
-                "make_directory",
+                tool_names::MAKE_DIRECTORY,
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
             // Delete operations: require confirmation (dangerous).
             r(
                 "builtin-auto-ask-delete",
-                "delete_file",
+                tool_names::DELETE_FILE,
                 &[AgentMode::Auto],
                 PermissionAction::Ask,
             ),
             // Command execution: auto-allowed (no per-command confirmation in Auto mode; a risk notice was shown on entry).
             r(
                 "builtin-auto-allow-command",
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
@@ -374,25 +375,25 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // Identical to the Auto mode rules: fully automatic, except file deletion which still asks.
             r(
                 "builtin-workflow-allow-fs-read",
-                "read_file",
+                tool_names::READ_FILE,
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-workflow-allow-fs-list",
-                "list_directory",
+                tool_names::LIST_DIRECTORY,
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-workflow-allow-fs-write",
-                "write_file",
+                tool_names::WRITE_FILE,
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-workflow-allow-fs-edit",
-                "replace_in_file",
+                tool_names::REPLACE_IN_FILE,
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
@@ -410,21 +411,21 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
             r(
                 "builtin-workflow-allow-fs-mkdir",
-                "make_directory",
+                tool_names::MAKE_DIRECTORY,
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
             // Delete operations: require confirmation (dangerous).
             r(
                 "builtin-workflow-ask-delete",
-                "delete_file",
+                tool_names::DELETE_FILE,
                 &[AgentMode::Workflow],
                 PermissionAction::Ask,
             ),
             // Command execution: auto-allowed.
             r(
                 "builtin-workflow-allow-command",
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
@@ -443,13 +444,13 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // Plan mode is read-only: all write/delete operations denied.
             r(
                 "builtin-plan-allow-read",
-                "read_file",
+                tool_names::READ_FILE,
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-plan-allow-list-dir",
-                "list_directory",
+                tool_names::LIST_DIRECTORY,
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
@@ -462,7 +463,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // Write/delete operations: denied.
             rf(
                 "builtin-plan-deny-write",
-                "write_file",
+                tool_names::WRITE_FILE,
                 &[AgentMode::Plan],
                 PermissionAction::Deny,
                 None,
@@ -471,7 +472,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
             rf(
                 "builtin-plan-deny-replace",
-                "replace_in_file",
+                tool_names::REPLACE_IN_FILE,
                 &[AgentMode::Plan],
                 PermissionAction::Deny,
                 None,
@@ -480,7 +481,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
             rf(
                 "builtin-plan-deny-mkdir",
-                "make_directory",
+                tool_names::MAKE_DIRECTORY,
                 &[AgentMode::Plan],
                 PermissionAction::Deny,
                 None,
@@ -489,7 +490,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
             rf(
                 "builtin-plan-deny-delete",
-                "delete_file",
+                tool_names::DELETE_FILE,
                 &[AgentMode::Plan],
                 PermissionAction::Deny,
                 None,
@@ -502,13 +503,13 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // here made every such call hard-rejected after being advertised).
             r(
                 "builtin-plan-allow-web-fetch",
-                "web_fetch",
+                tool_names::WEB_FETCH,
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-plan-allow-web-search",
-                "web_search",
+                tool_names::WEB_SEARCH,
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
@@ -553,19 +554,19 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // Memory tools: reads allowed, writes denied.
             r(
                 "builtin-plan-allow-memory-read",
-                "recall",
+                tool_names::RECALL,
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-plan-allow-memory-search",
-                "search_memory",
+                tool_names::SEARCH_MEMORY,
                 &[AgentMode::Plan],
                 PermissionAction::Allow,
             ),
             rf(
                 "builtin-plan-deny-memory-write",
-                "remember",
+                tool_names::REMEMBER,
                 &[AgentMode::Plan],
                 PermissionAction::Deny,
                 None,
@@ -593,7 +594,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             // Command execution has side effects, conflicting with Plan mode's research-only goal -> explicitly denied.
             rf(
                 "builtin-plan-deny-execute-command",
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 &[AgentMode::Plan],
                 PermissionAction::Deny,
                 None,
@@ -742,7 +743,7 @@ fn rule_matches(
     // 5a. MCP-18 defense-in-depth: a SESSION rule for execute_command that never
     //     got a prefix (empty command at derivation time) must not match anything —
     //     without this check it would allow every command for the whole session.
-    if rule.session && tool_name == "execute_command" && rule.command_prefix.is_none() {
+    if rule.session && tool_name == tool_names::EXECUTE_COMMAND && rule.command_prefix.is_none() {
         return false;
     }
     // 5. Command prefix: execute_command only - the first whitespace-delimited token must match exactly.
@@ -754,7 +755,7 @@ fn rule_matches(
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let first_token = cmd.split_whitespace().next().unwrap_or("");
-        if tool_name != "execute_command"
+        if tool_name != tool_names::EXECUTE_COMMAND
             || first_token.is_empty()
             || !first_token.eq_ignore_ascii_case(prefix)
             || (rule.session && command_has_chain_operators(cmd))
@@ -903,14 +904,14 @@ mod tests {
     #[test]
     fn test_glob_match() {
         assert!(glob_match("*", "anything"));
-        assert!(glob_match("write_file", "write_file"));
-        assert!(!glob_match("write_file", "read_file"));
+        assert!(glob_match(tool_names::WRITE_FILE, tool_names::WRITE_FILE));
+        assert!(!glob_match(tool_names::WRITE_FILE, tool_names::READ_FILE));
         assert!(glob_match("search_*", "search_files"));
-        assert!(glob_match("search_*", "search_content"));
-        assert!(!glob_match("search_*", "read_file"));
-        assert!(glob_match("*_file", "write_file"));
-        assert!(glob_match("*_file", "delete_file"));
-        assert!(!glob_match("*_file", "list_directory"));
+        assert!(glob_match("search_*", tool_names::SEARCH_CONTENT));
+        assert!(!glob_match("search_*", tool_names::READ_FILE));
+        assert!(glob_match("*_file", tool_names::WRITE_FILE));
+        assert!(glob_match("*_file", tool_names::DELETE_FILE));
+        assert!(!glob_match("*_file", tool_names::LIST_DIRECTORY));
 
         // ** matches paths recursively: dir/** should match deep paths.
         assert!(glob_match("dir/**", "dir/a/b"));
@@ -933,7 +934,7 @@ mod tests {
     fn test_normal_mode_read_allowed() {
         let args = serde_json::json!({"path": "src/main.rs"});
         let result = check_permission_defaults(
-            "read_file",
+            tool_names::READ_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
@@ -945,7 +946,7 @@ mod tests {
     fn test_normal_mode_write_asks() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
         let result = check_permission_defaults(
-            "write_file",
+            tool_names::WRITE_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
@@ -957,7 +958,7 @@ mod tests {
     fn test_normal_mode_delete_asks() {
         let args = serde_json::json!({"path": "src/main.rs"});
         let result = check_permission_defaults(
-            "delete_file",
+            tool_names::DELETE_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
@@ -969,7 +970,7 @@ mod tests {
     fn test_plan_mode_write_denied() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
         let result = check_permission_defaults(
-            "write_file",
+            tool_names::WRITE_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Plan,
@@ -981,7 +982,7 @@ mod tests {
     fn test_plan_mode_execute_command_denied() {
         let args = serde_json::json!({"command": "cargo test"});
         let result = check_permission_defaults(
-            "execute_command",
+            tool_names::EXECUTE_COMMAND,
             crate::core::ids::BUILTIN_SERVER_ID,
             &args,
             &AgentMode::Plan,
@@ -1001,7 +1002,7 @@ mod tests {
         let cmd_args = serde_json::json!({"command": "cargo build"});
         assert_eq!(
             check_permission_defaults(
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 crate::core::ids::BUILTIN_SERVER_ID,
                 &cmd_args,
                 &AgentMode::Normal
@@ -1010,7 +1011,7 @@ mod tests {
         );
         add_session_rule(PermissionRule {
             id: "test-session-cargo".into(),
-            tool_pattern: "execute_command".into(),
+            tool_pattern: tool_names::EXECUTE_COMMAND.into(),
             server_id: None,
             modes: Vec::new(),
             action: PermissionAction::Allow,
@@ -1021,7 +1022,7 @@ mod tests {
         });
         assert_eq!(
             check_permission_defaults(
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 crate::core::ids::BUILTIN_SERVER_ID,
                 &cmd_args,
                 &AgentMode::Normal
@@ -1032,7 +1033,7 @@ mod tests {
         let npm_args = serde_json::json!({"command": "npm test"});
         assert_eq!(
             check_permission_defaults(
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 crate::core::ids::BUILTIN_SERVER_ID,
                 &npm_args,
                 &AgentMode::Normal
@@ -1043,7 +1044,7 @@ mod tests {
         let inject_args = serde_json::json!({"command": "cargox; rm -rf /"});
         assert_eq!(
             check_permission_defaults(
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 crate::core::ids::BUILTIN_SERVER_ID,
                 &inject_args,
                 &AgentMode::Normal
@@ -1053,7 +1054,7 @@ mod tests {
         // Session allow cannot cross Deny (Plan mode has a built-in Deny for execute_command).
         assert_eq!(
             check_permission_defaults(
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 crate::core::ids::BUILTIN_SERVER_ID,
                 &cmd_args,
                 &AgentMode::Plan
@@ -1072,7 +1073,7 @@ mod tests {
         clear_session_rules();
         add_session_rule(PermissionRule {
             id: "test-session-cargo-sec02".into(),
-            tool_pattern: "execute_command".into(),
+            tool_pattern: tool_names::EXECUTE_COMMAND.into(),
             server_id: None,
             modes: Vec::new(),
             action: PermissionAction::Allow,
@@ -1085,7 +1086,7 @@ mod tests {
         // Same prefix, plain command still allowed
         assert_eq!(
             check_permission_defaults(
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 server,
                 &serde_json::json!({"command": "cargo fmt"}),
                 &AgentMode::Normal
@@ -1103,7 +1104,7 @@ mod tests {
         ] {
             assert_eq!(
                 check_permission_defaults(
-                    "execute_command",
+                    tool_names::EXECUTE_COMMAND,
                     server,
                     &serde_json::json!({"command": chained}),
                     &AgentMode::Normal
@@ -1124,7 +1125,7 @@ mod tests {
         clear_session_rules();
         add_session_rule(PermissionRule {
             id: "test-session-noprefix-mcp18".into(),
-            tool_pattern: "execute_command".into(),
+            tool_pattern: tool_names::EXECUTE_COMMAND.into(),
             server_id: None,
             modes: Vec::new(),
             action: PermissionAction::Allow,
@@ -1135,7 +1136,7 @@ mod tests {
         });
         assert_eq!(
             check_permission_defaults(
-                "execute_command",
+                tool_names::EXECUTE_COMMAND,
                 crate::core::ids::BUILTIN_SERVER_ID,
                 &serde_json::json!({"command": "rm -rf build"}),
                 &AgentMode::Normal
@@ -1151,7 +1152,7 @@ mod tests {
     /// made every advertised call hard-rejected).
     #[test]
     fn plan_mode_web_tools_are_allowed() {
-        for tool in ["web_fetch", "web_search"] {
+        for tool in [tool_names::WEB_FETCH, tool_names::WEB_SEARCH] {
             assert_eq!(
                 check_permission_defaults(
                     tool,
@@ -1173,7 +1174,7 @@ mod tests {
         clear_session_rules();
         add_session_rule(PermissionRule {
             id: "test-session-write-sec02".into(),
-            tool_pattern: "write_file".into(),
+            tool_pattern: tool_names::WRITE_FILE.into(),
             server_id: None,
             modes: Vec::new(),
             action: PermissionAction::Allow,
@@ -1187,7 +1188,7 @@ mod tests {
         // Same file -> session rule allows (built-in Normal for write_file is Ask)
         assert_eq!(
             check_permission_defaults(
-                "write_file",
+                tool_names::WRITE_FILE,
                 server,
                 &args_for("/proj/src/main.rs"),
                 &AgentMode::Normal
@@ -1197,7 +1198,7 @@ mod tests {
         // Sibling file / other directory -> back to built-in Ask
         assert_eq!(
             check_permission_defaults(
-                "write_file",
+                tool_names::WRITE_FILE,
                 server,
                 &args_for("/proj/src/other.rs"),
                 &AgentMode::Normal
@@ -1206,7 +1207,7 @@ mod tests {
         );
         assert_eq!(
             check_permission_defaults(
-                "write_file",
+                tool_names::WRITE_FILE,
                 server,
                 &args_for("/proj/README.md"),
                 &AgentMode::Normal
@@ -1220,7 +1221,7 @@ mod tests {
     fn test_auto_mode_write_allowed() {
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
         let result = check_permission_defaults(
-            "write_file",
+            tool_names::WRITE_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Auto,
@@ -1232,7 +1233,7 @@ mod tests {
     fn test_auto_mode_delete_asks() {
         let args = serde_json::json!({"path": "src/main.rs"});
         let result = check_permission_defaults(
-            "delete_file",
+            tool_names::DELETE_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Auto,
@@ -1244,7 +1245,7 @@ mod tests {
     fn test_off_mode_denies_all() {
         let args = serde_json::json!({"path": "src/main.rs"});
         let result = check_permission_defaults(
-            "read_file",
+            tool_names::READ_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Off,
@@ -1256,7 +1257,7 @@ mod tests {
     fn test_custom_rule_overrides_default() {
         let custom = vec![PermissionRule {
             id: "custom-allow-delete".into(),
-            tool_pattern: "delete_file".into(),
+            tool_pattern: tool_names::DELETE_FILE.into(),
             server_id: None,
             modes: vec![AgentMode::Normal],
             action: PermissionAction::Allow,
@@ -1267,7 +1268,7 @@ mod tests {
         }];
         let args = serde_json::json!({"path": "src/old.rs"});
         let result = check_permission(
-            "delete_file",
+            tool_names::DELETE_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
@@ -1280,7 +1281,7 @@ mod tests {
     fn test_deny_overrides_allow() {
         let custom = vec![PermissionRule {
             id: "custom-deny-read-dotenv".into(),
-            tool_pattern: "read_file".into(),
+            tool_pattern: tool_names::READ_FILE.into(),
             server_id: None,
             modes: vec![AgentMode::Auto],
             action: PermissionAction::Deny,
@@ -1291,7 +1292,7 @@ mod tests {
         }];
         let args = serde_json::json!({"path": ".env"});
         let result = check_permission(
-            "read_file",
+            tool_names::READ_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Auto,
@@ -1304,9 +1305,9 @@ mod tests {
     fn test_normal_memory_tools_allowed() {
         let args = serde_json::json!({});
         for tool in [
-            "remember",
-            "recall",
-            "search_memory",
+            tool_names::REMEMBER,
+            tool_names::RECALL,
+            tool_names::SEARCH_MEMORY,
             "update_memory",
             "forget_memory",
         ] {
@@ -1329,7 +1330,7 @@ mod tests {
         let args = serde_json::json!({});
         assert_eq!(
             check_permission_defaults(
-                "recall",
+                tool_names::RECALL,
                 crate::core::ids::BUILTIN_FS_SERVER_ID,
                 &args,
                 &AgentMode::Plan
@@ -1338,7 +1339,7 @@ mod tests {
         );
         assert_eq!(
             check_permission_defaults(
-                "remember",
+                tool_names::REMEMBER,
                 crate::core::ids::BUILTIN_FS_SERVER_ID,
                 &args,
                 &AgentMode::Plan
@@ -1362,7 +1363,7 @@ mod tests {
         // Normal mode: read_file is built-in Allow (priority 10); a same-priority custom rule tightens it to Ask.
         let custom = vec![PermissionRule {
             id: "tighten-read".into(),
-            tool_pattern: "read_file".into(),
+            tool_pattern: tool_names::READ_FILE.into(),
             server_id: None,
             modes: vec![],
             action: PermissionAction::Ask,
@@ -1373,7 +1374,7 @@ mod tests {
         }];
         let args = serde_json::json!({"path": "src/main.rs"});
         let result = check_permission(
-            "read_file",
+            tool_names::READ_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Normal,
@@ -1387,7 +1388,7 @@ mod tests {
     fn test_custom_low_priority_deny_still_wins() {
         let custom = vec![PermissionRule {
             id: "deny-write-src".into(),
-            tool_pattern: "write_file".into(),
+            tool_pattern: tool_names::WRITE_FILE.into(),
             server_id: None,
             modes: vec![AgentMode::Auto],
             action: PermissionAction::Deny,
@@ -1398,7 +1399,7 @@ mod tests {
         }];
         let args = serde_json::json!({"path": "src/main.rs", "content": "x"});
         let result = check_permission(
-            "write_file",
+            tool_names::WRITE_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Auto,

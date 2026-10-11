@@ -23,6 +23,7 @@ use crate::utils::web_tools;
 use super::execute_builtin_tool;
 use super::streaming::stream_one_round;
 use super::{execute_tool_with_retry, is_git_repo};
+use crate::core::tool_names;
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -132,7 +133,7 @@ pub(crate) fn build_subagent_tools(
         }
     }
     // Command execution tool
-    if profile.is_tool_allowed("execute_command") {
+    if profile.is_tool_allowed(tool_names::EXECUTE_COMMAND) {
         let spec = shell_tools::get_command_tool_spec();
         server_map.insert(
             spec.function.name.clone(),
@@ -281,7 +282,7 @@ pub(crate) async fn handle_delegate_task(
     if *agent_mode != AgentMode::Auto {
         let custom_rules = permission::load_permissions(Some(&project_root)).rules;
         let action = permission::check_permission(
-            "delegate_task",
+            tool_names::DELEGATE_TASK,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             arguments,
             agent_mode,
@@ -306,7 +307,7 @@ pub(crate) async fn handle_delegate_task(
                     app,
                     pending.inner(),
                     crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    "delegate_task",
+                    tool_names::DELEGATE_TASK,
                     arguments,
                     &reason,
                     None,
@@ -411,10 +412,10 @@ async fn resolve_task_workspace(
 ) -> (crate::utils::worktree::TaskWorkspace, Vec<String>) {
     use crate::utils::worktree::TaskWorkspace;
     let mut notes = Vec::new();
-    let write_capable = profile.is_tool_allowed("write_file")
-        || profile.is_tool_allowed("replace_in_file")
-        || profile.is_tool_allowed("delete_file")
-        || profile.is_tool_allowed("execute_command");
+    let write_capable = profile.is_tool_allowed(tool_names::WRITE_FILE)
+        || profile.is_tool_allowed(tool_names::REPLACE_IN_FILE)
+        || profile.is_tool_allowed(tool_names::DELETE_FILE)
+        || profile.is_tool_allowed(tool_names::EXECUTE_COMMAND);
     if !write_capable {
         return (TaskWorkspace::Shared, notes); // read-only tasks never need isolation
     }
@@ -908,7 +909,7 @@ pub(crate) async fn handle_delegate_tasks(
         let project_root = file_tools::resolve_project_root(app, project_id)?;
         let custom_rules = permission::load_permissions(Some(&project_root)).rules;
         let action = permission::check_permission(
-            "delegate_tasks",
+            tool_names::DELEGATE_TASKS,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             arguments,
             agent_mode,
@@ -943,7 +944,7 @@ pub(crate) async fn handle_delegate_tasks(
                     app,
                     pending.inner(),
                     crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    "delegate_tasks",
+                    tool_names::DELEGATE_TASKS,
                     arguments,
                     &reason,
                     None,
@@ -2281,7 +2282,7 @@ mod tests {
         let first = drain_notices_at(&c, "asst", "topic", "zh-CN").unwrap();
         assert!(first.contains("后台子智能体通知"));
         assert!(first.contains("结果 A"));
-        assert!(first.contains("get_subagent_result"));
+        assert!(first.contains(tool_names::GET_SUBAGENT_RESULT));
         assert!(drain_notices_at(&c, "other", "topic", "zh-CN").is_none());
         // 二次 drain：consume-once，不再返回
         assert!(drain_notices_at(&c, "asst", "topic", "zh-CN").is_none());

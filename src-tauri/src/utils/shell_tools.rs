@@ -32,6 +32,7 @@ const MAX_COMMAND_LEN: usize = 4096;
 pub use crate::utils::tool_result::{tool_err, tool_ok};
 
 // Truncation is provided by utils::truncate (name matches semantics)
+use crate::core::tool_names;
 use crate::utils::truncate::truncate_bytes_lossy as truncate_output;
 
 // ====== Dangerous-command detection ======
@@ -701,7 +702,7 @@ pub fn get_command_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         function: ToolFunctionSpec {
-            name: "execute_command".into(),
+            name: tool_names::EXECUTE_COMMAND.into(),
             description: "在项目目录中执行系统命令，返回 stdout/stderr 和退出码。沙箱内默认**无网络**（Linux/macOS OS 级隔离）：命令需要联网（下载依赖、API 调用、访问 localhost 服务）时必须显式设 network=true（审批时向用户标注）。用于运行构建、测试、git 命令等。".into(),
             parameters: json!({
                 "type": "object",

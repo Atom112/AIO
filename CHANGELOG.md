@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第4项：下载器同构收敛（services::download 单一实现）
+
+- **共享下载引擎（阶段4 第4项）**：`commands/model_download.rs`（嵌入/重排模型）与 `commands/local_model_download.rs`（本地 GGUF 市场下载）各持一份同构机器——per-id 控制表（pause/cancel 旗标）、控制注销守卫、流复制尾段（append/truncate → 分块循环 → 节流进度 → 暂停/取消轮询 → flush → ENG-04 终长核对 → 原子 rename），两副本已发生过一次漂移（ENG-5 身份匹配注销曾只存在于 GGUF 一侧）。全部收敛到新建 `services/download.rs` 单一实现：两下载器只保留域特有逻辑（多源回退 / If-Range+ETag / ENG-11 空间预检 / GGUF 魔数校验）；嵌入侧的注销守卫顺带升级为 ENG-5 身份匹配版（原版无条件移除）
+- **回归测试迁移**：ENG-5 身份匹配注销测试上移共享模块（覆盖更全：注册→继任覆盖→前任退出不误删→继任可置位→继任退出正常清理→signal 空表返回 false）
+
 ### 🧪 阶段5 第2批：SSE/恶意 server 集成测试 + BTW 乱码修复
 
 - **SSE 跨 chunk UTF-8 切割流测试（报告阶段5第3项）**：新增 `commands/llm/sse_lines.rs`——把主循环内联的字节级行缓冲抽为 `SseLineBuffer` 纯模块；穷举回归测试把含中文与 4 字节 emoji 的多行流按**每个字节边界**两段切分（外加逐字节喂入），重组行必须与整段喂入一致——任何边界产生 U+FFFD 即失败（PROV-1 的穷举防线）；另补 LOOP-9 超限与 CRLF/trim 行为测试

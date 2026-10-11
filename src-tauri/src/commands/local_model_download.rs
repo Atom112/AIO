@@ -14,13 +14,17 @@
 
 use crate::core::events as ev;
 use crate::ierr;
+// 阶段4: 控制表/注销守卫/流复制尾段——与嵌入模型下载器共享（services::download，
+// 本文件此前自持一份同构副本，且 ENG-5 身份匹配注销曾只存在于这一侧）
+use crate::services::download::{
+    signal_download, stream_to_checkpoint, DownloadControl, DownloadInterrupt, UnregisterGuard,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Window};
-use tokio::io::AsyncWriteExt;
 
 use crate::commands::local_model_market::MarketFile;
 
@@ -72,18 +76,8 @@ pub struct InstalledLocalModel {
     pub size_bytes: u64,
 }
 
-/// Control flags for an in-flight download (registered per id).
-#[derive(Clone)]
-struct DownloadControl {
-    cancel: Arc<AtomicBool>,
-    pause: Arc<AtomicBool>,
-}
-
-fn download_controls() -> &'static Mutex<std::collections::HashMap<String, DownloadControl>> {
-    static CONTROLS: OnceLock<Mutex<std::collections::HashMap<String, DownloadControl>>> =
-        OnceLock::new();
-    CONTROLS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-}
+// 阶段4: DownloadControl / download_controls / UnregisterGuard / signal_download
+// moved to services::download (shared with the embedding downloader).
 
 /// ENG-11: repo-wide concurrent download cap — unbounded parallel model downloads
 /// thrash the disk and the network; two at a time keeps large models from starving
@@ -92,39 +86,6 @@ static DOWNLOAD_SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
 fn download_slots() -> &'static tokio::sync::Semaphore {
     DOWNLOAD_SLOTS.get_or_init(|| tokio::sync::Semaphore::new(2))
-}
-
-/// ENG-5: removes only the registering task's own control entry on drop
-/// (identity-matched by the cancel flag's Arc pointer) — a successor's entry is
-/// never dropped by a predecessor's exit.
-struct UnregisterGuard {
-    id: String,
-    cancel: Arc<AtomicBool>,
-}
-
-impl Drop for UnregisterGuard {
-    fn drop(&mut self) {
-        if let Ok(mut map) = download_controls().lock() {
-            if let Some(current) = map.get(&self.id) {
-                if Arc::ptr_eq(&current.cancel, &self.cancel) {
-                    map.remove(&self.id);
-                }
-            }
-        }
-    }
-}
-
-fn signal_download(id: &str, set: impl Fn(&DownloadControl)) -> bool {
-    match download_controls().lock() {
-        Ok(map) => match map.get(id) {
-            Some(c) => {
-                set(c);
-                true
-            }
-            None => false,
-        },
-        Err(_) => false,
-    }
 }
 
 /// Default install directory for local models: `<app_data_dir>/models/local`.
@@ -311,7 +272,9 @@ pub async fn local_model_download(
     // second task overwrite the first's control (making the first unstoppable) and
     // the first task's Drop guard then removed the SECOND's entry on exit.
     {
-        let mut map = download_controls().lock().map_err(|e| e.to_string())?;
+        let mut map = crate::services::download::download_controls()
+            .lock()
+            .map_err(|e| e.to_string())?;
         if map.contains_key(&id) {
             return Err(ierr!(
                 "该模型已有下载任务在进行中（不可并行下载同一模型）",
@@ -322,10 +285,7 @@ pub async fn local_model_download(
     }
     // ENG-5: the unregister guard removes only OUR entry (identity-matched by the
     // cancel flag's Arc pointer), never a successor's.
-    let _guard = UnregisterGuard {
-        id: id.clone(),
-        cancel: control.cancel.clone(),
-    };
+    let _guard = UnregisterGuard::new(&id, &control);
 
     // ENG-11: wait for a global download slot; a queued task still honors cancel
     // (the flags are polled while waiting instead of blocking uninteruptibly).
@@ -512,91 +472,40 @@ pub async fn local_model_download(
                 }
             }
         }
-        let mut stream = resp.bytes_stream();
-        let mut out = if resume_from > 0 {
-            tokio::fs::OpenOptions::new().append(true).open(&tmp).await
-        } else {
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&tmp)
-                .await
-        }
-        .map_err(|e| {
-            ierr!(
-                "创建临时文件失败: {}",
-                "Failed to create temporary file: {}",
-                e
-            )
-        })?;
-        let mut downloaded: u64 = resume_from;
-        let mut interrupted: Option<&'static str> = None;
-        let mut last_emit: Option<Instant> = None;
-        use futures_util::StreamExt as _;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| ierr!("下载中断: {}", "Download interrupted: {}", e))?;
-            out.write_all(&chunk)
-                .await
-                .map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
-            downloaded += chunk.len() as u64;
-            if last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(200)) {
-                last_emit = Some(Instant::now());
-                let _ = window.emit(
-                    ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
-                    serde_json::json!({
-                        "id": request.id,
-                        "file": file.name,
-                        "downloaded": downloaded,
-                        "total": total,
-                        "source": source,
-                    }),
-                );
-            }
-            if control.cancel.load(Ordering::Relaxed) {
-                interrupted = Some("cancelled");
-                break;
-            }
-            if control.pause.load(Ordering::Relaxed) {
-                interrupted = Some("paused");
-                break;
-            }
-        }
-        out.flush()
-            .await
-            .map_err(|e| ierr!("落盘失败: {}", "Failed to flush to disk: {}", e))?;
-        drop(out);
-        match interrupted {
-            Some("cancelled") => {
-                let _ = tokio::fs::remove_file(&tmp).await;
-                let _ = tokio::fs::remove_file(etag_path(&tmp)).await;
+        // 阶段4: streamed copy tail — shared implementation (services::download).
+        // The GGUF downloader keeps only its domain specifics: the ENG-11 space
+        // pre-check above, the `.etag` sidecar cleanup (passed to the engine so it
+        // is removed on cancel and after the atomic rename) and the ENG-04 GGUF
+        // magic verify below.
+        match stream_to_checkpoint(
+            &window,
+            ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
+            &serde_json::json!({ "id": request.id, "source": source }),
+            &file.name,
+            resp,
+            &tmp,
+            dest,
+            resume_from,
+            &control,
+            Some(&etag_path(&tmp)),
+        )
+        .await?
+        {
+            Some(DownloadInterrupt::Cancelled) => {
                 return Ok(LocalModelDownloadOutcome {
                     status: "cancelled".into(),
                     id: request.id,
                     entry_path: None,
                 });
             }
-            Some("paused") => {
+            Some(DownloadInterrupt::Paused) => {
                 return Ok(LocalModelDownloadOutcome {
                     status: "paused".into(),
                     id: request.id,
                     entry_path: None,
                 });
             }
-            _ => {
-                // ENG-04: 终长核对——截断流此前被当完成直接 rename，
-                // 之后 dest.exists() 盲信跳过使损坏成为"永久完成"
-                if total > 0 && downloaded != total {
-                    return Err(ierr!(
-                        "下载不完整（{}/{} 字节），检查点已保留可续传",
-                        "Download incomplete ({}/{} bytes); checkpoint kept, resumable",
-                        downloaded,
-                        total
-                    ));
-                }
-                std::fs::rename(&tmp, dest)
-                    .map_err(|e| ierr!("重命名失败: {}", "Failed to rename: {}", e))?;
-                let _ = std::fs::remove_file(etag_path(&tmp));
+            None => {
                 // ENG-04: GGUF 魔数校验（跨源续传/截断的最后一道兜底防线）
                 if let Err(e) = verify_gguf_magic(dest) {
                     let _ = std::fs::remove_file(dest);
@@ -1130,36 +1039,9 @@ mod tests {
         assert_eq!(path_under("D:\\Elsewhere\\a.gguf", base), None);
     }
 
-    /// ENG-5: the unregister guard is identity-matched — a predecessor's exit must
-    /// never remove a successor's control entry (the historic id-keyed remove did).
-    #[test]
-    fn unregister_guard_only_removes_own_entry() {
-        const KEY: &str = "eng5-test-model";
-        let a = DownloadControl {
-            cancel: Arc::new(AtomicBool::new(false)),
-            pause: Arc::new(AtomicBool::new(false)),
-        };
-        download_controls()
-            .lock()
-            .unwrap()
-            .insert(KEY.into(), a.clone());
-        let guard = UnregisterGuard {
-            id: KEY.into(),
-            cancel: a.cancel.clone(),
-        };
-        // 模拟后续任务覆盖控制表（同 id 并发现在已被拒，但守卫必须保持安全）
-        let b = DownloadControl {
-            cancel: Arc::new(AtomicBool::new(false)),
-            pause: Arc::new(AtomicBool::new(false)),
-        };
-        download_controls().lock().unwrap().insert(KEY.into(), b);
-        drop(guard);
-        assert!(
-            download_controls().lock().unwrap().contains_key(KEY),
-            "旧任务退出不得移除新任务的控制项"
-        );
-        download_controls().lock().unwrap().remove(KEY);
-    }
+    /// ENG-5: the unregister-guard identity-match regression now lives in
+    /// services::download::tests::control_unregister_is_identity_matched
+    /// (the guard itself moved to the shared engine in 阶段4).
 
     #[test]
     fn format_bytes_units() {

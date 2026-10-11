@@ -40,6 +40,7 @@ import {
   tabActive,
 } from '../../../shared/components/buttonStyles';
 import McpServerDetail from './McpServerDetail';
+import { createJsonCache } from '../../../core/utils/cache';
 import { formatNumber, reportError, t } from '../../../core/i18n';
 
 type ViewMode = 'market' | 'downloaded';
@@ -58,25 +59,14 @@ interface McpCatalogCache {
   nextCursor?: string;
 }
 
-const readCatalogCache = (): McpCatalogCache | null => {
-  try {
-    const raw = localStorage.getItem(CATALOG_CACHE_KEY);
-    if (!raw) return null;
-    const cache = JSON.parse(raw) as McpCatalogCache;
-    if (!cache.updatedAt || !Array.isArray(cache.servers)) return null;
-    return cache;
-  } catch {
-    return null;
-  }
-};
-
-const writeCatalogCache = (cache: McpCatalogCache) => {
-  try {
-    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    // Cache write failure must not block catalog browsing.
-  }
-};
+// 阶段4（设置样板收敛）: localStorage JSON cache via the shared factory
+// (core/utils/cache) — read is parse-memoized, write swallows quota errors.
+const catalogCache = createJsonCache<McpCatalogCache>(CATALOG_CACHE_KEY, (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const cache = raw as Partial<McpCatalogCache>;
+  if (!cache.updatedAt || !Array.isArray(cache.servers)) return null;
+  return cache as McpCatalogCache;
+});
 
 const McpServerList: Component = () => {
   const [view, setView] = createSignal<ViewMode>('market');
@@ -119,7 +109,7 @@ const McpServerList: Component = () => {
       // instant-render-on-mount path; searched/paginated views rely on the
       // backend cache alone.
       if (!cursor && !query().trim()) {
-        writeCatalogCache({
+        catalogCache.write({
           updatedAt: Date.now(),
           servers: page.servers,
           nextCursor: page.nextCursor,
@@ -137,8 +127,8 @@ const McpServerList: Component = () => {
     try {
       // Render the persisted snapshot synchronously: the market opens with
       // content immediately; a fresh cache skips the network entirely.
-      const cache = readCatalogCache();
-      const cacheIsFresh = !!cache && Date.now() - cache.updatedAt < CATALOG_CACHE_TTL_MS;
+      const cache = catalogCache.read();
+      const cacheIsFresh = !!cache && catalogCache.isFresh(cache.updatedAt, CATALOG_CACHE_TTL_MS);
       if (cache) {
         setCatalog(cache.servers);
         setNextCursor(cache.nextCursor);

@@ -39,6 +39,7 @@ import {
   btnTabXs,
   tabActive,
 } from '../../../shared/components/buttonStyles';
+import { createJsonCache } from '../../../core/utils/cache';
 import { t } from '../../../core/i18n';
 import type { MarketSkill, SkillConfig, DiscoveredNpxSkill } from '../../../core/types/skill';
 
@@ -55,26 +56,16 @@ interface SkillMarketCache {
   marketUpdatedAt: Partial<Record<MarketSort, number>>;
 }
 
-const readMarketCache = (): SkillMarketCache | null => {
-  try {
-    const raw = localStorage.getItem(MARKET_CACHE_KEY);
-    if (!raw) return null;
-    const cache = JSON.parse(raw) as SkillMarketCache;
-    if (!cache.updatedAt || !cache.markets) return null;
-    cache.marketUpdatedAt ??= { all: cache.updatedAt };
-    return cache;
-  } catch {
-    return null;
-  }
-};
-
-const writeMarketCache = (cache: SkillMarketCache) => {
-  try {
-    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    // Cache write failure must not block market browsing.
-  }
-};
+// 阶段4（设置样板收敛）: localStorage JSON cache via the shared factory
+// (core/utils/cache) — read is parse-memoized, write swallows quota errors.
+const marketCache = createJsonCache<SkillMarketCache>(MARKET_CACHE_KEY, (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const cache = raw as Partial<SkillMarketCache>;
+  if (!cache.updatedAt || !cache.markets) return null;
+  // Schema-evolution backfill: pre-bucket caches stored one global timestamp.
+  cache.marketUpdatedAt ??= { all: cache.updatedAt };
+  return cache as SkillMarketCache;
+});
 
 const formatInstalls = (value: number): string => {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -87,7 +78,7 @@ const formatInstalls = (value: number): string => {
 const [cachedNpxSkills, setCachedNpxSkills] = createSignal<DiscoveredNpxSkill[] | null>(null);
 
 const SkillList: Component = () => {
-  const initialCache = readMarketCache();
+  const initialCache = marketCache.read();
   const [view, setView] = createSignal<ViewMode>('market');
   const [scope, setScope] = createSignal<ScopeMode>(currentProjectId() ? 'project' : 'global');
   const projectId = () => (scope() === 'project' ? currentProjectId() : null);
@@ -172,11 +163,11 @@ const SkillList: Component = () => {
     setLoading(true);
     setError(null);
     try {
-      const cache = readMarketCache();
+      const cache = marketCache.read();
       if (!forceRefresh) {
         const cachedList = cache?.markets[nextSort];
         const cachedAt = cache?.marketUpdatedAt[nextSort] ?? 0;
-        const cacheIsFresh = Date.now() - cachedAt < MARKET_CACHE_TTL_MS;
+        const cacheIsFresh = marketCache.isFresh(cachedAt, MARKET_CACHE_TTL_MS);
         if (cachedList && cacheIsFresh) {
           setMarketSkills(cachedList);
           setLastRefreshedAt(new Date(cachedAt));
@@ -189,7 +180,7 @@ const SkillList: Component = () => {
       });
       setMarketSkills(list);
       const updatedAt = Date.now();
-      writeMarketCache({
+      marketCache.write({
         updatedAt,
         markets: { ...(cache?.markets ?? {}), [nextSort]: list },
         marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [nextSort]: updatedAt },
@@ -205,8 +196,8 @@ const SkillList: Component = () => {
   onMount(async () => {
     const cacheIsFresh =
       initialCache &&
-      Date.now() - (initialCache.marketUpdatedAt.all ?? 0) < MARKET_CACHE_TTL_MS &&
-      Date.now() - initialCache.updatedAt < MARKET_CACHE_TTL_MS;
+      marketCache.isFresh(initialCache.marketUpdatedAt.all ?? 0, MARKET_CACHE_TTL_MS) &&
+      marketCache.isFresh(initialCache.updatedAt, MARKET_CACHE_TTL_MS);
     setLoading(!initialCache?.markets.all);
     try {
       const localList = await listSkills(projectId());
@@ -216,7 +207,7 @@ const SkillList: Component = () => {
       const marketList = await listSkillMarket({ sort: 'all', forceRefresh: false });
       setMarketSkills(marketList);
       const updatedAt = Date.now();
-      writeMarketCache({
+      marketCache.write({
         updatedAt,
         markets: { ...(initialCache?.markets ?? {}), all: marketList },
         marketUpdatedAt: { ...(initialCache?.marketUpdatedAt ?? {}), all: updatedAt },
@@ -282,8 +273,8 @@ const SkillList: Component = () => {
       });
       setMarketSkills(marketList);
       const updatedAt = Date.now();
-      const cache = readMarketCache();
-      writeMarketCache({
+      const cache = marketCache.read();
+      marketCache.write({
         updatedAt,
         markets: { ...(cache?.markets ?? {}), [sort()]: marketList },
         marketUpdatedAt: { ...(cache?.marketUpdatedAt ?? {}), [sort()]: updatedAt },

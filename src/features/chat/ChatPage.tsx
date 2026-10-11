@@ -2,7 +2,6 @@ import { Component, createSignal, onMount, onCleanup, createEffect, Show } from 
 import { convertFileSrc } from '@tauri-apps/api/core';
 import {
   appendMessage,
-  askBtwQuestion as askBtwQuestionCmd,
   branchTopic,
   callLlmStream,
   generateImage,
@@ -25,11 +24,11 @@ import {
 } from './hooks/chatTurnEffects';
 import { registerChatCommands } from './hooks/chatCommands';
 import { usePanelResize } from './hooks/usePanelResize';
+import { useBtwQuestion } from './hooks/useBtwQuestion';
 // 阶段4 第2项（拆分切片）：API 载荷消息构建三件套抽至 utils/apiMessages（纯函数 + 11 单测）
 import { buildApiMessages, ensureToolMessagesComplete } from './utils/apiMessages';
 import { TOOL_INTERRUPTED } from './constants';
 import { autoDetectLsp, startLspServer } from '../../core/api/lsp';
-import { listen } from '@tauri-apps/api/event';
 import { useNavigate } from '@solidjs/router';
 import {
   datas,
@@ -78,7 +77,6 @@ import {
   setPendingQuestions,
   type AgentStep,
 } from '../../core/store/store';
-import { EVENTS } from '../../core/api/events';
 // P3（localStorage 裸调收编）：面板布局持久化经 core/store/layout 域 API
 import {
   loadPanelCollapsed,
@@ -178,10 +176,6 @@ const ChatPage: Component = () => {
   /** Message-level selection mode */
   const [isSelectingMessages, setIsSelectingMessages] = createSignal(false);
   const [selectedMessageIds, setSelectedMessageIds] = createSignal<Set<string>>(new Set());
-  /** /btw floating Q&A overlay list (ephemeral, not stored in history) */
-  const [btwOverlays, setBtwOverlays] = createSignal<
-    Array<{ id: string; question: string; answer: string | null; loading: boolean }>
-  >([]);
   /** Page root element ref, used to compute relative positions while resizing panels */
   let chatPageRef: HTMLDivElement | undefined;
   /**
@@ -272,6 +266,14 @@ const ChatPage: Component = () => {
     if (!asst) return null;
     return asst.topics.find((t: Topic) => t.id === currentTopicId()) || asst.topics[0] || null;
   };
+
+  // 阶段4 第2项（拆分切片）：/btw 侧问浮层逻辑抽至 useBtwQuestion 钩子
+  // （置于 currentAssistant/activeTopic 声明之后：依赖其响应式访问器）
+  const { btwOverlays, openBtwQuestion, dismissBtwOverlay } = useBtwQuestion({
+    selectedModel,
+    currentAssistant,
+    activeTopic,
+  });
 
   /** Topic shown in the share modal: prefer the ID set from the TopicSidebar context menu, otherwise the active topic */
   const shareTopic = (): Topic | null => {
@@ -430,80 +432,6 @@ const ChatPage: Component = () => {
   };
 
   // checkAndSummarize / fallbackTitle / checkAndRename moved to hooks/chatTurnEffects.ts (CHAT-12)
-
-  /**
-   * /btw side question: streams an answer over the existing conversation context (no tools, no history changes).
-   * Listens to the `btw-chunk` event and updates the overlay chunk by chunk.
-   * unlisten fires on the done/error event, avoiding a race between invoke resolve and event delivery.
-   */
-  const askBtwQuestion = async (question: string, overlayId: string) => {
-    const currentMdl = selectedModel();
-    const asstObj = currentAssistant();
-    const topicObj = activeTopic();
-    if (!currentMdl || !asstObj || !topicObj) return;
-
-    let resolved = false;
-
-    // register the listener before invoke so the first chunk is never lost
-    const unlisten = await listen<{
-      overlay_id: string;
-      content: string;
-      done: boolean;
-      error?: string;
-    }>(EVENTS.btwChunk, (e) => {
-      const { overlay_id, content, done, error } = e.payload;
-      if (overlay_id !== overlayId) return;
-
-      if (error) {
-        resolved = true;
-        setBtwOverlays((prev) =>
-          prev.map((o) =>
-            o.id === overlayId ? { ...o, answer: `[Error] ${error}`, loading: false } : o,
-          ),
-        );
-        unlisten();
-        return;
-      }
-      if (done) {
-        resolved = true;
-        setBtwOverlays((prev) =>
-          prev.map((o) => (o.id === overlayId ? { ...o, loading: false } : o)),
-        );
-        unlisten();
-        return;
-      }
-      setBtwOverlays((prev) =>
-        prev.map((o) => (o.id === overlayId ? { ...o, answer: (o.answer || '') + content } : o)),
-      );
-    });
-
-    try {
-      // dedicated BTW system prompt: forbid continuing the main task, answer from context only
-      const btwSystemPrompt = `[SIDE QUESTION — DO NOT CONTINUE THE MAIN TASK]
-You are answering a brief side question about the conversation above.
-Do NOT continue, repeat, or redo any work from the conversation.
-Only answer the specific question asked. Be concise.
-
-${asstObj.prompt}`;
-
-      const messagesForAI: Record<string, unknown>[] = [
-        { role: 'system', content: btwSystemPrompt },
-        ...topicObj.history.flatMap((m: any) => buildApiMessages(m)),
-        { role: 'user', content: question },
-      ];
-
-      await askBtwQuestionCmd(llmCreds(currentMdl), overlayId, JSON.stringify(messagesForAI));
-    } catch (err) {
-      if (!resolved) {
-        setBtwOverlays((prev) =>
-          prev.map((o) =>
-            o.id === overlayId ? { ...o, answer: `[Error] ${err}`, loading: false } : o,
-          ),
-        );
-        unlisten();
-      }
-    }
-  };
 
   /**
    * Slash command — promptBody type (/review, /explain, etc.)
@@ -774,9 +702,7 @@ ${asstObj.prompt}`;
         // /btw handled separately: answer immediately from the current context without interrupting the main agent
         if (resolved.command.id === 'slash-btw') {
           const question = resolved.args || '';
-          const id = crypto.randomUUID();
-          setBtwOverlays((prev) => [...prev, { id, question, answer: '', loading: true }]);
-          askBtwQuestion(question, id);
+          openBtwQuestion(question);
           setInputMessage('');
           setPendingFiles([]);
           return;
@@ -1446,7 +1372,7 @@ ${asstObj.prompt}`;
             onConfirmSelection={handleConfirmSelection}
             onBranchFromMessage={branchFromMessage}
             btwOverlays={btwOverlays()}
-            onDismissBtw={(id) => setBtwOverlays((prev) => prev.filter((o) => o.id !== id))}
+            onDismissBtw={dismissBtwOverlay}
           />
         </Show>
       </div>

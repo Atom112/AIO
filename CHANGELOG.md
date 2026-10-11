@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（拆分切片3）：/btw 侧问浮层 → useBtwQuestion 钩子
+
+- **BTW 钩子化（阶段4 第2项拆分程序）**：`/btw` 侧问的浮层信号、流式应答（`btw-chunk` 事件逐 chunk 更新 overlay、unlisten 先注册防首 chunk 丢失、done/error/异常三路收口）、开问（生成 overlay + 启动应答）与关闭四个操作从 ChatPage 抽至 `hooks/useBtwQuestion.ts`（模型/助手/话题三个响应式访问器经参数注入）；ChatPage **1496 → 1422 行**（本拆分程序累计 1746 → 1422）
+
 ### 🧱 阶段4 第2项（拆分切片续）：API 载荷消息构建 → utils/apiMessages（+11 单测）
 
 - **消息构建三件套抽出（阶段4 第2项 "useChatSend/useAttachments 路径"）**：`truncateToolResult`（20k 头尾截断）/ `buildApiMessages`（历史消息 → API 载荷展开；孤儿 toolCall 原位合成中断错误结果）/ `ensureToolMessagesComplete`（tool_call 配对守卫——后端 `verify_tool_messages` 仅告警，此为修复侧）三个纯函数从 ChatPage 抽至 `utils/apiMessages.ts`，**并补 11 个单测**（此前零测试的配对/展开/截断逻辑，含连续回合 pending 冲刷与末端冲刷两个此前完全无覆盖的分支）；ChatPage **1615 → 1496 行**

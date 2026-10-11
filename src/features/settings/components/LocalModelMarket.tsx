@@ -52,6 +52,8 @@ import {
   localModelsGetDir,
   localModelsSetDir,
 } from '../../../core/api/localModel';
+// 阶段4（设置样板收敛）: shared localStorage JSON cache factory
+import { createJsonCache } from '../../../core/utils/cache';
 import type {
   DownloadSource,
   HardwareProfile,
@@ -81,42 +83,24 @@ function cacheKeyFor(source: DownloadSource, queryKey: string): string {
   return `${source}::${queryKey}`;
 }
 
-// FE-17: parsed-cache memo. readMarketCache() used to JSON.parse the ENTIRE
-// cache (every cached query) on every call — and currentEntry() is a reactive
-// accessor, so the full parse ran per render / per source-query keystroke.
-// The parsed object is now cached in memory and only re-parsed when the
-// storage key's content changes (writes go through writeMarketCache).
-let parsedMarketCache: MarketCache | null = null;
-let marketCacheLoaded = false;
+// 阶段4（设置样板收敛）: the FE-17 hand-rolled parse-memo + read/write pair is
+// replaced by the shared factory (core/utils/cache) — same single-parse
+// semantics, one implementation for all three market pages.
+const marketCache = createJsonCache<MarketCache>(MARKET_CACHE_KEY, (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const cache = raw as Partial<MarketCache>;
+  if (!cache.updatedAt || !cache.queries) return null;
+  return cache as MarketCache;
+});
 
 function readMarketCache(): MarketCache | null {
-  if (!marketCacheLoaded) {
-    marketCacheLoaded = true;
-    try {
-      const raw = localStorage.getItem(MARKET_CACHE_KEY);
-      if (raw) {
-        const cache = JSON.parse(raw) as MarketCache;
-        if (cache.updatedAt && cache.queries) {
-          parsedMarketCache = cache;
-        }
-      }
-    } catch {
-      parsedMarketCache = null;
-    }
-  }
-  return parsedMarketCache;
+  return marketCache.read();
 }
 
 function writeMarketCache(key: string, entry: MarketCacheEntry) {
-  try {
-    const cache = readMarketCache() ?? { updatedAt: 0, queries: {} };
-    cache.queries[key] = entry;
-    cache.updatedAt = Date.now();
-    parsedMarketCache = cache;
-    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    /* storage full / disabled: cache is best-effort */
-  }
+  const cache = marketCache.read() ?? { updatedAt: 0, queries: {} };
+  cache.queries[key] = entry;
+  marketCache.write({ ...cache, updatedAt: Date.now() });
 }
 
 // Hardware profile never changes at runtime: cache at module level so switching

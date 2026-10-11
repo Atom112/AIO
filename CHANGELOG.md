@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第6项（续）：core/utils/cache.ts SWR 缓存工厂
+
+- **共享 localStorage JSON 缓存工厂（阶段4 第6项收尾）**：新建 `core/utils/cache.ts` 的 `createJsonCache`——读（惰性 getItem + JSON.parse + 形状校验降级 null + **解析备忘**：每次加载只解析一次，write 后刷新）、写（stringify + setItem，配额/禁用错误吞掉——缓存尽力而为不阻塞功能）、`isFresh`（三市场共用的 6h TTL 判定）。三个市场页各持的手写 readCache/writeCache 副本全部收敛：SkillList（多桶 + 桶时间戳 + 模式演进回填）、McpServerList（单对象）、LocalModelMarket（FE-17 手搓解析备忘被工厂取代）；5 个单测覆盖读写回路/损坏降级/备忘语义/配额吞错/TTL 边界（Node 环境注入内存 localStorage stub）
+
 ### 🧱 阶段4 第6项：设置层样板收敛（shared Switch glow 变体 + shared Toast）
 
 - **共享发光开关（阶段4 第6项）**：设置页的内联发光开关（h-[22px] w-[40px] 半透明轨道 + 开启态主色辉光 + 4px 白色旋钮）此前是 6 份手工内联副本（ProviderList ×3、ProviderDetailPage、EmbeddingModelSettings、ModelRow）——为共享 Switch 组件加 `variant="glow"` 与 `stopPropagation` 属性后全部收敛；ProviderDetailPage 原"开关嵌在 label 按钮里"（button 嵌 button 的无效 HTML）重构为并排结构；rgba 字面量棘轮顺带 179→173

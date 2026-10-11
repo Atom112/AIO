@@ -131,8 +131,8 @@ const RGBA_BASELINE = 179;
 // New code must not add `any`; lower the baseline as the backlog is cleaned up.
 // 2026-10 阶段5（FE-21）：流事件载荷类型化（streamPayloads.ts）+ chatEventListeners
 // 全量收编后 163 → 100；主发送路径迁移 + CHAT-10 清理抽出（阶段4 第2项切片6，
-// PR #73）净降 → 97，基线随修随降锁定。
-const ANY_BASELINE = 97;
+// PR #73）净降 → 97；MessageBubble 拆分（PR 本批）5 处 as-any 噪音删除 → 93，基线随修随降。
+const ANY_BASELINE = 93;
 let anyCount = 0;
 const anyFiles = [];
 for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {

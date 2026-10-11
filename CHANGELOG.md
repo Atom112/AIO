@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第1项（子目标2/5）：stream_one_round → streaming.rs
+
+- **SSE 流轮次搬家（阶段4 第1项子目标）**：`stream_one_round`（请求构造 → POST → SSE 累积 → 事件下发，含 Anthropic 适配、工具调用累积、token usage 提取、图像生成收集）连同其累积产物 `RoundResult` / `ToolCallAccum` 从 mod.rs 整体搬到新文件 `commands/llm/streaming.rs`（442 行）——mod.rs 只留主循环编排，**2755 → 2325 行**（file-size 门禁 2770 内余量扩大）；字段 `pub(crate)` 化（主循环/subagents 直接读取）；subagents 复用入口随之切到 `super::streaming::stream_one_round`
+- **顺手清理**：`ToolCallPayload` 的 mod.rs re-export（声称"保持路径稳定"但全仓无消费者）删除；搬家后 mod.rs 失用的 BTreeMap 导入删除
+
 ### 🧱 阶段4 第1项（子目标1/5）：消 14 模块 glob re-export（commands/llm）
 
 - **消除“同一符号两条路径”（阶段4 第1项子目标）**：`commands/llm/mod.rs` 的 14 个 `pub(crate) use <module>::*;` glob re-export 全部移除——它们使每个子模块符号同时存在于 `llm::X` 与 `llm::<module>::X` 两条路径，且 8 个子模块又以 `use crate::commands::llm::*;` **glob 引回父模块**（连带吸入 mod.rs 的全部工具 use 头与 trait 导入），构成父⇄子循环吸入结构——正是同构漂移与遮蔽的温床

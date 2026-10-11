@@ -86,6 +86,8 @@ const AppSettings: Component = () => {
   const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // Reset-all confirmation state
   const [langOpen, setLangOpen] = createSignal(false); // Language dropdown open state
   let langRef: HTMLDivElement | undefined; // Language dropdown container
+  const [isoOpen, setIsoOpen] = createSignal(false); // Isolation dropdown open state
+  let isoRef: HTMLDivElement | undefined; // Isolation dropdown container
 
   let recordingCleanup: (() => void) | null = null; // Recording-mode cleanup function
 
@@ -108,6 +110,7 @@ const AppSettings: Component = () => {
   onMount(() => {
     const onDocMouse = (e: MouseEvent) => {
       if (langOpen() && langRef && !langRef.contains(e.target as Node)) setLangOpen(false);
+      if (isoOpen() && isoRef && !isoRef.contains(e.target as Node)) setIsoOpen(false);
     };
     document.addEventListener('mousedown', onDocMouse);
     onCleanup(() => document.removeEventListener('mousedown', onDocMouse));
@@ -488,6 +491,12 @@ const AppSettings: Component = () => {
     { value: 'en-US' as Locale, label: t('app.language.enUS') },
   ]);
 
+  const isolationOptions = createMemo(() => [
+    { value: 'auto', label: t('app.subagentIsolation.auto') },
+    { value: 'worktree', label: t('app.subagentIsolation.worktree') },
+    { value: 'off', label: t('app.subagentIsolation.off') },
+  ]);
+
   return (
     <div class="flex flex-col gap-[15px] box-border">
       <div
@@ -694,34 +703,71 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.subagentIsolation.description')}</p>
           </div>
 
-          <select
-            class="px-3 py-1.5 rounded text-sm outline-none"
-            style={{
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid var(--border-dim)',
-              color: 'white',
-            }}
-            value={subagentIsolation()}
-            onChange={(e) => {
-              const mode = e.currentTarget.value;
-              setSubagentIsolation(mode);
-              schedulePatch(
-                'subagentIsolationMode',
-                async () => {
-                  try {
-                    await patchAppConfig({ subagentIsolationMode: mode });
-                  } catch (err) {
-                    console.warn('Failed to save parallel-write isolation config:', err);
-                  }
-                },
-                0,
-              );
-            }}
-          >
-            <option value="auto">{t('app.subagentIsolation.auto')}</option>
-            <option value="worktree">{t('app.subagentIsolation.worktree')}</option>
-            <option value="off">{t('app.subagentIsolation.off')}</option>
-          </select>
+          <div class="relative min-w-[150px]" ref={isoRef}>
+            <button
+              type="button"
+              class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-xs text-left cursor-pointer outline-none border border-[var(--border-dim)] transition-all duration-150"
+              onClick={() => setIsoOpen(!isoOpen())}
+              aria-haspopup="listbox"
+              aria-expanded={isoOpen()}
+            >
+              <span class="truncate text-white/80">
+                {isolationOptions().find((o) => o.value === subagentIsolation())?.label}
+              </span>
+              <span class="text-white/30 text-[10px]">&#9662;</span>
+            </button>
+            <div
+              class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top"
+              style={{
+                background: 'rgba(var(--surface-bg), 0.92)',
+                'backdrop-filter': 'blur(24px) saturate(150%)',
+                border: '1px solid var(--border-dim)',
+                'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
+              }}
+              classList={{
+                'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !isoOpen(),
+                'visible opacity-100 scale-100 translate-y-0': isoOpen(),
+              }}
+              role="listbox"
+            >
+              <For each={isolationOptions()}>
+                {(opt) => {
+                  const sel = () => subagentIsolation() === opt.value;
+                  return (
+                    <div
+                      class="flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none"
+                      classList={{
+                        'text-white bg-pri-10': sel(),
+                        'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
+                      }}
+                      role="option"
+                      aria-selected={sel()}
+                      onClick={() => {
+                        setSubagentIsolation(opt.value);
+                        schedulePatch(
+                          'subagentIsolationMode',
+                          async () => {
+                            try {
+                              await patchAppConfig({ subagentIsolationMode: opt.value });
+                            } catch (err) {
+                              console.warn('Failed to save parallel-write isolation config:', err);
+                            }
+                          },
+                          0,
+                        );
+                        setIsoOpen(false);
+                      }}
+                    >
+                      <span class="grow truncate">{opt.label}</span>
+                      <Show when={sel()}>
+                        <Icon name="check" size={12} class="text-pri" />
+                      </Show>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">

@@ -26,18 +26,11 @@ import {
   gitBranch,
   gitBranches,
   switchBranch,
-  collectSubagents,
-  setActiveSubagentView,
   type GeneratedImageInfo,
 } from '../../../core/store/store';
-import {
-  getSubagentProfileStyle,
-  subagentProfileLabel,
-  formatSubagentDuration,
-} from './SubagentConversationView';
 import { open } from '@tauri-apps/plugin-dialog';
 import { pickSavePath } from '../../../core/api/dialog';
-import { copyStoredImage, discardChatAttachment } from '../../../core/api/attachment';
+import { copyStoredImage } from '../../../core/api/attachment';
 import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
 import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
 import Icon from '../../../shared/components/Icon';
@@ -47,17 +40,14 @@ import WebSearchButton from './WebSearchButton';
 import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
 import AgentQuestionBubble, { type PendingQuestion } from './AgentQuestionBubble';
 import TokenStatsBar from './TokenStatsBar';
-import {
-  totalErrors,
-  totalWarnings,
-  problemsPanelVisible,
-  setProblemsPanelVisible,
-  hasDiagnostics,
-} from '../../../core/store/diagnostics';
+
 import AgentModeSelector from './AgentModeSelector';
 import WelcomeScreen from './WelcomeScreen';
 import { useChatAutoScroll } from '../hooks/useChatAutoScroll';
 import MessageBubble from './MessageBubble';
+import SubagentMenu from './SubagentMenu';
+import PendingFileChips from './PendingFileChips';
+import DiagnosticsToggle from './DiagnosticsToggle';
 import BtwResponseBox from './BtwResponseBox';
 import {
   btnGhost,
@@ -166,7 +156,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const [branchOpen, setBranchOpen] = createSignal(false);
   const [branchToast, setBranchToast] = createSignal<string | null>(null);
   // Subagent pull-up menu state
-  const [subagentMenuOpen, setSubagentMenuOpen] = createSignal(false);
   // Message DOM element map (id → HTMLElement), used for exit animations
   const messageEls = new Map<string, HTMLElement>();
   // Keep only messages still rendered in the current topic; prevents DOM references from accumulating across topic switches or deletions.
@@ -186,17 +175,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
   // All subagent steps of the current topic (including past turns, persisted on messages
   // via agentSteps). The status-bar pull-up menu entry shows when any subagent exists.
-  const subagents = createMemo(() => collectSubagents(props.activeTopic));
-  const hasRunningSubagent = () => subagents().some((s) => s.status === 'running');
 
-  // Close the Git branch dropdown / subagent pull-up menu on outside click
+  // Close the Git branch dropdown on outside click (the subagent menu owns its closer)
   const closeOverlays = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
     if (branchOpen() && !target.closest('.branch-dropdown-container')) {
       setBranchOpen(false);
-    }
-    if (subagentMenuOpen() && !target.closest('.subagent-menu-container')) {
-      setSubagentMenuOpen(false);
     }
   };
   onMount(() => document.addEventListener('mousedown', closeOverlays));
@@ -498,51 +482,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
         </div>
       </Show>
 
-      <div class="flex flex-wrap gap-[3px] bg-transparent pt-[3px] relative z-0">
-        <For each={props.pendingFiles}>
-          {(file, i) => (
-            <div
-              class="flex items-center rounded-[16px] text-[12px] px-[10px] py-1 transition-all duration-200"
-              style={{
-                background: 'rgba(var(--primary-rgb),0.08)',
-                border: '1px solid rgba(var(--primary-rgb),0.12)',
-                color: 'rgba(var(--primary-rgb),0.6)',
-              }}
-            >
-              <Show
-                when={file.type === 'image'}
-                fallback={
-                  <span class="mr-1 inline-flex">
-                    <Icon name="file" size={12} class="opacity-60" />
-                  </span>
-                }
-              >
-                <img
-                  src={file.previewUrl}
-                  loading="lazy"
-                  class="w-5 h-5 object-cover mr-1 rounded-[2px]"
-                />
-              </Show>
-              {file.name}
-              <button
-                class="flex items-center bg-none border-none text-[rgba(var(--text-base-rgb),0.5)] cursor-pointer text-lg leading-none ml-2 transition-colors duration-200 hover:text-[var(--color-danger)]"
-                onClick={() => {
-                  const currentIndex = i();
-                  const duplicatePending = props.pendingFiles.some(
-                    (pending, index) => index !== currentIndex && pending.id === file.id,
-                  );
-                  if (!duplicatePending) {
-                    void discardChatAttachment(file.id).catch(console.error);
-                  }
-                  props.setPendingFiles((p) => p.filter((_, idx) => idx !== currentIndex));
-                }}
-              >
-                ×
-              </button>
-            </div>
-          )}
-        </For>
-      </div>
+      {/* Pending attachments (extracted: PendingFileChips) */}
+      <PendingFileChips
+        pendingFiles={() => props.pendingFiles}
+        setPendingFiles={props.setPendingFiles}
+      />
 
       <div class="bg-transparent flex flex-col relative w-full z-10">
         {/* Agent mode status bar */}
@@ -719,152 +663,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                   </span>
                 </Show>
 
-                {/* Subagent pull-up menu: right side of the status bar, shown when any subagent exists */}
-                <Show when={subagents().length > 0}>
-                  <div class="subagent-menu-container relative inline-block ml-auto">
-                    <button
-                      type="button"
-                      class={
-                        'px-1.5 py-0.5 rounded-md text-[11px] bg-[rgba(var(--surface-alt-bg),0.5)] ' +
-                        btnGhost
-                      }
-                      style={{
-                        color: 'rgba(var(--text-base-rgb),0.55)',
-                        'font-weight': '400',
-                      }}
-                      classList={{
-                        // 与分支触发器同款全响应式方案（见上方注释）
-                        '!bg-[rgba(var(--surface-bg),0.7)]': subagentMenuOpen(),
-                        'hover:bg-[rgba(var(--surface-bg),0.6)]': !subagentMenuOpen(),
-                      }}
-                      title={t('agent.subagent.menuTrigger', { count: subagents().length })}
-                      aria-label={t('agent.subagent.menuTrigger', { count: subagents().length })}
-                      aria-haspopup="menu"
-                      aria-expanded={subagentMenuOpen()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSubagentMenuOpen(!subagentMenuOpen());
-                      }}
-                    >
-                      {t('agent.subagent.menuTitle')}
-                      <Show when={hasRunningSubagent()}>
-                        <Icon name="spinner" size={11} class="animate-spin mx-0.5" />
-                      </Show>
-                      {` ${t('agent.subagent.menuCount', { count: subagents().length })} `}
-                      <Icon name="chevron-up" size={10} class="ml-0.5" />
-                    </button>
-                    <Show when={subagentMenuOpen()}>
-                      <div
-                        ref={(el) =>
-                          requestAnimationFrame(() => {
-                            el.classList.remove('opacity-0', 'scale-95');
-                            el.classList.add('opacity-100', 'scale-100');
-                          })
-                        }
-                        class="absolute bottom-full right-0 mb-2 z-[41] w-[320px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
-                        style={{
-                          background: 'rgba(var(--surface-bg),0.96)',
-                          border: '1px solid var(--border-dim)',
-                          'backdrop-filter': 'blur(12px)',
-                          'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div
-                          class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
-                          style={{
-                            color: 'rgba(var(--text-base-rgb),0.35)',
-                            background: 'rgba(var(--text-base-rgb),0.04)',
-                            'border-bottom': '1px solid var(--border-dim)',
-                          }}
-                        >
-                          {t('agent.subagent.menuTitle')}
-                        </div>
-                        <div class="py-1 max-h-[280px] overflow-y-auto">
-                          <For each={subagents()}>
-                            {(sub) => {
-                              const ps = getSubagentProfileStyle(sub.subagentProfile);
-                              return (
-                                <button
-                                  type="button"
-                                  class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer border-none bg-transparent hover:bg-[rgba(var(--text-base-rgb),0.05)]"
-                                  style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
-                                  onClick={() => {
-                                    if (sub.subagentId) setActiveSubagentView(sub.subagentId);
-                                    setSubagentMenuOpen(false);
-                                  }}
-                                >
-                                  <span class="flex items-center justify-center w-4 h-4 shrink-0">
-                                    <Show
-                                      when={sub.status === 'running'}
-                                      fallback={
-                                        <Show
-                                          when={sub.status === 'error'}
-                                          fallback={
-                                            <Icon
-                                              name="check"
-                                              size={12}
-                                              class="text-white/30 shrink-0"
-                                            />
-                                          }
-                                        >
-                                          <Icon
-                                            name="x"
-                                            size={12}
-                                            class="text-red-400/70 shrink-0"
-                                          />
-                                        </Show>
-                                      }
-                                    >
-                                      <Icon
-                                        name="spinner"
-                                        size={12}
-                                        class="animate-spin shrink-0"
-                                      />
-                                    </Show>
-                                  </span>
-                                  <span
-                                    class="flex items-center justify-center w-5 h-5 rounded shrink-0"
-                                    style={{
-                                      background: ps.bgColor,
-                                      border: `1px solid ${ps.borderColor}`,
-                                      color: ps.color,
-                                    }}
-                                  >
-                                    <Icon name={ps.icon} size={11} />
-                                  </span>
-                                  <span class="flex-1 min-w-0 text-left">
-                                    <span class="flex items-center gap-1.5">
-                                      <span class="text-[12px] font-medium truncate">
-                                        {sub.subagentName ||
-                                          subagentProfileLabel(sub.subagentProfile)}
-                                      </span>
-                                      <span class="text-[10px] text-white/35 shrink-0">
-                                        {subagentProfileLabel(sub.subagentProfile)}
-                                      </span>
-                                    </span>
-                                    <Show when={sub.subagentTask}>
-                                      <span class="block truncate text-[11px] text-white/35">
-                                        {sub.subagentTask}
-                                      </span>
-                                    </Show>
-                                  </span>
-                                  <Show
-                                    when={sub.status !== 'running' && sub.duration !== undefined}
-                                  >
-                                    <span class="font-mono text-[10px] text-white/25 shrink-0">
-                                      {formatSubagentDuration(sub.duration!)}
-                                    </span>
-                                  </Show>
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </div>
-                    </Show>
-                  </div>
-                </Show>
+                {/* Subagent pull-up menu (extracted: SubagentMenu owns state + outside-click) */}
+                <SubagentMenu activeTopic={() => props.activeTopic} />
               </div>
             );
           })()}
@@ -967,33 +767,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 <Icon src="/icons/app-logo/image-photo.svg" class="w-5 h-5" />
               </button>
 
-              {/* LSP problems panel toggle */}
-              <Show when={hasDiagnostics()}>
-                <button
-                  class={'relative p-1.5 ' + btnIcon}
-                  style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
-                  title={t('chat.diagnostics', {
-                    errors: formatNumber(totalErrors()),
-                    warnings: formatNumber(totalWarnings()),
-                  })}
-                  onClick={() => setProblemsPanelVisible(!problemsPanelVisible())}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
-                    e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.6)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'transparent';
-                    e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.4)';
-                  }}
-                >
-                  <Icon name="clipboard" size={14} />
-                  <Show when={totalErrors() > 0}>
-                    <span class="absolute -top-1 -right-1 text-[9px] px-1 rounded-full bg-red-500 text-white font-bold leading-tight">
-                      {totalErrors()}
-                    </span>
-                  </Show>
-                </button>
-              </Show>
+              {/* LSP problems panel toggle (extracted: DiagnosticsToggle) */}
+              <DiagnosticsToggle />
             </div>
 
             <div class="flex items-center gap-2">

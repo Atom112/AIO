@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（<900 目标全线达成）：ChatInterface 893 行（三组件抽出）
+
+- **ChatInterface <900 达标（1118 → 893，-20%），本批三组件 verbatim 抽出**：
+  - **`components/SubagentMenu.tsx`（~175 行）**：子代理上拉菜单——触发按钮（计数 + 运行中 spinner）+ 下拉列表（状态图标/profile 样式/名称任务/耗时）；**自带开关状态与 outside-click 关闭器**（原 closeOverlays 的菜单分支随迁，ChatInterface 只留分支下拉的关闭职责）
+  - **`components/PendingFileChips.tsx`（~85 行）**：待发附件预览条（图片缩略/文件图标 + 名称 + 移除按钮；重复 pending 守卫下才丢弃后端附件）
+  - **`components/DiagnosticsToggle.tsx`（~68 行）**：LSP 问题面板切换按钮（诊断信号全为模块级 store——零组件依赖）
+- **阶段4 第2项 <900 目标完成**：ChatPage **845**、ChatInterface **893**（阶段起点 1746/2058，-52%/-57%）；报告点名的拆分路径（useChatAutoScroll/MessageBubble/useChatSend/useAttachments/usePanelResize/useBtwQuestion/apiMessages/failedTurnCleanup/skillMessages/sendMessagePrep/slashHandlers/useMessageSelection/useCheckpointResume/topicActions/SubagentMenu/PendingFileChips/DiagnosticsToggle）**全部落地**
+
 ### 🧱 阶段4 第2项（<900 目标达成）：ChatPage 845 行（选择模式/Checkpoint/Topic 生命周期三模块抽出）
 
 - **ChatPage 达标 <900（1746 → 845，-52%）**，本批三模块抽出（1026→845）：

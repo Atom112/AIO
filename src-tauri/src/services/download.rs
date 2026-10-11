@@ -17,7 +17,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::Emitter;
 
 /// Control flags for an in-flight download (registered per id).
 #[derive(Clone)]
@@ -79,6 +78,7 @@ pub(crate) fn signal_download(id: &str, set: impl Fn(&DownloadControl)) -> bool 
 }
 
 /// Why the streamed copy ended early (None = the file completed and was renamed).
+#[derive(Debug)]
 pub(crate) enum DownloadInterrupt {
     Cancelled,
     Paused,
@@ -98,9 +98,14 @@ pub(crate) enum DownloadInterrupt {
 /// start match / Range-ignored reset) and keeps its domain specifics: the local
 /// GGUF downloader does the ENG-11 space pre-check before calling and the GGUF
 /// magic verify after `Ok(None)`.
+///
+/// `emit` receives `(event, payload)` — the caller wraps its window; taking a
+/// closure instead of `&Window` keeps the engine testable without a Tauri app
+/// (the 阶段5 kill-recovery integration tests below drive it with synthetic 206
+/// responses).
 #[allow(clippy::too_many_arguments)] // one streamed-copy engine, parameterized by event/payload/cleanup
 pub(crate) async fn stream_to_checkpoint(
-    window: &tauri::Window,
+    emit: impl Fn(&str, Value),
     event: &str,
     progress_extras: &Value,
     file_name: &str,
@@ -150,7 +155,7 @@ pub(crate) async fn stream_to_checkpoint(
                 map.insert("downloaded".into(), Value::from(downloaded));
                 map.insert("total".into(), Value::from(total));
             }
-            let _ = window.emit(event, payload);
+            emit(event, payload);
         }
         if control.cancel.load(Ordering::Relaxed) {
             interrupted = Some(DownloadInterrupt::Cancelled);
@@ -237,5 +242,273 @@ mod tests {
         assert!(!signal_download(id, |c| c
             .cancel
             .store(true, Ordering::Relaxed)));
+    }
+}
+
+#[cfg(test)]
+mod kill_recovery_tests {
+    //! 下载中途 kill 恢复（报告阶段5第3项）。
+    //!
+    //! 用 `http::Response` 合成 206/200 响应（`reqwest::Response: From<http::Response>`，
+    //! http 已在依赖树内）直接驱动共享下载引擎，无需真实 HTTP 服务器。覆盖：
+    //! - A. 进程 kill 后重试：`.part` 检查点续传 → 追加 → 终长核对 → 原子 rename → 完整文件
+    //! - B. 服务器中途断流（Content-Length 虚高）：报"不完整"且检查点保留已收字节
+    //! - C. 取消：`.part` 与 `.etag` sidecar 一并清理
+    //! - D. 暂停：检查点保留（前缀+已收字节），下次继续
+    //! - E. 全新下载（Range 被忽略/无检查点）：truncate 分支，陈旧检查点被整体覆盖
+
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Kill 发生时已落盘的字节（GGUF 魔数开头，贴近真实产物）。
+    const PREFIX: &[u8] = b"GGUF\x03\x00\x00\x00\x12\x34\x56\x78\x9a\xbc";
+    /// 续传响应携带的剩余字节。
+    const SUFFIX: &[u8] = b"0123456789abcdefghijklmnopqrstuv";
+
+    /// 合成 (status, headers, body) 响应供引擎流式消费。
+    fn synth_response(status: u16, headers: &[(&str, &str)], body: Vec<u8>) -> reqwest::Response {
+        let mut builder = http::Response::builder().status(status);
+        for (k, v) in headers {
+            builder = builder.header(*k, *v);
+        }
+        reqwest::Response::from(builder.body(body).expect("静态响应构造必然成功"))
+    }
+
+    fn fresh_control() -> DownloadControl {
+        DownloadControl {
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    struct KillDir {
+        root: PathBuf,
+    }
+
+    impl KillDir {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("aio-kill-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            Self { root }
+        }
+        fn part(&self) -> PathBuf {
+            self.root.join("model.gguf.part")
+        }
+        fn etag(&self) -> PathBuf {
+            self.root.join("model.gguf.part.etag")
+        }
+        fn dest(&self) -> PathBuf {
+            self.root.join("model.gguf")
+        }
+        /// 模拟下完 PREFIX 字节后被 kill：检查点 + ETag sidecar 留在磁盘。
+        fn killed_state(&self) {
+            std::fs::write(self.part(), PREFIX).unwrap();
+            std::fs::write(self.etag(), "\"etag-v1\"").unwrap();
+        }
+    }
+
+    impl Drop for KillDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn noop_emit() -> impl Fn(&str, Value) {
+        |_: &str, _: Value| {}
+    }
+
+    /// A. 主恢复路径：kill 后重试拿到 206 → 追加 → rename 出完整文件，sidecar 清理。
+    #[tokio::test]
+    async fn kill_then_resume_appends_and_renames_complete_file() {
+        let dir = KillDir::new();
+        dir.killed_state();
+        let total_len = (PREFIX.len() + SUFFIX.len() - 1).to_string();
+        let resp = synth_response(
+            206,
+            &[
+                ("Content-Type", "application/octet-stream"),
+                ("Content-Length", &SUFFIX.len().to_string()),
+                (
+                    "Content-Range",
+                    &format!(
+                        "bytes {}-{}/{}",
+                        PREFIX.len(),
+                        total_len,
+                        PREFIX.len() + SUFFIX.len()
+                    ),
+                ),
+            ],
+            SUFFIX.to_vec(),
+        );
+        let control = fresh_control();
+        let out = stream_to_checkpoint(
+            noop_emit(),
+            "local-model-download-progress",
+            &serde_json::json!({ "id": "test-model" }),
+            "model.gguf",
+            resp,
+            &dir.part(),
+            &dir.dest(),
+            PREFIX.len() as u64,
+            &control,
+            Some(&dir.etag()),
+        )
+        .await;
+        assert!(
+            matches!(out, Ok(None)),
+            "完整续传应以 Ok(None) 完成: {out:?}"
+        );
+        // 终文件 = 前缀 + 续传字节（kill 的字节一分不丢）
+        let content = std::fs::read(dir.dest()).unwrap();
+        assert_eq!(content, [PREFIX, SUFFIX].concat());
+        // .part 与 .etag 均已清理
+        assert!(!dir.part().exists());
+        assert!(!dir.etag().exists());
+    }
+
+    /// B. 服务器中途断流：声明 32 字节只送到 10 字节——终长核对报"不完整"，
+    /// 检查点保留前缀+已收字节（下次 Range 从这里续传），绝不 rename 半截文件。
+    /// 真实断流是"头已声明、body 未送完"：用 wrap_stream（size_hint 未知）构造，
+    /// 使 content_length 走 Content-Length 头而非完整 body 的精确长度。
+    #[tokio::test]
+    async fn server_kill_midstream_keeps_resumable_checkpoint() {
+        let dir = KillDir::new();
+        dir.killed_state();
+        let truncated = &SUFFIX[..10];
+        // wrap_stream: unknown body length → content_length() falls back to the header
+        let body = reqwest::Body::wrap_stream(futures_util::stream::once(async move {
+            Ok::<Vec<u8>, std::io::Error>(truncated.to_vec())
+        }));
+        let http_resp = http::Response::builder()
+            .status(206)
+            .header("Content-Length", SUFFIX.len().to_string())
+            .header(
+                "Content-Range",
+                format!(
+                    "bytes {}-{}/{}",
+                    PREFIX.len(),
+                    PREFIX.len() + SUFFIX.len() - 1,
+                    PREFIX.len() + SUFFIX.len()
+                ),
+            )
+            .body(body)
+            .expect("静态响应构造必然成功");
+        let resp = reqwest::Response::from(http_resp);
+        let control = fresh_control();
+        let out = stream_to_checkpoint(
+            noop_emit(),
+            "local-model-download-progress",
+            &serde_json::json!({ "id": "test-model" }),
+            "model.gguf",
+            resp,
+            &dir.part(),
+            &dir.dest(),
+            PREFIX.len() as u64,
+            &control,
+            Some(&dir.etag()),
+        )
+        .await;
+        let err = out.expect_err("截断流必须报错");
+        assert!(err.contains("下载不完整"), "终长核对必须报不完整: {err}");
+        // 检查点 = 前缀 + 已收到的 10 字节
+        let part = std::fs::read(dir.part()).unwrap();
+        assert_eq!(part, [PREFIX, truncated].concat());
+        assert!(dir.etag().exists(), "ETag sidecar 保留供下次 If-Range");
+        assert!(!dir.dest().exists(), "不得 rename 半截文件");
+    }
+
+    /// C. 取消：`.part` 检查点与 `.etag` sidecar 一并清理。
+    #[tokio::test]
+    async fn cancel_midstream_removes_checkpoint_and_sidecar() {
+        let dir = KillDir::new();
+        dir.killed_state();
+        let control = fresh_control();
+        control.cancel.store(true, Ordering::Relaxed);
+        let resp = synth_response(
+            206,
+            &[("Content-Length", &SUFFIX.len().to_string())],
+            SUFFIX.to_vec(),
+        );
+        let out = stream_to_checkpoint(
+            noop_emit(),
+            "local-model-download-progress",
+            &serde_json::json!({ "id": "test-model" }),
+            "model.gguf",
+            resp,
+            &dir.part(),
+            &dir.dest(),
+            PREFIX.len() as u64,
+            &control,
+            Some(&dir.etag()),
+        )
+        .await;
+        assert!(matches!(out, Ok(Some(DownloadInterrupt::Cancelled))));
+        assert!(!dir.part().exists(), "取消应删除检查点");
+        assert!(!dir.etag().exists(), "取消应删除 sidecar");
+        assert!(!dir.dest().exists());
+    }
+
+    /// D. 暂停：检查点保留前缀+本次已收字节，sidecar 保留——下次 Range 续传。
+    #[tokio::test]
+    async fn pause_midstream_preserves_checkpoint_for_next_resume() {
+        let dir = KillDir::new();
+        dir.killed_state();
+        let control = fresh_control();
+        control.pause.store(true, Ordering::Relaxed);
+        let resp = synth_response(
+            206,
+            &[("Content-Length", &SUFFIX.len().to_string())],
+            SUFFIX.to_vec(),
+        );
+        let out = stream_to_checkpoint(
+            noop_emit(),
+            "local-model-download-progress",
+            &serde_json::json!({ "id": "test-model" }),
+            "model.gguf",
+            resp,
+            &dir.part(),
+            &dir.dest(),
+            PREFIX.len() as u64,
+            &control,
+            Some(&dir.etag()),
+        )
+        .await;
+        assert!(matches!(out, Ok(Some(DownloadInterrupt::Paused))));
+        let part = std::fs::read(dir.part()).unwrap();
+        assert_eq!(part, [PREFIX, SUFFIX].concat(), "暂停保留全部已收字节");
+        assert!(dir.etag().exists());
+        assert!(!dir.dest().exists());
+    }
+
+    /// E. 全新下载（服务器忽略 Range 回 200 / 无检查点）：truncate 分支——
+    /// 磁盘上的陈旧检查点被整体覆盖，终文件只含新响应的字节。
+    #[tokio::test]
+    async fn fresh_download_truncates_stale_checkpoint() {
+        let dir = KillDir::new();
+        // 上一次中断留下的陈旧检查点（若无 truncate 会与新响应拼接成损坏文件）
+        std::fs::write(dir.part(), b"stale-bytes-from-previous-attempt").unwrap();
+        let resp = synth_response(
+            200,
+            &[("Content-Length", &SUFFIX.len().to_string())],
+            SUFFIX.to_vec(),
+        );
+        let control = fresh_control();
+        let out = stream_to_checkpoint(
+            noop_emit(),
+            "local-model-download-progress",
+            &serde_json::json!({ "id": "test-model" }),
+            "model.gguf",
+            resp,
+            &dir.part(),
+            &dir.dest(),
+            0,
+            &control,
+            Some(&dir.etag()),
+        )
+        .await;
+        assert!(matches!(out, Ok(None)));
+        let content = std::fs::read(dir.dest()).unwrap();
+        assert_eq!(content, SUFFIX, "陈旧检查点必须被 truncate 覆盖");
+        assert!(!dir.part().exists());
     }
 }

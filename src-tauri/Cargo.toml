@@ -60,3 +60,9 @@ auto-launch = "0.6"
 sqlite-vec = "0.1.9"
 sysinfo = "0.33"
 fastembed = { version = "4", default-features = false, features = ["ort-download-binaries"] }
+
+[dev-dependencies]
+# http is already in the dependency tree via reqwest 0.13 (same major version);
+# declaring it lets the download kill-recovery tests build synthetic 206
+# responses (reqwest::Response: From<http::Response>) without a live server.
+http = "1"

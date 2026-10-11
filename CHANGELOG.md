@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第6项：设置层样板收敛（shared Switch glow 变体 + shared Toast）
+
+- **共享发光开关（阶段4 第6项）**：设置页的内联发光开关（h-[22px] w-[40px] 半透明轨道 + 开启态主色辉光 + 4px 白色旋钮）此前是 6 份手工内联副本（ProviderList ×3、ProviderDetailPage、EmbeddingModelSettings、ModelRow）——为共享 Switch 组件加 `variant="glow"` 与 `stopPropagation` 属性后全部收敛；ProviderDetailPage 原"开关嵌在 label 按钮里"（button 嵌 button 的无效 HTML）重构为并排结构；rgba 字面量棘轮顺带 179→173
+- **共享 Toast（阶段4 第6项）**：新建 `shared/components/Toast.tsx`——`useToast()` 钩子（信号 + 自动消失定时器）与 `ToastBubble` 气泡组件，替换 ProviderDetailPage / ProviderList 两页各自持的 toast 信号 + 19 处 `setToast({...})` + `setTimeout(setToast(null))` 内联对 + 两块逐字符相同的 JSX 气泡；顺带修两类定时器缺陷：旧 3s 定时器不再截断新 toast（替换时先清定时器）、卸载后不再触发悬空定时器（onCleanup 清理）
+
 ### 🧱 阶段4 第4项：下载器同构收敛（services::download 单一实现）
 
 - **共享下载引擎（阶段4 第4项）**：`commands/model_download.rs`（嵌入/重排模型）与 `commands/local_model_download.rs`（本地 GGUF 市场下载）各持一份同构机器——per-id 控制表（pause/cancel 旗标）、控制注销守卫、流复制尾段（append/truncate → 分块循环 → 节流进度 → 暂停/取消轮询 → flush → ENG-04 终长核对 → 原子 rename），两副本已发生过一次漂移（ENG-5 身份匹配注销曾只存在于 GGUF 一侧）。全部收敛到新建 `services/download.rs` 单一实现：两下载器只保留域特有逻辑（多源回退 / If-Range+ETag / ENG-11 空间预检 / GGUF 魔数校验）；嵌入侧的注销守卫顺带升级为 ENG-5 身份匹配版（原版无条件移除）

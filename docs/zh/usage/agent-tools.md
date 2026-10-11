@@ -222,7 +222,7 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 
 来源：`src-tauri/src/utils/lsp_tools.rs`、`src-tauri/src/utils/lsp_agent_tools.rs`
 
-调用时若对应语言服务器未运行，会按需自动启动（需本机已安装对应服务器，如 `pyright-langserver`、`rust-analyzer`、`typescript-language-server`、`gopls`）。LSP 启动失败不影响其他工具使用。
+调用时若对应语言服务器未运行，会按需自动启动（需本机已安装对应服务器，如 `pyright-langserver`、`rust-analyzer`、`typescript-language-server`、`gopls`）。查询前会把目标文件内容同步进服务器（didOpen/didChange），确保符号与诊断及时可用；read_lints 在诊断尚未发布时会短暂等待重试。LSP 启动失败不影响其他工具使用。
 
 ### `read_lints`
 

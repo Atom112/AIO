@@ -15,7 +15,6 @@ use lsp_types::PublishDiagnosticsParams;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -25,6 +24,20 @@ use tokio::sync::Mutex;
 use std::os::windows::process::CommandExt;
 
 // ====== LspClient ======
+
+/// Event sink: `(event_name, payload)`. The LSP client stays decoupled from the
+/// Tauri runtime — production callers wrap an `AppHandle::emit` into this shape
+/// (see `commands/lsp.rs` / `utils/lsp_agent_tools.rs`), tests pass a no-op.
+pub type LspEventSink = std::sync::Arc<dyn Fn(&'static str, Value) + Send + Sync>;
+
+/// Wraps an AppHandle's emit into an [`LspEventSink`].
+pub fn app_event_sink<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> LspEventSink {
+    use tauri::Emitter as _;
+    let app = app.clone();
+    std::sync::Arc::new(move |event, payload| {
+        let _ = app.emit(event, payload);
+    })
+}
 
 /// Connection abstraction for a single language server
 #[derive(Clone)]
@@ -45,16 +58,21 @@ pub(crate) struct LspClientInner {
     pub stdin: Mutex<Option<ChildStdin>>,
     /// Currently accumulated diagnostics: uri -> diagnostics
     pub diagnostics: DashMap<String, Vec<lsp_types::Diagnostic>>,
+    /// Latest synced version per open document: uri -> version (didOpen on first
+    /// sync, didChange afterwards — see `LspClient::sync_document`)
+    pub open_docs: DashMap<String, u32>,
 }
 
 impl LspClient {
-    /// Spawn the language server child process and send the initialize handshake
+    /// Spawn the language server child process and send the initialize handshake.
+    /// `sink` receives the client's events (status / stderr / diagnostics); pass
+    /// `app_event_sink(&app)` in production.
     pub async fn start(
         language_id: impl Into<String>,
         project_root: PathBuf,
         command: &str,
         args: &[String],
-        app: AppHandle,
+        sink: LspEventSink,
     ) -> LspResult<Self> {
         let language_id = language_id.into();
         let root_uri = path_to_uri(&project_root)?;
@@ -108,6 +126,7 @@ impl LspClient {
                 child: Mutex::new(Some(child)),
                 stdin: Mutex::new(Some(stdin)),
                 diagnostics: DashMap::new(),
+                open_docs: DashMap::new(),
             }),
         };
 
@@ -115,19 +134,19 @@ impl LspClient {
         spawn_stdout_reader(
             client.clone(),
             BufReader::new(stdout),
-            app.clone(),
+            sink.clone(),
             language_id.clone(),
         );
 
         // stderr -> log events
         if let Some(stderr) = stderr {
-            let app2 = app.clone();
+            let sink2 = sink.clone();
             let lid = language_id.clone();
             tokio::spawn(async move {
                 use tokio::io::AsyncBufReadExt;
                 let mut lines = tokio::io::BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    let _ = app2.emit(
+                    sink2(
                         ev::LSP_SERVER_STDERR,
                         serde_json::json!({ "languageId": lid, "line": line }),
                     );
@@ -318,6 +337,54 @@ impl LspClient {
         Ok(())
     }
 
+    /// Syncs a document's current content into the server: `didOpen` the first
+    /// time a URI is synced, `didChange` (full-text replacement) afterwards.
+    ///
+    /// Why: nothing in AIO ever opens documents (the frontend is not an editor,
+    /// and the agent tools query files directly), so a freshly started server
+    /// has usually not analyzed the target file yet and answers symbol /
+    /// hover / diagnostics queries with empty results. didOpen makes the server
+    /// analyze the file (and publish its diagnostics) before the query runs.
+    pub async fn sync_document(&self, uri: &str, language_id: &str, text: &str) -> LspResult<()> {
+        // Advance the version; remember whether this is the first sync.
+        // (The entry guard must drop before awaiting notify below.)
+        let (first_sync, version) = {
+            use dashmap::mapref::entry::Entry;
+            match self.inner.open_docs.entry(uri.to_string()) {
+                Entry::Occupied(mut occ) => {
+                    *occ.get_mut() += 1;
+                    (false, *occ.get())
+                }
+                Entry::Vacant(vac) => {
+                    vac.insert(1);
+                    (true, 1u32)
+                }
+            }
+        };
+        let (method, params) = if first_sync {
+            (
+                "textDocument/didOpen",
+                serde_json::json!({
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": language_id,
+                        "text": text,
+                        "version": version,
+                    }
+                }),
+            )
+        } else {
+            (
+                "textDocument/didChange",
+                serde_json::json!({
+                    "textDocument": { "uri": uri, "version": version },
+                    "contentChanges": [ { "text": text } ],
+                }),
+            )
+        };
+        self.notify(method, Some(params)).await
+    }
+
     /// Handle a single message read from stdout
     pub(crate) fn dispatch_message(&self, line: &str) {
         let v: Value = match serde_json::from_str(line) {
@@ -377,7 +444,7 @@ fn file_path_to_uri(project_root: &Path, file_path: &str) -> LspResult<String> {
 fn spawn_stdout_reader(
     client: LspClient,
     mut reader: BufReader<ChildStdout>,
-    app: AppHandle,
+    sink: LspEventSink,
     language_id: String,
 ) {
     tokio::spawn(async move {
@@ -391,7 +458,7 @@ fn spawn_stdout_reader(
                         if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
                             if method == "textDocument/publishDiagnostics" {
                                 if let Some(params) = v.get("params") {
-                                    let _ = app.emit(
+                                    sink(
                                         ev::LSP_DIAGNOSTICS_UPDATED,
                                         serde_json::json!({
                                             "languageId": language_id,
@@ -404,7 +471,7 @@ fn spawn_stdout_reader(
                     }
                 }
                 Ok(None) => {
-                    let _ = app.emit(
+                    sink(
                         ev::LSP_SERVER_STATUS,
                         serde_json::json!({
                             "languageId": language_id,
@@ -416,7 +483,7 @@ fn spawn_stdout_reader(
                 Err(e) => {
                     err_count += 1;
                     if err_count > 10 {
-                        let _ = app.emit(
+                        sink(
                             ev::LSP_SERVER_STDERR,
                             serde_json::json!({
                                 "languageId": language_id,
@@ -433,3 +500,148 @@ fn spawn_stdout_reader(
 
 // ====== Windows command resolution ======
 // (removed: superseded by utils::exec_resolve, the repo-wide PATH-only resolver)
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Fake stdio LSP server (node): completes the initialize handshake, records
+    /// didOpen/didChange per URI, and answers `documentSymbol` with two symbols
+    /// ONLY for URIs it has seen a document sync for — mirroring how real servers
+    /// (pyright et al.) answer empty for files they have not analyzed.
+    const FAKE_SERVER: &str = r#"
+let buf = '';
+const opened = {};
+process.stdin.setEncoding('utf8');
+function send(obj) {
+  const body = JSON.stringify(obj);
+  process.stdout.write('Content-Length: ' + Buffer.byteLength(body) + '\r\n\r\n' + body);
+}
+process.stdin.on('data', (d) => {
+  buf += d;
+  for (;;) {
+    const idx = buf.indexOf('\r\n\r\n');
+    if (idx < 0) break;
+    const header = buf.slice(0, idx);
+    const m = /Content-Length:\s*(\d+)/i.exec(header);
+    if (!m) { buf = buf.slice(idx + 4); continue; }
+    const len = parseInt(m[1], 10);
+    if (buf.length < idx + 4 + len) break;
+    const body = buf.slice(idx + 4, idx + 4 + len);
+    buf = buf.slice(idx + 4 + len);
+    let msg;
+    try { msg = JSON.parse(body); } catch { continue; }
+    if (msg.method === 'initialize') {
+      send({ jsonrpc: '2.0', id: msg.id, result: { capabilities: { documentSymbolProvider: true } } });
+    } else if (msg.method === 'shutdown') {
+      send({ jsonrpc: '2.0', id: msg.id, result: null });
+    } else if (msg.method === 'exit') {
+      process.exit(0);
+    } else if (msg.method === 'textDocument/didOpen' || msg.method === 'textDocument/didChange') {
+      opened[msg.params.textDocument.uri] = msg.params.textDocument;
+    } else if (msg.id !== undefined && msg.method) {
+      if (msg.method === 'textDocument/documentSymbol') {
+        const uri = msg.params.textDocument.uri;
+        const result = opened[uri] ? [
+          { name: 'greet', kind: 12, range: { start: { line: 0, character: 0 }, end: { line: 2, character: 0 } } },
+          { name: 'add', kind: 12, range: { start: { line: 3, character: 0 }, end: { line: 5, character: 0 } } },
+        ] : [];
+        send({ jsonrpc: '2.0', id: msg.id, result });
+      } else {
+        send({ jsonrpc: '2.0', id: msg.id, result: null });
+      }
+    }
+  }
+});
+"#;
+
+    /// Regression for the harness-test finding: queries racing the analyzer.
+    /// Before a `sync_document` (didOpen) the server answers documentSymbol with
+    /// an empty array; after the sync the symbols are visible, and a second
+    /// sync degrades to didChange without breaking the query flow.
+    /// Skips silently when node is unavailable (PATH-only resolution).
+    #[tokio::test]
+    async fn sync_document_makes_symbols_visible() {
+        if crate::utils::exec_resolve::resolve_executable("node").is_none() {
+            return; // node absent on this machine — nothing to test against
+        }
+
+        let root = std::env::temp_dir().join("aio_lsp_sync_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("创建临时目录失败");
+        std::fs::write(root.join("sample.py"), "def greet():\n    return 1\n")
+            .expect("写入样本失败");
+        let script = std::env::temp_dir().join("aio_fake_lsp_server.js");
+        std::fs::write(&script, FAKE_SERVER).expect("写入假服务器脚本失败");
+
+        let sink: LspEventSink = std::sync::Arc::new(|_event: &'static str, _payload: Value| {});
+        let client = LspClient::start(
+            "python",
+            root.clone(),
+            "node",
+            &[script.to_string_lossy().to_string()],
+            sink,
+        )
+        .await
+        .expect("假语言服务器启动失败");
+
+        let uri = url::Url::from_file_path(root.join("sample.py"))
+            .expect("路径转 URI 失败")
+            .to_string();
+        let doc = serde_json::json!({ "textDocument": { "uri": uri } });
+
+        // 1) Before any sync: the file was never opened → empty answer
+        let r = client
+            .request(
+                "textDocument/documentSymbol",
+                Some(doc.clone()),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect("请求失败");
+        assert_eq!(
+            r.as_array().map(Vec::len),
+            Some(0),
+            "未同步的文件应返回空符号"
+        );
+
+        // 2) First sync = didOpen → symbols become visible
+        client
+            .sync_document(&uri, "python", "def greet():\n    return 1\n")
+            .await
+            .expect("didOpen 失败");
+        let r = client
+            .request(
+                "textDocument/documentSymbol",
+                Some(doc.clone()),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect("请求失败");
+        assert_eq!(r.as_array().map(Vec::len), Some(2), "didOpen 后应返回符号");
+
+        // 3) Second sync = didChange (version bump) → still works
+        client
+            .sync_document(&uri, "python", "def greet():\n    return 2\n")
+            .await
+            .expect("didChange 失败");
+        let r = client
+            .request(
+                "textDocument/documentSymbol",
+                Some(doc),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect("请求失败");
+        assert_eq!(
+            r.as_array().map(Vec::len),
+            Some(2),
+            "didChange 后应仍返回符号"
+        );
+
+        let _ = client.shutdown().await;
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&script);
+    }
+}

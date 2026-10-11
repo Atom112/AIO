@@ -222,7 +222,7 @@ Create a commit.
 
 Source: `src-tauri/src/utils/lsp_tools.rs`, `src-tauri/src/utils/lsp_agent_tools.rs`
 
-If the language server for the file type is not running, it is started on demand when an LSP tool is called (the server must be installed locally, e.g. `pyright-langserver`, `rust-analyzer`, `typescript-language-server`, `gopls`). LSP startup failure does not affect other tools.
+If the language server for the file type is not running, it is started on demand when an LSP tool is called (the server must be installed locally, e.g. `pyright-langserver`, `rust-analyzer`, `typescript-language-server`, `gopls`). Before a query, the target file's current content is synced into the server (didOpen/didChange) so symbols and diagnostics are available promptly; read_lints briefly waits and retries while diagnostics have not been published yet. LSP startup failure does not affect other tools.
 
 ### `read_lints`
 

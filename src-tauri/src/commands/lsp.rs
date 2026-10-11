@@ -39,12 +39,13 @@ pub async fn start_lsp_server(
         .ok_or_else(|| ierr!("不支持的语言: {}", "Unsupported language: {}", language_id))?;
 
     // Start the language server
+    let sink = crate::plugins::lsp::app_event_sink(&app);
     let client = LspClient::start(
         language_id.clone(),
         project_root.clone(),
         &lang_config.command,
         &lang_config.args,
-        app.clone(),
+        sink,
     )
     .await
     .map_err(|e| {

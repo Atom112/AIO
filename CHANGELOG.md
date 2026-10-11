@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 🔧 LSP 查询竞态修复（文档同步 + 诊断等待）
+
+- **查询前同步文档到语言服务器**（harness 端到端测试发现）：AIO 此前从不发送 `textDocument/didOpen`，而语言服务器对「未分析过的文件」的符号/诊断查询返回空——懒启动后的首轮查询必然踩中（实测：pyright 拉起成功但 lsp_symbols 返回「文件中无符号」、read_lints 漏掉已埋好的类型错误；预热后同一引擎 CLI 立刻报出该错误，证明是竞态而非漏检）。现在 `lsp_symbols/definition/references/hover` 查询前会把文件当前磁盘内容 didOpen（首次）/didChange（后续，版本号递增）进服务器，服务器先分析再应答；read_lints 对显式指定的文件同样同步
+- **read_lints 空诊断有界重试**：诊断经 publishDiagnostics 异步到达，查询赶在服务器（重）分析完成前会误报「无问题」；现为空且有活跃服务器时最多重试 3×700ms
+- **LspClient 与 Tauri 运行时解耦**：事件（status/stderr/diagnostics）经注入的 `LspEventSink` 闭包上报（生产包一层 `app_event_sink`），集成测试传 no-op——插件层不再依赖 AppHandle 类型，也为测试铺路
+- **+1 集成测试**：node 假 LSP 服务器（stdio JSON-RPC，完整握手）验证「未同步→空符号 / didOpen→符号可见 / didChange→仍可用」三段式回归；node 缺席时静默跳过
+
 ### 🔧 Agent 工具链修复（web_search / LSP）
 
 - **web_search 换真实搜索引擎链**：原实现打的是 DuckDuckGo **Instant Answer API**（`api.duckduckgo.com`）——那是主题摘要查询接口而非搜索后端，绝大多数查询（尤其中文词）返回空载荷，导致 web_search 几乎每次都报「未找到相关结果」（工具可用性检查中暴露：连续 3 次不同查询均空）。现改为四级回退链：**Bing 结果页（主源，普通 HTTP 客户端即可用、国内免代理可达）→ DDG html 端点 → DDG lite 端点 → IA API 兜底**；搜索请求伪装成桌面浏览器形状（UA + Accept/Accept-Language，DDG html/lite 对非浏览器指纹会弹 JS 挑战页）；解析层支持三套标记（Bing `b_algo` 块 + DDG `result__a`/`result-link` 两种布局），统一解出 `uddg` 重定向与 Bing `/ck/a` base64url 重定向的真实 URL、过滤广告位（y.js/aclick/b_ad）、解码命名+数字 HTML 实体；响应 256KB 上限流式读取（SEC-08 同款）；+4 解析单测 + 真实端到端冒烟验证（「python 官方文档」返回带标题/URL/摘要的真结果）

@@ -154,7 +154,7 @@ fn extension_to_language_id(ext: &str) -> Option<&str> {
 /// before conversion — `Path::join` lets an absolute argument replace the base
 /// entirely and `..` walks out, which would hand the language server (and its
 /// hover/definition results) files outside the project.
-fn file_path_to_uri(project_root: &Path, file_path: &str) -> Result<String, String> {
+pub(crate) fn file_path_to_uri(project_root: &Path, file_path: &str) -> Result<String, String> {
     let canonical =
         crate::utils::file_tools::safe_path(&project_root.to_string_lossy(), file_path, true)
             .map_err(|e| {
@@ -176,7 +176,7 @@ fn file_path_to_uri(project_root: &Path, file_path: &str) -> Result<String, Stri
 }
 
 /// Shared front half: file extension → language_id, plus relative-path normalization.
-fn resolve_language_and_path(
+pub(crate) fn resolve_language_and_path(
     project_root: &str,
     file_path: &str,
 ) -> Result<(String, String), String> {
@@ -265,12 +265,13 @@ async fn ensure_lsp_client(
         .ok_or_else(|| ierr!("不支持的语言: {}", "Unsupported language: {}", language_id))?;
 
     let root = Path::new(project_root).to_path_buf();
+    let sink = crate::plugins::lsp::app_event_sink(app);
     let client = LspClient::start(
         language_id.to_string(),
         root.clone(),
         &lang_config.command,
         &lang_config.args,
-        app.clone(),
+        sink,
     )
     .await
     .map_err(|e| {
@@ -306,6 +307,18 @@ async fn ensure_lsp_client(
     Ok(client)
 }
 
+/// Passive client lookup by language_id: never starts a server.
+/// Shared by the background code-indexing path and read_lints' document sync.
+pub(crate) fn passive_lsp_client(
+    app: &tauri::AppHandle,
+    project_root: &str,
+    language_id: &str,
+) -> Option<LspClient> {
+    let lsp_mgr = app.state::<LspManager>();
+    let client_key = format!("{}/{}", project_root, language_id);
+    lsp_mgr.clients.get(&client_key).map(|e| e.value().clone())
+}
+
 /// Passive lookup: resolves the `LspClient` without ever starting a server.
 /// Used by best-effort background paths (memory code indexing falls back to
 /// line-window chunking when LSP is absent).
@@ -314,38 +327,55 @@ fn resolve_lsp_client_passive(
     project_root: &str,
     file_path: &str,
 ) -> Result<(LspClient, String), String> {
-    let lsp_mgr = app.state::<LspManager>();
     let (language_id, normalized) = resolve_language_and_path(project_root, file_path)?;
 
     // Build the client key ("{project_root}/{language_id}")
     let client_key = format!("{}/{}", project_root, language_id);
-    let client = lsp_mgr
-        .clients
-        .get(&client_key)
-        .map(|entry| entry.value().clone())
-        .ok_or_else(|| {
-            ierr!(
-                "{} 语言服务器未运行 (key={})。",
-                "{} language server is not running (key={}).",
-                language_id,
-                client_key
-            )
-        })?;
+    let client = passive_lsp_client(app, project_root, &language_id).ok_or_else(|| {
+        ierr!(
+            "{} 语言服务器未运行 (key={})。",
+            "{} language server is not running (key={}).",
+            language_id,
+            client_key
+        )
+    })?;
 
     Ok((client, normalized))
 }
 
 /// Agent-tool lookup: resolves the `LspClient` for a given file path, starting
 /// the language server on demand when none is running (see `ensure_lsp_client`).
-/// Returns `(client, relative_path)`.
+/// Returns `(client, language_id, relative_path)`.
 async fn resolve_lsp_client(
     app: &tauri::AppHandle,
     project_root: &str,
     file_path: &str,
-) -> Result<(LspClient, String), String> {
+) -> Result<(LspClient, String, String), String> {
     let (language_id, normalized) = resolve_language_and_path(project_root, file_path)?;
     let client = ensure_lsp_client(app, project_root, &language_id).await?;
-    Ok((client, normalized))
+    Ok((client, language_id, normalized))
+}
+
+/// Best-effort document sync (didOpen/didChange with the current disk content)
+/// before querying a file — see `LspClient::sync_document`. Read failures
+/// (binary / unreadable / missing) skip the sync silently; the query still runs.
+async fn sync_document_for_query(
+    client: &LspClient,
+    project_root: &str,
+    relative_path: &str,
+    language_id: &str,
+    uri: &str,
+) {
+    let Ok(canonical) = crate::utils::file_tools::safe_path(project_root, relative_path, true)
+    else {
+        return;
+    };
+    let Ok(text) = tokio::fs::read_to_string(&canonical).await else {
+        return;
+    };
+    if let Err(e) = client.sync_document(uri, language_id, &text).await {
+        tracing::warn!("[lsp] 文档同步失败（{}）: {}", relative_path, e);
+    }
 }
 
 /// Extracts (line, character) from args.
@@ -393,8 +423,10 @@ pub async fn execute_lsp_definition(
         .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
-    let (client, relative_path) = resolve_lsp_client(app, project_root, file_path).await?;
+    let (client, language_id, relative_path) =
+        resolve_lsp_client(app, project_root, file_path).await?;
     let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
+    sync_document_for_query(&client, project_root, &relative_path, &language_id, &uri).await;
 
     let params = json!({
         "textDocument": { "uri": uri },
@@ -460,8 +492,10 @@ pub async fn execute_lsp_references(
         .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
-    let (client, relative_path) = resolve_lsp_client(app, project_root, file_path).await?;
+    let (client, language_id, relative_path) =
+        resolve_lsp_client(app, project_root, file_path).await?;
     let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
+    sync_document_for_query(&client, project_root, &relative_path, &language_id, &uri).await;
 
     let params = json!({
         "textDocument": { "uri": uri },
@@ -523,8 +557,10 @@ pub async fn execute_lsp_hover(
         .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
     let (line, character) = extract_position(args)?;
 
-    let (client, relative_path) = resolve_lsp_client(app, project_root, file_path).await?;
+    let (client, language_id, relative_path) =
+        resolve_lsp_client(app, project_root, file_path).await?;
     let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
+    sync_document_for_query(&client, project_root, &relative_path, &language_id, &uri).await;
 
     let params = json!({
         "textDocument": { "uri": uri },
@@ -563,8 +599,10 @@ pub async fn execute_lsp_symbols(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ierr!("缺少 'path' 参数", "Missing 'path' argument"))?;
 
-    let (client, relative_path) = resolve_lsp_client(app, project_root, file_path).await?;
+    let (client, language_id, relative_path) =
+        resolve_lsp_client(app, project_root, file_path).await?;
     let uri = file_path_to_uri(Path::new(project_root), &relative_path)?;
+    sync_document_for_query(&client, project_root, &relative_path, &language_id, &uri).await;
 
     let params = json!({
         "textDocument": { "uri": uri }

@@ -3,48 +3,37 @@ use super::*;
 
 impl MemoryStore {
     /// Memory store statistics.
+    /// MEM-14: single conditional-aggregation COUNT (was 5 separate queries) and
+    /// one lock hold for the rolling-counter reads (was 8 separate acquisitions).
     pub fn stats(&self) -> Result<MemoryStats, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM facts", [], |r| r.get(0))
-            .map_err(|e| e.to_string())?;
-        let active: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_ACTIVE],
-                |r| r.get(0),
+        let (total, active, archived, superseded, embedded) = {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(status = ?1), 0), COALESCE(SUM(status = ?2), 0), \
+                        COALESCE(SUM(status = ?3), 0), COALESCE(SUM(embedding IS NOT NULL), 0) FROM facts",
+                params![STATUS_ACTIVE, STATUS_ARCHIVED, STATUS_SUPERSEDED],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                },
             )
-            .map_err(|e| e.to_string())?;
-        let archived: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_ARCHIVED],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let superseded: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_SUPERSEDED],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let embedded: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let last_reindex: Option<String> = conn
-            .query_row(
+            .map_err(|e| e.to_string())?
+        };
+        let last_reindex: Option<String> = {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row(
                 "SELECT v FROM meta WHERE k = ?1",
                 [META_LAST_REINDEX],
                 |r| r.get(0),
             )
             .optional()
-            .map_err(|e| e.to_string())?;
-        drop(conn);
+            .map_err(|e| e.to_string())?
+        };
         let db_size = std::fs::metadata(
             Path::new(&self.project_root)
                 .join(".aio")
@@ -53,20 +42,35 @@ impl MemoryStore {
         )
         .map(|m| m.len())
         .unwrap_or(0);
-        // 7-day quality probes
-        let queries = self.rolling_get(STAT_QUERIES);
-        let hits = self.rolling_get(STAT_HITS);
-        let dedup = self.rolling_get(STAT_DEDUP);
-        let extracted = self.rolling_get(STAT_EXTRACTED);
-        let judge_merge = self.rolling_get(STAT_JUDGE_MERGE);
-        let judge_update = self.rolling_get(STAT_JUDGE_UPDATE);
-        let judge_supersede = self.rolling_get(STAT_JUDGE_SUPERSEDE);
-        let judge_keep = self.rolling_get(STAT_JUDGE_KEEP);
+        // 7-day quality probes: all rolling counters read under ONE lock hold
+        let queries;
+        let hits;
+        let dedup;
+        let extracted;
         let mut judge_distribution = std::collections::HashMap::new();
-        judge_distribution.insert("merge".to_string(), judge_merge);
-        judge_distribution.insert("update".to_string(), judge_update);
-        judge_distribution.insert("supersede".to_string(), judge_supersede);
-        judge_distribution.insert("keep_separate".to_string(), judge_keep);
+        {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            queries = rolling_get_with(&conn, STAT_QUERIES);
+            hits = rolling_get_with(&conn, STAT_HITS);
+            dedup = rolling_get_with(&conn, STAT_DEDUP);
+            extracted = rolling_get_with(&conn, STAT_EXTRACTED);
+            judge_distribution.insert(
+                "merge".to_string(),
+                rolling_get_with(&conn, STAT_JUDGE_MERGE),
+            );
+            judge_distribution.insert(
+                "update".to_string(),
+                rolling_get_with(&conn, STAT_JUDGE_UPDATE),
+            );
+            judge_distribution.insert(
+                "supersede".to_string(),
+                rolling_get_with(&conn, STAT_JUDGE_SUPERSEDE),
+            );
+            judge_distribution.insert(
+                "keep_separate".to_string(),
+                rolling_get_with(&conn, STAT_JUDGE_KEEP),
+            );
+        }
         Ok(MemoryStats {
             total_facts: total,
             active_facts: active,
@@ -121,29 +125,47 @@ impl MemoryStore {
     }
 
     /// Reads the 7-day rolling counter.
+    /// MEM-14: now only kept for external single-key callers (UI panel); the
+    /// stats() batch path uses [`rolling_get_with`] under one lock.
+    #[allow(dead_code)] // retained as the public single-key API
     pub fn rolling_get(&self, key: &str) -> i64 {
         let Ok(conn) = self.conn.lock() else { return 0 };
-        let sql_key = format!("{key}_val");
-        // meta.v uses the TEXT storage class; must parse via string (direct get::<_, i64> fails with InvalidColumnType)
-        let v: String = conn
-            .query_row("SELECT v FROM meta WHERE k = ?1", [&sql_key], |r| r.get(0))
-            .unwrap_or_default();
-        v.trim().parse::<i64>().unwrap_or(0)
+        rolling_get_with(&conn, key)
     }
 
     /// Increments retrieval access counts (for usage statistics).
+    /// MEM-14: one batched UPDATE with an IN list — the historic per-id UPDATE
+    /// loop cost one statement (and one lock hold each round) per hit.
     pub fn bump_access(&self, ids: &[String]) {
         if ids.is_empty() {
             return;
         }
         let now = now_iso();
         if let Ok(conn) = self.conn.lock() {
-            for id in ids {
-                let _ = conn.execute(
-                    "UPDATE facts SET access_count = access_count + 1, last_access_at = ?1 WHERE id = ?2",
-                    params![now, id],
+            for chunk in ids.chunks(100) {
+                let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let sql = format!(
+                    "UPDATE facts SET access_count = access_count + 1, last_access_at = ?1 WHERE id IN ({placeholders})"
                 );
+                // Same binding shape as the params! macro: &[&dyn ToSql]
+                let mut bind: Vec<&dyn rusqlite::ToSql> = vec![&now];
+                for id in chunk {
+                    bind.push(id);
+                }
+                let _ = conn.execute(&sql, bind.as_slice());
             }
         }
     }
+}
+
+/// Reads a rolling counter through an already-held connection (MEM-14: lets
+/// `stats()` batch all 8 probe reads under one lock).
+/// meta.v uses the TEXT storage class; must parse via string (direct get::<_, i64>
+/// fails with InvalidColumnType).
+fn rolling_get_with(conn: &rusqlite::Connection, key: &str) -> i64 {
+    let sql_key = format!("{key}_val");
+    let v: String = conn
+        .query_row("SELECT v FROM meta WHERE k = ?1", [&sql_key], |r| r.get(0))
+        .unwrap_or_default();
+    v.trim().parse::<i64>().unwrap_or(0)
 }

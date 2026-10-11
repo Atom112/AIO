@@ -19,7 +19,7 @@ import {
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import { transportLabel, statusLabel, statusColor } from '../../../core/utils/mcp';
-import { memoryGetStatus, memorySetEnabled } from '../../../core/utils/memory';
+import { memoryGetStatus, memorySetEnabled } from '../../../core/api/memory';
 import type { MemoryStatus } from '../../../core/types/memory';
 import MemoryPanel from './MemoryPanel';
 import Icon from '../../../shared/components/Icon';

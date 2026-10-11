@@ -2,9 +2,11 @@
 // reviews from creeping back; each failing gate lists the exact offending locations.
 // Gate list:
 //   1. Raw Chinese JSX leaks (user-facing copy must go through i18n)
+//   1b. Raw English JSX text leaks (same rule, English heuristic — 阶段5)
 //   2. Hardcoded color ban (new colors must use CSS variables; allowlist covers built-in defaults and the standalone export template)
+//   2b. Literal rgba/rgb ratchet (same rule as 2 for the rgb() form; legacy stock capped, may only go down — 阶段5)
 //   3. `any` ratchet (only the existing baseline is allowed; new `any` raises the count and fails)
-//   4. Frontend/backend layering (features/ must not call raw invoke; services/plugins/core/utils must not depend on commands)
+//   4. Frontend/backend layering (features/ AND core/utils must not call raw invoke; services/plugins/core/utils must not depend on commands)
 //   5. File-size caps (component/module line counts)
 //   6. Backend command registration consistency (every #[tauri::command] must be registered in lib.rs)
 import { readFile, readdir } from 'node:fs/promises';
@@ -78,11 +80,58 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
   }
 }
 
+// ---------- Gate 2b: literal rgba/rgb ratchet (阶段5) ----------
+// Numeric rgba()/rgb() literals are the same class of violation as #hex (theme
+// colors must come from CSS variables), but the codebase carries a large legacy
+// stock — a ratchet (like the `any` gate) instead of an instant red. var()-driven
+// forms — rgba(var(--primary-rgb),0.5) — are compliant and excluded by the regex.
+const RGBA_BASELINE = 179;
+{
+  let rgbaCount = 0;
+  const rgbaFiles = [];
+  for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
+    const r = rel(p);
+    if (COLOR_ALLOWLIST.has(r)) continue;
+    const c = await read(p);
+    const n = (c.match(/rgba?\(\s*\d/g) || []).length;
+    if (n > 0) {
+      rgbaCount += n;
+      if (n >= 10) rgbaFiles.push(`${r}(${n})`);
+    }
+  }
+  if (rgbaCount > RGBA_BASELINE) {
+    push(
+      'color-rgba-ratchet',
+      '(global)',
+      `字面 rgba/rgb 计数 ${rgbaCount} 超过基准 ${RGBA_BASELINE}（新颜色必须走 CSS 变量）；最大来源: ${rgbaFiles.slice(0, 5).join(', ')}`,
+    );
+  }
+}
+
+// ---------- Gate 1b: raw English JSX text (阶段5 heuristic) ----------
+// Same class as the Chinese gate above: user-facing copy must go through t().
+// The pattern is deliberately narrow — a JSX text NODE (>English prose<), at least
+// two words — so imports/comments/tailwind classes cannot false-positive.
+{
+  const EN_NODE_RE = />\s*[A-Z][A-Za-z0-9 ,.!?%:()'"-]{8,}?\s*</g;
+  for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+    const c = await read(p);
+    EN_NODE_RE.lastIndex = 0;
+    let m;
+    while ((m = EN_NODE_RE.exec(c)) !== null) {
+      const line = c.slice(0, m.index).split('\n').length;
+      const text = m[0].slice(1, -1).trim();
+      push('i18n-en-jsx', rel(p), `L${line} 裸英文 JSX 文案（应走 t()）: ${text.slice(0, 50)}`);
+    }
+  }
+}
+
 // ---------- Gate 3: `any` ratchet (baseline cap, may only go down) ----------
 // Baseline: the `any` count recorded when this gate first went green after the split.
 // New code must not add `any`; lower the baseline as the backlog is cleaned up.
-// Known hotspots: chatEventListeners.ts / ChatPage.tsx (listen<any> payloads pending typing).
-const ANY_BASELINE = 163;
+// 2026-10 阶段5（FE-21）：流事件载荷类型化（streamPayloads.ts）+ chatEventListeners
+// 全量收编后 163 → 100。
+const ANY_BASELINE = 100;
 let anyCount = 0;
 const anyFiles = [];
 for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
@@ -107,6 +156,15 @@ for await (const p of walk(path.join(root, 'src/features'), ['.tsx', '.ts'])) {
   const c = await read(p);
   if (/\binvoke[<(]/.test(c)) {
     push('layering-fe', rel(p), '组件层裸 invoke—— 必须经 core/api/ 域封装');
+  }
+}
+// FE-25: the utils layer is also barred from direct invoke — Tauri wrappers belong
+// to core/api; utils keeps pure logic only (cache/lookup/formatting). core/api itself
+// and core/store (stateful domains managing their own IPC lifecycle) are exempt.
+for await (const p of walk(path.join(root, 'src/core/utils'), ['.tsx', '.ts'])) {
+  const c = await read(p);
+  if (/\binvoke[<(]/.test(c)) {
+    push('layering-utils', rel(p), 'utils 层裸 invoke —— Tauri 封装必须下沉到 core/api/');
   }
 }
 // Backend: lower layers must not depend back on the commands layer
@@ -170,10 +228,22 @@ if (errors.length) {
   for (const e of errors) console.error('  ' + e);
   process.exit(1);
 }
-console.log(
-  'gates passed: i18n-jsx=0, color=0, any=' +
-    anyCount +
-    ' (≤' +
-    ANY_BASELINE +
-    '), layering=0, file-size=0, cmd-dispatch=0',
-);
+{
+  // Recount for the summary line (rgba count lives in a scoped block above)
+  let rgbaTotal = 0;
+  for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
+    if (COLOR_ALLOWLIST.has(rel(p))) continue;
+    rgbaTotal += ((await read(p)).match(/rgba?\(\s*\d/g) || []).length;
+  }
+  console.log(
+    'gates passed: i18n-jsx=0, i18n-en-jsx=0, color=0, rgba=' +
+      rgbaTotal +
+      ' (≤' +
+      RGBA_BASELINE +
+      '), any=' +
+      anyCount +
+      ' (≤' +
+      ANY_BASELINE +
+      '), layering=0, file-size=0, cmd-dispatch=0',
+  );
+}

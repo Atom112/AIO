@@ -85,6 +85,8 @@ export interface ToolCallDisplay {
   function: { name: string; arguments: string };
   /** UI state: calling / success / error */
   state?: 'calling' | 'success' | 'error';
+  /** Plain-text tool result (display + message rebuild; truncated view of fullContent) */
+  content?: string;
   /** Structured result returned by the tool */
   result?: any;
   /** Error message (when state=error) */

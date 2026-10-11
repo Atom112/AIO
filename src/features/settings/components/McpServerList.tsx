@@ -468,7 +468,7 @@ const McpServerList: Component = () => {
                         disabled={!server.repositoryUrl && !server.websiteUrl}
                         onClick={() => void openSafeUrl(server.repositoryUrl || server.websiteUrl)}
                       >
-                        Official MCP Registry
+                        {t('mcp.detail.officialRegistry')}
                       </button>
                       <button
                         class={installed() ? btnSuccess : btnSecondarySm}

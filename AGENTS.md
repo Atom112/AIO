@@ -32,9 +32,9 @@ src/
 ├── index.css            # Tailwind v4 CSS + theme CSS variables (light/dark mode)
 ├── core/
 │   ├── store/           # 域模块：types/models/chat/engine/project/profiles/ui-prefs/update/workflow（store.ts 仅作 barrel 再导出；接口在 types.ts）；diagnostics.ts
-│   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers）+ events.ts（事件名常量）—— 组件不得裸 invoke
+│   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers/memory/catalog/dialog）+ events.ts（事件名常量，双端守门测试）+ streamPayloads.ts（流事件载荷类型）—— 组件与 utils 均不得裸 invoke
 │   ├── types/           # Backend mirror types: mcp.ts, skill.ts
-│   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog), mcp.ts, exportConversation.ts
+│   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog 缓存+查询，invoke 已下沉 api/catalog), mcp.ts, exportConversation.ts —— 禁止裸 invoke（门禁 layering-utils）
 │   ├── i18n/            # index.ts (t(), locale) + locales/zh-CN.json + locales/en-US.json
 │   ├── shortcuts.ts     # Keyboard shortcut + slash command registry
 │   ├── agent-prompts.ts # Agent system-prompt presets

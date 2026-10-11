@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::vector::{brute_force_topk, bytes_to_f32, f32_to_bytes};
+use super::vector::f32_to_bytes;
 use crate::services::memory::CollectRowsWarn;
 
 pub const STATUS_ACTIVE: &str = "active";

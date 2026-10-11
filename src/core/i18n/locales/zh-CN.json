@@ -98,7 +98,7 @@
   "app.maxConcurrentSubagents.title": "最大并发子智能体数",
   "app.subagentIsolation.title": "并行写入隔离",
   "app.subagentIsolation.description": "多个写入类子任务并行修改文件时的隔离方式。",
-  "app.subagentIsolation.auto": "自动（git 项目用独立工作区）",
+  "app.subagentIsolation.auto": "自动",
   "app.subagentIsolation.worktree": "始终独立工作区",
   "app.subagentIsolation.off": "共享目录（仅文件锁）",
   "app.maxToolRounds.description": "限制单次 Agent 运行的工具调用轮数，到达后优雅收尾而非硬中断，防止无界消耗。",

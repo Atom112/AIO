@@ -4,6 +4,76 @@
 
 ## [Unreleased]
 
+### 🔒 全仓深度审查修复 · 阶段 3（剩余 P2 全量：SEC/LOOP/MCP/MEM/PROV/ENG/INFRA/CHAT/FE/HOR）
+
+**批次 1 — 安全读写与进程边界（SEC-04/06/08/09 + INFRA-3）**
+
+- **文件读取上限（SEC-04）**：file_tools 全部读取路径加上限——`read_file` 32MB 硬顶 + 流式 SHA-256（多 GB 文件不再整读入内存再截断）；`write_file` expect_hash 校验与 `replace_in_file` 改流式哈希 + 尺寸门；`search_content` 每文件 1MB 扫描上限；diff 预览源读取 2MB 上限
+- **可执行文件 PATH-only 解析（SEC-06）**：新增 `utils/exec_resolve`（绝不查当前目录；Windows PATHEXT 顺序归一 EXE 优先），替换全部裸名 `Command::new` spawn——git 工具/命令执行 shell/注册表 reg/资源管理器 explorer/skill npm/npx/MCP catalog 运行时检查/MCP stdio/LSP 客户端/引擎探测（where/which/sc/nvidia-smi/python）与沙箱包装器（bwrap/sandbox-exec）；三处重复的 PATHEXT 解析实现合并为单一实现（Windows CreateProcess 对裸名先查应用目录与当前目录——Agent 命令的 cwd 是模型可写的项目根，植入 `git.exe` 即劫持）
+- **web_fetch 流式接收（SEC-08）**：响应体改 Content-Length 预检 + chunk 累积超限即中止，不再先整缓冲再限长
+- **命令触碰标记（SEC-09）**：`execute_command` 成功后对项目根做有界 mtime 扫描（跳过 .git/node_modules 等，10 万条目/5000 标记上限），窗口内修改的文件记为 "command" 写入者——后续任何 Agent 写入被 hashline 闸门强制先重读（格式化/构建/代码生成命令静默失效模型陈旧上下文的丢失更新面）
+- **zip 炸弹上限（INFRA-3）**：docx/pptx 条目解压 64MB/总量 256MB 上限，谎报小尺寸实际解压超限即中止
+
+**批次 2 — 循环取消与注入隔离（LOOP-5/11/12）**
+
+- **三处等待全部取消响应（LOOP-5）**：Phase-2 并行工具等待加 token select（停止后不再被慢速子任务钉住）；delegate_task 单发与批量并发的信号量排队等待均加 token select（排队中立即释放）
+- **工具输出隔离标记（LOOP-11）**：工具结果统一以 `<tool_result>...</tool_result>` 哨兵包裹（单一咽喉点 truncate_tool_result），载荷内字面哨兵以零宽空格中和防伪造闭合标签逃逸；主/子 Agent 系统提示词同步声明不可信数据规则
+- **create_workflow 步骤上限（LOOP-12）**：20 步硬顶（此前无上限，N 步=N 个完整子 Agent 回合，架空主循环 50 轮预算）
+
+**批次 3 — MCP（MCP-12/14）**
+
+- **连接池指纹键（MCP-12）**：池键改 `id::指纹前缀`（生效配置 transport 摘要）——项目级 overlay 给同一 id 不同 transport 时各项目各自连接互不串用；start 只重启同指纹变体，stop/remove 清全部变体；状态/工具列举按指纹感知查找
+- **catalog 注入面（MCP-14）**：注册表数据进入 npx/uvx argv 前全量校验——包标识/版本（拒绝 `1.0 --flag` 冒充）、runtime 参数（只许长旗标与裸值）；env 名称 POSIX 文法 + 加载器/包管理器配置拒绝清单（NODE_OPTIONS/npm_config__/PIP__/UV_*）；header 名 token 文法；明文 http remote 仅限环回；安装路径对 argv 与 env/header 二次防御
+
+**批次 4 — 记忆子系统（MEM-06/07/08/09/11）**
+
+- **embed_one 单一实现（MEM-06）**：四处复制粘贴收敛为 `services::memory::embed_one`（统一维度漂移守卫——库内向量维度与当前模型不一致跳过向量化，杜绝写入永远查不到的死向量）；模型切换探测改用无守卫 `embed_raw`
+- **连接缓存真实 LRU（MEM-7）**：超上限必淘汰最久未触条目（原仅 30 分钟 TTL 过期淘汰，全员"热"时无上界增长）
+- **代码索引四项（MEM-08）**：目录扫描/元数据/读取全部 spawn_blocking；读取项目根 .gitignore（名称级/目录前缀/整路径三类模式）过滤；file_type 不追符号链接（杜绝符号链接环死循环与别名重复索引）；索引后清理磁盘已删文件的残留 chunks/FTS/状态行
+- **整理互斥原子化（MEM-09）**：单语句 INSERT…ON CONFLICT…WHERE 认领（消除读后写窗口内两次整理并发双花预算）
+- **检索锁与 N+1（MEM-11）**：同步 SQLite 检索移入 spawn_blocking；详情装配改批量 IN 查询（每 100 候选一条，消除逐 id 往返）
+
+**批次 5 — Provider（PROV-8/9/10/11）**
+
+- **嵌入模型缓存失败策略（PROV-8）**：实例缓存只存成功结果——失败（未下载/损坏）不再冻结到重启，下载后下次调用即可用
+- **ONNX 加载下沉（PROV-9）**：embed/rerank 数百 MB 模型读盘+图构建移入 spawn_blocking，不再占用 async worker
+- **重排全量打分（PROV-10）**：top_k 由硬编码 16 改整个候选集（上限 50）——原第 17+ 名保留 RRF 原始分（~0.01）与交叉编码器分（~0.0-1.0）混排，量纲不一致
+- **URL 脱敏（PROV-11）**：错误消息与日志中的 URL 一律去查询串（Gemini `?key=...` 不再进入 toast/日志）；`classify_reqwest_error` 双脱敏；`post_chat_completion` 保留重试判定所需错误前缀
+
+**批次 6 — 引擎与下载（ENG-05/08/10/11）**
+
+- **下载控制表并发（ENG-05）**：同 id 并发下载拒绝；退出守卫按 cancel Arc 指针身份匹配只清理自己的控制项
+- **引擎启动互斥（ENG-08）**：`start_local_server` 全程持锁——"停旧再启"序列原子化，两个并发启动不再同时存活
+- **迁移悬空引用（ENG-10）**：目录迁移只重写实际迁移成功的 provider 路径（原无条件重写制造悬空引用）
+- **空间与并发（ENG-11）**：全局并发下载上限（2 槽位，排队响应取消）；每文件 Content-Length 已知时权威空间检查（元数据 size=0 此前完全绕过预检）
+
+**批次 7 — 前端流（CHAT-7/9/10/11/12）**
+
+- **流状态全局化（CHAT-12）**：isThinking/typingIndex/pendingApprovals/pendingQuestions 迁至 `core/store/stream.ts`；18 个流事件监听器改由根 Layout 一次性注册存活全程（仅 3 个拖放监听器页面级）——中途切 /settings 不再销毁监听器导致流内容丢失、done 收尾（落盘/重命名/压缩）永不执行
+- **流归属键批处理（CHAT-7）**：按 assistant::topic 分槽，目标消息 flush 时按 ID 重解析（快照下标在压缩裁剪后错位）
+- **Reasoning 合批（CHAT-9）**：与 llmChunk 共用 flush 窗口，一次 setDatas 同时落 content/reasoning/agentSteps（原每 chunk 两次 setDatas + 全量步骤重建）
+- **孤儿占位清理（CHAT-10）**：invoke 失败删除全空占位气泡、部分输出关闭运行步骤并标记中断（原留永久"思考中"空气泡）
+- **重发停止等待（CHAT-11）**：150ms 魔法等待改轮询 isThinking（5s 上限），慢速收尾不再与新回合流交错
+
+**批次 8 — 设置页（FE-04/06/08/09/12）**
+
+- **持久化三层修复（FE-04）**：写操作串行化（排队任务执行时重读配置，读改写不再竞态丢更新）；文本字段 400ms 防抖合批；Ollama 5 秒轮询先比对内容无变化不写盘；离页冲刷未落盘内容
+- **i18n/文案（FE-06/08/09）**：命令面板补 new-project 翻译条目（切换语言后该命令冻结在启动 locale）；Markdown 复制按钮 aria-label 走 t()；停止引擎失败裸错误改 i18n 包装
+- **明文密钥不落盘（FE-12）**：profile 模型覆盖保存时 apiKey 前端传空、后端落盘前清空（运行时密钥每轮从供应商配置新鲜解析）
+
+**批次 9 — 插件面与同步命令（HOR-2/4）**
+
+- **能力收窄（HOR-2）**：移除 fs/shell 两个 Tauri 插件（前端零使用，全栈后端→注册即攻击面）；修复 opener 从未注册的真实 bug（safeUrl 调用此前运行时必失败）；asset 协议作用域从通配 `**` 收窄为 `$APPDATA/attachments/**`（与 tauri.conf.json 一致）
+- **同步命令异步化（HOR-4/ENG-09）**：git 全部 5 命令（spawn git 子进程）、硬件档案探测、模型删除/列表/目录迁移、嵌入模型删除/迁移/取消清理——全部改 async + spawn_blocking（Tauri 同步命令跑主线程，此前大仓库分支查询/多 GB 目录删除直接卡 UI）
+
+**批次 10 — 阶段 3 收尾（SEC-03R/05 + LOOP-7/8 + MCP-10）**
+
+- **web_fetch DNS 解析校验 + IP 固定（SEC-03R）**：每跳先解析并校验全部地址为公网单播（私网/保留/metadata 段全拒），再经 ClientBuilder::resolve 固定到已验证 IP——封掉"域名指向内网"绕过与 check-then-connect 重绑定窗口
+- **写入前目标复检（SEC-05）**：四个变更类文件工具写/删/建前复检规范化路径与首验一致（junction 中途替换改变规范化路径即拒绝），TOCTOU 窗口从整个工具体收窄到微秒级
+- **检查点锁外序列化（LOOP-7）**：主循环先序列化再取 SQLite 锁（多 MB 上下文序列化不再阻塞全部数据库使用者）
+- **精确 token 计数下沉（LOOP-8）**：近预算 tiktoken 全上下文编码（主/子两处）移入 spawn_blocking
+- **stdio 崩溃自愈（MCP-10）**：stdout EOF/连续读错误按连接实例身份从池中精确移除（同 id 其他项目活变体保留）并广播断开——原状态表永久残留"已连接"、后续调用全部挂到超时
+
 ### 🔒 全仓深度审查修复（CODE_REVIEW_REPORT.md：阶段 0/1/2，P0×2 + P1×31 全量 + 高价值 P2）
 
 **阶段 0（P0 紧急止血）**

@@ -13,7 +13,7 @@ AIO is a lightweight, cross-platform AI assistant desktop client built with **Ta
 | Styling           | Tailwind CSS (v4, via `@tailwindcss/postcss`, no tailwind.config)        | ^4.0.0                    |
 | Build Tool        | Vite                                                                     | ^8.0.16                   |
 | Desktop Framework | Tauri                                                                    | 2.11.x                    |
-| Tauri Plugins     | dialog, fs, shell, opener, updater                                       | 2.x                       |
+| Tauri Plugins     | dialog, opener, updater（fs/shell 已移除——前端零使用，全部文件/命令操作走自有命令层）| 2.x                       |
 | Backend Language  | Rust (pinned in `src-tauri/rust-toolchain.toml`; use `cargo +1.97.1`)    | 1.97.1                    |
 | Database          | SQLite (rusqlite)                                                        | bundled                   |
 | i18n              | @solid-primitives/i18n (locales: zh-CN, en-US)                           | ^2.2.1                    |

@@ -37,8 +37,6 @@ dashmap = "6.0"
 once_cell = "1"
 parking_lot = "0.12"
 tauri-plugin-dialog = "2.7.1"
-tauri-plugin-shell = "2.3.5"
-tauri-plugin-fs = "2.5.1"
 uuid = { version = "1", features = ["v4", "fast-rng", "serde"] }
 base64 = "0.22.1"
 rusqlite = { version = "0.39.0", features = ["bundled"] }

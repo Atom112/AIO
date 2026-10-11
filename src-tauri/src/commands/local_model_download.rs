@@ -621,15 +621,20 @@ pub fn local_model_pause_download(id: String) -> bool {
 
 /// Cancels a local model download (deletes the checkpoint; with no active download,
 /// cleans up `.part` files under the model's directory directly).
+/// HOR-4: the no-download cleanup walks the model dir — off the main thread.
 #[tauri::command]
-pub fn local_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
+pub async fn local_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
     let active = signal_download(&id, |c| c.cancel.store(true, Ordering::Relaxed));
     if !active {
         // P0-2：id 经 safe_join 校验后再定位目录
         let dir = crate::core::path_safety::safe_join(&local_models_dir(&app), id.trim())?;
-        if dir.is_dir() {
-            remove_part_files(&dir);
-        }
+        tokio::task::spawn_blocking(move || {
+            if dir.is_dir() {
+                remove_part_files(&dir);
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     Ok(active)
 }
@@ -663,19 +668,26 @@ fn read_model_marker(dir: &Path) -> Option<ModelMarker> {
 
 /// Deletes an installed local model (removes its install directory, or the loose
 /// `.gguf` file itself when the id refers to a top-level file).
+/// HOR-4: recursive removal of a multi-GB model dir must not run on the main
+/// thread (Tauri executes sync commands there) — the removal runs on the
+/// blocking pool.
 #[tauri::command]
-pub fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
     // P0-2：id 经 safe_join 校验——`Path::join` 对绝对路径参数会整体替换基路径，
     // `..` 组件在 syscall 时逃逸；这里杜绝「任意目录递归删除」原语
     let path = crate::core::path_safety::safe_join(&local_models_dir(&app), id.trim())?;
-    if path.is_dir() {
-        std::fs::remove_dir_all(&path)
-            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
-    } else if path.is_file() {
-        std::fs::remove_file(&path)
-            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
-    }
-    Ok(())
+    tokio::task::spawn_blocking(move || {
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
+        } else if path.is_file() {
+            std::fs::remove_file(&path)
+                .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Lists installed local models by scanning the install directory for GGUF content:
@@ -684,13 +696,24 @@ pub fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
 ///   scan, marker's entry file) or when it DIRECTLY contains `*.gguf` files (no
 ///   recursion) — foreign directories (caches, tool folders with deeply nested
 ///   models) are never mistaken for downloaded models.
+/// HOR-4: the recursive disk scan runs on the blocking pool (sync commands would
+/// execute it on the main thread).
 #[tauri::command]
-pub fn local_model_installed_list(app: AppHandle) -> Result<Vec<InstalledLocalModel>, String> {
+pub async fn local_model_installed_list(
+    app: AppHandle,
+) -> Result<Vec<InstalledLocalModel>, String> {
     let root = local_models_dir(&app);
+    tokio::task::spawn_blocking(move || Ok(installed_list_inner(root)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Synchronous body of [`local_model_installed_list`] (runs on the blocking pool).
+fn installed_list_inner(root: PathBuf) -> Vec<InstalledLocalModel> {
     let mut out = Vec::new();
     let entries = match std::fs::read_dir(&root) {
         Ok(e) => e,
-        Err(_) => return Ok(out),
+        Err(_) => return out,
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -747,7 +770,7 @@ pub fn local_model_installed_list(app: AppHandle) -> Result<Vec<InstalledLocalMo
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(out)
+    out
 }
 
 /// Current local model install directory.
@@ -759,8 +782,10 @@ pub fn local_models_get_dir(app: AppHandle) -> Result<String, String> {
 /// Sets the local model install directory (empty `dir` restores the default). Downloaded
 /// models are migrated to the new directory, and every provider's localModelPaths entry
 /// pointing into the old directory is rewritten (best-effort, failures are logged only).
+/// HOR-4: the migration renames/copies multi-GB model dirs — it runs on the blocking
+/// pool so the main thread (and the UI) stays responsive.
 #[tauri::command]
-pub fn local_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
+pub async fn local_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
     let old = local_models_dir(&app);
     let mut cfg = crate::core::config::load_app_config(&app)
         .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
@@ -769,7 +794,11 @@ pub fn local_models_set_dir(app: AppHandle, dir: String) -> Result<String, Strin
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     let new = local_models_dir(&app);
     if !same_path(&old, &new) {
-        migrate_local_models(&app, &old, &new);
+        let app_c = app.clone();
+        let new_c = new.clone();
+        tokio::task::spawn_blocking(move || migrate_local_models(&app_c, &old, &new_c))
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(new.to_string_lossy().to_string())
 }

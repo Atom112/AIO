@@ -9,7 +9,7 @@ import {
   Show,
   untrack,
 } from 'solid-js';
-import { open } from '@tauri-apps/plugin-shell';
+import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   loadAppConfig,
   saveAppConfig,
@@ -719,7 +719,7 @@ const AppSettings: Component = () => {
           <button
             type="button"
             class={btnSecondarySm + ' min-w-[112px]'}
-            onClick={() => open('https://github.com/Atom112/AIO')}
+            onClick={() => void openSafeUrl('https://github.com/Atom112/AIO')}
             title={t('app.openSource.visit')}
           >
             <Icon src="/icons/app-logo/github.svg" class="w-4 h-4" />

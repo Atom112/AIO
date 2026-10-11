@@ -147,8 +147,10 @@ pub fn embedding_models_get_dir(app: AppHandle) -> Result<String, String> {
 /// restores the default directory). Downloaded embed models under the old directory are
 /// migrated to the new one (freeing space there); migration is best-effort: per-item
 /// failures are only logged and never block the directory switch.
+/// HOR-4: the migration moves multi-GB model dirs — it runs on the blocking pool
+/// instead of Tauri's main thread.
 #[tauri::command]
-pub fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
+pub async fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
     let old = embed_models_dir(&app);
     let mut cfg = crate::core::config::load_app_config(&app)
         .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
@@ -157,7 +159,10 @@ pub fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, S
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     let new = embed_models_dir(&app);
     if !same_path(&old, &new) {
-        migrate_embed_models(&old, &new);
+        let new_c = new.clone();
+        tokio::task::spawn_blocking(move || migrate_embed_models(&old, &new_c))
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(new.to_string_lossy().to_string())
 }
@@ -401,25 +406,33 @@ pub fn embedding_model_pause_download(id: String) -> bool {
 /// Cancels a model download. `id`: manifest entry id. Returns whether a download was in
 /// flight; when none is (e.g. already paused), it cleans up all `.part` checkpoint files
 /// for the model directly.
+/// HOR-4: the cleanup is disk I/O — off the main thread.
 #[tauri::command]
-pub fn embedding_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
+pub async fn embedding_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
     let active = signal_download(&id, |c| c.cancel.store(true, Ordering::Relaxed));
     if !active {
         if let Some(entry) = find_entry(&id) {
             let dir = entry_dir(&app, entry);
-            if dir.is_dir() {
-                for f in entry.files {
-                    let _ = std::fs::remove_file(dir.join(f.name).with_extension("part"));
+            // Preserve the historic checkpoint naming: <file>.<ext> -> <file>.part
+            let names: Vec<String> = entry.files.iter().map(|f| f.name.to_string()).collect();
+            tokio::task::spawn_blocking(move || {
+                if dir.is_dir() {
+                    for name in names {
+                        let _ = std::fs::remove_file(dir.join(name).with_extension("part"));
+                    }
                 }
-            }
+            })
+            .await
+            .map_err(|e| e.to_string())?;
         }
     }
     Ok(active)
 }
 
 /// Deletes a downloaded model (frees disk space + evicts the in-process loaded instance cache; no-op for bundled models).
+/// HOR-4: recursive removal of a multi-GB model dir — off the main thread.
 #[tauri::command]
-pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> {
     let entry = find_entry(&id).ok_or_else(|| ierr!("未知模型: {}", "Unknown model: {}", id))?;
     if entry.bundled {
         return Ok(());
@@ -430,11 +443,15 @@ pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> 
         crate::plugins::rerank::local_onnx::evict_model(&id);
     }
     let dir = entry_dir(&app, entry);
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)
-            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
-    }
-    Ok(())
+    tokio::task::spawn_blocking(move || {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Compares two directory paths in normalized form (canonicalize when they exist, literal comparison otherwise).

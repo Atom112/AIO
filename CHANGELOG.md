@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（拆分切片续）：API 载荷消息构建 → utils/apiMessages（+11 单测）
+
+- **消息构建三件套抽出（阶段4 第2项 "useChatSend/useAttachments 路径"）**：`truncateToolResult`（20k 头尾截断）/ `buildApiMessages`（历史消息 → API 载荷展开；孤儿 toolCall 原位合成中断错误结果）/ `ensureToolMessagesComplete`（tool_call 配对守卫——后端 `verify_tool_messages` 仅告警，此为修复侧）三个纯函数从 ChatPage 抽至 `utils/apiMessages.ts`，**并补 11 个单测**（此前零测试的配对/展开/截断逻辑，含连续回合 pending 冲刷与末端冲刷两个此前完全无覆盖的分支）；ChatPage **1615 → 1496 行**
+
 ### 🧱 阶段4 第2项（拆分切片）：ChatPage 面板拖拽 → usePanelResize 钩子
 
 - **usePanelResize 钩子（阶段4 第2项 "ChatPage 按已有拆分路径执行 <900 目标" 的首切片）**：左面板"幕帘"拖拽（双向 1:1 光标追踪 + 幕帘揭示宽度 + 释放 easeOutCubic 吸附 + rAF 动画取消）与右面板百分比拖拽的全部状态与逻辑（4 信号 + 3 常量 + 挂载监听 + 3 函数 ≈ 130 行）从 ChatPage 抽至 `hooks/usePanelResize.ts`——纯布局逻辑自成一体，依赖（持久化宽度/折叠态）经参数注入；ChatPage **1746 → 1616 行**（<900 目标继续按 useChatSend/useAttachments 路径推进）

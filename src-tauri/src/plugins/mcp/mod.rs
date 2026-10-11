@@ -140,6 +140,78 @@ impl McpServerState {
     ) -> parking_lot::MutexGuard<'_, std::collections::HashMap<String, Arc<McpConnection>>> {
         self.0.lock()
     }
+
+    /// Pool key of a server under its effective config (MCP-12): `"{id}::{fp16}"`,
+    /// where the fingerprint is the canonical transport digest from the trust store.
+    /// Project-level overlays can give one server id different effective transports
+    /// per project; a plain-id key would hand one project another project's
+    /// connection (and a restart in one project would kill the other's). The
+    /// fingerprint covers exactly the fields that decide "connect where / run what",
+    /// so display fields like enabled_tools never fork the connection.
+    pub fn pool_key(id: &str, config: &McpServerConfig) -> String {
+        let fp = crate::core::mcp_trust::config_fingerprint(config);
+        let short: String = fp.chars().take(16).collect();
+        format!("{id}::{short}")
+    }
+
+    /// Insert a connection keyed by (id, effective-config fingerprint).
+    pub fn insert_for_config(&self, id: &str, config: &McpServerConfig, conn: Arc<McpConnection>) {
+        self.0.lock().insert(Self::pool_key(id, config), conn);
+    }
+
+    /// The connection for `id` under exactly this effective config (None when the
+    /// pool holds only a differently-configured variant — that is the point).
+    pub fn get_for_config(&self, id: &str, config: &McpServerConfig) -> Option<Arc<McpConnection>> {
+        self.0.lock().get(&Self::pool_key(id, config)).cloned()
+    }
+
+    /// Remove the connection for `id` under exactly this effective config (restart
+    /// semantics: only the same variant is replaced, other projects' variants stay).
+    pub fn remove_for_config(
+        &self,
+        id: &str,
+        config: &McpServerConfig,
+    ) -> Option<Arc<McpConnection>> {
+        self.0.lock().remove(&Self::pool_key(id, config))
+    }
+
+    /// Remove every pool entry belonging to `id` (all config variants), returning them.
+    pub fn remove_all_variants(&self, id: &str) -> Vec<Arc<McpConnection>> {
+        let mut map = self.0.lock();
+        let prefix = format!("{id}::");
+        let targets: Vec<String> = map
+            .keys()
+            .filter(|k| k.as_str() == id || k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        targets.into_iter().filter_map(|k| map.remove(&k)).collect()
+    }
+
+    /// Any connection for `id` (config-agnostic fallback for informational calls
+    /// that carry no project context: resources/prompts lookups from the UI).
+    pub fn get_any(&self, id: &str) -> Option<Arc<McpConnection>> {
+        let map = self.0.lock();
+        if let Some(conn) = map.get(id) {
+            return Some(conn.clone());
+        }
+        let prefix = format!("{id}::");
+        map.keys()
+            .find(|k| k.starts_with(&prefix))
+            .and_then(|k| map.get(k).cloned())
+    }
+
+    /// Distinct server ids currently connected (fingerprint suffixes stripped).
+    pub fn distinct_ids(&self) -> Vec<String> {
+        let map = self.0.lock();
+        let mut ids: Vec<String> = Vec::new();
+        for key in map.keys() {
+            let id = key.split("::").next().unwrap_or(key);
+            if !ids.iter().any(|x| x == id) {
+                ids.push(id.to_string());
+            }
+        }
+        ids
+    }
 }
 
 /// In-flight MCP tool calls: call_id -> AbortHandle
@@ -580,6 +652,45 @@ mod tests {
         // 正常服务器 id → 不豁免
         let other = stdio_cfg("some-server", &exe.to_string_lossy(), vec![]);
         assert!(!is_self_generated_fs_server(&other, &project_str));
+    }
+
+    /// MCP-12: pool keys fork per effective-config variant — same config is stable,
+    /// a different transport for the same id gets a different key (so one project's
+    /// connection is never handed to / restarted by another project).
+    #[test]
+    fn pool_key_separates_config_variants() {
+        fn cfg(id: &str, command: &str) -> McpServerConfig {
+            McpServerConfig {
+                id: id.into(),
+                display_name: "x".into(),
+                transport: McpTransport::Stdio {
+                    command: command.into(),
+                    args: vec![],
+                    env: BTreeMap::new(),
+                    cwd: None,
+                },
+                enabled_tools: vec![],
+                auto_start: false,
+                has_stored_secret: false,
+                trusted: false,
+                from_catalog: None,
+            }
+        }
+        let a1 = McpServerState::pool_key("srv", &cfg("srv", "run-a"));
+        let a2 = McpServerState::pool_key("srv", &cfg("srv", "run-a"));
+        let b = McpServerState::pool_key("srv", &cfg("srv", "run-b"));
+        assert_eq!(a1, a2, "相同生效配置必须命中同一池条目");
+        assert_ne!(a1, b, "不同 transport 的同 id 服务器必须分池");
+        assert!(a1.starts_with("srv::"), "键保留 id 前缀便于清理: {a1}");
+        assert_eq!(a1.len(), "srv::".len() + 16, "指纹取短前缀即可区分");
+        // 展示字段（enabled_tools）不参与指纹：连接身份只取决于 transport
+        let mut display_only = cfg("srv", "run-a");
+        display_only.enabled_tools = vec!["other-tool".into()];
+        assert_eq!(
+            McpServerState::pool_key("srv", &display_only),
+            a1,
+            "enabled_tools 差异不应分裂连接"
+        );
     }
 
     #[test]

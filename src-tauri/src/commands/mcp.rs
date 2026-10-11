@@ -190,11 +190,10 @@ pub async fn remove_mcp_server(
 ) -> Result<(), String> {
     // Reuse the stop_mcp_server cleanup logic: abort in-flight calls + plugin.stop (clears HTTP_STATES)
     requests.abort_server(&id);
-    let conn_opt = {
-        let mut map = state.lock();
-        map.remove(&id)
-    };
-    if let Some(conn) = conn_opt {
+    // MCP-12: stop every config variant of this id (project overlays may have forked
+    // the pool into several fingerprint-keyed entries)
+    let conns = state.remove_all_variants(&id);
+    for conn in conns {
         let transport_id = conn.transport_kind.clone();
         if let Some(plugin) = mgr.get(&transport_id) {
             let conn_owned = Arc::try_unwrap(conn).unwrap_or_else(|arc| (*arc).clone());
@@ -273,11 +272,9 @@ pub async fn start_mcp_server(
     // （stdout reader 持有连接克隆，kill_on_drop 永不触发，覆盖 map 前必须显式 stop 旧连接）
     let _start_guard = mcp_start_mutex().lock().await;
 
-    // 重复 start 防护：已连接同 id 的旧连接先停止（重启语义；失败时保持停止态而非泄漏进程）
-    if let Some(old) = {
-        let mut map = state.lock();
-        map.remove(&id)
-    } {
+    // 重复 start 防护：同 id 且同生效配置的旧连接先停止（重启语义；失败时保持停止态而非泄漏进程）。
+    // MCP-12: 只替换同指纹变体——其他项目以不同 overlay 运行的连接不受影响。
+    if let Some(old) = state.remove_for_config(&id, &config) {
         if let Some(p) = mgr.get(&old.transport_kind) {
             let _ = p.stop((*old).clone()).await;
         } else {
@@ -388,10 +385,9 @@ pub async fn start_mcp_server(
         (None, 0)
     };
 
-    {
-        let mut map = state.lock();
-        map.insert(id.clone(), conn);
-    }
+    // MCP-12: the pool key carries the effective-config fingerprint, so a project
+    // overlay variant never collides with (or restarts) another project's connection.
+    state.insert_for_config(&id, &config, conn);
 
     emit_status_full(
         &app,
@@ -422,11 +418,9 @@ pub async fn stop_mcp_server(
     // First abort this server's in-flight calls
     requests.abort_server(&id);
 
-    let conn_opt = {
-        let mut map = state.lock();
-        map.remove(&id)
-    };
-    if let Some(conn) = conn_opt {
+    // MCP-12: stop every config variant of this id (user-intent "stop this server")
+    let conns = state.remove_all_variants(&id);
+    for conn in conns {
         let transport_id = conn.transport_kind.clone();
         if let Some(plugin) = mgr.get(&transport_id) {
             // stop needs an owned conn; unwrap the Arc here
@@ -451,13 +445,14 @@ pub async fn stop_mcp_server(
 pub async fn list_mcp_server_status(
     state: State<'_, McpServerState>,
 ) -> Result<HashMap<String, McpServerStatusInfo>, String> {
-    let map = state.lock();
+    // MCP-12: pool keys carry fingerprint suffixes; the UI consumes plain server ids.
+    let ids = state.distinct_ids();
     let mut out = HashMap::new();
-    for id in map.keys() {
+    for id in ids {
         out.insert(
             id.clone(),
             McpServerStatusInfo {
-                id: id.clone(),
+                id,
                 status: McpStatus::Connected,
                 message: None,
                 tool_count: 0,
@@ -485,10 +480,8 @@ pub async fn list_mcp_tools(
     project_id: Option<String>,
 ) -> Result<Vec<ToolSpec>, String> {
     // 1) Collect all server_ids, then release the lock immediately
-    let ids: Vec<String> = {
-        let map = state.lock();
-        map.keys().cloned().collect()
-    };
+    // (MCP-12: distinct ids — the pool may hold several fingerprint variants per id)
+    let ids = state.distinct_ids();
 
     // 2) Collect (id, conn, cfg, plugin) tuples; await only once everything is ready
     let mut jobs: Vec<(
@@ -509,10 +502,8 @@ pub async fn list_mcp_tools(
         let Some(plugin) = mgr.get(transport_id) else {
             continue;
         };
-        let conn = {
-            let map = state.lock();
-            map.get(&id).cloned()
-        };
+        // MCP-12: fingerprint-aware lookup — never another project's variant
+        let conn = state.get_for_config(&id, &cfg);
         if let Some(conn) = conn {
             jobs.push((cfg, plugin, conn));
         }
@@ -581,10 +572,9 @@ pub(crate) async fn list_mcp_tools_for_assistant_inner(
         let Some(plugin) = mgr.get(transport_id) else {
             continue;
         };
-        let conn = {
-            let map = state.lock();
-            map.get(&id).cloned()
-        };
+        // MCP-12: fingerprint-aware lookup — a project overlay variant must get its
+        // own connection, never another project's.
+        let conn = state.get_for_config(&id, &cfg);
         if let Some(conn) = conn {
             jobs.push((cfg, plugin, conn));
         }
@@ -776,14 +766,17 @@ pub(crate) async fn execute_tool_call(
         )
     })?;
     let conn = {
-        let map = state.lock();
-        map.get(server_id).cloned().ok_or_else(|| {
-            ierr!(
-                "MCP server 未连接: {}",
-                "MCP server not connected: {}",
-                server_id
-            )
-        })?
+        // MCP-12: fingerprint-aware lookup — the merged config decides which variant
+        // this call belongs to; a different project's connection is never reused.
+        state
+            .get_for_config(server_id, &cfg)
+            .ok_or_else(|| {
+                ierr!(
+                    "MCP server 未连接（当前项目的生效配置下无活动连接）: {}",
+                    "MCP server not connected (no active connection for this project's effective config): {}",
+                    server_id
+                )
+            })?
     };
 
     // Track by call_id; the uuid keeps it unique so concurrent same-name calls cannot
@@ -1072,12 +1065,10 @@ pub async fn list_mcp_resources(
     state: State<'_, McpServerState>,
     id: String,
 ) -> Result<Vec<McpResource>, String> {
-    let conn = {
-        let map = state.lock();
-        map.get(&id)
-            .cloned()
-            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
-    };
+    // Config-agnostic informational lookup (no project context on this path; MCP-12)
+    let conn = state
+        .get_any(&id)
+        .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?;
     let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
         ierr!(
             "未注册 transport 插件: {}",
@@ -1099,12 +1090,10 @@ pub async fn read_mcp_resource(
     id: String,
     uri: String,
 ) -> Result<ReadResourceResult, String> {
-    let conn = {
-        let map = state.lock();
-        map.get(&id)
-            .cloned()
-            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
-    };
+    // Config-agnostic informational lookup (no project context on this path; MCP-12)
+    let conn = state
+        .get_any(&id)
+        .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?;
     let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
         ierr!(
             "未注册 transport 插件: {}",
@@ -1125,12 +1114,10 @@ pub async fn list_mcp_prompts(
     state: State<'_, McpServerState>,
     id: String,
 ) -> Result<Vec<McpPrompt>, String> {
-    let conn = {
-        let map = state.lock();
-        map.get(&id)
-            .cloned()
-            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
-    };
+    // Config-agnostic informational lookup (no project context on this path; MCP-12)
+    let conn = state
+        .get_any(&id)
+        .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?;
     let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
         ierr!(
             "未注册 transport 插件: {}",
@@ -1153,12 +1140,10 @@ pub async fn get_mcp_prompt(
     name: String,
     arguments: Option<Value>,
 ) -> Result<GetPromptResult, String> {
-    let conn = {
-        let map = state.lock();
-        map.get(&id)
-            .cloned()
-            .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?
-    };
+    // Config-agnostic informational lookup (no project context on this path; MCP-12)
+    let conn = state
+        .get_any(&id)
+        .ok_or_else(|| ierr!("MCP server 未连接: {}", "MCP server not connected: {}", id))?;
     let plugin = mgr.get(&conn.transport_kind).ok_or_else(|| {
         ierr!(
             "未注册 transport 插件: {}",

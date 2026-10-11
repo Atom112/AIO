@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（拆分切片4）：附件暂存 → useAttachments 钩子
+
+- **附件逻辑钩子化（阶段4 第2项 useAttachments 路径）**：`handleFileUpload`（扩展名白名单预校验——59 个扩展两表、附件 API 存储调用、去重暂存、图片 `convertFileSrc` 预览 URL）从 ChatPage 抽至 `hooks/useAttachments.ts`——**纯 verbatim 搬迁**（初版曾多造一个与 ChatInterface 上传命令重复的选对话框包装，已收敛删除：对话框调用留在既有调用点，钩子只管暂存）；ChatPage **1421 → 1327 行**（本拆分程序累计 1746 → 1327）
+
 ### 🧹 P3 魔法串：内建工具名常量表（core/tool_names）
 
 - **工具名单一来源（P3 魔法串）**：`"read_file"`/`"write_file"`/`"execute_command"`/`"delegate_task"` 等 23 个内建工具名此前以字符串字面量散布 **14 个生产模块**（subagent 配置表、permission 内建规则、mod/turn_runner 分发与比较、file_locks/diff 写入分类、mcp 审批分类…共 **366 处**）——改名任一工具要全仓追字符串。新建 `core/tool_names.rs` 常量表（22 个 `pub const`，逐个带文档），全量替换为 `tool_names::X` 引用；**作用域精确**：MCP 服务器自定义工具名（运行时来源）不收编；glob 模式（`"delete_*"`/`"*_file"`）是模式字面量非工具名，保持原样；注释行不动（文档中的工具名引用仍是散文）

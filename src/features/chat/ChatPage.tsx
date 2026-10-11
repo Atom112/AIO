@@ -1,5 +1,4 @@
 import { Component, createSignal, onMount, onCleanup, createEffect, Show } from 'solid-js';
-import { convertFileSrc } from '@tauri-apps/api/core';
 import {
   appendMessage,
   branchTopic,
@@ -13,7 +12,6 @@ import {
   visionAnalyzeImages,
   type ActiveCheckpoint,
 } from '../../core/api/chat';
-import { storeChatAttachment } from '../../core/api/attachment';
 import { registerChatUiListeners } from './hooks/chatEventListeners';
 import {
   activeTitleGenTopicId,
@@ -25,6 +23,7 @@ import {
 import { registerChatCommands } from './hooks/chatCommands';
 import { usePanelResize } from './hooks/usePanelResize';
 import { useBtwQuestion } from './hooks/useBtwQuestion';
+import { useAttachments } from './hooks/useAttachments';
 // 阶段4 第2项（拆分切片）：API 载荷消息构建三件套抽至 utils/apiMessages（纯函数 + 11 单测）
 import { buildApiMessages, ensureToolMessagesComplete } from './utils/apiMessages';
 import { TOOL_INTERRUPTED } from './constants';
@@ -275,6 +274,12 @@ const ChatPage: Component = () => {
     activeTopic,
   });
 
+  // 阶段4 第2项（拆分切片）：附件暂存逻辑抽至 useAttachments 钩子
+  const { handleFileUpload } = useAttachments({
+    setPendingFiles,
+    setIsProcessing,
+  });
+
   /** Topic shown in the share modal: prefer the ID set from the TopicSidebar context menu, otherwise the active topic */
   const shareTopic = (): Topic | null => {
     const asst = currentAssistant();
@@ -328,107 +333,6 @@ const ChatPage: Component = () => {
   const handleConfirmSelection = () => {
     setIsSelectingMessages(false);
     setShowShareModal(true);
-  };
-
-  /**
-   * Handle file upload and parsing.
-   * Calls the Tauri backend to read local file content; supports text files and images.
-   * Hardening: the frontend pre-validates the extension whitelist to avoid pointless calls.
-   * @param filePath - absolute path of the file
-   * @param fileType - file type hint ('file' or 'image')
-   */
-  const handleFileUpload = async (filePath: string, fileType: 'file' | 'image') => {
-    const fileName = filePath.split(/[\\/]/).pop() || t('chat.unknownFile');
-    const ext = (fileName.split('.').pop() || '').toLowerCase();
-    const ALLOWED_IMG = ['png', 'jpg', 'jpeg', 'webp'];
-    const ALLOWED_DOC = [
-      'pdf',
-      'docx',
-      'pptx',
-      'txt',
-      'md',
-      'json',
-      'csv',
-      'log',
-      'xml',
-      'yaml',
-      'yml',
-      'ini',
-      'tsv',
-      // source code / text
-      'rs',
-      'c',
-      'h',
-      'cpp',
-      'hpp',
-      'cc',
-      'cxx',
-      'cs',
-      'go',
-      'java',
-      'rb',
-      'py',
-      'js',
-      'mjs',
-      'cjs',
-      'ts',
-      'tsx',
-      'jsx',
-      'php',
-      'swift',
-      'kt',
-      'kts',
-      'scala',
-      'lua',
-      'sql',
-      'toml',
-      'sh',
-      'bash',
-      'zsh',
-      'dart',
-      'html',
-      'css',
-      'scss',
-      'less',
-      'vue',
-      'svelte',
-      'gradle',
-      'properties',
-      'r',
-      'pl',
-    ];
-    const isImg = fileType === 'image' || ALLOWED_IMG.includes(ext);
-    const isDoc = ALLOWED_DOC.includes(ext);
-    if (!isImg && !isDoc) {
-      alert(
-        t('chat.unsupportedFile', {
-          extension: ext,
-          supported: [...ALLOWED_IMG, ...ALLOWED_DOC].join(', '),
-        }),
-      );
-      return;
-    }
-    setIsProcessing(true);
-    try {
-      const stored = await storeChatAttachment(filePath);
-      setPendingFiles((prev) =>
-        prev.some((file) => file.id === stored.id)
-          ? prev
-          : [
-              ...prev,
-              {
-                ...stored,
-                name: fileName,
-                type: isImg ? 'image' : 'text',
-                previewUrl: isImg ? convertFileSrc(stored.storagePath) : undefined,
-              },
-            ],
-      );
-    } catch (err) {
-      alert(err);
-    } finally {
-      setIsProcessing(false);
-    }
   };
 
   // checkAndSummarize / fallbackTitle / checkAndRename moved to hooks/chatTurnEffects.ts (CHAT-12)

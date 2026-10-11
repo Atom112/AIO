@@ -13,7 +13,7 @@ use dashmap::DashMap;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub use client::LspClient;
+pub use client::{app_event_sink, LspClient};
 pub use error::LspResult;
 
 /// Language server configuration

@@ -2104,10 +2104,21 @@ pub(crate) async fn run_agent_turn_inner(
                 {
                     // Workflow creation: parse arguments and run all steps sequentially
                     workflow_called = true;
+                    const MAX_WORKFLOW_STEPS: usize = 20;
                     let title = args_val["title"].as_str().unwrap_or("Workflow").to_string();
                     let steps_raw = args_val["steps"].as_array();
                     let tool_result = if let Some(steps_arr) = steps_raw {
-                        if steps_arr.is_empty() {
+                        // LOOP-12: step count must stay bounded — every step is a full
+                        // subagent turn, so an unbounded workflow silently bypasses the
+                        // main-loop round budget (a 200-step workflow = 200 subagent runs).
+                        if steps_arr.len() > MAX_WORKFLOW_STEPS {
+                            Err(ierr!(
+                                "create_workflow: 步骤数超过上限 {}（当前 {}）。请精简步骤或拆分为多个工作流",
+                                "create_workflow: step count exceeds the cap of {} (got {}). Reduce the steps or split into multiple workflows",
+                                MAX_WORKFLOW_STEPS,
+                                steps_arr.len()
+                            ))
+                        } else if steps_arr.is_empty() {
                             Err(ierr!(
                                 "create_workflow: 'steps' 数组不能为空",
                                 "create_workflow: 'steps' array must not be empty"
@@ -2393,7 +2404,22 @@ pub(crate) async fn run_agent_turn_inner(
                     });
                 }
 
-                while let Some((i, result)) = unordered.next().await {
+                // LOOP-5: the wait itself must honor cancellation — a queued
+                // delegation (or any slow parallel tool) must not pin the turn open
+                // for minutes after the user pressed stop. On cancel the remaining
+                // futures are dropped; their inner tasks share the token and wind
+                // down, and the round's bookkeeping below still runs.
+                loop {
+                    let (i, result) = tokio::select! {
+                        _ = token_inner.cancelled() => {
+                            was_cancelled = true;
+                            break;
+                        }
+                        next = unordered.next() => match next {
+                            Some(pair) => pair,
+                            None => break,
+                        },
+                    };
                     let (content_text, result_value, is_error) = match result {
                         Ok(tr) => {
                             let text = tr

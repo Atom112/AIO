@@ -288,7 +288,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           await props.handleFileUpload(path, 'file');
         }
       } catch (e) {
-        console.warn('[shortcut] 上传文件取消或失败:', e);
+        console.warn('[shortcut] file upload cancelled or failed:', e);
       }
     },
   });
@@ -310,7 +310,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       if (!dest) return;
       await copyStoredImage(img.storagePath, dest);
     } catch (e) {
-      console.error('保存图片失败:', e);
+      console.error('Failed to save image:', e);
       alert(t('error.save'));
     }
   };
@@ -1023,7 +1023,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                       try {
                                         await deleteTopicMessage(tId, reply.id!);
                                       } catch (e) {
-                                        console.error('删除助手回复失败:', e);
+                                        console.error('Failed to delete assistant reply:', e);
                                       }
                                       setDatas(
                                         'assistants',
@@ -1038,7 +1038,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                       try {
                                         await deleteTopicMessage(tId, msg.id!);
                                       } catch (e) {
-                                        console.error('删除消息失败:', e);
+                                        console.error('Failed to delete message:', e);
                                       }
                                       setDatas(
                                         'assistants',
@@ -1100,7 +1100,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                       try {
                                         await deleteTopicMessage(tId, reply.id!);
                                       } catch (e) {
-                                        console.error('删除助手回复失败:', e);
+                                        console.error('Failed to delete assistant reply:', e);
                                       }
                                       setDatas(
                                         'assistants',
@@ -1115,7 +1115,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                       try {
                                         await deleteTopicMessage(tId, msg.id!);
                                       } catch (e) {
-                                        console.error('删除消息失败:', e);
+                                        console.error('Failed to delete message:', e);
                                       }
                                       setDatas(
                                         'assistants',
@@ -1175,7 +1175,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 try {
                                   await deleteTopicMessage(tId, msg.id!);
                                 } catch (e) {
-                                  console.error('删除消息失败:', e);
+                                  console.error('Failed to delete message:', e);
                                 }
                                 setDatas(
                                   'assistants',
@@ -1231,7 +1231,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                 return next;
                               });
                             } catch (err) {
-                              console.error('批量撤销失败:', err);
+                              console.error('Failed to batch-revert:', err);
                               alert(t('agent.diff.revertFailed'));
                             }
                           };

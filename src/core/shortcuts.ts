@@ -254,7 +254,7 @@ function loadBindings(): Record<string, string> {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw) as Record<string, string>;
   } catch (e) {
-    console.warn('[shortcuts] 加载快捷键绑定失败，使用默认值', e);
+    console.warn('[shortcuts] failed to load shortcut bindings, using defaults', e);
   }
   return {};
 }
@@ -264,7 +264,7 @@ function saveBindings(bindings: Record<string, string>): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(bindings));
   } catch (e) {
-    console.warn('[shortcuts] 保存快捷键绑定失败', e);
+    console.warn('[shortcuts] failed to save shortcut bindings', e);
   }
 }
 
@@ -338,7 +338,7 @@ export function executeCommand(actionId: string): boolean {
     try {
       cmd.handler();
     } catch (e) {
-      console.error(`[shortcuts] 执行命令 "${actionId}" 时出错:`, e);
+      console.error(`[shortcuts] error executing command "${actionId}":`, e);
     }
     return true;
   }

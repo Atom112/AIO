@@ -205,7 +205,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     const ok = requestRenameTopic(asst.id, target.id);
     if (!ok) {
       // Default topic: the menu item should already be hidden; this is a defensive warning
-      console.warn('默认话题不支持重新生成标题');
+      console.warn('The default topic does not support title regeneration');
     }
     closeTopicMenu();
   };

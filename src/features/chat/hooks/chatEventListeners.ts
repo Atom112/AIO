@@ -869,7 +869,10 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     // ---- Compression failure (LOOP-3): the backend now restores the early region and
     // carries on, so this is a non-fatal notice; log it so failures are never invisible.
     listen<{ error: string }>(EVENTS.llmCompressionFailed, (e) => {
-      console.warn('[compression] 后端上下文压缩失败（已保持原上下文继续）:', e.payload.error);
+      console.warn(
+        '[compression] backend context compression failed (original context kept):',
+        e.payload.error,
+      );
     }),
   ];
 }

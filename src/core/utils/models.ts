@@ -154,7 +154,7 @@ async function loadCatalogFromBackend(): Promise<Catalog> {
     const resp = await loadCatalogFull();
     return applyResponse(resp);
   } catch (e) {
-    console.warn('[models] 从后端加载 catalog 失败:', e);
+    console.warn('[models] failed to load catalog from backend:', e);
     return EMPTY_CATALOG;
   }
 }

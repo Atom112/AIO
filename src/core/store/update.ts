@@ -54,6 +54,6 @@ export const setIgnoredUpdateVersion = (version: string | null): void => {
       localStorage.removeItem(IGNORED_UPDATE_VERSION_KEY);
     }
   } catch (e) {
-    console.warn('保存更新忽略记录失败:', e);
+    console.warn('Failed to save update-ignore record:', e);
   }
 };

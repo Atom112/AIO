@@ -523,7 +523,7 @@ const ChatPage: Component = () => {
     // fill placeholder tool messages for all unpaired toolCallIds in pending
     const flushPending = (target: any[]) => {
       for (const id of pendingToolCallIds) {
-        console.warn(`[ensureToolMessages] 补全缺失的 tool 响应: ${id}`);
+        console.warn(`[ensureToolMessages] patched missing tool response: ${id}`);
         target.push({
           role: 'tool' as const,
           toolCallId: id,
@@ -1056,7 +1056,10 @@ ${asstObj.prompt}`;
 
     const lastMsg = messagesForAI[messagesForAI.length - 1];
     if (lastMsg.role !== 'user') {
-      console.error('错误：发送给 API 的最后一条消息不是 User!', lastMsg);
+      console.error(
+        'Assertion failed: the last message sent to the API is not a User message!',
+        lastMsg,
+      );
       return;
     }
 
@@ -1226,7 +1229,7 @@ ${asstObj.prompt}`;
       // 静默 no-op），用户被迫切回原话题才能停止
       await stopActiveLlmStream();
     } catch (err) {
-      console.error('stop_llm_stream 失败:', err);
+      console.error('stop_llm_stream failed:', err);
     }
     setPendingApprovals([]);
   };
@@ -1256,7 +1259,7 @@ ${asstObj.prompt}`;
         setCurrentTopicId(asst.topics[0].id);
       }
     } catch (e) {
-      console.error('切换项目失败:', e);
+      console.error('Failed to switch project:', e);
     }
   };
 
@@ -1298,7 +1301,7 @@ ${asstObj.prompt}`;
       setCurrentTopicId(newTopic.id);
       await saveSingleAssistantToBackend(asstId);
     } catch (e) {
-      console.error('分支创建失败:', e);
+      console.error('Failed to create branch:', e);
     }
   };
 
@@ -1494,11 +1497,11 @@ ${asstObj.prompt}`;
 
           isFirstAppLaunch = false;
         }
-        console.log('成功加载数据');
+        console.log('Data loaded successfully');
       })
       .catch((err) => {
         // backend errors are logged here
-        console.error('加载助手列表失败:', err);
+        console.error('Failed to load assistant list:', err);
         console.error('load_all_assistants failed:', err);
         alert(t('error.load'));
       });

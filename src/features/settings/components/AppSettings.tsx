@@ -108,7 +108,7 @@ const AppSettings: Component = () => {
       const v = await getVersion();
       setVersion(v);
     } catch (e) {
-      console.error('获取版本失败', e);
+      console.error('Failed to fetch version', e);
     }
 
     // Load the auto-start config
@@ -127,7 +127,7 @@ const AppSettings: Component = () => {
         setSubagentIsolation(cfg.subagentIsolationMode);
       }
     } catch (e) {
-      console.warn('加载应用配置失败:', e);
+      console.warn('Failed to load app config:', e);
     }
   });
 
@@ -204,7 +204,7 @@ const AppSettings: Component = () => {
           break;
       }
     } catch (e) {
-      console.error('手动检查更新失败:', e);
+      console.error('Manual update check failed:', e);
       setCheckResult({
         kind: 'failed',
         current_version: version(),
@@ -608,7 +608,7 @@ const AppSettings: Component = () => {
                 try {
                   await apiSetAutoStart(val);
                 } catch (err) {
-                  console.warn('设置自启失败:', err);
+                  console.warn('Failed to set auto-start:', err);
                   setAutoStart(!val); // Roll back
                 }
               }}
@@ -639,7 +639,7 @@ const AppSettings: Component = () => {
                     await saveAppConfig({ ...cfg, maxToolRounds: clamped });
                   }
                 } catch (err) {
-                  console.warn('保存最大工具轮数配置失败:', err);
+                  console.warn('Failed to save max-tool-rounds config:', err);
                 }
               })();
             }}
@@ -668,7 +668,7 @@ const AppSettings: Component = () => {
                     await saveAppConfig({ ...cfg, maxConcurrentSubagents: clamped });
                   }
                 } catch (err) {
-                  console.warn('保存并发子智能体上限配置失败:', err);
+                  console.warn('Failed to save concurrent-subagent cap config:', err);
                 }
               })();
             }}
@@ -701,7 +701,7 @@ const AppSettings: Component = () => {
                     await saveAppConfig({ ...cfg, subagentIsolationMode: mode });
                   }
                 } catch (err) {
-                  console.warn('保存并行写入隔离配置失败:', err);
+                  console.warn('Failed to save parallel-write isolation config:', err);
                 }
               })();
             }}

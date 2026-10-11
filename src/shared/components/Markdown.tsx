@@ -402,7 +402,7 @@ const Markdown: Component<MarkdownProps> = (props) => {
           }
         })
         .catch((err) => {
-          console.error('无法复制代码: ', err);
+          console.error('Failed to copy code: ', err);
         });
     }
   };

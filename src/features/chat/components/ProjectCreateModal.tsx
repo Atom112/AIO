@@ -58,7 +58,7 @@ export default function ProjectCreateModal(props: Props) {
         }
       }
     } catch (e) {
-      console.warn('选择目录失败:', e);
+      console.warn('Failed to pick directory:', e);
     }
   };
 

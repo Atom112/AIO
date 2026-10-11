@@ -101,7 +101,7 @@ const Layout: Component<ParentProps> = (props) => {
     // Load provider configs asynchronously (once after startup)
     loadProviderConfigs()
       .then((file) => setProviderConfigs(file.providers))
-      .catch((e) => console.warn('[provider-configs] 启动加载失败:', e));
+      .catch((e) => console.warn('[provider-configs] startup load failed:', e));
 
     // Silently check for catalog updates in the background (fires only after the initial load completes, to avoid blocking first paint)
     setTimeout(async () => {
@@ -117,7 +117,7 @@ const Layout: Component<ParentProps> = (props) => {
           setModelsCatalogGeneratedAt(meta.generatedAt);
         }
       } catch (e) {
-        console.warn('[catalog] 启动静默更新失败:', e);
+        console.warn('[catalog] startup background update failed:', e);
       }
     }, 8000);
 
@@ -141,7 +141,7 @@ const Layout: Component<ParentProps> = (props) => {
         // Other cases: up_to_date / service_not_ready / network / failed -> stay silent
       } catch (e) {
         // Handle network failures silently; do not disturb the user
-        console.warn('启动时检查更新失败:', e);
+        console.warn('Startup update check failed:', e);
       }
     }, 1500);
   });

@@ -194,7 +194,7 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
   if (!newName) {
     newName = fallbackTitle(topic.history);
     if (newName) {
-      console.warn('LLM 标题生成失败，使用启发式后备:', llmError);
+      console.warn('LLM title generation failed, using heuristic fallback:', llmError);
     }
   }
 
@@ -226,7 +226,7 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
     );
     await saveSingleAssistantToBackend(eventAsstId);
     if (activeTitleGen === task) activeTitleGen = null;
-    console.warn('自动重命名失败，无可用后备:', llmError);
+    console.warn('Auto-rename failed, no fallback available:', llmError);
     return;
   }
 
@@ -257,7 +257,7 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
   );
   await saveSingleAssistantToBackend(eventAsstId);
   if (activeTitleGen === task) activeTitleGen = null;
-  console.log(`话题已自动重命名: ${latestTopic.name} → ${newName}`);
+  console.log(`Topic auto-renamed: ${latestTopic.name} -> ${newName}`);
 };
 
 /**
@@ -352,13 +352,15 @@ export const checkAndSummarize = async (
     // CHAT-2: 入口捕获的话题与当前话题必须一致——多秒 summarize await 期间用户
     // 切换话题后，旧 count 裁新话题历史会把整个更短话题清空并落盘
     if (latestTopic.id !== topic.id) {
-      console.warn('[Context] 压缩期间话题已切换，放弃持久化');
+      console.warn('[Context] topic switched during compression, discarding persistence');
       return { kind: 'skipped', reason: 'topic-switched' } as CompactOutcome;
     }
     const updatedHistory = latestTopic.history.slice(summarizeCount);
     // CHAT-2 加固：裁剪结果不应清空历史（同话题变短即中止，防数据丢失）
     if (updatedHistory.length === 0 && latestTopic.history.length > 0) {
-      console.warn('[Context] 压缩裁剪结果为空，放弃持久化（防数据丢失）');
+      console.warn(
+        '[Context] compression trimmed result empty, discarding persistence (data-loss guard)',
+      );
       return { kind: 'skipped', reason: 'empty-result' } as CompactOutcome;
     }
     setDatas(
@@ -372,7 +374,7 @@ export const checkAndSummarize = async (
       },
     );
     await saveSingleAssistantToBackend(currentAssistantId()!);
-    console.log('[Context] 压缩完成');
+    console.log('[Context] compression complete');
     return {
       kind: 'compressed',
       summarizedCount: summarizeCount,
@@ -399,7 +401,7 @@ export const checkAndSummarize = async (
       const outcome = await persistCompactedTopic(placeholder);
       return outcome.kind === 'compressed' ? { kind: 'archived', count: summarizeCount } : outcome;
     } catch (archiveErr) {
-      console.error('生成总结失败:', e, '归档亦失败:', archiveErr);
+      console.error('Failed to generate summary:', e, 'archive also failed:', archiveErr);
       return { kind: 'failed', error: String(e) };
     }
   }

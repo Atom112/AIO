@@ -25,7 +25,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     try {
       await respondToolApproval(props.approval.approvalId, true);
     } catch (e) {
-      console.error('发送批准结果失败:', e);
+      console.error('Failed to send approval result:', e);
     } finally {
       props.onResolved(props.approval.approvalId);
     }
@@ -37,7 +37,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     try {
       await respondToolApproval(props.approval.approvalId, true, 'session');
     } catch (e) {
-      console.error('发送会话放行结果失败:', e);
+      console.error('Failed to send session-allow result:', e);
     } finally {
       props.onResolved(props.approval.approvalId);
     }
@@ -47,7 +47,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     try {
       await respondToolApproval(props.approval.approvalId, false);
     } catch (e) {
-      console.error('发送拒绝结果失败:', e);
+      console.error('Failed to send denial result:', e);
     } finally {
       props.onResolved(props.approval.approvalId);
     }

@@ -85,6 +85,35 @@ fn download_controls() -> &'static Mutex<std::collections::HashMap<String, Downl
     CONTROLS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
+/// ENG-11: repo-wide concurrent download cap — unbounded parallel model downloads
+/// thrash the disk and the network; two at a time keeps large models from starving
+/// everything else.
+static DOWNLOAD_SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+
+fn download_slots() -> &'static tokio::sync::Semaphore {
+    DOWNLOAD_SLOTS.get_or_init(|| tokio::sync::Semaphore::new(2))
+}
+
+/// ENG-5: removes only the registering task's own control entry on drop
+/// (identity-matched by the cancel flag's Arc pointer) — a successor's entry is
+/// never dropped by a predecessor's exit.
+struct UnregisterGuard {
+    id: String,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Drop for UnregisterGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = download_controls().lock() {
+            if let Some(current) = map.get(&self.id) {
+                if Arc::ptr_eq(&current.cancel, &self.cancel) {
+                    map.remove(&self.id);
+                }
+            }
+        }
+    }
+}
+
 fn signal_download(id: &str, set: impl Fn(&DownloadControl)) -> bool {
     match download_controls().lock() {
         Ok(map) => match map.get(id) {
@@ -270,18 +299,44 @@ pub async fn local_model_download(
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
     };
-    if let Ok(mut map) = download_controls().lock() {
+    // ENG-5: same-id downloads must not overlap — the old unconditional insert let a
+    // second task overwrite the first's control (making the first unstoppable) and
+    // the first task's Drop guard then removed the SECOND's entry on exit.
+    {
+        let mut map = download_controls().lock().map_err(|e| e.to_string())?;
+        if map.contains_key(&id) {
+            return Err(ierr!(
+                "该模型已有下载任务在进行中（不可并行下载同一模型）",
+                "A download for this model is already in progress (parallel downloads of the same model are not allowed)"
+            ));
+        }
         map.insert(id.clone(), control.clone());
     }
-    struct UnregisterGuard(String);
-    impl Drop for UnregisterGuard {
-        fn drop(&mut self) {
-            if let Ok(mut map) = download_controls().lock() {
-                map.remove(&self.0);
+    // ENG-5: the unregister guard removes only OUR entry (identity-matched by the
+    // cancel flag's Arc pointer), never a successor's.
+    let _guard = UnregisterGuard {
+        id: id.clone(),
+        cancel: control.cancel.clone(),
+    };
+
+    // ENG-11: wait for a global download slot; a queued task still honors cancel
+    // (the flags are polled while waiting instead of blocking uninteruptibly).
+    {
+        let sem = download_slots();
+        loop {
+            tokio::select! {
+                permit = sem.acquire() => {
+                    let _permit = permit.map_err(|_| "下载并发闸门已关闭".to_string())?;
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(400)) => {
+                    if control.cancel.load(Ordering::Relaxed) {
+                        return Err("cancelled".into());
+                    }
+                }
             }
         }
     }
-    let _guard = UnregisterGuard(id.clone());
 
     let client = download_client(request.proxy_url.as_deref())?;
     let hf_token =
@@ -428,6 +483,27 @@ pub async fn local_model_download(
         })?;
 
         let total = resume_from + resp.content_length().unwrap_or(0);
+        // ENG-11: per-file space check at the point where the true size is known.
+        // The aggregate pre-check at task start is advisory only (TOCTOU: other
+        // processes consume space during a multi-GB download; and metadata-less
+        // files with size=0 bypassed it entirely — Content-Length here is
+        // authoritative).
+        let file_needed = total.saturating_sub(resume_from);
+        if file_needed > 0 {
+            if let Some(parent) = dest.parent() {
+                if let Some(avail) = available_space(parent) {
+                    if file_needed > avail {
+                        return Err(ierr!(
+                            "磁盘空间不足：{} 还需 {}，仅剩 {}（清理空间后重试）",
+                            "Insufficient disk space: {} needs {} more, only {} left (free space and retry)",
+                            file.name,
+                            format_bytes(file_needed),
+                            format_bytes(avail)
+                        ));
+                    }
+                }
+            }
+        }
         let mut stream = resp.bytes_stream();
         let mut out = if resume_from > 0 {
             tokio::fs::OpenOptions::new().append(true).open(&tmp).await
@@ -830,8 +906,12 @@ fn verify_gguf_magic(path: &Path) -> Result<(), String> {
 }
 
 /// Moves every model directory from `old` to `new` (rename first, cross-volume copy
-/// fallback), then rewrites provider localModelPaths entries under `old` to `new`.
+/// fallback), then rewrites provider localModelPaths entries under `old` to `new` —
+/// ENG-10: only for entries that actually migrated (failed/skipped copies keep their
+/// old-path references; rewriting them would create dangling pointers).
 fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
+    // ENG-10: names that actually landed under `new` (drive the path rewrite below)
+    let mut migrated: std::collections::HashSet<String> = std::collections::HashSet::new();
     if old.is_dir() {
         if let Err(e) = std::fs::create_dir_all(new) {
             tracing::warn!(
@@ -875,15 +955,24 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
                     continue;
                 }
                 if std::fs::rename(&src, &dst).is_err() {
-                    if let Err(e) = copy_dir_recursive(&src, &dst) {
-                        tracing::warn!(
-                            "[local-models] 迁移 {} 失败: {e}",
-                            entry.file_name().to_string_lossy()
-                        );
-                        continue;
+                    match copy_dir_recursive(&src, &dst) {
+                        Ok(()) => {
+                            // Copy succeeded only if the source is fully removable
+                            // afterwards; a failed removal leaves duplicates, which
+                            // the provider rewrite still treats as migrated (the
+                            // file exists at the new path).
+                            let _ = std::fs::remove_dir_all(&src);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[local-models] 迁移 {} 失败: {e}",
+                                entry.file_name().to_string_lossy()
+                            );
+                            continue;
+                        }
                     }
-                    let _ = std::fs::remove_dir_all(&src);
                 }
+                migrated.insert(entry.file_name().to_string_lossy().into_owned());
                 tracing::info!(
                     "[local-models] 已迁移本地模型 {} → {}",
                     entry.file_name().to_string_lossy(),
@@ -892,14 +981,26 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
             }
         }
     }
-    // Rewrite provider localModelPaths entries pointing into the old directory
+    // Rewrite provider localModelPaths entries pointing into the old directory —
+    // ENG-10: only entries whose model actually migrated; the old unconditional
+    // rewrite stranded references to models that stayed behind at the old path.
     if let Ok(mut file) = crate::commands::provider_config::load_provider_configs(app.clone()) {
         let mut changed = false;
         for cfg in file.providers.values_mut() {
             if let Some(map) = cfg.local_model_paths.as_mut() {
                 for path in map.values_mut() {
                     if let Some(rest) = path_under(path, old) {
-                        let next = new.join(rest).to_string_lossy().to_string();
+                        // The first path component under `old` identifies the entry
+                        // that had to migrate (model directory or loose GGUF name).
+                        let top = std::path::Path::new(&rest)
+                            .components()
+                            .next()
+                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        if !migrated.contains(&top) {
+                            continue;
+                        }
+                        let next = new.join(&rest).to_string_lossy().to_string();
                         tracing::info!("[local-models] 路径重写 {} → {next}", path);
                         *path = next;
                         changed = true;
@@ -963,6 +1064,37 @@ mod tests {
         assert_eq!(path_under("C:\\Data\\Models", base), None);
         assert_eq!(path_under("C:\\Data\\ModelsOther\\a.gguf", base), None);
         assert_eq!(path_under("D:\\Elsewhere\\a.gguf", base), None);
+    }
+
+    /// ENG-5: the unregister guard is identity-matched — a predecessor's exit must
+    /// never remove a successor's control entry (the historic id-keyed remove did).
+    #[test]
+    fn unregister_guard_only_removes_own_entry() {
+        const KEY: &str = "eng5-test-model";
+        let a = DownloadControl {
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
+        };
+        download_controls()
+            .lock()
+            .unwrap()
+            .insert(KEY.into(), a.clone());
+        let guard = UnregisterGuard {
+            id: KEY.into(),
+            cancel: a.cancel.clone(),
+        };
+        // 模拟后续任务覆盖控制表（同 id 并发现在已被拒，但守卫必须保持安全）
+        let b = DownloadControl {
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
+        };
+        download_controls().lock().unwrap().insert(KEY.into(), b);
+        drop(guard);
+        assert!(
+            download_controls().lock().unwrap().contains_key(KEY),
+            "旧任务退出不得移除新任务的控制项"
+        );
+        download_controls().lock().unwrap().remove(KEY);
     }
 
     #[test]

@@ -55,22 +55,6 @@ fn resolve_root(app: &AppHandle, project_id: &str) -> Result<String, String> {
     file_tools::resolve_project_root(app, Some(project_id))
 }
 
-/// Embed a single text; returns None on failure (retrieval/write falls back to keyword mode).
-async fn embed_one(
-    app: &AppHandle,
-    cfg: &MemoryEmbeddingConfig,
-    text: &str,
-) -> Option<(String, usize, Vec<f32>)> {
-    let embedder = crate::plugins::embed::resolve(app, cfg).ok()?;
-    let v = embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()?;
-    Some((embedder.model_key(), v.len(), v))
-}
-
 /// Compute embedder readiness (prefers the actually resolved embedder over the raw config:
 /// provider/model/dimensions in the config may come from a legacy global config snapshot and not match actual usage).
 fn embedder_status(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> EmbedderStatus {
@@ -180,7 +164,6 @@ pub async fn memory_add(
 ) -> Result<MemoryFact, String> {
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
-    let embedding_cfg = crate::services::memory::resolve_project_embedding(&app, &store);
     let fact = NewFact {
         key,
         content: content.clone(),
@@ -190,7 +173,8 @@ pub async fn memory_add(
         source_refs: None,
         pinned: false,
     };
-    let embedding = embed_one(&app, &embedding_cfg, &fact.content).await;
+    // MEM-06: canonical embed_one (dimension-drift guard included)
+    let embedding = crate::services::memory::embed_one(&app, &store, &fact.content).await;
     store.upsert_fact(&fact, embedding)
 }
 
@@ -205,7 +189,6 @@ pub async fn memory_update(
 ) -> Result<MemoryFact, String> {
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
-    let embedding_cfg = crate::services::memory::resolve_project_embedding(&app, &store);
     let existing = store.get_fact(&id)?;
     let new_content = content.unwrap_or(existing.content.clone());
     // With a key, go through upsert (in-place update for the same key + version audit); without a key, amend the content directly
@@ -219,7 +202,7 @@ pub async fn memory_update(
             source_refs: existing.source_refs.clone(),
             pinned: existing.pinned,
         };
-        let embedding = embed_one(&app, &embedding_cfg, &new_content).await;
+        let embedding = crate::services::memory::embed_one(&app, &store, &new_content).await;
         store.upsert_fact(&fact, embedding)?
     } else {
         // Keyless fact: amend the content in place; rewrite the vector in place (set_embedding).
@@ -230,7 +213,9 @@ pub async fn memory_update(
             // The category param takes effect via set_category in the keyless branch
             updated = store.set_category(&id, cat)?;
         }
-        if let Some(embedding) = embed_one(&app, &embedding_cfg, &new_content).await {
+        if let Some(embedding) =
+            crate::services::memory::embed_one(&app, &store, &new_content).await
+        {
             if let Err(e) = store.set_embedding(&id, Some(embedding)) {
                 tracing::warn!("记忆 {id} 向量重写失败（保留旧向量）: {e}");
             }
@@ -564,8 +549,10 @@ pub async fn memory_update_embedding(
         // Config unchanged: return the current status directly, no destructive operations
         return memory_get_status(app, project_id);
     }
-    // 1) Probe actual dimensions and model key with the selected model (more reliable than hand-filled dimensions/model in the config)
-    let (model_key, dims, _) = embed_one(&app, &config, "embedding probe")
+    // 1) Probe actual dimensions and model key with the selected model (more reliable than hand-filled dimensions/model in the config).
+    // MEM-06: embed_raw — guard-free on purpose: the probe must measure the NEW model's
+    // dimensions even while old vectors still exist (they are cleared in step 3).
+    let (model_key, dims, _) = crate::services::memory::embed_raw(&app, &config, "embedding probe")
         .await
         .ok_or_else(|| {
             ierr!(

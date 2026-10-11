@@ -4,10 +4,12 @@
 //! Before writing, vector-deduplicates against existing facts; high similarity goes through LLM arbitration (merge/update/supersede/keep_separate),
 //! the same dedup chain as explicit remember (the automatic side of the self-improving loop).
 
+// MEM-06: canonical single-text embedding (dimension-drift guard included)
+use crate::services::memory::embed_one;
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::llm::{chat_json, llm_config, LlmConfig};
 use crate::services::memory::manager::MemoryStoreManager;
-use crate::services::memory::store::{MemoryStore, NewFact};
+use crate::services::memory::store::NewFact;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -291,32 +293,6 @@ pub fn parse_extracted(v: &serde_json::Value) -> Vec<ExtractedFact> {
     }
     out.truncate(MAX_PER_RUN);
     out
-}
-
-async fn embed_one(
-    app: &AppHandle,
-    store: &MemoryStore,
-    text: &str,
-) -> Option<(String, usize, Vec<f32>)> {
-    let ecfg = crate::services::memory::resolve_project_embedding(app, store);
-    let embedder = crate::plugins::embed::resolve(app, &ecfg).ok()?;
-    let v = embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()?;
-    if let Some(lib_dim) = store.embedding_dim_meta() {
-        if lib_dim != v.len() {
-            tracing::warn!(
-                "记忆库向量维度 {} 与当前嵌入模型维度 {} 不一致，跳过向量化",
-                lib_dim,
-                v.len()
-            );
-            return None;
-        }
-    }
-    Some((embedder.model_key(), v.len(), v))
 }
 
 #[cfg(test)]

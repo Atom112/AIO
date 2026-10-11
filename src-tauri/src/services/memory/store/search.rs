@@ -123,28 +123,26 @@ impl MemoryStore {
             return Ok(Vec::new());
         }
 
-        // 4) Fetch details + recency boost + sort
+        // 4) Fetch details + recency boost + sort (MEM-11: one batched IN (...) query
+        //    per 100 candidates instead of a SELECT per id — the fused candidate set
+        //    is up to 4k entries, so the per-id loop cost one round-trip each)
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let mut scored: Vec<ScoredFact> = Vec::new();
-        for (id, score) in rrf.iter() {
-            if let Ok(fact) = self.fetch_scored(id, *score, now_secs, &conn) {
+        let mut candidates: Vec<(String, f32)> = rrf.into_iter().collect();
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let scored = self.fetch_scored_batch(&candidates, now_secs, &conn)?;
+        let mut scored: Vec<ScoredFact> = scored
+            .into_iter()
+            .filter(|fact| {
                 // Category filter (vector/FTS/LIKE paths all converge here; off-category facts never enter the result)
-                if let Some(cat) = &opts.category {
-                    if &fact.category != cat {
-                        continue;
-                    }
-                }
-                if let Some(min) = opts.min_score {
-                    if fact.score < min {
-                        continue;
-                    }
-                }
-                scored.push(fact);
-            }
-        }
+                opts.category
+                    .as_ref()
+                    .is_none_or(|cat| &fact.category == cat)
+                    && opts.min_score.is_none_or(|min| fact.score >= min)
+            })
+            .collect();
         scored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -199,23 +197,22 @@ impl MemoryStore {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let mut scored: Vec<ScoredFact> = Vec::new();
-        for (i, id) in ids.iter().enumerate() {
-            if let Ok(fact) = self.fetch_scored(id, 1.0 / (60.0 + i as f32 + 1.0), now_secs, &conn)
-            {
-                if let Some(cat) = &opts.category {
-                    if &fact.category != cat {
-                        continue;
-                    }
-                }
-                if let Some(min) = opts.min_score {
-                    if fact.score < min {
-                        continue;
-                    }
-                }
-                scored.push(fact);
-            }
-        }
+        // MEM-11: batched detail assembly (same as the hybrid path)
+        let candidates: Vec<(String, f32)> = ids
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| (id, 1.0 / (60.0 + i as f32 + 1.0)))
+            .collect();
+        let scored = self.fetch_scored_batch(&candidates, now_secs, &conn)?;
+        let mut scored: Vec<ScoredFact> = scored
+            .into_iter()
+            .filter(|fact| {
+                opts.category
+                    .as_ref()
+                    .is_none_or(|cat| &fact.category == cat)
+                    && opts.min_score.is_none_or(|min| fact.score >= min)
+            })
+            .collect();
         scored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -225,39 +222,65 @@ impl MemoryStore {
         Ok(scored)
     }
 
-    fn fetch_scored(
+    /// Batched detail assembly (MEM-11): one `IN (...)` query per 100 candidates
+    /// replaces the per-id SELECT loop. Only rows with status = 'active' are
+    /// returned; recent facts (<= 90 days) get the same 1.1 recency boost as before.
+    fn fetch_scored_batch(
         &self,
-        id: &str,
-        score: f32,
+        candidates: &[(String, f32)],
         now_secs: u64,
         conn: &Connection,
-    ) -> Result<ScoredFact, String> {
-        let row: (String, String, Option<String>, Option<String>) = conn
-            .query_row(
-                // MEM-03 兜底：vec0 腿无 status 过滤——非 active 事实（归档/被取代
-                // 但向量残留的）不再进入详情装配
-                "SELECT content, category, source_type, updated_at FROM facts WHERE id = ?1 AND status = 'active'",
-                [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .map_err(|e| e.to_string())?;
-        let mut final_score = score;
-        if let Some(upd) = &row.3 {
-            if let Some(secs) = iso_to_secs(upd) {
-                let age_days = now_secs.saturating_sub(secs) / 86400;
-                if age_days <= 90 {
-                    final_score *= 1.1;
+    ) -> Result<Vec<ScoredFact>, String> {
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::with_capacity(candidates.len());
+        for chunk in candidates.chunks(100) {
+            let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT id, content, category, source_type, updated_at FROM facts \
+                 WHERE status = 'active' AND id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+            let ids: Vec<&str> = chunk.iter().map(|(id, _)| id.as_str()).collect();
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(ids), |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+            for (id, content, category, source_type, updated_at) in
+                rows.collect_rows("search_batch")
+            {
+                // Rows come back in SQLite order; re-associate the fused score by id.
+                let Some((_, score)) = chunk.iter().find(|(cid, _)| *cid == id) else {
+                    continue;
+                };
+                let mut final_score = *score;
+                if let Some(upd) = &updated_at {
+                    if let Some(secs) = iso_to_secs(upd) {
+                        let age_days = now_secs.saturating_sub(secs) / 86400;
+                        if age_days <= 90 {
+                            final_score *= 1.1;
+                        }
+                    }
                 }
+                out.push(ScoredFact {
+                    id,
+                    content,
+                    category,
+                    score: final_score,
+                    source_type,
+                    updated_at,
+                });
             }
         }
-        Ok(ScoredFact {
-            id: id.to_string(),
-            content: row.0,
-            category: row.1,
-            score: final_score,
-            source_type: row.2,
-            updated_at: row.3,
-        })
+        Ok(out)
     }
 
     /// Read all active facts that have vectors (for consolidation/clustering).

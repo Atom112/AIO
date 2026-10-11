@@ -7,9 +7,11 @@
 //! - Mutual exclusion: per-project meta lock (10-minute expiry) keeps daily scheduling and manual triggers concurrency-safe (single-statement transactions)
 //! - Failure: silent degradation (tracing + report counters); never blocks the main flow.
 
+// MEM-06: canonical single-text embedding (dimension-drift guard included)
+use crate::services::memory::embed_one;
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::manager::MemoryStoreManager;
-use crate::services::memory::store::{iso_to_secs_pub, MemoryStore};
+use crate::services::memory::store::MemoryStore;
 use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
@@ -91,15 +93,16 @@ pub async fn consolidate(
         error: None,
     };
     let now = crate::utils::time::now_iso();
-    // Expiring mutex: no re-entry within 10 minutes (daily scheduling and manual triggers share the same lock)
-    if let Some(ts) = store.meta_get(META_CONSOLIDATE_LOCK)? {
-        if let (Some(t0), Some(t1)) = (iso_to_secs_pub(&ts), iso_to_secs_pub(&now)) {
-            if t1.saturating_sub(t0) < LOCK_TTL_SECS {
-                return Ok(report);
-            }
-        }
+    // MEM-9: the expiring mutex is claimed with ONE atomic check-and-set
+    // (INSERT … ON CONFLICT … WHERE old <= cutoff). The previous read-then-write
+    // sequence let two concurrent consolidations both pass the freshness check
+    // before either had written the lock, double-spending the LLM budget.
+    let cutoff = crate::utils::time::secs_to_iso(
+        crate::utils::time::now_unix_secs().saturating_sub(LOCK_TTL_SECS),
+    );
+    if !store.meta_try_lock(META_CONSOLIDATE_LOCK, &cutoff, &now)? {
+        return Ok(report); // 另一次整理在 10 分钟窗口内，直接让位
     }
-    store.meta_put(META_CONSOLIDATE_LOCK, &now)?;
     let mut all = store.list_active_facts_with_vectors()?;
     if all.len() > MAX_CLUSTER_FACTS {
         all.sort_by(|a, b| {
@@ -184,27 +187,6 @@ pub async fn consolidate(
     }
     store.meta_put(META_CONSOLIDATE_LAST, &crate::utils::time::now_iso())?;
     Ok(report)
-}
-
-async fn embed_one(
-    app: &AppHandle,
-    store: &MemoryStore,
-    text: &str,
-) -> Option<(String, usize, Vec<f32>)> {
-    let ecfg = crate::services::memory::resolve_project_embedding(app, store);
-    let embedder = crate::plugins::embed::resolve(app, &ecfg).ok()?;
-    let v = embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()?;
-    if let Some(lib_dim) = store.embedding_dim_meta() {
-        if lib_dim != v.len() {
-            return None;
-        }
-    }
-    Some((embedder.model_key(), v.len(), v))
 }
 
 /// Daily scheduling entry point: iterate memory-enabled projects and consolidate each one (per-project budget).

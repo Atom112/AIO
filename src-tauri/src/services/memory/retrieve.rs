@@ -7,7 +7,23 @@
 use super::store::{MemoryStore, ScoredFact, SearchOptions};
 use crate::core::models::MemoryRerankConfig;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tauri::AppHandle;
+
+/// MEM-11: run the synchronous SQLite hybrid search on the blocking pool. The search
+/// holds the per-store connection mutex for several queries — running it on an async
+/// worker thread stalls every other task scheduled on that worker.
+async fn search_hybrid_blocking(
+    store: &Arc<MemoryStore>,
+    query: String,
+    query_vec: Option<Vec<f32>>,
+    opts: SearchOptions,
+) -> Result<Vec<ScoredFact>, String> {
+    let store = Arc::clone(store);
+    tokio::task::spawn_blocking(move || store.search_hybrid(&query, query_vec.as_deref(), &opts))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
 /// One-time migration of the project-level rerank config (**an explicitly named write**, easy to audit):
 /// snapshots the legacy global config into the project when no project meta exists (idempotent).
@@ -106,24 +122,26 @@ pub async fn embed_query(app: &AppHandle, store: &MemoryStore, text: &str) -> Op
 
 /// Build the injection block (with rerank): hybrid search top-20 -> project-level rerank -> token-budget trim.
 /// Returns None if any stage fails (skip injection this round; never interrupts the task).
+/// MEM-11: the store is taken as `Arc` so the synchronous search can run on the blocking pool.
 pub async fn inject_block(
     app: &AppHandle,
-    store: &MemoryStore,
+    store: &Arc<MemoryStore>,
     query: &str,
     query_vec: Option<Vec<f32>>,
     budget: usize,
 ) -> Option<String> {
-    let results = store
-        .search_hybrid(
-            query,
-            query_vec.as_deref(),
-            &SearchOptions {
-                category: None,
-                k: 20,
-                min_score: None,
-            },
-        )
-        .ok()?;
+    let results = search_hybrid_blocking(
+        store,
+        query.to_string(),
+        query_vec,
+        SearchOptions {
+            category: None,
+            k: 20,
+            min_score: None,
+        },
+    )
+    .await
+    .ok()?;
     let results = apply_rerank(app, store, query, results).await;
     let results = apply_graph_boost(store, query, results).await;
     store.build_block_from(results, budget).ok().flatten()
@@ -141,9 +159,10 @@ pub async fn rewrite_query(app: &AppHandle, query: &str) -> Vec<String> {
 
 /// Multi-query retrieval + RRF fusion: each query runs its own hybrid search (with project-level rerank),
 /// results are fused and ranked by reciprocal rank, then truncated to top k. A single query degrades to plain retrieval.
+/// MEM-11: the store is taken as `Arc` so the synchronous search can run on the blocking pool.
 pub async fn merged_search(
     app: &AppHandle,
-    store: &MemoryStore,
+    store: &Arc<MemoryStore>,
     queries: &[String],
     opts: &SearchOptions,
 ) -> Result<Vec<ScoredFact>, String> {
@@ -154,7 +173,7 @@ pub async fn merged_search(
     let mut lists: Vec<Vec<ScoredFact>> = Vec::with_capacity(queries.len());
     for q in queries {
         let qv = embed_query(app, store, q).await;
-        let hits = store.search_hybrid(q, qv.as_deref(), opts)?;
+        let hits = search_hybrid_blocking(store, q.clone(), qv, opts.clone()).await?;
         let hits = apply_rerank(app, store, q, hits).await;
         let hits = apply_graph_boost(store, q, hits).await;
         lists.push(hits);
@@ -191,7 +210,7 @@ pub async fn merged_search(
 /// query for a second round, then RRF-fuse both rounds. Helps vague/terminology-poor queries; cost ~ two query embeddings.
 pub async fn iterative_search(
     app: &AppHandle,
-    store: &MemoryStore,
+    store: &Arc<MemoryStore>,
     query: &str,
     opts: &SearchOptions,
 ) -> Result<Vec<ScoredFact>, String> {

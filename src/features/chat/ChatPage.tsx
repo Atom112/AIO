@@ -8,7 +8,6 @@ import {
   llmCreds,
   loadAssistants,
   stopActiveLlmStream,
-  visionAnalyzeImages,
   type ActiveCheckpoint,
 } from '../../core/api/chat';
 import { registerChatUiListeners } from './hooks/chatEventListeners';
@@ -25,6 +24,11 @@ import { useAttachments } from './hooks/useAttachments';
 import { useChatSend } from './hooks/useChatSend';
 // 阶段4 第2项（拆分切片）：API 载荷消息构建三件套抽至 utils/apiMessages（纯函数 + 11 单测）
 import { buildApiMessages, ensureToolMessagesComplete } from './utils/apiMessages';
+import {
+  buildOutgoingMessages,
+  getReasoningPrompt,
+  resolveOutgoingContent,
+} from './utils/sendMessagePrep';
 import { cleanupFailedPlaceholder } from './utils/failedTurnCleanup';
 import { autoDetectLsp, startLspServer } from '../../core/api/lsp';
 import { useNavigate } from '@solidjs/router';
@@ -86,7 +90,6 @@ import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
 import Icon from '../../shared/components/Icon';
 import { isImageGenModel } from '../../core/utils/models';
-import { modelSupportsVision, resolveVisionModel } from './vision';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ProjectMcpTrustModal from './components/ProjectMcpTrustModal';
@@ -97,13 +100,6 @@ import { Portal } from 'solid-js/web';
 import ShareModal from './components/ShareModal';
 import ProblemsPanel from './components/ProblemsPanel';
 import WorkflowVisualization from './components/WorkflowVisualization';
-
-function getReasoningPrompt(level: string): string | null {
-  if (level === 'low') return t('agent.prompt.reasoningLow');
-  if (level === 'medium') return t('agent.prompt.reasoningMedium');
-  if (level === 'high') return t('agent.prompt.reasoningHigh');
-  return null;
-}
 
 // getModelContextWindow (and the turn-finalization effects checkAndRename /
 // checkAndSummarize) moved to hooks/chatTurnEffects.ts — CHAT-12: the global stream
@@ -632,97 +628,35 @@ const ChatPage: Component = () => {
     const topicId = currentTopicId();
     if (!asstId || !topicId) return;
 
-    // ---- auto vision analysis ----
-    // When the selected model cannot see images, the vision agent looks at
-    // them first: its structured description replaces the raw image parts
-    // (a non-vision model would ignore or reject the base64 payloads). The
-    // image attachments are unlinked (id stripped) so later turns never
-    // re-embed them; the history bubbles still show the thumbnails (they
-    // render from storagePath, not the id).
-    let outgoingText = userInput;
-    // Stripped image entries carry an optional id (AttachmentMeta-level):
-    // message_for_api skips id-less files, so later turns never re-embed them.
-    let outgoingFiles: Array<Omit<PendingAttachment, 'id'> & { id?: string }> = files;
-    if (files.some((f) => f.type === 'image') && !modelSupportsVision(currentMdl)) {
-      const visionModel = resolveVisionModel(currentMdl);
-      if (visionModel) {
-        setIsThinking(true);
-        try {
-          const imageIds = files.filter((f) => f.type === 'image').map((f) => f.id);
-          const description = await visionAnalyzeImages(
-            llmCreds(visionModel),
-            imageIds,
-            outgoingText,
-            locale(),
-          );
-          outgoingFiles = files.map((f) => (f.type === 'image' ? { ...f, id: undefined } : f));
-          outgoingText = `${outgoingText}\n\n${t('chat.visionAnalysisPrefix')}\n${description}`;
-        } catch (err) {
-          // Vision analysis failed — fall back to sending the images as-is
-          console.warn('[vision] analysis failed, sending images unchanged:', err);
-        } finally {
-          setIsThinking(false);
-        }
-      } else {
-        console.warn('[vision] no vision-capable model available; sending images unchanged');
-      }
-    }
+    // ---- auto vision analysis + outgoing-message assembly ----
+    // (extracted to utils/sendMessagePrep: resolveOutgoingContent + buildOutgoingMessages)
+    const { outgoingText, outgoingFiles } = await resolveOutgoingContent(
+      currentMdl,
+      files,
+      userInput,
+      setIsThinking,
+    );
 
-    const newUserMsg = {
-      id: crypto.randomUUID(),
-      role: 'user' as const,
-      content: outgoingText,
-      displayFiles: outgoingFiles.map((f) => ({
-        id: f.id,
-        name: f.name,
-        mimeType: f.mimeType,
-        size: f.size,
-        storagePath: f.storagePath,
-      })),
-      displayText: userInput,
-    };
-
+    // Re-read after the vision await: the user may have switched topic/assistant meanwhile
     const currentAsst = currentAssistant();
     const currentTopic = activeTopic();
     if (!currentAsst || !currentTopic) return;
 
-    /** Inject the system prompt matching the reasoning level so the model uses <think>...</think> to emit its thinking output */
-    const reasoningPrompt = getReasoningPrompt(reasoningLevel());
-
-    const agentMode = currentAsst?.agentMode || 'off';
     const pid = currentProjectId();
-    const projectInfo =
-      pid && currentProject()
-        ? { path: currentProject()!.path, name: currentProject()!.name }
-        : null;
-    const agentPromptContent =
-      agentMode !== 'off' && projectInfo
-        ? buildAgentSystemPrompt(agentMode as any, projectInfo)
-        : null;
-    const agentSystemPrompt = agentPromptContent
-      ? [{ role: 'system' as const, content: agentPromptContent }]
-      : [];
-    let messagesForAI: any[] = [
-      { role: 'system', content: currentAsst.prompt },
-      // output style constraints (emoji avoidance etc., mirroring mainstream agent system-prompt style sections)
-      { role: 'system', content: t('chat.prompt.style') },
-      ...buildSkillMessages(currentAsst, isChatMode()),
-      ...agentSystemPrompt,
-      ...(reasoningPrompt ? [{ role: 'system', content: reasoningPrompt }] : []),
-      ...(webSearchEnabled() ? [{ role: 'system', content: t('agent.prompt.web') }] : []),
-      ...(currentTopic.summary
-        ? [
-            {
-              role: 'system',
-              content: t('agent.prompt.summary', { summary: currentTopic.summary }),
-            },
-          ]
-        : []),
-      ...currentTopic.history.flatMap((m: any) => buildApiMessages(m)),
-      { role: 'user', content: newUserMsg.content, displayFiles: newUserMsg.displayFiles },
-    ];
-    // safety net: ensure every assistant(tool_calls) has matching role:tool messages
-    messagesForAI = ensureToolMessagesComplete(messagesForAI);
+    const { newUserMsg, messagesForAI } = buildOutgoingMessages({
+      currentAsst,
+      currentTopic,
+      outgoingText,
+      outgoingFiles,
+      userInput,
+      reasoningLevel: reasoningLevel(),
+      webSearchEnabled: webSearchEnabled(),
+      isChatMode: isChatMode(),
+      projectInfo:
+        pid && currentProject()
+          ? { path: currentProject()!.path, name: currentProject()!.name }
+          : null,
+    });
 
     const lastMsg = messagesForAI[messagesForAI.length - 1];
     if (lastMsg.role !== 'user') {
@@ -791,6 +725,7 @@ const ChatPage: Component = () => {
     try {
       // chat mode: plain conversation, calls call_llm_stream directly (no agent loop, no tools)
       // project/Agent mode: calls run_agent_turn (with tool calls, subagents, etc.)
+      const agentMode = currentAsst?.agentMode || 'off';
       if (isChatMode() && isImageGenModel(currentMdl.model_id, currentMdl.api_url)) {
         // dedicated endpoints (dall-e-2/3 etc.): non-streaming generation, the result comes back via llm-chunk(done)
         await generateImage(llmCreds(currentMdl), asstId, topicId, userInput);

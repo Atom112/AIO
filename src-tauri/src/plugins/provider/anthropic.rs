@@ -61,6 +61,12 @@ impl ProviderPlugin for AnthropicProvider {
         }
     }
 
+    /// 阶段4 第5项（聊天路径统一出口）: the chat endpoint /v1/messages uses the
+    /// same native auth as the models endpoint.
+    fn apply_chat_auth(&self, req: RequestBuilder, api_key: &str) -> RequestBuilder {
+        self.apply_auth(req, api_key)
+    }
+
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel> {
         let arr = body
             .get("data")

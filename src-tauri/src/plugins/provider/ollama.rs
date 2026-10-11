@@ -39,6 +39,12 @@ impl ProviderPlugin for OllamaProvider {
         req
     }
 
+    /// 阶段4 第5项（聊天路径统一出口）: no auth on the /v1 OpenAI-compat chat
+    /// endpoint either (the historic chat path sent a meaningless empty Bearer).
+    fn apply_chat_auth(&self, req: RequestBuilder, _api_key: &str) -> RequestBuilder {
+        req
+    }
+
     fn chat_completions_url(&self, api_url: &str) -> String {
         let base = api_url.trim_end_matches('/');
         // Ollama's OpenAI-compatible endpoint lives under the /v1 path

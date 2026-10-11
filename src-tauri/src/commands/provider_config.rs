@@ -279,11 +279,13 @@ pub async fn test_provider_connection(
     let use_openai_compat =
         engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
 
-    // Plugin selection is centralized: ProviderManager::boxed_for_url owns it (new plugins need no command-layer changes)
-    let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
-        Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
+    // Plugin selection is centralized: ProviderManager::for_url owns it (new plugins need no command-layer changes).
+    // 阶段4 第5项: Arc registry — the plugin outlives the manager without the historic boxed_for_url rebuild list.
+    let plugin: std::sync::Arc<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat
+    {
+        std::sync::Arc::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
     } else {
-        ProviderManager::new().boxed_for_url(&api_url)
+        ProviderManager::new().for_url(&api_url)
     };
 
     let client = plugin.build_client(proxy_url.as_deref(), TEST_TIMEOUT_SECS)?;
@@ -381,11 +383,13 @@ pub async fn fetch_provider_models(
     let use_openai_compat =
         engine_type.as_deref() == Some("llama_cpp") || engine_type.as_deref() == Some("vllm");
 
-    // Plugin selection is centralized: ProviderManager::boxed_for_url owns it (new plugins need no command-layer changes)
-    let plugin: Box<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat {
-        Box::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
+    // Plugin selection is centralized: ProviderManager::for_url owns it (new plugins need no command-layer changes).
+    // 阶段4 第5项: Arc registry — the plugin outlives the manager without the historic boxed_for_url rebuild list.
+    let plugin: std::sync::Arc<dyn crate::plugins::provider::ProviderPlugin> = if use_openai_compat
+    {
+        std::sync::Arc::new(crate::plugins::provider::openai_compat::OpenAICompatProvider)
     } else {
-        ProviderManager::new().boxed_for_url(&api_url)
+        ProviderManager::new().for_url(&api_url)
     };
 
     let client = plugin.build_client(proxy_url.as_deref(), DEFAULT_TIMEOUT_SECS)?;

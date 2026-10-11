@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（<900 目标切片）：出站消息组装抽出（sendMessagePrep）
+
+- **视觉预处理 + 消息组装抽出（ChatPage 1267→1202）**：handleSendMessage 中段（自动视觉分析——非视觉模型先由视觉 agent 生成结构化图像描述替换原始 base64 附件；系统栈组装——助手提示词 + 输出风格 + 技能 + agent 提示词 + 推理级别 + 联网 + 话题摘要 → 历史 → 新用户消息 + 工具配对安全网）verbatim 抽至 `utils/sendMessagePrep.ts`（174 行，两个入口 `resolveOutgoingContent` / `buildOutgoingMessages` 全参数显式化便于测试）+ **6 个组装顺序回归测试**（无条件系统栈顺序 / 条件段（推理/联网/摘要/agent 提示词）的含入与排除 / 持久化用户消息形状）
+- **any 棘轮 93 → 90（净降 3）**：`messagesForAI` 从 `any[]` 类型化为 `Message[]`；`(m: any)` flatMap 注解与 `agentMode as any` 双双消除（`Parameters<typeof buildAgentSystemPrompt>[0]` 索引类型）；getReasoningPrompt 随迁为导出
+
 ### 🧱 阶段4 第1项（子目标5/5 切片4）：压缩守卫收敛（CompressCtx）
 
 - **共享压缩上下文（agent_loop 切片 4）**：两循环 4 处同构的压缩调用模式（`std::mem::take` → `compress_context` 12 参调用 → 回填；主循环预算门 + 溢出门、子代理预算门 + 溢出门——后者还包着一层私有薄包装 `compress_sub_context`）收敛为 `round_artifacts.rs` 的 `CompressCtx`（借用式上下文：window/client/api_url/api_key/model/ids/token/keep_recent_tokens/tag/locale + `compress()` 单方法）。**溢出恢复门**（重试预算 + 错误分类 `is_context_overflow_error` + 最小长度 >4 三条件谓词）收敛为 `try_overflow_recovery` / `overflow_recoverable` 纯谓词（+1 测试覆盖三条件的全部反例）；子代理薄包装删除；主循环预算门的 8 变量 clone 块随之消失

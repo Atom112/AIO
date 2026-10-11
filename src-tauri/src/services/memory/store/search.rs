@@ -17,21 +17,36 @@ impl MemoryStore {
                 }
             }
         }
+        // P3（性能杂项·记忆检索）: brute-force fallback scores rows STREAMING —
+        // the historic path materialized every decoded vector first
+        // (Vec<(String, Vec<f32>)>: n id clones + n heap vectors) and then
+        // brute_force_topk cloned every id AGAIN while scoring, keeping only
+        // k. Scoring in the row loop keeps the per-row decode scoped and
+        // touches each id once.
         let mut stmt = conn
             .prepare("SELECT id, embedding FROM facts WHERE status = ?1 AND embedding IS NOT NULL")
             .map_err(|e| e.to_string())?;
-        let rows: Vec<(String, Vec<u8>)> = stmt
+        let mut scored: Vec<(String, f32)> = Vec::new();
+        let rows = stmt
             .query_map(params![STATUS_ACTIVE], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
             })
-            .map_err(|e| e.to_string())?
-            .collect_rows("search");
+            .map_err(|e| e.to_string())?;
+        for r in rows {
+            match r {
+                Ok((id, bytes)) => {
+                    let v = crate::services::memory::vector::bytes_to_f32(&bytes);
+                    scored.push((id, crate::services::memory::vector::cosine(query, &v)));
+                }
+                Err(e) => {
+                    tracing::warn!("[memory:search] 行读取失败（已跳过）: {e}")
+                }
+            }
+        }
         drop(stmt);
-        let decoded: Vec<(String, Vec<f32>)> = rows
-            .iter()
-            .map(|(id, b)| (id.clone(), bytes_to_f32(b)))
-            .collect();
-        Ok(brute_force_topk(&decoded, query, k))
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(k);
+        Ok(scored)
     }
 
     /// Pure vector cosine search (for dedup/arbitration): returns (id, cosine_similarity) sorted by descending similarity.

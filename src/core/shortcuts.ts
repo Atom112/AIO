@@ -349,6 +349,15 @@ export function executeCommand(actionId: string): boolean {
 
 export const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
 
+/**
+ * Shortcut-recording in progress (P3 前端打磨：录制与全局快捷键互斥).
+ * While recording in the settings page, GlobalKeyboardHandler must ignore ALL
+ * keydowns — otherwise recording Ctrl+K would simultaneously open the command
+ * palette, and Escape would both close it and be recorded as the binding.
+ * The recording UI sets this flag; the global handler checks it first.
+ */
+export const [shortcutRecording, setShortcutRecording] = createSignal(false);
+
 // ---- Keyboard event normalization ----
 
 /** Modifier key names */
@@ -441,48 +450,60 @@ export function isInputPassthrough(keys: string): boolean {
 
 registerCommand({
   id: 'command-palette',
-  label: t('cmd.command-palette.label'),
-  description: t('cmd.command-palette.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'command-palette',
+  description: '',
   category: 'navigation',
   defaultKeys: 'Ctrl+K',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'toggle-left-sidebar',
-  label: t('cmd.toggle-left-sidebar.label'),
-  description: t('cmd.toggle-left-sidebar.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'toggle-left-sidebar',
+  description: '',
   category: 'navigation',
   defaultKeys: 'Ctrl+B',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'toggle-right-sidebar',
-  label: t('cmd.toggle-right-sidebar.label'),
-  description: t('cmd.toggle-right-sidebar.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'toggle-right-sidebar',
+  description: '',
   category: 'navigation',
   defaultKeys: 'Ctrl+Alt+B',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'go-to-settings',
-  label: t('cmd.go-to-settings.label'),
-  description: t('cmd.go-to-settings.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'go-to-settings',
+  description: '',
   category: 'navigation',
   defaultKeys: 'Ctrl+,',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'go-to-chat',
-  label: t('cmd.go-to-chat.label'),
-  description: t('cmd.go-to-chat.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'go-to-chat',
+  description: '',
   category: 'navigation',
   defaultKeys: 'Ctrl+1',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'new-topic',
-  label: t('cmd.new-topic.label'),
-  description: t('cmd.new-topic.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'new-topic',
+  description: '',
   category: 'chat',
   defaultKeys: 'Ctrl+N',
   handler: NOOP_HANDLER,
@@ -501,8 +522,10 @@ registerCommand({
 });
 registerCommand({
   id: 'new-assistant',
-  label: t('cmd.new-assistant.label'),
-  description: t('cmd.new-assistant.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'new-assistant',
+  description: '',
   category: 'chat',
   // FE-03: 此前与 new-project 同为 Ctrl+Shift+N——注册序使 new-assistant 默认
   // 键永远无法触发（getActionByKeys 按插入序取首）；冲突检测只在用户录制时
@@ -512,80 +535,100 @@ registerCommand({
 });
 registerCommand({
   id: 'toggle-web-search',
-  label: t('cmd.toggle-web-search.label'),
-  description: t('cmd.toggle-web-search.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'toggle-web-search',
+  description: '',
   category: 'chat',
   defaultKeys: 'Ctrl+Shift+S',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'cycle-reasoning',
-  label: t('cmd.cycle-reasoning.label'),
-  description: t('cmd.cycle-reasoning.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'cycle-reasoning',
+  description: '',
   category: 'chat',
   defaultKeys: 'Ctrl+Shift+R',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'cycle-agent-mode',
-  label: t('cmd.cycle-agent-mode.label'),
-  description: t('cmd.cycle-agent-mode.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'cycle-agent-mode',
+  description: '',
   category: 'chat',
   defaultKeys: 'Ctrl+Shift+M',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'stop-generation',
-  label: t('cmd.stop-generation.label'),
-  description: t('cmd.stop-generation.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'stop-generation',
+  description: '',
   category: 'chat',
   defaultKeys: 'Escape',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'focus-input',
-  label: t('cmd.focus-input.label'),
-  description: t('cmd.focus-input.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'focus-input',
+  description: '',
   category: 'chat',
   defaultKeys: 'Ctrl+I',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'upload-file',
-  label: t('cmd.upload-file.label'),
-  description: t('cmd.upload-file.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'upload-file',
+  description: '',
   category: 'chat',
   defaultKeys: 'Ctrl+U',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'prev-assistant',
-  label: t('cmd.prev-assistant.label'),
-  description: t('cmd.prev-assistant.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'prev-assistant',
+  description: '',
   category: 'sidebar',
   defaultKeys: 'Ctrl+[',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'next-assistant',
-  label: t('cmd.next-assistant.label'),
-  description: t('cmd.next-assistant.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'next-assistant',
+  description: '',
   category: 'sidebar',
   defaultKeys: 'Ctrl+]',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'prev-topic',
-  label: t('cmd.prev-topic.label'),
-  description: t('cmd.prev-topic.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'prev-topic',
+  description: '',
   category: 'sidebar',
   defaultKeys: 'Ctrl+Shift+[',
   handler: NOOP_HANDLER,
 });
 registerCommand({
   id: 'next-topic',
-  label: t('cmd.next-topic.label'),
-  description: t('cmd.next-topic.description'),
+  // P3（双翻译家族统一）：显示文案统一走 COMMAND_TRANSLATIONS（command.* 键）；
+  // 此处烘焙值仅为缺表兜底，不再持 i18n 键
+  label: 'next-topic',
+  description: '',
   category: 'sidebar',
   defaultKeys: 'Ctrl+Shift+]',
   handler: NOOP_HANDLER,
@@ -595,8 +638,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-clear',
-  label: t('cmd.slash-clear.label'),
-  description: t('cmd.slash-clear.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/clear',
+  description: 'slash-clear',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -607,8 +651,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-compact',
-  label: t('cmd.slash-compact.label'),
-  description: t('cmd.slash-compact.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/compact',
+  description: 'slash-compact',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -619,8 +664,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-review',
-  label: t('cmd.slash-review.label'),
-  description: t('cmd.slash-review.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/review',
+  description: 'slash-review',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -631,8 +677,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-explain',
-  label: t('cmd.slash-explain.label'),
-  description: t('cmd.slash-explain.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/explain',
+  description: 'slash-explain',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -643,8 +690,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-fix',
-  label: t('cmd.slash-fix.label'),
-  description: t('cmd.slash-fix.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/fix',
+  description: 'slash-fix',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -655,8 +703,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-optimize',
-  label: t('cmd.slash-optimize.label'),
-  description: t('cmd.slash-optimize.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/optimize',
+  description: 'slash-optimize',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -667,8 +716,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-translate',
-  label: t('cmd.slash-translate.label'),
-  description: t('cmd.slash-translate.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/translate',
+  description: 'slash-translate',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -679,8 +729,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-summarize',
-  label: t('cmd.slash-summarize.label'),
-  description: t('cmd.slash-summarize.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/summarize',
+  description: 'slash-summarize',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -691,8 +742,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-search',
-  label: t('cmd.slash-search.label'),
-  description: t('cmd.slash-search.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/search',
+  description: 'slash-search',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -703,8 +755,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-settings',
-  label: t('cmd.slash-settings.label'),
-  description: t('cmd.slash-settings.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/settings',
+  description: 'slash-settings',
   category: 'navigation',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -715,8 +768,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-help',
-  label: t('cmd.slash-help.label'),
-  description: t('cmd.slash-help.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/help',
+  description: 'slash-help',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,
@@ -727,8 +781,9 @@ registerCommand({
 
 registerCommand({
   id: 'slash-btw',
-  label: t('cmd.slash-btw.label'),
-  description: t('cmd.slash-btw.description'),
+  // P3（双翻译家族统一）：斜杠命令名是 locale 无关的字面量，非翻译
+  label: '/btw',
+  description: 'slash-btw',
   category: 'chat',
   defaultKeys: '',
   handler: NOOP_HANDLER,

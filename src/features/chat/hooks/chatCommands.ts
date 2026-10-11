@@ -10,6 +10,8 @@ import {
   registerCommand,
 } from '../../../core/shortcuts';
 import { t } from '../../../core/i18n';
+import { savePanelCollapsed } from '../../../core/store/layout';
+import { persistReasoningLevel, persistWebSearch } from '../../../core/store/ui-prefs';
 import {
   setDatas as storeSetDatas,
   type AgentMode,
@@ -39,9 +41,8 @@ export interface ChatCommandDeps {
   handleStopGeneration: () => Promise<void>;
   // Mode & search
   reasoningLevel: () => 'off' | 'low' | 'medium' | 'high';
-  setReasoningLevel: (v: 'off' | 'low' | 'medium' | 'high') => void;
   webSearchEnabled: () => boolean;
-  setWebSearchEnabled: (v: boolean) => void;
+  // P3（localStorage 收编）：setter 经 ui-prefs 的 persist*（信号+写盘一体），钩子不再取用
   // Data access
   datas: DatasState;
   setDatas: typeof storeSetDatas;
@@ -76,9 +77,8 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     setIsThinking,
     handleStopGeneration,
     reasoningLevel,
-    setReasoningLevel,
+    // P3（localStorage 收编）：setter 不再取用——persist* 已在 ui-prefs 内同时置信号与写盘
     webSearchEnabled,
-    setWebSearchEnabled,
     datas,
     setDatas,
     projects,
@@ -104,7 +104,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     handler: () => {
       const newState = !isRightCollapsed();
       setIsRightCollapsed(newState);
-      localStorage.setItem('right-collapsed', String(newState));
+      savePanelCollapsed('right', newState);
       if (!newState && rightPanelWidth() < 5) setRightPanelWidth(18);
     },
   });
@@ -218,8 +218,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     id: 'toggle-web-search',
     handler: () => {
       const next = !webSearchEnabled();
-      setWebSearchEnabled(next);
-      localStorage.setItem('chat-web-search', String(next));
+      persistWebSearch(next);
     },
   });
 
@@ -230,8 +229,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
       const current = reasoningLevel();
       const idx = levels.indexOf(current);
       const next = levels[(idx + 1) % levels.length];
-      setReasoningLevel(next);
-      localStorage.setItem('chat-reasoning-level', next);
+      persistReasoningLevel(next);
     },
   });
 
@@ -310,8 +308,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     id: 'slash-search',
     handler: () => {
       const next = !webSearchEnabled();
-      setWebSearchEnabled(next);
-      localStorage.setItem('chat-web-search', String(next));
+      persistWebSearch(next);
     },
   });
 

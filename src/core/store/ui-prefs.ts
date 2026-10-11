@@ -47,3 +47,23 @@ export const setLocalAutoStartConfirmed = (): void => {
     /* ignore */
   }
 };
+
+/** Local model market download source preference (P3：localStorage 裸调收编——组件层经此域 API). */
+type DownloadSourcePref = 'auto' | 'modelscope' | 'huggingface';
+const DOWNLOAD_SOURCE_KEY = 'aio-local-model-source';
+export const loadDownloadSourcePref = (): DownloadSourcePref => {
+  try {
+    const v = localStorage.getItem(DOWNLOAD_SOURCE_KEY);
+    if (v === 'auto' || v === 'modelscope' || v === 'huggingface') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'auto';
+};
+export const saveDownloadSourcePref = (s: DownloadSourcePref): void => {
+  try {
+    localStorage.setItem(DOWNLOAD_SOURCE_KEY, s);
+  } catch {
+    /* ignore */
+  }
+};

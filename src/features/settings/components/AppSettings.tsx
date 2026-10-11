@@ -37,6 +37,7 @@ import {
   formatShortcutForDisplay,
   getCommandDisplayLabel,
   getCommandDisplayDescription,
+  setShortcutRecording,
   type CommandAction,
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
@@ -347,6 +348,8 @@ const AppSettings: Component = () => {
       recordingCleanup = null;
     }
     setRecordingActionId(actionId);
+    // P3（录制互斥）：通知全局键盘处理器让位
+    setShortcutRecording(true);
 
     const onKeyDown = (e: KeyboardEvent) => {
       const combo = normalizeKeyCombo(e);
@@ -381,6 +384,7 @@ const AppSettings: Component = () => {
 
   /** Stop recording */
   const stopRecording = () => {
+    setShortcutRecording(false);
     setRecordingActionId(null);
     if (recordingCleanup) {
       recordingCleanup();

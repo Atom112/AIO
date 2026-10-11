@@ -6,10 +6,15 @@
 //! the raw image parts in the conversation (a non-vision model would
 //! otherwise ignore the base64 payloads or reject the request outright).
 
-use crate::commands::llm::*;
+// 阶段4 第1项（消 glob）：显式 use 取代原父模块 glob。
+use crate::commands::llm::client::{
+    chat_error_message, chat_text_content, non_streaming_http_client, post_chat_completion,
+};
+
 use crate::core::state::DbState;
 use crate::ierr;
 use base64::engine::general_purpose;
+use base64::Engine as _;
 use serde_json::json;
 use tauri::{AppHandle, Manager};
 
@@ -31,7 +36,7 @@ const VISION_SYSTEM_EN: &str = "You are the AIO vision analysis agent. The main 
 /// The structured image description text (replaces the images for the
 /// non-vision main model). Non-streaming, 45s timeout.
 #[tauri::command]
-pub(crate) async fn vision_analyze_images(
+pub async fn vision_analyze_images(
     app: AppHandle,
     api_url: String,
     api_key: String,

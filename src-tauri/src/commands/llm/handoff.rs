@@ -1,8 +1,10 @@
 //! Compression archives and handoff documents (snapcompact-style archives, handoff docs, subagent progress summaries).
 
-use crate::commands::llm::*;
+use crate::commands::llm::budget::estimate_message_tokens;
 use crate::ierr;
+use crate::utils::truncate::truncate_chars_head_tail;
 use tauri::AppHandle;
+use tauri::Manager;
 
 /// Extract a progress summary of completed work from the subagent context (used when the
 /// round cap is hit or no final text was produced), so a truncated task still returns useful info.

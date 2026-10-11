@@ -1,10 +1,29 @@
 //! Subagent and workflow orchestration: delegate_task(s), execute_workflow, execute_subagent and their helpers.
 
-use crate::commands::llm::*;
+// 阶段4 第1项（消 glob）：原 `use crate::commands::llm::*;` 同时吸入 mod.rs 的
+// 14 个子模块 glob 与其工具 use 头——替换为下述显式 use（符号 → 真实来源）。
+use crate::commands::llm::budget::is_context_overflow_error;
+use crate::commands::llm::compress::compress_context;
+use crate::commands::llm::handoff::build_subagent_progress_summary;
+use crate::commands::llm::tool_dispatch::{is_parallel_safe, merge_mcp_tools, FsServerPolicy};
 use crate::core::events as ev;
+use crate::core::models::*;
+use crate::core::permission::{self, PermissionAction};
+use crate::core::subagent;
 use crate::ierr;
+use crate::plugins::mcp::PendingApprovals;
+use crate::utils::file_tools;
+use crate::utils::git_tools;
+use crate::utils::lsp_agent_tools;
+use crate::utils::shell_tools;
+use crate::utils::truncate::truncate_chars_head;
+use crate::utils::truncate::{truncate_chars_head_tail, truncate_tool_result};
+use crate::utils::web_tools;
+// mod.rs 本体符号（主循环公共引擎入口）：经 super:: 显式引入
+use super::{execute_builtin_tool, execute_tool_with_retry, is_git_repo, stream_one_round};
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
+use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Window};

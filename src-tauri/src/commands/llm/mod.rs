@@ -1,12 +1,10 @@
 pub mod btw;
 
-use crate::commands::attachment::sync_message_attachments;
 use crate::core::events as ev;
 use crate::core::models::*;
 use crate::core::permission::{self, PermissionAction};
 use crate::core::state::DbState;
 use crate::core::state::StreamManager;
-use crate::core::subagent;
 use crate::ierr;
 use crate::plugins::mcp::PendingApprovals;
 use crate::utils::diff::compute_diff_preview;
@@ -15,12 +13,10 @@ use crate::utils::git_tools;
 use crate::utils::lsp_agent_tools;
 use crate::utils::lsp_tools;
 use crate::utils::shell_tools;
-use crate::utils::truncate::{truncate_chars_head, truncate_chars_head_tail, truncate_tool_result};
+use crate::utils::truncate::{truncate_chars_head, truncate_tool_result};
 use crate::utils::web_tools;
-use base64::engine::Engine as _;
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt; // for handling streaming data
-use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -45,20 +41,27 @@ pub(crate) mod tool_specs;
 pub(crate) mod usage;
 pub(crate) mod vision;
 
-pub(crate) use budget::*;
-pub(crate) use checkpoints::*;
-pub(crate) use client::*;
-pub(crate) use compress::*;
-pub(crate) use handoff::*;
-pub(crate) use locked_tools::*;
-pub(crate) use messages::*;
-pub(crate) use subagents::*;
-pub(crate) use tasks::*;
-pub(crate) use titles::*;
-pub(crate) use tool_dispatch::*;
-pub(crate) use tool_specs::*;
-pub(crate) use usage::*;
-pub(crate) use vision::*;
+// 阶段4 第1项：14 个子模块的 glob re-export 已移除——lib.rs 经由
+// `llm::<module>::<command>` 全路径注册（同 checkpoints/tasks 的既有风格），
+// 消除“同一符号两条路径”带来的漂移面。子模块间引用本就走全路径。
+// mod.rs 自身使用的子模块符号改为下方显式 use（符号 → 真实来源模块）。
+use budget::{estimate_context_tokens_offload, is_context_overflow_error, is_retryable_error};
+use checkpoints::{finalize_checkpoints, load_checkpoint_messages};
+use client::{non_streaming_http_client, streaming_http_client};
+use compress::compress_context;
+use handoff::{build_extract_transcript, consume_handoff_doc, write_handoff_doc};
+use locked_tools::execute_locked_file_tool;
+use messages::message_for_api;
+use subagents::{
+    drain_pending_subagent_notices, execute_get_subagent_result, execute_workflow,
+    handle_delegate_task, handle_delegate_tasks, record_subagent_outcome,
+    register_running_subagent,
+};
+use tasks::{execute_ask_user, execute_task_board_tool};
+use tool_dispatch::{build_main_tool_set, is_parallel_safe};
+use tool_specs::{execute_artifact_read, execute_skill_read};
+use usage::insert_usage_log;
+
 /// Round and context budgets for the agent loop (main loop derives from model window;
 /// subagents use conservative constants but honor explicit user config for rounds).
 ///
@@ -1098,7 +1101,8 @@ pub(crate) async fn execute_builtin_tool(
 }
 
 /// Helper: check if a directory is a git repo
-fn is_git_repo(dir: &str) -> bool {
+/// Private helper of the main agent context (subagents use the same resolution).
+pub(crate) fn is_git_repo(dir: &str) -> bool {
     std::path::Path::new(dir).join(".git").exists()
 }
 

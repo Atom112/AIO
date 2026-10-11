@@ -215,7 +215,10 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn is_platform_supported(&self) -> bool {
-        cfg!(not(target_os = "windows"))
+        // ENG-15: vLLM ships official Windows wheels (0.8+); the is_installed probe
+        // (python scan for a vllm install + HTTP fallback) is the accurate gate, so
+        // the historic hard `not(windows)` block hid a working setup.
+        true
     }
 
     fn install_path(&self, app: &AppHandle) -> PathBuf {

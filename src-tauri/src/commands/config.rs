@@ -330,7 +330,21 @@ pub(crate) fn load_assistant_agent_mode(
         )
         .ok()
         .flatten();
-    mode_str.and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok())
+    mode_str.and_then(|s| match serde_json::from_str(&format!("\"{s}\"")) {
+        Ok(mode) => Some(mode),
+        // SEC-18: an unparseable persisted mode (hand-edited/corrupted DB row, or a
+        // value from a future version) falls back to the caller's fail-closed Off.
+        // That fallback is correct post-SEC-19 (Off = no tools), but the drift must
+        // be visible instead of silently turning an Auto assistant into chat mode.
+        Err(e) => {
+            tracing::warn!(
+                "[sec-18] assistant {} 的 agent_mode 值无法解析（{:?}），回退 Off（fail-closed）: {e}",
+                assistant_id,
+                s
+            );
+            None
+        }
+    })
 }
 
 /// Persist a single assistant (with all its topics and messages).

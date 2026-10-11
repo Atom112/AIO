@@ -53,6 +53,9 @@ export const EVENTS = {
   /** Tool approval request */
   toolApprovalRequested: 'tool-approval-requested',
 
+  /** Tool approval expired (backend timed out; the bubble removes itself) */
+  toolApprovalExpired: 'tool-approval-expired',
+
   /** Agent task board changed (create_tasks / update_task) */
   agentTasksChanged: 'agent-tasks-changed',
 

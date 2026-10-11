@@ -455,6 +455,23 @@ fn now_timestamp() -> String {
 /// 历史实现按 `start + 9` 切片使 account 带前导冒号，所有 MCP 密钥解析必然失败。
 const KEYRING_PREFIX: &str = "${KEYRING:";
 
+/// MCP-23: extracts every `${KEYRING:account}` account name from a value (pure).
+/// Unclosed placeholders yield nothing further. Used by the orphaned-secret cleanup
+/// at config-save time to know exactly which keyring accounts an old entry named.
+pub(crate) fn keyring_accounts_in(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find(KEYRING_PREFIX) {
+        let after = &rest[start + KEYRING_PREFIX.len()..];
+        let Some(end) = after.find('}') else {
+            break;
+        };
+        out.push(after[..end].to_string());
+        rest = &after[end + 1..];
+    }
+    out
+}
+
 /// 解析值中的**全部** `${KEYRING:account}` 占位符（纯函数，便于测试）。
 ///
 /// - `lookup` 返回 `None` → `Err(account)`，由调用方生成用户可见错误；
@@ -740,6 +757,25 @@ mod tests {
         })
         .expect("多占位符应全部解析");
         assert_eq!(out, "pre-A-mid-B-post");
+    }
+
+    /// MCP-23: account extraction drives the orphaned-secret cleanup — it must
+    /// enumerate every placeholder (multi-placeholder values), skip unclosed ones,
+    /// and return empty for plain values.
+    #[test]
+    fn keyring_accounts_in_enumerates_all_placeholders() {
+        assert_eq!(
+            keyring_accounts_in(
+                "pre-${KEYRING:mcp-server-x-env-K}-mid-${KEYRING:mcp-server-x-header-H}"
+            ),
+            vec![
+                "mcp-server-x-env-K".to_string(),
+                "mcp-server-x-header-H".to_string()
+            ]
+        );
+        assert!(keyring_accounts_in("plain value").is_empty());
+        assert!(keyring_accounts_in("${KEYRING:unclosed").is_empty());
+        assert_eq!(keyring_accounts_in(""), Vec::<String>::new());
     }
 
     #[test]

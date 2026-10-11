@@ -134,11 +134,13 @@ impl FileLockRegistry {
     /// spellings of one file (Foo.txt / foo.txt) must share one lock and one
     /// last-writer entry. Keys come from `safe_path`, whose canonicalization only
     /// covers existing components — the final spelling of not-yet-existing files is
-    /// caller-provided, hence the fold here.
+    /// caller-provided, hence the fold here. SEC-16: full Unicode lowercase — the
+    /// historic ASCII-only fold left Unicode case pairs (Kelvin sign, Cyrillic,
+    /// accented Latin) as distinct keys, splitting one file into two locks on Windows.
     fn key(path: &str) -> String {
         #[cfg(windows)]
         {
-            path.to_ascii_lowercase()
+            path.to_lowercase()
         }
         #[cfg(not(windows))]
         {

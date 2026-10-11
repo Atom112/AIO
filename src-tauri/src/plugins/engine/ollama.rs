@@ -125,6 +125,9 @@ fn ollama_launch_agent_exists() -> bool {
 }
 
 /// Check whether the Ollama HTTP endpoint at host:port is reachable (blocking, for trait methods)
+/// ENG-12: requires a 2xx response — the historic `.send().is_ok()` counted ANY HTTP
+/// answer (404/502 from a stray proxy on 11434) as "Ollama running", so the engine
+/// reported installed/alive when it wasn't (same class as the ENG-03 llama/vLLM fix).
 fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
     std::thread::spawn(move || {
@@ -132,13 +135,15 @@ fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
             .get(&url)
             .timeout(Duration::from_secs(2))
             .send()
-            .is_ok()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
     })
     .join()
     .unwrap_or(false)
 }
 
 /// Async variant: check whether the Ollama HTTP endpoint is reachable (for polling inside start())
+/// ENG-12: same 2xx requirement as the blocking variant.
 async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
     reqwest::Client::new()
@@ -146,7 +151,8 @@ async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
         .timeout(Duration::from_secs(2))
         .send()
         .await
-        .is_ok()
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 /// Check whether the default port 11434 is reachable

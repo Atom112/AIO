@@ -496,24 +496,21 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 None,
                 20,
             ),
-            // No web access.
-            rf(
-                "builtin-plan-deny-web-fetch",
+            // Web tools: read-only research, consistent with Plan mode's goal
+            // (SEC-13: the Plan tool set assembles web_fetch/web_search and the
+            // system prompt directs the model to use them — the historic Deny
+            // here made every such call hard-rejected after being advertised).
+            r(
+                "builtin-plan-allow-web-fetch",
                 "web_fetch",
                 &[AgentMode::Plan],
-                PermissionAction::Deny,
-                None,
-                None,
-                20,
+                PermissionAction::Allow,
             ),
-            rf(
-                "builtin-plan-deny-web-search",
+            r(
+                "builtin-plan-allow-web-search",
                 "web_search",
                 &[AgentMode::Plan],
-                PermissionAction::Deny,
-                None,
-                None,
-                20,
+                PermissionAction::Allow,
             ),
             // Git read operations: allowed (Plan may inspect history and status).
             r(
@@ -740,6 +737,12 @@ fn rule_matches(
     }
     // 4. Check path pattern (multiple path keys; semantics in path_matches).
     if !path_matches(rule, arguments) {
+        return false;
+    }
+    // 5a. MCP-18 defense-in-depth: a SESSION rule for execute_command that never
+    //     got a prefix (empty command at derivation time) must not match anything —
+    //     without this check it would allow every command for the whole session.
+    if rule.session && tool_name == "execute_command" && rule.command_prefix.is_none() {
         return false;
     }
     // 5. Command prefix: execute_command only - the first whitespace-delimited token must match exactly.
@@ -1110,6 +1113,56 @@ mod tests {
             );
         }
         clear_session_rules();
+    }
+
+    /// Regression (MCP-18): a session execute_command rule WITHOUT a prefix
+    /// (derived from an approval whose command string was empty/missing) must
+    /// never match — it would otherwise allow every command for the session.
+    #[test]
+    fn session_command_rule_without_prefix_never_matches() {
+        let _guard = SESSION_TEST_LOCK.lock();
+        clear_session_rules();
+        add_session_rule(PermissionRule {
+            id: "test-session-noprefix-mcp18".into(),
+            tool_pattern: "execute_command".into(),
+            server_id: None,
+            modes: Vec::new(),
+            action: PermissionAction::Allow,
+            path_pattern: None,
+            command_prefix: None,
+            session: true,
+            priority: 50,
+        });
+        assert_eq!(
+            check_permission_defaults(
+                "execute_command",
+                crate::core::ids::BUILTIN_SERVER_ID,
+                &serde_json::json!({"command": "rm -rf build"}),
+                &AgentMode::Normal
+            ),
+            PermissionAction::Ask,
+            "无前缀的会话规则不得放行任何命令"
+        );
+        clear_session_rules();
+    }
+
+    /// SEC-13: Plan mode advertises web_fetch/web_search in its tool set and
+    /// system prompt, so the permission table must Allow them (the historic Deny
+    /// made every advertised call hard-rejected).
+    #[test]
+    fn plan_mode_web_tools_are_allowed() {
+        for tool in ["web_fetch", "web_search"] {
+            assert_eq!(
+                check_permission_defaults(
+                    tool,
+                    crate::core::ids::BUILTIN_SERVER_ID,
+                    &serde_json::json!({"url": "https://example.com"}),
+                    &AgentMode::Plan
+                ),
+                PermissionAction::Allow,
+                "Plan 模式应放行只读研究工具 {tool}"
+            );
+        }
     }
 
     /// Regression (SEC-02): session file-tool rules allow only the SAME file —

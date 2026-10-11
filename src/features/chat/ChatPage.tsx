@@ -45,9 +45,7 @@ import {
   resolveAssistantModel,
   modelKey,
   reasoningLevel,
-  setReasoningLevel,
   webSearchEnabled,
-  setWebSearchEnabled,
   pendingRenameRequest,
   setPendingRenameRequest,
   resolveAssistantSkills,
@@ -78,6 +76,13 @@ import {
   type AgentStep,
 } from '../../core/store/store';
 import { EVENTS } from '../../core/api/events';
+// P3（localStorage 裸调收编）：面板布局持久化经 core/store/layout 域 API
+import {
+  loadPanelCollapsed,
+  loadPanelWidth,
+  savePanelCollapsed,
+  savePanelWidth,
+} from '../../core/store/layout';
 import { buildAgentSystemPrompt } from '../../core/agent-prompts';
 import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { locale, t } from '../../core/i18n';
@@ -151,12 +156,8 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
  * @component
  */
 const ChatPage: Component = () => {
-  const [leftPanelWidth, setLeftPanelWidth] = createSignal(
-    Number(localStorage.getItem('chat-left-panel-width')) || 18,
-  ); // left panel width percentage (assistant list), default 18%, range 15%-30%
-  const [rightPanelWidth, setRightPanelWidth] = createSignal(
-    Number(localStorage.getItem('chat-right-panel-width')) || 18,
-  ); // right panel width percentage (topic list), default 18%, range 15%-30%
+  const [leftPanelWidth, setLeftPanelWidth] = createSignal(loadPanelWidth('left')); // left panel width percentage (assistant list), default 18%, range 15%-30%
+  const [rightPanelWidth, setRightPanelWidth] = createSignal(loadPanelWidth('right')); // right panel width percentage (topic list), default 18%, range 15%-30%
   /**
    * Left panel: width tracks the cursor 1:1 throughout the drag (both directions), snapping only
    * on release; the narrowest tracking width equals the collapsed rail width, so the handle stays grabbable and content never overflows.
@@ -176,12 +177,8 @@ const ChatPage: Component = () => {
   const [leftRevealMinPx, setLeftRevealMinPx] = createSignal(0);
   /** rAF id of the release snap animation: cancelled when a new drag starts so it never fights the user's gesture */
   let leftSnapRaf: number | undefined;
-  const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(
-    localStorage.getItem('left-collapsed') === 'true',
-  ); // left/right panel width adjustment logic
-  const [isRightCollapsed, setIsRightCollapsed] = createSignal(
-    localStorage.getItem('right-collapsed') === 'true',
-  );
+  const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(loadPanelCollapsed('left')); // left/right panel width adjustment logic
+  const [isRightCollapsed, setIsRightCollapsed] = createSignal(loadPanelCollapsed('right'));
   const [inputMessage, setInputMessage] = createSignal(''); // message text currently in the input box
   const [pendingFiles, setPendingFiles] = createSignal<PendingAttachment[]>([]); // files staged for sending (copied into the app attachment dir, not yet linked to a message)
   // CHAT-12: isThinking / typingIndex / pendingApprovals / pendingQuestions now live in
@@ -246,7 +243,7 @@ const ChatPage: Component = () => {
    */
   const setLeftCollapsed = (collapsed: boolean) => {
     setIsLeftCollapsed(collapsed);
-    localStorage.setItem('left-collapsed', String(collapsed));
+    savePanelCollapsed('left', collapsed);
     if (!collapsed && leftPanelWidth() < 5) {
       setLeftPanelWidth(18);
     }
@@ -269,7 +266,7 @@ const ChatPage: Component = () => {
     e.stopPropagation();
     const newState = !isRightCollapsed();
     setIsRightCollapsed(newState);
-    localStorage.setItem('right-collapsed', String(newState));
+    savePanelCollapsed('right', newState);
     if (!newState && rightPanelWidth() < 5) {
       setRightPanelWidth(18);
     }
@@ -1443,9 +1440,7 @@ ${asstObj.prompt}`;
       setIsThinking,
       handleStopGeneration,
       reasoningLevel,
-      setReasoningLevel,
       webSearchEnabled,
-      setWebSearchEnabled,
       datas,
       setDatas,
       projects,
@@ -1558,10 +1553,10 @@ ${asstObj.prompt}`;
     prevTitleGenTopicId = tId;
   });
   createEffect(() => {
-    localStorage.setItem('chat-left-panel-width', leftPanelWidth().toString());
+    savePanelWidth('left', leftPanelWidth());
   });
   createEffect(() => {
-    localStorage.setItem('chat-right-panel-width', rightPanelWidth().toString());
+    savePanelWidth('right', rightPanelWidth());
   });
 
   // auto-detect and start language servers when the project switches

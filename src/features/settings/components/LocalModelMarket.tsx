@@ -54,6 +54,8 @@ import {
 } from '../../../core/api/localModel';
 // 阶段4（设置样板收敛）: shared localStorage JSON cache factory
 import { createJsonCache } from '../../../core/utils/cache';
+// P3（localStorage 裸调收编）：下载源偏好持久化域 API
+import { loadDownloadSourcePref, saveDownloadSourcePref } from '../../../core/store/ui-prefs';
 import type {
   DownloadSource,
   HardwareProfile,
@@ -107,25 +109,11 @@ function writeMarketCache(key: string, entry: MarketCacheEntry) {
 // settings tabs / providers never re-probes.
 const [cachedHardware, setCachedHardware] = createSignal<HardwareProfile | null>(null);
 
-// Download source preference persists in localStorage (UI pref, no backend state needed)
-const SOURCE_CACHE_KEY = 'aio-local-model-source';
-function readSourcePref(): DownloadSource {
-  try {
-    const v = localStorage.getItem(SOURCE_CACHE_KEY);
-    if (v === 'auto' || v === 'modelscope' || v === 'huggingface') return v;
-  } catch {
-    /* ignore */
-  }
-  return 'auto';
-}
-const [dlSource, setDlSource] = createSignal<DownloadSource>(readSourcePref());
+// Download source preference: P3（localStorage 裸调收编）——持久化经 ui-prefs 域 API
+const [dlSource, setDlSource] = createSignal<DownloadSource>(loadDownloadSourcePref());
 const selectSource = (s: DownloadSource) => {
   setDlSource(s);
-  try {
-    localStorage.setItem(SOURCE_CACHE_KEY, s);
-  } catch {
-    /* ignore */
-  }
+  saveDownloadSourcePref(s);
 };
 
 /** One downloadable quant-family (a single file, or all shards of a split GGUF). */

@@ -20,12 +20,18 @@ import {
   executeCommand,
   commandPaletteOpen,
   setCommandPaletteOpen,
+  shortcutRecording,
   isEditableTarget,
   isInputPassthrough,
 } from '../../core/shortcuts';
 
 const GlobalKeyboardHandler = () => {
   const onKeyDown = (event: KeyboardEvent) => {
+    // P3（录制互斥）：设置页正在录制快捷键时，全局处理器必须完全让位——
+    // 录制器自己持有 capture 监听；此处再响应会双重触发（录制 Ctrl+K 的
+    // 同时打开命令面板；Escape 被录成绑定的同时关闭面板）。
+    if (shortcutRecording()) return;
+
     const combo = normalizeKeyCombo(event);
     if (!combo) return;
 

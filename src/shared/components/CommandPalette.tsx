@@ -77,13 +77,10 @@ function matchWord(word: string, cmd: CommandAction): boolean {
     .toLowerCase();
   if (initials.includes(w)) return true;
 
-  // Chinese pinyin initials (first letter of each label character — effective for Chinese).
-  if (/^[a-z]+$/.test(w) && label.length >= w.length) {
-    const pyAbbr = Array.from(label)
-      .map((ch) => ch[0]?.toLowerCase() ?? '')
-      .join('');
-    if (pyAbbr.includes(w)) return true;
-  }
+  // (Removed a dead "pinyin initials" branch: mapping every label char to its
+  // own first char is a no-op — the result equals the label itself, which the
+  // substring match above already covers. Real pinyin-initial matching would
+  // need a romanization table; until then, Chinese labels match by substring.)
 
   return false;
 }

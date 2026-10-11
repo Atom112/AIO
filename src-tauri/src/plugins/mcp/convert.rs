@@ -18,7 +18,10 @@ use serde_json::Value;
 /// MCP-11: `description` is OPTIONAL in the spec — a valid tool without one is
 /// no longer silently dropped (an empty description is emitted instead).
 pub fn tools_to_specs(tools: Vec<Value>) -> Vec<ToolSpec> {
-    tools
+    // MCP-20: make the cap visible — tools beyond the cap used to vanish with no
+    // signal at all, leaving the model and the user unaware the set was clipped.
+    let total = tools.len();
+    let out: Vec<ToolSpec> = tools
         .into_iter()
         .filter_map(|t| {
             let name = t.get("name")?.as_str()?.to_string();
@@ -41,7 +44,14 @@ pub fn tools_to_specs(tools: Vec<Value>) -> Vec<ToolSpec> {
             })
         })
         .take(MAX_TOOLS_PER_SERVER)
-        .collect()
+        .collect();
+    if total > out.len() {
+        tracing::warn!(
+            "[mcp] tools/list 截断：服务器提供 {total} 个工具，仅保留前 {} 个",
+            out.len()
+        );
+    }
+    out
 }
 
 /// `tools/call` result → ToolResult (`{ content: [...], isError: bool }`).

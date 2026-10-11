@@ -223,7 +223,8 @@ impl super::McpServerPlugin for HttpPlugin {
             "id": id,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                // MCP-20: shared MCP_PROTOCOL_VERSION constant (two transports)
+                "protocolVersion": super::MCP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
             }

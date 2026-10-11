@@ -1069,7 +1069,13 @@ pub(crate) async fn execute_builtin_tool(
     } else if tool_name == "think" {
         Ok(crate::utils::think::execute(arguments))
     } else if tool_name == "project_map" {
-        Ok(crate::utils::project_map::execute(&tools_root))
+        // SEC-20: the tree walk is synchronous FS traversal — run it on the
+        // blocking pool instead of stalling the async worker thread.
+        let root_c = tools_root.clone();
+        let res = tokio::task::spawn_blocking(move || crate::utils::project_map::execute(&root_c))
+            .await
+            .unwrap_or_else(|_| crate::utils::tool_result::tool_err("project_map 执行线程 panic"));
+        Ok(res)
     } else if tool_name.starts_with("git_") {
         let tool_name_c = tool_name.to_string();
         let arguments_c = arguments.clone();

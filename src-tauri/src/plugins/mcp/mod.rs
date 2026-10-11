@@ -86,6 +86,10 @@ pub trait McpServerPlugin: Send + Sync {
 /// Maximum number of tools allowed per server (guards against tools/list explosion)
 pub const MAX_TOOLS_PER_SERVER: usize = 100;
 
+/// MCP-20: the protocol version sent in the initialize handshake (stdio and HTTP
+/// transports shared two diverging literals before this constant existed).
+pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+
 /// MCP plugin registry
 pub struct McpServerManager {
     plugins: HashMap<String, Arc<dyn McpServerPlugin>>,

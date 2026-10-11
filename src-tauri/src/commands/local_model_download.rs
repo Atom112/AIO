@@ -182,11 +182,15 @@ fn source_candidates(
     if source != "huggingface" {
         if let Some(repo) = req.ms_repo.as_deref().filter(|r| !r.trim().is_empty()) {
             let repo = crate::commands::local_model_market::encode_repo_path(repo.trim());
-            out.push(SourceCandidate {
-                name: "modelscope",
-                url: format!("https://modelscope.cn/models/{repo}/resolve/master/{encoded}"),
-                token: None,
-            });
+            // ENG-18: ModelScope's default branch is not always "master" (newer repos
+            // use "main") — the alternate-branch candidate retries instead of 404ing.
+            for branch in ["master", "main"] {
+                out.push(SourceCandidate {
+                    name: "modelscope",
+                    url: format!("https://modelscope.cn/models/{repo}/resolve/{branch}/{encoded}"),
+                    token: None,
+                });
+            }
         }
     }
     if source != "modelscope" {
@@ -196,12 +200,16 @@ fn source_candidates(
                 ("hf-mirror", "https://hf-mirror.com"),
                 ("huggingface", "https://huggingface.co"),
             ] {
-                out.push(SourceCandidate {
-                    name,
-                    url: format!("{base}/{repo}/resolve/main/{encoded}"),
-                    // ENG-02: Token 仅附于 huggingface.co 官方域；镜像候选匿名访问
-                    token: hf_token.clone().filter(|_| name == "huggingface"),
-                });
+                // ENG-18: most HF repos default to "main", but some still use
+                // "master" — try the alternate branch as a fallback candidate.
+                for branch in ["main", "master"] {
+                    out.push(SourceCandidate {
+                        name,
+                        url: format!("{base}/{repo}/resolve/{branch}/{encoded}"),
+                        // ENG-02: Token 仅附于 huggingface.co 官方域；镜像候选匿名访问
+                        token: hf_token.clone().filter(|_| name == "huggingface"),
+                    });
+                }
             }
         }
     }

@@ -167,9 +167,10 @@ impl super::McpServerPlugin for StdioPlugin {
     }
 
     async fn initialize(&self, conn: &McpConnection) -> McpResult<McpServerInfo> {
-        // MCP initialize handshake (upgraded to protocol version 2025-06-18; keeps working with the server's returned version)
+        // MCP initialize handshake (MCP-20: the version lives in the shared
+        // MCP_PROTOCOL_VERSION constant; the server's returned version is tolerated)
         let params = json!({
-            "protocolVersion": "2025-06-18",
+            "protocolVersion": super::MCP_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {
                 "name": "aio",

@@ -90,6 +90,36 @@ pub fn parse_prompts(prompts: Vec<Value>) -> Vec<McpPrompt> {
         .collect()
 }
 
+/// `initialize` result payload → McpServerInfo (阶段4: stdio/http previously
+/// carried two diverging copies of this parsing — name/version/capabilities).
+///
+/// `result` is the UNWRAPPED initialize result object (the caller is responsible
+/// for digging it out of the JSON-RPC envelope on transports that return one).
+/// Absent fields degrade: name → "unknown", version → None, capabilities → None.
+pub fn parse_server_info(result: &Value) -> crate::core::models::McpServerInfo {
+    let info_val = result
+        .get("serverInfo")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+    let name = info_val
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let version = info_val
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let capabilities = result
+        .get("capabilities")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+    crate::core::models::McpServerInfo {
+        name,
+        version,
+        capabilities,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +139,26 @@ mod tests {
         assert_eq!(specs[0].function.parameters["type"], "object");
         assert_eq!(specs[1].function.name, "write");
         assert_eq!(specs[1].function.description, "");
+    }
+
+    /// 阶段4 回归：共享 initialize 解析——缺字段的降级行为（unknown/None）
+    /// 与 capabilities 反序列化保持一致。
+    #[test]
+    fn parse_server_info_degrades_missing_fields() {
+        let full = json!({
+            "serverInfo": { "name": "demo", "version": "1.2.3" },
+            "capabilities": { "tools": {} }
+        });
+        let info = parse_server_info(&full);
+        assert_eq!(info.name, "demo");
+        assert_eq!(info.version.as_deref(), Some("1.2.3"));
+        assert!(info.capabilities.is_some());
+
+        // 完全缺失 → 降级
+        let empty = parse_server_info(&json!({}));
+        assert_eq!(empty.name, "unknown");
+        assert!(empty.version.is_none());
+        assert!(empty.capabilities.is_none());
     }
 
     #[test]

@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4/5 推进：记忆统计批量化 + MCP initialize 解析统一（P3 性能杂项 MEM-14 + 阶段4 同构收敛）
+
+- **记忆统计批量化（MEM-14）**：`stats()` 的 5 条独立 COUNT 合并为单条条件聚合查询；8 个滚动计数器读取合并到单次锁持有（新增 `rolling_get_with` 连接内读取助手）；`bump_access` 的逐 id UPDATE 循环改为分块 `IN (...)` 批量更新（每次检索命中列表从 N 条语句降为 N/100 条）
+- **MCP initialize 解析统一（阶段4 第3项子目标）**：stdio/http 两份同构的 serverInfo/capabilities 解析并入 `convert::parse_server_info`（HTTP 侧先剥 JSON-RPC envelope 的 result 层再走共享实现）——两传输从此不会漂移；补缺字段降级行为回归测试
+
 ### 🧱 阶段5：门禁与测试补强（审查修复计划第 5 阶段，部分完成）
 
 - **事件登记全量守门**：新增 `events.test.ts` 双端一致性测试——解析 `events.rs` 的全部 `pub const` 事件与 `events.ts` 的 EVENTS 映射做双向比对（后端有前端无=死常量、前端有后端无=死监听），外加模块形状校验（重复值/幽灵导出）；任何一端漏登记立即红

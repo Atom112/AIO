@@ -238,29 +238,10 @@ impl super::McpServerPlugin for HttpPlugin {
             }),
         )
         .await;
-        let info_val = v
-            .get("result")
-            .and_then(|r| r.get("serverInfo"))
-            .cloned()
-            .unwrap_or(json!({}));
-        let name = info_val
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let version = info_val
-            .get("version")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let capabilities = v
-            .get("result")
-            .and_then(|r| r.get("capabilities"))
-            .and_then(|c| serde_json::from_value(c.clone()).ok());
-        Ok(McpServerInfo {
-            name,
-            version,
-            capabilities,
-        })
+        // 阶段4: initialize 解析并入 convert——HTTP 传输的响应多一层 JSON-RPC
+        // envelope，先剥 result 再走共享实现（stdio/http 不再各持一份解析）
+        let result = v.get("result").cloned().unwrap_or(json!({}));
+        Ok(super::convert::parse_server_info(&result))
     }
 
     async fn list_tools(

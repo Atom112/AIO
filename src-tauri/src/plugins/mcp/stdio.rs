@@ -183,26 +183,8 @@ impl super::McpServerPlugin for StdioPlugin {
         // The protocol requires notifications/initialized to be sent after initialize
         conn.notify("notifications/initialized", None).await?;
 
-        // Parse serverInfo
-        let info_val = result.get("serverInfo").cloned().unwrap_or(json!({}));
-        let name = info_val
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let version = info_val
-            .get("version")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        // Parse capabilities
-        let capabilities = result
-            .get("capabilities")
-            .and_then(|v| serde_json::from_value(v.clone()).ok());
-        Ok(McpServerInfo {
-            name,
-            version,
-            capabilities,
-        })
+        // 阶段4: initialize 解析并入 convert（stdio/http 单一实现，防同构漂移）
+        Ok(super::convert::parse_server_info(&result))
     }
 
     async fn list_tools(&self, conn: &McpConnection) -> McpResult<Vec<ToolSpec>> {

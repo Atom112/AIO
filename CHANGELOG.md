@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧱 阶段4 第2项（拆分切片）：ChatPage 面板拖拽 → usePanelResize 钩子
+
+- **usePanelResize 钩子（阶段4 第2项 "ChatPage 按已有拆分路径执行 <900 目标" 的首切片）**：左面板"幕帘"拖拽（双向 1:1 光标追踪 + 幕帘揭示宽度 + 释放 easeOutCubic 吸附 + rAF 动画取消）与右面板百分比拖拽的全部状态与逻辑（4 信号 + 3 常量 + 挂载监听 + 3 函数 ≈ 130 行）从 ChatPage 抽至 `hooks/usePanelResize.ts`——纯布局逻辑自成一体，依赖（持久化宽度/折叠态）经参数注入；ChatPage **1746 → 1616 行**（<900 目标继续按 useChatSend/useAttachments 路径推进）
+
 ### 🧱 阶段4 第1项（子目标4/5）：主循环闭包 → AgentTurnRunner
 
 - **主循环闭包结构化（阶段4 第1项子目标）**：`run_agent_turn_inner` 内的 ~1230 行 `async move` 闭包此前隐式捕获 **24 个自由变量**（22 行 let-clone 捕获列表：窗口/应用句柄、取消令牌、流管理器、身份键、代次号、模型连接参数、预算……）——捕获集不可见、无结构、每加一个字段悄悄变长。新建 `commands/llm/turn_runner.rs`：`AgentTurnRunner` 结构体显式化全部 24 个捕获（字段即契约，带文档）；`run()` 顶部按原局部名解构重命名（`app: app_c`、`token: token_inner`、`turn_gen_id: turn_id_c`……），**1230 行循环体原样迁入零改动**；mod.rs 构造一次 runner 取代捕获列表。mod.rs **2285 → 1055 行**（较阶段起点 2755 已 -70%）；panic 兜底 epilogue（LOOP-6）与 StreamManager 注册侧所需的 `_g` 克隆保留在 mod.rs 并改从原参数取源；后续子目标（subagents 与主循环抽公共 agent_loop）以此为收敛面

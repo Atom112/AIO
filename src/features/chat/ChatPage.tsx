@@ -24,6 +24,7 @@ import {
   getModelContextWindow,
 } from './hooks/chatTurnEffects';
 import { registerChatCommands } from './hooks/chatCommands';
+import { usePanelResize } from './hooks/usePanelResize';
 import { TOOL_INTERRUPTED } from './constants';
 import { autoDetectLsp, startLspServer } from '../../core/api/lsp';
 import { listen } from '@tauri-apps/api/event';
@@ -158,25 +159,6 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
 const ChatPage: Component = () => {
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(loadPanelWidth('left')); // left panel width percentage (assistant list), default 18%, range 15%-30%
   const [rightPanelWidth, setRightPanelWidth] = createSignal(loadPanelWidth('right')); // right panel width percentage (topic list), default 18%, range 15%-30%
-  /**
-   * Left panel: width tracks the cursor 1:1 throughout the drag (both directions), snapping only
-   * on release; the narrowest tracking width equals the collapsed rail width, so the handle stays grabbable and content never overflows.
-   */
-  const LEFT_RAIL_WIDTH_PX = 54; // collapsed rail width, kept in sync with ProjectSidebar
-  const LEFT_MAX_WIDTH_PCT = 30;
-  /** Release deadzone (px): dragging out less than this counts as not really opened, so it still collapses on release */
-  const LEFT_RELEASE_DEADZONE_PX = 12;
-  const [isResizing, setIsResizing] = createSignal(false);
-  /** Live width preview (%) while dragging: rendered during tracking, cleared on release to fall back to the remembered leftPanelWidth */
-  const [leftDragWidth, setLeftDragWidth] = createSignal<number | null>(null);
-  /**
-   * "Curtain" layout width of the expanded content (px, = content-box width of the 15% minimal panel).
-   * While narrowing, content neither reflows nor fades — it is progressively clipped by the panel's left
-   * edge (curtain reveal), avoiding an empty transition frame with both content sets invisible; recomputed on resize.
-   */
-  const [leftRevealMinPx, setLeftRevealMinPx] = createSignal(0);
-  /** rAF id of the release snap animation: cancelled when a new drag starts so it never fights the user's gesture */
-  let leftSnapRaf: number | undefined;
   const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(loadPanelCollapsed('left')); // left/right panel width adjustment logic
   const [isRightCollapsed, setIsRightCollapsed] = createSignal(loadPanelCollapsed('right'));
   const [inputMessage, setInputMessage] = createSignal(''); // message text currently in the input box
@@ -219,18 +201,6 @@ const ChatPage: Component = () => {
 
   // Curtain-reveal target width: content-box width of the 15% minimal panel (asymmetric padding 15 left
   // + 21 right, plus a 2px safety margin so content never overflows at 15%); recomputed on resize; ProjectSidebar infers container width from -38
-  onMount(() => {
-    const updateRevealMin = () => {
-      const base = chatPageRef?.clientWidth ?? window.innerWidth;
-      setLeftRevealMinPx(Math.max(base * 0.15 - 38, 120));
-    };
-    updateRevealMin();
-    window.addEventListener('resize', updateRevealMin);
-    onCleanup(() => window.removeEventListener('resize', updateRevealMin));
-    onCleanup(() => {
-      if (leftSnapRaf !== undefined) cancelAnimationFrame(leftSnapRaf);
-    });
-  });
   /**
    * Compute the right panel display width.
    * @returns {number} right panel width, or 0 when collapsed
@@ -248,6 +218,19 @@ const ChatPage: Component = () => {
       setLeftPanelWidth(18);
     }
   };
+
+  // 阶段4 第2项（拆分切片）：面板拖拽/幕帘/吸附逻辑抽至 usePanelResize 钩子
+  const { isResizing, leftDragWidth, leftRevealMinPx, startLeftResize, startResizeRight } =
+    usePanelResize({
+      chatPageRef: () => chatPageRef,
+      isLeftCollapsed,
+      setLeftCollapsed,
+      leftPanelWidth,
+      setLeftPanelWidth,
+      rightPanelWidth,
+      setRightPanelWidth,
+      isRightCollapsed,
+    });
 
   /**
    * Toggle the left panel collapsed state.
@@ -1310,120 +1293,6 @@ ${asstObj.prompt}`;
    * @param e - MouseEvent mouse event
    * @param onDragMove - callback per mouse move, receives the percentage of the cursor across the full page width
    */
-  const attachResizeDrag = (e: MouseEvent, onDragMove: (pct: number) => void) => {
-    e.preventDefault();
-    setIsResizing(true);
-
-    const totalW = chatPageRef?.offsetWidth ?? window.innerWidth;
-    const handleMove = (moveEvent: MouseEvent) => {
-      onDragMove((moveEvent.clientX / totalW) * 100);
-    };
-
-    const stopResize = () => {
-      setIsResizing(false);
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', stopResize);
-    };
-
-    document.addEventListener('mousemove', handleMove);
-    document.addEventListener('mouseup', stopResize);
-  };
-
-  /**
-   * Drag-resize the left panel: strict 1:1 cursor tracking in both expand and collapse directions; snap only on release.
-   *
-   * - Tracking origin: map the panel's "currently occupied pixel width" onto the cursor axis — the rail
-   *   width when collapsed, the DOM-measured rendered width when expanded (the handle sits at the
-   *   panel's right edge, so measuring guarantees zero first-frame displacement and no jump).
-   *   Width delta = cursor delta, strictly 1:1;
-   * - Percentage conversion uses `clientWidth` (content width), matching how CSS `width:%` resolves;
-   * - Minimum width: tracking width never drops below the collapsed rail width, so the handle cannot
-   *   be dragged to the far left and content never overflows;
-   * - Release snap: pinned at the minimum or still inside the deadzone -> collapse; otherwise land at >= 15% and remember.
-   *
-   * @param e - MouseEvent mouse event
-   */
-  const startLeftResize = (e: MouseEvent) => {
-    // user re-grabbed the handle: cancel the in-flight snap animation, the gesture takes over
-    if (leftSnapRaf !== undefined) {
-      cancelAnimationFrame(leftSnapRaf);
-      leftSnapRaf = undefined;
-    }
-    const cssBase = chatPageRef?.clientWidth ?? window.innerWidth;
-    const wasCollapsed = isLeftCollapsed();
-    const doCollapse = LEFT_RAIL_WIDTH_PX / cssBase; // narrowest tracking width (%)
-    // panel's current occupied pixel width: rail width when collapsed; measured when expanded (falls back to the remembered width if unmeasurable)
-    const handleEl = e.currentTarget instanceof Element ? e.currentTarget : null;
-    const measuredPx = handleEl?.parentElement?.getBoundingClientRect().width ?? 0;
-    const basePx = wasCollapsed
-      ? LEFT_RAIL_WIDTH_PX
-      : measuredPx > 0
-        ? measuredPx
-        : (leftPanelWidth() / 100) * cssBase;
-    // cursor axis zero point: cursor X minus this equals the width the panel should occupy
-    const anchorX = e.clientX - basePx;
-    setIsResizing(true);
-    e.preventDefault();
-
-    const handleMove = (moveEvent: MouseEvent) => {
-      const pct = ((moveEvent.clientX - anchorX) / cssBase) * 100;
-      setLeftDragWidth(Math.min(Math.max(pct, doCollapse), LEFT_MAX_WIDTH_PCT));
-    };
-
-    const stopResize = () => {
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', stopResize);
-      const dragged = leftDragWidth();
-      if (dragged === null) {
-        setIsResizing(false);
-        return; // pressed without dragging: keep as-is
-      }
-      const draggedPx = (dragged / 100) * cssBase;
-      if (draggedPx <= LEFT_RAIL_WIDTH_PX + LEFT_RELEASE_DEADZONE_PX) {
-        // pinned at the minimum / never really opened: snap back to the collapsed rail (via the CSS collapse transition)
-        setLeftDragWidth(null);
-        setIsResizing(false);
-        setLeftCollapsed(true);
-        return;
-      }
-      // Opened: ease the preview width to the snap target (>= 15%) with rAF.
-      // Mask/padding/opacity follow each frame's width, so the ending has no hard clip or jump;
-      // isResizing stays true (CSS transitions disabled) during it to avoid double smoothing.
-      const target = Math.max(dragged, 15);
-      const durationMs = 250;
-      const start = performance.now();
-      const step = (now: number) => {
-        const t = Math.min((now - start) / durationMs, 1);
-        const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
-        setLeftDragWidth(dragged + (target - dragged) * eased);
-        if (t < 1) {
-          leftSnapRaf = requestAnimationFrame(step);
-          return;
-        }
-        leftSnapRaf = undefined;
-        setLeftPanelWidth(target);
-        setLeftCollapsed(false);
-        setLeftDragWidth(null);
-        setIsResizing(false);
-      };
-      leftSnapRaf = requestAnimationFrame(step);
-    };
-
-    document.addEventListener('mousemove', handleMove);
-    // listen for mouseup immediately: a press-and-release on the handle without any mousemove still completes the snap
-    document.addEventListener('mouseup', stopResize);
-  };
-
-  /**
-   * Drag-resize the right panel (original behavior: only available when expanded).
-   * @param e - MouseEvent mouse event
-   */
-  const startResizeRight = (e: MouseEvent) => {
-    attachResizeDrag(e, (pct) => {
-      setRightPanelWidth(Math.min(Math.max(100 - pct, 15), 30));
-    });
-  };
-
   onMount(() => {
     const navigate = useNavigate();
 

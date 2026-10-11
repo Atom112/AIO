@@ -97,17 +97,8 @@ pub(crate) fn build_subagent_messages(
     msgs
 }
 
-/// Extracts the first text content of a ToolResult (serializes the whole content if no text).
-fn tool_result_text(tr: &ToolResult) -> String {
-    tr.content
-        .iter()
-        .find(|c| c.kind == "text")
-        .and_then(|c| c.data.get("text"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| serde_json::to_string(&tr.content).unwrap_or_default())
-}
-
+// 阶段4 第1项（公共 agent_loop 地基）：文本提取与主循环共享单一实现
+use super::round_artifacts::tool_result_text;
 /// Builds the subagent's restricted tool list (filtered by profile).
 ///
 /// Returns tool specs only; the subagent's builtin tools all go through the `__builtin__`

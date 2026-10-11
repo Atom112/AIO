@@ -793,28 +793,9 @@ impl AgentTurnRunner {
                         ))
                     };
 
-                    let (content_text, result_value, is_error) = match tool_result {
-                        Ok(tr) => {
-                            let text = tr
-                                .content
-                                .iter()
-                                .find(|c| c.kind == "text")
-                                .and_then(|c| c.data.get("text"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| {
-                                    serde_json::to_string(&tr.content).unwrap_or_default()
-                                });
-                            let result_value =
-                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
-                            (text, result_value, tr.is_error)
-                        }
-                        Err(e) => (
-                            super::round_artifacts::tool_error_text(&e),
-                            json!({ "error": e }),
-                            true,
-                        ),
-                    };
+                    // Shared display-triple conversion (round_artifacts)
+                    let (content_text, result_value, is_error) =
+                        super::round_artifacts::tool_result_display(&tool_result);
 
                     exec_results[i] = Some(ToolExecResult {
                         content_text,
@@ -955,28 +936,9 @@ impl AgentTurnRunner {
                         ).await
                     };
 
-                    let (content_text, result_value, is_error) = match tool_result {
-                        Ok(tr) => {
-                            let text = tr
-                                .content
-                                .iter()
-                                .find(|c| c.kind == "text")
-                                .and_then(|c| c.data.get("text"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| {
-                                    serde_json::to_string(&tr.content).unwrap_or_default()
-                                });
-                            let result_value =
-                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
-                            (text, result_value, tr.is_error)
-                        }
-                        Err(e) => (
-                            super::round_artifacts::tool_error_text(&e),
-                            json!({ "error": e }),
-                            true,
-                        ),
-                    };
+                    // Shared display-triple conversion (round_artifacts)
+                    let (content_text, result_value, is_error) =
+                        super::round_artifacts::tool_result_display(&tool_result);
                     // For file-modifying tools, capture the diff for frontend display
                     let file_changes = file_path_for_diff
                         .and_then(|path| {
@@ -1037,28 +999,9 @@ impl AgentTurnRunner {
                             None => break,
                         },
                     };
-                    let (content_text, result_value, is_error) = match result {
-                        Ok(tr) => {
-                            let text = tr
-                                .content
-                                .iter()
-                                .find(|c| c.kind == "text")
-                                .and_then(|c| c.data.get("text"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| {
-                                    serde_json::to_string(&tr.content).unwrap_or_default()
-                                });
-                            let result_value =
-                                serde_json::to_value(&tr.content).unwrap_or(json!([]));
-                            (text, result_value, tr.is_error)
-                        }
-                        Err(e) => (
-                            super::round_artifacts::tool_error_text(&e),
-                            json!({ "error": e }),
-                            true,
-                        ),
-                    };
+                    // Shared display-triple conversion (round_artifacts)
+                    let (content_text, result_value, is_error) =
+                        super::round_artifacts::tool_result_display(&result);
                     // Emit this delegate result immediately
                     let tc = &round_result.tool_calls[i];
                     let _ = window.emit(

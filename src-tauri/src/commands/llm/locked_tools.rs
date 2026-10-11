@@ -151,6 +151,7 @@ pub(crate) async fn run_locked_file_tool(
 mod tests {
     use super::*;
     use crate::core::file_locks::FileLockRegistry;
+    use crate::core::tool_names;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -200,7 +201,7 @@ mod tests {
 
         let a = run(
             &reg,
-            "write_file",
+            tool_names::WRITE_FILE,
             &json!({"path": "same.txt", "content": "from writer A"}),
             &root,
             "sub-coder-a",
@@ -211,7 +212,7 @@ mod tests {
         // B: blind overwrite of A's file -> cross-writer gate rejection
         let b = run(
             &reg,
-            "write_file",
+            tool_names::WRITE_FILE,
             &json!({"path": "same.txt", "content": "from writer B"}),
             &root,
             "sub-coder-b",
@@ -223,7 +224,7 @@ mod tests {
         // B re-reads and retries with the fresh digest -> serialized write lands
         let read = run(
             &reg,
-            "read_file",
+            tool_names::READ_FILE,
             &json!({"path": "same.txt", "with_hash": true}),
             &root,
             "sub-coder-b",
@@ -237,7 +238,7 @@ mod tests {
             .to_string();
         let b = run(
             &reg,
-            "write_file",
+            tool_names::WRITE_FILE,
             &json!({"path": "same.txt", "content": "from writer B", "expect_hash": hash}),
             &root,
             "sub-coder-b",
@@ -268,7 +269,7 @@ mod tests {
         // Writer A creates the file
         run(
             &reg,
-            "write_file",
+            tool_names::WRITE_FILE,
             &json!({"path": "gate.txt", "content": "alpha\n"}),
             &root,
             "sub-coder-a",
@@ -278,7 +279,7 @@ mod tests {
         // Writer B: unanchored replace -> gate error naming A
         let r = run(
             &reg,
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &json!({"path": "gate.txt", "old_string": "alpha", "new_string": "ALPHA"}),
             &root,
             "sub-coder-b",
@@ -292,7 +293,7 @@ mod tests {
         // Writer B: unanchored overwrite write_file -> gate error (expect_hash)
         let r = run(
             &reg,
-            "write_file",
+            tool_names::WRITE_FILE,
             &json!({"path": "gate.txt", "content": "overwrite"}),
             &root,
             "sub-coder-b",
@@ -304,7 +305,7 @@ mod tests {
         // Writer B re-reads with hash and retries the replace with the anchor
         let read = run(
             &reg,
-            "read_file",
+            tool_names::READ_FILE,
             &json!({"path": "gate.txt", "with_hash": true}),
             &root,
             "sub-coder-b",
@@ -319,7 +320,7 @@ mod tests {
             .to_string();
         let r = run(
             &reg,
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &json!({"path": "gate.txt", "old_string": "alpha", "new_string": "ALPHA", "anchor_hash": hash}),
             &root,
             "sub-coder-b",
@@ -330,7 +331,7 @@ mod tests {
         // Writer B overwrites write_file with expect_hash = the CURRENT digest (post-replace)
         let read = run(
             &reg,
-            "read_file",
+            tool_names::READ_FILE,
             &json!({"path": "gate.txt", "with_hash": true}),
             &root,
             "sub-coder-b",
@@ -344,7 +345,7 @@ mod tests {
             .to_string();
         let r = run(
             &reg,
-            "write_file",
+            tool_names::WRITE_FILE,
             &json!({"path": "gate.txt", "content": "final", "expect_hash": fresh_hash}),
             &root,
             "sub-coder-b",
@@ -364,7 +365,7 @@ mod tests {
 
         let r = run(
             &reg,
-            "read_file",
+            tool_names::READ_FILE,
             &json!({"path": "note.txt"}),
             &root,
             "main-agent",
@@ -397,8 +398,22 @@ mod tests {
         let args_b = json!({"path": "par.txt", "content": body_b});
 
         let (ra, rb) = tokio::join!(
-            run_locked_file_tool(&reg, "write_file", &args_a, &root, &tok_a, "main-agent"),
-            run_locked_file_tool(&reg, "write_file", &args_b, &root, &tok_b, "main-agent"),
+            run_locked_file_tool(
+                &reg,
+                tool_names::WRITE_FILE,
+                &args_a,
+                &root,
+                &tok_a,
+                "main-agent"
+            ),
+            run_locked_file_tool(
+                &reg,
+                tool_names::WRITE_FILE,
+                &args_b,
+                &root,
+                &tok_b,
+                "main-agent"
+            ),
         );
         assert!(text_of(&ra.unwrap()).contains("✓ 写入"));
         assert!(text_of(&rb.unwrap()).contains("✓ 写入"));

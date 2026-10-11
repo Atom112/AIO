@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 
 use super::tool_specs::{artifact_read_tool_spec, skill_read_tool_spec};
+use crate::core::tool_names;
 
 /// Whether a **builtin** tool is safe to run concurrently (purely read-only, no side
 /// effects, no approval dialog on the normal path). Only meaningful for calls with
@@ -26,17 +27,17 @@ pub(crate) fn is_parallel_safe(tool_name: &str) -> bool {
     matches!(
         tool_name,
         // file read/search
-        "read_file" | "list_directory" | "search_files" | "search_content"
+        tool_names::READ_FILE | tool_names::LIST_DIRECTORY | "search_files" | tool_names::SEARCH_CONTENT
             // web read-only
-            | "web_fetch" | "web_search"
+            | tool_names::WEB_FETCH | tool_names::WEB_SEARCH
             // git read-only
             | "git_status" | "git_diff" | "git_log"
             // LSP queries
             | "read_lints" | "lsp_definition" | "lsp_references" | "lsp_hover" | "lsp_symbols"
             // memory read-only
-            | "recall" | "search_memory" | "search_code"
+            | tool_names::RECALL | tool_names::SEARCH_MEMORY | "search_code"
             // other read-only / side-effect-free
-            | "project_map" | "think"
+            | tool_names::PROJECT_MAP | tool_names::THINK
     )
 }
 
@@ -389,12 +390,12 @@ mod tests {
     #[test]
     fn read_only_tools_are_parallel_safe() {
         for name in [
-            "read_file",
-            "list_directory",
+            tool_names::READ_FILE,
+            tool_names::LIST_DIRECTORY,
             "search_files",
-            "search_content",
-            "web_fetch",
-            "web_search",
+            tool_names::SEARCH_CONTENT,
+            tool_names::WEB_FETCH,
+            tool_names::WEB_SEARCH,
             "git_status",
             "git_diff",
             "git_log",
@@ -403,11 +404,11 @@ mod tests {
             "lsp_references",
             "lsp_hover",
             "lsp_symbols",
-            "recall",
-            "search_memory",
+            tool_names::RECALL,
+            tool_names::SEARCH_MEMORY,
             "search_code",
-            "project_map",
-            "think",
+            tool_names::PROJECT_MAP,
+            tool_names::THINK,
         ] {
             assert!(is_parallel_safe(name), "{name} 应为并行安全");
         }
@@ -416,21 +417,21 @@ mod tests {
     #[test]
     fn mutating_tools_stay_serial() {
         for name in [
-            "write_file",
-            "replace_in_file",
-            "delete_file",
-            "make_directory",
-            "execute_command",
+            tool_names::WRITE_FILE,
+            tool_names::REPLACE_IN_FILE,
+            tool_names::DELETE_FILE,
+            tool_names::MAKE_DIRECTORY,
+            tool_names::EXECUTE_COMMAND,
             "git_add",
             "git_commit",
-            "remember",
+            tool_names::REMEMBER,
             "update_memory",
             "forget_memory",
             // orchestration tools: each goes through its own dedicated path
-            "delegate_task",
-            "delegate_tasks",
-            "create_workflow",
-            "get_subagent_result",
+            tool_names::DELEGATE_TASK,
+            tool_names::DELEGATE_TASKS,
+            tool_names::CREATE_WORKFLOW,
+            tool_names::GET_SUBAGENT_RESULT,
             // unknown tool
             "some_mcp_tool",
             "",
@@ -465,9 +466,11 @@ mod tests {
     /// No conflict: the original name is kept, mapped to its server.
     #[test]
     fn merge_mcp_tools_no_conflict() {
-        let mut tools = vec![spec_named("read_file")];
-        let mut map =
-            std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
+        let mut tools = vec![spec_named(tool_names::READ_FILE)];
+        let mut map = std::collections::HashMap::from([(
+            tool_names::READ_FILE.to_string(),
+            "builtin".to_string(),
+        )]);
         merge_mcp_tools(
             &mut tools,
             &mut map,
@@ -482,13 +485,15 @@ mod tests {
     /// Conflict with a builtin tool: renamed to mcp__<server>__<tool>.
     #[test]
     fn merge_mcp_tools_conflict_with_builtin_renames() {
-        let mut tools = vec![spec_named("read_file")];
-        let mut map =
-            std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
+        let mut tools = vec![spec_named(tool_names::READ_FILE)];
+        let mut map = std::collections::HashMap::from([(
+            tool_names::READ_FILE.to_string(),
+            "builtin".to_string(),
+        )]);
         merge_mcp_tools(
             &mut tools,
             &mut map,
-            &mcp_set(&[("read_file", "srv1")]),
+            &mcp_set(&[(tool_names::READ_FILE, "srv1")]),
             FsServerPolicy::DropMutatingAndDuplicates,
         );
         assert_eq!(
@@ -496,7 +501,10 @@ mod tests {
             Some("srv1")
         );
         // the original name still maps to builtin
-        assert_eq!(map.get("read_file").map(String::as_str), Some("builtin"));
+        assert_eq!(
+            map.get(tool_names::READ_FILE).map(String::as_str),
+            Some("builtin")
+        );
     }
 
     /// Two servers offering the same tool name: the first keeps the original name, later ones are renamed.
@@ -568,17 +576,29 @@ mod tests {
             let mut map = std::collections::HashMap::new();
             let mut tools = Vec::new();
             if builtin_mutating_injected {
-                map.insert("write_file".to_string(), "builtin".to_string());
-                tools.push(spec_named("write_file"));
+                map.insert(tool_names::WRITE_FILE.to_string(), "builtin".to_string());
+                tools.push(spec_named(tool_names::WRITE_FILE));
             }
             merge_mcp_tools(
                 &mut tools,
                 &mut map,
                 &mcp_set(&[
-                    ("write_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
-                    ("replace_in_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
-                    ("delete_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
-                    ("make_directory", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                    (
+                        tool_names::WRITE_FILE,
+                        crate::core::ids::BUILTIN_FS_SERVER_ID,
+                    ),
+                    (
+                        tool_names::REPLACE_IN_FILE,
+                        crate::core::ids::BUILTIN_FS_SERVER_ID,
+                    ),
+                    (
+                        tool_names::DELETE_FILE,
+                        crate::core::ids::BUILTIN_FS_SERVER_ID,
+                    ),
+                    (
+                        tool_names::MAKE_DIRECTORY,
+                        crate::core::ids::BUILTIN_FS_SERVER_ID,
+                    ),
                 ]),
                 FsServerPolicy::DropMutatingAndDuplicates,
             );
@@ -589,7 +609,7 @@ mod tests {
             );
             if builtin_mutating_injected {
                 assert_eq!(
-                    map.get("write_file").map(String::as_str),
+                    map.get(tool_names::WRITE_FILE).map(String::as_str),
                     Some("builtin"),
                     "{tool_access}: 内置 write_file 不得被覆盖"
                 );
@@ -602,13 +622,18 @@ mod tests {
     #[test]
     fn fs_server_read_tools_dedupe_only_when_builtin_provides() {
         // hybrid/full: builtin read present -> fs variant dropped, NOT renamed
-        let mut map =
-            std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
-        let mut tools = vec![spec_named("read_file")];
+        let mut map = std::collections::HashMap::from([(
+            tool_names::READ_FILE.to_string(),
+            "builtin".to_string(),
+        )]);
+        let mut tools = vec![spec_named(tool_names::READ_FILE)];
         merge_mcp_tools(
             &mut tools,
             &mut map,
-            &mcp_set(&[("read_file", crate::core::ids::BUILTIN_FS_SERVER_ID)]),
+            &mcp_set(&[(
+                tool_names::READ_FILE,
+                crate::core::ids::BUILTIN_FS_SERVER_ID,
+            )]),
             FsServerPolicy::DropMutatingAndDuplicates,
         );
         assert_eq!(tools.len(), 1, "重复读工具应去重");
@@ -620,11 +645,14 @@ mod tests {
         merge_mcp_tools(
             &mut tools2,
             &mut map2,
-            &mcp_set(&[("read_file", crate::core::ids::BUILTIN_FS_SERVER_ID)]),
+            &mcp_set(&[(
+                tool_names::READ_FILE,
+                crate::core::ids::BUILTIN_FS_SERVER_ID,
+            )]),
             FsServerPolicy::DropMutatingAndDuplicates,
         );
         assert_eq!(
-            map2.get("read_file").map(String::as_str),
+            map2.get(tool_names::READ_FILE).map(String::as_str),
             Some(crate::core::ids::BUILTIN_FS_SERVER_ID)
         );
     }
@@ -634,15 +662,23 @@ mod tests {
     /// isolation and the write locks.
     #[test]
     fn fs_server_tools_never_reach_subagents() {
-        let mut map =
-            std::collections::HashMap::from([("read_file".to_string(), "builtin".to_string())]);
-        let mut tools = vec![spec_named("read_file")];
+        let mut map = std::collections::HashMap::from([(
+            tool_names::READ_FILE.to_string(),
+            "builtin".to_string(),
+        )]);
+        let mut tools = vec![spec_named(tool_names::READ_FILE)];
         merge_mcp_tools(
             &mut tools,
             &mut map,
             &mcp_set(&[
-                ("read_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
-                ("write_file", crate::core::ids::BUILTIN_FS_SERVER_ID),
+                (
+                    tool_names::READ_FILE,
+                    crate::core::ids::BUILTIN_FS_SERVER_ID,
+                ),
+                (
+                    tool_names::WRITE_FILE,
+                    crate::core::ids::BUILTIN_FS_SERVER_ID,
+                ),
                 ("search_files", crate::core::ids::BUILTIN_FS_SERVER_ID),
             ]),
             FsServerPolicy::DropAll,
@@ -660,11 +696,11 @@ mod tests {
         merge_mcp_tools(
             &mut tools,
             &mut map,
-            &mcp_set(&[("write_file", "my-git-helper")]),
+            &mcp_set(&[(tool_names::WRITE_FILE, "my-git-helper")]),
             FsServerPolicy::DropMutatingAndDuplicates,
         );
         assert_eq!(
-            map.get("write_file").map(String::as_str),
+            map.get(tool_names::WRITE_FILE).map(String::as_str),
             Some("my-git-helper")
         );
     }

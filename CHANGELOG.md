@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 🧹 P3 魔法串：内建工具名常量表（core/tool_names）
+
+- **工具名单一来源（P3 魔法串）**：`"read_file"`/`"write_file"`/`"execute_command"`/`"delegate_task"` 等 23 个内建工具名此前以字符串字面量散布 **14 个生产模块**（subagent 配置表、permission 内建规则、mod/turn_runner 分发与比较、file_locks/diff 写入分类、mcp 审批分类…共 **366 处**）——改名任一工具要全仓追字符串。新建 `core/tool_names.rs` 常量表（22 个 `pub const`，逐个带文档），全量替换为 `tool_names::X` 引用；**作用域精确**：MCP 服务器自定义工具名（运行时来源）不收编；glob 模式（`"delete_*"`/`"*_file"`）是模式字面量非工具名，保持原样；注释行不动（文档中的工具名引用仍是散文）
+
 ### 🧱 阶段4 第2项（拆分切片3）：/btw 侧问浮层 → useBtwQuestion 钩子
 
 - **BTW 钩子化（阶段4 第2项拆分程序）**：`/btw` 侧问的浮层信号、流式应答（`btw-chunk` 事件逐 chunk 更新 overlay、unlisten 先注册防首 chunk 丢失、done/error/异常三路收口）、开问（生成 overlay + 启动应答）与关闭四个操作从 ChatPage 抽至 `hooks/useBtwQuestion.ts`（模型/助手/话题三个响应式访问器经参数注入）；ChatPage **1496 → 1422 行**（本拆分程序累计 1746 → 1422）

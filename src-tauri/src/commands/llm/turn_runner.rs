@@ -38,6 +38,7 @@ use super::tool_specs::{execute_artifact_read, execute_skill_read};
 use super::usage::insert_usage_log;
 use super::DelegateContext;
 use super::{execute_builtin_tool, execute_tool_with_retry};
+use crate::core::tool_names;
 
 /// 主循环运行器：单回合自主循环的全部输入（原 async-move 闭包的捕获集）。
 pub(crate) struct AgentTurnRunner {
@@ -555,7 +556,7 @@ impl AgentTurnRunner {
                     serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
 
                 if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
-                    && tc.name == "delegate_task"
+                    && tc.name == tool_names::DELEGATE_TASK
                 {
                     // Check the wait argument: false = run in the background (fire-and-forget)
                     let wait_for_result = args_val
@@ -685,7 +686,7 @@ impl AgentTurnRunner {
                         parallel_futures.push((i, fut));
                     }
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
-                    && tc.name == "delegate_tasks"
+                    && tc.name == tool_names::DELEGATE_TASKS
                 {
                     // Batch parallel: collect one future into parallel_futures.
                     // 阶段4 第1项（子目标 3/5）：继承上下文一次打包（delegate_ctx）。
@@ -713,7 +714,7 @@ impl AgentTurnRunner {
                         Box::pin(async move { handle_delegate_tasks(&ctx, &args_val_clone).await });
                     parallel_futures.push((i, fut));
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
-                    && tc.name == "get_subagent_result"
+                    && tc.name == tool_names::GET_SUBAGENT_RESULT
                 {
                     // Pull 通道：查询/等待后台子智能体结果。与 delegate 系一致进阶段 2
                     // 并行池（同轮可并行等待多个后台任务；自身无副作用）。
@@ -725,7 +726,7 @@ impl AgentTurnRunner {
                     });
                     parallel_futures.push((i, fut));
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
-                    && tc.name == "create_workflow"
+                    && tc.name == tool_names::CREATE_WORKFLOW
                 {
                     // Workflow creation: parse arguments and run all steps sequentially
                     workflow_called = true;
@@ -839,14 +840,17 @@ impl AgentTurnRunner {
                 } else {
                     // Non-delegate tool: execute immediately in order
                     // Extract the file path before tool execution (args_val may be moved into the MCP call)
-                    let file_path_for_diff: Option<String> =
-                        if ["write_file", "replace_in_file", "delete_file"]
-                            .contains(&tc.name.as_str())
-                        {
-                            args_val["path"].as_str().map(|s| s.to_string())
-                        } else {
-                            None
-                        };
+                    let file_path_for_diff: Option<String> = if [
+                        tool_names::WRITE_FILE,
+                        tool_names::REPLACE_IN_FILE,
+                        tool_names::DELETE_FILE,
+                    ]
+                    .contains(&tc.name.as_str())
+                    {
+                        args_val["path"].as_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    };
                     let tool_result = if server_id.as_deref()
                         == Some(crate::core::ids::BUILTIN_SERVER_ID)
                         && tc.name == "read_artifact"
@@ -862,7 +866,7 @@ impl AgentTurnRunner {
                     } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                         && matches!(
                             tc.name.as_str(),
-                            "create_tasks" | "update_task" | "list_tasks"
+                            tool_names::CREATE_TASKS | tool_names::UPDATE_TASK | "list_tasks"
                         )
                     {
                         // Orchestrator task board: in-memory metadata + frontend mirror,
@@ -875,7 +879,7 @@ impl AgentTurnRunner {
                             &args_val,
                         ))
                     } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
-                        && tc.name == "ask_user"
+                        && tc.name == tool_names::ASK_USER
                     {
                         // Clarification questions: pauses the loop until the user answers
                         // (respond_agent_question), the token cancels, or the timeout fires

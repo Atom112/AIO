@@ -19,6 +19,7 @@
 //! `commands/llm/tool_dispatch.rs`) so every mutating file tool routes through this choke
 //! point; the server itself remains for external MCP clients.
 
+use crate::core::tool_names;
 use crate::ierr;
 use dashmap::DashMap;
 use serde_json::Value;
@@ -316,7 +317,7 @@ pub fn cross_writer_gate(
         return Ok(());
     }
     match tool_name {
-        "replace_in_file" => {
+        tool_names::REPLACE_IN_FILE => {
             if arguments["anchor_hash"].as_str().unwrap_or("").is_empty() {
                 Err(ierr!(
                     "文件此前由另一个智能体（{}）修改过，为防止丢失更新，本次替换必须携带 anchor_hash：请先 read_file(with_hash=true) 重新读取最新内容，然后携带返回的 [HASH sha256:...] 值重试",
@@ -327,7 +328,7 @@ pub fn cross_writer_gate(
                 Ok(())
             }
         }
-        "write_file" => {
+        tool_names::WRITE_FILE => {
             if target_exists && arguments["expect_hash"].as_str().unwrap_or("").is_empty() {
                 Err(ierr!(
                     "文件此前由另一个智能体（{}）修改过，直接覆盖会丢弃对方改动：请先 read_file(with_hash=true) 重新读取，并在 write_file 中携带 expect_hash=最新哈希；请基于最新内容重写",
@@ -515,7 +516,7 @@ mod tests {
         );
         // The gate then forces a re-read for any agent writing the touched file.
         assert!(cross_writer_gate(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &json!({"path": "x", "new_string": "y"}),
             true,
             Some(COMMAND_WRITER_ID),
@@ -539,10 +540,10 @@ mod tests {
 
         // Never written by anyone: everything passes
         for (tool, args, exists) in [
-            ("replace_in_file", &replace_args_no_hash, true),
-            ("write_file", &write_new, false),
-            ("write_file", &write_overwrite_no_hash, true),
-            ("delete_file", &delete_args, true),
+            (tool_names::REPLACE_IN_FILE, &replace_args_no_hash, true),
+            (tool_names::WRITE_FILE, &write_new, false),
+            (tool_names::WRITE_FILE, &write_overwrite_no_hash, true),
+            (tool_names::DELETE_FILE, &delete_args, true),
         ] {
             assert!(
                 cross_writer_gate(tool, args, exists, None, "agent-b").is_ok(),
@@ -552,7 +553,7 @@ mod tests {
 
         // Same writer as last: passes without anchors (backward compatible)
         assert!(cross_writer_gate(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &replace_args_no_hash,
             true,
             Some("agent-b"),
@@ -560,7 +561,7 @@ mod tests {
         )
         .is_ok());
         assert!(cross_writer_gate(
-            "write_file",
+            tool_names::WRITE_FILE,
             &write_overwrite_no_hash,
             true,
             Some("agent-b"),
@@ -570,7 +571,7 @@ mod tests {
 
         // Different writer: replace requires anchor_hash
         assert!(cross_writer_gate(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &replace_args_no_hash,
             true,
             Some("agent-a"),
@@ -578,7 +579,7 @@ mod tests {
         )
         .is_err());
         assert!(cross_writer_gate(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &replace_args_hash,
             true,
             Some("agent-a"),
@@ -588,7 +589,7 @@ mod tests {
 
         // Different writer: overwrite requires expect_hash, new file does not
         assert!(cross_writer_gate(
-            "write_file",
+            tool_names::WRITE_FILE,
             &write_overwrite_no_hash,
             true,
             Some("agent-a"),
@@ -596,20 +597,25 @@ mod tests {
         )
         .is_err());
         assert!(cross_writer_gate(
-            "write_file",
+            tool_names::WRITE_FILE,
             &write_overwrite_hash,
             true,
             Some("agent-a"),
             "agent-b"
         )
         .is_ok());
-        assert!(
-            cross_writer_gate("write_file", &write_new, false, Some("agent-a"), "agent-b").is_ok()
-        );
+        assert!(cross_writer_gate(
+            tool_names::WRITE_FILE,
+            &write_new,
+            false,
+            Some("agent-a"),
+            "agent-b"
+        )
+        .is_ok());
 
         // Different writer: delete passes (lock still serializes; content merge N/A)
         assert!(cross_writer_gate(
-            "delete_file",
+            tool_names::DELETE_FILE,
             &delete_args,
             true,
             Some("agent-a"),
@@ -622,7 +628,7 @@ mod tests {
     #[test]
     fn gate_error_names_other_writer() {
         let err = cross_writer_gate(
-            "replace_in_file",
+            tool_names::REPLACE_IN_FILE,
             &json!({"path": "a", "new_string": "x"}),
             true,
             Some("sub-coder-123"),

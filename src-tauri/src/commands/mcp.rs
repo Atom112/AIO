@@ -18,6 +18,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
 
+use crate::core::tool_names;
 use crate::ierr;
 
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1088,7 +1089,7 @@ fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
         priority: 50,
     };
     match ctx.tool_name.as_str() {
-        "execute_command" => {
+        tool_names::EXECUTE_COMMAND => {
             // First-token command prefix (e.g. cargo / npm / git); the rule only
             // matches chain-operator-free commands (see permission::rule_matches).
             let cmd = ctx
@@ -1110,7 +1111,10 @@ fn register_session_allow_rule(ctx: &crate::plugins::mcp::ApprovalContext) {
                 }
             }
         }
-        "write_file" | "replace_in_file" | "delete_file" | "make_directory" => {
+        tool_names::WRITE_FILE
+        | tool_names::REPLACE_IN_FILE
+        | tool_names::DELETE_FILE
+        | tool_names::MAKE_DIRECTORY => {
             // Same file only (exact path). The historic parent + "/**" glob turned
             // one approval into a whole-directory (root: whole-project) write pass.
             if let Some(path) = ctx.arguments.get("path").and_then(|v| v.as_str()) {

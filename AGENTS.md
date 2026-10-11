@@ -40,7 +40,7 @@ src/
 │   ├── agent-prompts.ts # Agent system-prompt presets
 │   └── assets/
 ├── features/
-│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：21 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
+│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个流监听器在根 Layout 全局注册 + 3 个拖放监听器页面级；chatTurnEffects.ts：回合收尾效果）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
@@ -127,6 +127,7 @@ src-tauri/src/
     ├── knowledge.rs     # Project knowledge (.aio/knowledge.json)
     ├── project_map.rs   # Project structure mapping
     ├── sandbox.rs       # Shell sandboxing（路径白名单/黑名单校验）
+    ├── exec_resolve.rs  # PATH-only 可执行文件解析（全部裸名 spawn 的唯一入口；Windows PATHEXT 顺序归一）
     ├── think.rs         # Reasoning tool
     ├── url_validation.rs # SSRF/URL safety checks
     ├── token_counter.rs # Token counting

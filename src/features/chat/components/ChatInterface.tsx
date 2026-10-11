@@ -180,6 +180,19 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const fsTooltip = createMemo(() =>
     fsStatus() === 'connected' ? t('chat.filesystemConnected') : t('chat.filesystemConnecting'),
   );
+  /**
+   * CHAT-11: wait until the running generation actually finishes (isThinking flips to
+   * false in the stream's done handler), bounded to `timeoutMs`. The resend/edit paths
+   * previously slept a magic 150ms after stop and hoped the backend's cancel epilogue
+   * had finished; a slow epilogue (checkpoint finalize etc.) let the old stream's tail
+   * interleave into the freshly resent message.
+   */
+  const awaitGenerationStopped = async (timeoutMs = 5000) => {
+    const started = Date.now();
+    while (props.isThinking && Date.now() - started < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
   // Pending programmatic scrolls: +1 before each programmatic scrollTop assignment,
   // consumed by one scroll event; events run real logic (at-bottom check) only when the
   // count is 0, so multiple scroll events per assignment cannot spuriously disable auto-follow.
@@ -993,8 +1006,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     msg.displayText !== undefined ? msg.displayText : msg.content;
                                   if (!text) return;
                                   if (props.isThinking) {
-                                    props.handleStopGeneration();
-                                    await new Promise((r) => setTimeout(r, 150));
+                                    // CHAT-11: wait for the stream to actually stop
+                                    // (isThinking flips in the done handler) instead of
+                                    // sleeping a magic 150ms and racing the epilogue.
+                                    await props.handleStopGeneration();
+                                    await awaitGenerationStopped();
                                   }
                                   const asstId = currentAssistantId();
                                   const tId = currentTopicId();
@@ -1067,8 +1083,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                                     msg.displayText !== undefined ? msg.displayText : msg.content;
                                   if (!text) return;
                                   if (props.isThinking) {
-                                    props.handleStopGeneration();
-                                    await new Promise((r) => setTimeout(r, 150));
+                                    // CHAT-11: wait for the stream to actually stop
+                                    // (isThinking flips in the done handler) instead of
+                                    // sleeping a magic 150ms and racing the epilogue.
+                                    await props.handleStopGeneration();
+                                    await awaitGenerationStopped();
                                   }
                                   const asstId = currentAssistantId();
                                   const tId = currentTopicId();

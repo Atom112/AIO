@@ -75,15 +75,9 @@ pub async fn execute(
         .collect();
 
     if active_clients.is_empty() {
-        return Ok(tool_ok(format!(
-            "当前项目没有运行中的语言服务器。可用的语言包括：{}。\n请使用 auto_detect_ls 检测项目语言，然后 start_lsp_server 启动对应服务器。",
-            lsp_mgr
-                .languages
-                .iter()
-                .map(|l| l.name.as_str())
-                .collect::<Vec<_>>()
-                .join("、")
-        )));
+        return Ok(tool_ok(
+            "当前项目没有运行中的语言服务器（打开项目时会自动检测并启动；未运行通常意味着对应服务器未安装，如 pyright-langserver、rust-analyzer、typescript-language-server、gopls）。\n对具体代码文件调用 lsp_symbols 等 LSP 工具时会按需启动对应服务器。".to_string(),
+        ));
     }
 
     // Build the output

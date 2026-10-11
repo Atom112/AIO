@@ -28,6 +28,7 @@ pub(crate) mod budget;
 pub(crate) mod checkpoints;
 pub(crate) mod client;
 pub(crate) mod compress;
+pub(crate) mod delegate_ctx;
 pub(crate) mod handoff;
 pub(crate) mod locked_tools;
 pub(crate) mod messages;
@@ -49,6 +50,7 @@ use budget::{estimate_context_tokens_offload, is_context_overflow_error, is_retr
 use checkpoints::{finalize_checkpoints, load_checkpoint_messages};
 use client::{non_streaming_http_client, streaming_http_client};
 use compress::compress_context;
+use delegate_ctx::DelegateContext;
 use handoff::{build_extract_transcript, consume_handoff_doc, write_handoff_doc};
 use locked_tools::execute_locked_file_tool;
 use messages::message_for_api;
@@ -1465,25 +1467,10 @@ pub(crate) async fn run_agent_turn_inner(
                         // Fire-and-forget: the subagent runs in the background, the main agent continues immediately.
                         // Dual channel: outcome cached for get_subagent_result (pull) + completion notice
                         // queued for system-message injection (push).
-                        let window_clone = window.clone();
-                        let app_clone = app_c.clone();
-                        let client_clone = client.clone();
-                        let api_url_clone = api_url.clone();
-                        let api_key_clone = api_key.clone();
-                        let model_clone = model.clone();
-                        let assistant_id_clone = assistant_id_c.clone();
-                        let topic_id_clone = topic_id_c.clone();
                         let args_val_clone = args_val.clone();
-                        let project_id_clone = project_id_c.clone();
-                        let agent_mode_clone = agent_mode.clone();
-                        let profile_overrides_clone = profile_overrides_c.clone();
-                        let custom_profiles_clone = custom_profiles_c.clone();
                         // Child token: parent cancellation cascades; stop_subagent can cancel this background subagent by ID
                         let token_clone = token_inner.child_token();
                         let token_for_registry = token_clone.clone();
-                        let locale_clone = locale_c.clone();
-                        let mcp_ids_clone = mcp_server_ids_c.clone();
-                        let sem_clone = subagent_semaphore.clone();
                         let subagent_id = uuid::Uuid::new_v4().to_string();
                         let sid = subagent_id.clone();
                         let app_c2 = app_c.clone();
@@ -1495,27 +1482,31 @@ pub(crate) async fn run_agent_turn_inner(
                         let bg_task =
                             truncate_chars_head(args_val_clone["task"].as_str().unwrap_or(""), 100);
                         register_running_subagent(&app_c, &subagent_id, bg_profile, bg_task);
+                        // 阶段4 第1项（子目标 3/5）：继承上下文一次打包，替代 17 项克隆瀑布
+                        let bg_ctx = DelegateContext {
+                            window: window.clone(),
+                            app: app_c.clone(),
+                            client: client.clone(),
+                            api_url: api_url.clone(),
+                            api_key: api_key.clone(),
+                            model: model.clone(),
+                            parent_assistant_id: assistant_id_c.clone(),
+                            parent_topic_id: topic_id_c.clone(),
+                            project_id: project_id_c.clone(),
+                            agent_mode: agent_mode.clone(),
+                            token: token_clone,
+                            profile_model_overrides: profile_overrides_c.clone(),
+                            custom_profiles: custom_profiles_c.clone(),
+                            mcp_server_ids: mcp_server_ids_c.clone(),
+                            semaphore: subagent_semaphore.clone(),
+                            locale: locale_c.clone(),
+                        };
+                        // 后台收尾通知所需的归属信息（move 进 spawn）
+                        let assistant_id_clone = assistant_id_c.clone();
+                        let topic_id_clone = topic_id_c.clone();
+                        let locale_clone = locale_c.clone();
                         let jh = tokio::spawn(async move {
-                            let result = handle_delegate_task(
-                                &window_clone,
-                                &app_clone,
-                                &client_clone,
-                                &api_url_clone,
-                                &api_key_clone,
-                                &model_clone,
-                                &assistant_id_clone,
-                                &topic_id_clone,
-                                &args_val_clone,
-                                project_id_clone.as_deref(),
-                                &agent_mode_clone,
-                                sem_clone,
-                                &token_clone,
-                                &profile_overrides_clone,
-                                &custom_profiles_clone,
-                                &mcp_ids_clone,
-                                &locale_clone,
-                            )
-                            .await;
+                            let result = handle_delegate_task(&bg_ctx, &args_val_clone).await;
                             // Remove handle from registry on completion
                             if let Some(handles) =
                                 app_c2.try_state::<crate::core::state::SubagentHandles>()
@@ -1566,93 +1557,61 @@ pub(crate) async fn run_agent_turn_inner(
                             is_error: false,
                         });
                     } else {
-                        // Subagent delegation: collect the future, run it in parallel later
-                        let window_clone = window.clone();
-                        let app_clone = app_c.clone();
-                        let client_clone = client.clone();
-                        let api_url_clone = api_url.clone();
-                        let api_key_clone = api_key.clone();
-                        let model_clone = model.clone();
-                        let assistant_id_clone = assistant_id_c.clone();
-                        let topic_id_clone = topic_id_c.clone();
+                        // Subagent delegation: collect the future, run it in parallel later.
+                        // 阶段4 第1项（子目标 3/5）：继承上下文一次打包（delegate_ctx）。
                         let args_val_clone = args_val.clone();
-                        let project_id_clone = project_id_c.clone();
-                        let agent_mode_clone = agent_mode.clone();
-                        let profile_overrides_clone = profile_overrides_c.clone();
-                        let custom_profiles_clone = custom_profiles_c.clone();
-                        let token_clone = token_inner.clone();
-                        let locale_clone = locale_c.clone();
-                        let mcp_ids_clone = mcp_server_ids_c.clone();
-                        let sem_clone = subagent_semaphore.clone();
+                        let ctx = delegate_ctx::DelegateContext {
+                            window: window.clone(),
+                            app: app_c.clone(),
+                            client: client.clone(),
+                            api_url: api_url.clone(),
+                            api_key: api_key.clone(),
+                            model: model.clone(),
+                            parent_assistant_id: assistant_id_c.clone(),
+                            parent_topic_id: topic_id_c.clone(),
+                            project_id: project_id_c.clone(),
+                            agent_mode: agent_mode.clone(),
+                            token: token_inner.clone(),
+                            profile_model_overrides: profile_overrides_c.clone(),
+                            custom_profiles: custom_profiles_c.clone(),
+                            mcp_server_ids: mcp_server_ids_c.clone(),
+                            semaphore: subagent_semaphore.clone(),
+                            locale: locale_c.clone(),
+                        };
 
-                        let fut = Box::pin(async move {
-                            handle_delegate_task(
-                                &window_clone,
-                                &app_clone,
-                                &client_clone,
-                                &api_url_clone,
-                                &api_key_clone,
-                                &model_clone,
-                                &assistant_id_clone,
-                                &topic_id_clone,
-                                &args_val_clone,
-                                project_id_clone.as_deref(),
-                                &agent_mode_clone,
-                                sem_clone,
-                                &token_clone,
-                                &profile_overrides_clone,
-                                &custom_profiles_clone,
-                                &mcp_ids_clone,
-                                &locale_clone,
-                            )
-                            .await
-                        });
+                        let fut =
+                            Box::pin(
+                                async move { handle_delegate_task(&ctx, &args_val_clone).await },
+                            );
                         parallel_futures.push((i, fut));
                     }
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == "delegate_tasks"
                 {
-                    // Batch parallel: collect one future into parallel_futures
-                    let window_clone = window.clone();
-                    let app_clone = app_c.clone();
-                    let client_clone = client.clone();
-                    let api_url_clone = api_url.clone();
-                    let api_key_clone = api_key.clone();
-                    let model_clone = model.clone();
-                    let assistant_id_clone = assistant_id_c.clone();
-                    let topic_id_clone = topic_id_c.clone();
+                    // Batch parallel: collect one future into parallel_futures.
+                    // 阶段4 第1项（子目标 3/5）：继承上下文一次打包（delegate_ctx）。
                     let args_val_clone = args_val.clone();
-                    let project_id_clone = project_id_c.clone();
-                    let agent_mode_clone = agent_mode.clone();
-                    let profile_overrides_clone = profile_overrides_c.clone();
-                    let custom_profiles_clone = custom_profiles_c.clone();
-                    let semaphore_clone = subagent_semaphore.clone();
-                    let token_clone = token_inner.clone();
-                    let locale_clone = locale_c.clone();
-                    let mcp_ids_clone = mcp_server_ids_c.clone();
+                    let ctx = delegate_ctx::DelegateContext {
+                        window: window.clone(),
+                        app: app_c.clone(),
+                        client: client.clone(),
+                        api_url: api_url.clone(),
+                        api_key: api_key.clone(),
+                        model: model.clone(),
+                        parent_assistant_id: assistant_id_c.clone(),
+                        parent_topic_id: topic_id_c.clone(),
+                        project_id: project_id_c.clone(),
+                        agent_mode: agent_mode.clone(),
+                        token: token_inner.clone(),
+                        profile_model_overrides: profile_overrides_c.clone(),
+                        custom_profiles: custom_profiles_c.clone(),
+                        mcp_server_ids: mcp_server_ids_c.clone(),
+                        semaphore: subagent_semaphore.clone(),
+                        locale: locale_c.clone(),
+                    };
 
-                    let fut = Box::pin(async move {
-                        handle_delegate_tasks(
-                            &window_clone,
-                            &app_clone,
-                            &client_clone,
-                            &api_url_clone,
-                            &api_key_clone,
-                            &model_clone,
-                            &assistant_id_clone,
-                            &topic_id_clone,
-                            &args_val_clone,
-                            project_id_clone.as_deref(),
-                            &agent_mode_clone,
-                            &token_clone,
-                            &profile_overrides_clone,
-                            &custom_profiles_clone,
-                            &mcp_ids_clone,
-                            semaphore_clone,
-                            &locale_clone,
-                        )
-                        .await
-                    });
+                    let fut =
+                        Box::pin(async move { handle_delegate_tasks(&ctx, &args_val_clone).await });
                     parallel_futures.push((i, fut));
                 } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == "get_subagent_result"

@@ -1500,24 +1500,8 @@ pub(crate) async fn execute_subagent(
         match result {
             Ok(rr) => {
                 // Append the assistant message to the subagent context
-                let mut asst_obj = serde_json::Map::new();
-                asst_obj.insert("role".into(), json!("assistant"));
-                asst_obj.insert("content".into(), rr.api_content.clone());
-                if !rr.tool_calls.is_empty() {
-                    let tcs: Vec<serde_json::Value> = rr
-                        .tool_calls
-                        .iter()
-                        .map(|tc| {
-                            json!({
-                                "id": tc.id,
-                                "type": "function",
-                                "function": { "name": tc.name, "arguments": tc.arguments },
-                            })
-                        })
-                        .collect();
-                    asst_obj.insert("tool_calls".into(), json!(tcs));
-                }
-                sub_msgs.push(serde_json::Value::Object(asst_obj));
+                // (shared construction with the main loop; null_content=false keeps the empty string)
+                super::round_artifacts::append_assistant_message(&mut sub_msgs, &rr, false);
 
                 // Emit the subagent step event (notify the frontend)
                 let step_content = if rr.content.is_empty() {
@@ -1542,15 +1526,13 @@ pub(crate) async fn execute_subagent(
                 );
 
                 // Output truncated (finish_reason="length") with no tool calls: append a continuation instruction and retry once
-                if rr.finish_reason.as_deref() == Some("length")
-                    && rr.tool_calls.is_empty()
-                    && length_retries < 1
-                {
-                    length_retries += 1;
-                    sub_msgs.push(json!({
-                        "role": "system",
-                        "content": "[输出被截断] 请直接继续完成上一条回复中未完成的内容，不要重复已经输出的部分。"
-                    }));
+                if super::round_artifacts::try_length_continuation(
+                    &mut sub_msgs,
+                    rr.finish_reason.as_deref(),
+                    rr.tool_calls.is_empty(),
+                    &mut length_retries,
+                    1,
+                ) {
                     continue;
                 }
 
@@ -1677,7 +1659,7 @@ pub(crate) async fn execute_subagent(
 
                     let content_text = match tool_result {
                         Ok(tr) => tool_result_text(&tr),
-                        Err(e) => format!("[Error] {}", e),
+                        Err(e) => super::round_artifacts::tool_error_text(&e),
                     };
                     let _ = window.emit(
                         ev::SUBAGENT_STEP,
@@ -1705,7 +1687,7 @@ pub(crate) async fn execute_subagent(
                     while let Some((i, result)) = unordered.next().await {
                         let content_text = match result {
                             Ok(tr) => tool_result_text(&tr),
-                            Err(e) => format!("[Error] {}", e),
+                            Err(e) => super::round_artifacts::tool_error_text(&e),
                         };
                         let tc = &rr.tool_calls[i];
                         let _ = window.emit(
@@ -1731,12 +1713,12 @@ pub(crate) async fn execute_subagent(
                         } else {
                             truncate_tool_result(content_text)
                         };
-                        sub_msgs.push(json!({
-                            "role": "tool",
-                            "content": truncated_content,
-                            "tool_call_id": tc.id,
-                            "name": tc.name,
-                        }));
+                        super::round_artifacts::push_tool_message(
+                            &mut sub_msgs,
+                            &tc.id,
+                            &tc.name,
+                            &truncated_content,
+                        );
                     }
                 }
 

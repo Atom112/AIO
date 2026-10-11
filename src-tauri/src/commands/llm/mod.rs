@@ -27,6 +27,8 @@ pub(crate) mod delegate_ctx;
 pub(crate) mod handoff;
 pub(crate) mod locked_tools;
 pub(crate) mod messages;
+// 阶段4 第1项（子目标 5/5 首切片）：两循环共享的轮次产物构造（agent_loop 地基）
+pub(crate) mod round_artifacts;
 pub(crate) mod sse_lines;
 pub(crate) mod streaming;
 pub(crate) mod subagents;

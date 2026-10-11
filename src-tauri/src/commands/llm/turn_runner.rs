@@ -447,43 +447,23 @@ impl AgentTurnRunner {
                 round_result.cached_input_tokens,
             );
 
-            // Append this round's assistant message (incl. tool_calls) to the context
-            let mut asst_obj = serde_json::Map::new();
-            asst_obj.insert("role".into(), json!("assistant"));
-            asst_obj.insert(
-                "content".into(),
-                match &round_result.api_content {
-                    serde_json::Value::String(s) if s.is_empty() => json!(null),
-                    other => other.clone(),
-                },
+            // Append this round's assistant message (incl. tool_calls) to the context.
+            // 阶段4 第1项（公共 agent_loop 地基）：与子代理循环共享的构造。
+            super::round_artifacts::append_assistant_message(
+                &mut messages_for_api,
+                &round_result,
+                true,
             );
-            if !round_result.tool_calls.is_empty() {
-                let tcs: Vec<serde_json::Value> = round_result
-                    .tool_calls
-                    .iter()
-                    .map(|tc| {
-                        json!({
-                            "id": tc.id,
-                            "type": "function",
-                            "function": { "name": tc.name, "arguments": tc.arguments },
-                        })
-                    })
-                    .collect();
-                asst_obj.insert("tool_calls".into(), json!(tcs));
-            }
-            messages_for_api.push(serde_json::Value::Object(asst_obj));
 
             // Output truncated (finish_reason="length") with no tool calls: append a continuation
             // instruction and retry (bounded) instead of ending mid-reply.
-            if round_result.finish_reason.as_deref() == Some("length")
-                && round_result.tool_calls.is_empty()
-                && length_retries < MAX_LENGTH_RETRIES
-            {
-                length_retries += 1;
-                messages_for_api.push(serde_json::json!({
-                    "role": "system",
-                    "content": "[输出被截断] 请直接继续完成上一条回复中未完成的内容，不要重复已经输出的部分。"
-                }));
+            if super::round_artifacts::try_length_continuation(
+                &mut messages_for_api,
+                round_result.finish_reason.as_deref(),
+                round_result.tool_calls.is_empty(),
+                &mut length_retries,
+                MAX_LENGTH_RETRIES,
+            ) {
                 continue;
             }
 
@@ -829,7 +809,11 @@ impl AgentTurnRunner {
                                 serde_json::to_value(&tr.content).unwrap_or(json!([]));
                             (text, result_value, tr.is_error)
                         }
-                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                        Err(e) => (
+                            super::round_artifacts::tool_error_text(&e),
+                            json!({ "error": e }),
+                            true,
+                        ),
                     };
 
                     exec_results[i] = Some(ToolExecResult {
@@ -987,7 +971,11 @@ impl AgentTurnRunner {
                                 serde_json::to_value(&tr.content).unwrap_or(json!([]));
                             (text, result_value, tr.is_error)
                         }
-                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                        Err(e) => (
+                            super::round_artifacts::tool_error_text(&e),
+                            json!({ "error": e }),
+                            true,
+                        ),
                     };
                     // For file-modifying tools, capture the diff for frontend display
                     let file_changes = file_path_for_diff
@@ -1013,13 +1001,13 @@ impl AgentTurnRunner {
                         },
                     );
 
-                    // Backfill the role:tool message immediately
-                    let mut tool_msg = serde_json::Map::new();
-                    tool_msg.insert("role".into(), json!("tool"));
-                    tool_msg.insert("content".into(), json!(truncate_tool_result(&content_text)));
-                    tool_msg.insert("tool_call_id".into(), json!(tc.id));
-                    tool_msg.insert("name".into(), json!(tc.name));
-                    messages_for_api.push(serde_json::Value::Object(tool_msg));
+                    // Backfill the role:tool message immediately (shared construction)
+                    super::round_artifacts::push_tool_message(
+                        &mut messages_for_api,
+                        &tc.id,
+                        &tc.name,
+                        &truncate_tool_result(&content_text),
+                    );
                 }
             }
 
@@ -1065,7 +1053,11 @@ impl AgentTurnRunner {
                                 serde_json::to_value(&tr.content).unwrap_or(json!([]));
                             (text, result_value, tr.is_error)
                         }
-                        Err(e) => (format!("[Error] {}", e), json!({ "error": e }), true),
+                        Err(e) => (
+                            super::round_artifacts::tool_error_text(&e),
+                            json!({ "error": e }),
+                            true,
+                        ),
                     };
                     // Emit this delegate result immediately
                     let tc = &round_result.tool_calls[i];
@@ -1084,13 +1076,13 @@ impl AgentTurnRunner {
                         },
                     );
 
-                    // Backfill the role:tool message immediately
-                    let mut tool_msg = serde_json::Map::new();
-                    tool_msg.insert("role".into(), json!("tool"));
-                    tool_msg.insert("content".into(), json!(truncate_tool_result(&content_text)));
-                    tool_msg.insert("tool_call_id".into(), json!(tc.id));
-                    tool_msg.insert("name".into(), json!(tc.name));
-                    messages_for_api.push(serde_json::Value::Object(tool_msg));
+                    // Backfill the role:tool message immediately (shared construction)
+                    super::round_artifacts::push_tool_message(
+                        &mut messages_for_api,
+                        &tc.id,
+                        &tc.name,
+                        &truncate_tool_result(&content_text),
+                    );
                 }
             }
 
@@ -1116,15 +1108,12 @@ impl AgentTurnRunner {
                         },
                     );
 
-                    let mut tool_msg = serde_json::Map::new();
-                    tool_msg.insert("role".into(), json!("tool"));
-                    tool_msg.insert(
-                        "content".into(),
-                        json!(truncate_tool_result(&result.content_text)),
+                    super::round_artifacts::push_tool_message(
+                        &mut messages_for_api,
+                        &tc.id,
+                        &tc.name,
+                        &truncate_tool_result(&result.content_text),
                     );
-                    tool_msg.insert("tool_call_id".into(), json!(tc.id));
-                    tool_msg.insert("name".into(), json!(tc.name));
-                    messages_for_api.push(serde_json::Value::Object(tool_msg));
                 }
             }
 

@@ -7,7 +7,7 @@
 
 import { createSignal, onMount, Show } from 'solid-js';
 import { t } from '../../../core/i18n';
-import { memoryGetStatus, memoryUpdateRerank, rerankTest } from '../../../core/utils/memory';
+import { memoryGetStatus, memoryUpdateRerank, rerankTest } from '../../../core/api/memory';
 import type {
   EmbeddingModelInfo,
   MemoryRerankConfig,

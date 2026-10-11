@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 🧱 阶段5：门禁与测试补强（审查修复计划第 5 阶段，部分完成）
+
+- **事件登记全量守门**：新增 `events.test.ts` 双端一致性测试——解析 `events.rs` 的全部 `pub const` 事件与 `events.ts` 的 EVENTS 映射做双向比对（后端有前端无=死常量、前端有后端无=死监听），外加模块形状校验（重复值/幽灵导出）；任何一端漏登记立即红
+- **颜色门禁扩展 rgba/rgb（2b）**：数字字面 `rgba(...)`/`rgb(...)` 与 #hex 同罪，但存量 179 处以棘轮收编（只降不升）；`rgba(var(--...))` 变量形式不计
+- **英文文案启发式门禁（1b）**：裸英文 JSX 文本节点（`>English prose<`，≥2 词）判违——首个命中 `Official MCP Registry` 已改走 `t()`（新键 `mcp.detail.officialRegistry`）；模式刻意收窄，import/注释/tailwind class 不误报
+- **分层门禁扩至 utils（FE-25）**：`core/utils/` 禁止裸 invoke——Tauri 封装属 `core/api/`；`utils/memory.ts`（40 个 memory/embedding/rerank 命令封装）整体迁至 `core/api/memory.ts`，`utils/models.ts` 的目录 invoke 下沉到新建 `core/api/catalog.ts`（utils 保留缓存+纯查询逻辑，类型 re-export 保持外部导入路径不变）
+- **any 棘轮收编 163 → 100（FE-21 部分）**：新增 `core/api/streamPayloads.ts`（11 个流事件载荷类型，镜像 `chat.rs` 的 serde 结构），chatEventListeners 的 11 处 `listen<any>` 全部类型化；Solid store 路径谓词去掉 `any` 注解让路径推断接管；补 `ToolCallDisplay.content` 字段（运行时一直写入而类型缺失）
+
 ### 🔒 全仓深度审查修复 · 阶段 3（剩余 P2 全量：SEC/LOOP/MCP/MEM/PROV/ENG/INFRA/CHAT/FE/HOR）
 
 **批次 1 — 安全读写与进程边界（SEC-04/06/08/09 + INFRA-3）**

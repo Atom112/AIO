@@ -31,7 +31,7 @@ import {
   memoryUpdate,
   memoryUpdateEmbedding,
   DEFAULT_EMBED_MODEL_ID,
-} from '../../../core/utils/memory';
+} from '../../../core/api/memory';
 import type {
   CodeChunkHit,
   CodeIndexStatus,

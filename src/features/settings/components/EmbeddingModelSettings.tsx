@@ -23,7 +23,7 @@ import {
   embeddingModelSetEnabled,
   embeddingModelsGetDir,
   embeddingModelsSetDir,
-} from '../../../core/utils/memory';
+} from '../../../core/api/memory';
 import type { EmbeddingModelInfo } from '../../../core/types/memory';
 import { formatSize } from '../../../core/utils/format';
 import { EVENTS } from '../../../core/api/events';

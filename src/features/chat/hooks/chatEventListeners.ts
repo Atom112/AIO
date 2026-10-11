@@ -12,6 +12,19 @@
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { EVENTS } from '../../../core/api/events';
+import type {
+  LlmRoundStartPayload,
+  LlmChunkPayload,
+  LlmReasoningPayload,
+  LlmToolCallPayload,
+  LlmToolResultPayload,
+  LlmCompressionPayload,
+  ToolApprovalRequestedPayload,
+  SubagentStartPayload,
+  SubagentStepPayload,
+  SubagentDonePayload,
+  SubagentErrorPayload,
+} from '../../../core/api/streamPayloads';
 import { t } from '../../../core/i18n';
 import type { Setter } from 'solid-js';
 import { reasoningLevel } from '../../../core/store/store';
@@ -32,6 +45,7 @@ import {
   type Message,
   type SubagentStep,
   type Topic,
+  type ToolCallDisplay,
   type WorkflowState,
 } from '../../../core/store/store';
 import { checkAndRename, checkAndSummarize } from './chatTurnEffects';
@@ -64,11 +78,11 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
 
   // CHAT-9: shared timeline appender (thinking/content step runs)
   const appendTimelineStep = (
-    steps: any[],
+    steps: AgentStep[],
     type: 'thinking' | 'content',
     textField: 'thinkingText' | 'contentText',
     text: string,
-  ) => {
+  ): AgentStep[] => {
     const lastStep = steps[steps.length - 1];
     if (lastStep && lastStep.type === type && lastStep.status === 'running') {
       return [
@@ -77,7 +91,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       ];
     }
     const now = Date.now();
-    const closed =
+    const closed: AgentStep[] =
       lastStep && lastStep.status === 'running'
         ? [
             ...steps.slice(0, -1),
@@ -134,7 +148,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'history',
         idx,
         'agentSteps',
-        (steps: any[] = []) => {
+        (steps: AgentStep[] = []) => {
           let out = steps;
           if (batch.reasoning)
             out = appendTimelineStep(out, 'thinking', 'thinkingText', batch.reasoning);
@@ -192,7 +206,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
 
   return [
     // A new LLM round starts: multi-round agent work reuses the same assistant message
-    listen<any>(EVENTS.llmRoundStart, (e) => {
+    listen<LlmRoundStartPayload>(EVENTS.llmRoundStart, (e) => {
       const { assistant_id, topic_id, round } = e.payload;
 
       // Later rounds: close the previous round's steps and set up the new round (no longer flattened wholesale into interimContent)
@@ -215,7 +229,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               'history',
               lastIdx,
               'agentSteps',
-              (steps: any[] = []) => {
+              (steps: AgentStep[] = []): AgentStep[] => {
                 if (steps.length === 0) return steps;
                 const last = steps[steps.length - 1];
                 if (last.status !== 'running') return steps;
@@ -270,7 +284,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (topic) setTypingIndex(topic.history.length - 1);
     }),
-    listen<any>(EVENTS.llmChunk, async (e) => {
+    listen<LlmChunkPayload>(EVENTS.llmChunk, async (e) => {
       const {
         assistant_id,
         topic_id,
@@ -316,17 +330,17 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         const finishTime = Date.now();
         setDatas(
           'assistants',
-          (a: any) => a.id === assistant_id,
+          (a) => a.id === assistant_id,
           'topics',
-          (t: any) => t.id === topic_id,
+          (t) => t.id === topic_id,
           'history',
-          (h: any[]) => {
+          (h) => {
             const lastIdx = h.length - 1;
             if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
             const msg = h[lastIdx];
-            const steps: any[] = msg.agentSteps || [];
-            const toolCalls: any[] = msg.toolCalls || [];
-            const updatedMsg: any = { ...msg };
+            const steps: AgentStep[] = msg.agentSteps || [];
+            const toolCalls: ToolCallDisplay[] = msg.toolCalls || [];
+            const updatedMsg: Message = { ...msg };
             // Save token usage
             if (input_tokens != null) updatedMsg.inputTokens = input_tokens;
             if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
@@ -336,8 +350,8 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
             if (images) updatedMsg.images = images;
             if (!error && content) updatedMsg.content = content;
             // Orphaned toolCalls: entries still in calling are marked as interrupted errors
-            if (toolCalls.some((tc: any) => tc.state === 'calling')) {
-              updatedMsg.toolCalls = toolCalls.map((tc: any) =>
+            if (toolCalls.some((tc) => tc.state === 'calling')) {
+              updatedMsg.toolCalls = toolCalls.map((tc): ToolCallDisplay =>
                 tc.state === 'calling' ? { ...tc, state: 'error', error: TOOL_INTERRUPTED } : tc,
               );
             }
@@ -348,7 +362,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               ...h.slice(0, lastIdx),
               {
                 ...updatedMsg,
-                agentSteps: steps.map((s: any, i: number) => {
+                agentSteps: steps.map((s, i: number): AgentStep => {
                   if (s.status !== 'running') return s;
                   // Interrupted tool_call steps stay consistent with their toolCall state (marked error);
                   // other running steps (including the last) are closed as complete
@@ -386,15 +400,15 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     // Chain-of-thought chunk: accumulated into the message's reasoning field and the
     // agentSteps timeline. CHAT-9: batched through the same per-stream flush window —
     // previously each reasoning chunk cost two setDatas plus a full steps rebuild.
-    listen<any>(EVENTS.llmReasoning, (e) => {
+    listen<LlmReasoningPayload>(EVENTS.llmReasoning, (e) => {
       if (reasoningLevel() === 'off') return;
       const { assistant_id, topic_id, content } = e.payload;
       pushToBatch(assistant_id, topic_id, 'reasoning', content);
     }),
     // LLM tool-call event: show the "calling" bubble and build the agentSteps timeline
-    listen<any>(EVENTS.llmToolCall, (e) => {
+    listen<LlmToolCallPayload>(EVENTS.llmToolCall, (e) => {
       const { assistant_id, topic_id, tool_call_id, name, arguments: argsJson } = e.payload;
-      const newTc = {
+      const newTc: ToolCallDisplay = {
         id: tool_call_id,
         type: 'function',
         function: { name, arguments: argsJson },
@@ -402,30 +416,30 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       };
       setDatas(
         'assistants',
-        (a: any) => a.id === assistant_id,
+        (a) => a.id === assistant_id,
         'topics',
-        (t: any) => t.id === topic_id,
+        (t) => t.id === topic_id,
         'history',
-        (h: any[]) => {
+        (h) => {
           const lastIdx = h.length - 1;
           if (lastIdx >= 0 && h[lastIdx]?.role === 'assistant') {
             const msg = h[lastIdx];
             // Keep the toolCalls array (used when rebuilding messages)
             const existing = msg.toolCalls || [];
-            if (existing.find((tc: any) => tc.id === tool_call_id)) return h;
+            if (existing.find((tc) => tc.id === tool_call_id)) return h;
             const newToolCalls = [...existing, newTc];
             // Build agentSteps: close the previous step and add a new tool_call step
             const now = Date.now();
-            const steps: any[] = msg.agentSteps || [];
+            const steps: AgentStep[] = msg.agentSteps || [];
             const lastStep = steps[steps.length - 1];
-            const closed =
+            const closed: AgentStep[] =
               lastStep && lastStep.status === 'running'
                 ? [
                     ...steps.slice(0, -1),
                     { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
                   ]
                 : steps;
-            const newSteps = [
+            const newSteps: AgentStep[] = [
               ...closed,
               {
                 id: crypto.randomUUID(),
@@ -445,7 +459,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       );
     }),
     // Tool execution result: update the matching toolCall state on the assistant message and the agentSteps timeline
-    listen<any>(EVENTS.llmToolResult, (e) => {
+    listen<LlmToolResultPayload>(EVENTS.llmToolResult, (e) => {
       const {
         assistant_id,
         topic_id,
@@ -458,22 +472,22 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       } = e.payload;
       setDatas(
         'assistants',
-        (a: any) => a.id === assistant_id,
+        (a) => a.id === assistant_id,
         'topics',
-        (t: any) => t.id === topic_id,
+        (t) => t.id === topic_id,
         'history',
-        (h: any[]) =>
-          h.map((m: any) => {
+        (h) =>
+          h.map((m) => {
             if (m.role !== 'assistant' || !m.toolCalls) return m;
             // CHAT-6: 未命中即原样返回，保持引用稳定——<For> 按引用比较，此前
             // 每个工具事件都无条件产出新数组/新对象，整列消息行重挂载
             // （AgentProcessBlock 被迫长出模块级渲染队列对抗它）
-            const hitToolCall = m.toolCalls.some((tc: any) => tc.id === tool_call_id);
+            const hitToolCall = m.toolCalls.some((tc) => tc.id === tool_call_id);
             const hitStep = (m.agentSteps || []).some(
-              (s: any) => s.type === 'tool_call' && s.toolCall?.id === tool_call_id,
+              (s) => s.type === 'tool_call' && s.toolCall?.id === tool_call_id,
             );
             if (!hitToolCall && !hitStep) return m;
-            const newToolCalls = m.toolCalls.map((tc: any) =>
+            const newToolCalls = m.toolCalls.map((tc): ToolCallDisplay =>
               tc.id === tool_call_id
                 ? {
                     ...tc,
@@ -488,7 +502,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
             );
             // Also update the matching tool_call step in agentSteps
             const now = Date.now();
-            const newSteps = (m.agentSteps || []).map((s: any) => {
+            const newSteps = (m.agentSteps || []).map((s): AgentStep => {
               if (s.type === 'tool_call' && s.toolCall?.id === tool_call_id) {
                 return {
                   ...s,
@@ -514,17 +528,17 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     }),
     // In-run context compaction event: only main-agent compaction updates conversation memory —
     // topic.summary is overwritten and history trimmed to the token budget so later rounds stop resending the compacted part
-    listen<any>(EVENTS.llmCompression, (e) => {
+    listen<LlmCompressionPayload>(EVENTS.llmCompression, (e) => {
       const { assistant_id, topic_id, source, summary } = e.payload;
       if (!assistant_id || !topic_id) return;
       if (source === 'subagent') return; // subagent context compaction is unrelated to the main conversation
       if (!summary || typeof summary !== 'string' || summary.trim() === '') return;
-      const asst = datas.assistants.find((a: any) => a.id === assistant_id);
+      const asst = datas.assistants.find((a) => a.id === assistant_id);
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (!topic) return;
       // Aligned with the backend keep_recent_tokens: accumulate ~20k tokens from the tail, keeping at least the last 4 messages (one full exchange)
       const KEEP_TOKEN_BUDGET = 20_000;
-      const estTokens = (m: any): number => {
+      const estTokens = (m: Message): number => {
         const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
         return Math.ceil(text.length / 4) + 8;
       };
@@ -541,7 +555,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       if (trimmed.length === hist.length && topic.summary === summary) return;
       setDatas(
         'assistants',
-        (a: any) => a.id === assistant_id,
+        (a) => a.id === assistant_id,
         'topics',
         (t: Topic) => t.id === topic_id,
         { history: trimmed, summary },
@@ -579,7 +593,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       },
     ),
     // Tool-call approval request event: the backend needs user confirmation before running a tool (fields are snake_case to match the backend)
-    listen<any>(EVENTS.toolApprovalRequested, (e) => {
+    listen<ToolApprovalRequestedPayload>(EVENTS.toolApprovalRequested, (e) => {
       const {
         approval_id,
         server_id,
@@ -657,7 +671,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     // ===== Subagent event listeners =====
 
     // Subagent start: push a subagent step into the current assistant message's agentSteps
-    listen<any>(EVENTS.subagentStart, (e) => {
+    listen<SubagentStartPayload>(EVENTS.subagentStart, (e) => {
       const {
         parent_assistant_id,
         parent_topic_id,
@@ -668,16 +682,16 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       } = e.payload;
       setDatas(
         'assistants',
-        (a: any) => a.id === parent_assistant_id,
+        (a) => a.id === parent_assistant_id,
         'topics',
-        (t: any) => t.id === parent_topic_id,
+        (t) => t.id === parent_topic_id,
         'history',
-        (h: any[]) => {
+        (h) => {
           const lastIdx = h.length - 1;
           if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
           const msg = h[lastIdx];
-          const steps: any[] = msg.agentSteps || [];
-          const newStep = {
+          const steps: AgentStep[] = msg.agentSteps || [];
+          const newStep: AgentStep = {
             id: `subagent-${subagent_id}`,
             type: 'subagent',
             timestamp: Date.now(),
@@ -695,21 +709,21 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     }),
 
     // Subagent step update: append the sub-agent's internal steps
-    listen<any>(EVENTS.subagentStep, (e) => {
+    listen<SubagentStepPayload>(EVENTS.subagentStep, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, round, step_type, summary } =
         e.payload;
       setDatas(
         'assistants',
-        (a: any) => a.id === parent_assistant_id,
+        (a) => a.id === parent_assistant_id,
         'topics',
-        (t: any) => t.id === parent_topic_id,
+        (t) => t.id === parent_topic_id,
         'history',
-        (h: any[]) => {
+        (h) => {
           const lastIdx = h.length - 1;
           if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
           const msg = h[lastIdx];
-          const steps: any[] = msg.agentSteps || [];
-          const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
+          const steps: AgentStep[] = msg.agentSteps || [];
+          const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
           if (subIdx < 0) return h;
           const subStep = steps[subIdx];
           const newSubStep = {
@@ -733,7 +747,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
             ...h.slice(0, lastIdx),
             {
               ...msg,
-              agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
+              agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
             },
           ];
         },
@@ -741,24 +755,24 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     }),
 
     // Subagent done: mark the subagent step complete and record the result
-    listen<any>(EVENTS.subagentDone, (e) => {
+    listen<SubagentDonePayload>(EVENTS.subagentDone, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, result } = e.payload;
       const finishTime = Date.now();
       setDatas(
         'assistants',
-        (a: any) => a.id === parent_assistant_id,
+        (a) => a.id === parent_assistant_id,
         'topics',
-        (t: any) => t.id === parent_topic_id,
+        (t) => t.id === parent_topic_id,
         'history',
-        (h: any[]) => {
+        (h) => {
           const lastIdx = h.length - 1;
           if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
           const msg = h[lastIdx];
-          const steps: any[] = msg.agentSteps || [];
-          const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
+          const steps: AgentStep[] = msg.agentSteps || [];
+          const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
           if (subIdx < 0) return h;
           const subStep = steps[subIdx];
-          const updatedSub = {
+          const updatedSub: AgentStep = {
             ...subStep,
             status: 'complete',
             duration: finishTime - subStep.timestamp,
@@ -768,7 +782,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
             ...h.slice(0, lastIdx),
             {
               ...msg,
-              agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
+              agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
             },
           ];
         },
@@ -776,23 +790,23 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     }),
 
     // Subagent error
-    listen<any>(EVENTS.subagentError, (e) => {
+    listen<SubagentErrorPayload>(EVENTS.subagentError, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, error } = e.payload;
       setDatas(
         'assistants',
-        (a: any) => a.id === parent_assistant_id,
+        (a) => a.id === parent_assistant_id,
         'topics',
-        (t: any) => t.id === parent_topic_id,
+        (t) => t.id === parent_topic_id,
         'history',
-        (h: any[]) => {
+        (h) => {
           const lastIdx = h.length - 1;
           if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
           const msg = h[lastIdx];
-          const steps: any[] = msg.agentSteps || [];
-          const subIdx = steps.findIndex((s: any) => s.subagentId === subagent_id);
+          const steps: AgentStep[] = msg.agentSteps || [];
+          const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
           if (subIdx < 0) return h;
           const subStep = steps[subIdx];
-          const updatedSub = {
+          const updatedSub: AgentStep = {
             ...subStep,
             status: 'error',
             duration: Date.now() - subStep.timestamp,
@@ -802,7 +816,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
             ...h.slice(0, lastIdx),
             {
               ...msg,
-              agentSteps: steps.map((s: any, i: number) => (i === subIdx ? updatedSub : s)),
+              agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
             },
           ];
         },

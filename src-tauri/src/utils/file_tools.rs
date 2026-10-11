@@ -85,6 +85,28 @@ pub(crate) fn is_mutating_file_tool(name: &str) -> bool {
     )
 }
 
+/// SEC-5: reparse-point swap narrowing. Re-runs the sandbox resolution for the target
+/// immediately before the mutation and requires it to produce the SAME canonical path
+/// as the first validation — a junction/reparse point swapped in between (e.g. while
+/// the tool was reading the old content) changes the canonicalization and is
+/// rejected. This narrows the validate-to-write TOCTOU window from the whole tool
+/// body down to the microseconds between this check and the actual file operation;
+/// complete elimination would need FILE_FLAG_OPEN_REPARSE_POINT / O_NOFOLLOW
+/// semantics on every syscall, which is out of scope here.
+fn revalidate_target_stable(
+    project_root: &str,
+    rel: &str,
+    validated: &std::path::Path,
+) -> Result<(), String> {
+    match safe_path(project_root, rel, false) {
+        Ok(recheck) if recheck == *validated => Ok(()),
+        _ => Err(ierr!(
+            "目标路径在操作期间发生了变化（可能被替换为链接/挂载点），已拒绝写入",
+            "The target path changed during the operation (possibly swapped for a link/mount point); write refused"
+        )),
+    }
+}
+
 /// Atomic file replace: write a temp sibling, then rename over the target, so concurrent
 /// readers never observe a torn file and a crash mid-write cannot leave the target half
 /// written. The target's permissions (mode bits / readonly) are copied onto the temp file
@@ -504,6 +526,11 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if let Some(p) = t.parent() {
                 let _ = std::fs::create_dir_all(p);
             }
+            // SEC-5: junction/reparse-point swap narrowing — the canonical target must
+            // be unchanged since the validation above (which the hash read straddled).
+            if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                return tool_err(&e);
+            }
             match atomic_write(&t, content) {
                 Ok(_) => tool_ok(format!(
                     "✓ 写入 {path} ({}B)\n[HASH sha256:{}]",
@@ -679,6 +706,10 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if t.is_dir() {
                 return tool_err(&ierr!("是目录: {}", "Is a directory: {}", path));
             }
+            // SEC-5: canonical target must be unchanged since validation
+            if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                return tool_err(&e);
+            }
             match std::fs::remove_file(&t) {
                 Ok(_) => tool_ok(format!("✓ 删除 {path}")),
                 Err(e) => tool_err(&format!("{e}")),
@@ -695,6 +726,10 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             };
             if t.exists() {
                 return tool_err(&ierr!("已存在: {}", "Already exists: {}", path));
+            }
+            // SEC-5: canonical target must be unchanged since validation
+            if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                return tool_err(&e);
             }
             match std::fs::create_dir_all(&t) {
                 Ok(_) => tool_ok(format!("✓ 创建 {path}")),
@@ -816,6 +851,12 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                             "Content too large after replacement (>{}B)",
                             MAX_W
                         ));
+                    }
+                    // SEC-5: junction/reparse-point swap narrowing — the canonical
+                    // target must be unchanged since validation (the content read
+                    // and match scan straddled it).
+                    if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                        return tool_err(&e);
                     }
                     match atomic_write(&t, &new_content) {
                         Ok(_) => tool_ok(format!(

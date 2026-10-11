@@ -1714,8 +1714,13 @@ pub(crate) async fn execute_subagent(
 
                 // Subagent context safety valve: compress when the token estimate exceeds the conservative
                 // budget (no model-window info needed, safe for most >=64k windows; keeps recent-token budget)
-                let sub_est: usize =
-                    estimate_context_tokens(model_to_use, &sub_msgs, limits.context_budget);
+                // LOOP-8: the exact-count estimate runs on the blocking pool
+                let sub_est: usize = crate::commands::llm::budget::estimate_context_tokens_offload(
+                    model_to_use,
+                    &sub_msgs,
+                    limits.context_budget,
+                )
+                .await;
                 if sub_est > limits.context_budget && sub_msgs.len() > 4 {
                     let _ = compress_sub_context(
                         window,

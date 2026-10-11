@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::process::Stdio;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
@@ -338,7 +338,13 @@ fn spawn_stdout_reader(
                     }
                 }
                 Ok(None) => {
-                    // EOF
+                    // EOF = the child process died (crash or kill). MCP-10: without
+                    // pool self-healing the entry lingered as "Connected" and every
+                    // later call hung until its timeout — drop THIS instance and
+                    // tell the frontend it is down.
+                    let _ = app
+                        .state::<crate::plugins::mcp::McpServerState>()
+                        .remove_dead_conn(&server_id, &conn);
                     let _ = app.emit(
                         ev::MCP_SERVER_STATUS,
                         json!({ "id": server_id, "status": McpStatus::Disconnected }),
@@ -348,6 +354,13 @@ fn spawn_stdout_reader(
                 Err(e) => {
                     err_count += 1;
                     if err_count > 10 {
+                        let _ = app
+                            .state::<crate::plugins::mcp::McpServerState>()
+                            .remove_dead_conn(&server_id, &conn);
+                        let _ = app.emit(
+                            ev::MCP_SERVER_STATUS,
+                            json!({ "id": server_id, "status": McpStatus::Disconnected }),
+                        );
                         let _ = app.emit(
                             ev::MCP_SERVER_STDERR,
                             json!({ "id": server_id, "line": format!("stdout read error: {}", e) }),

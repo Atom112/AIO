@@ -2500,8 +2500,9 @@ pub(crate) async fn run_agent_turn_inner(
             }
 
             // Context budget check (token-level, model-aware): estimate the context, compress past the threshold
+            // LOOP-8: the estimate (near-budget: exact tiktoken over the whole context) runs on the blocking pool.
             let estimated_tokens: usize =
-                estimate_context_tokens(&model, &messages_for_api, context_budget);
+                estimate_context_tokens_offload(&model, &messages_for_api, context_budget).await;
             if estimated_tokens > context_budget && messages_for_api.len() > 4 {
                 let window_c = window.clone();
                 let client_c = client.clone();
@@ -2552,14 +2553,17 @@ pub(crate) async fn run_agent_turn_inner(
             // checkpoint and resume always restarted the turn from scratch, despite
             // the module doc and retention policy promising per-round snapshots).
             // The turn's context is settled here: tool backfill + compression done.
+            // LOOP-7: serialize BEFORE taking the global SQLite lock — serializing
+            // a multi-MB context under `DbState` blocked every other database user.
             {
+                let messages_json = serde_json::to_string(&messages_for_api).unwrap_or_default();
                 let conn = app_c.state::<crate::core::state::DbState>();
-                save_checkpoint(
+                crate::commands::llm::checkpoints::save_checkpoint_json(
                     &conn.0.lock(),
                     &topic_id_c,
                     &turn_id,
                     round,
-                    &messages_for_api,
+                    &messages_json,
                 );
             }
         }

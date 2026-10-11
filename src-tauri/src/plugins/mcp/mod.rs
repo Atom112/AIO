@@ -212,6 +212,29 @@ impl McpServerState {
         }
         ids
     }
+
+    /// MCP-10 self-healing: remove the pool entry for THIS connection instance
+    /// when its transport dies (stdio child crash / EOF). Only the dead instance
+    /// is dropped — a live variant of the same server id (another project's
+    /// overlay) stays. Returns whether an entry was removed.
+    pub fn remove_dead_conn(&self, id: &str, conn: &McpConnection) -> bool {
+        let mut map = self.0.lock();
+        let prefix = format!("{id}::");
+        let targets: Vec<String> = map
+            .iter()
+            .filter(|(k, v)| {
+                (k.as_str() == id || k.starts_with(&prefix)) && (**v).same_connection(conn)
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        let mut removed = false;
+        for k in targets {
+            if map.remove(&k).is_some() {
+                removed = true;
+            }
+        }
+        removed
+    }
 }
 
 /// In-flight MCP tool calls: call_id -> AbortHandle

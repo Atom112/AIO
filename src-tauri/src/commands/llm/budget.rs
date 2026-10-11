@@ -63,6 +63,28 @@ pub(crate) fn estimate_context_tokens(
         .sum()
 }
 
+/// LOOP-8: near-budget exact counting is CPU-bound (tiktoken encodes the whole
+/// context). Running it inline stalls an async worker thread for tens/hundreds of
+/// ms; the estimate runs on the blocking pool instead. The rough pre-check inside
+/// keeps the common far-below-budget case nearly free either way.
+///
+/// On a join failure (panicking task — effectively never) the estimate falls back
+/// to exactly `budget`, which triggers compression: erring toward compressing is
+/// the safe direction (a missed trigger only surfaces as an overflow API error).
+pub(crate) async fn estimate_context_tokens_offload(
+    model: &str,
+    messages: &[serde_json::Value],
+    budget: usize,
+) -> usize {
+    let model = model.to_string();
+    // One owned copy for the 'static closure — only taken when the estimate runs
+    // (near budget); the common path returns after the cheap rough pre-check.
+    let messages = messages.to_vec();
+    tokio::task::spawn_blocking(move || estimate_context_tokens(&model, &messages, budget))
+        .await
+        .unwrap_or(budget)
+}
+
 /// Whether an API error is caused by context-length overflow (used for overflow auto-recovery: retry once after compression).
 pub(crate) fn is_context_overflow_error(e: &str) -> bool {
     let e = e.to_lowercase();

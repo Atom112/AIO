@@ -107,6 +107,14 @@ impl McpConnection {
         }
     }
 
+    /// MCP-10: instance identity — clones share one `inner` Arc, so this is true
+    /// exactly when two handles belong to the same underlying transport. Used by
+    /// the pool's self-healing removal to drop ONLY the dead instance (another
+    /// project's live variant of the same server id must stay).
+    pub fn same_connection(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Send a JSON-RPC request and await the response (with timeout)
     pub async fn request(
         &self,

@@ -5,7 +5,8 @@
 //! - **Agent tool implementations**: `file_tools`, `git_tools`, `shell_tools`, `web_tools`,
 //!   `lsp_tools`, `lsp_agent_tools`, `project_map`, `project_index`, `think`, `worktree`
 //!   (subagent worktree isolation)
-//! - **Security infrastructure**: `sandbox` (subprocess sandbox), `url_validation` (SSRF protection)
+//! - **Security infrastructure**: `sandbox` (subprocess sandbox), `url_validation` (SSRF protection),
+//!   `exec_resolve` (PATH-only executable resolution — every bare-name spawn must go through it)
 //! - **File and attachment handling**: `file_parser` (PDF/Office/text extraction)
 //! - **General utilities**: `tool_result`, `truncate`, `time`, `diff`, `token_counter`,
 //!   `generated_images`
@@ -14,6 +15,7 @@
 //! `knowledge` is a read-only legacy module (superseded by project-level RAG); no new dependencies on it.
 
 pub mod diff;
+pub mod exec_resolve;
 pub mod file_parser;
 pub mod file_tools;
 pub mod generated_images;

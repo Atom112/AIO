@@ -729,8 +729,12 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        // SEC-06: PATH-only resolution — a bare "reg" spawn would consult the process
+        // cwd before PATH; reg.exe lives in System32 and always resolves.
+        let reg = crate::utils::exec_resolve::resolve_executable("reg")
+            .ok_or_else(|| ierr!("未找到 reg.exe（System32）", "reg.exe not found (System32)"))?;
         if enabled {
-            let output = Command::new("reg")
+            let output = Command::new(reg)
                 .args([
                     "add",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -759,7 +763,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 ));
             }
         } else {
-            let output = Command::new("reg")
+            let output = Command::new(reg)
                 .args([
                     "delete",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",

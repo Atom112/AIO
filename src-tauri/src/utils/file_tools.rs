@@ -17,6 +17,14 @@ use std::path::PathBuf;
 const MAX_R: u64 = 1_000_000; // read size cap: 1MB
 const MAX_W: u64 = 5_000_000; // write size cap: 5MB
 const MAX_S: usize = 10_000; // list/search cap: 10K entries
+/// Hard cap on any single file read into memory by the file tools (SEC-04): files
+/// beyond this size are refused outright instead of being slurped whole — the model
+/// is told to use command-line tools for them. Keeps a multi-GB file from OOM-ing
+/// the agent turn while staying generous enough for real source files.
+const MAX_READ_FILE_BYTES: u64 = 32 * 1024 * 1024;
+/// Per-file content cap for the search_content scan (SEC-04): a multi-GB log file
+/// must not be slurped whole; matches within the first 1MB are what the model needs.
+const SEARCH_SCAN_FILE_CAP: u64 = 1_000_000;
 
 // ====== Helpers ======
 
@@ -25,6 +33,46 @@ fn sha256_hex(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
     hex::encode(hasher.finalize())
+}
+
+/// Streams a file through SHA-256 without loading it into memory (SEC-04: hashing a
+/// multi-GB file must not allocate proportionally). The digest is identical to
+/// [`sha256_hex`] over the whole file — the hashline protocol's anchor values stay
+/// stable no matter which path computed them.
+fn sha256_hex_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut hasher = Sha256::new();
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path).map_err(|e| e.to_string())?);
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Reads at most `cap` bytes of a file (UTF-8 lossy; missing file → empty string).
+/// For preview/scan purposes only — bounded reads must never grow to file size.
+pub(crate) fn read_bytes_capped(path: &std::path::Path, cap: u64) -> String {
+    use std::io::Read;
+    let mut buf: Vec<u8> = Vec::new();
+    if let Ok(mut f) = std::fs::File::open(path) {
+        let _ = (&mut f).take(cap).read_to_end(&mut buf);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Bilingual refusal message for files above [`MAX_READ_FILE_BYTES`] (SEC-04).
+fn too_large_error(actual: u64) -> String {
+    ierr!(
+        "文件过大（{}，单文件上限 {}）：拒绝读入内存以防资源耗尽。请改用 execute_command 配合命令行工具（如 sed/awk/分页读取）处理",
+        "File too large ({}; single-file cap {}): refusing to load it into memory to avoid resource exhaustion. Use execute_command with command-line tools (sed/awk/paged reads) instead",
+        sz(actual),
+        sz(MAX_READ_FILE_BYTES)
+    )
 }
 
 /// Whether the tool is a mutating single-path file tool. Such tools MUST be dispatched
@@ -329,18 +377,21 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Ok(m) => m,
                 Err(e) => return tool_err(&e.to_string()),
             };
-            // Read all bytes at once (display is capped at 1MB, the hash is NOT) and compute
-            // the SHA-256 of the COMPLETE file (hashline protocol: the digest must match the
-            // full-content digest computed by replace_in_file's anchor_hash / write_file's
-            // expect_hash validation — a truncated digest would permanently break edits of
-            // files > MAX_R under the cross-writer gate)
-            let bytes = match std::fs::read(&t) {
-                Ok(b) => b,
-                Err(e) => return tool_err(&e.to_string()),
+            // SEC-04: bounded reads — a multi-GB file must not be slurped into memory
+            // before truncating. Display bytes are taken with a capped read; the
+            // digest is streamed (memory O(1)) and still covers the COMPLETE file
+            // (hashline protocol: the digest must match the full-content digest
+            // computed by replace_in_file's anchor_hash / write_file's expect_hash
+            // validation — a truncated digest would permanently break edits of
+            // files > MAX_R under the cross-writer gate).
+            if meta.len() > MAX_READ_FILE_BYTES {
+                return tool_err(&too_large_error(meta.len()));
+            }
+            let file_hash = match sha256_hex_file(&t) {
+                Ok(h) => h,
+                Err(e) => return tool_err(&e),
             };
-            let hash_len = bytes.len().min(MAX_R as usize);
-            let file_hash = sha256_hex(&bytes);
-            let raw = String::from_utf8_lossy(&bytes[..hash_len]).into_owned();
+            let raw = read_bytes_capped(&t, MAX_R);
             let over_size = meta.len() > MAX_R;
             let total_lines = raw.lines().count();
             // Line-numbered output (1-based, cat -n style): lets the model cite exact line numbers
@@ -428,9 +479,18 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             // scenarios by the execute_builtin_tool gate; validated here whenever given.
             let expect_hash = arguments["expect_hash"].as_str().unwrap_or("");
             if !expect_hash.is_empty() && t.is_file() {
-                let current = match std::fs::read(&t) {
-                    Ok(b) => sha256_hex(&b),
+                // SEC-04: stream the hash instead of slurping the file; refuse files
+                // beyond the hard read cap (the overwrite target can't be verified).
+                let len = match std::fs::metadata(&t) {
+                    Ok(m) => m.len(),
                     Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
+                };
+                if len > MAX_READ_FILE_BYTES {
+                    return tool_err(&too_large_error(len));
+                }
+                let current = match sha256_hex_file(&t) {
+                    Ok(h) => h,
+                    Err(e) => return tool_err(&e),
                 };
                 if current != expect_hash {
                     return tool_err(&ierr!(
@@ -555,7 +615,22 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                         continue;
                     }
                     scanned += 1;
-                    let c = match std::fs::read_to_string(&p) {
+                    // SEC-04: bounded per-file scan (first SEARCH_SCAN_FILE_CAP bytes);
+                    // non-UTF-8 files are skipped, same as the previous read_to_string path.
+                    let bytes = {
+                        use std::io::Read;
+                        match std::fs::File::open(&p) {
+                            Ok(mut f) => {
+                                let mut b = Vec::new();
+                                match (&mut f).take(SEARCH_SCAN_FILE_CAP).read_to_end(&mut b) {
+                                    Ok(_) => b,
+                                    Err(_) => continue,
+                                }
+                            }
+                            Err(_) => continue,
+                        }
+                    };
+                    let c = match String::from_utf8(bytes) {
                         Ok(c) => c,
                         Err(_) => continue,
                     };
@@ -642,6 +717,15 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             }
             if is_binary(&t) {
                 return tool_err(&ierr!("二进制文件: {}", "Binary file: {}", path));
+            }
+            // SEC-04: hard size cap before the in-memory replace (read_to_string on a
+            // multi-GB file would allocate proportionally).
+            let len = match std::fs::metadata(&t) {
+                Ok(m) => m.len(),
+                Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
+            };
+            if len > MAX_READ_FILE_BYTES {
+                return tool_err(&too_large_error(len));
             }
             let content = match std::fs::read_to_string(&t) {
                 Ok(c) => c,

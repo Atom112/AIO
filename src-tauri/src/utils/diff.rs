@@ -3,6 +3,21 @@
 //! Serves approval previews for the Agent file-modification tools: precomputes a
 //! Git-style unified diff for write_file / replace_in_file / delete_file for user confirmation.
 
+/// Preview source cap (SEC-04): only the head of oversized files feeds the preview —
+/// a multi-GB text file must not be read whole to render an 8000-byte diff.
+const PREVIEW_SOURCE_CAP: u64 = 2 * 1024 * 1024;
+
+/// Reads up to [`PREVIEW_SOURCE_CAP`] bytes of a file (UTF-8 lossy; missing file →
+/// empty string). Preview-only reads must stay bounded regardless of file size.
+fn read_preview_source(path: &std::path::Path) -> String {
+    use std::io::Read;
+    let mut buf: Vec<u8> = Vec::new();
+    if let Ok(mut f) = std::fs::File::open(path) {
+        let _ = (&mut f).take(PREVIEW_SOURCE_CAP).read_to_end(&mut buf);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
 /// Precompute the diff preview for file-modification tools (shown before approval).
 /// Returns (preview_diff, file_path); non-file-modification tools return (None, None).
 pub fn compute_diff_preview(
@@ -20,7 +35,7 @@ pub fn compute_diff_preview(
         "write_file" => {
             let new_content = arguments["content"].as_str().unwrap_or("");
             let old_content = full_path()
-                .and_then(|p| std::fs::read_to_string(&p).ok())
+                .map(|p| read_preview_source(&p))
                 .unwrap_or_default();
             let diff = simple_diff(
                 &old_content,
@@ -33,7 +48,7 @@ pub fn compute_diff_preview(
             let old_s = arguments["old_string"].as_str().unwrap_or("");
             let new_s = arguments["new_string"].as_str().unwrap_or("");
             let old_content = full_path()
-                .and_then(|p| std::fs::read_to_string(&p).ok())
+                .map(|p| read_preview_source(&p))
                 .unwrap_or_default();
             if old_content.contains(old_s) {
                 let new_content = old_content.replacen(old_s, new_s, 1);
@@ -49,7 +64,7 @@ pub fn compute_diff_preview(
         }
         "delete_file" => {
             let old_content = full_path()
-                .and_then(|p| std::fs::read_to_string(&p).ok())
+                .map(|p| read_preview_source(&p))
                 .unwrap_or_default();
             if old_content.is_empty() {
                 (None, file_path)

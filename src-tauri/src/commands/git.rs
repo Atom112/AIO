@@ -30,7 +30,10 @@ pub fn switch_git_branch(project_path: String, branch_name: String) -> Result<St
 /// Applicable to file modifications made by write_file / replace_in_file / delete_file.
 #[tauri::command]
 pub fn revert_file_change(project_path: String, file_path: String) -> Result<String, String> {
-    let status = std::process::Command::new("git")
+    // SEC-06: PATH-only git resolution (cwd = project dir must not be searched first)
+    let git = crate::utils::exec_resolve::resolve_executable("git")
+        .ok_or_else(|| ierr!("未在 PATH 中找到 git", "git not found on PATH"))?;
+    let status = std::process::Command::new(git)
         .args(["checkout", "HEAD", "--", &file_path])
         .current_dir(&project_path)
         .status()
@@ -49,9 +52,12 @@ pub fn revert_file_changes_batch(
     project_path: String,
     file_paths: Vec<String>,
 ) -> Result<Vec<String>, String> {
+    // SEC-06: PATH-only git resolution (see revert_file_change)
+    let git = crate::utils::exec_resolve::resolve_executable("git")
+        .ok_or_else(|| ierr!("未在 PATH 中找到 git", "git not found on PATH"))?;
     let mut results = Vec::new();
     for file_path in &file_paths {
-        let status = std::process::Command::new("git")
+        let status = std::process::Command::new(&git)
             .args(["checkout", "HEAD", "--", file_path])
             .current_dir(&project_path)
             .status()

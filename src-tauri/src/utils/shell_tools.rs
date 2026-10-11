@@ -810,15 +810,21 @@ pub fn execute_command(
     }
 
     // pick the shell per platform
-    let (shell, shell_arg) = if cfg!(windows) {
-        ("cmd", "/C")
-    } else {
-        ("sh", "-c")
+    let shell_name = if cfg!(windows) { "cmd" } else { "sh" };
+    let shell_arg = if cfg!(windows) { "/C" } else { "-c" };
+    // SEC-06: resolve the shell against PATH only — CreateProcess searches the cwd
+    // (the project root, model-writable) BEFORE PATH, so a planted `cmd.exe`/`sh`
+    // there must not be executed.
+    let Some(shell) = crate::utils::exec_resolve::resolve_executable(shell_name) else {
+        return tool_err(&format!(
+            "无法定位系统 shell（PATH 中未找到 {shell_name}），拒绝执行"
+        ));
     };
+    let shell = shell.to_string_lossy().into_owned();
 
     // Sandbox wrapping (Linux/macOS best-effort): replace the launch argv when available; otherwise run natively
     let sandbox_argv = crate::utils::sandbox::sandbox_command_prefix(
-        shell,
+        &shell,
         shell_arg,
         command,
         project_root,
@@ -903,9 +909,13 @@ pub fn execute_command(
                 {
                     let pid = c.id();
                     if pid > 0 {
-                        let _ = std::process::Command::new("kill")
-                            .args(["-KILL", &format!("-{pid}")])
-                            .status();
+                        // PATH-only resolution (SEC-06): never spawn a bare `kill`
+                        if let Some(kill) = crate::utils::exec_resolve::resolve_executable("kill") {
+                            let _ = std::process::Command::new(kill)
+                                .arg("-KILL")
+                                .arg(format!("-{pid}"))
+                                .status();
+                        }
                     }
                 }
                 let _ = c.kill();
@@ -961,7 +971,16 @@ fn execute_command_in_appcontainer(
     // the project root by the AC module). With the AppContainer attribute present,
     // executable resolution runs under the low-privilege token - the full path
     // (ComSpec) must be used; a bare "cmd" fails with ERROR_FILE_NOT_FOUND.
-    let cmd_path = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+    // SEC-06: if ComSpec is unset, fall back to PATH-only resolution (never a bare
+    // name, which would consult the project-root cwd).
+    let cmd_path = std::env::var("ComSpec")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            crate::utils::exec_resolve::resolve_executable("cmd")
+                .map(|p| p.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "cmd.exe".to_string());
     let cmdline = format!("{cmd_path} /C {command}");
     let (mut child, job) = match crate::utils::sandbox::spawn_in_appcontainer(
         &cmdline,

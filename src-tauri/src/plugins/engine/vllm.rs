@@ -264,7 +264,9 @@ impl LocalEnginePlugin for VllmPlugin {
         _port: u16,
         _gpu_layers: i32,
     ) -> std::process::Command {
-        std::process::Command::new("python")
+        // SEC-06: PATH-only resolution; unresolvable falls back to the bare name so the
+        // OS reports the native error (vLLM start surfaces a clear message either way).
+        std::process::Command::new(crate::utils::exec_resolve::resolve_or_keep("python"))
     }
 
     fn start<'a>(

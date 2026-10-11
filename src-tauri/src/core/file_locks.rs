@@ -23,7 +23,7 @@ use crate::ierr;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
@@ -34,6 +34,36 @@ pub const LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 /// Waits at least this long are logged (tracing) as coordination friction; timeouts always
 /// error to the model with the holder name.
 pub const CONTENTION_REPORT_AFTER: Duration = Duration::from_secs(3);
+
+/// Writer id recorded for files changed by `execute_command` (SEC-09): shell commands
+/// modify files outside the hashline protocol, so the last-writer entry must force a
+/// re-read (anchor_hash / expect_hash) before any agent write to those files.
+pub const COMMAND_WRITER_ID: &str = "command";
+
+/// Directories the post-command touch scan never descends into: agent commands
+/// regenerate their contents at scale (builds/installs), an agent writing there by
+/// hand is pathological, and skipping keeps the walk bounded.
+const SCAN_SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    ".cache",
+    ".gradle",
+    ".m2",
+];
+
+/// Max filesystem entries the post-command scan visits (runaway-tree guard).
+const SCAN_MAX_ENTRIES: usize = 100_000;
+/// Max files the scan marks per command; beyond that the walk stops early (the
+/// re-read guidance still reaches the model through the tool result itself).
+const SCAN_MAX_MARKS: usize = 5_000;
 
 struct LockEntry {
     sem: Arc<Semaphore>,
@@ -188,6 +218,64 @@ impl FileLockRegistry {
     pub fn mark_writer(&self, path: &str, writer_id: &str) {
         self.last_writers
             .insert(Self::key(path), writer_id.to_string());
+    }
+
+    /// SEC-09: single bounded walk under `root` marking every file whose mtime falls at
+    /// or after `since` as written by [`COMMAND_WRITER_ID`], so any subsequent agent
+    /// write to those files is forced through the hashline gate (re-read before edit).
+    ///
+    /// `since` is the command's start time; a 2-second mtime-granularity margin is
+    /// subtracted, which can false-positive on files modified just before the command —
+    /// safe (it only triggers an extra re-read). Files modified *while* the command ran
+    /// always fall inside the window. Returns the number of files marked.
+    pub fn mark_command_touched_files(&self, root: &std::path::Path, since: SystemTime) -> usize {
+        let since = since.checked_sub(Duration::from_secs(2)).unwrap_or(since);
+        let mut marked = 0usize;
+        let mut visited = 0usize;
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                visited += 1;
+                if visited > SCAN_MAX_ENTRIES {
+                    tracing::warn!(
+                        "[sec-09] 命令触碰扫描超过 {SCAN_MAX_ENTRIES} 个条目，提前中止（仅标记已发现的 {} 个文件）",
+                        marked
+                    );
+                    return marked;
+                }
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                if file_type.is_dir() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if !SCAN_SKIP_DIRS.contains(&name.as_ref()) {
+                        stack.push(entry.path());
+                    }
+                } else if file_type.is_file() {
+                    let Ok(metadata) = entry.metadata() else {
+                        continue;
+                    };
+                    let Ok(modified) = metadata.modified() else {
+                        continue;
+                    };
+                    if modified >= since {
+                        if marked >= SCAN_MAX_MARKS {
+                            tracing::warn!(
+                                "[sec-09] 单条命令触碰的文件超过 {SCAN_MAX_MARKS} 个，停止标记（后续写入请自行 read_file 校准）"
+                            );
+                            return marked;
+                        }
+                        marked += 1;
+                        self.mark_writer(&entry.path().to_string_lossy(), COMMAND_WRITER_ID);
+                    }
+                }
+            }
+        }
+        marked
     }
 
     /// Number of lock entries currently tracked (test assertions).
@@ -375,6 +463,64 @@ mod tests {
         assert_eq!(r.last_writer("/p/c.txt").as_deref(), Some("agent-a"));
         r.mark_writer("/p/c.txt", "agent-b");
         assert_eq!(r.last_writer("/p/c.txt").as_deref(), Some("agent-b"));
+    }
+
+    /// SEC-09: the post-command scan marks files modified inside the command window as
+    /// written by "command", skips untouched files and skipped dirs (node_modules),
+    /// and the cross-writer gate then demands an anchor from any agent writer.
+    #[test]
+    fn command_touch_scan_marks_modified_files_only() {
+        let r = registry();
+        let dir =
+            std::env::temp_dir().join(format!("aio-cmdscan-{}", uuid::Uuid::new_v4().simple()));
+        let sub = dir.join("sub");
+        let nm = dir.join("node_modules");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(&nm).unwrap();
+
+        let old_path = dir.join("old.txt");
+        std::fs::write(&old_path, "old").unwrap();
+        let hour_ago = SystemTime::now()
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap();
+        let f = std::fs::File::options()
+            .write(true)
+            .open(&old_path)
+            .unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(hour_ago))
+            .unwrap();
+        drop(f);
+
+        let new_path = sub.join("new.txt");
+        std::fs::write(&new_path, "new").unwrap();
+        let nm_path = nm.join("gen.txt");
+        std::fs::write(&nm_path, "gen").unwrap();
+
+        let marked = r.mark_command_touched_files(&dir, SystemTime::now());
+        assert_eq!(marked, 1, "只有窗口内修改的文件被标记");
+        assert_eq!(
+            r.last_writer(&new_path.to_string_lossy()).as_deref(),
+            Some(COMMAND_WRITER_ID),
+            "命令窗口内新增/修改的文件应标记为 command 写入"
+        );
+        assert!(
+            r.last_writer(&old_path.to_string_lossy()).is_none(),
+            "窗口前修改的文件不应被标记"
+        );
+        assert!(
+            r.last_writer(&nm_path.to_string_lossy()).is_none(),
+            "node_modules 应被扫描跳过"
+        );
+        // The gate then forces a re-read for any agent writing the touched file.
+        assert!(cross_writer_gate(
+            "replace_in_file",
+            &json!({"path": "x", "new_string": "y"}),
+            true,
+            Some(COMMAND_WRITER_ID),
+            "agent-a"
+        )
+        .is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Cross-writer gate: fresh files and same-writer sequences pass; a different last

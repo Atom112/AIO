@@ -59,11 +59,9 @@ impl LspClient {
         let language_id = language_id.into();
         let root_uri = path_to_uri(&project_root)?;
 
-        // Windows: resolve the command on PATH (mirrors resolve_command_on_path in MCP stdio)
-        #[cfg(windows)]
-        let program = resolve_lsp_command(command).unwrap_or_else(|| command.to_string());
-        #[cfg(not(windows))]
-        let program = command.to_string();
+        // SEC-06: canonical PATH-only resolution (also handles the Windows PATHEXT
+        // walk); falls back to the configured command so the OS reports the native error.
+        let program = crate::utils::exec_resolve::resolve_or_keep(command);
 
         let mut cmd = Command::new(&program);
         cmd.args(args)
@@ -434,38 +432,4 @@ fn spawn_stdout_reader(
 }
 
 // ====== Windows command resolution ======
-
-#[cfg(windows)]
-fn resolve_lsp_command(command: &str) -> Option<String> {
-    use std::path::{Path, PathBuf};
-
-    let p = Path::new(command);
-    if p.extension().is_some() {
-        return None;
-    }
-    let file_name = p.file_name()?;
-
-    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
-    let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
-
-    let dirs: Vec<PathBuf> = match p.parent() {
-        Some(d) if !d.as_os_str().is_empty() => vec![d.to_path_buf()],
-        _ => std::env::var("PATH")
-            .ok()?
-            .split(';')
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .collect(),
-    };
-
-    let file_name = file_name.to_string_lossy();
-    for dir in dirs {
-        for ext in &exts {
-            let candidate = dir.join(format!("{}{}", file_name, ext));
-            if candidate.is_file() {
-                return Some(candidate.to_string_lossy().into_owned());
-            }
-        }
-    }
-    None
-}
+// (removed: superseded by utils::exec_resolve, the repo-wide PATH-only resolver)

@@ -207,21 +207,35 @@ pub async fn execute_web_fetch(url_str: &str, max_bytes: Option<u64>) -> ToolRes
             || ct.contains("xml")
             || ct.contains("javascript");
         let is_html = ct.contains("html");
-        match resp.bytes().await {
-            Ok(bytes) => {
-                if bytes.len() as u64 > limit {
-                    return tool_err(&format!("响应体过大 ({}B > {limit}B)", bytes.len()));
-                }
-                let text = String::from_utf8_lossy(&bytes).to_string();
-                let result = if is_text && is_html {
-                    strip_html(&text)
-                } else {
-                    text
-                };
-                return tool_ok(truncate(&result, limit));
+        // SEC-08: never buffer the whole body. The declared Content-Length is checked
+        // first, then the stream is drained chunk by chunk and aborted the moment the
+        // limit is exceeded — a hostile/huge response cannot OOM the agent turn.
+        if let Some(len) = resp.content_length() {
+            if len > limit {
+                return tool_err(&format!("响应体过大 (Content-Length {len}B > {limit}B)"));
             }
-            Err(e) => return tool_err(&format!("读取响应失败: {e}")),
         }
+        let mut resp = resp;
+        let mut body: Vec<u8> = Vec::new();
+        loop {
+            match resp.chunk().await {
+                Ok(Some(chunk)) => {
+                    if body.len() as u64 + chunk.len() as u64 > limit {
+                        return tool_err(&format!("响应体过大 (> {limit}B)"));
+                    }
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(None) => break,
+                Err(e) => return tool_err(&format!("读取响应失败: {e}")),
+            }
+        }
+        let text = String::from_utf8_lossy(&body).to_string();
+        let result = if is_text && is_html {
+            strip_html(&text)
+        } else {
+            text
+        };
+        return tool_ok(truncate(&result, limit));
     }
 
     tool_err(&format!("重定向次数超过上限 ({MAX_REDIRECTS})"))

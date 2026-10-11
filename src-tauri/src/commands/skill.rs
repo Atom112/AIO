@@ -949,7 +949,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         }
 
         // 3) Scan global npm packages with skill-like traits (fallback)
-        let npm_output = std::process::Command::new("npm")
+        let npm_output = std::process::Command::new(resolve_command("npm"))
             .args(["list", "-g", "--depth=0", "--json"])
             .output();
         if let Ok(output) = npm_output {
@@ -1333,7 +1333,7 @@ pub async fn refresh_npx_skill(
 fn try_read_package_meta(package_name: &str) -> (String, String, String) {
     use std::io::Read;
 
-    let mut child = match std::process::Command::new("npm")
+    let mut child = match std::process::Command::new(resolve_command("npm"))
         .args(["list", "-g", "--depth=0", "--json"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -1396,43 +1396,12 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
     (String::new(), String::new(), "0.0.0".to_string())
 }
 
-/// Windows: resolves a bare command name (e.g. "npx") to a full path (e.g. "C:\...\npx.cmd").
-/// Process::Command does not search PATHEXT extensions, so this is done manually.
-/// Non-Windows returns the command name unchanged.
+/// Resolves a bare command name (e.g. "npx") to a full path when possible.
+/// Delegates to the canonical PATH-only resolver (SEC-06; also handles the Windows
+/// PATHEXT walk): bare-name spawns must not consult the current directory.
+/// Unresolvable names are returned unchanged so the OS produces its native error.
 fn resolve_command(command: &str) -> String {
-    #[cfg(windows)]
-    {
-        use std::path::{Path, PathBuf};
-        let p = Path::new(command);
-        if p.extension().is_some() {
-            return command.to_string();
-        }
-        let file_name = match p.file_name() {
-            Some(f) => f.to_string_lossy(),
-            None => return command.to_string(),
-        };
-        let pathext =
-            std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
-        let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
-        let dirs: Vec<PathBuf> = match p.parent() {
-            Some(d) if !d.as_os_str().is_empty() => vec![d.to_path_buf()],
-            _ => std::env::var("PATH")
-                .unwrap_or_default()
-                .split(';')
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-                .collect(),
-        };
-        for dir in dirs {
-            for ext in &exts {
-                let candidate = dir.join(format!("{}{}", file_name, ext));
-                if candidate.is_file() {
-                    return candidate.to_string_lossy().into_owned();
-                }
-            }
-        }
-    }
-    command.to_string()
+    crate::utils::exec_resolve::resolve_or_keep(command)
 }
 
 #[cfg(test)]

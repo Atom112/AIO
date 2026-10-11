@@ -83,13 +83,10 @@ impl super::McpServerPlugin for StdioPlugin {
 
         // Windows: `npx`/`npm`/`pnpm` are actually `.cmd` batch scripts; CreateProcess does
         // not resolve extensions via PATHEXT, so `Command::new("npx")` fails with "program not found".
-        // Resolve the bare command name to a full path (e.g. `C:\...\npx.cmd`) first; std then
-        // wraps execution with `cmd /C` automatically. Falls back to the original command when
-        // resolution fails, preserving the native error.
-        #[cfg(windows)]
-        let program = resolve_command_on_path(&command).unwrap_or_else(|| command.clone());
-        #[cfg(not(windows))]
-        let program = command.clone();
+        // SEC-06: the canonical PATH-only resolver both walks PATH×PATHEXT and prevents
+        // current-directory lookup (MCP server cwd may be a model-writable project dir).
+        // Falls back to the original command when resolution fails, preserving the native error.
+        let program = crate::utils::exec_resolve::resolve_or_keep(&command);
 
         // Build the tokio::process::Command
         // Do not inherit the full system env: clear it, then pass the whitelist + user-configured env (user config overrides the whitelist).
@@ -395,52 +392,6 @@ pub(crate) fn handle_server_notification(
             tracing::debug!("[mcp:{server_id}] 未消费的通知: {method}");
         }
     }
-}
-
-/// Windows: resolves a command name to a full executable path.
-///
-/// `CreateProcess` does not search extensions via `PATHEXT` the way `cmd.exe` does,
-/// and `npx`/`npm`/`pnpm` on Windows are actually `.cmd` batch scripts, so
-/// `Command::new("npx")` fails with "program not found". This manually walks
-/// `PATH` × `PATHEXT` to find the first existing file.
-///
-/// - Bare command name (e.g. `npx`): walk all PATH directories, appending PATHEXT extensions.
-/// - Bare name with a directory (e.g. `C:\nodejs\npx`): only append extensions within that directory.
-/// - Already has an extension: returns None; the caller falls back to the original command to preserve the native error.
-#[cfg(windows)]
-fn resolve_command_on_path(command: &str) -> Option<String> {
-    use std::path::{Path, PathBuf};
-
-    let p = Path::new(command);
-    if p.extension().is_some() {
-        return None;
-    }
-    let file_name = p.file_name()?;
-
-    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
-    let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
-
-    // If command contains a directory part, search only that directory; otherwise walk PATH
-    let dirs: Vec<PathBuf> = match p.parent() {
-        Some(d) if !d.as_os_str().is_empty() => vec![d.to_path_buf()],
-        _ => std::env::var("PATH")
-            .ok()?
-            .split(';')
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .collect(),
-    };
-
-    let file_name = file_name.to_string_lossy();
-    for dir in dirs {
-        for ext in &exts {
-            let candidate = dir.join(format!("{}{}", file_name, ext));
-            if candidate.is_file() {
-                return Some(candidate.to_string_lossy().into_owned());
-            }
-        }
-    }
-    None
 }
 
 /// Utility: derives the placeholder from an existing keyring account (for the UI to call before saving)

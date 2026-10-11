@@ -341,18 +341,30 @@ pub async fn check_mcp_catalog_runtime(package_type: String) -> Result<bool, Str
         "http" => return Ok(true),
         _ => return Ok(false),
     };
-    #[cfg(windows)]
-    let status = tokio::process::Command::new("cmd")
-        .args(["/C", command, "--version"])
-        .kill_on_drop(true)
-        .status()
-        .await;
-    #[cfg(not(windows))]
-    let status = tokio::process::Command::new(command)
-        .arg("--version")
-        .kill_on_drop(true)
-        .status()
-        .await;
+    // SEC-06: PATH-only resolution — an unresolvable runtime simply counts as absent.
+    let Some(runtime) = crate::utils::exec_resolve::resolve_executable(command) else {
+        return Ok(false);
+    };
+    let Some(shell) =
+        crate::utils::exec_resolve::resolve_executable(if cfg!(windows) { "cmd" } else { "sh" })
+    else {
+        return Ok(false);
+    };
+    // Windows batch wrappers (npx.cmd) must run through cmd /C; POSIX shebangs run via sh -c.
+    let status = if cfg!(windows) {
+        tokio::process::Command::new(shell)
+            .args(["/C", &runtime.to_string_lossy(), "--version"])
+            .kill_on_drop(true)
+            .status()
+            .await
+    } else {
+        tokio::process::Command::new(shell)
+            .arg("-c")
+            .arg(format!("{} --version", runtime.to_string_lossy()))
+            .kill_on_drop(true)
+            .status()
+            .await
+    };
     Ok(status.map(|value| value.success()).unwrap_or(false))
 }
 

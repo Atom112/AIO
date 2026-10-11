@@ -1002,11 +1002,36 @@ pub(crate) async fn execute_builtin_tool(
         #[cfg(not(windows))]
         let ac_dirs: Option<Vec<String>> = None;
         let root = tools_root.clone();
-        Ok(tokio::task::spawn_blocking(move || {
+        let started = std::time::SystemTime::now();
+        let result = tokio::task::spawn_blocking(move || {
             shell_tools::execute_command(&command, &root, timeout, allow_network, ac_dirs)
         })
         .await
-        .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic")))
+        .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic"));
+        // SEC-09: a successful command may have modified project files outside the
+        // hashline protocol. Mark files changed during its window so the next agent
+        // write to them is forced through the cross-writer gate (re-read first) —
+        // without this, a formatter/build/codegen command silently invalidates the
+        // model's stale file context and the next write clobbers its output.
+        if !result.is_error {
+            let registry: std::sync::Arc<crate::core::file_locks::FileLockRegistry> = app
+                .state::<std::sync::Arc<crate::core::file_locks::FileLockRegistry>>()
+                .inner()
+                .clone();
+            let scan_root = tools_root.clone();
+            let marked = tokio::task::spawn_blocking(move || {
+                registry.mark_command_touched_files(std::path::Path::new(&scan_root), started)
+            })
+            .await
+            .unwrap_or(0);
+            if marked > 0 {
+                tracing::debug!(
+                    "[sec-09] 命令窗口内 {} 个项目文件被触碰，已标记需重读",
+                    marked
+                );
+            }
+        }
+        Ok(result)
     } else if tool_name == "web_fetch" {
         let url = arguments["url"].as_str().unwrap_or("");
         let max_bytes = arguments["max_bytes"].as_u64();

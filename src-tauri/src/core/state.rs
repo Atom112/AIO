@@ -24,7 +24,184 @@ pub type StreamTaskKey = (String, String);
 pub type StreamTaskEntry = (JoinHandle<()>, CancellationToken, String);
 
 /// Concurrent map of active LLM streaming tasks.
+///
+/// 阶段5（报告第3项：并发 run_agent_turn 换代）：换代协议此前内联在两个命令层
+/// 调用点（call_llm_stream / run_agent_turn 各一份 remove→cancel→wait + 注册 +
+/// 身份注销）——协议本体收进本类型成为单一来源，并发换代语义随附集成测试
+/// （generation_tests：窗口内协作退出 / 越窗滞留旧代不腐蚀新代条目 / 身份不匹配
+/// 注销零效果）。
+#[derive(Clone)]
 pub struct StreamManager(pub Arc<DashMap<StreamTaskKey, StreamTaskEntry>>);
+
+impl StreamManager {
+    pub fn new() -> Self {
+        Self(Arc::new(DashMap::new()))
+    }
+
+    /// Registers a running stream task under `key` (assistant_id, topic_id).
+    pub fn register(
+        &self,
+        key: StreamTaskKey,
+        handle: JoinHandle<()>,
+        token: CancellationToken,
+        turn_id: String,
+    ) {
+        self.0.insert(key, (handle, token, turn_id));
+    }
+
+    /// stop_stream path: cancels the current task for `key` (cancel only, never abort —
+    /// the epilogue is guaranteed and the task removes its own entry via [`remove_own`]).
+    /// Returns whether a task was found.
+    pub fn cancel(&self, key: &StreamTaskKey) -> bool {
+        match self.0.get(key) {
+            Some(entry) => {
+                entry.1.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Generation replacement (LOOP-1): takes the OLD entry out, cancels it, and
+    /// awaits its epilogue bounded by `wait`. The old task's self-removal is
+    /// identity-matched ([`remove_own`]), so even a task that outlives `wait` —
+    /// e.g. stuck in a 300s command — can no longer corrupt the replacement's entry.
+    pub async fn replace_generation(&self, key: &StreamTaskKey, wait: std::time::Duration) {
+        if let Some((_, (old_handle, old_token, _))) = self.0.remove(key) {
+            old_token.cancel();
+            let _ = tokio::time::timeout(wait, old_handle).await;
+        }
+    }
+
+    /// Identity-matched self-removal (epilogue): removes the entry only when it still
+    /// belongs to THIS turn generation. After a replacement raced past its wait
+    /// window, the entry under `key` may already belong to the NEW task — a keyed
+    /// remove would orphan it (stop could never find it again). Returns whether the
+    /// caller's own entry was actually removed.
+    pub fn remove_own(&self, key: &StreamTaskKey, turn_id: &str) -> bool {
+        self.0
+            .remove_if(key, |_, (_, _, entry_turn)| entry_turn == turn_id)
+            .is_some()
+    }
+}
+
+#[cfg(test)]
+mod generation_tests {
+    //! 并发 run_agent_turn 换代（报告阶段5第3项）。
+    //!
+    //! 协议本体在 [`StreamManager`]（阶段5 从两个命令层调用点收敛而来），此处
+    //! 直接以真实 spawn 任务 + CancellationToken 驱动完整换代语义——
+    //! start_paused 使时间自动推进，睡眠时序确定且瞬时。
+
+    use super::*;
+    use std::time::Duration;
+
+    /// 旧代协作退出：cancel 后在窗口内完成收尾与自注销；换代后注册的新代
+    /// 可被 stop 找到并取消（无孤儿）。
+    #[tokio::test(start_paused = true)]
+    async fn replacement_cancels_cooperative_old_generation_within_window() {
+        let mgr = StreamManager::new();
+        let key = ("assistant-1".to_string(), "topic-1".to_string());
+
+        // Old task: waits on its token, then runs its epilogue (identity self-removal).
+        let old_token = CancellationToken::new();
+        let token_wait = old_token.clone();
+        let mgr_inner = mgr.clone();
+        let key_c = key.clone();
+        let old_handle = tokio::spawn(async move {
+            token_wait.cancelled().await;
+            // Epilogue
+            assert!(mgr_inner.remove_own(&key_c, "turn-old"));
+        });
+        mgr.register(key.clone(), old_handle, old_token, "turn-old".to_string());
+
+        // Replacement: old task exits promptly → entry already gone when the window closes.
+        mgr.replace_generation(&key, Duration::from_secs(10)).await;
+        assert!(mgr.0.get(&key).is_none(), "协作旧代应在窗口内完成自注销");
+
+        // New generation registers; stop must find and cancel it.
+        let new_token = CancellationToken::new();
+        let new_handle = tokio::spawn(std::future::pending::<()>());
+        mgr.register(
+            key.clone(),
+            new_handle,
+            new_token.clone(),
+            "turn-new".to_string(),
+        );
+        assert!(mgr.cancel(&key), "stop 应找到新代条目");
+        assert!(new_token.is_cancelled(), "stop 应取消新代令牌");
+    }
+
+    /// 旧代越窗滞留（如卡在 300s 命令）：换代的等待窗口超时后新代立即注册——
+    /// 滞留旧代随后才跑收尾，其身份注销必须不腐蚀新代条目；stop 仍能找到新代。
+    /// 这是 LOOP-1 的核心回归：历史的按键注销会把新代条目删成孤儿。
+    #[tokio::test(start_paused = true)]
+    async fn outliving_old_generation_cannot_corrupt_replacement_entry() {
+        let mgr = StreamManager::new();
+        let key = ("assistant-1".to_string(), "topic-2".to_string());
+
+        // Old task: stuck in a "long command" (sleep), THEN runs its late epilogue.
+        let old_token = CancellationToken::new();
+        let mgr_inner = mgr.clone();
+        let key_c = key.clone();
+        let old_handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await; // stuck past the window
+            let _removed = mgr_inner.remove_own(&key_c, "turn-old");
+            // 身份不匹配：返回 false，新代条目必须毫发无损
+            assert!(!_removed, "滞留旧代的注销不应命中任何条目");
+        });
+        mgr.register(key.clone(), old_handle, old_token, "turn-old".to_string());
+
+        // Replacement waits only 50ms → the stuck old task outlives the window.
+        mgr.replace_generation(&key, Duration::from_millis(50))
+            .await;
+
+        // New generation registers immediately.
+        let new_token = CancellationToken::new();
+        let new_handle = tokio::spawn(std::future::pending::<()>());
+        mgr.register(
+            key.clone(),
+            new_handle,
+            new_token.clone(),
+            "turn-new".to_string(),
+        );
+
+        // Let the outliving old task run its late epilogue (auto-advanced time).
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        let entry = mgr.0.get(&key);
+        assert!(entry.is_some(), "新代条目不得被滞留旧代腐蚀删除");
+        assert_eq!(entry.as_ref().unwrap().2, "turn-new");
+        // stop_stream still finds the NEW generation (no orphan)
+        assert!(mgr.cancel(&key));
+        assert!(new_token.is_cancelled());
+    }
+
+    /// 身份注销矩阵：持有者注销命中（返回 true），他人 turn_id 注销零效果
+    /// （返回 false 且条目保留）——旧按键注销无身份校验，任何旧代收尾都能
+    /// 删掉新代条目，本断言固化为该缺陷的回归防线。
+    #[tokio::test]
+    async fn identity_mismatch_removal_is_inert() {
+        let mgr = StreamManager::new();
+        let key = ("assistant-2".to_string(), "topic-3".to_string());
+        let token = CancellationToken::new();
+        let handle = tokio::spawn(std::future::pending::<()>());
+        mgr.register(key.clone(), handle, token, "turn-new".to_string());
+
+        // A late OLD generation's epilogue (foreign turn id): inert.
+        assert!(!mgr.remove_own(&key, "turn-old"));
+        assert!(
+            mgr.0.get(&key).is_some(),
+            "身份不匹配的注销不得删除新代条目"
+        );
+        assert_eq!(mgr.0.get(&key).unwrap().2, "turn-new");
+
+        // The owner's own removal works.
+        assert!(mgr.remove_own(&key, "turn-new"));
+        assert!(mgr.0.get(&key).is_none(), "持有者注销应清空条目");
+        assert!(!mgr.cancel(&key), "清空后 stop 返回 false");
+    }
+}
 
 /// Wraps the SQLite database connection
 pub struct DbState(pub parking_lot::Mutex<rusqlite::Connection>);

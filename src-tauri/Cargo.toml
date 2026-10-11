@@ -66,3 +66,8 @@ fastembed = { version = "4", default-features = false, features = ["ort-download
 # declaring it lets the download kill-recovery tests build synthetic 206
 # responses (reqwest::Response: From<http::Response>) without a live server.
 http = "1"
+# test-util (NOT part of tokio "full") enables #[tokio::test(start_paused)] for the
+# StreamManager generation tests — auto-advancing time makes the sleep-based
+# replacement-window sequencing deterministic and instant. Dev-only: the release
+# build keeps the lean runtime.
+tokio = { version = "1", features = ["test-util"] }

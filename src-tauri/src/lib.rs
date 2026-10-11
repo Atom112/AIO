@@ -19,7 +19,6 @@ use crate::plugins::engine::EngineManager;
 use crate::plugins::lsp::LspManager;
 use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
 use crate::services::memory::MemoryStoreManager;
-use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
@@ -92,7 +91,7 @@ pub fn run() {
         // fs, and the single shell open() usage now goes through opener.
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(StreamManager(Arc::new(dashmap::DashMap::new())))
+        .manage(StreamManager::new())
         .manage(LocalEngineState::new())
         .manage(EngineManager::new())
         .manage(McpServerManager::builtin())

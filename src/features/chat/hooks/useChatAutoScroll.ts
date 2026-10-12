@@ -138,25 +138,35 @@ export function useChatAutoScroll(deps: AutoScrollDeps) {
    *  Message rows use content-visibility: auto (contain-intrinsic-size: auto 100px); unrendered
    *  rows lay out as 100px placeholders, so one scrollTop assignment only reaches the placeholder
    *  bottom. Progressive rendering expands about one viewport per frame, so correction continues
-   *  over multiple frames until the position settles (cap 40 ≈ 200+ messages; short ones settle
-   *  in 2-3). Aborts on user scroll-up; the first snap runs in a microtask (DOM committed, not
-   *  yet painted), avoiding a one-frame flash at the wrong position. */
+   *  over multiple frames until the position settles (guard cap 60; short ones settle in 2-3).
+   *  Aborts on user scroll-up; the first snap runs in a microtask (DOM committed, not
+   *  yet painted), avoiding a one-frame flash at the wrong position.
+   *  Round-11 feedback fix: the loop used to exit on "two frames at the same scrollTop",
+   *  which happens early while placeholder rows are still collapsed — late height
+   *  expansion then drifted the view off the bottom with no further correction
+   *  ("auto-scroll fails / lands at the top of history"). Now it exits only when the
+   *  view is genuinely AT the bottom AND stable for two consecutive frames. */
   const snapToLatestOnTopicSwitch = () => {
     queueMicrotask(() => {
       if (!scrollContainerRef() || userScrolledUp) return;
       snapToBottom();
       let lastTop = -1;
       let guard = 0;
+      let settledFrames = 0;
       const step = () => {
         const el = scrollContainerRef();
-        if (!el || userScrolledUp || guard >= 40) return;
+        if (!el || userScrolledUp || guard >= 60) return;
         snapToBottom();
         const cur = el.scrollTop;
-        if (cur !== lastTop) {
-          lastTop = cur;
-          guard += 1;
-          requestAnimationFrame(step);
+        if (isAtBottom() && cur === lastTop) {
+          settledFrames += 1;
+          if (settledFrames >= 2) return; // at the bottom and stable — done
+        } else {
+          settledFrames = 0;
         }
+        lastTop = cur;
+        guard += 1;
+        requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
     });

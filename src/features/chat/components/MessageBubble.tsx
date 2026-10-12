@@ -108,7 +108,12 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
   const isActiveRound = createMemo(
     () => index() === props.parentTypingIndex() && props.isThinking(),
   );
-  const fileChanges = msg.role === 'assistant' ? aggregateFileChanges(msg) : [];
+  // Reactive: streaming updates now mutate the message in place (produce, no row
+  // remount), so the aggregation must track msg.toolCalls itself instead of being
+  // computed once at setup (it used to rely on remounts to refresh).
+  const fileChanges = createMemo(() =>
+    msg.role === 'assistant' ? aggregateFileChanges(msg) : ([] as AggregatedFileChange[]),
+  );
   return (
     <Show when={msg.role !== 'tool'}>
       <div class="flex items-start gap-2 mb-3">
@@ -655,10 +660,10 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
           </div>
 
           {/* File Changes box (assistant messages only, shown when there are file changes) */}
-          <Show when={fileChanges.length > 0}>
+          <Show when={fileChanges().length > 0}>
             {(() => {
               const isReverted = () => props.isReverted(msg.id, index());
-              const diffStats = () => aggregateDiffStats(fileChanges);
+              const diffStats = () => aggregateDiffStats(fileChanges());
               const showUndo = () => !props.isReverted(msg.id, index()) && props.showUndo();
               const handleUndoAll = async () => {
                 const projectPath = props.project()?.path;
@@ -666,7 +671,7 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
                 try {
                   await revertFileChangesBatch(
                     projectPath,
-                    fileChanges.map((fc) => fc.filePath),
+                    fileChanges().map((fc) => fc.filePath),
                   );
                   props.markReverted(msg.id ?? String(index()));
                 } catch (err) {
@@ -716,7 +721,7 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
                     </Show>
                     <span style={{ color: 'rgba(var(--text-base-rgb),0.25)' }}>
                       {t('agent.diff.files', {
-                        count: formatNumber(fileChanges.length),
+                        count: formatNumber(fileChanges().length),
                       })}
                     </span>
                     <Show when={diffStats().added > 0 || diffStats().deleted > 0}>
@@ -779,7 +784,7 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
                     </Show>
                   </div>
                   <div class="p-2">
-                    <DiffView changes={fileChanges} allReverted={isReverted()} />
+                    <DiffView changes={fileChanges()} allReverted={isReverted()} />
                   </div>
                 </div>
               );

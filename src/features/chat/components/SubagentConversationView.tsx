@@ -18,6 +18,7 @@ import {
   createEffect,
   Show,
   For,
+  Index,
   onCleanup,
   type JSX,
 } from 'solid-js';
@@ -458,13 +459,17 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
               </div>
             </Show>
 
-            {/* Subagent per-turn thinking + narration + tool executions: left assistant bubble */}
-            <For each={turns()}>
+            {/* Subagent per-turn thinking + narration + tool executions: left assistant bubble.
+                <Index> (position-keyed), not <For>: the turns memo rebuilds turn OBJECTS on every
+                streamed delta, and <For> compares by reference — it would destroy/recreate every
+                bubble per token, replaying ThinkBlock's entrance animation (the "flicker") and
+                resetting its inner scroll. Index keeps each row's DOM alive across rebuilds. */}
+            <Index each={turns()}>
               {(turn) =>
                 agentRow(
                   <>
                     <Show
-                      when={turn.text || turn.tools.length > 0 || turn.thinking}
+                      when={turn().text || turn().tools.length > 0 || turn().thinking}
                       fallback={
                         <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
                           <Icon name="spinner" size={14} class="animate-spin opacity-50" />
@@ -473,30 +478,30 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
                       }
                     >
                       {/* Streamed chain of thought (live while running, collapsible after) */}
-                      <Show when={turn.thinking?.summary}>
+                      <Show when={turn().thinking?.summary}>
                         <ThinkBlock
-                          content={turn.thinking!.summary || ''}
-                          isStreaming={turn.thinking?.status === 'running'}
+                          content={turn().thinking!.summary || ''}
+                          isStreaming={turn().thinking?.status === 'running'}
                         />
                       </Show>
-                      <Show when={turn.text}>
+                      <Show when={turn().text}>
                         <div class="mt-1 text-[13px]">
-                          <Markdown content={turn.text} />
+                          <Markdown content={turn().text} />
                         </div>
                       </Show>
-                      <Show when={turn.tools.length > 0}>
+                      <Show when={turn().tools.length > 0}>
                         <div
                           class="flex flex-col gap-1"
-                          classList={{ 'mt-2': !!turn.text || !!turn.thinking?.summary }}
+                          classList={{ 'mt-2': !!turn().text || !!turn().thinking?.summary }}
                         >
-                          <For each={turn.tools}>{(tool) => <ToolRow step={tool} />}</For>
+                          <For each={turn().tools}>{(tool) => <ToolRow step={tool} />}</For>
                         </div>
                       </Show>
                     </Show>
                   </>,
                 )
               }
-            </For>
+            </Index>
 
             {/* Working: trailing bubble (executing tools / waiting for the next turn's output) */}
             <Show when={isRunning()}>

@@ -11,6 +11,7 @@
 // (core/store/store + core/store/stream), so no page component needs to outlive them.
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { produce } from 'solid-js/store';
 import { EVENTS } from '../../../core/api/events';
 import type {
   LlmRoundStartPayload,
@@ -116,49 +117,36 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     const topic = asst?.topics.find((tp) => tp.id === batch.topicId);
     const idx = topic?.history.findIndex((m) => m.id === batch.messageId) ?? -1;
     if (!topic || idx < 0) return; // message gone (mid-window compaction) — drop
-    if (batch.content) {
-      setDatas(
-        'assistants',
-        (a) => a.id === batch.assistantId,
-        'topics',
-        (tp) => tp.id === batch.topicId,
-        'history',
-        idx,
-        'content',
-        (old) => (typeof old === 'string' ? old : '') + batch.content,
-      );
-    }
-    if (batch.reasoning) {
-      setDatas(
-        'assistants',
-        (a) => a.id === batch.assistantId,
-        'topics',
-        (tp) => tp.id === batch.topicId,
-        'history',
-        idx,
-        'reasoning',
-        (old) => (typeof old === 'string' ? old : '') + batch.reasoning,
-      );
-    }
-    if (batch.agentStepsContent || batch.reasoning) {
-      setDatas(
-        'assistants',
-        (a) => a.id === batch.assistantId,
-        'topics',
-        (tp) => tp.id === batch.topicId,
-        'history',
-        idx,
-        'agentSteps',
-        (steps: AgentStep[] = []) => {
-          let out = steps;
+    // UI-flicker fix (round-11 feedback): mutate the message IN PLACE via produce.
+    // Solid path setters rebuild every object along the path, so the previous three
+    // setDatas calls produced a fresh message reference per flush — the streaming
+    // row remounted under <For> every ~80ms, replaying every CSS entrance animation
+    // (stream fade-in, ThinkBlock expand-width) and resetting inner scroll positions:
+    // the "thinking chain flickers per token" symptom. produce keeps the message
+    // identity stable; fine-grained store proxies still notify every reader.
+    setDatas(
+      'assistants',
+      (a) => a.id === batch.assistantId,
+      'topics',
+      (tp) => tp.id === batch.topicId,
+      'history',
+      idx,
+      produce((msg) => {
+        const m = msg as Message;
+        if (batch.content)
+          m.content = (typeof m.content === 'string' ? m.content : '') + batch.content;
+        if (batch.reasoning)
+          m.reasoning = (typeof m.reasoning === 'string' ? m.reasoning : '') + batch.reasoning;
+        if (batch.agentStepsContent || batch.reasoning) {
+          let steps: AgentStep[] = Array.isArray(m.agentSteps) ? m.agentSteps : [];
           if (batch.reasoning)
-            out = appendTimelineStep(out, 'thinking', 'thinkingText', batch.reasoning);
+            steps = appendTimelineStep(steps, 'thinking', 'thinkingText', batch.reasoning);
           if (batch.agentStepsContent)
-            out = appendTimelineStep(out, 'content', 'contentText', batch.agentStepsContent);
-          return out;
-        },
-      );
-    }
+            steps = appendTimelineStep(steps, 'content', 'contentText', batch.agentStepsContent);
+          m.agentSteps = steps;
+        }
+      }),
+    );
   };
 
   // Append one chunk (content or reasoning) to the stream's batch, creating the batch
@@ -209,6 +197,9 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
   // Shared mutator: applies fn to the subagentSteps array of the given subagent
   // inside the last assistant message of the (assistant, topic). All subagent-*
   // listeners below funnel through it.
+  // produce-based: mutates the message in place — the previous spread-rebuild
+  // replaced the history item reference per delta, remounting the parent row and
+  // replaying its entrance animations while a subagent streamed (per-token flicker).
   const mutateSubagentSteps = (
     parentAssistantId: string,
     parentTopicId: string,
@@ -221,26 +212,20 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       'topics',
       (t) => t.id === parentTopicId,
       'history',
-      (h) => {
-        const lastIdx = h.length - 1;
-        if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-        const msg = h[lastIdx];
+      produce((h) => {
+        const list = h as Message[];
+        const lastIdx = list.length - 1;
+        if (lastIdx < 0 || list[lastIdx]?.role !== 'assistant') return;
+        const msg = list[lastIdx];
         const steps: AgentStep[] = msg.agentSteps || [];
         const subIdx = steps.findIndex((s) => s.subagentId === subagentId);
-        if (subIdx < 0) return h;
+        if (subIdx < 0) return;
         const subStep = steps[subIdx];
-        const updatedSub = {
+        steps[subIdx] = {
           ...subStep,
           subagentSteps: mutate(subStep.subagentSteps || []),
         };
-        return [
-          ...h.slice(0, lastIdx),
-          {
-            ...msg,
-            agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
-          },
-        ];
-      },
+      }),
     );
   };
 
@@ -296,7 +281,8 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           if (lastMsg?.role === 'assistant') {
             // Flush anything still batched for this stream before resetting the message
             flushStreamBatch(streamKey(assistant_id, topic_id));
-            // Close the currently running step
+            // Close the currently running step + reset content/reasoning for the new
+            // round — one in-place produce (see flushStreamBatch for the remount rationale)
             const now = Date.now();
             setDatas(
               'assistants',
@@ -305,29 +291,21 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               (t) => t.id === topic_id,
               'history',
               lastIdx,
-              'agentSteps',
-              (steps: AgentStep[] = []): AgentStep[] => {
-                if (steps.length === 0) return steps;
+              produce((draft) => {
+                const m = draft as Message;
+                const steps: AgentStep[] = Array.isArray(m.agentSteps) ? m.agentSteps : [];
                 const last = steps[steps.length - 1];
-                if (last.status !== 'running') return steps;
-                return [
-                  ...steps.slice(0, -1),
-                  { ...last, status: 'complete', duration: now - last.timestamp },
-                ];
-              },
-            );
-            // Reset content / reasoning to receive the new round's output
-            setDatas(
-              'assistants',
-              (a) => a.id === assistant_id,
-              'topics',
-              (t) => t.id === topic_id,
-              'history',
-              lastIdx,
-              {
-                content: '',
-                reasoning: '',
-              },
+                if (last && last.status === 'running') {
+                  steps[steps.length - 1] = {
+                    ...last,
+                    status: 'complete',
+                    duration: now - last.timestamp,
+                  };
+                  m.agentSteps = steps;
+                }
+                m.content = '';
+                m.reasoning = '';
+              }),
             );
             // Typewriter index stays unchanged (still pointing at the same message)
             return;
@@ -497,42 +475,40 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'topics',
         (t) => t.id === topic_id,
         'history',
-        (h) => {
+        produce((hDraft) => {
+          // In-place (produce): keeps the message identity stable so the row does not
+          // remount and replay its entrance animations on every tool event.
+          const h = hDraft as Message[];
           const lastIdx = h.length - 1;
-          if (lastIdx >= 0 && h[lastIdx]?.role === 'assistant') {
-            const msg = h[lastIdx];
-            // Keep the toolCalls array (used when rebuilding messages)
-            const existing = msg.toolCalls || [];
-            if (existing.find((tc) => tc.id === tool_call_id)) return h;
-            const newToolCalls = [...existing, newTc];
-            // Build agentSteps: close the previous step and add a new tool_call step
-            const now = Date.now();
-            const steps: AgentStep[] = msg.agentSteps || [];
-            const lastStep = steps[steps.length - 1];
-            const closed: AgentStep[] =
-              lastStep && lastStep.status === 'running'
-                ? [
-                    ...steps.slice(0, -1),
-                    { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
-                  ]
-                : steps;
-            const newSteps: AgentStep[] = [
-              ...closed,
-              {
-                id: crypto.randomUUID(),
-                type: 'tool_call',
-                timestamp: now,
-                status: 'running',
-                toolCall: newTc,
-              },
-            ];
-            return [
-              ...h.slice(0, lastIdx),
-              { ...msg, toolCalls: newToolCalls, agentSteps: newSteps },
-            ];
-          }
-          return h;
-        },
+          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return;
+          const msg = h[lastIdx];
+          // Keep the toolCalls array (used when rebuilding messages)
+          const existing = msg.toolCalls || [];
+          if (existing.find((tc) => tc.id === tool_call_id)) return;
+          const newToolCalls: ToolCallDisplay[] = [...existing, newTc];
+          // Build agentSteps: close the previous step and add a new tool_call step
+          const now = Date.now();
+          const steps: AgentStep[] = msg.agentSteps || [];
+          const lastStep = steps[steps.length - 1];
+          const closed: AgentStep[] =
+            lastStep && lastStep.status === 'running'
+              ? [
+                  ...steps.slice(0, -1),
+                  { ...lastStep, status: 'complete', duration: now - lastStep.timestamp },
+                ]
+              : steps;
+          msg.toolCalls = newToolCalls;
+          msg.agentSteps = [
+            ...closed,
+            {
+              id: crypto.randomUUID(),
+              type: 'tool_call',
+              timestamp: now,
+              status: 'running',
+              toolCall: newTc,
+            },
+          ];
+        }),
       );
     }),
     // Tool execution result: update the matching toolCall state on the assistant message and the agentSteps timeline
@@ -553,18 +529,19 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'topics',
         (t) => t.id === topic_id,
         'history',
-        (h) =>
-          h.map((m) => {
-            if (m.role !== 'assistant' || !m.toolCalls) return m;
-            // CHAT-6: 未命中即原样返回，保持引用稳定——<For> 按引用比较，此前
-            // 每个工具事件都无条件产出新数组/新对象，整列消息行重挂载
-            // （AgentProcessBlock 被迫长出模块级渲染队列对抗它）
+        produce((hDraft) => {
+          // In-place: only the hit message mutates (field assignment on the draft);
+          // no history/message reference churn, no row remounts.
+          const h = hDraft as Message[];
+          for (let i = h.length - 1; i >= 0; i--) {
+            const m = h[i];
+            if (m.role !== 'assistant' || !m.toolCalls) continue;
             const hitToolCall = m.toolCalls.some((tc) => tc.id === tool_call_id);
             const hitStep = (m.agentSteps || []).some(
               (s) => s.type === 'tool_call' && s.toolCall?.id === tool_call_id,
             );
-            if (!hitToolCall && !hitStep) return m;
-            const newToolCalls = m.toolCalls.map((tc): ToolCallDisplay =>
+            if (!hitToolCall && !hitStep) continue;
+            m.toolCalls = m.toolCalls.map((tc): ToolCallDisplay =>
               tc.id === tool_call_id
                 ? {
                     ...tc,
@@ -579,7 +556,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
             );
             // Also update the matching tool_call step in agentSteps
             const now = Date.now();
-            const newSteps = (m.agentSteps || []).map((s): AgentStep => {
+            m.agentSteps = (m.agentSteps || []).map((s): AgentStep => {
               if (s.type === 'tool_call' && s.toolCall?.id === tool_call_id) {
                 return {
                   ...s,
@@ -599,8 +576,9 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               }
               return s;
             });
-            return { ...m, toolCalls: newToolCalls, agentSteps: newSteps };
-          }),
+            break; // tool_call_id lives in exactly one message
+          }
+        }),
       );
     }),
     // In-run context compaction event: only main-agent compaction updates conversation memory —
@@ -652,20 +630,23 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           'topics',
           (t: Topic) => t.id === topic_id,
           'history',
-          (h: Message[]) => {
+          produce((hDraft) => {
+            const h = hDraft as Message[];
             const lastIdx = h.length - 1;
-            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+            if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return;
             const msg = h[lastIdx];
             const steps: AgentStep[] = msg.agentSteps ?? [];
-            const newStep: AgentStep = {
-              id: 'handoff-' + Date.now(),
-              type: 'content',
-              timestamp: Date.now(),
-              status: 'complete',
-              contentText: t('agent.handoff.note', { path }),
-            };
-            return [...h.slice(0, lastIdx), { ...msg, agentSteps: [...steps, newStep] }];
-          },
+            msg.agentSteps = [
+              ...steps,
+              {
+                id: 'handoff-' + Date.now(),
+                type: 'content',
+                timestamp: Date.now(),
+                status: 'complete',
+                contentText: t('agent.handoff.note', { path }),
+              },
+            ];
+          }),
         );
       },
     ),
@@ -772,25 +753,28 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'topics',
         (t) => t.id === parent_topic_id,
         'history',
-        (h) => {
+        produce((hDraft) => {
+          const h = hDraft as Message[];
           const lastIdx = h.length - 1;
-          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return;
           const msg = h[lastIdx];
           const steps: AgentStep[] = msg.agentSteps || [];
-          const newStep: AgentStep = {
-            id: `subagent-${subagent_id}`,
-            type: 'subagent',
-            timestamp: Date.now(),
-            status: 'running',
-            subagentId: subagent_id,
-            subagentProfile: profile_id,
-            subagentName: profile_name,
-            subagentTask: task_summary,
-            subagentSteps: [],
-            subagentResult: '',
-          };
-          return [...h.slice(0, lastIdx), { ...msg, agentSteps: [...steps, newStep] }];
-        },
+          msg.agentSteps = [
+            ...steps,
+            {
+              id: `subagent-${subagent_id}`,
+              type: 'subagent',
+              timestamp: Date.now(),
+              status: 'running',
+              subagentId: subagent_id,
+              subagentProfile: profile_id,
+              subagentName: profile_name,
+              subagentTask: task_summary,
+              subagentSteps: [],
+              subagentResult: '',
+            },
+          ];
+        }),
       );
     }),
 
@@ -873,28 +857,23 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'topics',
         (t) => t.id === parent_topic_id,
         'history',
-        (h) => {
+        produce((hDraft) => {
+          const h = hDraft as Message[];
           const lastIdx = h.length - 1;
-          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return;
           const msg = h[lastIdx];
           const steps: AgentStep[] = msg.agentSteps || [];
           const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
-          if (subIdx < 0) return h;
+          if (subIdx < 0) return;
           const subStep = steps[subIdx];
-          const updatedSub: AgentStep = {
+          steps[subIdx] = {
             ...subStep,
             status: 'complete',
             duration: finishTime - subStep.timestamp,
             subagentResult: result || '',
           };
-          return [
-            ...h.slice(0, lastIdx),
-            {
-              ...msg,
-              agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
-            },
-          ];
-        },
+          msg.agentSteps = steps;
+        }),
       );
     }),
 
@@ -907,28 +886,23 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'topics',
         (t) => t.id === parent_topic_id,
         'history',
-        (h) => {
+        produce((hDraft) => {
+          const h = hDraft as Message[];
           const lastIdx = h.length - 1;
-          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return;
           const msg = h[lastIdx];
           const steps: AgentStep[] = msg.agentSteps || [];
           const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
-          if (subIdx < 0) return h;
+          if (subIdx < 0) return;
           const subStep = steps[subIdx];
-          const updatedSub: AgentStep = {
+          steps[subIdx] = {
             ...subStep,
             status: 'error',
             duration: Date.now() - subStep.timestamp,
             subagentResult: error || t('agent.sub.error'),
           };
-          return [
-            ...h.slice(0, lastIdx),
-            {
-              ...msg,
-              agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
-            },
-          ];
-        },
+          msg.agentSteps = steps;
+        }),
       );
     }),
     // ---- Workflow events ----

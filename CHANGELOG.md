@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### 🎨 界面视觉修复五连（本轮用户反馈）
+
+- **流式闪烁根修（消息身份稳定化）**：`flushStreamBatch`（80ms 批处理）此前每次 flush 用 3 次 `setDatas` 路径更新——Store 的路径 setter 会**重建路径上每个对象**（消息引用每 80ms 变一次），`<For>` 按引用比较 → 流式中的消息行每个 flush 重挂载一次 → 气泡入场动画（`animate-stream-fade-in`、ThinkBlock 展开动画）逐 token 重放（用户看到的"闪烁卡顿"）。现流式路径全部消息更新改为 `produce()` 原地变异（solid-js/store）：flushStreamBatch 合并为单次 produce（content+reasoning+agentSteps）、子代理步骤/回合开始/工具调用/工具结果/交接/子代理起止共 8 组监听器同步转换——消息对象引用稳定，细粒度代理仍精确通知；`MessageBubble.fileChanges` 改 `createMemo` 跟踪 `msg.toolCalls`（原地变异下引用比较失效的配套修复）
+- **自动滚动修复（主视图 + 思维链内部）**：① 话题切换回底 snap 的 rAF 渐进校正循环，此前在 content-visibility 占位行逐帧撑高时提前退出 → 用户看到"闪到消息记录最前端"；现退出条件收紧为「触底且 scrollTop 连续 2 帧稳定」，守卫上限 40→60；② ThinkBlock 内部此前完全不跟随流式增长——新增 body 滚动跟随（流式中贴底、滚轮上翻即暂停、回到底部自动恢复）；AgentProcessBlock StepCard 思考体同款处理
+- **子智能体视图逐 token 重挂载修复**：`SubagentConversationView` 回合列表 `<For>` → `<Index>`（turns memo 每 delta 重建 turn 对象，`<For>` 引用比较导致子代理视图 ThinkBlock 同样逐 token 重放入场动画）；Index 按位置持行，DOM 跨重建存活
+- **任务清单并入状态条（DSH 风格）**：TaskBoardPanel 从消息记录上方的独立灰主题面板（`bg-gray-800` 硬编码）改为状态条内嵌分区——展开时状态条向上生长显示任务行（CSS 变量配色、in_progress 主色脉冲点、completed 划线），点击摘要行可收起；收起态状态条仅多一行「任务清单：N项 已完成M项 待处理K项」（i18n 双语）
+- **授权/提问弹窗并入状态条**：ToolApprovalBubble 与 ask_user 问答不再以卡片插入消息流（打断阅读位置），改在状态条内展开（max-h 45vh 可滚动，与状态行以分隔线相隔）
+- **输入框高度响应式修复**：textarea 高度此前只在 onInput 手动设置、只在 Enter 键分支重置——按钮发送（或任何清空输入的路径）后高度不回落，需再按一次回车才恢复。现高度由 `createEffect` 从 `props.inputMessage` 信号驱动：任何路径（输入、发送清空、/命令填充）都即时重算（空→40px，长文→min(scrollHeight, 200)）
+- exe 已重建（dist 重嵌）；`npm run check:frontend` 全绿（rgba 棘轮持平 173）
+
 ### ✅ 第十一轮复测：三项目标全部确认（全绿轮）
 
 - **第十一轮结论**：① 主代理直执通过（full 工具集 + 提示词策略修复生效，时间线无子代理卡片）；② 子智能体实时流式通过（四项操作员观察全中：卡片进度行/正文流式/工具行实时/思考块）；③ **P1-6 判决性确认**——授权后重试返回 git 自身的 `拒绝访问。`（EDR 层）而非「AppContainer 沙箱启动失败」，随后 `ver` 正常，沙箱未被砖；④ 记忆语义排序正常。终端日志拍下完整管线时序：触发 `16:21:49.163` → 授权重试 `16:22:00.429`（**11 秒完成点击→路由→重试**——round-10「解耦」误判的最终铁证）

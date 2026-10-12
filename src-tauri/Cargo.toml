@@ -20,8 +20,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.3", features = ["protocol-asset", "macos-private-api"] }
-tauri-plugin-opener = "2"
+# Version alignment: the tauri crate minor MUST match the @tauri-apps/api npm
+# package minor (tauri-build's check fails the build on drift — the npm side is
+# locked to ~2.12). Plugin crate minors likewise match their npm packages
+# (~2.7 opener / ~2.7 dialog). Keep this table in sync with package.json.
+tauri = { version = "2.12", features = ["protocol-asset", "macos-private-api"] }
+tauri-plugin-opener = "2.7"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -115,7 +115,49 @@ fn init_project_dir(project_path: &str) -> Result<(), String> {
         })?;
     }
 
+    // Keep the agent's runtime metadata out of `git status`: when the directory is
+    // a git repo, ensure .gitignore covers `.aio/` (best-effort — a read-only or
+    // unusual repo must never break adding the project).
+    if let Err(e) = ensure_aio_gitignored(project_path) {
+        tracing::warn!("[project] .gitignore 维护失败（忽略）: {e}");
+    }
+
     Ok(())
+}
+
+/// Ensures the project's `.gitignore` lists `.aio/` (the agent's runtime metadata
+/// dir: memory DB, MCP config, skills). Creates the file when the repo has none;
+/// appends when the entry is missing; no-op otherwise. Only acts inside a git
+/// repository (a `.git` entry is present). Pure-enough helper: unit-tested on
+/// temp dirs (create/append/idempotent/non-git no-op cases).
+pub(crate) fn ensure_aio_gitignored(project_path: &str) -> Result<bool, String> {
+    let root = std::path::Path::new(project_path);
+    if !root.join(".git").exists() {
+        return Ok(false); // not a git repo — nothing to do
+    }
+    const ENTRY: &str = ".aio/";
+    let gi = root.join(".gitignore");
+    let existing = std::fs::read_to_string(&gi).unwrap_or_default();
+    for line in existing.lines() {
+        let t = line.trim();
+        if t == ENTRY || t == ".aio" || t == "/.aio/" || t == "/.aio" {
+            return Ok(false); // already covered
+        }
+    }
+    let addition = if existing.is_empty() {
+        format!("# AIO agent runtime metadata (memory DB, MCP/skill config)\n{ENTRY}\n")
+    } else {
+        let sep = if existing.ends_with('\n') { "" } else { "\n" };
+        format!("{sep}\n# AIO agent runtime metadata (memory DB, MCP/skill config)\n{ENTRY}\n")
+    };
+    std::fs::write(&gi, format!("{existing}{addition}")).map_err(|e| {
+        ierr!(
+            ".gitignore 写入失败: {}",
+            "Failed to write .gitignore: {}",
+            e
+        )
+    })?;
+    Ok(true)
 }
 
 /// Create a new project.
@@ -303,4 +345,68 @@ pub fn project_skills_path(project_path: &str) -> PathBuf {
     PathBuf::from(project_path)
         .join(AIO_DIR)
         .join("skills.json")
+}
+
+#[cfg(test)]
+mod gitignore_tests {
+    use super::ensure_aio_gitignored;
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("aio-gitignore-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Git repo without .gitignore → the file is created with the .aio/ entry.
+    #[test]
+    fn creates_gitignore_in_git_repo() {
+        let dir = temp_root("create");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        assert!(ensure_aio_gitignored(dir.to_str().unwrap()).unwrap());
+        let content = std::fs::read_to_string(dir.join(".gitignore")).unwrap();
+        assert!(content.lines().any(|l| l.trim() == ".aio/"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Existing .gitignore without the entry → appended exactly once.
+    #[test]
+    fn appends_entry_to_existing_gitignore() {
+        let dir = temp_root("append");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".gitignore"), "target/\nnode_modules/\n").unwrap();
+        assert!(ensure_aio_gitignored(dir.to_str().unwrap()).unwrap());
+        let content = std::fs::read_to_string(dir.join(".gitignore")).unwrap();
+        assert!(content.starts_with("target/\nnode_modules/\n"));
+        assert_eq!(content.matches(".aio/").count(), 1, "不得重复追加");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Entry already present (any common spelling) → no-op, content untouched.
+    #[test]
+    fn idempotent_when_entry_present() {
+        for spelling in [".aio/", ".aio", "/.aio/", "/.aio"] {
+            let dir = temp_root("idem");
+            std::fs::create_dir_all(dir.join(".git")).unwrap();
+            let original = format!("target/\n{spelling}\n");
+            std::fs::write(dir.join(".gitignore"), &original).unwrap();
+            assert!(!ensure_aio_gitignored(dir.to_str().unwrap()).unwrap());
+            assert_eq!(
+                std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
+                original,
+                "{spelling} 已覆盖时不得改动"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// Not a git repo → no-op, no file created.
+    #[test]
+    fn non_git_repo_is_noop() {
+        let dir = temp_root("nogit");
+        assert!(!ensure_aio_gitignored(dir.to_str().unwrap()).unwrap());
+        assert!(!dir.join(".gitignore").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -617,7 +617,9 @@ pub async fn execute_web_fetch(url_str: &str, max_bytes: Option<u64>) -> ToolRes
         // limit is exceeded — a hostile/huge response cannot OOM the agent turn.
         if let Some(len) = resp.content_length() {
             if len > limit {
-                return tool_err(&format!("响应体过大 (Content-Length {len}B > {limit}B)"));
+                return tool_err(&format!(
+                    "响应体超出 max_bytes 读取上限（{len}B > {limit}B）：这是本次调用设定的上限，不是页面问题；需要完整内容时调大 max_bytes 重试"
+                ));
             }
         }
         let mut resp = resp;
@@ -626,7 +628,9 @@ pub async fn execute_web_fetch(url_str: &str, max_bytes: Option<u64>) -> ToolRes
             match resp.chunk().await {
                 Ok(Some(chunk)) => {
                     if body.len() as u64 + chunk.len() as u64 > limit {
-                        return tool_err(&format!("响应体过大 (> {limit}B)"));
+                        return tool_err(&format!(
+                            "响应体超出 max_bytes 读取上限（已读 > {limit}B）：这是本次调用设定的上限，不是页面问题；需要完整内容时调大 max_bytes 重试"
+                        ));
                     }
                     body.extend_from_slice(&chunk);
                 }

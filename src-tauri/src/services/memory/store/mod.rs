@@ -460,6 +460,21 @@ impl MemoryStore {
         .ok_or_else(|| ierr!("事实不存在: {}", "Fact not found: {}", id))
     }
 
+    /// Finds the ACTIVE fact id for a dedup key (harness round 8: the remember
+    /// tool pre-checks this so a key-overwrite result can be distinguished from
+    /// a fresh insert — upsert_fact keeps the existing id, so the caller can
+    /// tell the model exactly what it overwrote before the write happens).
+    pub fn find_active_id_by_key(&self, key: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT id FROM facts WHERE key = ?1 AND status != ?2",
+            params![key, STATUS_ARCHIVED],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+    }
+
     /// Lists facts (optional status/category filters, ordered by updated_at desc, paginated).
     pub fn list_facts(
         &self,
@@ -1134,6 +1149,63 @@ mod tests {
             source_refs: None,
             pinned: false,
         }
+    }
+
+    /// Harness round 8 (remember key semantics): a second write with the SAME key
+    /// upserts in place — the id stays stable, recall sees only the latest
+    /// content, and the old content lands in the fact_versions audit chain
+    /// (readable via the memory panel). The silent part of this was the TOOL
+    /// result's uniform message, fixed in tools.rs; this pins the storage-layer
+    /// contract the new message depends on.
+    #[test]
+    fn test_keyed_upsert_replaces_in_place_with_version_audit() {
+        let root = temp_project("keyupsert");
+        let store = MemoryStore::open(&root).unwrap();
+        let v1 = store
+            .upsert_fact(&fact("round-8 v1", Some("r8-dedup-probe")), None)
+            .unwrap();
+        let id1 = v1.id.clone();
+        assert!(
+            store
+                .find_active_id_by_key("r8-dedup-probe")
+                .unwrap()
+                .is_some(),
+            "新 key 应可按 key 定位"
+        );
+        let v2 = store
+            .upsert_fact(&fact("round-8 v2", Some("r8-dedup-probe")), None)
+            .unwrap();
+        assert_eq!(v2.id, id1, "同 key 二次写入应原地更新（id 不变）");
+        assert_eq!(v2.content, "round-8 v2");
+        // The old content is archived, not lost
+        let versions = store.get_versions(&id1).unwrap();
+        assert!(!versions.is_empty(), "覆盖必须留下版本审计");
+        assert!(
+            versions
+                .iter()
+                .any(|v| v.reason == "update" && v.content_before.as_deref() == Some("round-8 v1")),
+            "v1 应存档于版本历史: {versions:?}"
+        );
+        // find_active_id_by_key matches the surviving row (and misses nothing)
+        assert_eq!(
+            store
+                .find_active_id_by_key("r8-dedup-probe")
+                .unwrap()
+                .as_deref(),
+            Some(id1.as_str())
+        );
+        assert!(store
+            .find_active_id_by_key("no-such-key")
+            .unwrap()
+            .is_none());
+        // A DIFFERENT key is a fresh insert (no overwrite)
+        let v3 = store
+            .upsert_fact(&fact("fresh", Some("r8-other-key")), None)
+            .unwrap();
+        assert_ne!(v3.id, id1);
+        let versions3 = store.get_versions(&v3.id).unwrap();
+        assert!(versions3.is_empty(), "新插入不应产生版本行");
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]

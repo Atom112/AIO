@@ -738,6 +738,15 @@ pub fn get_command_tool_spec() -> ToolSpec {
 /// has them on PATH; forwarding bridges the two views.
 const FORWARDED_INTERPRETERS: &[&str] = &["python", "python3", "py", "pip", "node", "npm", "npx"];
 
+/// Whether a command result text carries the Windows sandbox (AppContainer)
+/// access-denied signature: WinError 5 surfaces as "Access is denied" (en) or
+/// "拒绝访问" (zh) from cmd, PowerShell (UnauthorizedAccessException maps here),
+/// and Python ([WinError 5]). Harness round 3: this signature triggers the
+/// sandbox-expansion request (one-click grant / unsandboxed-once / ignore).
+pub(crate) fn is_sandbox_access_denied(result_text: &str) -> bool {
+    result_text.contains("Access is denied") || result_text.contains("拒绝访问")
+}
+
 /// Rewrites a command whose FIRST token is a bare known-interpreter name into the
 /// host-process-resolved absolute path, returning the rewritten command plus the
 /// interpreter's directory (for best-effort R+X granting inside the AppContainer
@@ -1395,6 +1404,27 @@ mod tests {
         assert!(!r.is_error, "大输出命令应正常完成: {text}");
         assert!(!text.contains("超时"), "不应被超时误杀: {text}");
         assert!(text.contains("0123456789ABCDEF"), "输出内容缺失");
+    }
+
+    /// Access-denied signature detection (harness round 3): WinError 5 renders as
+    /// either locale string, from cmd, PowerShell, or Python tracebacks.
+    #[test]
+    fn sandbox_access_denied_signature() {
+        for text in [
+            "[Error] $ cmd\nexit code: 1\n[stderr]:\nAccess is denied.\n",
+            "Remove-Item : 拒绝访问",
+            "PermissionError: [WinError 5] 拒绝访问",
+        ] {
+            assert!(is_sandbox_access_denied(text), "应识别: {text}");
+        }
+        for text in [
+            "exit code: 1\n[stderr]:\n不是内部或外部命令", // 9009: missing, not denied
+            "cargo build finished",
+            "",
+            "错误: 文件不存在",
+        ] {
+            assert!(!is_sandbox_access_denied(text), "不应误报: {text}");
+        }
     }
 
     // ====== forward_script_interpreter (harness round 2, issue 2) ======

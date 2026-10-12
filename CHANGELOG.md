@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 🔓 沙箱扩权请求（Gemini 式 UX 闭环，AppContainer 路线收尾）
+
+- **拒绝即问，一键补救**：命令在 Windows AppContainer 沙箱内被拒（WinError 5 签名：`Access is denied` / `拒绝访问`，覆盖 cmd/PowerShell/Python）时，弹出选择对话框——「授权解释器目录并重试（本次会话）」/「授权并永久记住（写入 `sandboxWindowsToolchainDirs`）」/「跳出沙箱执行（仅本次）」/「忽略」，支持输入任意目录路径授权。把「模型盲试烧轮数」（第一轮 tester 25 轮）和「用户全程不知情」收敛为「用户点一下」；EDR/机器级过滤（DACL 之外、代码修不了的层）从此有产品级出口
+- **实现零新前端组件、零新事件**：复用 ask_user 问答管线（前端 AgentQuestionBubble 原样渲染；监听器仅按 request_id 路由）——`tasks.rs` 提取 `ask_user_questions` 底层通道（超时参数化：ask_user 600s / 扩权 60s），决策映射/去重窗口/目录合并均为纯函数（+6 单测：选项映射、跳过降级、自定义路径校验、无提示降级、30 分钟去重窗口、合并去重保序）
+- **会话级 R+X 授权表**（`win_appcontainer.rs`）：扩权批准的目录进程内存生效、退出即失效，与配置级 `sandboxWindowsToolchainDirs` 案例不敏感合并去重后进入同一 fail-closed R+X 列表；「永久记住」选项走 best-effort 写入配置（失败仅降级为会话级并记日志）；+1 单测（增/去重/空忽略）
+- **无人值守安全降级**：同一首命令 token 30 分钟内最多弹一次（+可回拨测试）；60 秒无响应按「忽略」返回原始错误；stop 令牌穿透（cancelled 正常传播）——自动运行场景完全退化为既有行为（熔断器兜底），不会卡住回合
+- docs zh/en `permissions.md` 沙箱节同步
+
 ### 🔁 Harness 复测（第二轮）四项闭环
 
 - **`delete_file` 免确认（Auto/Workflow）**（复测建议 1）：Auto/Workflow 模式下 `delete_file` 改为 Allow——与已 Allow 的 `execute_command` 对齐（`del`/`rm` 本就是命令，且删除被沙箱限定在项目内）；Normal 模式保持 Ask（与写/提交/建目录的逐次确认一致），Normal 下的静默白名单走项目级 `.aio/permissions.json`（自定义高优先级 Allow 规则，机制已有）。修复无人值守审批超时（复测子智能体调 `delete_file` 60s 无人批准）；docs zh/en 同步

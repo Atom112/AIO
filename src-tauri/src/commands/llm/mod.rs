@@ -29,6 +29,7 @@ pub(crate) mod locked_tools;
 pub(crate) mod messages;
 // 阶段4 第1项（子目标 5/5 首切片）：两循环共享的轮次产物构造（agent_loop 地基）
 pub(crate) mod round_artifacts;
+pub(crate) mod sandbox_expand;
 pub(crate) mod sse_lines;
 pub(crate) mod streaming;
 pub(crate) mod subagents;
@@ -547,25 +548,77 @@ pub(crate) async fn execute_builtin_tool(
         let timeout = arguments["timeout"].as_u64();
         // Network egress control: declared explicitly by the model; default false = no network inside the sandbox
         let allow_network = arguments["network"].as_bool().unwrap_or(false);
-        // Windows AppContainer: when enabled in config, pass toolchain R+X dirs to run under the OS-level sandbox
+        // Windows AppContainer: when enabled in config, run under the OS-level sandbox with
+        // the configured toolchain dirs + session grants (added via expansion approvals).
         #[cfg(windows)]
-        let ac_dirs: Option<Vec<String>> = {
-            let ac_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
-            if ac_cfg.sandbox_windows == "appcontainer" {
-                Some(ac_cfg.sandbox_windows_toolchain_dirs.clone())
-            } else {
-                None
-            }
-        };
+        let ac_dirs: Option<Vec<String>> =
+            sandbox_expand::appcontainer_dirs_with_session_grants(app);
         #[cfg(not(windows))]
         let ac_dirs: Option<Vec<String>> = None;
+        #[cfg(windows)]
+        let sandboxed = ac_dirs.is_some();
         let root = tools_root.clone();
+        let command_for_run = command.clone();
+        let run_command = |ac_dirs: Option<Vec<String>>, command: String| {
+            let root = root.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    shell_tools::execute_command(&command, &root, timeout, allow_network, ac_dirs)
+                })
+                .await
+                .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic"))
+            }
+        };
         let started = std::time::SystemTime::now();
-        let result = tokio::task::spawn_blocking(move || {
-            shell_tools::execute_command(&command, &root, timeout, allow_network, ac_dirs)
-        })
-        .await
-        .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic"));
+        let result = run_command(ac_dirs, command_for_run.clone()).await;
+        // Harness round 3 (sandbox expansion): an access-denied signature from inside the
+        // AppContainer becomes a one-click remediation dialog (grant dir / unsandboxed
+        // once / ignore) instead of a raw error the model blind-retries against. Ask at
+        // most once per first command token per 30-min window; timeout degrades to the
+        // original error (pre-expansion behavior, safe for unattended runs).
+        #[cfg(windows)]
+        let result = if sandboxed
+            && result.is_error
+            && sandbox_expand::should_ask(&command)
+            && shell_tools::is_sandbox_access_denied(&round_artifacts::tool_result_text(&result))
+        {
+            sandbox_expand::mark_asked(&command);
+            let err_text = round_artifacts::tool_result_text(&result);
+            let hint_dir = shell_tools::forward_script_interpreter(&command)
+                .1
+                .map(|p| p.to_string_lossy().into_owned());
+            match sandbox_expand::request_sandbox_expansion(
+                app, &command, &err_text, hint_dir, token,
+            )
+            .await
+            {
+                Ok(sandbox_expand::ExpansionDecision::GrantSessionRetry { dir }) => {
+                    crate::utils::sandbox::add_session_rx_grant(&dir);
+                    run_command(
+                        sandbox_expand::appcontainer_dirs_with_session_grants(app),
+                        command_for_run.clone(),
+                    )
+                    .await
+                }
+                Ok(sandbox_expand::ExpansionDecision::GrantPermanentRetry { dir }) => {
+                    crate::utils::sandbox::add_session_rx_grant(&dir);
+                    sandbox_expand::persist_toolchain_dir(app, &dir);
+                    run_command(
+                        sandbox_expand::appcontainer_dirs_with_session_grants(app),
+                        command_for_run.clone(),
+                    )
+                    .await
+                }
+                Ok(sandbox_expand::ExpansionDecision::RunUnsandboxedOnce) => {
+                    run_command(None, command_for_run.clone()).await
+                }
+                Ok(sandbox_expand::ExpansionDecision::Ignore) => result,
+                Err(e) if e == "cancelled" => return Err("cancelled".into()),
+                Err(_) => result, // timeout / channel closed → keep the original error
+            }
+        } else {
+            result
+        };
         // SEC-09: a successful command may have modified project files outside the
         // hashline protocol. Mark files changed during its window so the next agent
         // write to them is forced through the cross-writer gate (re-read first) —

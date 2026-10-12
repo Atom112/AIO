@@ -595,7 +595,7 @@ pub(crate) async fn execute_builtin_tool(
                 }
                 denied || not_found
             } {
-            tracing::info!(
+            tracing::warn!(
                 "[sandbox-expand] 触发扩权请求：命令「{}」被沙箱拒绝（首次该操作，30 分钟窗口）",
                 command
             );
@@ -636,7 +636,7 @@ pub(crate) async fn execute_builtin_tool(
                     // degradation, by design) — but LEAVE THE EVIDENCE: round 9
                     // reported the dialog as "never triggered" with no trace of
                     // whether it fired-and-timed-out; this log settles such disputes.
-                    tracing::info!(
+                    tracing::warn!(
                         "[sandbox-expand] 扩权请求未获响应（{e}），按忽略处理返回原错误"
                     );
                     result

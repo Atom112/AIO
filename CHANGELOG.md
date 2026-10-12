@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🧠 第八轮发现闭环：remember 覆盖语义可见化 + 子代理工具口径
+
+- **remember 同 key 覆盖的结果区分（第八轮核心发现）**：取证修正——「旧版本静默丢失」在存储层**不成立**（`upsert_fact` 同 key 原地更新、id 不变，旧内容经版本审计写入 `fact_versions`，`get_versions`/记忆面板可查）；真正的缺陷是**工具层不可见**：新建与覆盖返回完全同文的「已记住」，模型无从得知自己覆盖了既有条目。现：结果按四种情形区分（新建 / 仲裁更新 / 仲裁合并 / 同 key 覆盖），全部带 `id`（衔接 `update_memory`/`forget_memory` 的 id 入参）；`key` 参数 spec 写明覆盖语义与「需保留版本演进请勿复用 key」；+1 存储层回归测试钉死契约（同 key 二写 id 不变 + `fact_versions` 存档 v1 + `find_active_id_by_key` 定位）
+- **子智能体工具集口径文档化（第八轮发现 2）**：`agent-tools.md` zh/en 补「主体口径」注——工具总表/权限矩阵描述**主代理**；子智能体按 `SubagentProfile` 白名单装配（explorer/architect 显式拒绝 `git_*`，9 只读工具；coder/general 持有 Git 读取），未注入工具调用得到 fail-closed 报错；`remember` 文档行的 `key` 参数同步覆盖语义
+- **第八轮其余条目定性**：`web_fetch` 仅 HTTPS（spec 已有明文，无需改）；`delete_file` 不能删目录（设计如此，目录删除走 shell）；文件系统边界（中文/空格/空文件/深层自动建目录/多点）全通过；夹具仓库报告补 P2-4（shell-git 与 delete_file 能力不对齐——预期分层，宿主侧代提交兜底）/ P2-5（子代理无 Git 工具——设计预期）两条目 + 10.2 勘误，宿主侧清理 `deep/` 残留并落地第七/八轮未提交项（`a89159d`）
+
 ### 🔎 第六轮复测两项产品修复（两项修复确认生效之外）
 
 - **路径越界错误可区分化（报告 9.1 caveat）**：`safe_path` 的 `must_exist` 探测在「绝对路径越界 + 目标不存在」时把 canonicalize 的裸 io 错误（`os error 3`）直接透传——与「项目内文件确实不存在」同构，无法区分网关拦截与真实缺失（实测 `read_file D:\Windows\win.ini` 与 `read_file 不存在的库内文件` 报同款错）。现：越界+探测失败返回专属「路径越界」文案；探测成功的既有路径（canonical 终检）与「库内缺失 → 路径不可访问」语义均不变。实现：`lexically_inside` 纯函数（`..` 词法展开、Windows 扩展前缀剥离、大小写不敏感组件比较——项目内绝对路径大小写变体不误判）；+4 单测（越界+缺失→越界文案、库内缺失保留不可访问、存在越界目标仍被 canonical 终检拒绝、项目内绝对路径放行含大小写变体）

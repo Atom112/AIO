@@ -50,7 +50,7 @@ fn remember_spec() -> ToolSpec {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "key": { "type": "string", "description": "知识的简短标识（用于去重，可选）" },
+                    "key": { "type": "string", "description": "知识的简短标识，去重键（可选）。注意：同 key 的活动条目再次写入为**覆盖**（原地更新、id 不变，旧内容存档至版本历史，recall 只返回最新版）——需保留版本演进的事实请勿复用 key，改用不同 key 或事后 update_memory（按 id）" },
                     "content": { "type": "string", "description": "事实内容" },
                     "category": {
                         "type": "string",
@@ -296,6 +296,11 @@ async fn execute_remember(
         .unwrap_or(0.92)
         .clamp(0.0, 1.0);
     let mut resolved_id: Option<String> = None;
+    // Harness round 8: how the write resolved — arbitration "update"/"merge"
+    // (cosine-NN dedup), or a key-overwrite detected below. The final result
+    // message tells the model exactly which happened; a silent in-place
+    // overwrite used to be indistinguishable from a fresh insert.
+    let mut resolved_kind: Option<&'static str> = None;
     if let Some((_, _, vec)) = &embedding {
         if let Ok(dups) = store.search_similar(vec, 3) {
             for (dup_id, cosine) in dups {
@@ -327,6 +332,7 @@ async fn execute_remember(
                                     store.set_embedding(&existing.id, Some(emb.clone()))?;
                                 }
                                 resolved_id = Some(existing.id);
+                                resolved_kind = Some("update");
                                 break;
                             }
                             JudgeAction::Merge => {
@@ -344,6 +350,7 @@ async fn execute_remember(
                                         store.set_embedding(&existing.id, Some((model, dim, vec)));
                                 }
                                 resolved_id = Some(existing.id);
+                                resolved_kind = Some("merge");
                                 break;
                             }
                             JudgeAction::Supersede => {
@@ -356,6 +363,14 @@ async fn execute_remember(
         }
     }
     let embed_available = embedding.is_some();
+    // Round 8: key-overwrite pre-check (only for the insert path — arbitration
+    // already resolved above). upsert_fact keeps the existing id and archives the
+    // old content to fact_versions; the result must SAY so instead of a uniform
+    // "已记住" (a silent in-place overwrite was indistinguishable from a insert).
+    let preexisting_key_id: Option<String> = match (&resolved_id, &key) {
+        (None, Some(k)) => store.find_active_id_by_key(k)?,
+        _ => None,
+    };
     let saved = match resolved_id {
         Some(id) => store.get_fact(&id)?,
         None => {
@@ -384,10 +399,28 @@ async fn execute_remember(
             None => "\n\n[!] 注意：本条记忆未生成语义向量（维度与记忆库不一致，嵌入模型可能已切换），请在设置 → Embedding 模型中修复。".to_string(),
         }
     };
-    Ok(tool_ok(format!(
-        "已记住: {}（{}）{}",
-        saved.content, saved.category, embed_note
-    )))
+    // Round 8: outcome-distinguishing result — insert / arbitration update /
+    // arbitration merge / key overwrite each get their own message, and the id
+    // is always surfaced (update_memory / forget_memory take ids).
+    let outcome = match resolved_kind {
+        Some("update") => format!(
+            "已更新既有记忆: {}（{}，id={}）：原内容已存档至版本历史（记忆面板可查）",
+            saved.content, saved.category, saved.id
+        ),
+        Some("merge") => format!(
+            "已合并入既有记忆: {}（{}，id={}）：合并前内容已存档至版本历史（记忆面板可查）",
+            saved.content, saved.category, saved.id
+        ),
+        _ if preexisting_key_id.is_some() => format!(
+            "已更新既有条目: {}（{}，key=\"{}\"，id={}）：同 key 写入为覆盖语义，旧内容已存档至版本历史（记忆面板可查）；需保留历史演进请勿复用 key",
+            saved.content, saved.category, saved.key.as_deref().unwrap_or_default(), saved.id
+        ),
+        _ => format!(
+            "已记住: {}（{}，id={}）",
+            saved.content, saved.category, saved.id
+        ),
+    };
+    Ok(tool_ok(format!("{outcome}{embed_note}")))
 }
 
 async fn execute_recall(

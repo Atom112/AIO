@@ -22,6 +22,7 @@ import type {
   ToolApprovalRequestedPayload,
   SubagentStartPayload,
   SubagentStepPayload,
+  SubagentDeltaPayload,
   SubagentDonePayload,
   SubagentErrorPayload,
 } from '../../../core/api/streamPayloads';
@@ -203,6 +204,82 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     fresh.timer = window.setTimeout(() => flushStreamBatch(key), FLUSH_MS) as unknown as number;
     streamBatches.set(key, fresh);
   };
+
+  // ===== Subagent live streaming (harness round 11) =====
+  // Shared mutator: applies fn to the subagentSteps array of the given subagent
+  // inside the last assistant message of the (assistant, topic). All subagent-*
+  // listeners below funnel through it.
+  const mutateSubagentSteps = (
+    parentAssistantId: string,
+    parentTopicId: string,
+    subagentId: string,
+    mutate: (steps: SubagentStep[]) => SubagentStep[],
+  ) => {
+    setDatas(
+      'assistants',
+      (a) => a.id === parentAssistantId,
+      'topics',
+      (t) => t.id === parentTopicId,
+      'history',
+      (h) => {
+        const lastIdx = h.length - 1;
+        if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
+        const msg = h[lastIdx];
+        const steps: AgentStep[] = msg.agentSteps || [];
+        const subIdx = steps.findIndex((s) => s.subagentId === subagentId);
+        if (subIdx < 0) return h;
+        const subStep = steps[subIdx];
+        const updatedSub = {
+          ...subStep,
+          subagentSteps: mutate(subStep.subagentSteps || []),
+        };
+        return [
+          ...h.slice(0, lastIdx),
+          {
+            ...msg,
+            agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
+          },
+        ];
+      },
+    );
+  };
+
+  // Live streaming delta (text / reasoning): append to the round's RUNNING stream
+  // step — one step per (round, kind) accumulates the full text, giving the
+  // standalone subagent view the same live fidelity as the main conversation.
+  const handleSubagentDelta =
+    (kind: 'content' | 'thinking') =>
+    (payload: {
+      parent_assistant_id: string;
+      parent_topic_id: string;
+      subagent_id: string;
+      round: number;
+      content: string;
+    }) => {
+      const { parent_assistant_id, parent_topic_id, subagent_id, round, content } = payload;
+      mutateSubagentSteps(parent_assistant_id, parent_topic_id, subagent_id, (steps) => {
+        for (let i = steps.length - 1; i >= 0; i--) {
+          const s = steps[i];
+          if (s.round !== round) break; // steps are appended in round order
+          if (s.type === kind && s.status === 'running') {
+            const next = steps.slice();
+            next[i] = { ...next[i], summary: (next[i].summary || '') + content };
+            return next;
+          }
+        }
+        return [
+          ...steps,
+          {
+            id: `sub${kind}-${round}-${Date.now()}`,
+            type: kind,
+            timestamp: Date.now(),
+            status: 'running' as const,
+            summary: content,
+            round,
+          },
+        ];
+      });
+    };
 
   return [
     // A new LLM round starts: multi-round agent work reuses the same assistant message
@@ -670,6 +747,15 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
 
     // ===== Subagent event listeners =====
 
+    // Subagent live deltas: text streams as 'content' steps, chain-of-thought as
+    // 'thinking' steps (both accumulate into one running step per round).
+    listen<SubagentDeltaPayload>(EVENTS.subagentChunk, (e) =>
+      handleSubagentDelta('content')(e.payload),
+    ),
+    listen<SubagentDeltaPayload>(EVENTS.subagentReasoning, (e) =>
+      handleSubagentDelta('thinking')(e.payload),
+    ),
+
     // Subagent start: push a subagent step into the current assistant message's agentSteps
     listen<SubagentStartPayload>(EVENTS.subagentStart, (e) => {
       const {
@@ -708,50 +794,73 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       );
     }),
 
-    // Subagent step update: append the sub-agent's internal steps
+    // Subagent step update: round-end/tool events + giant-tool-arg progress heartbeats.
+    // Harness round 11: with live delta streaming the round-end step additionally
+    // completes the running streamed steps, and a `content` round-end summary is
+    // deduped against the already-streamed text (kept only as a fallback when a
+    // provider never streamed).
     listen<SubagentStepPayload>(EVENTS.subagentStep, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, round, step_type, summary } =
         e.payload;
-      setDatas(
-        'assistants',
-        (a) => a.id === parent_assistant_id,
-        'topics',
-        (t) => t.id === parent_topic_id,
-        'history',
-        (h) => {
-          const lastIdx = h.length - 1;
-          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return h;
-          const msg = h[lastIdx];
-          const steps: AgentStep[] = msg.agentSteps || [];
-          const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
-          if (subIdx < 0) return h;
-          const subStep = steps[subIdx];
-          const newSubStep = {
-            id: `substep-${round}-${Date.now()}`,
-            type: (step_type || '').startsWith('tool_result')
-              ? ('tool_call' as const)
-              : (step_type as SubagentStep['type']),
-            timestamp: Date.now(),
-            status: 'complete' as const,
-            summary: summary || '',
-            toolName: (step_type || '').startsWith('tool_result')
-              ? (step_type as string).replace('tool_result:', '')
-              : undefined,
-            round,
-          };
-          const updatedSub = {
-            ...subStep,
-            subagentSteps: [...(subStep.subagentSteps || []), newSubStep],
-          };
+      mutateSubagentSteps(parent_assistant_id, parent_topic_id, subagent_id, (steps) => {
+        // Round end: complete this round's running streamed steps (thinking/content)
+        const isRoundEnd = step_type === 'content' || step_type === 'tool_call';
+        const base = isRoundEnd
+          ? steps.map((s) =>
+              s.round === round && s.status === 'running'
+                ? { ...s, status: 'complete' as const }
+                : s,
+            )
+          : steps;
+
+        if (step_type === 'streaming') {
+          // Heartbeat / giant tool-arg progress ("write_file: 12KB"): update the last
+          // streaming step of this round in place instead of appending spam.
+          for (let i = base.length - 1; i >= 0; i--) {
+            const s = base[i];
+            if (s.round !== round) break;
+            if (s.type === 'streaming') {
+              const next = base.slice();
+              next[i] = { ...next[i], summary: summary || '', timestamp: Date.now() };
+              return next;
+            }
+          }
           return [
-            ...h.slice(0, lastIdx),
+            ...base,
             {
-              ...msg,
-              agentSteps: steps.map((s, i: number) => (i === subIdx ? updatedSub : s)),
+              id: `substep-${round}-${Date.now()}`,
+              type: 'streaming' as const,
+              timestamp: Date.now(),
+              status: 'running' as const,
+              summary: summary || '',
+              round,
             },
           ];
-        },
-      );
+        }
+
+        if (step_type === 'content') {
+          // Content round-end: the narration already streamed live — append only
+          // when no streamed content step exists for the round (provider without
+          // delta streaming; legacy shape).
+          const streamed = base.some((s) => s.round === round && s.type === 'content');
+          if (streamed) return base;
+        }
+
+        const newSubStep = {
+          id: `substep-${round}-${Date.now()}`,
+          type: (step_type || '').startsWith('tool_result')
+            ? ('tool_call' as const)
+            : (step_type as SubagentStep['type']),
+          timestamp: Date.now(),
+          status: 'complete' as const,
+          summary: summary || '',
+          toolName: (step_type || '').startsWith('tool_result')
+            ? (step_type as string).replace('tool_result:', '')
+            : undefined,
+          round,
+        };
+        return [...base, newSubStep];
+      });
     }),
 
     // Subagent done: mark the subagent step complete and record the result

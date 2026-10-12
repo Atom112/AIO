@@ -241,6 +241,7 @@ pub async fn call_llm_stream(
             &assistant_id_c,
             &topic_id_c,
             false,
+            None, // main-conversation call: deltas emit llm-chunk / llm-reasoning directly
             Some(&app_handle),
             true,
             None,

@@ -379,6 +379,7 @@ impl AgentTurnRunner {
                 &assistant_id_c,
                 &topic_id_c,
                 false,
+                None, // main conversation: deltas emit llm-chunk / llm-reasoning directly
                 Some(&app_c),
                 true,
                 max_output_tokens,

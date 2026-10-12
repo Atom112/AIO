@@ -23,6 +23,7 @@ import {
 } from 'solid-js';
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import Markdown from '../../../shared/components/Markdown';
+import ThinkBlock from '../../../shared/components/ThinkBlock';
 import { t } from '../../../core/i18n';
 import {
   activeSubagentView,
@@ -136,8 +137,12 @@ const ToolRow: Component<{ step: SubagentStep }> = (props) => (
   </div>
 );
 
-/** One conversation bubble: a subagent turn's narration text + tools executed within that turn */
+/** One conversation bubble: a subagent turn's thinking + narration text + tools executed within that turn */
 interface SubagentTurn {
+  /** Owning LLM round (undefined for legacy persisted data without the round field) */
+  round?: number;
+  /** Streamed reasoning (chain of thought), rendered as a collapsible ThinkBlock */
+  thinking?: SubagentStep;
   text: string;
   tools: SubagentStep[];
 }
@@ -181,28 +186,54 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
     }
   });
 
-  // Message-stream grouping: a tool_call step without toolName is the subagent's narration for that turn (opens a new bubble);
-  // tool_result steps attach to the current bubble; content steps duplicate the final result (shown by the result bubble);
-  // streaming heartbeats and thinking steps are not rendered.
-  // The backend emits a bracketed "tool call" placeholder for empty-text turns; treat it as no text (that turn's bubble holds only tool rows).
+  // Message-stream grouping (harness round 11, live-streaming aware):
+  // NEW data (steps carry `round`): each round = one turn { thinking?, text, tools[] } —
+  //   thinking streams as a collapsible reasoning block, content as live narration text,
+  //   the round-end tool_call summary is deduped against the streamed content.
+  // LEGACY data (no round field): the pre-streaming shape — a no-toolName tool_call step
+  //   opens a narration bubble; thinking/content/streaming steps are not rendered.
   const turns = createMemo<SubagentTurn[]>(() => {
     const steps = step()?.subagentSteps || [];
     const out: SubagentTurn[] = [];
     let cur: SubagentTurn | null = null;
-    const ensure = (): SubagentTurn => {
-      if (!cur) {
-        cur = { text: '', tools: [] };
-        out.push(cur);
-      }
+    const newTurn = (round?: number): SubagentTurn => {
+      cur = { round, thinking: undefined, text: '', tools: [] };
+      out.push(cur);
       return cur;
     };
+    const ensureForRound = (round: number): SubagentTurn =>
+      cur && cur.round === round ? cur : newTurn(round);
+    const legacy = steps.every((s) => s.round === undefined);
     for (const s of steps) {
-      if (s.type === 'content' || s.type === 'streaming' || s.type === 'thinking') continue;
-      if (!s.toolName) {
-        cur = { text: s.summary === '[工具调用]' ? '' : s.summary || '', tools: [] };
-        out.push(cur);
+      if (legacy) {
+        if (s.type === 'content' || s.type === 'streaming' || s.type === 'thinking') continue;
+        if (!s.toolName) {
+          newTurn(undefined);
+          cur!.text = s.summary === '[工具调用]' ? '' : s.summary || '';
+        } else {
+          if (!cur) newTurn(undefined);
+          cur!.tools.push(s);
+        }
+        continue;
+      }
+      // Round-aware path (live-streamed subagents)
+      const r = s.round;
+      if (s.type === 'streaming') continue; // heartbeats / giant-arg progress
+      if (s.type === 'thinking') {
+        ensureForRound(r!).thinking = s;
+      } else if (s.type === 'content') {
+        const turn = ensureForRound(r!);
+        turn.text = (turn.text || '') + (s.summary || '');
+      } else if (s.toolName) {
+        if (!cur) newTurn(r);
+        cur!.tools.push(s);
       } else {
-        ensure().tools.push(s);
+        // Round-end narration summary: dedupe against the streamed text of the same round
+        const curTurn = cur as SubagentTurn | null; // closures reassign cur; TS CFA can't track
+        const dup = !!curTurn && curTurn.round === r && !!curTurn.text;
+        if (dup) continue;
+        newTurn(r);
+        cur!.text = s.summary === '[工具调用]' ? '' : s.summary || '';
       }
     }
     return out;
@@ -427,13 +458,13 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
               </div>
             </Show>
 
-            {/* Subagent per-turn narration + tool executions: left assistant bubble */}
+            {/* Subagent per-turn thinking + narration + tool executions: left assistant bubble */}
             <For each={turns()}>
               {(turn) =>
                 agentRow(
                   <>
                     <Show
-                      when={turn.text || turn.tools.length > 0}
+                      when={turn.text || turn.tools.length > 0 || turn.thinking}
                       fallback={
                         <div class="flex items-center gap-2 py-1 text-white/50 italic text-[14px] select-none">
                           <Icon name="spinner" size={14} class="animate-spin opacity-50" />
@@ -441,13 +472,23 @@ const SubagentConversationView: Component<SubagentConversationViewProps> = (prop
                         </div>
                       }
                     >
+                      {/* Streamed chain of thought (live while running, collapsible after) */}
+                      <Show when={turn.thinking?.summary}>
+                        <ThinkBlock
+                          content={turn.thinking!.summary || ''}
+                          isStreaming={turn.thinking?.status === 'running'}
+                        />
+                      </Show>
                       <Show when={turn.text}>
                         <div class="mt-1 text-[13px]">
                           <Markdown content={turn.text} />
                         </div>
                       </Show>
                       <Show when={turn.tools.length > 0}>
-                        <div class="flex flex-col gap-1" classList={{ 'mt-2': !!turn.text }}>
+                        <div
+                          class="flex flex-col gap-1"
+                          classList={{ 'mt-2': !!turn.text || !!turn.thinking?.summary }}
+                        >
                           <For each={turn.tools}>{(tool) => <ToolRow step={tool} />}</For>
                         </div>
                       </Show>

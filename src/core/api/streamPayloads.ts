@@ -113,6 +113,17 @@ export interface SubagentStepPayload {
   summary: string;
 }
 
+/** `subagent-chunk` / `subagent-reasoning`: live streaming delta from a subagent round. */
+export interface SubagentDeltaPayload {
+  parent_assistant_id: string;
+  parent_topic_id: string;
+  subagent_id: string;
+  round: number;
+  /** Delta kind: "content" (text) or "reasoning" (chain of thought). */
+  kind: string;
+  content: string;
+}
+
 /** `subagent-done`: a subagent finished with a result. */
 export interface SubagentDonePayload {
   parent_assistant_id: string;

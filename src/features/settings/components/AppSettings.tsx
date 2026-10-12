@@ -44,6 +44,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
 import NumberInput from '../../../shared/components/NumberInput';
 import Switch from '../../../shared/components/Switch';
+import Dropdown from '../../../shared/components/Dropdown';
 import {
   btnIcon,
   btnPrimary,
@@ -72,6 +73,7 @@ const AppSettings: Component = () => {
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (default 25)
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
   const [subagentIsolation, setSubagentIsolation] = createSignal('auto'); // Parallel write isolation (auto default)
+  const [mainAgentToolAccess, setMainAgentToolAccess] = createSignal('hybrid'); // Main agent tool access (hybrid default)
   const [version, setVersion] = createSignal(''); // App version
   const [checkUpdating, setCheckUpdating] = createSignal(false); // Manual update check in progress
   const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // Result of the last manual check
@@ -146,6 +148,9 @@ const AppSettings: Component = () => {
       }
       if (typeof cfg?.subagentIsolationMode === 'string' && cfg.subagentIsolationMode) {
         setSubagentIsolation(cfg.subagentIsolationMode);
+      }
+      if (typeof cfg?.mainAgentToolAccess === 'string' && cfg.mainAgentToolAccess) {
+        setMainAgentToolAccess(cfg.mainAgentToolAccess);
       }
     } catch (e) {
       console.warn('Failed to load app config:', e);
@@ -497,6 +502,12 @@ const AppSettings: Component = () => {
     { value: 'off', label: t('app.subagentIsolation.off') },
   ]);
 
+  const toolAccessOptions = createMemo(() => [
+    { value: 'hybrid', label: t('app.mainAgentToolAccess.hybrid') },
+    { value: 'full', label: t('app.mainAgentToolAccess.full') },
+    { value: 'orchestrator', label: t('app.mainAgentToolAccess.orchestrator') },
+  ]);
+
   return (
     <div class="flex flex-col gap-[15px] box-border">
       <div
@@ -768,6 +779,37 @@ const AppSettings: Component = () => {
               </For>
             </div>
           </div>
+        </div>
+
+        {/* Harness round 11: main agent tool access (hybrid default / full / orchestrator).
+            "full" gives the main agent every built-in tool (incl. execute_command) so
+            simple tasks complete directly without a subagent round-trip. */}
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.mainAgentToolAccess.title')}
+            </span>
+            <p class="text-xs text-white/35 mt-1">{t('app.mainAgentToolAccess.description')}</p>
+          </div>
+
+          <Dropdown
+            value={mainAgentToolAccess() as 'hybrid' | 'full' | 'orchestrator'}
+            onChange={(v) => {
+              setMainAgentToolAccess(v);
+              schedulePatch(
+                'mainAgentToolAccess',
+                async () => {
+                  try {
+                    await patchAppConfig({ mainAgentToolAccess: v });
+                  } catch (err) {
+                    console.warn('Failed to save main-agent tool access config:', err);
+                  }
+                },
+                0,
+              );
+            }}
+            options={toolAccessOptions()}
+          />
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">

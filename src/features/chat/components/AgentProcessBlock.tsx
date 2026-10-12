@@ -184,6 +184,29 @@ const StepCard: Component<{
     }
   };
 
+  // Harness round 11 (live subagent progress): the running subagent's latest streamed
+  // sub-step — a streaming narration tail, a "write_file: 12KB" argument-growth line, or
+  // the newest tool row. Keeps the timeline card informative during multi-minute subagents.
+  const latestSubagentProgress = createMemo(() => {
+    if (props.step.type !== 'subagent' || props.step.status !== 'running') return undefined;
+    const steps = props.step.subagentSteps || [];
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const s = steps[i];
+      const text =
+        s.type === 'streaming'
+          ? s.summary
+          : s.type === 'content'
+            ? tailOf(s.summary || '', 60)
+            : s.toolName
+              ? `${s.toolName} ✓`
+              : undefined;
+      if (text) return text;
+    }
+    return undefined;
+  });
+  const tailOf = (text: string, max: number) =>
+    text.length > max ? `…${text.slice(text.length - max)}` : text;
+
   return (
     <div
       ref={entranceRef}
@@ -253,6 +276,16 @@ const StepCard: Component<{
           {props.step.type === 'subagent' && props.step.subagentTask && (
             <span class="truncate text-white/30 flex-1 min-w-0">{props.step.subagentTask}</span>
           )}
+          {/* Live progress line (harness round 11): latest streamed sub-step of a running
+              subagent — narration tail / tool-arg growth, so a multi-minute subagent no
+              longer shows as a silent "thinking" card. */}
+          {props.step.type === 'subagent' &&
+            props.step.status === 'running' &&
+            latestSubagentProgress() && (
+              <span class="truncate text-white/40 flex-1 min-w-0 tabular-nums">
+                {latestSubagentProgress()}
+              </span>
+            )}
           {(props.step.type === 'tool_call' || props.step.type === 'subagent') &&
             stepStatusIcon(props.step) && (
               <span class="flex items-center justify-center shrink-0">

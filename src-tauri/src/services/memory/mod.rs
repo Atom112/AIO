@@ -136,3 +136,17 @@ pub async fn embed_one(
     }
     Some((model, dim, v))
 }
+
+/// Best-effort reason the embedding pipeline is unavailable (None = it resolves
+/// fine). Harness round 5: EVERY fact in the test project carried a NULL
+/// embedding (a legacy ollama model name can never resolve in the local
+/// registry) and neither the model nor the user could tell — recall scores had
+/// silently degraded to RRF keyword ranks (~0.02, no discrimination). The
+/// memory write/search tools surface this reason so the degradation is visible.
+pub fn embedding_unavailable_reason(app: &tauri::AppHandle, store: &MemoryStore) -> Option<String> {
+    let cfg = resolve_project_embedding(app, store);
+    if !cfg.enabled {
+        return Some(crate::ierr!("嵌入未启用", "Embedding is not enabled"));
+    }
+    crate::plugins::embed::resolve(app, &cfg).err()
+}

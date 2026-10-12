@@ -9,7 +9,7 @@ export interface WorkflowStepState {
   stepId: string;
   profileId: string;
   name: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
   startedAt?: number;
   duration?: number;
 }

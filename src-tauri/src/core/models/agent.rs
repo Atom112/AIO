@@ -28,6 +28,9 @@ pub enum WorkflowStepStatus {
     Running,
     Completed,
     Failed,
+    /// Harness round 5 (failure gating): never started because an earlier step
+    /// failed and aborted the chain (step-level continueOnError escapes this).
+    Skipped,
 }
 
 /// One step of a workflow
@@ -42,6 +45,11 @@ pub struct WorkflowStep {
     pub name: String,
     /// Task description (input to the subagent)
     pub task_description: String,
+    /// Whether this step keeps the chain running when IT fails (escape hatch for
+    /// intentionally best-effort steps; a failed step still aborts later steps
+    /// unless this is true)
+    #[serde(default)]
+    pub continue_on_error: bool,
     /// Current status
     pub status: WorkflowStepStatus,
     /// Step execution result

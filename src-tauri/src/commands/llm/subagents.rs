@@ -4,7 +4,8 @@
 // 14 个子模块 glob 与其工具 use 头——替换为下述显式 use（符号 → 真实来源）。
 use crate::commands::llm::handoff::build_subagent_progress_summary;
 use crate::commands::llm::tool_dispatch::{
-    classify_outcome, is_parallel_safe, merge_mcp_tools, FsServerPolicy, ToolFailureBreaker,
+    classify_outcome, is_parallel_safe, merge_mcp_tools, FsServerPolicy, ToolCallStats,
+    ToolFailureBreaker,
 };
 use crate::core::events as ev;
 use crate::core::models::*;
@@ -230,6 +231,7 @@ pub(crate) async fn handle_delegate_task(
     let custom_profiles = ctx.custom_profiles.as_slice();
     let mcp_server_ids = ctx.mcp_server_ids.as_slice();
     let locale = ctx.locale.as_str();
+    let stats_ctx = ctx.stats.clone();
     let semaphore = ctx.semaphore.clone();
     // Single/background delegate_task is also bound by the global concurrency cap (shares the same semaphore as batch delegate_tasks).
     // LOOP-5: waiting for a permit must honor cancellation — a queued delegation
@@ -340,6 +342,7 @@ pub(crate) async fn handle_delegate_task(
         locale,
         isolation_hint,
         !is_background,
+        stats_ctx.as_deref(),
     )
     .await?;
 
@@ -665,6 +668,7 @@ pub(crate) async fn execute_single_delegate(
     locale: &str,
     isolation_hint: Option<&str>,
     allow_worktree: bool,
+    stats: Option<&ToolCallStats>,
 ) -> Result<DelegateOutcome, String> {
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
@@ -725,6 +729,7 @@ pub(crate) async fn execute_single_delegate(
         token,
         mcp_server_ids,
         locale,
+        stats,
     )
     .await;
 
@@ -1026,6 +1031,7 @@ pub(crate) async fn handle_delegate_tasks(
                 &locale_clone,
                 isolation_hint.as_deref(),
                 true, // awaited batch delegation supports worktree isolation
+                None, // batch delegations feed no workflow failure gate
             )
             .await;
             (task_idx, outcome)
@@ -1191,6 +1197,13 @@ pub(crate) async fn execute_workflow(
 
     let mut context = String::new();
     let mut all_results: Vec<String> = Vec::new();
+    // Harness round 5 (failure gating): a failed step ABORTS the chain by default
+    // (step-level continue_on_error keeps intentionally best-effort steps running);
+    // later steps are marked skipped, and the summary reports honest counts
+    // instead of the old "执行完成（N/N 步骤）" over every-failure.
+    let mut failed_steps = 0usize;
+    let mut skipped_steps = 0usize;
+    let mut abort_reason: Option<String> = None;
 
     for (idx, step) in workflow.steps.iter().enumerate() {
         if token.is_cancelled() {
@@ -1199,6 +1212,25 @@ pub(crate) async fn execute_workflow(
                 serde_json::json!({ "workflowId": workflow.workflow_id }),
             );
             return Err(ierr!("工作流被用户取消", "Workflow cancelled by the user"));
+        }
+
+        // Gated: an earlier step failed and aborted the chain — mark skipped.
+        if let Some(reason) = &abort_reason {
+            all_results.push(format!(
+                "步骤 {} ({}): [跳过] {}",
+                idx + 1,
+                step.name,
+                reason
+            ));
+            skipped_steps += 1;
+            let _ = window.emit(
+                ev::WORKFLOW_STEP_COMPLETE,
+                serde_json::json!({
+                    "stepId": step.step_id,
+                    "status": "skipped",
+                }),
+            );
+            continue;
         }
 
         // Emit the workflow-step-start event
@@ -1227,6 +1259,9 @@ pub(crate) async fn execute_workflow(
 
         // Call handle_delegate_task to run this step.
         // 阶段4 第1项（子目标 3/5）：步骤转发也走打包上下文（借用→owned 一次性克隆）。
+        // stats feeds the round-5 failure gate: a step whose tool calls ALL failed
+        // is a hard environment failure even though the subagent returned a summary.
+        let stats = std::sync::Arc::new(ToolCallStats::new());
         let step_ctx = super::delegate_ctx::DelegateContext {
             window: window.clone(),
             app: app.clone(),
@@ -1244,6 +1279,7 @@ pub(crate) async fn execute_workflow(
             mcp_server_ids: mcp_server_ids.to_vec(),
             semaphore: semaphore.clone(),
             locale: locale.to_string(),
+            stats: Some(stats.clone()),
         };
         let result = handle_delegate_task(&step_ctx, &arguments).await;
 
@@ -1260,18 +1296,29 @@ pub(crate) async fn execute_workflow(
                     .unwrap_or("(done)")
                     .to_string();
 
+                // Round-5 gate: every tool call errored = the step produced nothing
+                // usable (e.g. its only read_file failed) — count as failed even
+                // though the subagent returned an honest failure summary.
+                let all_tools_failed = stats.all_failed();
+                let marker = if all_tools_failed {
+                    "[工具全部失败] "
+                } else {
+                    ""
+                };
+
                 // Append to the context (head+tail truncation prevents unbounded growth across steps)
                 context.push_str(&format!(
-                    "\n## 步骤 {} ({}): {}\n{}",
+                    "\n## 步骤 {} ({}): {}{}",
                     idx + 1,
                     step.name,
                     step.profile_id,
                     truncate_chars_head_tail(&step_result_text, 1200)
                 ));
                 all_results.push(format!(
-                    "步骤 {} ({}): {}",
+                    "步骤 {} ({}): {}{}",
                     idx + 1,
                     step.name,
+                    marker,
                     step_result_text
                 ));
 
@@ -1280,12 +1327,31 @@ pub(crate) async fn execute_workflow(
                     ev::WORKFLOW_STEP_COMPLETE,
                     serde_json::json!({
                         "stepId": step.step_id,
-                        "status": "completed",
+                        "status": if all_tools_failed { "failed" } else { "completed" },
                         "duration": duration_ms,
                     }),
                 );
+
+                if all_tools_failed {
+                    failed_steps += 1;
+                    if !step.continue_on_error {
+                        abort_reason = Some(format!(
+                            "步骤 {}（{}）的 {} 次工具调用全部失败（环境或路径不可用）",
+                            idx + 1,
+                            step.name,
+                            stats.total()
+                        ));
+                    }
+                }
             }
             Err(e) => {
+                if e == "cancelled" {
+                    let _ = window.emit(
+                        ev::WORKFLOW_COMPLETE,
+                        serde_json::json!({ "workflowId": workflow.workflow_id }),
+                    );
+                    return Err("cancelled".into());
+                }
                 context.push_str(&format!(
                     "\n## 步骤 {} ({}): [失败] {}",
                     idx + 1,
@@ -1303,8 +1369,14 @@ pub(crate) async fn execute_workflow(
                         "duration": duration_ms,
                     }),
                 );
+                failed_steps += 1;
 
-                // A failed step does not abort the workflow; later steps still run
+                // Harness round 5: a failed step ABORTS the chain unless the step
+                // opts out via continue_on_error (the old behavior fed the error to
+                // later steps as plain text and reported N/N completed regardless).
+                if !step.continue_on_error {
+                    abort_reason = Some(format!("步骤 {}（{}）执行失败", idx + 1, step.name));
+                }
             }
         }
     }
@@ -1315,21 +1387,28 @@ pub(crate) async fn execute_workflow(
         serde_json::json!({ "workflowId": workflow.workflow_id }),
     );
 
-    // Build the final result
-    let summary = format!(
-        "工作流 '{}' 执行完成（{}/{} 步骤）\n\n{}",
-        workflow.title,
-        total_steps,
-        total_steps,
-        all_results.join("\n\n")
-    );
+    // Build the final result: honest per-outcome counts (round 5: the summary used
+    // to claim "执行完成（N/N）" even when every step failed).
+    let completed_steps = total_steps - failed_steps - skipped_steps;
+    let headline = if failed_steps == 0 && skipped_steps == 0 {
+        format!(
+            "工作流 '{}' 执行完成（{}/{} 步骤）",
+            workflow.title, completed_steps, total_steps
+        )
+    } else {
+        format!(
+            "工作流 '{}' 执行结束：成功 {}/{} 步骤，失败 {}，跳过 {}",
+            workflow.title, completed_steps, total_steps, failed_steps, skipped_steps
+        )
+    };
+    let summary = format!("{headline}\n\n{}", all_results.join("\n\n"));
 
     Ok(ToolResult {
         content: vec![ToolResultContent {
             kind: "text".into(),
             data: serde_json::json!({ "text": summary }),
         }],
-        is_error: false,
+        is_error: failed_steps > 0,
     })
 }
 
@@ -1361,6 +1440,7 @@ pub(crate) async fn execute_subagent(
     token: &CancellationToken,
     mcp_server_ids: &[String],
     locale: &str,
+    stats: Option<&ToolCallStats>,
 ) -> Result<ToolResult, String> {
     let subagent_id = uuid::Uuid::new_v4().to_string();
     let model_to_use = profile.model_override.as_deref().unwrap_or(model);
@@ -1687,6 +1767,10 @@ pub(crate) async fn execute_subagent(
                     if let Some(n) = tool_breaker.record(&tc.name, outcome) {
                         content_text.push_str(&tool_breaker.warn_message(&tc.name, n));
                     }
+                    // Workflow failure gating stats (harness round 5)
+                    if let Some(st) = stats {
+                        st.record(tool_is_error);
+                    }
                     let _ = window.emit(
                         ev::SUBAGENT_STEP,
                         SubagentStepPayload {
@@ -1723,6 +1807,10 @@ pub(crate) async fn execute_subagent(
                         if let Some(n) = tool_breaker.record(&rr.tool_calls[i].name, outcome) {
                             content_text
                                 .push_str(&tool_breaker.warn_message(&rr.tool_calls[i].name, n));
+                        }
+                        // Workflow failure gating stats (harness round 5)
+                        if let Some(st) = stats {
+                            st.record(tool_is_error);
                         }
                         let tc = &rr.tool_calls[i];
                         let _ = window.emit(

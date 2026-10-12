@@ -72,6 +72,7 @@
   "agent.sub.working": "子智能体正在工作中...",
   "agent.workflow.pending": "等待中",
   "agent.workflow.running": "执行中",
+  "agent.workflow.skipped": "已跳过",
   "agent.tasks.title": "任务清单",
   "agent.question.title": "向你提问",
   "agent.question.recommended": "推荐",

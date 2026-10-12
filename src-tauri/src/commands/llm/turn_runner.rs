@@ -601,6 +601,7 @@ impl AgentTurnRunner {
                             mcp_server_ids: mcp_server_ids_c.clone(),
                             semaphore: subagent_semaphore.clone(),
                             locale: locale_c.clone(),
+                            stats: None,
                         };
                         // 后台收尾通知所需的归属信息（move 进 spawn）
                         let assistant_id_clone = assistant_id_c.clone();
@@ -678,6 +679,7 @@ impl AgentTurnRunner {
                             mcp_server_ids: mcp_server_ids_c.clone(),
                             semaphore: subagent_semaphore.clone(),
                             locale: locale_c.clone(),
+                            stats: None,
                         };
 
                         let fut =
@@ -709,6 +711,7 @@ impl AgentTurnRunner {
                         mcp_server_ids: mcp_server_ids_c.clone(),
                         semaphore: subagent_semaphore.clone(),
                         locale: locale_c.clone(),
+                        stats: None,
                     };
 
                     let fut =
@@ -758,6 +761,8 @@ impl AgentTurnRunner {
                                     step["profile"].as_str().unwrap_or("general").to_string();
                                 let name = step["name"].as_str().unwrap_or("").to_string();
                                 let task = step["task"].as_str().unwrap_or("").to_string();
+                                let continue_on_error =
+                                    step["continue_on_error"].as_bool().unwrap_or(false);
                                 if task.is_empty() {
                                     parse_error = Some(ierr!(
                                         "create_workflow: 步骤 {} 缺少 'task' 字段",
@@ -771,6 +776,9 @@ impl AgentTurnRunner {
                                     profile_id: profile,
                                     name,
                                     task_description: task,
+                                    // Harness round 5: failed steps abort the chain
+                                    // by default; opt-out per step.
+                                    continue_on_error,
                                     status: WorkflowStepStatus::Pending,
                                     result: None,
                                     started_at: None,

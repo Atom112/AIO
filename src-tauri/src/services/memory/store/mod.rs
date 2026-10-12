@@ -285,6 +285,19 @@ impl MemoryStore {
         })
     }
 
+    /// Best-effort WAL checkpoint (TRUNCATE) after memory write sessions —
+    /// reclaims the WAL file so the main DB stays the durable copy (harness
+    /// round 5: 4KB main DB vs 1.4MB WAL). Failure is logged and ignored: a busy
+    /// concurrent reader must never fail the tool call.
+    pub fn checkpoint_wal(&self) {
+        let Ok(conn) = self.conn.lock() else {
+            return;
+        };
+        if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+            tracing::debug!("[memory] WAL checkpoint 未完成（忽略）: {e}");
+        }
+    }
+
     /// Opens a standalone connection to the project memory store (for code.rs and similar; WAL allows concurrent connections).
     pub fn open_connection(project_root: &str) -> Result<Connection, String> {
         // The auto-extension must be registered before opening the connection.
@@ -302,6 +315,12 @@ impl MemoryStore {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| e.to_string())?;
         conn.pragma_update(None, "busy_timeout", 5000)
+            .map_err(|e| e.to_string())?;
+        // Harness round 5: bound WAL growth early. The SQLite default
+        // (1000 pages ≈ 4MB) let the WAL pile up ~350x the main DB size
+        // (1.4MB vs 4KB) with version-audit + FTS page churn before the first
+        // automatic checkpoint ever fired.
+        conn.pragma_update(None, "wal_autocheckpoint", 100)
             .map_err(|e| e.to_string())?;
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
         // Versioned migrations (progress tracked via user_version).

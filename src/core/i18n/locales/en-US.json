@@ -72,6 +72,7 @@
   "agent.sub.working": "Subagent is working...",
   "agent.workflow.pending": "Pending",
   "agent.workflow.running": "Running",
+  "agent.workflow.skipped": "Skipped",
   "agent.tasks.title": "Task list",
   "agent.question.title": "Question for you",
   "agent.question.recommended": "Recommended",

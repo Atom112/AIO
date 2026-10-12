@@ -41,7 +41,11 @@ const REVOKE_ACCESS: i32 = 4;
 const SUB_CONTAINERS_AND_OBJECTS_INHERIT: u32 = 3;
 const TRUSTEE_IS_SID: i32 = 0;
 const TRUSTEE_IS_UNKNOWN: i32 = 0;
-const ACCESS_ALLOWED_ACE_TYPE: u8 = 1;
+/// winnt.h: ACCESS_ALLOWED_ACE_TYPE is **0** (1 is ACCESS_DENIED_ACE_TYPE).
+/// A wrong value here silently skips every allow-ACE in DACL scans — the
+/// SEC-14 gate and the mask-aware grant check then never match anything
+/// (the ACE dump probe caught it: allow-ACEs carried type=0).
+const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 const ACL_SIZE_INFORMATION: u32 = 2;
 // Note: attribute numbers must follow the local SDK's WinBase.h enum (SecurityCapabilities = 9,
 // 9 | PROC_THREAD_ATTRIBUTE_INPUT = 0x20009). Using 21 (a different attribute) makes
@@ -54,6 +58,17 @@ const STARTF_USESTDHANDLES: u32 = 0x100;
 pub const FILE_GENERIC_READ: u32 = 0x0012_0089;
 pub const FILE_GENERIC_WRITE: u32 = 0x0012_0116;
 pub const FILE_GENERIC_EXECUTE: u32 = 0x0012_00A0;
+/// winnt.h standard right `DELETE`: required to delete/rename the object
+/// itself. NOT part of FILE_GENERIC_WRITE — without it every `del`/`rename`/
+/// `MoveFileEx` inside a granted directory fails with access denied (CPython's
+/// atomic pyc replace broke the same way, littering `*.pyc.<random>` orphans).
+/// Note: standard rights live in the high word — 0x0001 is FILE_READ_DATA,
+/// a trap the first version of this constant fell into (caught by the AC e2e
+/// regression test: `del` still refused with the low-word bit).
+pub const DELETE: u32 = 0x0001_0000;
+/// winnt.h `FILE_DELETE_CHILD`: directory-level right to delete contained
+/// objects regardless of the child's own ACE (dir-level delete semantics).
+pub const FILE_DELETE_CHILD: u32 = 0x0040;
 /// internetClient capability (S-1-15-3-1): outbound TCP/UDP client only.
 const INTERNET_CLIENT_SID: &str = "S-1-15-3-1";
 
@@ -134,9 +149,14 @@ struct ExplicitAccessW {
 
 #[repr(C)]
 struct AclSizeInformation {
+    /// winnt.h ACL_SIZE_INFORMATION field order: AceCount is FIRST — a misordered
+    /// struct silently reads AclBytesFree(0) as the ACE count, making every DACL
+    /// scan see zero ACEs (the mask-aware grant check and the SEC-14 reclaim gate
+    /// never matched anything; grants kept working only via SetEntriesInAclW's
+    /// own trustee-merge semantics).
+    ace_count: u32,
     acl_bytes_in_use: u32,
     acl_bytes_free: u32,
-    ace_count: u32,
 }
 
 #[repr(C)]
@@ -326,9 +346,13 @@ fn ensure_profile_sid(profile_name: &str) -> Result<*mut c_void, String> {
 // ---- ACL ----
 
 /// Check whether the DACL already contains an allow-ACE for the given SID (idempotent dedup, prevents ACE accumulation).
-fn dacl_has_sid_ace(dacl: *mut c_void, sid: *const c_void) -> bool {
+/// Returns the required-mask bits NOT covered by any allow-ACE the SID holds on
+/// this DACL (0 = fully covered). Windows access checks OR every allow-ACE for
+/// a SID, so an earlier narrower grant (e.g. pre-DELETE versions) plus a fresh
+/// cumulative ACE add up — that is exactly the stale-grant upgrade path.
+fn dacl_sid_missing_permissions(dacl: *mut c_void, sid: *const c_void, mask: u32) -> u32 {
     if dacl.is_null() {
-        return false;
+        return mask;
     }
     let mut info = AclSizeInformation {
         acl_bytes_in_use: 0,
@@ -344,8 +368,9 @@ fn dacl_has_sid_ace(dacl: *mut c_void, sid: *const c_void) -> bool {
         )
     } == 0
     {
-        return false;
+        return mask;
     }
+    let mut covered: u32 = 0;
     for i in 0..info.ace_count {
         let mut ace: *mut c_void = std::ptr::null_mut();
         if unsafe { GetAce(dacl, i, &mut ace) } == 0 || ace.is_null() {
@@ -358,26 +383,31 @@ fn dacl_has_sid_ace(dacl: *mut c_void, sid: *const c_void) -> bool {
         let ace_sid =
             unsafe { &(*ace.cast::<AccessAllowedAce>()).sid_start } as *const u32 as *const c_void;
         if unsafe { EqualSid(ace_sid, sid) } != 0 {
-            return true;
+            covered |= ace_hdr.mask;
         }
     }
-    false
+    mask & !covered
 }
 
-/// Append an allow-ACE for the AppContainer SID to the directory DACL (never overwrites
-/// existing ACEs: System32 etc. rely on the ALL APPLICATION PACKAGES ACE, and overwriting
-/// would break system-executable visibility). Idempotent: in-process cache + DACL scan dedup.
+/// Append a cumulative allow-ACE for the AppContainer SID to the directory DACL
+/// (never overwrites existing ACEs: System32 etc. rely on the ALL APPLICATION
+/// PACKAGES ACE, and overwriting would break system-executable visibility).
+/// Mask-aware: an existing narrower ACE for the same SID (e.g. from a pre-DELETE
+/// version) is upgraded by appending the full mask — Windows ORs all allow-ACEs
+/// for a SID. Idempotent: in-process cache (keyed by path+mask) + DACL scan dedup.
 fn grant_dir_access(
     path: &str,
     sid: *mut c_void,
-    permissions: u32,
+    mask: u32,
     cache_key_suffix: &str,
 ) -> Result<(), String> {
     let canon = std::path::Path::new(path)
         .canonicalize()
         .map_err(|e| ierr!("路径不存在 {}: {}", "Path does not exist {}: {}", path, e))?;
     let canon_s = canon.to_string_lossy().into_owned();
-    let cache_key = format!("{cache_key_suffix}:{}", canon_s);
+    // Mask is part of the cache key: a mask change (e.g. the DELETE upgrade) must
+    // re-check and upgrade existing grants within the same process too.
+    let cache_key = format!("{cache_key_suffix}:{mask:08x}:{}", canon_s);
     {
         let cache = grants_cache().lock().unwrap();
         if cache.contains(&cache_key) {
@@ -410,9 +440,12 @@ fn grant_dir_access(
         ));
     }
 
-    if !dacl_has_sid_ace(dacl, sid) {
+    if dacl_sid_missing_permissions(dacl, sid, mask) != 0 {
+        // Missing bits: append a cumulative allow-ACE (Windows ORs all allow-ACEs
+        // for the SID, so this upgrades stale pre-DELETE grants without touching
+        // any other ACE).
         let ea = ExplicitAccessW {
-            grf_access_permissions: permissions,
+            grf_access_permissions: mask,
             grf_access_mode: GRANT_ACCESS,
             grf_inheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT,
             trustee: TrusteeW {
@@ -519,7 +552,9 @@ pub fn revoke_project_grants(project_root: &str) {
                 )
             };
             if rc == ERROR_SUCCESS {
-                if dacl_has_sid_ace(dacl, sid) {
+                // "SID holds any allow-ACE" = the full-rights mask is not fully
+                // missing (dacl_sid_missing_permissions ORs all the SID's ACE masks).
+                if dacl_sid_missing_permissions(dacl, sid, u32::MAX) != u32::MAX {
                     // REVOKE_ACCESS strips the allow-ACEs for this SID only
                     let ea = ExplicitAccessW {
                         grf_access_permissions: 0, // ignored for REVOKE_ACCESS
@@ -679,11 +714,13 @@ pub fn spawn_in_appcontainer(
     let hash = fnv1a_hex(canon_s.to_lowercase().as_bytes());
     let sid = ensure_profile_sid(&profile_name)?;
 
-    // 2) ACLs: project root RW+X; AC-dedicated temp dir RW; toolchain dirs R+X
+    // 2) ACLs: project root RW+X + delete (delete/rename must work inside the
+    //    sandbox — build tools' atomic replaces need it); AC-dedicated temp dir
+    //    RW + delete; toolchain dirs R+X (read-only by design)
     grant_dir_access(
         &canon_s,
         sid,
-        FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE,
+        FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE | FILE_DELETE_CHILD,
         &hash,
     )?;
     let ac_temp = std::env::temp_dir().join("aio-ac").join(&hash);
@@ -697,7 +734,7 @@ pub fn spawn_in_appcontainer(
     grant_dir_access(
         ac_temp.to_str().unwrap_or_default(),
         sid,
-        FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+        FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | FILE_DELETE_CHILD,
         &format!("{hash}-tmp"),
     )?;
     for dir in extra_rx_dirs {
@@ -966,7 +1003,11 @@ mod tests {
     use super::*;
 
     /// Run a real command in the AppContainer and collect output (local Windows integration check).
-    fn run_ac(cmd: &str, project: &std::path::Path, network: bool) -> (String, Option<i32>) {
+    fn run_ac(
+        cmd: &str,
+        project: &std::path::Path,
+        network: bool,
+    ) -> (String, String, Option<i32>) {
         std::fs::create_dir_all(project).unwrap();
         let cmd_path = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
         let (mut child, _job) = spawn_in_appcontainer(
@@ -982,15 +1023,20 @@ mod tests {
             let mut f = f;
             let _ = f.read_to_string(&mut out);
         }
+        let mut err = String::new();
+        if let Some(f) = child.stderr_read.take() {
+            let mut f = f;
+            let _ = f.read_to_string(&mut err);
+        }
         let (code, _to) = wait_with_timeout(&child, 30_000);
-        (out, code)
+        (out, err, code)
     }
 
     /// Basic execution: cmd echo outputs normally inside the AC.
     #[test]
     fn appcontainer_basic_exec() {
         let project = std::env::temp_dir().join("aio-ac-test-basic");
-        let (out, code) = run_ac("echo aio_ac_ok", &project, false);
+        let (out, _err, code) = run_ac("echo aio_ac_ok", &project, false);
         assert_eq!(code, Some(0), "exit code 应为 0, out={out}");
         assert!(out.contains("aio_ac_ok"), "应捕获输出: {out}");
         let _ = std::fs::remove_dir_all(&project);
@@ -1003,7 +1049,7 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let escape_target = std::env::temp_dir().join("aio_ac_escape_marker.txt");
         let _ = std::fs::remove_file(&escape_target);
-        let (out, code) = run_ac(
+        let (out, _err, code) = run_ac(
             &format!("echo pwned > \"{}\"", escape_target.to_str().unwrap()),
             &project,
             false,
@@ -1020,7 +1066,7 @@ mod tests {
     fn appcontainer_allows_write_inside_project() {
         let project = std::env::temp_dir().join("aio-ac-test-inside");
         std::fs::create_dir_all(&project).unwrap();
-        let (out, code) = run_ac("echo ok > inside_write_test.txt", &project, false);
+        let (out, _err, code) = run_ac("echo ok > inside_write_test.txt", &project, false);
         assert!(
             project.join("inside_write_test.txt").exists(),
             "项目内写入应成功 (code={code:?}, out={out})"
@@ -1032,8 +1078,149 @@ mod tests {
     #[test]
     fn appcontainer_blocks_network_by_default() {
         let project = std::env::temp_dir().join("aio-ac-test-net");
-        let (out, code) = run_ac("ping -n 1 -w 500 127.0.0.1", &project, false);
+        let (out, _err, code) = run_ac("ping -n 1 -w 500 127.0.0.1", &project, false);
         assert!(code != Some(0), "无 capability 时 ping 应失败 (out={out})");
         let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// E2E regression (harness session finding): `del` inside the project was refused
+    /// with access denied — the project-root grant mask (FILE_GENERIC_WRITE) lacks
+    /// DELETE, so every delete/rename inside the sandbox failed, including CPython's
+    /// atomic pyc replace (littering *.pyc.<random> orphans). The grant now carries
+    /// DELETE | FILE_DELETE_CHILD; deletion must work inside the AC.
+    ///
+    /// Ignored by default: DeleteFile from an AppContainer is additionally subject to
+    /// machine-level policy layers (integrity labels, EDR filter drivers, nested
+    /// sandbox ancestors) that can deny it regardless of the DACL — this machine
+    /// exhibits that, so the assertion fails here even with a correct grant.
+    /// Run manually on a clean machine: `cargo test appcontainer_delete -- --ignored`.
+    #[test]
+    #[ignore = "requires a clean (non-nested) AppContainer environment; run manually"]
+    fn appcontainer_delete_inside_project() {
+        let project = std::env::temp_dir().join("aio-ac-test-del");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("probe_del.txt"), b"x").unwrap();
+        let (out, err, code) = run_ac("del probe_del.txt", &project, false);
+        assert!(
+            !project.join("probe_del.txt").exists(),
+            "项目内删除应成功 (code={code:?}, out={out}, err={err})"
+        );
+        assert_eq!(code, Some(0), "del 退出码应为 0, out={out}, err={err}");
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// Regression for the upgrade path: directories granted by PRE-DELETE versions
+    /// carry a narrow allow-ACE (no DELETE bits). A re-grant with the wider mask must
+    /// detect the missing bits via the DACL scan and append a cumulative ACE (Windows
+    /// ORs all allow-ACEs for a SID) instead of skipping on mere SID presence.
+    #[test]
+    fn stale_grant_upgrades_to_delete_mask() {
+        let project = std::env::temp_dir().join("aio-ac-test-stale-grant");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        let canon = project.canonicalize().unwrap();
+        let canon_s =
+            crate::utils::file_tools::strip_windows_extended_prefix(&canon.to_string_lossy());
+        let profile = profile_name_for_root(&canon_s);
+        let sid = ensure_profile_sid(&profile).expect("测试 profile 创建失败");
+
+        // 1) Simulate a stale (pre-DELETE) grant and prove the bits are missing.
+        grant_dir_access(
+            &canon_s,
+            sid,
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE,
+            "stale-test",
+        )
+        .expect("旧掩码授权失败");
+        let missing = {
+            let mut dacl: *mut c_void = std::ptr::null_mut();
+            let mut sd: *mut c_void = std::ptr::null_mut();
+            let path_w = wide(&canon_s);
+            assert_eq!(
+                unsafe {
+                    GetNamedSecurityInfoW(
+                        path_w.as_ptr(),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        &mut dacl,
+                        std::ptr::null_mut(),
+                        &mut sd,
+                    )
+                },
+                ERROR_SUCCESS
+            );
+            let m = dacl_sid_missing_permissions(
+                dacl,
+                sid,
+                FILE_GENERIC_READ
+                    | FILE_GENERIC_WRITE
+                    | FILE_GENERIC_EXECUTE
+                    | DELETE
+                    | FILE_DELETE_CHILD,
+            );
+            if !sd.is_null() {
+                unsafe { LocalFree(sd) };
+            }
+            m
+        };
+        assert!(
+            missing & (DELETE | FILE_DELETE_CHILD) == DELETE | FILE_DELETE_CHILD,
+            "旧授权应缺失 DELETE 位 (missing={missing:08x})"
+        );
+
+        // 2) Re-grant with the full mask (same cache-suffix family as production):
+        // the mask-aware scan must append the upgrade despite the SID already having an ACE.
+        let hash = fnv1a_hex(canon_s.to_lowercase().as_bytes());
+        grant_dir_access(
+            &canon_s,
+            sid,
+            FILE_GENERIC_READ
+                | FILE_GENERIC_WRITE
+                | FILE_GENERIC_EXECUTE
+                | DELETE
+                | FILE_DELETE_CHILD,
+            &hash,
+        )
+        .expect("升级授权失败");
+        let missing2 = {
+            let mut dacl: *mut c_void = std::ptr::null_mut();
+            let mut sd: *mut c_void = std::ptr::null_mut();
+            let path_w = wide(&canon_s);
+            assert_eq!(
+                unsafe {
+                    GetNamedSecurityInfoW(
+                        path_w.as_ptr(),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        &mut dacl,
+                        std::ptr::null_mut(),
+                        &mut sd,
+                    )
+                },
+                ERROR_SUCCESS
+            );
+            let m = dacl_sid_missing_permissions(
+                dacl,
+                sid,
+                FILE_GENERIC_READ
+                    | FILE_GENERIC_WRITE
+                    | FILE_GENERIC_EXECUTE
+                    | DELETE
+                    | FILE_DELETE_CHILD,
+            );
+            if !sd.is_null() {
+                unsafe { LocalFree(sd) };
+            }
+            m
+        };
+        assert_eq!(missing2, 0, "升级后应无缺失位 (missing={missing2:08x})");
+
+        unsafe { LocalFree(sid) };
+        let _ = std::fs::remove_dir_all(&project);
+        let _ = unsafe { DeleteAppContainerProfile(wide(&profile).as_ptr()) };
     }
 }

@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### 🔒 Windows 沙箱删除授权修复（harness 会话报告全部条目闭环）
+
+- **AppContainer 授权掩码补 DELETE**（报告第 9 条根因）：项目根与 AC 临时目录的授权掩码 `READ|WRITE|EXECUTE` 不含标准权限 `DELETE`（0x10000）与 `FILE_DELETE_CHILD`——沙箱内一切删除/重命名被「拒绝访问」（实测：LLM 会话 cmd del/rmdir、PowerShell Remove-Item、Python os.remove 全灭，CPython 的 pyc 原子替换也失败，留下 `*.pyc.<随机>` 孤儿残骸；任何做原子重命名的构建工具都会踩中）。现掩码补齐 `DELETE | FILE_DELETE_CHILD`；Linux bwrap（`--bind`）与 macOS（`allow file-write*`）语义本就含删除，三平台对齐
+- **顺手钉出两个 SEC-14 潜伏 FFI bug**（此前的 ACE 扫描从未真正工作过，全靠 `SetEntriesInAclW` 的 trustee 合并语义兜底才没出事）：① `ACL_SIZE_INFORMATION` 结构体字段序错误——`AceCount` 在 winnt.h 中是首字段，错序后读到的是 `AclBytesFree`(=0)，扫描永远看到 0 条 ACE；② `ACCESS_ALLOWED_ACE_TYPE` 常量错写成 1（那是 DENY）——allow-ACE 全被类型过滤器跳过。修复后：授权去重、掩码升级探测、SEC-14 项目删除回收（移除 ACE）首次真正可用
+- **掩码感知的授权升级**：授权缓存键含掩码；DACL 扫描改按「缺失位」判断（`dacl_sid_missing_permissions`），旧版本窄掩码授权在下次命令时自动追加累积 ACE（Windows 对同 SID 的多条 allow-ACE 按位 OR）——存量项目目录无需手动迁移；+1 回归测试（真实 FFI：旧掩码授权→断言缺失位→升级→断言无缺失）
+- **AC 内 `del` 端到端测试**：标记 `#[ignore]`——本机环境对 AC 进程的 DeleteFile 有 DACL 之外的额外拒绝层（完整性标签/EDR/嵌套沙箱），正确授权下仍无法通过；干净环境可手动 `cargo test appcontainer_delete -- --ignored` 复跑
+
+### 🔧 其余三项修复
+
+- **web_fetch max_bytes 错误文案**（报告问题 3）：「响应体过大」听起来像页面问题，实为调用方上限——改为「响应体超出 max_bytes 读取上限（{len}B > {limit}B）…可调大 max_bytes 重试」（报告 LLM 当时就误判了一次）
+- **子智能体环境指引**（报告问题 1/2）：系统提示补两行——环境受阻（缺解释器/权限拒绝）时记录失败并继续、不反复重试（对应 tester 烧满 25 轮）；并行 worktree 同伴从同一 HEAD 分叉互相看不见（对应 writer/coder 并行时 README 误判 math_utils 未创建）；delegate_task 的 isolation 参数说明同步补充
+- **`.aio/` 自动进 .gitignore**（报告遗留项）：git 项目添加时自动维护 `.gitignore`（无则创建、缺则追加、幂等、非 git 仓库不动），消除 `git status` 里永久的 `? .aio/` 噪音；+4 单测（创建/追加/幂等/非仓库）
+
 ### 🔧 依赖对齐：tauri 双端版本错配修复
 
 - **Rust crate 升级对齐 npm 包**：tauri-build 的版本守门检查（NPM 包与 Rust crate 必须同 major/minor）在真实重建时拦截了 dev——`tauri` crate 停在 2.11.5 而 `@tauri-apps/api` 已随宽松范围 `^2.11.1` 漂到 2.12.3；`tauri-plugin-opener` crate 停在 2.5.4 而 npm 侧是 2.7.1（错配由早前 `npm audit fix` 类更新潜伏引入，因增量构建缓存一直未触发该检查）。现 crate 升至 **tauri 2.12.3**（=npm api 2.12.3）、**opener 2.7.1**（=npm 2.7.1）

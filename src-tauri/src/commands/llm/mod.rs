@@ -579,12 +579,26 @@ pub(crate) async fn execute_builtin_tool(
         // per operation token per 30-min window; timeout degrades to the original
         // error (pre-expansion behavior, safe for unattended runs).
         #[cfg(windows)]
-        let result = if sandboxed && result.is_error && sandbox_expand::should_ask(&command) && {
-            let text = round_artifacts::tool_result_text(&result);
-            shell_tools::is_sandbox_access_denied(&text)
-                || (shell_tools::forwarded_interpreter_of(&command).is_some()
-                    && shell_tools::is_command_not_found_result(&text))
-        } {
+        let result = if sandboxed
+            && result.is_error
+            && sandbox_expand::should_ask(&command)
+            && {
+                let text = round_artifacts::tool_result_text(&result);
+                let denied = shell_tools::is_sandbox_access_denied(&text);
+                let not_found = shell_tools::forwarded_interpreter_of(&command).is_some()
+                    && shell_tools::is_command_not_found_result(&text);
+                if result.is_error && !denied && !not_found {
+                    tracing::debug!(
+                    "[sandbox-expand] 不触发：签名不匹配（access_denied={denied}, not_found={not_found}）: {}",
+                    &text.chars().take(120).collect::<String>()
+                );
+                }
+                denied || not_found
+            } {
+            tracing::info!(
+                "[sandbox-expand] 触发扩权请求：命令「{}」被沙箱拒绝（首次该操作，30 分钟窗口）",
+                command
+            );
             sandbox_expand::mark_asked(&command);
             let err_text = round_artifacts::tool_result_text(&result);
             let hint_dir = shell_tools::forward_script_interpreter(&command)
@@ -617,7 +631,16 @@ pub(crate) async fn execute_builtin_tool(
                 }
                 Ok(sandbox_expand::ExpansionDecision::Ignore) => result,
                 Err(e) if e == "cancelled" => return Err("cancelled".into()),
-                Err(_) => result, // timeout / channel closed → keep the original error
+                Err(e) => {
+                    // timeout / channel closed → keep the original error (unattended
+                    // degradation, by design) — but LEAVE THE EVIDENCE: round 9
+                    // reported the dialog as "never triggered" with no trace of
+                    // whether it fired-and-timed-out; this log settles such disputes.
+                    tracing::info!(
+                        "[sandbox-expand] 扩权请求未获响应（{e}），按忽略处理返回原错误"
+                    );
+                    result
+                }
             }
         } else {
             result

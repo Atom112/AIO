@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🔧 依赖对齐：tauri 双端版本错配修复
+
+- **Rust crate 升级对齐 npm 包**：tauri-build 的版本守门检查（NPM 包与 Rust crate 必须同 major/minor）在真实重建时拦截了 dev——`tauri` crate 停在 2.11.5 而 `@tauri-apps/api` 已随宽松范围 `^2.11.1` 漂到 2.12.3；`tauri-plugin-opener` crate 停在 2.5.4 而 npm 侧是 2.7.1（错配由早前 `npm audit fix` 类更新潜伏引入，因增量构建缓存一直未触发该检查）。现 crate 升至 **tauri 2.12.3**（=npm api 2.12.3）、**opener 2.7.1**（=npm 2.7.1）
+- **npm 范围收紧防再漂移**：三个 `@tauri-apps/*` 运行时包从 `^`（允许 minor 漂移）收紧为 `~`（锁死 minor）——api `~2.12.3`、plugin-dialog `~2.7.1`、plugin-opener `~2.7.1`，杜绝 audit-fix 类操作再次单侧漂移触发此错配
+- **验证**：cargo 全量 319 passed / clippy 0（tauri 2.12 无弃用 API）；`tauri dev` 真实重跑 build.rs 版本检查通过、app 正常启动
+
 ### 🔧 LSP 查询竞态修复（文档同步 + 诊断等待）
 
 - **查询前同步文档到语言服务器**（harness 端到端测试发现）：AIO 此前从不发送 `textDocument/didOpen`，而语言服务器对「未分析过的文件」的符号/诊断查询返回空——懒启动后的首轮查询必然踩中（实测：pyright 拉起成功但 lsp_symbols 返回「文件中无符号」、read_lints 漏掉已埋好的类型错误；预热后同一引擎 CLI 立刻报出该错误，证明是竞态而非漏检）。现在 `lsp_symbols/definition/references/hover` 查询前会把文件当前磁盘内容 didOpen（首次）/didChange（后续，版本号递增）进服务器，服务器先分析再应答；read_lints 对显式指定的文件同样同步

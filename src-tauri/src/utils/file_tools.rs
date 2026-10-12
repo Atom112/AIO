@@ -11,7 +11,7 @@ use crate::core::tool_names;
 use crate::ierr;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ====== Constants ======
 
@@ -182,6 +182,42 @@ pub(crate) fn mutating_tool_target(
     Some((target, exists))
 }
 
+/// Lexical containment of the RAW resolved path (harness round 6): expands `..`
+/// components without touching the filesystem, strips the Windows extended-length
+/// prefix from the canonical base, and compares component-wise — case-insensitively
+/// on Windows (a user-typed absolute in-project path may differ in drive/dir case
+/// from the canonical base). Pure — unit-tested.
+fn lexically_inside(base: &Path, resolved: &Path) -> bool {
+    let mut lex = PathBuf::new();
+    for c in resolved.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                lex.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => lex.push(other),
+        }
+    }
+    let strip = |p: &Path| {
+        PathBuf::from(crate::utils::file_tools::strip_windows_extended_prefix(
+            &p.to_string_lossy(),
+        ))
+    };
+    let (b, l) = (strip(base), strip(&lex));
+    if b.components().count() > l.components().count() {
+        return false;
+    }
+    if cfg!(windows) {
+        let norm =
+            |c: std::path::Component| -> String { c.as_os_str().to_string_lossy().to_lowercase() };
+        let bc: Vec<String> = b.components().map(norm).collect();
+        let lc: Vec<String> = l.components().map(norm).collect();
+        lc[..bc.len()] == bc[..]
+    } else {
+        l.starts_with(&b)
+    }
+}
+
 /// Path sandbox: resolves the requested path and ensures it stays within `allowed_dir`.
 ///
 /// Safety invariant: regardless of whether the target exists or can be canonicalized, it
@@ -202,9 +238,25 @@ pub(crate) fn safe_path(
     })?;
     let p = PathBuf::from(requested);
     let resolved = if p.is_absolute() { p } else { base.join(&p) };
+    // Harness round 6: lexical escape signature of the RAW path (no filesystem
+    // probing). When a probe later FAILS on a path that is lexically outside the
+    // project, the error must be the distinct 路径越界 message — the old flow
+    // leaked the raw canonicalize io error ("os error 3"), indistinguishable from
+    // a genuinely missing in-project path (report 9.1: read_file D:\Windows\win.ini).
+    // Probing-success paths keep their existing semantics (final canonical check).
+    let lex_outside = !lexically_inside(&base, &resolved);
     let target = if must_exist {
-        std::fs::canonicalize(&resolved)
-            .map_err(|e| ierr!("路径不可访问: {}", "Path is inaccessible: {}", e))?
+        std::fs::canonicalize(&resolved).map_err(|e| {
+            if lex_outside {
+                ierr!(
+                    "路径越界: '{}' 不在项目目录内",
+                    "Path out of bounds: '{}' is not inside the project directory",
+                    requested
+                )
+            } else {
+                ierr!("路径不可访问: {}", "Path is inaccessible: {}", e)
+            }
+        })?
     } else {
         match std::fs::canonicalize(&resolved) {
             Ok(c) => c,
@@ -239,8 +291,17 @@ pub(crate) fn safe_path(
                     }
                     r
                 } else {
-                    let canon = std::fs::canonicalize(&exist)
-                        .map_err(|e| ierr!("路径不可访问: {}", "Path is inaccessible: {}", e))?;
+                    let canon = std::fs::canonicalize(&exist).map_err(|e| {
+                        if lex_outside {
+                            ierr!(
+                                "路径越界: '{}' 不在项目目录内",
+                                "Path out of bounds: '{}' is not inside the project directory",
+                                requested
+                            )
+                        } else {
+                            ierr!("路径不可访问: {}", "Path is inaccessible: {}", e)
+                        }
+                    })?;
                     let mut r = canon;
                     for n in trail.into_iter().rev() {
                         r.push(n);
@@ -990,6 +1051,81 @@ mod safe_path_tests {
         fs::write(base.join("real.txt"), b"x").unwrap();
         let r = safe_path(&base_s, "real.txt", true).unwrap();
         assert!(r.starts_with(fs::canonicalize(&base).unwrap()));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Harness round 6 (report 9.1 caveat): an out-of-bounds request whose probe
+    /// FAILS (target does not exist) must surface the distinct 路径越界 error —
+    /// the old flow leaked the raw canonicalize io error ("os error 3"),
+    /// indistinguishable from a genuinely missing in-project path.
+    #[test]
+    fn escape_with_missing_target_yields_out_of_bounds_error() {
+        let base = fresh_base("escape-missing");
+        let base_s = base.to_string_lossy().to_string();
+        // Relative .. escape to a nonexistent outside target, both must_exist modes
+        for must_exist in [true, false] {
+            let r = safe_path(&base_s, "../../../__aio_no_such_dir__/x.txt", must_exist);
+            let err = r.expect_err("越界+缺失目标必须报错");
+            assert!(err.contains("路径越界"), "应报越界而非裸 io 错误: {err}");
+            assert!(!err.contains("os error"), "不应泄露原始 io 错误: {err}");
+        }
+        // Absolute escape to a definitely-missing location (parent of the temp base)
+        let outside = base
+            .parent()
+            .unwrap()
+            .join("__aio_no_such_dir__")
+            .join("x.txt");
+        let r = safe_path(&base_s, &outside.to_string_lossy(), true);
+        let err = r.expect_err("绝对路径越界+缺失必须报错");
+        assert!(err.contains("路径越界"), "应报越界: {err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The counter-edge must keep its semantics: a MISSING path that IS inside the
+    /// project still reports 路径不可访问 (io error passthrough), not 越界.
+    #[test]
+    fn missing_in_project_path_keeps_inaccessible_error() {
+        let base = fresh_base("missing-in");
+        let base_s = base.to_string_lossy().to_string();
+        let r = safe_path(&base_s, "no_such_dir/no_such_file.txt", true);
+        let err = r.expect_err("缺失的库内路径必须报错");
+        assert!(err.contains("路径不可访问"), "库内缺失应报不可访问: {err}");
+        assert!(!err.contains("路径越界"), "不应误报越界: {err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// An EXISTING out-of-bounds target still reaches the final canonical check
+    /// (regression: the lexical pre-sign only picks the error message when the
+    /// probe fails — probing-success behavior must be unchanged).
+    #[test]
+    fn existing_escape_target_still_rejected_by_canonical_check() {
+        let base = fresh_base("escape-exists");
+        let base_s = base.to_string_lossy().to_string();
+        // The temp dir's parent definitely exists
+        let outside = base.parent().unwrap().to_path_buf();
+        let r = safe_path(&base_s, &outside.to_string_lossy(), true);
+        let err = r.expect_err("存在的越界目标必须被拒");
+        assert!(err.contains("路径越界"), "应报越界: {err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Absolute path INSIDE the project keeps working (harness round 6: the LLM's
+    /// delete_file test passed a full absolute path — `D:\aio-harness-sandbox\tests\x.txt`).
+    #[test]
+    fn absolute_path_inside_project_still_allowed() {
+        let base = fresh_base("abs-inside");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("inside_abs.txt"), b"x").unwrap();
+        let abs = base.join("inside_abs.txt");
+        let r = safe_path(&base_s, &abs.to_string_lossy(), true);
+        assert!(r.is_ok(), "项目内绝对路径应放行: {r:?}");
+        // Windows case variance on an in-project absolute path is NOT an escape
+        #[cfg(windows)]
+        {
+            let lower = abs.to_string_lossy().to_lowercase();
+            let r = safe_path(&base_s, &lower, true);
+            assert!(r.is_ok(), "大小写不同的项目内绝对路径应放行: {r:?}");
+        }
         let _ = fs::remove_dir_all(&base);
     }
 

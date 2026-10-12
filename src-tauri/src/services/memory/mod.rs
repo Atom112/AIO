@@ -83,14 +83,47 @@ pub fn resolve_project_embedding(
             .unwrap_or_default()
             .memory_embedding
     };
-    if cfg.provider != "local" || cfg.model.trim().is_empty() {
+    let cfg = if cfg.provider != "local" || cfg.model.trim().is_empty() {
         MemoryEmbeddingConfig {
             enabled: cfg.enabled,
             ..MemoryEmbeddingConfig::default()
         }
     } else {
         cfg
+    };
+    // Harness round 6 (self-heal): a dead legacy config (unresolvable model name)
+    // with an empty vector library auto-resets to the local default, so semantic
+    // retrieval recovers on the next write instead of degrading forever.
+    maybe_self_heal_embedding_cfg(&cfg, store)
+}
+
+/// Harness round 6 (self-heal): a project-level embedding config naming a model
+/// that cannot resolve in the local registry (e.g. the legacy ollama model of the
+/// pre-v0.8 era, "bge-m3:latest") silently degraded every write to NULL vectors
+/// and every search to keyword RRF ranks — for five test rounds, because the fix
+/// required a manual settings change that never happened. When such a dead config
+/// is found AND the library holds no vectors at all, reset it to the local
+/// default (bundled all-MiniLM-L6-v2) and persist the reset. A library WITH
+/// vectors is never auto-reset (that is a user decision, not ours).
+pub(crate) fn maybe_self_heal_embedding_cfg(
+    cfg: &MemoryEmbeddingConfig,
+    store: &MemoryStore,
+) -> MemoryEmbeddingConfig {
+    if !cfg.enabled
+        || crate::core::model_registry::find_entry(cfg.model.trim()).is_some()
+        || store.has_any_vectors()
+    {
+        return cfg.clone();
     }
+    tracing::warn!(
+        "[memory] 嵌入模型 '{}' 在本地注册表中不存在且库内无向量，自动回退默认本地模型（原配置导致语义检索静默降级为关键词匹配）",
+        cfg.model
+    );
+    let def = MemoryEmbeddingConfig::default();
+    if let Err(e) = store.set_embedding_cfg(&def) {
+        tracing::warn!("[memory] 死配置自愈写入失败（本次进程内仍使用默认模型）: {e}");
+    }
+    def
 }
 
 /// Embed a single text under an explicit config, with no store guards (MEM-06).
@@ -149,4 +182,88 @@ pub fn embedding_unavailable_reason(app: &tauri::AppHandle, store: &MemoryStore)
         return Some(crate::ierr!("嵌入未启用", "Embedding is not enabled"));
     }
     crate::plugins::embed::resolve(app, &cfg).err()
+}
+
+#[cfg(test)]
+mod self_heal_tests {
+    use super::*;
+    use crate::core::models::MemoryEmbeddingConfig;
+
+    fn temp_store(tag: &str) -> (std::path::PathBuf, MemoryStore) {
+        let dir = std::env::temp_dir().join(format!("aio-heal-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let dir_s = dir.to_string_lossy().to_string();
+        let store = MemoryStore::open(&dir_s).expect("open store");
+        (dir, store)
+    }
+
+    fn dead_legacy_cfg() -> MemoryEmbeddingConfig {
+        MemoryEmbeddingConfig {
+            provider: "ollama".into(),
+            model: "bge-m3:latest".into(),
+            api_url: String::new(),
+            dimensions: 1024,
+            enabled: true,
+            api_key: String::new(),
+        }
+    }
+
+    /// Harness round 6: the exact test-project situation — a legacy ollama model
+    /// name that can never resolve + zero vectors — auto-resets to the local
+    /// default and persists the reset (model, dims) so later opens stay healed.
+    #[test]
+    fn self_heal_resets_dead_legacy_model_when_no_vectors() {
+        let (_dir, store) = temp_store("reset");
+        store.set_embedding_cfg(&dead_legacy_cfg()).unwrap();
+        let (cfg, set) = store.embedding_cfg();
+        assert!(set, "meta 应已设置");
+        assert_eq!(cfg.model, "bge-m3:latest");
+        assert!(!store.has_any_vectors(), "新库应无向量");
+
+        let healed = maybe_self_heal_embedding_cfg(&cfg, &store);
+        assert_eq!(healed.model, "all-MiniLM-L6-v2");
+        assert_eq!(healed.dimensions, 384);
+
+        // Persisted: the next read sees the healed config and matching dim meta.
+        let (cfg2, _) = store.embedding_cfg();
+        assert_eq!(cfg2.model, "all-MiniLM-L6-v2");
+        assert_eq!(store.embedding_dim_meta(), Some(384));
+        let _ = std::fs::remove_dir_all(&_dir);
+    }
+
+    /// A library WITH vectors is never auto-reset (user decision, not ours), and
+    /// a disabled config is never healed either (the user turned embedding off).
+    #[test]
+    fn self_heal_skips_when_vectors_exist_or_disabled() {
+        let (_dir, store) = temp_store("skip-vec");
+        store.set_embedding_cfg(&dead_legacy_cfg()).unwrap();
+        // One fact WITH a vector → no heal
+        store
+            .upsert_fact(
+                &crate::services::memory::store::NewFact {
+                    key: Some("k".into()),
+                    content: "c".into(),
+                    category: "note".into(),
+                    importance: 0.5,
+                    source_type: None,
+                    source_refs: None,
+                    pinned: false,
+                },
+                Some(("m".into(), 4, vec![0.5f32; 4])),
+            )
+            .expect("upsert");
+        let (cfg, _) = store.embedding_cfg();
+        let out = maybe_self_heal_embedding_cfg(&cfg, &store);
+        assert_eq!(out.model, "bge-m3:latest", "有向量的库不应自愈");
+        let _ = std::fs::remove_dir_all(&_dir);
+
+        // Disabled config (only reachable via the global fallback path — meta reads
+        // always come back enabled=true) is never healed: the user turned it off.
+        let (_dir2, store2) = temp_store("skip-off");
+        let mut disabled = dead_legacy_cfg();
+        disabled.enabled = false;
+        let out2 = maybe_self_heal_embedding_cfg(&disabled, &store2);
+        assert_eq!(out2.model, "bge-m3:latest", "禁用状态不应自愈");
+        let _ = std::fs::remove_dir_all(&_dir2);
+    }
 }

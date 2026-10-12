@@ -47,6 +47,23 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Whether any fact carries a stored vector (harness round 6: the dead-config
+    /// self-heal only fires when NOTHING has vectors — a library with live vectors
+    /// is never auto-reset). On query errors assume vectors exist (conservative:
+    /// never reset on an unreadable library).
+    pub fn has_any_vectors(&self) -> bool {
+        let Ok(conn) = self.conn.lock() else {
+            return true; // unreadable = conservative
+        };
+        conn.query_row(
+            "SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(true)
+    }
+
     /// Read a meta key's value.
     /// Read the project-level embedding config (returns (local default, false) when unset).
     pub fn embedding_cfg(&self) -> (MemoryEmbeddingConfig, bool) {

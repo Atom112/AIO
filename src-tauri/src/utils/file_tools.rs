@@ -830,6 +830,12 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             // Linear scan: the newline counter advances with the cursor (a per-match
             // prefix re-scan made this quadratic — catastrophic on large files with many
             // matches); the listed lines are capped so the error stays readable and cheap.
+            // The cursor advances by the WHOLE match (non-overlapping, str::matches
+            // semantics) — the historic `abs_pos + 1` byte-step panicked whenever
+            // old_string started with a multi-byte UTF-8 char (any CJK old_string with
+            // one match made the next `content[pos..]` slice land mid-character:
+            // "文件工具执行线程 panic" in harness round 4) and also miscounted
+            // overlapping occurrences ("aa" in "aaaa" → 3 instead of 2).
             let mut matches: Vec<usize> = Vec::new();
             let mut pos = 0;
             let mut line = 1usize;
@@ -837,7 +843,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 let abs_pos = pos + found;
                 line += content[pos..abs_pos].matches('\n').count();
                 matches.push(line);
-                pos = abs_pos + 1;
+                pos = abs_pos + old_s.len();
             }
             match matches.len() {
                 0 => {
@@ -1129,6 +1135,67 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
+    /// Regression (harness round 4, tool-stability incident): an old_string that
+    /// STARTS with a multi-byte UTF-8 char (any CJK text) used to panic the file
+    /// tool thread — the match-count loop stepped the cursor by +1 BYTE, so the
+    /// next `content[pos..]` slice landed mid-character. The writer subagent hit
+    /// this appending a Chinese chapter and had to fall back to line-range mode.
+    #[test]
+    fn replace_in_file_cjk_old_string_does_not_panic() {
+        let base = fresh_base("replace-cjk");
+        let base_s = base.to_string_lossy().to_string();
+        // Exact reproduction: single match of a CJK-leading old_string (the second
+        // loop iteration used to slice at match_start+1 = mid-character).
+        fs::write(base.join("c.txt"), "前文\n拒绝访问\n后文\n").unwrap();
+        let args = serde_json::json!({
+            "path": "c.txt",
+            "old_string": "拒绝访问",
+            "new_string": "访问被拒"
+        });
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(
+            text.contains("✓ 替换"),
+            "中文 old_string 应正常替换: {text}"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("c.txt")).unwrap(),
+            "前文\n访问被拒\n后文\n"
+        );
+
+        // Append-by-replacement (the writer's exact scenario): old_string is the
+        // CJK file tail, new_string = tail + new chapter.
+        fs::write(base.join("a.txt"), "标题\n（完整清单见附录）\n").unwrap();
+        let args = serde_json::json!({
+            "path": "a.txt",
+            "old_string": "（完整清单见附录）",
+            "new_string": "（完整清单见附录）\n## 7. 新章节\n新增内容。"
+        });
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        assert!(text_of(&r).contains("✓ 替换"), "中文追加替换不应 panic");
+        assert!(fs::read_to_string(base.join("a.txt"))
+            .unwrap()
+            .contains("## 7. 新章节"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Non-overlapping match semantics (str::matches): the historic +1 byte step
+    /// counted "aa" in "aaaa" as 3 occurrences; the whole-match step counts 2.
+    #[test]
+    fn replace_in_file_counts_non_overlapping_matches() {
+        let base = fresh_base("replace-overlap");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("o.txt"), "xaaaaax\n").unwrap();
+        let args = serde_json::json!({"path": "o.txt", "old_string": "aa", "new_string": "bb"});
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(
+            text.contains("出现了 2 次"),
+            "非重叠语义应计 2 处（不是 3 处）: {text}"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
     /// Regression (P0-2): read_file's [HASH] must be the digest of the COMPLETE file —
     /// files > 1MB must remain editable through anchor_hash (the digest previously
     /// covered only the first MAX_R bytes, making cross-writer edits a permanent
@@ -1184,8 +1251,11 @@ mod safe_path_tests {
             &base_s,
         );
         let text = text_of(&r);
+        // Non-overlapping match semantics (str::matches): "aaa" in 1.2M "a"s = 400,000
+        // occurrences. (The historic +1 byte-step counted 1,199,998 overlapping
+        // matches — the overlap semantics fix in the CJK-boundary patch changed this.)
         assert!(
-            text.contains("出现了") && text.contains("共 1199998 处"),
+            text.contains("出现了") && text.contains("共 400000 处"),
             "应报多匹配错误（含总数）: {text}"
         );
         assert!(text.matches(" 1").count() < 40, "列出的匹配行号必须截断");

@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 🔤 Harness 第三轮（HARNESS_FIX_REPORT.md）五项闭环 + 一个隐藏 P0
+
+- **控制台输出 GBK 解码（隐藏 P0，报告只当「正常现象」一笔带过）**：cmd.exe 在中文 Windows 按 GBK 输出本地化消息，此前被按 UTF-8 有损解码成乱码——`拒绝访问。` 变成 mojibake，导致**签名检测在中文系统上全部失效**（扩权弹窗从未触发过、环境类失败判别失明）。现 stdout/stderr 按「UTF-8 严格优先 → 系统 ANSI 代码页（MultiByteToWideChar CP_ACP）回退」解码（无新依赖）；真实 cmd E2E 验证中文往返（+1）；GBK 字节夹具单测（+1）
+- **解释器转发 v2**（报告 P0-2 根因修正）：DB 取证发现 tester 全程用 `cmd /c python --version` 形态——上一版只识别首 token 裸名，cmd 包裹全部漏转发。现解包 `cmd`/`cmd.exe` + flags 后识别操作 token（`cmd /c python -V`、`CMD.EXE /C /F npm install`、`python.exe` 后缀形态全覆盖）；转发列表加入 `git`/`cargo`（报告观察到 shell 无 git；两者常装于 Program Files，默认 AAP ACE 使转发后的绝对路径在 AC 内真实可执行）；+3 单测组（cmd 包裹改写/形态识别/操作级去重键）
+- **扩权触发扩展**：转发目标解释器在沙箱内「不是内部或外部命令 / 9009」也触发扩权弹窗（与拒绝访问同等待遇）；去重键升级为**操作级**（`cmd /c X` 与裸 `X` 同键，无关 cmd 调用不再互撞）；docs zh/en 同步
+- **熔断器 v2**（报告 P1-1 三条可选建议全采纳）：① 阈值可配（`toolBreakerThreshold`，0=默认 6，下钳 2）② 第 3 次连续环境类失败起在结果文本追加剩余预算预警 ③ **环境类/业务类失败区分**——仅「命令不存在/权限被拒/缺依赖」签名计数；`pytest` 测试未通过这类业务失败**不再计入**（模型修真实 bug 的重试是合法行为，由轮数上限兜底）；+3 单测
+- **shell/内置工具边界文档化**（报告 P1-3）：permissions.md zh/en 新增「shell 运行在沙箱 token 下，部分 OS 级操作（如 `cmd dir` 枚举）可能被拒；内置文件工具经宿主进程执行不受影响——属预期分层」
+- **报告勘误（chat DB 取证）**：P0-1 的「`delete_file` 60s 审批超时」为过时信息（round 3 全程无人调用过该工具；Auto/Workflow 免确认已在运行 build 生效）；P0-1 的 `del` 文件删除被拒是本机 EDR 层（DACL 之外的路径过滤，产品代码不可修）——扩权弹窗「跳出沙箱执行」即为其产品级出口
+
 ### 🔓 沙箱扩权请求（Gemini 式 UX 闭环，AppContainer 路线收尾）
 
 - **拒绝即问，一键补救**：命令在 Windows AppContainer 沙箱内被拒（WinError 5 签名：`Access is denied` / `拒绝访问`，覆盖 cmd/PowerShell/Python）时，弹出选择对话框——「授权解释器目录并重试（本次会话）」/「授权并永久记住（写入 `sandboxWindowsToolchainDirs`）」/「跳出沙箱执行（仅本次）」/「忽略」，支持输入任意目录路径授权。把「模型盲试烧轮数」（第一轮 tester 25 轮）和「用户全程不知情」收敛为「用户点一下」；EDR/机器级过滤（DACL 之外、代码修不了的层）从此有产品级出口

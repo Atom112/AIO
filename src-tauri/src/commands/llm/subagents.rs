@@ -4,7 +4,7 @@
 // 14 个子模块 glob 与其工具 use 头——替换为下述显式 use（符号 → 真实来源）。
 use crate::commands::llm::handoff::build_subagent_progress_summary;
 use crate::commands::llm::tool_dispatch::{
-    is_parallel_safe, merge_mcp_tools, FsServerPolicy, ToolFailureBreaker,
+    classify_outcome, is_parallel_safe, merge_mcp_tools, FsServerPolicy, ToolFailureBreaker,
 };
 use crate::core::events as ev;
 use crate::core::models::*;
@@ -1437,12 +1437,13 @@ pub(crate) async fn execute_subagent(
     let mut length_retries: u32 = 0;
     // Context-overflow auto-recovery attempts (retry after compression)
     let mut sub_overflow_retries: u32 = 0;
-    // Per-run tool circuit breaker (harness finding: the tester subagent hit the
-    // 25-round cap retrying environment-blocked operations — now disabled early)
-    let mut tool_breaker = ToolFailureBreaker::default();
     // Subagent budget (AgentLimits: runaway guard at 100 rounds; an explicit user-set
     // max_tool_rounds takes precedence).
     let app_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
+    // Per-run tool circuit breaker (harness finding: the tester subagent hit the
+    // 25-round cap retrying environment-blocked operations — now disabled early).
+    // Threshold configurable via `toolBreakerThreshold` (0 = default 6).
+    let mut tool_breaker = ToolFailureBreaker::new(app_cfg.tool_breaker_threshold);
     let limits = crate::commands::llm::AgentLimits::for_subagent(&app_cfg);
     // Read-only tool concurrency toggle (shares the same config item as the main loop)
     let parallel_enabled = app_cfg.parallel_tool_execution;
@@ -1591,7 +1592,7 @@ pub(crate) async fn execute_subagent(
                     // Circuit breaker: consecutively-failing tools are disabled for
                     // the rest of the run — short-circuit instead of executing.
                     if tool_breaker.is_disabled(&tc.name) {
-                        tool_results[i] = Some((ToolFailureBreaker::blocked_message(&tc.name),));
+                        tool_results[i] = Some((tool_breaker.blocked_message(&tc.name),));
                         continue;
                     }
 
@@ -1674,15 +1675,18 @@ pub(crate) async fn execute_subagent(
                         .await
                     };
 
-                    let (content_text, tool_is_error) = match tool_result {
+                    let (mut content_text, tool_is_error) = match tool_result {
                         Ok(tr) => {
                             let is_err = tr.is_error;
                             (tool_result_text(&tr), is_err)
                         }
                         Err(e) => (super::round_artifacts::tool_error_text(&e), true),
                     };
-                    // Circuit breaker bookkeeping (consecutive-failure detection)
-                    tool_breaker.record(&tc.name, tool_is_error);
+                    // Circuit breaker v2 (harness round 3): env-class counting + warning band
+                    let outcome = classify_outcome(tool_is_error, &content_text);
+                    if let Some(n) = tool_breaker.record(&tc.name, outcome) {
+                        content_text.push_str(&tool_breaker.warn_message(&tc.name, n));
+                    }
                     let _ = window.emit(
                         ev::SUBAGENT_STEP,
                         SubagentStepPayload {
@@ -1707,15 +1711,19 @@ pub(crate) async fn execute_subagent(
                         });
                     }
                     while let Some((i, result)) = unordered.next().await {
-                        let (content_text, tool_is_error) = match result {
+                        let (mut content_text, tool_is_error) = match result {
                             Ok(tr) => {
                                 let is_err = tr.is_error;
                                 (tool_result_text(&tr), is_err)
                             }
                             Err(e) => (super::round_artifacts::tool_error_text(&e), true),
                         };
-                        // Circuit breaker bookkeeping (consecutive-failure detection)
-                        tool_breaker.record(&rr.tool_calls[i].name, tool_is_error);
+                        // Circuit breaker v2 (harness round 3): env-class counting + warning band
+                        let outcome = classify_outcome(tool_is_error, &content_text);
+                        if let Some(n) = tool_breaker.record(&rr.tool_calls[i].name, outcome) {
+                            content_text
+                                .push_str(&tool_breaker.warn_message(&rr.tool_calls[i].name, n));
+                        }
                         let tc = &rr.tool_calls[i];
                         let _ = window.emit(
                             ev::SUBAGENT_STEP,

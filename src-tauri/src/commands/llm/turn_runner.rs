@@ -32,7 +32,9 @@ use super::subagents::{
     register_running_subagent,
 };
 use super::tasks::{execute_ask_user, execute_task_board_tool};
-use super::tool_dispatch::{build_main_tool_set, is_parallel_safe, ToolFailureBreaker};
+use super::tool_dispatch::{
+    build_main_tool_set, classify_outcome, is_parallel_safe, ToolFailureBreaker,
+};
 use super::tool_specs::{execute_artifact_read, execute_skill_read};
 use super::usage::insert_usage_log;
 use super::DelegateContext;
@@ -192,8 +194,9 @@ impl AgentTurnRunner {
         let mut accumulated_content = String::new();
         let mut all_images: Vec<GeneratedImage> = Vec::new();
         // Per-turn tool circuit breaker (harness finding: environment-blocked
-        // retries can burn the whole round budget probing)
-        let mut tool_breaker = ToolFailureBreaker::default();
+        // retries can burn the whole round budget probing). Threshold is
+        // configurable via `toolBreakerThreshold` (0 = default 6).
+        let mut tool_breaker = ToolFailureBreaker::new(app_config.tool_breaker_threshold);
 
         // Workflow mode: inject the mandatory system message before the LLM loop (inside the stable prefix to favor prompt cache and compression protection)
         if agent_mode == AgentMode::Workflow {
@@ -544,7 +547,7 @@ impl AgentTurnRunner {
                 // short-circuit with an explanation instead of executing again
                 // (harness finding: a tester subagent burned all 25 rounds probing).
                 if tool_breaker.is_disabled(&tc.name) {
-                    let blocked = ToolFailureBreaker::blocked_message(&tc.name);
+                    let blocked = tool_breaker.blocked_message(&tc.name);
                     exec_results[i] = Some(ToolExecResult {
                         content_text: blocked.clone(),
                         result_value: json!({"error": blocked}),
@@ -955,10 +958,15 @@ impl AgentTurnRunner {
                     };
 
                     // Shared display-triple conversion (round_artifacts)
-                    let (content_text, result_value, is_error) =
+                    let (mut content_text, result_value, is_error) =
                         super::round_artifacts::tool_result_display(&tool_result);
-                    // Circuit breaker bookkeeping (consecutive-failure detection)
-                    tool_breaker.record(&tc.name, is_error);
+                    // Circuit breaker v2 (harness round 3): only ENV-class failures
+                    // count toward the disable; from the warning band an early-
+                    // warning line rides along with the result text.
+                    let outcome = classify_outcome(is_error, &content_text);
+                    if let Some(n) = tool_breaker.record(&tc.name, outcome) {
+                        content_text.push_str(&tool_breaker.warn_message(&tc.name, n));
+                    }
                     // For file-modifying tools, capture the diff for frontend display
                     let file_changes = file_path_for_diff
                         .and_then(|path| {
@@ -1020,10 +1028,16 @@ impl AgentTurnRunner {
                         },
                     };
                     // Shared display-triple conversion (round_artifacts)
-                    let (content_text, result_value, is_error) =
+                    let (mut content_text, result_value, is_error) =
                         super::round_artifacts::tool_result_display(&result);
-                    // Circuit breaker bookkeeping (consecutive-failure detection)
-                    tool_breaker.record(&round_result.tool_calls[i].name, is_error);
+                    // Circuit breaker v2 (harness round 3): env-class counting + warning band
+                    let outcome = classify_outcome(is_error, &content_text);
+                    if let Some(n) = tool_breaker.record(&round_result.tool_calls[i].name, outcome)
+                    {
+                        content_text.push_str(
+                            &tool_breaker.warn_message(&round_result.tool_calls[i].name, n),
+                        );
+                    }
                     // Emit this delegate result immediately
                     let tc = &round_result.tool_calls[i];
                     let _ = window.emit(

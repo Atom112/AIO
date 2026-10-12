@@ -69,6 +69,9 @@ struct AppConfigDisk {
     /// Windows AppContainer toolchain R+X directories
     #[serde(default, rename = "sandboxWindowsToolchainDirs")]
     sandbox_windows_toolchain_dirs: Vec<String>,
+    /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
+    #[serde(default, rename = "toolBreakerThreshold")]
+    tool_breaker_threshold: u32,
     #[serde(default, rename = "memoryEnabled")]
     memory_enabled: bool,
     #[serde(
@@ -158,6 +161,7 @@ impl AppConfigDisk {
             sandbox_required: cfg.sandbox_required,
             sandbox_windows: cfg.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: cfg.sandbox_windows_toolchain_dirs.clone(),
+            tool_breaker_threshold: cfg.tool_breaker_threshold,
             memory_enabled: cfg.memory_enabled,
             memory_auto_inject: cfg.memory_auto_inject,
             memory_auto_extract: cfg.memory_auto_extract,
@@ -203,6 +207,7 @@ impl AppConfigDisk {
             sandbox_required: self.sandbox_required,
             sandbox_windows: self.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: self.sandbox_windows_toolchain_dirs.clone(),
+            tool_breaker_threshold: self.tool_breaker_threshold,
             memory_enabled: self.memory_enabled,
             memory_auto_inject: self.memory_auto_inject,
             memory_auto_extract: self.memory_auto_extract,
@@ -238,6 +243,7 @@ impl Default for AppConfigDisk {
             sandbox_required: crate::core::models::default_true(),
             sandbox_windows: crate::core::models::default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
+            tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: crate::core::models::default_true(),
             memory_auto_extract: crate::core::models::default_true(),

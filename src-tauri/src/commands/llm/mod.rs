@@ -571,17 +571,20 @@ pub(crate) async fn execute_builtin_tool(
         };
         let started = std::time::SystemTime::now();
         let result = run_command(ac_dirs, command_for_run.clone()).await;
-        // Harness round 3 (sandbox expansion): an access-denied signature from inside the
-        // AppContainer becomes a one-click remediation dialog (grant dir / unsandboxed
-        // once / ignore) instead of a raw error the model blind-retries against. Ask at
-        // most once per first command token per 30-min window; timeout degrades to the
-        // original error (pre-expansion behavior, safe for unattended runs).
+        // Harness round 3 (sandbox expansion): an access-denied signature from inside
+        // the AppContainer — or a not-found signature when the command targets a
+        // forwarded interpreter (cmd /c python … → 9009 inside the sandbox) — becomes
+        // a one-click remediation dialog (grant dir / unsandboxed once / ignore)
+        // instead of a raw error the model blind-retries against. Ask at most once
+        // per operation token per 30-min window; timeout degrades to the original
+        // error (pre-expansion behavior, safe for unattended runs).
         #[cfg(windows)]
-        let result = if sandboxed
-            && result.is_error
-            && sandbox_expand::should_ask(&command)
-            && shell_tools::is_sandbox_access_denied(&round_artifacts::tool_result_text(&result))
-        {
+        let result = if sandboxed && result.is_error && sandbox_expand::should_ask(&command) && {
+            let text = round_artifacts::tool_result_text(&result);
+            shell_tools::is_sandbox_access_denied(&text)
+                || (shell_tools::forwarded_interpreter_of(&command).is_some()
+                    && shell_tools::is_command_not_found_result(&text))
+        } {
             sandbox_expand::mark_asked(&command);
             let err_text = round_artifacts::tool_result_text(&result);
             let hint_dir = shell_tools::forward_script_interpreter(&command)

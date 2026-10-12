@@ -41,56 +41,140 @@ pub(crate) fn is_parallel_safe(tool_name: &str) -> bool {
     )
 }
 
+/// One execution outcome for the tool failure breaker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolOutcome {
+    /// Executed successfully — resets the tool's consecutive counter
+    Success,
+    /// Environment-blocked failure (missing command / permission denied / missing
+    /// dependency — text signature via `shell_tools::is_env_blocked_failure`):
+    /// counts toward the disable threshold.
+    EnvBlocked,
+    /// Business failure (the command/tool RAN and returned nonzero — e.g. failing
+    /// tests): never counts toward the threshold (harness round 3, P1-1: the
+    /// model legitimately retries while fixing real failures; the round cap
+    /// bounds that loop).
+    Business,
+}
+
 /// Per-turn tool circuit breaker (harness-session finding: a tester subagent
 /// burned its entire 25-round budget retrying environment-blocked operations).
 ///
-/// A tool that fails CONSECUTIVELY [`ToolFailureBreaker::THRESHOLD`] times — the
-/// signature of environment blocking (missing interpreter, permission denied,
-/// port occupied) rather than an argument mistake — is disabled for the rest of
-/// the turn: further calls short-circuit with [`ToolFailureBreaker::blocked_message`]
-/// instead of executing. A success resets that tool's counter (unless already
-/// disabled — disabled is terminal for the turn). Counts are per tool NAME, per
-/// turn (main loop and each subagent loop carry their own instance).
-#[derive(Default)]
+/// A tool that fails with [`ToolOutcome::EnvBlocked`] CONSECUTIVELY
+/// `threshold` times is disabled for the rest of the turn: further calls
+/// short-circuit with [`ToolFailureBreaker::blocked_message`] instead of
+/// executing. A success resets that tool's counter; a business failure leaves
+/// it unchanged (unless already disabled — disabled is terminal for the turn).
+/// Counts are per tool NAME, per turn (main loop and each subagent loop carry
+/// their own instance).
 pub(crate) struct ToolFailureBreaker {
     consecutive: HashMap<String, u32>,
     disabled: std::collections::HashSet<String>,
+    threshold: u32,
+}
+
+impl Default for ToolFailureBreaker {
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 impl ToolFailureBreaker {
-    const THRESHOLD: u32 = 6;
+    /// Default consecutive-env-failure threshold (harness round 3 evidence: the
+    /// tester's 6th probe carried no new information; 5 alternatives had failed).
+    pub const DEFAULT_THRESHOLD: u32 = 6;
+
+    /// `configured` 0 → default; clamped to >= 2 (a threshold of 1 would disable
+    /// on the first failure, leaving the model no chance to vary its approach).
+    pub(crate) fn new(configured: u32) -> Self {
+        let threshold = if configured == 0 {
+            Self::DEFAULT_THRESHOLD
+        } else {
+            configured.max(2)
+        };
+        Self {
+            consecutive: HashMap::new(),
+            disabled: std::collections::HashSet::new(),
+            threshold,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn threshold(&self) -> u32 {
+        self.threshold
+    }
 
     pub(crate) fn is_disabled(&self, tool: &str) -> bool {
         self.disabled.contains(tool)
     }
 
-    /// Records one execution outcome for the tool.
-    pub(crate) fn record(&mut self, tool: &str, is_error: bool) {
+    /// Records one execution outcome. Returns `Some(n)` — the current consecutive
+    /// ENV-failure count — when it enters the warning band (`warn_from <= n <
+    /// threshold`), so the caller can append an early-warning line to the result
+    /// text (harness round 3, P1-1 suggestion: "失败的预警").
+    pub(crate) fn record(&mut self, tool: &str, outcome: ToolOutcome) -> Option<u32> {
         if self.disabled.contains(tool) {
-            return; // terminal for the turn
+            return None; // terminal for the turn
         }
-        if !is_error {
-            self.consecutive.remove(tool);
-            return;
-        }
-        let n = self.consecutive.entry(tool.to_string()).or_insert(0);
-        *n += 1;
-        if *n >= Self::THRESHOLD {
-            tracing::warn!(
-                "[breaker] 工具 {} 连续失败 {} 次（环境阻断特征），本回合内已停用",
-                tool,
-                *n
-            );
-            self.disabled.insert(tool.to_string());
+        match outcome {
+            ToolOutcome::Success => {
+                self.consecutive.remove(tool);
+                None
+            }
+            ToolOutcome::Business => None, // never counts toward the disable
+            ToolOutcome::EnvBlocked => {
+                let n = self.consecutive.entry(tool.to_string()).or_insert(0);
+                *n += 1;
+                let n = *n;
+                if n >= self.threshold {
+                    tracing::warn!(
+                        "[breaker] 工具 {} 连续环境类失败 {} 次，本回合内已停用",
+                        tool,
+                        n
+                    );
+                    self.disabled.insert(tool.to_string());
+                    None
+                } else if n >= self.warn_from() {
+                    Some(n)
+                } else {
+                    None
+                }
+            }
         }
     }
 
-    /// Short-circuit result text for a call to a disabled tool.
-    pub(crate) fn blocked_message(tool: &str) -> String {
+    /// First warning-band count (3 before the threshold for the default 6).
+    fn warn_from(&self) -> u32 {
+        self.threshold.saturating_sub(3).max(1)
+    }
+
+    /// Early-warning line appended to the result text in the warning band.
+    pub(crate) fn warn_message(&self, tool: &str, n: u32) -> String {
         format!(
-            "工具 {tool} 在本回合已连续失败 {} 次，已停用至回合结束（通常是环境阻断：缺少解释器/依赖、权限被拒、资源不可用）。请改用其他方式完成该部分，或在总结中如实报告无法完成；不要继续重试。",
-            Self::THRESHOLD
+            "\n\n[!] 注意：{tool} 已连续环境类失败 {n} 次；再连续失败 {} 次将在本回合内停用（通常是环境阻断：缺少解释器/依赖、权限被拒）。请考虑改用其他方式。",
+            self.threshold - n
         )
+    }
+
+    /// Short-circuit result text for a call to a disabled tool.
+    pub(crate) fn blocked_message(&self, tool: &str) -> String {
+        format!(
+            "工具 {tool} 在本回合已连续环境类失败 {} 次，已停用至回合结束（通常是环境阻断：缺少解释器/依赖、权限被拒、资源不可用）。请改用其他方式完成该部分，或在总结中如实报告无法完成；不要继续重试。",
+            self.threshold
+        )
+    }
+}
+
+/// Classifies one tool execution into a breaker outcome from the error flag and
+/// the result text (env-class via `shell_tools::is_env_blocked_failure`; needs
+/// the ANSI-decoded console output — harness round 3).
+pub(crate) fn classify_outcome(is_error: bool, result_text: &str) -> ToolOutcome {
+    if !is_error {
+        ToolOutcome::Success
+    } else if crate::utils::shell_tools::is_env_blocked_failure(result_text) {
+        ToolOutcome::EnvBlocked
+    } else {
+        ToolOutcome::Business
     }
 }
 
@@ -760,28 +844,52 @@ mod tests {
 
     // ====== ToolFailureBreaker ======
 
-    /// Reaching the threshold disables the tool for the rest of the turn.
+    use super::ToolOutcome;
+
+    /// Reaching the threshold of ENV failures disables the tool for the rest of
+    /// the turn (harness round 3 reproduced: 6 consecutive nosuchcmd probes).
     #[test]
-    fn breaker_disables_after_consecutive_failures() {
+    fn breaker_disables_after_consecutive_env_failures() {
         let mut b = ToolFailureBreaker::default();
         for i in 0..5 {
-            b.record("execute_command", true);
+            b.record("execute_command", ToolOutcome::EnvBlocked);
             assert!(!b.is_disabled("execute_command"), "第 {i} 次不应停用");
         }
-        b.record("execute_command", true); // 6th consecutive failure
-        assert!(b.is_disabled("execute_command"), "连续 6 次失败应停用");
-        // Disabled is terminal for the turn: the record guard keeps it disabled.
-        b.record("execute_command", false);
+        b.record("execute_command", ToolOutcome::EnvBlocked); // 6th consecutive
+        assert!(
+            b.is_disabled("execute_command"),
+            "连续 6 次环境类失败应停用"
+        );
+        // Disabled is terminal for the turn: a success record keeps it disabled.
+        b.record("execute_command", ToolOutcome::Success);
         assert!(b.is_disabled("execute_command"));
     }
 
-    /// A success resets the consecutive counter — interleaved failures never trip.
+    /// Business failures (command ran, nonzero exit) NEVER trip the breaker —
+    /// harness round 3, P1-1: `pytest` failing while the model fixes real bugs
+    /// is legitimate retry behavior bounded by the round cap.
+    #[test]
+    fn breaker_ignores_business_failures() {
+        let mut b = ToolFailureBreaker::default();
+        for _ in 0..50 {
+            b.record("execute_command", ToolOutcome::Business);
+            assert!(!b.is_disabled("execute_command"));
+        }
+        // Interleaved business failures do not even advance the env counter.
+        b.record("execute_command", ToolOutcome::EnvBlocked);
+        b.record("execute_command", ToolOutcome::Business);
+        b.record("execute_command", ToolOutcome::EnvBlocked);
+        b.record("execute_command", ToolOutcome::Business);
+        assert!(!b.is_disabled("execute_command"), "环境计数应只有 2");
+    }
+
+    /// A success resets the consecutive counter — interleaved env failures never trip.
     #[test]
     fn breaker_success_resets_counter() {
         let mut b = ToolFailureBreaker::default();
         for _ in 0..20 {
-            b.record("del", true);
-            b.record("del", false); // intermittent failures are not environment blocking
+            b.record("del", ToolOutcome::EnvBlocked);
+            b.record("del", ToolOutcome::Success); // intermittent failures are not environment blocking
             assert!(!b.is_disabled("del"));
         }
     }
@@ -791,19 +899,67 @@ mod tests {
     fn breaker_is_per_tool() {
         let mut b = ToolFailureBreaker::default();
         for _ in 0..6 {
-            b.record("python_probe", true);
+            b.record("python_probe", ToolOutcome::EnvBlocked);
         }
         assert!(b.is_disabled("python_probe"));
         assert!(!b.is_disabled("other_tool"));
-        b.record("other_tool", true);
+        b.record("other_tool", ToolOutcome::EnvBlocked);
         assert!(!b.is_disabled("other_tool"));
     }
 
-    /// The blocked message must name the tool and the threshold.
+    /// The blocked message names the tool and the threshold.
     #[test]
     fn breaker_message_names_tool_and_threshold() {
-        let msg = ToolFailureBreaker::blocked_message("execute_command");
+        let b = ToolFailureBreaker::default();
+        let msg = b.blocked_message("execute_command");
         assert!(msg.contains("execute_command"));
         assert!(msg.contains("6"));
+    }
+
+    /// Configurable threshold (harness round 3, P1-1 suggestion 1): explicit
+    /// values apply (clamped to >= 2); 0 keeps the default.
+    #[test]
+    fn breaker_threshold_is_configurable() {
+        let mut b = ToolFailureBreaker::new(3);
+        assert_eq!(b.threshold(), 3);
+        b.record("t", ToolOutcome::EnvBlocked);
+        b.record("t", ToolOutcome::EnvBlocked);
+        assert!(!b.is_disabled("t"), "阈值 3：2 次不应停用");
+        b.record("t", ToolOutcome::EnvBlocked);
+        assert!(b.is_disabled("t"), "阈值 3：3 次应停用");
+        // Clamp: a threshold of 1 would disable on first failure — disallowed.
+        let b1 = ToolFailureBreaker::new(1);
+        assert_eq!(b1.threshold(), 2, "阈值应钳制到 2");
+        // 0 → default
+        assert_eq!(ToolFailureBreaker::new(0).threshold(), 6);
+    }
+
+    /// Early warning (harness round 3, P1-1 suggestion 2): from the 3rd
+    /// consecutive env failure the caller receives the count to append a
+    /// warning line; the message names remaining budget.
+    #[test]
+    fn breaker_warns_before_trip() {
+        let mut b = ToolFailureBreaker::default();
+        assert!(
+            b.record("t", ToolOutcome::EnvBlocked).is_none(),
+            "第 1 次不预警"
+        );
+        assert!(
+            b.record("t", ToolOutcome::EnvBlocked).is_none(),
+            "第 2 次不预警"
+        );
+        let n = b
+            .record("t", ToolOutcome::EnvBlocked)
+            .expect("第 3 次应预警");
+        assert_eq!(n, 3);
+        let warn = b.warn_message("t", n);
+        assert!(warn.contains("t"));
+        assert!(warn.contains("3"));
+        // 4th and 5th stay in the warning band (Some with the count)
+        assert_eq!(b.record("t", ToolOutcome::EnvBlocked), Some(4));
+        assert_eq!(b.record("t", ToolOutcome::EnvBlocked), Some(5));
+        // 6th trips: disables and returns None (the disable message replaces warnings)
+        assert!(b.record("t", ToolOutcome::EnvBlocked).is_none());
+        assert!(b.is_disabled("t"));
     }
 }

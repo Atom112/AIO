@@ -41,6 +41,59 @@ pub(crate) fn is_parallel_safe(tool_name: &str) -> bool {
     )
 }
 
+/// Per-turn tool circuit breaker (harness-session finding: a tester subagent
+/// burned its entire 25-round budget retrying environment-blocked operations).
+///
+/// A tool that fails CONSECUTIVELY [`ToolFailureBreaker::THRESHOLD`] times — the
+/// signature of environment blocking (missing interpreter, permission denied,
+/// port occupied) rather than an argument mistake — is disabled for the rest of
+/// the turn: further calls short-circuit with [`ToolFailureBreaker::blocked_message`]
+/// instead of executing. A success resets that tool's counter (unless already
+/// disabled — disabled is terminal for the turn). Counts are per tool NAME, per
+/// turn (main loop and each subagent loop carry their own instance).
+#[derive(Default)]
+pub(crate) struct ToolFailureBreaker {
+    consecutive: HashMap<String, u32>,
+    disabled: std::collections::HashSet<String>,
+}
+
+impl ToolFailureBreaker {
+    const THRESHOLD: u32 = 6;
+
+    pub(crate) fn is_disabled(&self, tool: &str) -> bool {
+        self.disabled.contains(tool)
+    }
+
+    /// Records one execution outcome for the tool.
+    pub(crate) fn record(&mut self, tool: &str, is_error: bool) {
+        if self.disabled.contains(tool) {
+            return; // terminal for the turn
+        }
+        if !is_error {
+            self.consecutive.remove(tool);
+            return;
+        }
+        let n = self.consecutive.entry(tool.to_string()).or_insert(0);
+        *n += 1;
+        if *n >= Self::THRESHOLD {
+            tracing::warn!(
+                "[breaker] 工具 {} 连续失败 {} 次（环境阻断特征），本回合内已停用",
+                tool,
+                *n
+            );
+            self.disabled.insert(tool.to_string());
+        }
+    }
+
+    /// Short-circuit result text for a call to a disabled tool.
+    pub(crate) fn blocked_message(tool: &str) -> String {
+        format!(
+            "工具 {tool} 在本回合已连续失败 {} 次，已停用至回合结束（通常是环境阻断：缺少解释器/依赖、权限被拒、资源不可用）。请改用其他方式完成该部分，或在总结中如实报告无法完成；不要继续重试。",
+            Self::THRESHOLD
+        )
+    }
+}
+
 /// Policy for tools coming from the built-in filesystem MCP server (`BUILTIN_FS_SERVER_ID`).
 ///
 /// Why filtering is mandatory: the fs server runs as a separate stdio subprocess rooted
@@ -703,5 +756,54 @@ mod tests {
             map.get(tool_names::WRITE_FILE).map(String::as_str),
             Some("my-git-helper")
         );
+    }
+
+    // ====== ToolFailureBreaker ======
+
+    /// Reaching the threshold disables the tool for the rest of the turn.
+    #[test]
+    fn breaker_disables_after_consecutive_failures() {
+        let mut b = ToolFailureBreaker::default();
+        for i in 0..5 {
+            b.record("execute_command", true);
+            assert!(!b.is_disabled("execute_command"), "第 {i} 次不应停用");
+        }
+        b.record("execute_command", true); // 6th consecutive failure
+        assert!(b.is_disabled("execute_command"), "连续 6 次失败应停用");
+        // Disabled is terminal for the turn: the record guard keeps it disabled.
+        b.record("execute_command", false);
+        assert!(b.is_disabled("execute_command"));
+    }
+
+    /// A success resets the consecutive counter — interleaved failures never trip.
+    #[test]
+    fn breaker_success_resets_counter() {
+        let mut b = ToolFailureBreaker::default();
+        for _ in 0..20 {
+            b.record("del", true);
+            b.record("del", false); // intermittent failures are not environment blocking
+            assert!(!b.is_disabled("del"));
+        }
+    }
+
+    /// Per-tool isolation: one blocked tool does not affect others.
+    #[test]
+    fn breaker_is_per_tool() {
+        let mut b = ToolFailureBreaker::default();
+        for _ in 0..6 {
+            b.record("python_probe", true);
+        }
+        assert!(b.is_disabled("python_probe"));
+        assert!(!b.is_disabled("other_tool"));
+        b.record("other_tool", true);
+        assert!(!b.is_disabled("other_tool"));
+    }
+
+    /// The blocked message must name the tool and the threshold.
+    #[test]
+    fn breaker_message_names_tool_and_threshold() {
+        let msg = ToolFailureBreaker::blocked_message("execute_command");
+        assert!(msg.contains("execute_command"));
+        assert!(msg.contains("6"));
     }
 }

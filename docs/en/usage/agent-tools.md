@@ -18,7 +18,7 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 | `search_files`    | File          | Allow          | Allow        | Allow        |
 | `search_content`  | File          | Allow          | Allow        | Allow        |
 | `replace_in_file` | File          | Ask            | Allow        | Deny         |
-| `delete_file`     | File          | Ask            | Ask          | Deny         |
+| `delete_file`     | File          | Ask            | Allow        | Deny         |
 | `make_directory`  | File          | Ask            | Allow        | Deny         |
 | `git_status`      | Git           | Allow          | Allow        | Allow        |
 | `git_diff`        | Git           | Allow          | Allow        | Allow        |
@@ -139,7 +139,7 @@ Delete a file.
 | **Parameters**  | `path` (string, required) -- file path                                      |
 | **Return**      | Deletion confirmation                                                       |
 | **Limits**      | --                                                                          |
-| **Permission**  | Normal/Ask, Auto/Ask, Plan/Deny                                             |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny                                           |
 
 ### `make_directory`
 
@@ -321,14 +321,14 @@ Source: `src-tauri/src/utils/shell_tools.rs`
 
 Execute a system command in the project directory.
 
-| Item            | Value                                                                                                                                                                                                                                     |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Execute a system command, returning stdout, stderr, and exit code.                                                                                                                                                                        |
-| **Parameters**  | `command` (string, required) -- command string, e.g. `"cargo build"`; `description` (string, optional) -- command description (audit log only); `timeout` (integer, optional) -- timeout in milliseconds, default 60,000ms, max 300,000ms |
-| **Return**      | stdout + stderr output (50KB each maximum)                                                                                                                                                                                                |
-| **Limits**      | Command length max 4096 characters; backtick/`$()` command substitution prohibited; dangerous commands blocked (`sudo`, `rm -rf /`, `format`, etc.); Windows Job Object sandbox                                                           |
-| **Security**    | Dangerous command detection (lexical token analysis), rejecting destructive/install/network exfiltration/env injection/fork bomb patterns                                                                                                 |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny; in sub-agents: general/debugger/tester roles allow, others deny                                                                                                                                        |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Execute a system command, returning stdout, stderr, and exit code.                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Parameters**  | `command` (string, required) -- command string, e.g. `"cargo build"`; `description` (string, optional) -- command description (audit log only); `timeout` (integer, optional) -- timeout in milliseconds, default 60,000ms, max 300,000ms                                                                                                                                                                                                                                 |
+| **Return**      | stdout + stderr output (50KB each maximum)                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Limits**      | Command length max 4096 characters; backtick/`$()` command substitution prohibited; dangerous commands blocked (`sudo`, `rm -rf /`, `format`, etc.); Windows Job Object sandbox; bare script interpreters as the first token (`python`/`py`/`node`/`npm`, etc.) are forwarded to the host-PATH-resolved absolute path (these names are otherwise invisible inside the sandbox shell), with a best-effort R+X grant on the interpreter directory under the Windows sandbox |
+| **Security**    | Dangerous command detection (lexical token analysis), rejecting destructive/install/network exfiltration/env injection/fork bomb patterns                                                                                                                                                                                                                                                                                                                                 |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny; in sub-agents: general/debugger/tester roles allow, others deny                                                                                                                                                                                                                                                                                                                                                                        |
 
 ---
 

@@ -32,7 +32,7 @@ use super::subagents::{
     register_running_subagent,
 };
 use super::tasks::{execute_ask_user, execute_task_board_tool};
-use super::tool_dispatch::{build_main_tool_set, is_parallel_safe};
+use super::tool_dispatch::{build_main_tool_set, is_parallel_safe, ToolFailureBreaker};
 use super::tool_specs::{execute_artifact_read, execute_skill_read};
 use super::usage::insert_usage_log;
 use super::DelegateContext;
@@ -191,6 +191,9 @@ impl AgentTurnRunner {
         // Final text and generated images accumulated across rounds (sent once at done; idempotently replaces frontend chunk accumulation)
         let mut accumulated_content = String::new();
         let mut all_images: Vec<GeneratedImage> = Vec::new();
+        // Per-turn tool circuit breaker (harness finding: environment-blocked
+        // retries can burn the whole round budget probing)
+        let mut tool_breaker = ToolFailureBreaker::default();
 
         // Workflow mode: inject the mandatory system message before the LLM loop (inside the stable prefix to favor prompt cache and compression protection)
         if agent_mode == AgentMode::Workflow {
@@ -535,6 +538,20 @@ impl AgentTurnRunner {
                 let server_id = tool_server_map.get(&tc.name).cloned();
                 let args_val: serde_json::Value =
                     serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
+
+                // Circuit breaker: a tool that failed CONSECUTIVELY (environment
+                // blocking signature) is disabled for the rest of the turn —
+                // short-circuit with an explanation instead of executing again
+                // (harness finding: a tester subagent burned all 25 rounds probing).
+                if tool_breaker.is_disabled(&tc.name) {
+                    let blocked = ToolFailureBreaker::blocked_message(&tc.name);
+                    exec_results[i] = Some(ToolExecResult {
+                        content_text: blocked.clone(),
+                        result_value: json!({"error": blocked}),
+                        is_error: true,
+                    });
+                    continue;
+                }
 
                 if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
                     && tc.name == tool_names::DELEGATE_TASK
@@ -940,6 +957,8 @@ impl AgentTurnRunner {
                     // Shared display-triple conversion (round_artifacts)
                     let (content_text, result_value, is_error) =
                         super::round_artifacts::tool_result_display(&tool_result);
+                    // Circuit breaker bookkeeping (consecutive-failure detection)
+                    tool_breaker.record(&tc.name, is_error);
                     // For file-modifying tools, capture the diff for frontend display
                     let file_changes = file_path_for_diff
                         .and_then(|path| {
@@ -1003,6 +1022,8 @@ impl AgentTurnRunner {
                     // Shared display-triple conversion (round_artifacts)
                     let (content_text, result_value, is_error) =
                         super::round_artifacts::tool_result_display(&result);
+                    // Circuit breaker bookkeeping (consecutive-failure detection)
+                    tool_breaker.record(&round_result.tool_calls[i].name, is_error);
                     // Emit this delegate result immediately
                     let tc = &round_result.tool_calls[i];
                     let _ = window.emit(

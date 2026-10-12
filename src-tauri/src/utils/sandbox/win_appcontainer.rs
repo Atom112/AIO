@@ -686,7 +686,12 @@ impl Drop for AcChild {
 /// - command_line: full command line (e.g. "cmd /C echo hi")
 /// - working_dir: working dir = project root (must be canonicalize-resolvable)
 /// - allow_network: inject the internetClient capability when true
-/// - extra_rx_dirs: extra dirs granted R+X (toolchains; granted only when present)
+/// - extra_rx_dirs: extra dirs granted R+X (toolchains; granted only when present,
+///   fail-closed — a configured toolchain dir that cannot be granted aborts the spawn)
+/// - best_effort_rx_dirs: extra dirs granted R+X on a best-effort basis (forwarded
+///   interpreter trees): a grant failure is logged and skipped — system locations
+///   (e.g. C:\Windows for py.exe) may deny the ACL write while already readable
+///   via the default ALL APPLICATION PACKAGES ACE, and that must not kill the command
 ///
 /// Returns (AcChild, JobGuard): guard Drop tears down the whole tree (timeout path drops it early).
 pub fn spawn_in_appcontainer(
@@ -694,6 +699,7 @@ pub fn spawn_in_appcontainer(
     working_dir: &str,
     allow_network: bool,
     extra_rx_dirs: &[String],
+    best_effort_rx_dirs: &[String],
 ) -> Result<(AcChild, crate::utils::sandbox::JobGuard), String> {
     // 1) profile + SID
     // canonicalize() on Windows returns a \?-prefixed extended path, which CreateProcessW's
@@ -746,6 +752,25 @@ pub fn spawn_in_appcontainer(
                 FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
                 &format!("{hash}-rx"),
             )?;
+        }
+    }
+    // Best-effort R+X (forwarded interpreter trees): log-and-skip on failure.
+    for dir in best_effort_rx_dirs {
+        let p = std::path::Path::new(dir);
+        if !p.exists() {
+            continue;
+        }
+        if let Err(e) = grant_dir_access(
+            dir,
+            sid,
+            FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+            &format!("{hash}-rx-auto"),
+        ) {
+            tracing::warn!(
+                "[appcontainer] 解释器目录 {} 授权失败（继续执行，位置可能本就可读）: {}",
+                dir,
+                e
+            );
         }
     }
 
@@ -1014,6 +1039,7 @@ mod tests {
             &format!("{cmd_path} /C {cmd}"),
             project.to_str().unwrap(),
             network,
+            &[],
             &[],
         )
         .expect("AppContainer spawn 失败");

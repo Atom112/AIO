@@ -43,7 +43,7 @@ AIO 的权限系统基于三态决策模型：
 - 内置文件操作（读、写、替换、建目录、搜索）→ Allow
 - Git 操作（全部）→ Allow
 - 命令执行（`execute_command`）→ Allow
-- 删除操作（`delete_file`）→ Ask
+- 删除操作（`delete_file`）→ Allow（与 `execute_command` 对齐：命令本就能 `del`/`rm`，且删除被沙箱限定在项目内；Normal 模式保持逐次确认）
 - 其他工具 → Allow
 
 ### Plan 模式
@@ -61,7 +61,7 @@ AIO 的权限系统基于三态决策模型：
 - 常规文件操作（读、写、替换、搜索、建目录）→ Allow
 - Git 操作 → Allow
 - 命令执行 → Allow
-- 删除操作 → Ask
+- 删除操作 → Allow
 - 其他工具 → Allow
 
 > 具体规则列表可在源码 `permission.rs:default_rules_for_mode` 查看。

@@ -345,12 +345,16 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
-            // Delete operations: require confirmation (dangerous).
+            // Delete: auto-allowed in Auto/Workflow. Consistency: execute_command
+            // (a strict superset of destructive capability — `del`/`rm` are just
+            // commands) is already Allow here, and delete_file stays confined to the
+            // project sandbox. Normal mode keeps Ask (it confirms every mutation).
+            // Harness-session follow-up: the per-call approval timed out headless.
             r(
-                "builtin-auto-ask-delete",
+                "builtin-auto-allow-delete",
                 tool_names::DELETE_FILE,
                 &[AgentMode::Auto],
-                PermissionAction::Ask,
+                PermissionAction::Allow,
             ),
             // Command execution: auto-allowed (no per-command confirmation in Auto mode; a risk notice was shown on entry).
             r(
@@ -415,12 +419,13 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Workflow],
                 PermissionAction::Allow,
             ),
-            // Delete operations: require confirmation (dangerous).
+            // Delete: auto-allowed (same reasoning as Auto mode — execute_command is
+            // already Allow and is strictly more capable).
             r(
-                "builtin-workflow-ask-delete",
+                "builtin-workflow-allow-delete",
                 tool_names::DELETE_FILE,
                 &[AgentMode::Workflow],
-                PermissionAction::Ask,
+                PermissionAction::Allow,
             ),
             // Command execution: auto-allowed.
             r(
@@ -1229,8 +1234,11 @@ mod tests {
         assert_eq!(result, PermissionAction::Allow);
     }
 
+    /// Harness-session follow-up: delete_file is auto-allowed in Auto mode —
+    /// execute_command (a strict superset: `del`/`rm` are commands) is already
+    /// Allow, and the headless approval path timed out waiting for a click.
     #[test]
-    fn test_auto_mode_delete_asks() {
+    fn test_auto_mode_delete_allowed() {
         let args = serde_json::json!({"path": "src/main.rs"});
         let result = check_permission_defaults(
             tool_names::DELETE_FILE,
@@ -1238,7 +1246,20 @@ mod tests {
             &args,
             &AgentMode::Auto,
         );
-        assert_eq!(result, PermissionAction::Ask);
+        assert_eq!(result, PermissionAction::Allow);
+    }
+
+    /// Same consistency fix for Workflow mode (execute_command already Allow).
+    #[test]
+    fn test_workflow_mode_delete_allowed() {
+        let args = serde_json::json!({"path": "src/main.rs"});
+        let result = check_permission_defaults(
+            tool_names::DELETE_FILE,
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Workflow,
+        );
+        assert_eq!(result, PermissionAction::Allow);
     }
 
     #[test]

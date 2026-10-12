@@ -18,7 +18,7 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 | `search_files`    | 文件 | Allow       | Allow     | Allow     |
 | `search_content`  | 文件 | Allow       | Allow     | Allow     |
 | `replace_in_file` | 文件 | Ask         | Allow     | Deny      |
-| `delete_file`     | 文件 | Ask         | Ask       | Deny      |
+| `delete_file`     | 文件 | Ask         | Allow     | Deny      |
 | `make_directory`  | 文件 | Ask         | Allow     | Deny      |
 | `git_status`      | Git  | Allow       | Allow     | Allow     |
 | `git_diff`        | Git  | Allow       | Allow     | Allow     |
@@ -139,7 +139,7 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 | **参数**   | `path` (string, 必填) — 文件路径             |
 | **返回值** | 删除确认                                     |
 | **限制**   | —                                            |
-| **权限**   | Normal/Ask, Auto/Ask, Plan/Deny              |
+| **权限**   | Normal/Ask, Auto/Allow, Plan/Deny            |
 
 ### `make_directory`
 
@@ -321,14 +321,14 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 
 在项目目录中执行系统命令。
 
-| 项目       | 值                                                                                                                                                                                        |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **描述**   | 执行系统命令，返回 stdout、stderr 和退出码。                                                                                                                                              |
-| **参数**   | `command` (string, 必填) — 命令字符串，如 `"cargo build"`；`description` (string, 可选) — 命令用途说明（仅审计日志）；`timeout` (integer, 可选) — 超时毫秒，默认 60,000ms，最大 300,000ms |
-| **返回值** | stdout + stderr 输出（各最多 50KB）                                                                                                                                                       |
-| **限制**   | 命令长度最大 4096 字符；禁止反引号/`$()` 命令替换；禁止高危命令（`sudo`、`rm -rf /`、`format` 等）；Windows Job Object 沙箱                                                               |
-| **安全**   | 危险命令检测（词法 token 分析），拒绝破坏性/安装/网络外泄/环境注入/fork bomb 等模式                                                                                                       |
-| **权限**   | Normal/Ask, Auto/Allow, Plan/Deny；子智能体中 general/debugger/tester 角色允许，其他禁止                                                                                                  |
+| 项目       | 值                                                                                                                                                                                                                                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **描述**   | 执行系统命令，返回 stdout、stderr 和退出码。                                                                                                                                                                                                                                                              |
+| **参数**   | `command` (string, 必填) — 命令字符串，如 `"cargo build"`；`description` (string, 可选) — 命令用途说明（仅审计日志）；`timeout` (integer, 可选) — 超时毫秒，默认 60,000ms，最大 300,000ms                                                                                                                 |
+| **返回值** | stdout + stderr 输出（各最多 50KB）                                                                                                                                                                                                                                                                       |
+| **限制**   | 命令长度最大 4096 字符；禁止反引号/`$()` 命令替换；禁止高危命令（`sudo`、`rm -rf /`、`format` 等）；Windows Job Object 沙箱；`python`/`py`/`node`/`npm` 等脚本解释器作为首 token 出现时自动转发为宿主 PATH 解析的绝对路径（沙箱 shell 内这些名字原本不可见），Windows 沙箱同时对其安装目录做尽力 R+X 授权 |
+| **安全**   | 危险命令检测（词法 token 分析），拒绝破坏性/安装/网络外泄/环境注入/fork bomb 等模式                                                                                                                                                                                                                       |
+| **权限**   | Normal/Ask, Auto/Allow, Plan/Deny；子智能体中 general/debugger/tester 角色允许，其他禁止                                                                                                                                                                                                                  |
 
 ---
 

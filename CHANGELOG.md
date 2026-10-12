@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 🔁 Harness 复测（第二轮）四项闭环
+
+- **`delete_file` 免确认（Auto/Workflow）**（复测建议 1）：Auto/Workflow 模式下 `delete_file` 改为 Allow——与已 Allow 的 `execute_command` 对齐（`del`/`rm` 本就是命令，且删除被沙箱限定在项目内）；Normal 模式保持 Ask（与写/提交/建目录的逐次确认一致），Normal 下的静默白名单走项目级 `.aio/permissions.json`（自定义高优先级 Allow 规则，机制已有）。修复无人值守审批超时（复测子智能体调 `delete_file` 60s 无人批准）；docs zh/en 同步
+- **脚本解释器转发**（复测建议 2）：`python`/`python3`/`py`/`pip`/`node`/`npm`/`npx` 作为命令首 token 且为裸名时，自动改写为宿主 PATH 解析的绝对路径（SEC-06：仅 PATH 解析、不查项目目录，防栽种）——沙箱 shell 内这些名字原本一律 9009（`where` 也找不到）；Windows AppContainer 同时对解释器安装目录做**尽力 R+X 授权**（新 `best_effort_rx_dirs` 参数，失败记日志继续：系统位置本就可读，不应因授权失败杀掉整条命令），解决解释器目录无 ALL APPLICATION PACKAGES ACE 不可见的问题（实测 `D:\Anaconda3` 授权后 AC 内可 `type` 读取）。注意：本机存在 DACL 之外的路径级过滤层（读放行、执行/列举仍拒），e2e 测试因此标 `#[ignore]`，干净环境手动复跑；docs zh/en 同步
+- **工具失败熔断器**（复测建议 3）：同一工具在主循环或子代理循环内**连续失败 6 次**（环境阻断特征：缺解释器/权限拒绝/资源不可用；成功即重置计数）→ 本回合内停用该工具，后续调用短路返回带原因的提示（引导改道或如实上报），不再执行——从执行器层面兜住「tester 烧满 25 轮重试」（复测确认提示词预算仅在任务描述写死时有效，机制层未拦）。主循环与子代理循环各自持独立熔断器；+4 单测
+- **`cmd dir` 拒绝 vs 工具正常**（复测观察 4）：确认为合理权限分层，不改（沙箱文件工具走进程内实现，不经 AC token）
+
 ### 🔒 Windows 沙箱删除授权修复（harness 会话报告全部条目闭环）
 
 - **AppContainer 授权掩码补 DELETE**（报告第 9 条根因）：项目根与 AC 临时目录的授权掩码 `READ|WRITE|EXECUTE` 不含标准权限 `DELETE`（0x10000）与 `FILE_DELETE_CHILD`——沙箱内一切删除/重命名被「拒绝访问」（实测：LLM 会话 cmd del/rmdir、PowerShell Remove-Item、Python os.remove 全灭，CPython 的 pyc 原子替换也失败，留下 `*.pyc.<随机>` 孤儿残骸；任何做原子重命名的构建工具都会踩中）。现掩码补齐 `DELETE | FILE_DELETE_CHILD`；Linux bwrap（`--bind`）与 macOS（`allow file-write*`）语义本就含删除，三平台对齐

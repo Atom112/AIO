@@ -92,6 +92,8 @@ export interface BuildOutgoingMessagesArgs {
   isChatMode: boolean;
   /** Active project (agent system prompt); null in global mode / chat mode. */
   projectInfo: { path: string; name: string } | null;
+  /** Main-agent tool access policy (drives the tool-policy line; "hybrid" default). */
+  mainAgentToolAccess?: 'hybrid' | 'full' | 'orchestrator';
 }
 
 /** The assembled outgoing turn: the persisted user message + the full API message list. */
@@ -117,6 +119,7 @@ export function buildOutgoingMessages(args: BuildOutgoingMessagesArgs): Outgoing
     webSearchEnabled,
     isChatMode,
     projectInfo,
+    mainAgentToolAccess,
   } = args;
 
   const newUserMsg = {
@@ -139,6 +142,8 @@ export function buildOutgoingMessages(args: BuildOutgoingMessagesArgs): Outgoing
       ? buildAgentSystemPrompt(
           agentMode as Parameters<typeof buildAgentSystemPrompt>[0],
           projectInfo,
+          undefined,
+          mainAgentToolAccess || 'hybrid',
         )
       : null;
   const agentSystemPrompt = agentPromptContent

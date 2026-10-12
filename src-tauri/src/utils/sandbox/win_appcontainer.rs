@@ -716,8 +716,10 @@ impl Drop for AcChild {
 /// - command_line: full command line (e.g. "cmd /C echo hi")
 /// - working_dir: working dir = project root (must be canonicalize-resolvable)
 /// - allow_network: inject the internetClient capability when true
-/// - extra_rx_dirs: extra dirs granted R+X (toolchains; granted only when present,
-///   fail-closed — a configured toolchain dir that cannot be granted aborts the spawn)
+/// - extra_rx_dirs: extra dirs granted R+X (toolchains + session expansion grants;
+///   best-effort since harness round 10 — a grant failure is logged and skipped:
+///   an EDR-blocked ACL write on ONE dir must not brick every sandboxed command;
+///   the sandbox essentials stay fail-closed)
 /// - best_effort_rx_dirs: extra dirs granted R+X on a best-effort basis (forwarded
 ///   interpreter trees): a grant failure is logged and skipped — system locations
 ///   (e.g. C:\Windows for py.exe) may deny the ACL write while already readable
@@ -773,15 +775,30 @@ pub fn spawn_in_appcontainer(
         FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | FILE_DELETE_CHILD,
         &format!("{hash}-tmp"),
     )?;
+    // Harness round 10 (cascade bug): extra R+X dirs (configured toolchain +
+    // session expansion grants) are now BEST-EFFORT — log-and-skip on failure.
+    // Previously a dir whose ACL write is denied (round 10: an expansion-dialog
+    // session grant on D:\Git\cmd, blocked by the machine EDR with error 5)
+    // failed the whole spawn closed: the RETRY after granting returned
+    // "AppContainer 沙箱启动失败" AND every later command in the session was
+    // bricked. Fail-closed remains only for the sandbox ESSENTIALS (profile
+    // creation, project-root grant, AC temp grant) — a missing extra grant
+    // means LESS access (fail-safe direction), not a broken sandbox.
     for dir in extra_rx_dirs {
         let p = std::path::Path::new(dir);
         if p.exists() {
-            grant_dir_access(
+            if let Err(e) = grant_dir_access(
                 dir,
                 sid,
                 FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
                 &format!("{hash}-rx"),
-            )?;
+            ) {
+                tracing::warn!(
+                    "[appcontainer] 工具链/会话目录 {} 授权失败（跳过该目录，沙箱继续）：{}",
+                    dir,
+                    e
+                );
+            }
         }
     }
     // Best-effort R+X (forwarded interpreter trees): log-and-skip on failure.

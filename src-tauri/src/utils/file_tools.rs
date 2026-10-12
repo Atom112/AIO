@@ -1332,6 +1332,49 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
+    /// Regression (harness round 10, test 3 closure): max_lines=-1 lifts ONLY the
+    /// line cap — the default 32KB byte cap still truncates; passing max_bytes=-1
+    /// as well returns the full file. The live round-10 probe couldn't verify
+    /// this (its test file was only 7.2KB); this closes it decisively.
+    #[test]
+    fn read_file_minus_one_byte_cap_semantics() {
+        let base = fresh_base("bytecap");
+        let base_s = base.to_string_lossy().to_string();
+        // ~44KB body: exceeds the 32KB default byte cap, far under the 1MB hard cap
+        let body = "0123456789abcdef\n".repeat(2600);
+        fs::write(base.join("big.txt"), &body).unwrap();
+        let total_lines = body.lines().count();
+
+        // max_lines=-1 alone: byte cap still applies -> a truncation marker appears
+        let r = execute_file_tool(
+            tool_names::READ_FILE,
+            &serde_json::json!({"path": "big.txt", "max_lines": -1}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            text.contains("已省略") || text.contains("已截断"),
+            "仅解除行数上限时 32KB 字节截断应生效"
+        );
+
+        // max_lines=-1 + max_bytes=-1: full body, no truncation marker
+        let r = execute_file_tool(
+            tool_names::READ_FILE,
+            &serde_json::json!({"path": "big.txt", "max_lines": -1, "max_bytes": -1}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            !text.contains("已省略") && !text.contains("已截断") && !text.contains("文件过大"),
+            "双 -1 应解除字节截断"
+        );
+        assert!(
+            text.contains(&format!("{total_lines}| ")),
+            "应包含最后一行（第 {total_lines} 行），证明返回全文"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
     /// Regression (harness round 9, P0-3): a MISSING `content` key used to fall
     /// through unwrap_or("") and silently truncate the target to 0 bytes (the
     /// tester emptied README.md this way). Now: missing → hard error; explicit

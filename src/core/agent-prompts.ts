@@ -13,6 +13,9 @@ export interface ProjectInfo {
 import type { AgentMode } from './store/store';
 import { locale } from './i18n';
 
+/** Main-agent tool access policy (mirrors the backend `mainAgentToolAccess` config). */
+export type MainAgentToolAccess = 'hybrid' | 'full' | 'orchestrator';
+
 /**
  * Build the Agent mode system prompt.
  *
@@ -25,6 +28,7 @@ export function buildAgentSystemPrompt(
   mode: AgentMode,
   project: ProjectInfo,
   customInstructions?: string,
+  toolAccess: MainAgentToolAccess = 'hybrid',
 ): string | null {
   if (mode === 'off') return null;
   if (locale() === 'en-US') {
@@ -34,10 +38,14 @@ export function buildAgentSystemPrompt(
       plan: 'Research and produce an implementation plan only. Do not modify files.',
       workflow: 'Create and execute an ordered workflow whose steps pass results forward.',
     };
+    const toolPolicy =
+      toolAccess === 'full'
+        ? 'Tool policy (your actual tool list is authoritative): you hold the FULL built-in tool set (file writes, command execution included) — complete simple tasks DIRECTLY without a subagent round-trip; delegate to subagents for complex, multi-step, large-scale, or parallel work (launch independent subtasks together with delegate_tasks).'
+        : 'Tool policy (your actual tool list is authoritative): read-only operations (file reads/search, web, git read, LSP, project map) may be executed directly to confirm information quickly; multi-step work and mutating operations (file writes, command execution) must be delegated to an appropriate subagent. Launch independent subtasks together with delegate_tasks.';
     return [
       '[Agent Mode] You are operating as an AIO Agent.',
       `Working directory: ${project.path}`,
-      'Tool policy (your actual tool list is authoritative): read-only operations (file reads/search, web, git read, LSP, project map) may be executed directly to confirm information quickly; multi-step work and mutating operations (file writes, command execution) must be delegated to an appropriate subagent. Launch independent subtasks together with delegate_tasks.',
+      toolPolicy,
       'Enabled MCP tools (if any) can be called directly; tools from untrusted servers will ask the user for confirmation each time.',
       '',
       'Tool-calling conventions:',
@@ -60,12 +68,16 @@ export function buildAgentSystemPrompt(
       .join('\n');
   }
 
+  const mutationPolicy =
+    toolAccess === 'full'
+      ? `- 你持有完整内置工具集（含文件修改与命令执行）：简单任务直接完成，无需委托往返；复杂、多步、大规模或需要并行的任务再委托子智能体（多个独立子任务同一轮并行创建，优先 delegate_tasks 批量并行）；`
+      : `- 多步任务与变更类操作（文件修改、命令执行）必须委托给子智能体；多个独立子任务在同一轮并行创建（优先 delegate_tasks 批量并行），不要逐个串行等待；`;
   const lines: string[] = [
     `[Agent Mode] 你正在以 Agent 模式运行。`,
     `工作目录: ${project.path}`,
     `工具使用原则（以你实际可用的工具列表为准）:`,
     `- 只读类操作（读文件/搜索/Web 查询/Git 读取/LSP/项目结构）可直接执行，快速确认信息；`,
-    `- 多步任务与变更类操作（文件修改、命令执行）必须委托给子智能体；多个独立子任务在同一轮并行创建（优先 delegate_tasks 批量并行），不要逐个串行等待；`,
+    mutationPolicy,
     `- 已启用的 MCP 工具可直接调用；来自未受信任 server 的工具会逐次请求用户确认。`,
     ``,
     `工具调用规范:`,

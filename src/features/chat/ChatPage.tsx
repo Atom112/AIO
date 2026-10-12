@@ -77,6 +77,7 @@ import {
   setPendingApprovals,
   pendingQuestions,
   setPendingQuestions,
+  config,
 } from '../../core/store/store';
 // P3（localStorage 裸调收编）：面板布局持久化经 core/store/layout 域 API
 import {
@@ -390,6 +391,9 @@ const ChatPage: Component = () => {
         pid && currentProject()
           ? { path: currentProject()!.path, name: currentProject()!.name }
           : null,
+      mainAgentToolAccess:
+        (config().mainAgentToolAccess as 'hybrid' | 'full' | 'orchestrator' | undefined) ||
+        'hybrid',
     });
 
     const lastMsg = messagesForAI[messagesForAI.length - 1];

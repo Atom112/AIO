@@ -24,6 +24,7 @@ import {
   setAppUpdateAvailable,
   setAppUpdateInfo,
   setAppUpdateDismissed,
+  setConfig,
 } from '../../../core/store/store';
 import {
   getRegisteredCommands,
@@ -800,7 +801,10 @@ const AppSettings: Component = () => {
                 'mainAgentToolAccess',
                 async () => {
                   try {
-                    await patchAppConfig({ mainAgentToolAccess: v });
+                    const newCfg = await patchAppConfig({ mainAgentToolAccess: v });
+                    // Sync the store signal so the agent system prompt picks the
+                    // new policy up on the NEXT message (no restart needed).
+                    if (newCfg) setConfig(newCfg);
                   } catch (err) {
                     console.warn('Failed to save main-agent tool access config:', err);
                   }

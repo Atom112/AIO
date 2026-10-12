@@ -43,7 +43,7 @@ Overview of the default rules for each Agent mode:
 - Built-in file operations (read, write, replace, make directory, search) &rarr; Allow
 - Git operations (all) &rarr; Allow
 - Command execution (`execute_command`) &rarr; Allow
-- Delete operations (`delete_file`) &rarr; Ask
+- Delete operations (`delete_file`) &rarr; Allow (aligned with `execute_command`, which can already `del`/`rm`; deletion stays confined to the project sandbox. Normal mode keeps per-call confirmation)
 - Other tools &rarr; Allow
 
 ### Plan Mode
@@ -61,7 +61,7 @@ Overview of the default rules for each Agent mode:
 - Regular file operations (read, write, replace, search, make directory) &rarr; Allow
 - Git operations &rarr; Allow
 - Command execution &rarr; Allow
-- Delete operations &rarr; Ask
+- Delete operations &rarr; Allow
 - Other tools &rarr; Allow
 
 > The full rule list can be found in the source at `permission.rs:default_rules_for_mode`.

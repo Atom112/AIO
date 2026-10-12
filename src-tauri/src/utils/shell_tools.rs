@@ -732,6 +732,48 @@ pub fn get_command_tool_spec() -> ToolSpec {
 
 // ====== Command execution ======
 
+/// Script-interpreter names eligible for host-PATH forwarding. Harness-session
+/// finding (round 2, issue 2): the sandboxed shell sees a stripped environment —
+/// `python`/`node`/`py` probes all exit 9009 — while the host AIO process itself
+/// has them on PATH; forwarding bridges the two views.
+const FORWARDED_INTERPRETERS: &[&str] = &["python", "python3", "py", "pip", "node", "npm", "npx"];
+
+/// Rewrites a command whose FIRST token is a bare known-interpreter name into the
+/// host-process-resolved absolute path, returning the rewritten command plus the
+/// interpreter's directory (for best-effort R+X granting inside the AppContainer
+/// sandbox — the interpreter tree is normally invisible to the AC token, e.g. a
+/// D:\Anaconda3 without an ALL APPLICATION PACKAGES ACE).
+///
+/// Fires only on a literally bare first token (no quotes, path separators, or
+/// drive colons): `python tests/x.py`, `node -e "..."`, `npm install`. Anything
+/// else (`cd x && python y`, absolute paths, `cmd /c python ...`) passes through
+/// untouched. Resolution is PATH-only via [`crate::utils::exec_resolve`] (SEC-06:
+/// the project cwd is never consulted, so a planted interpreter is not picked up).
+/// When resolution fails the command passes through unchanged. Pure — unit-tested.
+pub(crate) fn forward_script_interpreter(command: &str) -> (String, Option<std::path::PathBuf>) {
+    let trimmed = command.trim_start();
+    let indent_len = command.len() - trimmed.len();
+    let first_end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+    let first = &trimmed[..first_end];
+    let is_bare_known = !first.is_empty()
+        && !first.contains(['/', '\\', '"', ':'])
+        && FORWARDED_INTERPRETERS.contains(&first.to_ascii_lowercase().as_str());
+    if !is_bare_known {
+        return (command.to_string(), None);
+    }
+    let Some(resolved) = crate::utils::exec_resolve::resolve_executable(first) else {
+        return (command.to_string(), None);
+    };
+    let rest = &trimmed[first_end..];
+    let rewritten = format!(
+        "{}\"{}\"{}",
+        &command[..indent_len],
+        resolved.display(),
+        rest
+    );
+    (rewritten, resolved.parent().map(|p| p.to_path_buf()))
+}
+
 /// Checks the command for dangerous shell metacharacter sequences.
 fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
     // 1. backtick command substitution
@@ -819,6 +861,13 @@ pub fn execute_command(
         ));
     }
 
+    // Harness follow-up (round 2, issue 2): bare interpreter names resolve against
+    // the HOST PATH (the sandbox shell's stripped PATH can't see them).
+    let (command, interpreter_dir) = forward_script_interpreter(command);
+    let command = command.as_str();
+    #[cfg(not(windows))]
+    let _ = &interpreter_dir; // only the AppContainer branch consumes the dir
+
     // dangerous shell metacharacter check
     if let Some(reason) = check_shell_metacharacters(command) {
         return tool_err(&format!("安全拦截: {reason}"));
@@ -844,12 +893,25 @@ pub fn execute_command(
     // network blocked by default; any failure fails closed with an error.
     #[cfg(windows)]
     if let Some(dirs) = ac_dirs {
+        // The forwarded interpreter's tree needs R+X inside the AC (its directory
+        // usually has no ALL APPLICATION PACKAGES ACE, e.g. D:\Anaconda3). Granted
+        // best-effort: a system location (C:\Windows py.exe) may deny the ACL write
+        // while already being readable — that must not kill the command.
+        let dirs_lower: Vec<String> = dirs.iter().map(|d| d.to_ascii_lowercase()).collect();
+        let interpreter_extra: Vec<String> = interpreter_dir
+            .filter(|d| {
+                let dl = d.to_string_lossy().to_ascii_lowercase();
+                !dirs_lower.iter().any(|x| x.eq_ignore_ascii_case(&dl))
+            })
+            .map(|d| vec![d.to_string_lossy().into_owned()])
+            .unwrap_or_default();
         return execute_command_in_appcontainer(
             command,
             project_root,
             timeout,
             allow_network,
             &dirs,
+            &interpreter_extra,
         );
     }
 
@@ -1017,6 +1079,7 @@ fn execute_command_in_appcontainer(
     timeout: u64,
     allow_network: bool,
     toolchain_dirs: &[String],
+    best_effort_rx_dirs: &[String],
 ) -> ToolResult {
     // Same command-line shape as the native path: cmd /C <command> (cwd is set to
     // the project root by the AC module). With the AppContainer attribute present,
@@ -1038,6 +1101,7 @@ fn execute_command_in_appcontainer(
         project_root,
         allow_network,
         toolchain_dirs,
+        best_effort_rx_dirs,
     ) {
         Ok(v) => v,
         Err(e) => {
@@ -1331,5 +1395,108 @@ mod tests {
         assert!(!r.is_error, "大输出命令应正常完成: {text}");
         assert!(!text.contains("超时"), "不应被超时误杀: {text}");
         assert!(text.contains("0123456789ABCDEF"), "输出内容缺失");
+    }
+
+    // ====== forward_script_interpreter (harness round 2, issue 2) ======
+
+    /// Commands that must pass through untouched: operators, absolute/quoted
+    /// first tokens, unknown names, sub-commands after another command.
+    #[test]
+    fn forward_interpreter_passthrough_cases() {
+        for cmd in [
+            "cargo build",
+            "cd tests && python run.py",
+            "cmd /c python run.py",
+            "\"python\" run.py",
+            "python.exe run.py",
+            "D:\\Anaconda3\\python.exe run.py",
+            "./scripts/python.sh",
+            "echo python",
+            "",
+            "   ",
+        ] {
+            let (rewritten, dir) = forward_script_interpreter(cmd);
+            assert_eq!(rewritten, cmd, "不应改写: {cmd}");
+            assert!(dir.is_none(), "不应产生授权目录: {cmd}");
+        }
+    }
+
+    /// A bare known interpreter first token is rewritten to the quoted
+    /// host-resolved absolute path, preserving the rest and leading whitespace.
+    #[test]
+    fn forward_interpreter_rewrites_bare_names() {
+        // python is on the test machine's PATH (the AIO dev environment guarantees it)
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return; // PATH-less CI runner: nothing to forward, skip
+        }
+        let (rewritten, dir) = forward_script_interpreter("python tests/run.py");
+        assert!(
+            rewritten.starts_with('"'),
+            "应改写为带引号绝对路径: {rewritten}"
+        );
+        assert!(
+            rewritten.ends_with("tests/run.py"),
+            "参数应保留: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains(" python"),
+            "首 token 应被整体替换: {rewritten}"
+        );
+        assert!(dir.is_some(), "应返回解释器目录用于 R+X 授权");
+        let (rewritten2, _) = forward_script_interpreter("  npm  install --no-audit");
+        assert!(
+            rewritten2.starts_with("  \""),
+            "前导空白应保留: {rewritten2}"
+        );
+        assert!(
+            rewritten2.ends_with(" install --no-audit"),
+            "参数与中间空白应保留: {rewritten2}"
+        );
+    }
+
+    /// Case-insensitive on the interpreter name (Windows shells are).
+    #[test]
+    fn forward_interpreter_matches_case_insensitive() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return;
+        }
+        let (rewritten, _) = forward_script_interpreter("PYTHON -V");
+        assert!(rewritten.starts_with('"'), "大写名也应转发: {rewritten}");
+    }
+
+    /// E2E (harness round 2, issue 2): a bare `python` command must run inside
+    /// the Windows AppContainer sandbox — forwarding rewrites it to the host-PATH
+    /// absolute path and the best-effort R+X grant makes the interpreter tree
+    /// (normally invisible: no ALL APPLICATION PACKAGES ACE) readable/executable.
+    ///
+    /// Ignored by default: on machines with path-level security filtering beyond
+    /// the DACL (the dev box's EDR-layer denies exec/dir-list on its Anaconda
+    /// install even WITH the R+X grant in place — reads pass, exec is refused),
+    /// the assertion fails despite a correct grant. Rerun manually on a clean
+    /// machine: `cargo test ac_python_forwarding -- --ignored`. Skipped silently
+    /// when the host has no python on PATH.
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "interpreter exec is subject to machine-level path filtering; run manually on clean machines"]
+    fn ac_python_forwarding_end_to_end() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return; // host has no python — nothing to forward
+        }
+        let project = std::env::temp_dir().join("aio-ac-test-python-fwd");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        let r = execute_command(
+            "python -c \"print('aio_py_ok')\"",
+            project.to_str().unwrap(),
+            Some(30_000),
+            false,
+            Some(vec![]), // AppContainer enabled, empty toolchain list
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("aio_py_ok"),
+            "AC 内 python 转发应成功: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&project);
     }
 }

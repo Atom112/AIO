@@ -3,7 +3,9 @@
 // 阶段4 第1项（消 glob）：原 `use crate::commands::llm::*;` 同时吸入 mod.rs 的
 // 14 个子模块 glob 与其工具 use 头——替换为下述显式 use（符号 → 真实来源）。
 use crate::commands::llm::handoff::build_subagent_progress_summary;
-use crate::commands::llm::tool_dispatch::{is_parallel_safe, merge_mcp_tools, FsServerPolicy};
+use crate::commands::llm::tool_dispatch::{
+    is_parallel_safe, merge_mcp_tools, FsServerPolicy, ToolFailureBreaker,
+};
 use crate::core::events as ev;
 use crate::core::models::*;
 use crate::core::permission::{self, PermissionAction};
@@ -1435,6 +1437,9 @@ pub(crate) async fn execute_subagent(
     let mut length_retries: u32 = 0;
     // Context-overflow auto-recovery attempts (retry after compression)
     let mut sub_overflow_retries: u32 = 0;
+    // Per-run tool circuit breaker (harness finding: the tester subagent hit the
+    // 25-round cap retrying environment-blocked operations — now disabled early)
+    let mut tool_breaker = ToolFailureBreaker::default();
     // Subagent budget (AgentLimits: runaway guard at 100 rounds; an explicit user-set
     // max_tool_rounds takes precedence).
     let app_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
@@ -1583,6 +1588,13 @@ pub(crate) async fn execute_subagent(
                         continue;
                     }
 
+                    // Circuit breaker: consecutively-failing tools are disabled for
+                    // the rest of the run — short-circuit instead of executing.
+                    if tool_breaker.is_disabled(&tc.name) {
+                        tool_results[i] = Some((ToolFailureBreaker::blocked_message(&tc.name),));
+                        continue;
+                    }
+
                     if parallel_enabled && is_parallel_safe(&tc.name) {
                         // Read-only tool: collect as a concurrent future (awaited together in phase 2)
                         let app_c = app.clone();
@@ -1662,10 +1674,15 @@ pub(crate) async fn execute_subagent(
                         .await
                     };
 
-                    let content_text = match tool_result {
-                        Ok(tr) => tool_result_text(&tr),
-                        Err(e) => super::round_artifacts::tool_error_text(&e),
+                    let (content_text, tool_is_error) = match tool_result {
+                        Ok(tr) => {
+                            let is_err = tr.is_error;
+                            (tool_result_text(&tr), is_err)
+                        }
+                        Err(e) => (super::round_artifacts::tool_error_text(&e), true),
                     };
+                    // Circuit breaker bookkeeping (consecutive-failure detection)
+                    tool_breaker.record(&tc.name, tool_is_error);
                     let _ = window.emit(
                         ev::SUBAGENT_STEP,
                         SubagentStepPayload {
@@ -1690,10 +1707,15 @@ pub(crate) async fn execute_subagent(
                         });
                     }
                     while let Some((i, result)) = unordered.next().await {
-                        let content_text = match result {
-                            Ok(tr) => tool_result_text(&tr),
-                            Err(e) => super::round_artifacts::tool_error_text(&e),
+                        let (content_text, tool_is_error) = match result {
+                            Ok(tr) => {
+                                let is_err = tr.is_error;
+                                (tool_result_text(&tr), is_err)
+                            }
+                            Err(e) => (super::round_artifacts::tool_error_text(&e), true),
                         };
+                        // Circuit breaker bookkeeping (consecutive-failure detection)
+                        tool_breaker.record(&rr.tool_calls[i].name, tool_is_error);
                         let tc = &rr.tool_calls[i];
                         let _ = window.emit(
                             ev::SUBAGENT_STEP,

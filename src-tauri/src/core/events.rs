@@ -38,6 +38,10 @@ pub const LLM_HANDOFF: &str = "llm-handoff";
 pub const SUBAGENT_START: &str = "subagent-start";
 /// Subagent step progress
 pub const SUBAGENT_STEP: &str = "subagent-step";
+/// Subagent streaming delta (text) — DSH-parity live view (harness round 11)
+pub const SUBAGENT_CHUNK: &str = "subagent-chunk";
+/// Subagent streaming delta (reasoning/thinking content)
+pub const SUBAGENT_REASONING: &str = "subagent-reasoning";
 /// Subagent finished
 pub const SUBAGENT_DONE: &str = "subagent-done";
 /// Subagent error
@@ -107,6 +111,8 @@ mod tests {
             LLM_HANDOFF,
             SUBAGENT_START,
             SUBAGENT_STEP,
+            SUBAGENT_CHUNK,
+            SUBAGENT_REASONING,
             SUBAGENT_DONE,
             SUBAGENT_ERROR,
             WORKFLOW_START,

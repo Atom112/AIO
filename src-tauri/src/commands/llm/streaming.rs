@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Window};
 use tokio_util::sync::CancellationToken;
 
 use super::sse_lines;
+use super::subagents::{SubagentDeltaPayload, SubagentStepPayload};
 
 /// Accumulated result of one streaming round.
 pub(crate) struct RoundResult {
@@ -46,6 +47,19 @@ pub(crate) struct ToolCallAccum {
     pub(crate) arguments: String,
 }
 
+/// Live-stream context for a SUBAGENT round (harness round 11, DSH-parity live view):
+/// text/reasoning deltas are re-scoped to `subagent-chunk` / `subagent-reasoning`
+/// events so the standalone subagent conversation view streams in real time with
+/// the same fidelity as the main conversation (the old path suppressed all events
+/// and surfaced only round-granularity summaries).
+#[derive(Clone)]
+pub(crate) struct SubagentStreamCtx {
+    pub subagent_id: String,
+    pub parent_assistant_id: String,
+    pub parent_topic_id: String,
+    pub round: u32,
+}
+
 /// One streaming round: build body -> POST -> parse SSE -> accumulate content/reasoning/tool_calls -> emit delta events.
 ///
 /// Differences from the legacy `call_llm_stream`:
@@ -72,6 +86,9 @@ pub(crate) async fn stream_one_round(
     assistant_id: &str,
     topic_id: &str,
     suppress_events: bool,
+    // Subagent live-stream context: when Some, text/reasoning deltas emit
+    // subagent-scoped events instead of being suppressed (harness round 11).
+    subagent_ctx: Option<SubagentStreamCtx>,
     app: Option<&AppHandle>,
     process_images: bool,
     max_output_tokens: Option<u32>,
@@ -123,6 +140,10 @@ pub(crate) async fn stream_one_round(
     let mut reasoning_buf = String::new();
     // Server-reported finish_reason ("stop" / "tool_calls" / "length"), for caller-side truncation recovery
     let mut finish_reason: Option<String> = None;
+    // Tool-argument progress reporting (subagent live view, harness round 11):
+    // index -> bytes already reported. A giant write_file (~48KB) otherwise
+    // streams silently for minutes with no frontend feedback.
+    let mut tc_progress_reported: BTreeMap<usize, usize> = BTreeMap::new();
     // image_urls parsed from array deltas plus raw API payload parts (resent unrewritten next round to avoid token leakage)
     let mut image_urls: Vec<String> = Vec::new();
     let mut round_api_parts: Vec<serde_json::Value> = Vec::new();
@@ -199,7 +220,19 @@ pub(crate) async fn stream_one_round(
                         return Err(ierr!("LLM 流错误: {}", "LLM stream error: {}", err));
                     } else if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         content_buf.push_str(content);
-                        if !suppress_events {
+                        if let Some(ctx) = &subagent_ctx {
+                            let _ = window.emit(
+                                ev::SUBAGENT_CHUNK,
+                                SubagentDeltaPayload {
+                                    parent_assistant_id: ctx.parent_assistant_id.clone(),
+                                    parent_topic_id: ctx.parent_topic_id.clone(),
+                                    subagent_id: ctx.subagent_id.clone(),
+                                    round: ctx.round,
+                                    kind: "content".into(),
+                                    content: content.to_string(),
+                                },
+                            );
+                        } else if !suppress_events {
                             let _ = window.emit(
                                 ev::LLM_CHUNK,
                                 StreamPayload {
@@ -224,7 +257,21 @@ pub(crate) async fn stream_one_round(
                                 Some("text") => {
                                     if let Some(s) = part.get("text").and_then(|v| v.as_str()) {
                                         content_buf.push_str(s);
-                                        if !suppress_events {
+                                        if let Some(ctx) = &subagent_ctx {
+                                            let _ = window.emit(
+                                                ev::SUBAGENT_CHUNK,
+                                                SubagentDeltaPayload {
+                                                    parent_assistant_id: ctx
+                                                        .parent_assistant_id
+                                                        .clone(),
+                                                    parent_topic_id: ctx.parent_topic_id.clone(),
+                                                    subagent_id: ctx.subagent_id.clone(),
+                                                    round: ctx.round,
+                                                    kind: "content".into(),
+                                                    content: s.to_string(),
+                                                },
+                                            );
+                                        } else if !suppress_events {
                                             let _ = window.emit(
                                                 ev::LLM_CHUNK,
                                                 StreamPayload {
@@ -268,7 +315,19 @@ pub(crate) async fn stream_one_round(
                     {
                         if !reasoning.is_empty() {
                             reasoning_buf.push_str(reasoning);
-                            if !suppress_events {
+                            if let Some(ctx) = &subagent_ctx {
+                                let _ = window.emit(
+                                    ev::SUBAGENT_REASONING,
+                                    SubagentDeltaPayload {
+                                        parent_assistant_id: ctx.parent_assistant_id.clone(),
+                                        parent_topic_id: ctx.parent_topic_id.clone(),
+                                        subagent_id: ctx.subagent_id.clone(),
+                                        round: ctx.round,
+                                        kind: "reasoning".into(),
+                                        content: reasoning.to_string(),
+                                    },
+                                );
+                            } else if !suppress_events {
                                 let _ = window.emit(
                                     ev::LLM_REASONING,
                                     StreamPayload {
@@ -311,6 +370,38 @@ pub(crate) async fn stream_one_round(
                                 .and_then(|v| v.as_str())
                             {
                                 entry.2.push_str(args);
+                                // Giant tool-call argument progress (subagent live view only):
+                                // report every 2KB so a 48KB write_file no longer streams
+                                // silently for minutes ("thinking" with zero feedback).
+                                if let Some(ctx) = &subagent_ctx {
+                                    let last =
+                                        tc_progress_reported.get(&index).copied().unwrap_or(0);
+                                    if entry.2.len().saturating_sub(last) >= 2048 {
+                                        tc_progress_reported.insert(index, entry.2.len());
+                                        let tool = if entry.1.is_empty() {
+                                            "工具参数"
+                                        } else {
+                                            entry.1.as_str()
+                                        };
+                                        let _ = window.emit(
+                                            ev::SUBAGENT_STEP,
+                                            SubagentStepPayload {
+                                                parent_assistant_id: ctx
+                                                    .parent_assistant_id
+                                                    .clone(),
+                                                parent_topic_id: ctx.parent_topic_id.clone(),
+                                                subagent_id: ctx.subagent_id.clone(),
+                                                round: ctx.round,
+                                                step_type: "streaming".into(),
+                                                summary: format!(
+                                                    "{}: {}KB",
+                                                    tool,
+                                                    entry.2.len() / 1024
+                                                ),
+                                            },
+                                        );
+                                    }
+                                }
                             }
                         }
                     }

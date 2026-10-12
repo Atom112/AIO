@@ -1569,6 +1569,17 @@ pub(crate) async fn execute_subagent(
         );
 
         // Stream one round
+        // Harness round 11 (DSH-parity live view): pass the subagent stream context so
+        // text/reasoning deltas emit subagent-chunk / subagent-reasoning events (the
+        // old suppress-everything path left the standalone view showing only
+        // round-granularity summaries, and a giant tool argument streamed silently
+        // for minutes with zero frontend feedback).
+        let sub_stream_ctx = super::streaming::SubagentStreamCtx {
+            subagent_id: subagent_id.clone(),
+            parent_assistant_id: parent_assistant_id.to_string(),
+            parent_topic_id: parent_topic_id.to_string(),
+            round: round as u32,
+        };
         let result = stream_one_round(
             window,
             token,
@@ -1580,7 +1591,8 @@ pub(crate) async fn execute_subagent(
             tools_slice,
             parent_assistant_id,
             parent_topic_id,
-            true, // suppress events for sub-agent (uses subagent-* events instead)
+            true, // suppress MAIN-conversation events (subagent uses subagent-* events)
+            Some(sub_stream_ctx),
             None, // no subagent image output in v1: nothing written or rewritten, text only
             false,
             None, // subagent output capped by the round cap; no extra max_tokens injected
@@ -1594,7 +1606,11 @@ pub(crate) async fn execute_subagent(
                 // (shared construction with the main loop; null_content=false keeps the empty string)
                 super::round_artifacts::append_assistant_message(&mut sub_msgs, &rr, false);
 
-                // Emit the subagent step event (notify the frontend)
+                // Emit the subagent step event (notify the frontend).
+                // Harness round 11: with live delta streaming the narration text already
+                // arrived via subagent-chunk events — the round-end step now serves only
+                // (a) tool-call rounds' fallback summary and (b) completing the running
+                // streamed steps; the frontend listener marks them complete.
                 let step_content = if rr.content.is_empty() {
                     "[工具调用]".to_string()
                 } else {
@@ -2439,12 +2455,25 @@ pub(crate) struct SubagentStartPayload {
 
 #[derive(Serialize, Clone)]
 pub(crate) struct SubagentStepPayload {
-    parent_assistant_id: String,
-    parent_topic_id: String,
-    subagent_id: String,
-    round: u32,
-    step_type: String,
-    summary: String,
+    pub(crate) parent_assistant_id: String,
+    pub(crate) parent_topic_id: String,
+    pub(crate) subagent_id: String,
+    pub(crate) round: u32,
+    pub(crate) step_type: String,
+    pub(crate) summary: String,
+}
+
+/// Streaming delta for a subagent round (harness round 11, DSH-parity live view):
+/// text (`kind="content"`) and reasoning (`kind="reasoning"`) deltas re-scoped
+/// from the suppressed main-conversation channel to the subagent's own view.
+#[derive(Serialize, Clone)]
+pub(crate) struct SubagentDeltaPayload {
+    pub parent_assistant_id: String,
+    pub parent_topic_id: String,
+    pub subagent_id: String,
+    pub round: u32,
+    pub kind: String,
+    pub content: String,
 }
 
 #[derive(Serialize, Clone)]

@@ -36,6 +36,9 @@ export const EVENTS = {
   /** Subagent started / stepped / done / error */
   subagentStart: 'subagent-start',
   subagentStep: 'subagent-step',
+  /** Subagent live streaming deltas (text / reasoning) */
+  subagentChunk: 'subagent-chunk',
+  subagentReasoning: 'subagent-reasoning',
   subagentDone: 'subagent-done',
   subagentError: 'subagent-error',
 

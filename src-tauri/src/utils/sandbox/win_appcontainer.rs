@@ -293,6 +293,41 @@ fn grants_cache() -> &'static std::sync::Mutex<std::collections::HashSet<String>
     CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
+/// Process-lifetime record of best-effort grant FAILURES (harness round 11):
+/// success caching alone meant a dir whose ACL write the system refuses (EDR
+/// error 5) was re-attempted on EVERY spawn — round 11 observed three failed
+/// SetNamedSecurityInfoW calls plus three warnings within one minute on one
+/// poisoned entry. A dir recorded here is skipped (no ACL call, no log) for the
+/// rest of the process; a fresh app session re-attempts once.
+fn failed_grants_cache() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static FAILED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    FAILED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Attempts a best-effort grant once per (suffix, dir) per process; on failure
+/// records it (skipped thereafter) and emits the single warn line.
+fn grant_best_effort_once(
+    dir: &str,
+    sid: *mut c_void,
+    mask: u32,
+    cache_key_suffix: &str,
+    label: &str,
+    on_skip: &str,
+) {
+    let failure_key = format!("{cache_key_suffix}:{dir}");
+    {
+        let failed = failed_grants_cache().lock().unwrap();
+        if failed.contains(&failure_key) {
+            return;
+        }
+    }
+    if let Err(e) = grant_dir_access(dir, sid, mask, cache_key_suffix) {
+        failed_grants_cache().lock().unwrap().insert(failure_key);
+        tracing::warn!("[appcontainer] {label} {dir} 授权失败（{on_skip}）：{e}");
+    }
+}
+
 /// Process-lifetime R+X store (session grants added via the sandbox-expansion
 /// dialog, harness round 3). Distinct from the persistent
 /// `sandboxWindowsToolchainDirs` config: entries live only until the app exits.
@@ -787,38 +822,32 @@ pub fn spawn_in_appcontainer(
     for dir in extra_rx_dirs {
         let p = std::path::Path::new(dir);
         if p.exists() {
-            if let Err(e) = grant_dir_access(
+            grant_best_effort_once(
                 dir,
                 sid,
                 FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
                 &format!("{hash}-rx"),
-            ) {
-                tracing::warn!(
-                    "[appcontainer] 工具链/会话目录 {} 授权失败（跳过该目录，沙箱继续）：{}",
-                    dir,
-                    e
-                );
-            }
+                "工具链/会话目录",
+                "跳过该目录，沙箱继续",
+            );
         }
     }
-    // Best-effort R+X (forwarded interpreter trees): log-and-skip on failure.
+    // Best-effort R+X (forwarded interpreter trees): log-and-skip on failure,
+    // once per dir per app session (round 11 — a poisoned-but-ungrantable dir
+    // must not pay a failed SetNamedSecurityInfoW on every spawn).
     for dir in best_effort_rx_dirs {
         let p = std::path::Path::new(dir);
         if !p.exists() {
             continue;
         }
-        if let Err(e) = grant_dir_access(
+        grant_best_effort_once(
             dir,
             sid,
             FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
             &format!("{hash}-rx-auto"),
-        ) {
-            tracing::warn!(
-                "[appcontainer] 解释器目录 {} 授权失败（继续执行，位置可能本就可读）: {}",
-                dir,
-                e
-            );
-        }
+            "解释器目录",
+            "继续执行，位置可能本就可读",
+        );
     }
 
     // 3) capability (network=true -> internetClient)

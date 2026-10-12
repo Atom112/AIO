@@ -10,3 +10,4 @@ src-tauri/undefined/
 .claude/
 .temp/
 .aio/
+.shots/

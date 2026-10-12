@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 🐛 第四轮复测捕获：replace_in_file 中文 old_string 必 panic（UTF-8 边界）
+
+- **工具稳定性 bug（报告 7.5「副作用」记录，DB 取证钉死根因）**：writer 子智能体用精确字符串替换对中文文档做追加时返回「文件工具执行线程 panic」（文件哈希未变、内容无损）。根因：`file_tools.rs` 匹配计数循环按**字节 +1** 推进游标——`old_string` 首字符为多字节 UTF-8 字符（任何中文）且文件中至少匹配 1 次时，下一轮 `content[pos..]` 切片落在字符中间 → panic。**触发条件宽松到致命：中文项目里精确替换几乎不可用**（writer 被迫改用行范围模式恰好因为目标行以 ASCII `|` 开头而侥幸逃过）
+- **修复**：游标改为跳过**整个匹配**（`pos = abs_pos + old_s.len()`）——匹配末尾必在字符边界上；顺带修正重叠计数语义（`"aa"` 在 `"aaaa"` 旧代码误计 3 处，现为标准的非重叠 2 处，与 `str::matches` 一致）
+- +3 回归单测：中文单匹配替换（修复前必 panic）、中文追加替换（writer 精确场景复现）、非重叠计数语义
+
 ### 🔤 Harness 第三轮（HARNESS_FIX_REPORT.md）五项闭环 + 一个隐藏 P0
 
 - **控制台输出 GBK 解码（隐藏 P0，报告只当「正常现象」一笔带过）**：cmd.exe 在中文 Windows 按 GBK 输出本地化消息，此前被按 UTF-8 有损解码成乱码——`拒绝访问。` 变成 mojibake，导致**签名检测在中文系统上全部失效**（扩权弹窗从未触发过、环境类失败判别失明）。现 stdout/stderr 按「UTF-8 严格优先 → 系统 ANSI 代码页（MultiByteToWideChar CP_ACP）回退」解码（无新依赖）；真实 cmd E2E 验证中文往返（+1）；GBK 字节夹具单测（+1）

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 🔬 第五轮复测两项闭环：workflow 失败门控 + 记忆降级可见性
+
+- **workflow 失败门控（新增 P1-4，报告缺陷确认）**：此前步骤失败（子智能体错误，或其全部工具调用失败——如第五轮 explorer 的 read_file 路径不可访问）不中止链条，错误仅以文本喂给下一步，总结仍报「执行完成（N/N）」。现：① 步骤失败默认**中止后续步骤**（标记「已跳过」，前端工作流面板新增灰色 skipped 状态 + 双语文案）；② 步骤级 `continue_on_error: true` 逃生舱（尽力而为步骤）；③ 总结诚实计数（「成功 M/N，失败 K，跳过 S」），任一步骤失败则结果 `is_error=true`；④ 取消立即传播（不再被记为失败步骤）。实现：`ToolCallStats` 原子计数器穿透 DelegateContext → execute_single_delegate → execute_subagent（+2 单测：全失败签名、并发原子性）
+- **记忆嵌入降级可见性（隐藏 P0，第五轮「相关度恒 0.02」取证钉死）**：实测库内 10 条事实 embedding 全部 NULL——项目级嵌入配置为旧 ollama 模型名（`bge-m3:latest`），本地注册表永不解析 → `resolve()` 每次必败 → remember 静默 fail-open 存 NULL，recall 降级为纯 FTS 关键词匹配（相关度 = RRF 排名分 ≈ 0.02，无语义区分度），模型与用户全程无感知。现：remember/update 结果附「[!] 未生成语义向量（原因）」警告、recall/search_memory 标注「当前为关键词降级检索」并点名原因（`embedding_unavailable_reason` 复用 resolve 错误文本）
+- **记忆库 WAL 卫生（第五轮观察的定性修正 + 修复）**：1.4MB WAL vs 4KB 主库实为**未达 SQLite 默认 autocheckpoint 阈值（1000 页 ≈ 4MB）**而非读连接阻塞（-shm 常驻系连接 LRU 设计）；写放大来自版本审计/FTS/consolidate 后台重写。现：`wal_autocheckpoint=100`（约 400KB 边界）+ remember/update/forget 写会话后显式 `wal_checkpoint(TRUNCATE)`（失败仅记日志，绝不因并发读者失败工具调用）
+- **环境侧提示（非代码问题）**：本机嵌入配置需在设置 → Embedding 模型中切换为本地可用项（旧 ollama 配置在 v0.8 后永不解析）；切换走设置页流程（其会清理旧向量），修复后新记忆即带语义向量
+
 ### 🐛 第四轮复测捕获：replace_in_file 中文 old_string 必 panic（UTF-8 边界）
 
 - **工具稳定性 bug（报告 7.5「副作用」记录，DB 取证钉死根因）**：writer 子智能体用精确字符串替换对中文文档做追加时返回「文件工具执行线程 panic」（文件哈希未变、内容无损）。根因：`file_tools.rs` 匹配计数循环按**字节 +1** 推进游标——`old_string` 首字符为多字节 UTF-8 字符（任何中文）且文件中至少匹配 1 次时，下一轮 `content[pos..]` 切片落在字符中间 → panic。**触发条件宽松到致命：中文项目里精确替换几乎不可用**（writer 被迫改用行范围模式恰好因为目标行以 ASCII `|` 开头而侥幸逃过）

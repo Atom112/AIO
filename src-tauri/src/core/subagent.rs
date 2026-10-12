@@ -543,7 +543,9 @@ pub fn create_workflow_tool_spec() -> ToolSpec {
                 "- debugger → coder（诊断 + 修复）\n",
                 "- explorer → writer（探索 + 文档化）\n\n",
                 "注意：每个步骤是**顺序执行**的（非并行），前一步完成后下一步才开始；",
-                "步骤数上限 20，超出会被拒绝，复杂任务请拆分为多个工作流。",
+                "步骤数上限 20，超出会被拒绝，复杂任务请拆分为多个工作流。\n",
+                "失败语义：某步骤失败（子智能体错误，或其全部工具调用失败）会**中止后续步骤**（标记为跳过），",
+                "除非该步骤显式设置 continue_on_error=true（适合可选/尽力而为的步骤）。"
             )
             .into(),
             parameters: serde_json::json!({
@@ -569,6 +571,10 @@ pub fn create_workflow_tool_spec() -> ToolSpec {
                                 "task": {
                                     "type": "string",
                                     "description": "分配给该子智能体执行的任务描述。应包含具体目标、预期产出和必要上下文。"
+                                },
+                                "continue_on_error": {
+                                    "type": "boolean",
+                                    "description": "该步骤失败后是否继续执行后续步骤。默认 false（失败即中止链，后续步骤标记跳过）。仅当该步骤是可选的/尽力而为的（如格式化、可选检查）才设为 true。"
                                 }
                             },
                             "required": ["profile", "name", "task"]

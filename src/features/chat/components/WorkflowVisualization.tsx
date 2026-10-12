@@ -17,6 +17,7 @@ const STATUS_DOT: Record<string, string> = {
   running: 'bg-blue-500 animate-pulse',
   completed: 'bg-green-500',
   failed: 'bg-red-500',
+  skipped: 'bg-gray-600',
 };
 
 /** Step status → Tailwind text color */
@@ -25,6 +26,7 @@ const STATUS_TEXT: Record<string, string> = {
   running: 'text-blue-400',
   completed: 'text-green-400',
   failed: 'text-red-400',
+  skipped: 'text-gray-500',
 };
 
 const STATUS_LABEL: Record<string, TranslationKey> = {
@@ -32,6 +34,7 @@ const STATUS_LABEL: Record<string, TranslationKey> = {
   running: 'agent.workflow.running',
   completed: 'agent.status.completed',
   failed: 'agent.status.failed',
+  skipped: 'agent.workflow.skipped',
 };
 
 /** Milliseconds → "Xs" format (seconds rounded) */

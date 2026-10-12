@@ -7,6 +7,7 @@
 //! 本结构把继承上下文打包为单一值：主循环构造一次 `DelegateContext`，调用
 //! 签名收敛为 `(ctx, arguments)`；新增上下文字段只改一个结构体定义。
 
+use crate::commands::llm::tool_dispatch::ToolCallStats;
 use crate::core::models::{AgentMode, CustomSubagentProfile, ProfileModelOverride};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -32,4 +33,8 @@ pub(crate) struct DelegateContext {
     pub mcp_server_ids: Vec<String>,
     pub semaphore: Arc<Semaphore>,
     pub locale: String,
+    /// Tool-call statistics collector for THIS delegation (harness round 5:
+    /// workflow failure gating reads it after the step finishes; None = the
+    /// caller doesn't need gating stats).
+    pub stats: Option<Arc<ToolCallStats>>,
 }

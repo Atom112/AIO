@@ -202,11 +202,20 @@ pub async fn execute_memory_tool(
             )
         })?;
     match tool_name {
-        "remember" => execute_remember(app, &store, arguments).await,
+        "remember" | "update_memory" | "forget_memory" => {
+            // Write tools share one flow so the WAL stays reclaimed after write
+            // sessions (harness round 5: checkpoint after writes keeps the main DB
+            // durable instead of accumulating every page version in the WAL).
+            let result = match tool_name {
+                "remember" => execute_remember(app, &store, arguments).await,
+                "update_memory" => execute_update(app, &store, arguments).await,
+                _ => execute_forget(&store, arguments),
+            };
+            store.checkpoint_wal();
+            result
+        }
         "recall" => execute_recall(app, &store, arguments).await,
         "search_memory" => execute_search(app, &store, arguments).await,
-        "update_memory" => execute_update(app, &store, arguments).await,
-        "forget_memory" => execute_forget(&store, arguments),
         "search_code" => execute_search_code(app, project_root, arguments).await,
         _ => Err(ierr!(
             "未知记忆工具: {}",
@@ -346,6 +355,7 @@ async fn execute_remember(
             }
         }
     }
+    let embed_available = embedding.is_some();
     let saved = match resolved_id {
         Some(id) => store.get_fact(&id)?,
         None => {
@@ -361,9 +371,22 @@ async fn execute_remember(
             store.upsert_fact(&fact, embedding)?
         }
     };
+    // Harness round 5 (visibility): a NULL vector must be VISIBLE — the whole
+    // project's facts had silently lost semantic retrieval (keyword-only RRF
+    // ~0.02 scores) because the configured embedding model never resolved.
+    let embed_note = if embed_available {
+        String::new()
+    } else {
+        match crate::services::memory::embedding_unavailable_reason(app, store) {
+            Some(reason) => format!(
+                "\n\n[!] 注意：本条记忆未生成语义向量（{reason}）。recall 将降级为关键词匹配，请在设置 → Embedding 模型中修复。"
+            ),
+            None => "\n\n[!] 注意：本条记忆未生成语义向量（维度与记忆库不一致，嵌入模型可能已切换），请在设置 → Embedding 模型中修复。".to_string(),
+        }
+    };
     Ok(tool_ok(format!(
-        "已记住: {}（{}）",
-        saved.content, saved.category
+        "已记住: {}（{}）{}",
+        saved.content, saved.category, embed_note
     )))
 }
 
@@ -396,6 +419,11 @@ async fn execute_recall(
             r.category,
             r.content,
             r.score,
+        ));
+    }
+    if let Some(reason) = crate::services::memory::embedding_unavailable_reason(app, store) {
+        out.push_str(&format!(
+            "\n（当前为关键词降级检索：嵌入不可用——{reason}。相关度是关键词排名分，无语义区分度。）"
         ));
     }
     Ok(tool_ok(out))
@@ -440,6 +468,11 @@ async fn execute_search(
             r.content,
             r.score,
             r.id,
+        ));
+    }
+    if let Some(reason) = crate::services::memory::embedding_unavailable_reason(app, store) {
+        out.push_str(&format!(
+            "\n（当前为关键词降级检索：嵌入不可用——{reason}。相关度是关键词排名分，无语义区分度。）"
         ));
     }
     Ok(tool_ok(out))
@@ -522,7 +555,13 @@ async fn execute_update(
             pinned: existing.pinned,
         };
         let embedding = embed_one(app, store, &new_content).await;
-        store.upsert_fact(&fact, embedding)?
+        let embed_note = if embedding.is_none() {
+            "\n\n[!] 注意：本条记忆未生成语义向量（嵌入不可用或维度不一致），请在设置 → Embedding 模型中修复。"
+        } else {
+            ""
+        };
+        let saved = store.upsert_fact(&fact, embedding)?;
+        return Ok(tool_ok(format!("已更新记忆: {}{embed_note}", saved.id)));
     } else {
         let mut updated = store.update_content(id, &new_content, "update")?;
         if new_category != existing.category {

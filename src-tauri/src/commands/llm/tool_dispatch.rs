@@ -178,6 +178,46 @@ pub(crate) fn classify_outcome(is_error: bool, result_text: &str) -> ToolOutcome
     }
 }
 
+/// Cross-thread tool-call statistics for one subagent run (harness round 5:
+/// workflow failure gating consumes this — a step whose tool calls ALL failed
+/// is a hard environment failure even though the subagent returned a summary).
+#[derive(Default)]
+pub(crate) struct ToolCallStats {
+    total: std::sync::atomic::AtomicUsize,
+    failed: std::sync::atomic::AtomicUsize,
+}
+
+impl ToolCallStats {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records one tool-call outcome (atomic: the subagent loop's parallel phase
+    /// runs read-only tools concurrently while serial results land interleaved).
+    pub(crate) fn record(&self, is_error: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.total.fetch_add(1, Relaxed);
+        if is_error {
+            self.failed.fetch_add(1, Relaxed);
+        }
+    }
+
+    pub(crate) fn total(&self) -> usize {
+        self.total.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) fn failed(&self) -> usize {
+        self.failed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Hard-failure signature: at least one call happened and every single one
+    /// errored (the round-5 explorer step: its only read_file failed, yet the
+    /// step was counted "completed" and the chain continued on garbage).
+    pub(crate) fn all_failed(&self) -> bool {
+        self.total() > 0 && self.failed() == self.total()
+    }
+}
+
 /// Policy for tools coming from the built-in filesystem MCP server (`BUILTIN_FS_SERVER_ID`).
 ///
 /// Why filtering is mandatory: the fs server runs as a separate stdio subprocess rooted
@@ -961,5 +1001,43 @@ mod tests {
         // 6th trips: disables and returns None (the disable message replaces warnings)
         assert!(b.record("t", ToolOutcome::EnvBlocked).is_none());
         assert!(b.is_disabled("t"));
+    }
+
+    // ====== ToolCallStats (harness round 5, workflow failure gating) ======
+
+    /// all_failed is the hard-failure signature: >0 calls and every one errored.
+    #[test]
+    fn stats_all_failed_signature() {
+        let s = ToolCallStats::new();
+        assert!(!s.all_failed(), "无调用不算失败");
+        s.record(true);
+        assert!(
+            s.all_failed(),
+            "唯一调用失败 = 硬失败（round-5 explorer 场景）"
+        );
+        s.record(false);
+        assert!(!s.all_failed(), "有成功调用则不判硬失败");
+        assert_eq!(s.total(), 2);
+        assert_eq!(s.failed(), 1);
+    }
+
+    /// Mixed outcomes across threads (atomicity smoke).
+    #[test]
+    fn stats_concurrent_mixed_outcomes() {
+        let s = std::sync::Arc::new(ToolCallStats::new());
+        let mut joins = Vec::new();
+        for t in 0..4 {
+            let s2 = s.clone();
+            joins.push(std::thread::spawn(move || {
+                for i in 0..100 {
+                    s2.record((t * 100 + i) % 3 == 0);
+                }
+            }));
+        }
+        for j in joins {
+            j.join().unwrap();
+        }
+        assert_eq!(s.total(), 400);
+        assert_eq!(s.failed(), 134); // per thread: 34 of 100 (i%3==0)
     }
 }

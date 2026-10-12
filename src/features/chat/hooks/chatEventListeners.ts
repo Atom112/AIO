@@ -845,7 +845,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           : null,
       );
     }),
-    listen<{ stepId: string; status: 'completed' | 'failed'; duration?: number }>(
+    listen<{ stepId: string; status: 'completed' | 'failed' | 'skipped'; duration?: number }>(
       EVENTS.workflowStepComplete,
       (e) => {
         setWorkflowState((prev) =>

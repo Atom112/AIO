@@ -83,6 +83,7 @@ AIO 的权限系统基于三态决策模型：
 - 命令需要联网（下载依赖、API 调用、访问 localhost 服务）时，模型须显式声明 `network: true`（Windows 注入 internetClient capability；审批弹窗标注"需要网络访问"）。
 - **fail-closed**：Linux/macOS 沙箱不可用时，Auto/Workflow 模式直接拒绝执行（`sandboxRequired` 默认开）；Normal 模式审批弹窗附带沙箱不可用警示。
 - Windows 工具链目录（cargo/scoop 等用户安装路径）经 `sandboxWindowsToolchainDirs` 配置追加 R+X；系统目录依赖内置 ALL APPLICATION PACKAGES ACE。
+- **沙箱扩权请求**：命令在 Windows 沙箱内被拒绝（WinError 5「拒绝访问 / Access is denied」）时弹出选择对话框——「授权解释器目录并重试（本次会话）」「授权并永久记住（写入 `sandboxWindowsToolchainDirs`）」「跳出沙箱执行（仅本次）」「忽略」，也支持直接输入任意目录路径授权。同一首命令 30 分钟内最多询问一次；60 秒无响应按「忽略」处理（无人值守自动降级为原始错误，不会卡住回合）。
 - 危险命令词法检测是 defense-in-depth 预警层（Critical 级无条件硬阻断），安全强制以 OS 沙箱为准。
 
 ## `.aio/permissions.json` 文件格式

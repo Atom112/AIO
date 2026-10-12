@@ -293,6 +293,36 @@ fn grants_cache() -> &'static std::sync::Mutex<std::collections::HashSet<String>
     CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
+/// Process-lifetime R+X store (session grants added via the sandbox-expansion
+/// dialog, harness round 3). Distinct from the persistent
+/// `sandboxWindowsToolchainDirs` config: entries live only until the app exits.
+fn session_rx_grants_locked() -> std::sync::MutexGuard<'static, Vec<String>> {
+    static SESSION_RX_GRANTS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
+        std::sync::OnceLock::new();
+    SESSION_RX_GRANTS
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+}
+
+/// Adds a process-lifetime R+X grant (case-insensitively deduped).
+pub fn add_session_rx_grant(dir: &str) {
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let mut grants = session_rx_grants_locked();
+    if !grants.iter().any(|d| d.eq_ignore_ascii_case(trimmed)) {
+        grants.push(trimmed.to_string());
+        tracing::info!("[appcontainer] 会话级 R+X 授权已添加: {trimmed}");
+    }
+}
+
+/// Current process-lifetime R+X grants (added via the sandbox-expansion dialog).
+pub fn session_rx_grants() -> Vec<String> {
+    session_rx_grants_locked().clone()
+}
+
 // ---- profile / SID ----
 
 /// SEC-14: shared per-project profile-name derivation — spawn_in_appcontainer and
@@ -1066,6 +1096,20 @@ mod tests {
         assert_eq!(code, Some(0), "exit code 应为 0, out={out}");
         assert!(out.contains("aio_ac_ok"), "应捕获输出: {out}");
         let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// Session R+X grants (harness round 3, expansion dialog): add, case-insensitive
+    /// dedup, and snapshot read-back.
+    #[test]
+    fn session_rx_grants_add_and_dedupe() {
+        session_rx_grants_locked().clear();
+        add_session_rx_grant("D:\\Anaconda3");
+        add_session_rx_grant("  d:\\anaconda3  "); // same dir, different case + whitespace
+        add_session_rx_grant("E:\\Go");
+        add_session_rx_grant(""); // empty ignored
+        let grants = session_rx_grants();
+        assert_eq!(grants, vec!["D:\\Anaconda3", "E:\\Go"]);
+        session_rx_grants_locked().clear();
     }
 
     /// File-write boundary: the AC token cannot write paths outside the project (core security property).

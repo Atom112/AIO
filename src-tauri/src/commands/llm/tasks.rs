@@ -468,17 +468,21 @@ fn format_response(questions: &[QuestionView], response: &QuestionResponse) -> S
     out
 }
 
-/// Executes the ask_user tool: emit the questions, pause until the user answers
-/// (respond_agent_question), the token cancels, or the safety-valve timeout fires.
-pub(crate) async fn execute_ask_user(
+/// Core ask_user channel: emit the questions, pause until the user answers
+/// (respond_agent_question), the token cancels, or the timeout fires.
+///
+/// Returns the raw [`QuestionResponse`] — `execute_ask_user` formats it for the
+/// model; the sandbox-expansion flow (harness round 3) instead acts on the chosen
+/// option. The frontend listener routes by `request_id` only, so internal callers
+/// may pass empty assistant/topic ids.
+pub(crate) async fn ask_user_questions(
     app: &AppHandle,
     assistant_id: &str,
     topic_id: &str,
-    arguments: &Value,
+    questions: Vec<QuestionView>,
+    timeout: Duration,
     token: &CancellationToken,
-) -> Result<crate::core::models::ToolResult, String> {
-    let questions = parse_questions(arguments)?;
-
+) -> Result<QuestionResponse, String> {
     let pending = app.state::<PendingAgentQuestions>();
     let (tx, rx) = tokio::sync::oneshot::channel::<QuestionResponse>();
     let request_id = pending.insert(tx);
@@ -489,7 +493,7 @@ pub(crate) async fn execute_ask_user(
             request_id: request_id.clone(),
             assistant_id: assistant_id.to_string(),
             topic_id: topic_id.to_string(),
-            questions: questions.clone(),
+            questions,
         },
     );
 
@@ -498,7 +502,7 @@ pub(crate) async fn execute_ask_user(
             pending.remove(&request_id);
             return Err("cancelled".into());
         }
-        res = tokio::time::timeout(ASK_USER_TIMEOUT, rx) => match res {
+        res = tokio::time::timeout(timeout, rx) => match res {
             Ok(Ok(r)) => r,
             Ok(Err(_)) => {
                 pending.remove(&request_id);
@@ -516,7 +520,28 @@ pub(crate) async fn execute_ask_user(
             }
         },
     };
+    Ok(response)
+}
 
+/// Executes the ask_user tool: emit the questions, pause until the user answers
+/// (respond_agent_question), the token cancels, or the safety-valve timeout fires.
+pub(crate) async fn execute_ask_user(
+    app: &AppHandle,
+    assistant_id: &str,
+    topic_id: &str,
+    arguments: &Value,
+    token: &CancellationToken,
+) -> Result<crate::core::models::ToolResult, String> {
+    let questions = parse_questions(arguments)?;
+    let response = ask_user_questions(
+        app,
+        assistant_id,
+        topic_id,
+        questions.clone(),
+        ASK_USER_TIMEOUT,
+        token,
+    )
+    .await?;
     Ok(tool_ok(format_response(&questions, &response)))
 }
 

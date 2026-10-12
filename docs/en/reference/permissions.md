@@ -83,6 +83,7 @@ Workflow (`create_workflow`) steps **inherit the Agent mode they were started wi
 - Commands needing network (dependency downloads, API calls, localhost services) must declare `network: true` explicitly (Windows injects the internetClient capability; the approval dialog is annotated).
 - **Fail-closed**: when the sandbox is unavailable on Linux/macOS, Auto/Workflow mode refuses execution (`sandboxRequired` defaults on); Normal mode annotates the approval dialog with a sandbox-unavailable warning.
 - Windows toolchain dirs (cargo/scoop user paths) are granted R+X via `sandboxWindowsToolchainDirs`; system dirs rely on built-in ALL APPLICATION PACKAGES ACEs.
+- **Sandbox expansion request**: when a command is denied inside the Windows sandbox (WinError 5, "Access is denied"), a choice dialog pops — "Grant the interpreter directory and retry (this session)", "Grant and remember permanently (written to `sandboxWindowsToolchainDirs`)", "Run without sandbox (this once)", or "Ignore"; a free-form directory path can also be typed. At most one request per first command token per 30 minutes; no response within 60 seconds degrades to "Ignore" (unattended runs fall back to the original error and never stall the turn).
 - The lexical dangerous-command check is a defense-in-depth advisory layer (Critical always hard-blocked); OS sandboxing is the enforcement boundary.
 
 ## `.aio/permissions.json` File Format

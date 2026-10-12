@@ -357,8 +357,8 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
                     "type":"object",
                     "properties":{
                         "path":{"type":"string","description":"文件路径"},
-                        "max_lines":{"type":"integer","description":"最大读取行数（默认 300；传 -1 表示不限行数）"},
-                        "max_bytes":{"type":"integer","description":"最大读取字节数（默认 32768）"},
+                        "max_lines":{"type":"integer","description":"最大读取行数（默认 300；-1 = 不限行数——注意行数上限与字节上限相互独立，-1 不解除字节截断，需完整大文件请同时传 max_bytes=-1）"},
+                        "max_bytes":{"type":"integer","description":"最大读取字节数（默认 32768；-1 = 不限字节，仍受 1MB 安全上限约束）"},
                         "with_hash":{"type":"boolean","description":"是否返回文件 SHA-256 摘要（默认 false）"}
                     },
                     "required":["path"]
@@ -369,8 +369,8 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: tool_names::WRITE_FILE.into(),
-                description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）；文件被其他智能体修改过后，覆盖时必须携带 expect_hash（当前内容哈希），不匹配会报错".into(),
-                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容"},"expect_hash":{"type":"string","description":"写入前校验的文件当前 SHA-256（read_file(with_hash=true) 获取）。文件被其他智能体修改过后为必填；不匹配则报错，需重新读取最新内容"}},"required":["path","content"]}),
+                description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）；文件被其他智能体修改过后，覆盖时必须携带 expect_hash（当前内容哈希），不匹配会报错。content 为必填：缺失直接报错；用空字符串覆盖非空文件同样要求 expect_hash（防参数拼装事故清空文件）".into(),
+                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容（必填；显式空字符串 = 清空文件，对非空文件需配合 expect_hash）"},"expect_hash":{"type":"string","description":"写入前校验的文件当前 SHA-256（read_file(with_hash=true) 获取）。文件被其他智能体修改过后为必填；不匹配则报错，需重新读取最新内容"}},"required":["path","content"]}),
             },
         },
         ToolSpec {
@@ -437,14 +437,35 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 return tool_err(&ierr!("缺少 path", "Missing path"));
             }
             // Read caps: default 300 lines / 32KB (token efficiency: keeps full large files out of the context);
-            // max_lines = -1 means unlimited lines, max_bytes = -1 means unlimited bytes (still bounded by the MAX_R hard cap).
-            let max_lines_arg = arguments["max_lines"].as_i64().unwrap_or(300);
+            // max_lines = -1 means unlimited lines, max_bytes = -1 means unlimited
+            // bytes (still bounded by the MAX_R hard cap). Harness round 9: values
+            // below -1 used to be silently accepted as "unlimited" — validate
+            // instead, so a malformed call fails loudly instead of half-applying.
+            let max_lines_arg = match arguments["max_lines"].as_i64() {
+                Some(v) if v < -1 => {
+                    return tool_err(&ierr!(
+                        "max_lines 无效（-1 表示不限行数，不允许更小的负数）: {}",
+                        "Invalid max_lines (-1 means unlimited lines; smaller negatives are rejected): {}",
+                        v
+                    ))
+                }
+                other => other.unwrap_or(300),
+            };
             let max_lines = if max_lines_arg < 0 {
                 usize::MAX
             } else {
                 (max_lines_arg as u64).clamp(1, 1_000_000) as usize
             };
-            let max_bytes_arg = arguments["max_bytes"].as_i64().unwrap_or(32 * 1024);
+            let max_bytes_arg = match arguments["max_bytes"].as_i64() {
+                Some(v) if v < -1 => {
+                    return tool_err(&ierr!(
+                        "max_bytes 无效（-1 表示不限字节，不允许更小的负数）: {}",
+                        "Invalid max_bytes (-1 means unlimited bytes; smaller negatives are rejected): {}",
+                        v
+                    ))
+                }
+                other => other.unwrap_or(32 * 1024),
+            };
             let max_bytes = if max_bytes_arg < 0 {
                 usize::MAX
             } else {
@@ -547,7 +568,28 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
         }
         tool_names::WRITE_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
-            let content = arguments["content"].as_str().unwrap_or("");
+            // P0-3 (harness round 9): a MISSING `content` key used to fall through
+            // `unwrap_or("")` and silently overwrite the target with 0 bytes — the
+            // tester truncated README.md to empty this way. Distinguish the three
+            // cases: missing key (hard error), explicit empty string (allowed —
+            // empty files are legitimate, round 8 verified), and normal content.
+            let content = match arguments.get("content") {
+                Some(v) => match v.as_str() {
+                    Some(s) => s,
+                    None => {
+                        return tool_err(&ierr!(
+                            "content 参数必须是字符串（收到其他类型）",
+                            "The content parameter must be a string (got another type)"
+                        ))
+                    }
+                },
+                None => {
+                    return tool_err(&ierr!(
+                        "缺少 content 参数：写入不能省略内容（如需清空文件请显式传空字符串，且对已存在的非空文件将要求 expect_hash 确认）",
+                        "Missing content parameter: a write must not omit content (pass an explicit empty string to truncate; overwriting a non-empty file with empty content additionally requires expect_hash)"
+                    ))
+                }
+            };
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
             }
@@ -560,6 +602,25 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             };
             if t.exists() && t.is_dir() {
                 return tool_err(&ierr!("目标是目录: {}", "Target is a directory: {}", path));
+            }
+            // P0-3 second guard: empty overwrite of a NON-EMPTY file requires
+            // expect_hash — you must prove you read what you are about to destroy.
+            // (New files and already-empty files stay freely writable: the
+            // legitimate empty-file cases from round 8 keep working.)
+            if content.is_empty() && t.is_file() {
+                let len = match std::fs::metadata(&t) {
+                    Ok(m) => m.len(),
+                    Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
+                };
+                let expect_hash = arguments["expect_hash"].as_str().unwrap_or("");
+                if len > 0 && expect_hash.is_empty() {
+                    return tool_err(&ierr!(
+                        "拒绝用空内容覆盖非空文件（{}，当前 {}B）：这几乎总是参数拼装事故。如确要清空，请先 read_file(with_hash=true) 取得哈希并显式传 content:\"\" + expect_hash。",
+                        "Refusing to overwrite a non-empty file ({}B) with empty content — this is almost always a malformed call ({}). To truncate intentionally, first run read_file(with_hash=true) and pass an explicit empty content plus expect_hash.",
+                        path,
+                        len
+                    ));
+                }
             }
             // hashline protocol — expect_hash: pre-overwrite content validation (the
             // mirror of replace_in_file's anchor_hash). Enforced for cross-writer
@@ -1268,6 +1329,112 @@ mod safe_path_tests {
             fs::read_to_string(base.join("r.txt")).unwrap(),
             "alpha\nBETA\ngamma\n"
         );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (harness round 9, P0-3): a MISSING `content` key used to fall
+    /// through unwrap_or("") and silently truncate the target to 0 bytes (the
+    /// tester emptied README.md this way). Now: missing → hard error; explicit
+    /// empty string over a non-empty file → requires expect_hash; explicit empty
+    /// on a NEW file stays allowed (round-8 empty-file case).
+    #[test]
+    fn write_file_missing_content_and_empty_overwrite_guards() {
+        let base = fresh_base("p03");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("readme.md"), "line1\nline2\n").unwrap();
+
+        // 1) Missing content → error, file untouched
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md"}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            r.is_error && text.contains("缺少 content"),
+            "漏传 content 必须报错: {text}"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("readme.md")).unwrap(),
+            "line1\nline2\n",
+            "文件必须原样保留"
+        );
+
+        // 2) Explicit empty content over a NON-EMPTY file without expect_hash → error
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md", "content": ""}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            r.is_error && text.contains("空内容覆盖非空文件"),
+            "空覆盖非空文件必须要求 expect_hash: {text}"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("readme.md")).unwrap(),
+            "line1\nline2\n"
+        );
+
+        // 3) Explicit empty + correct expect_hash → allowed (intentional truncate)
+        let hash = super::sha256_hex(b"line1\nline2\n");
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md", "content": "", "expect_hash": hash}),
+            &base_s,
+        );
+        assert!(
+            !r.is_error,
+            "带 expect_hash 的显式清空应放行: {}",
+            text_of(&r)
+        );
+        assert_eq!(fs::read_to_string(base.join("readme.md")).unwrap(), "");
+
+        // 4) Explicit empty on a NEW file → allowed (round-8 case)
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "fresh_empty.txt", "content": ""}),
+            &base_s,
+        );
+        assert!(!r.is_error, "新建空文件应放行: {}", text_of(&r));
+        assert!(base.join("fresh_empty.txt").exists());
+
+        // 5) Non-string content type → error
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md", "content": 42}),
+            &base_s,
+        );
+        assert!(r.is_error && text_of(&r).contains("必须是字符串"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (harness round 9): max_lines/max_bytes below -1 used to be
+    /// silently treated as unlimited — now rejected loudly.
+    #[test]
+    fn read_file_rejects_below_minus_one_limits() {
+        let base = fresh_base("neglimit");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("f.txt"), "x\ny\n").unwrap();
+        for arg in ["max_lines", "max_bytes"] {
+            let r = execute_file_tool(
+                tool_names::READ_FILE,
+                &serde_json::json!({"path": "f.txt", arg: -5}),
+                &base_s,
+            );
+            let text = text_of(&r);
+            assert!(
+                r.is_error && text.contains("无效"),
+                "{arg}=-5 应报错: {text}"
+            );
+        }
+        // -1 stays valid for both
+        let r = execute_file_tool(
+            tool_names::READ_FILE,
+            &serde_json::json!({"path": "f.txt", "max_lines": -1, "max_bytes": -1}),
+            &base_s,
+        );
+        assert!(!r.is_error, "-1 应保持合法: {}", text_of(&r));
         let _ = fs::remove_dir_all(&base);
     }
 

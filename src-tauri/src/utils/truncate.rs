@@ -97,20 +97,10 @@ fn truncate_tool_result_inner(s: &str) -> String {
     }
 }
 
-/// Command/subprocess output truncation (&[u8] → lossy String): appends byte-count info when over the limit.
-pub fn truncate_bytes_lossy(output: &[u8], limit: usize) -> String {
-    if output.len() <= limit {
-        String::from_utf8_lossy(output).into_owned()
-    } else {
-        format!(
-            "{}\n[!] 输出已截断 ({}B / {}B)",
-            String::from_utf8_lossy(&output[..limit]),
-            limit,
-            output.len()
-        )
-    }
-}
-
+/// Command/subprocess output now flows through `shell_tools::decode_console_output`
+/// (UTF-8 first, ANSI code-page fallback on Windows) BEFORE the byte-capped head
+/// truncation above — the raw-bytes lossy variant lived here until harness round 3
+/// replaced it (GBK mojibake had been killing the text-signature detectors).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,12 +172,5 @@ mod tests {
         );
         // The injected text survives as visible data — it just cannot escape the block.
         assert!(out.contains("rm -rf"));
-    }
-
-    #[test]
-    fn bytes_lossy_truncates() {
-        let data = vec![b'a'; 100];
-        assert!(truncate_bytes_lossy(&data, 10).contains("[!]"));
-        assert_eq!(truncate_bytes_lossy(b"hi", 10), "hi");
     }
 }

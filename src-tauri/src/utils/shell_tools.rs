@@ -33,7 +33,66 @@ pub use crate::utils::tool_result::{tool_err, tool_ok};
 
 // Truncation is provided by utils::truncate (name matches semantics)
 use crate::core::tool_names;
-use crate::utils::truncate::truncate_bytes_lossy as truncate_output;
+
+// ====== Console output decoding (harness round 3, hidden P0) =====
+//
+// cmd.exe on zh-CN Windows emits localized messages in GBK (code page 936); the
+// previous lossy-UTF-8 conversion rendered "拒绝访问。" as mojibake, which
+// silently KILLED every text-signature feature built on command output:
+// sandbox-expansion detection (is_sandbox_access_denied), not-found detection,
+// and env-class failure classification. Decode UTF-8-first (most modern tools
+// speak UTF-8), falling back to the system ANSI code page.
+
+/// Converts raw command output bytes to text: strict UTF-8 first, then the
+/// Windows ANSI code page (CP_ACP → GBK on zh-CN), then lossy UTF-8 as the
+/// last resort. Pure given the injected decoder — unit-tested.
+pub(crate) fn decode_console_output(bytes: &[u8]) -> String {
+    if std::str::from_utf8(bytes).is_ok() {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    match decode_ansi_codepage(bytes) {
+        Some(s) => s,
+        None => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// ANSI-code-page decode via kernel32 `MultiByteToWideChar(CP_ACP)` (Windows
+/// only). Returns None on conversion failure so the caller can fall back.
+#[cfg(windows)]
+fn decode_ansi_codepage(bytes: &[u8]) -> Option<String> {
+    const CP_ACP: u32 = 0;
+    extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            dw_flags: u32,
+            lp_multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            lp_wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    let len = bytes.len().min(i32::MAX as usize) as i32;
+    let wide_len =
+        unsafe { MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0) };
+    if wide_len <= 0 {
+        return None;
+    }
+    let mut wide = vec![0u16; wide_len as usize];
+    let written =
+        unsafe { MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), wide_len) };
+    if written <= 0 {
+        return None;
+    }
+    String::from_utf16(&wide[..written as usize]).ok()
+}
+
+#[cfg(not(windows))]
+fn decode_ansi_codepage(_bytes: &[u8]) -> Option<String> {
+    None // no ANSI code page outside Windows; lossy UTF-8 is the fallback
+}
 
 // ====== Dangerous-command detection ======
 
@@ -732,54 +791,141 @@ pub fn get_command_tool_spec() -> ToolSpec {
 
 // ====== Command execution ======
 
-/// Script-interpreter names eligible for host-PATH forwarding. Harness-session
-/// finding (round 2, issue 2): the sandboxed shell sees a stripped environment —
-/// `python`/`node`/`py` probes all exit 9009 — while the host AIO process itself
-/// has them on PATH; forwarding bridges the two views.
-const FORWARDED_INTERPRETERS: &[&str] = &["python", "python3", "py", "pip", "node", "npm", "npx"];
+/// Executable names eligible for host-PATH forwarding. Harness findings:
+/// round 2 — the sandboxed shell sees a stripped environment (`python`/`node`
+/// probes exit 9009) while the host AIO process has them on PATH; round 3 —
+/// the same holds for `git` (report: shell has no git either). `git`/`cargo`
+/// installs usually live under Program Files, whose default ALL APPLICATION
+/// PACKAGES ACE makes the forwarded absolute path genuinely executable inside
+/// the AppContainer (unlike user-dir interpreters, which the expansion
+/// dialog then mediates).
+const FORWARDED_INTERPRETERS: &[&str] = &[
+    "python", "python3", "py", "pip", "node", "npm", "npx", "git", "cargo",
+];
 
 /// Whether a command result text carries the Windows sandbox (AppContainer)
 /// access-denied signature: WinError 5 surfaces as "Access is denied" (en) or
 /// "拒绝访问" (zh) from cmd, PowerShell (UnauthorizedAccessException maps here),
 /// and Python ([WinError 5]). Harness round 3: this signature triggers the
 /// sandbox-expansion request (one-click grant / unsandboxed-once / ignore).
+/// Depends on [`decode_console_output`] — GBK mojibake previously made the
+/// Chinese half of this matcher dead on zh-CN systems.
 pub(crate) fn is_sandbox_access_denied(result_text: &str) -> bool {
     result_text.contains("Access is denied") || result_text.contains("拒绝访问")
 }
 
-/// Rewrites a command whose FIRST token is a bare known-interpreter name into the
-/// host-process-resolved absolute path, returning the rewritten command plus the
-/// interpreter's directory (for best-effort R+X granting inside the AppContainer
-/// sandbox — the interpreter tree is normally invisible to the AC token, e.g. a
-/// D:\Anaconda3 without an ALL APPLICATION PACKAGES ACE).
+/// Whether a command result text says the command was NOT FOUND (as opposed to
+/// found-and-failed): cmd's "'x' 不是内部或外部命令" / "'x' is not recognized",
+/// plus the 9009 exit marker. Environment-class failure signature (harness
+/// round 3: the breaker must distinguish env-blocked from business failures).
+pub(crate) fn is_command_not_found_result(result_text: &str) -> bool {
+    result_text.contains("不是内部或外部命令")
+        || result_text.contains("is not recognized")
+        || result_text.contains("exit code: 9009")
+}
+
+/// Whether a command result text is an ENVIRONMENT-class failure (missing
+/// command / missing dependency / permission denied) rather than a business
+/// failure (command ran and returned nonzero). Used by the tool failure
+/// breaker: only env-class consecutive failures trip the disable.
+pub(crate) fn is_env_blocked_failure(result_text: &str) -> bool {
+    is_sandbox_access_denied(result_text)
+        || is_command_not_found_result(result_text)
+        || result_text.contains("系统找不到指定的文件")
+        || result_text.contains("The system cannot find the file specified")
+        || result_text.contains("ModuleNotFoundError")
+        || result_text.contains("command not found")
+}
+
+/// Splits the command into whitespace tokens, returning (byte offset of the
+/// operation token, token text). The operation token is the first token after
+/// unwrapping `cmd`/`cmd.exe` + its `/x` flags — i.e. what actually runs:
+/// `cmd /c python -V` → `python`; `cmd /c del x` → `del`; `cargo build` → `cargo`.
+/// Bails (None) when a quote appears before the operation token (conservative).
+fn operation_token_span(command: &str) -> Option<(usize, &str)> {
+    let trimmed = command.trim_start();
+    let offset = command.len() - trimmed.len();
+    let mut pos = 0usize;
+    let mut first = true;
+    let mut in_cmd_header = false;
+    for tok in trimmed.split_whitespace() {
+        let tok_start = trimmed[pos..].find(tok).unwrap_or(0) + pos;
+        let lower = tok.to_ascii_lowercase();
+        if first {
+            first = false;
+            if lower == "cmd" || lower == "cmd.exe" {
+                in_cmd_header = true;
+                pos = tok_start + tok.len();
+                continue;
+            }
+        }
+        if in_cmd_header && tok.starts_with('/') {
+            pos = tok_start + tok.len();
+            continue; // cmd flags: /c /k /s ...
+        }
+        if tok.contains('"') {
+            return None; // quoted payload — do not guess inside quotes
+        }
+        return Some((offset + tok_start, tok));
+    }
+    None
+}
+
+/// The forwarded-executable name this command targets, if any: `python -V` →
+/// "python", `cmd /c npm install` → "npm". None for non-forwarded operations
+/// (`cmd /c del x` → None; `del` is not in the list). Quoted/absolute/relative
+/// operation tokens are never forwarded.
+pub(crate) fn forwarded_interpreter_of(command: &str) -> Option<String> {
+    let (_, tok) = operation_token_span(command)?;
+    let lower = tok.to_ascii_lowercase();
+    let base = lower.strip_suffix(".exe").unwrap_or(&lower);
+    let bare = !base.is_empty()
+        && !base.contains(['/', '\\', ':'])
+        && !base.contains('"')
+        && FORWARDED_INTERPRETERS.contains(&base);
+    bare.then(|| base.to_string())
+}
+
+/// Dedup key for the sandbox-expansion ask-once window: the OPERATION the
+/// command performs (post cmd-unwrap), not the raw first token — `cmd /c del x`
+/// and `del x` share the key "del"; `cmd /c python -V` and `python -V` share
+/// "python"; unrelated cmd invocations do not collide.
+pub(crate) fn expansion_key(command: &str) -> String {
+    operation_token_span(command)
+        .map(|(_, tok)| tok.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+/// Rewrites a command whose operation token (first token, or the token after
+/// `cmd /c`-style flags) is a bare known-executable name into the host-process-
+/// resolved absolute path, returning the rewritten command plus the executable's
+/// directory (for best-effort R+X granting inside the AppContainer sandbox —
+/// the tree is normally invisible to the AC token, e.g. a D:\Anaconda3 without
+/// an ALL APPLICATION PACKAGES ACE).
 ///
-/// Fires only on a literally bare first token (no quotes, path separators, or
-/// drive colons): `python tests/x.py`, `node -e "..."`, `npm install`. Anything
-/// else (`cd x && python y`, absolute paths, `cmd /c python ...`) passes through
-/// untouched. Resolution is PATH-only via [`crate::utils::exec_resolve`] (SEC-06:
-/// the project cwd is never consulted, so a planted interpreter is not picked up).
+/// Fires only on a literally bare operation token (no quotes, path separators,
+/// or drive colons): `python tests/x.py`, `node -e "..."`, `npm install`, and —
+/// harness round 3, the gap the LLM testers actually hit — `cmd /c python -V`.
+/// Anything else (`cd x && python y`, absolute paths) passes through untouched.
+/// Resolution is PATH-only via [`crate::utils::exec_resolve`] (SEC-06: the
+/// project cwd is never consulted, so a planted interpreter is not picked up).
 /// When resolution fails the command passes through unchanged. Pure — unit-tested.
 pub(crate) fn forward_script_interpreter(command: &str) -> (String, Option<std::path::PathBuf>) {
-    let trimmed = command.trim_start();
-    let indent_len = command.len() - trimmed.len();
-    let first_end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
-    let first = &trimmed[..first_end];
-    let is_bare_known = !first.is_empty()
-        && !first.contains(['/', '\\', '"', ':'])
-        && FORWARDED_INTERPRETERS.contains(&first.to_ascii_lowercase().as_str());
-    if !is_bare_known {
-        return (command.to_string(), None);
-    }
-    let Some(resolved) = crate::utils::exec_resolve::resolve_executable(first) else {
+    let Some((tok_start, tok)) = operation_token_span(command) else {
         return (command.to_string(), None);
     };
-    let rest = &trimmed[first_end..];
-    let rewritten = format!(
-        "{}\"{}\"{}",
-        &command[..indent_len],
-        resolved.display(),
-        rest
-    );
+    if forwarded_interpreter_of(command).is_none() {
+        return (command.to_string(), None);
+    }
+    let Some(resolved) = crate::utils::exec_resolve::resolve_executable(tok) else {
+        return (command.to_string(), None);
+    };
+    let mut rewritten = String::with_capacity(command.len() + 16);
+    rewritten.push_str(&command[..tok_start]);
+    rewritten.push('"');
+    rewritten.push_str(&resolved.display().to_string());
+    rewritten.push('"');
+    rewritten.push_str(&command[tok_start + tok.len()..]);
     (rewritten, resolved.parent().map(|p| p.to_path_buf()))
 }
 
@@ -1194,9 +1340,12 @@ fn build_command_result(
     }
 
     if !stdout.is_empty() || stdout_total > 0 {
+        // Decode BEFORE truncation: GBK/ANSI console messages must reach the
+        // model (and the signature detectors) as readable text (harness round 3).
+        let decoded = decode_console_output(&stdout);
         result.push_str(&format!(
             "\n[stdout]:\n{}\n",
-            truncate_output(&stdout, MAX_OUTPUT_BYTES)
+            crate::utils::truncate::truncate_bytes_head(&decoded, MAX_OUTPUT_BYTES)
         ));
         if stdout_total > stdout.len() {
             result.push_str(&format!(
@@ -1207,9 +1356,10 @@ fn build_command_result(
         }
     }
     if !stderr.is_empty() || stderr_total > 0 {
+        let decoded = decode_console_output(&stderr);
         result.push_str(&format!(
             "\n[stderr]:\n{}\n",
-            truncate_output(&stderr, MAX_OUTPUT_BYTES)
+            crate::utils::truncate::truncate_bytes_head(&decoded, MAX_OUTPUT_BYTES)
         ));
         if stderr_total > stderr.len() {
             result.push_str(&format!(
@@ -1427,18 +1577,20 @@ mod tests {
         }
     }
 
-    // ====== forward_script_interpreter (harness round 2, issue 2) ======
+    // ====== forward_script_interpreter (harness round 2 + round 3) ======
 
     /// Commands that must pass through untouched: operators, absolute/quoted
     /// first tokens, unknown names, sub-commands after another command.
+    /// (Round 3: `cmd /c python run.py` MOVED OUT of this list — it is now
+    /// forwarded, which is exactly the gap the LLM testers hit; `cargo` and
+    /// `python.exe` are also forwarded now, so they are rewrite cases.)
     #[test]
     fn forward_interpreter_passthrough_cases() {
         for cmd in [
-            "cargo build",
             "cd tests && python run.py",
-            "cmd /c python run.py",
+            "cmd /c del abc.txt", // del is not a forwarded executable
+            "cmd /c nosuchcmd_r3_1",
             "\"python\" run.py",
-            "python.exe run.py",
             "D:\\Anaconda3\\python.exe run.py",
             "./scripts/python.sh",
             "echo python",
@@ -1484,6 +1636,86 @@ mod tests {
         );
     }
 
+    /// Harness round 3 (the actual tester form): `cmd /c <interp> …` unwraps
+    /// the cmd header and its flags, then forwards the operation token. The
+    /// `python.exe` suffix form forwards too.
+    #[test]
+    fn forward_interpreter_rewrites_cmd_wrapped() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return;
+        }
+        let (rewritten, dir) = forward_script_interpreter("cmd /c python --version");
+        assert!(
+            rewritten.starts_with("cmd /c \"") && rewritten.ends_with("--version"),
+            "应改写 cmd 包裹内的解释器: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains(" python "),
+            "内部 token 应被整体替换: {rewritten}"
+        );
+        assert!(dir.is_some(), "cmd 包裹也应返回解释器目录");
+
+        // Uppercase CMD.EXE header + multiple flags
+        let (rewritten2, _) = forward_script_interpreter("CMD.EXE /C /F python -V");
+        assert!(
+            rewritten2.starts_with("CMD.EXE /C /F \""),
+            "大小写与多 flag 都应解包: {rewritten2}"
+        );
+
+        // .exe-suffixed operation token
+        let (rewritten3, dir3) = forward_script_interpreter("cmd /c python.exe tests/run.py");
+        assert!(
+            rewritten3.starts_with("cmd /c \"") && dir3.is_some(),
+            "python.exe 形态也应转发: {rewritten3}"
+        );
+    }
+
+    /// forwarded_interpreter_of: what the command targets, for expansion triggering.
+    #[test]
+    fn forwarded_interpreter_of_forms() {
+        assert_eq!(
+            forwarded_interpreter_of("cmd /c python --version").as_deref(),
+            Some("python"),
+            "cmd 包裹应识别"
+        );
+        assert_eq!(
+            forwarded_interpreter_of("python -V").as_deref(),
+            Some("python")
+        );
+        assert_eq!(
+            forwarded_interpreter_of("PYTHON.EXE -V").as_deref(),
+            Some("python"),
+            "大小写与 .exe 后缀应归一"
+        );
+        assert_eq!(
+            forwarded_interpreter_of("cmd /c npm install").as_deref(),
+            Some("npm")
+        );
+        assert_eq!(
+            forwarded_interpreter_of("git status").as_deref(),
+            Some("git")
+        );
+        assert_eq!(
+            forwarded_interpreter_of("cmd /c del abc.txt"),
+            None,
+            "del 不在转发列表"
+        );
+        assert_eq!(forwarded_interpreter_of("cd x && python y"), None);
+        assert_eq!(forwarded_interpreter_of("\"python\" x"), None);
+    }
+
+    /// expansion_key: operation-level dedup for the sandbox-expansion window —
+    /// `cmd /c X` and bare `X` share one key; unrelated operations do not.
+    #[test]
+    fn expansion_key_is_operation_level() {
+        assert_eq!(expansion_key("cmd /c python --version"), "python");
+        assert_eq!(expansion_key("python -V"), "python");
+        assert_eq!(expansion_key("cmd /c del x"), "del");
+        assert_eq!(expansion_key("del x"), "del");
+        assert_eq!(expansion_key("  cmd /c ver"), "ver");
+        assert_eq!(expansion_key(""), "");
+    }
+
     /// Case-insensitive on the interpreter name (Windows shells are).
     #[test]
     fn forward_interpreter_matches_case_insensitive() {
@@ -1492,6 +1724,86 @@ mod tests {
         }
         let (rewritten, _) = forward_script_interpreter("PYTHON -V");
         assert!(rewritten.starts_with('"'), "大写名也应转发: {rewritten}");
+    }
+
+    // ====== console output decoding (harness round 3, hidden P0) ======
+
+    /// UTF-8 output passes through untouched; invalid-UTF-8 GBK bytes decode to
+    /// readable Chinese via the ANSI code page (zh-CN CP936) — the case that
+    /// previously turned "拒绝访问。" into mojibake and killed signature matching.
+    #[test]
+    fn decode_console_output_utf8_and_gbk() {
+        assert_eq!(decode_console_output(b"plain ascii"), "plain ascii");
+        assert_eq!(decode_console_output("中文 utf-8".as_bytes()), "中文 utf-8");
+        // GBK bytes of "拒绝访问。" (BE DC BE F8 B7 C3 CE CA A1 A3)
+        let gbk_denied = [0xBEu8, 0xDC, 0xBE, 0xF8, 0xB7, 0xC3, 0xCE, 0xCA, 0xA1, 0xA3];
+        if cfg!(windows) {
+            let decoded = decode_console_output(&gbk_denied);
+            assert!(
+                decoded.contains("拒绝访问"),
+                "GBK 拒绝访问应正确解码（ACP=936 系统），got: {decoded:?}"
+            );
+            // The signature matcher must now see the real text
+            assert!(is_sandbox_access_denied(&decoded), "解码后签名应可识别");
+        }
+        // On non-Windows there is no ANSI fallback: lossy UTF-8, no panic
+        let _ = decode_console_output(&gbk_denied);
+    }
+
+    /// Not-found + env-class signatures (harness round 3): the breaker's
+    /// env/business distinction and the 9009-expansion trigger depend on these.
+    #[test]
+    fn not_found_and_env_class_signatures() {
+        for text in [
+            "'python' 不是内部或外部命令，也不是可运行的程序或批处理文件",
+            "'x' is not recognized as an internal or external command",
+            "exit code: 9009",
+        ] {
+            assert!(is_command_not_found_result(text), "应识别未找到: {text}");
+            assert!(is_env_blocked_failure(text), "未找到属环境类: {text}");
+        }
+        for text in [
+            "拒绝访问。",
+            "Access is denied.",
+            "ModuleNotFoundError: No module named 'numpy'",
+            "/bin/sh: 1: git: command not found",
+        ] {
+            assert!(is_env_blocked_failure(text), "应识别环境类: {text}");
+        }
+        // Business failures: command RAN and failed — must NOT be env-class
+        for text in [
+            "exit code: 1\n[stderr]:\n1 test failed",
+            "assert False: assertion failed",
+            "error: could not compile `aio`",
+        ] {
+            assert!(
+                !is_env_blocked_failure(text),
+                "业务失败不应判为环境类: {text}"
+            );
+            assert!(!is_command_not_found_result(text));
+        }
+    }
+
+    /// E2E decode verification (harness round 3): a real cmd.exe run whose console
+    /// code page is GBK (zh-CN default) must surface readable Chinese in the tool
+    /// result — previously "拒绝访问。" arrived as mojibake and killed the
+    /// signature detectors (expansion dialog / env-class breaker).
+    #[test]
+    #[cfg(windows)]
+    fn gbk_console_output_decodes_e2e() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command(
+            "cmd /c echo 拒绝访问测试OK",
+            &root,
+            Some(15_000),
+            false,
+            None,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("拒绝访问测试OK"),
+            "GBK 控制台输出应正确解码: {text}"
+        );
     }
 
     /// E2E (harness round 2, issue 2): a bare `python` command must run inside

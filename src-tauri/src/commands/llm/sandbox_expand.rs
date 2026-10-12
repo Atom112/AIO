@@ -56,14 +56,13 @@ fn recently_asked() -> &'static std::sync::Mutex<HashMap<String, Instant>> {
 }
 
 fn first_token(command: &str) -> String {
-    command
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase()
+    // Operation-level key (harness round 3): `cmd /c python -V` and `python -V`
+    // share "python"; `cmd /c del x` and `del x` share "del" — the ask-once window
+    // dedups by what the command DOES, not by the raw first token.
+    crate::utils::shell_tools::expansion_key(command)
 }
 
-/// Whether this command's first token is eligible for a new expansion request
+/// Whether this command's operation token is eligible for a new expansion request
 /// (not asked within the [`REASK_AFTER`] window).
 pub(crate) fn should_ask(command: &str) -> bool {
     let key = first_token(command);

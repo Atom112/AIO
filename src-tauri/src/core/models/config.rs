@@ -203,6 +203,12 @@ pub struct AppConfig {
     /// system dirs rely on the built-in ALL APPLICATION PACKAGES ACE and need no configuration).
     #[serde(default, rename = "sandboxWindowsToolchainDirs")]
     pub sandbox_windows_toolchain_dirs: Vec<String>,
+    /// Consecutive ENVIRONMENT-class failures (missing command / permission denied /
+    /// missing dependency) before a tool is disabled for the rest of the turn
+    /// (harness round 3, P1-1: configurable). Business failures (command ran, nonzero
+    /// exit) never trip the breaker. 0 = default (6).
+    #[serde(default, rename = "toolBreakerThreshold")]
+    pub tool_breaker_threshold: u32,
 }
 
 /// Default value of the Windows command sandbox mode.
@@ -241,6 +247,7 @@ impl Default for AppConfig {
             sandbox_required: default_true(),
             sandbox_windows: default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
+            tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: default_true(),
             memory_auto_extract: default_true(),

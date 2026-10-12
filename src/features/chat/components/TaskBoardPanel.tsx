@@ -1,10 +1,12 @@
 /**
- * TaskBoardPanel - agent task list panel
+ * TaskBoardPanel - agent task list section inside the agent status bar.
  *
- * While the main agent works through a task list (create_tasks / update_task tools), this
- * collapsible panel above the chat area shows the board for the current topic with live
- * statuses. Data source: the agentTaskBoard signal (mirrored via agent-tasks-changed).
- * Mounting slot and visual language follow WorkflowVisualization.
+ * Round-11 redesign (user feedback): the board used to be a standalone gray-themed
+ * panel above the message area, visually detached from the app theme. It now renders
+ * as a section of the status bar strip (above the status row, inside the strip's
+ * border): created tasks expand the strip to show the detailed rows; the collapse
+ * button reduces it to a single summary line ("Tasks: N, done M, pending K").
+ * Colors are CSS-variable based and follow the active theme.
  */
 import { Component, createSignal, For, Show } from 'solid-js';
 import { agentTaskBoard } from '../../../core/store/store';
@@ -25,37 +27,56 @@ const TaskBoardPanel: Component<TaskBoardPanelProps> = (props) => {
   };
 
   const doneCount = () => board()!.tasks.filter((tk) => tk.status === 'completed').length;
+  const pendingCount = () => board()!.tasks.filter((tk) => tk.status === 'pending').length;
 
   return (
     <Show when={board()}>
-      <div class="bg-gray-800/60 border-b border-gray-700 shrink-0">
-        {/* Header bar */}
+      <div class="border-b" style={{ 'border-color': 'rgba(var(--border-rgb), 0.15)' }}>
+        {/* Summary / toggle row: collapsed state shows only this line */}
         <button
           type="button"
-          class="flex items-center justify-between w-full px-3 py-1.5 text-left hover:bg-white/[0.03] transition-colors"
+          class="flex items-center gap-2 w-full px-3 py-1.5 text-left cursor-pointer bg-transparent border-none hover:bg-[rgba(var(--text-base-rgb),0.04)] transition-colors"
           onClick={() => setCollapsed((p) => !p)}
+          title={collapsed() ? t('agent.tasks.expand') : t('agent.tasks.collapse')}
         >
-          <div class="flex items-center gap-2 text-xs text-gray-300 min-w-0">
-            <Icon name="clipboard" size={12} class="text-yellow-400 shrink-0" />
-            <span class="font-medium truncate">{t('agent.tasks.title')}</span>
-            <span class="text-gray-600 shrink-0 tabular-nums">
-              {doneCount()}/{board()!.tasks.length}
-            </span>
-          </div>
+          <Icon
+            name="clipboard"
+            size={12}
+            class="shrink-0"
+            style={{ color: 'rgba(var(--primary-rgb),0.7)' }}
+          />
+          <span class="font-medium truncate" style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}>
+            {t('agent.tasks.statusLine', {
+              total: board()!.tasks.length,
+              done: doneCount(),
+              pending: pendingCount(),
+            })}
+          </span>
           <Icon
             name="arrow-left"
-            class={`text-gray-500 shrink-0 transition-transform duration-200 ${collapsed() ? '-rotate-90' : 'rotate-90'}`}
+            size={11}
+            class="shrink-0 ml-auto transition-transform duration-200"
+            classList={{ '-rotate-90': collapsed(), 'rotate-90': !collapsed() }}
+            style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
           />
         </button>
 
-        {/* Task rows */}
+        {/* Detailed task rows */}
         <Show when={!collapsed()}>
-          <div class="px-3 pb-2 space-y-1 max-h-[240px] overflow-y-auto scrollbar-thin">
+          <div class="px-2 pb-2 space-y-1 max-h-[200px] overflow-y-auto scrollbar-thin">
             <For each={board()!.tasks}>
               {(task) => (
                 <div
-                  class="flex items-center gap-2 rounded-lg bg-gray-800/50 border border-gray-700/50 px-2 py-1 text-xs select-none"
-                  classList={{ 'opacity-50': task.status === 'pending' }}
+                  class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] select-none"
+                  style={{
+                    background: 'rgba(var(--text-base-rgb),0.03)',
+                    'border-left': `2px solid ${
+                      task.status === 'in_progress'
+                        ? 'rgba(var(--primary-rgb),0.55)'
+                        : 'transparent'
+                    }`,
+                  }}
+                  classList={{ 'opacity-55': task.status === 'pending' }}
                 >
                   {/* Status mark */}
                   <Show
@@ -64,17 +85,37 @@ const TaskBoardPanel: Component<TaskBoardPanelProps> = (props) => {
                       <span
                         class="w-2 h-2 rounded-full shrink-0"
                         classList={{
-                          'border border-gray-500': task.status === 'pending',
-                          'bg-blue-500 animate-pulse': task.status === 'in_progress',
+                          'animate-pulse': task.status === 'in_progress',
+                        }}
+                        style={{
+                          background:
+                            task.status === 'in_progress'
+                              ? 'rgba(var(--primary-rgb),0.8)'
+                              : 'transparent',
+                          border:
+                            task.status === 'pending'
+                              ? '1px solid rgba(var(--text-base-rgb),0.35)'
+                              : 'none',
                         }}
                       />
                     }
                   >
-                    <Icon name="check" size={12} class="text-green-500 shrink-0" />
+                    <Icon
+                      name="check"
+                      size={12}
+                      class="shrink-0"
+                      style={{ color: 'var(--color-success)' }}
+                    />
                   </Show>
                   <span
-                    class="text-gray-300 truncate"
-                    classList={{ 'line-through text-gray-500': task.status === 'completed' }}
+                    class="truncate"
+                    classList={{ 'line-through': task.status === 'completed' }}
+                    style={{
+                      color:
+                        task.status === 'completed'
+                          ? 'rgba(var(--text-base-rgb),0.35)'
+                          : 'rgba(var(--text-base-rgb),0.75)',
+                    }}
                   >
                     {task.title}
                   </span>

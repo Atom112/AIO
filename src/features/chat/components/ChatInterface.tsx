@@ -39,6 +39,7 @@ import ReasoningButton from './ReasoningButton';
 import WebSearchButton from './WebSearchButton';
 import ToolApprovalBubble, { type PendingApproval } from './ToolApprovalBubble';
 import AgentQuestionBubble, { type PendingQuestion } from './AgentQuestionBubble';
+import TaskBoardPanel from './TaskBoardPanel';
 import TokenStatsBar from './TokenStatsBar';
 
 import AgentModeSelector from './AgentModeSelector';
@@ -172,6 +173,25 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   });
   // Reverted message IDs (local signal, not persisted)
   const [revertedMessages, setRevertedMessages] = createSignal<Set<string>>(new Set());
+
+  // Round-11 feedback: the textarea height was only resized in onInput + reset only in
+  // the Enter keydown — sending via the button (or any path that clears the signal)
+  // left the box expanded until the next keypress. Drive the height REACTIVELY from the
+  // signal instead: every path (typing, button send, /command fill, edit-resend) resizes.
+  createEffect(() => {
+    const value = props.inputMessage;
+    const el = textareaRef;
+    if (!el) return;
+    if (!value) {
+      el.style.height = '40px';
+      el.style.overflowY = 'hidden';
+      return;
+    }
+    el.style.height = 'auto';
+    const natural = Math.min(el.scrollHeight, 200);
+    el.style.height = `${natural}px`;
+    el.style.overflowY = natural >= 200 ? 'auto' : 'hidden';
+  });
 
   // All subagent steps of the current topic (including past turns, persisted on messages
   // via agentSteps). The status-bar pull-up menu entry shows when any subagent exists.
@@ -416,28 +436,6 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               </div>
             </Show>
           </Show>
-
-          {/* Tool-call approval bubbles */}
-          <Show when={props.pendingApprovals.length > 0}>
-            <div class="mb-3 space-y-2">
-              <For each={props.pendingApprovals}>
-                {(approval) => (
-                  <ToolApprovalBubble approval={approval} onResolved={props.onResolveApproval} />
-                )}
-              </For>
-            </div>
-          </Show>
-
-          {/* Agent question bubbles (ask_user): options + custom input + skip */}
-          <Show when={props.pendingQuestions.length > 0}>
-            <div class="mb-3 space-y-2">
-              <For each={props.pendingQuestions}>
-                {(question) => (
-                  <AgentQuestionBubble question={question} onResolved={props.onResolveQuestion} />
-                )}
-              </For>
-            </div>
-          </Show>
         </div>
       </div>
 
@@ -504,167 +502,199 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               }[mode as 'normal' | 'auto' | 'plan' | 'workflow'] || mode;
             return (
               <div
-                class="flex items-center gap-2 px-3 h-8 rounded-2xl text-xs"
+                class="flex flex-col rounded-2xl text-xs overflow-hidden"
                 style={{
                   background: 'rgba(var(--surface-bg), 0.5)',
                   border: '1px solid rgba(var(--border-rgb), 0.15)',
                 }}
               >
-                <Icon name="wrench" size={14} />
-                <span style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}>
-                  {t('chat.agentStatus', { mode: modeLabel, project: project?.name ?? '' })}
-                </span>
-                <Show when={gitBranch()}>
-                  <div class="branch-dropdown-container relative inline-block">
-                    <button
-                      type="button"
-                      class={'px-1.5 py-0.5 bg-[rgba(var(--surface-alt-bg),0.5)] ' + btnGhost}
-                      style={{ color: 'rgba(var(--text-base-rgb),0.5)', 'font-weight': '400' }}
-                      classList={{
-                        // 全响应式：open 恒深背景（important 压过常态类）；
-                        // 非 open 才允许 hover 浅深背景。不做任何 JS 样式写入，
-                        // 杜绝 mouseleave 守卫漏恢复导致的深色残留。
-                        '!bg-[rgba(var(--surface-bg),0.7)]': branchOpen(),
-                        'hover:bg-[rgba(var(--surface-bg),0.6)]': !branchOpen(),
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setBranchOpen(!branchOpen());
-                      }}
-                    >
-                      {t('chat.branchPrefix')}{' '}
-                      <Icon
-                        name="git-branch"
-                        size={12}
-                        style={{ display: 'inline', 'vertical-align': 'middle' }}
-                      />{' '}
-                      {gitBranch()}
-                      <Icon
-                        name="chevron-up"
-                        size={10}
-                        class="ml-0.5"
-                        style={{ display: 'inline', 'vertical-align': 'middle' }}
-                      />
-                    </button>
-                    <Show when={branchOpen()}>
-                      <div
-                        ref={(el) =>
-                          requestAnimationFrame(() => {
-                            el.classList.remove('opacity-0', 'scale-95');
-                            el.classList.add('opacity-100', 'scale-100');
-                          })
-                        }
-                        class="absolute bottom-full left-0 mb-2 z-[41] w-[200px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
-                        style={{
-                          background: 'rgba(var(--surface-bg),0.96)',
-                          border: '1px solid var(--border-dim)',
-                          'backdrop-filter': 'blur(12px)',
-                          'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div
-                          class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
-                          style={{
-                            color: 'rgba(var(--text-base-rgb),0.35)',
-                            background: 'rgba(var(--text-base-rgb),0.04)',
-                            'border-bottom': '1px solid var(--border-dim)',
-                          }}
-                        >
-                          {t('chat.switchBranch')}
-                        </div>
-                        <div class="py-1 max-h-[200px] overflow-y-auto">
-                          <For each={gitBranches()}>
-                            {(branch) => (
-                              <button
-                                type="button"
-                                class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer border-none text-[13px]"
-                                style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
-                                classList={{
-                                  '!bg-[rgba(var(--surface-bg),0.5)]': branch === gitBranch(),
-                                }}
-                                onClick={async () => {
-                                  if (branch === gitBranch()) {
-                                    setBranchOpen(false);
-                                    return;
-                                  }
-                                  try {
-                                    await switchBranch(branch);
-                                    setBranchOpen(false);
-                                  } catch (e) {
-                                    console.error('[git] switch branch failed:', e);
-                                    setBranchToast(t('chat.branchSwitchFailed'));
-                                    setTimeout(() => setBranchToast(null), 3000);
-                                  }
-                                }}
-                                onMouseEnter={(e) => {
-                                  if (branch !== gitBranch())
-                                    e.currentTarget.style.background =
-                                      'rgba(var(--text-base-rgb),0.05)';
-                                }}
-                                onMouseLeave={(e) => {
-                                  if (branch !== gitBranch())
-                                    e.currentTarget.style.background = 'transparent';
-                                }}
-                              >
-                                <span class="flex-1 truncate">{branch}</span>
-                                <Show when={branch === gitBranch()}>
-                                  <Icon
-                                    name="check"
-                                    size={13}
-                                    class="shrink-0"
-                                    style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}
-                                  />
-                                </Show>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </div>
-                    </Show>
+                {/* Task list (create_tasks / update_task live mirror): expands inside the
+                    status bar frame above the status row; collapsible to a one-line summary */}
+                <TaskBoardPanel topicId={props.activeTopic?.id ?? ''} />
+
+                {/* Tool approvals + ask_user: interaction panels now live in the status bar
+                    (DSH-style) instead of popping cards into the message flow */}
+                <Show when={props.pendingApprovals.length > 0 || props.pendingQuestions.length > 0}>
+                  <div
+                    class="px-2 py-2 space-y-2 max-h-[45vh] overflow-y-auto border-b"
+                    style={{ 'border-color': 'rgba(var(--border-rgb), 0.15)' }}
+                  >
+                    <For each={props.pendingApprovals}>
+                      {(approval) => (
+                        <ToolApprovalBubble
+                          approval={approval}
+                          onResolved={props.onResolveApproval}
+                        />
+                      )}
+                    </For>
+                    <For each={props.pendingQuestions}>
+                      {(question) => (
+                        <AgentQuestionBubble
+                          question={question}
+                          onResolved={props.onResolveQuestion}
+                        />
+                      )}
+                    </For>
                   </div>
                 </Show>
-                <Show when={project}>
-                  <span
-                    class="w-2 h-2 rounded-full shrink-0"
-                    style={{ background: fsColor() }}
-                    title={fsTooltip()}
-                  />
-                </Show>
-                <Show when={project && selectedModel()?.engine_type && localEngineName()}>
-                  <span
-                    class="w-px h-3 shrink-0"
-                    style={{ background: 'rgba(var(--text-base-rgb),0.15)' }}
-                  />
-                </Show>
-                <Show when={selectedModel()?.engine_type && localEngineName()}>
-                  <span
-                    class="inline-flex items-center gap-1 text-[11px] shrink-0"
-                    style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
-                  >
-                    <Show
-                      when={isStartingLocalModel()}
-                      fallback={
-                        <Show when={localEngineConnected()}>
-                          <span style={{ color: 'var(--color-success)' }}>
-                            {t('chat.localEngineConnected', { engine: localEngineName() })}
-                          </span>
-                        </Show>
-                      }
-                    >
-                      <Icon
-                        src="/icons/app-logo/loading.svg"
-                        class="w-3 h-3 animate-spin shrink-0"
-                      />
-                      <span class="text-white/80">
-                        {t('chat.localEngineConnecting', { engine: localEngineName() })}
-                      </span>
-                    </Show>
-                  </span>
-                </Show>
 
-                {/* Subagent pull-up menu (extracted: SubagentMenu owns state + outside-click) */}
-                <SubagentMenu activeTopic={() => props.activeTopic} />
+                <div class="flex items-center gap-2 px-3 h-8">
+                  <Icon name="wrench" size={14} />
+                  <span style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}>
+                    {t('chat.agentStatus', { mode: modeLabel, project: project?.name ?? '' })}
+                  </span>
+                  <Show when={gitBranch()}>
+                    <div class="branch-dropdown-container relative inline-block">
+                      <button
+                        type="button"
+                        class={'px-1.5 py-0.5 bg-[rgba(var(--surface-alt-bg),0.5)] ' + btnGhost}
+                        style={{ color: 'rgba(var(--text-base-rgb),0.5)', 'font-weight': '400' }}
+                        classList={{
+                          // 全响应式：open 恒深背景（important 压过常态类）；
+                          // 非 open 才允许 hover 浅深背景。不做任何 JS 样式写入，
+                          // 杜绝 mouseleave 守卫漏恢复导致的深色残留。
+                          '!bg-[rgba(var(--surface-bg),0.7)]': branchOpen(),
+                          'hover:bg-[rgba(var(--surface-bg),0.6)]': !branchOpen(),
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBranchOpen(!branchOpen());
+                        }}
+                      >
+                        {t('chat.branchPrefix')}{' '}
+                        <Icon
+                          name="git-branch"
+                          size={12}
+                          style={{ display: 'inline', 'vertical-align': 'middle' }}
+                        />{' '}
+                        {gitBranch()}
+                        <Icon
+                          name="chevron-up"
+                          size={10}
+                          class="ml-0.5"
+                          style={{ display: 'inline', 'vertical-align': 'middle' }}
+                        />
+                      </button>
+                      <Show when={branchOpen()}>
+                        <div
+                          ref={(el) =>
+                            requestAnimationFrame(() => {
+                              el.classList.remove('opacity-0', 'scale-95');
+                              el.classList.add('opacity-100', 'scale-100');
+                            })
+                          }
+                          class="absolute bottom-full left-0 mb-2 z-[41] w-[200px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
+                          style={{
+                            background: 'rgba(var(--surface-bg),0.96)',
+                            border: '1px solid var(--border-dim)',
+                            'backdrop-filter': 'blur(12px)',
+                            'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div
+                            class="px-3 py-2 text-[11px] font-bold uppercase tracking-widest"
+                            style={{
+                              color: 'rgba(var(--text-base-rgb),0.35)',
+                              background: 'rgba(var(--text-base-rgb),0.04)',
+                              'border-bottom': '1px solid var(--border-dim)',
+                            }}
+                          >
+                            {t('chat.switchBranch')}
+                          </div>
+                          <div class="py-1 max-h-[200px] overflow-y-auto">
+                            <For each={gitBranches()}>
+                              {(branch) => (
+                                <button
+                                  type="button"
+                                  class="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors cursor-pointer border-none text-[13px]"
+                                  style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
+                                  classList={{
+                                    '!bg-[rgba(var(--surface-bg),0.5)]': branch === gitBranch(),
+                                  }}
+                                  onClick={async () => {
+                                    if (branch === gitBranch()) {
+                                      setBranchOpen(false);
+                                      return;
+                                    }
+                                    try {
+                                      await switchBranch(branch);
+                                      setBranchOpen(false);
+                                    } catch (e) {
+                                      console.error('[git] switch branch failed:', e);
+                                      setBranchToast(t('chat.branchSwitchFailed'));
+                                      setTimeout(() => setBranchToast(null), 3000);
+                                    }
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (branch !== gitBranch())
+                                      e.currentTarget.style.background =
+                                        'rgba(var(--text-base-rgb),0.05)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (branch !== gitBranch())
+                                      e.currentTarget.style.background = 'transparent';
+                                  }}
+                                >
+                                  <span class="flex-1 truncate">{branch}</span>
+                                  <Show when={branch === gitBranch()}>
+                                    <Icon
+                                      name="check"
+                                      size={13}
+                                      class="shrink-0"
+                                      style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}
+                                    />
+                                  </Show>
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                      </Show>
+                    </div>
+                  </Show>
+                  <Show when={project}>
+                    <span
+                      class="w-2 h-2 rounded-full shrink-0"
+                      style={{ background: fsColor() }}
+                      title={fsTooltip()}
+                    />
+                  </Show>
+                  <Show when={project && selectedModel()?.engine_type && localEngineName()}>
+                    <span
+                      class="w-px h-3 shrink-0"
+                      style={{ background: 'rgba(var(--text-base-rgb),0.15)' }}
+                    />
+                  </Show>
+                  <Show when={selectedModel()?.engine_type && localEngineName()}>
+                    <span
+                      class="inline-flex items-center gap-1 text-[11px] shrink-0"
+                      style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
+                    >
+                      <Show
+                        when={isStartingLocalModel()}
+                        fallback={
+                          <Show when={localEngineConnected()}>
+                            <span style={{ color: 'var(--color-success)' }}>
+                              {t('chat.localEngineConnected', { engine: localEngineName() })}
+                            </span>
+                          </Show>
+                        }
+                      >
+                        <Icon
+                          src="/icons/app-logo/loading.svg"
+                          class="w-3 h-3 animate-spin shrink-0"
+                        />
+                        <span class="text-white/80">
+                          {t('chat.localEngineConnecting', { engine: localEngineName() })}
+                        </span>
+                      </Show>
+                    </span>
+                  </Show>
+
+                  {/* Subagent pull-up menu (extracted: SubagentMenu owns state + outside-click) */}
+                  <SubagentMenu activeTopic={() => props.activeTopic} />
+                </div>
               </div>
             );
           })()}
@@ -678,23 +708,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             class="bg-transparent border-none text-white font-inherit text-base leading-relaxed min-h-[40px] max-h-[20vh] outline-none overflow-y-hidden px-[5px] pb-[5px] resize-none w-full focus:overflow-y-auto"
             placeholder={t('chat.input.placeholder')}
             value={props.inputMessage}
-            onInput={(e) => {
-              props.setInputMessage(e.currentTarget.value);
-              e.currentTarget.style.height = 'auto';
-              const newHeight = e.currentTarget.scrollHeight;
-              e.currentTarget.style.height = `${newHeight}px`;
-              if (newHeight > 200) {
-                e.currentTarget.style.overflowY = 'auto';
-                e.currentTarget.style.height = '200px';
-              } else {
-                e.currentTarget.style.overflowY = 'hidden';
-              }
-            }}
+            onInput={(e) => props.setInputMessage(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
                 e.preventDefault();
                 props.handleSendMessage();
-                if (textareaRef) textareaRef.style.height = '40px';
               }
             }}
           />

@@ -106,7 +106,6 @@ import WorkflowVisualization from './components/WorkflowVisualization';
 // listeners (registered from Layout) call them after `done`, so they must be
 // module-level singletons instead of page-scope closures.
 
-import TaskBoardPanel from './components/TaskBoardPanel';
 import { clearAllDiagnostics } from '../../core/store/diagnostics';
 
 let isFirstAppLaunch = true;
@@ -755,9 +754,6 @@ const ChatPage: Component = () => {
           <Show when={workflowState()}>
             <WorkflowVisualization />
           </Show>
-
-          {/* Agent task list panel (create_tasks / update_task live mirror) */}
-          <TaskBoardPanel topicId={activeTopic()?.id ?? ''} />
 
           {/* Checkpoint resume entry: banner for crash-orphaned turns */}
           <Show when={activeCheckpoint() && !isThinking()}>

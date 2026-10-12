@@ -156,6 +156,21 @@ const StepCard: Component<{
   // animation properties override each other).
   let entranceRef: HTMLDivElement | undefined;
 
+  // Round-11 feedback: the running thinking step's body is a capped scroll box but had
+  // no follow logic — streamed reasoning grew below the fold. Follow the bottom while
+  // the step runs; a wheel-up pauses, scrolling back to the bottom resumes.
+  const thinkingBodyRef: { current: HTMLDivElement | undefined } = { current: undefined };
+  let thinkingFollowPaused = false;
+  createEffect(() => {
+    const step = props.step;
+    const thinkingText = step.thinkingText; // track reasoning growth
+    const el = thinkingBodyRef.current;
+    void thinkingText;
+    if (step.status === 'running' && step.type === 'thinking' && el && !thinkingFollowPaused) {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
+
   // Lock the expanded state during the entrance animation: a fast running → complete flip would
   // collapse the body height and visually squash the animation; real expanded returns once it ends.
   const [entranceDone, setEntranceDone] = createSignal(!isNew);
@@ -360,7 +375,25 @@ const StepCard: Component<{
       >
         {/* Thinking step: raw text */}
         {props.step.type === 'thinking' && props.step.thinkingText && (
-          <div class="text-[12px] leading-relaxed italic whitespace-pre-wrap break-words text-white/50 px-2 py-1.5 rounded bg-black/[0.12] max-h-[300px] overflow-y-auto">
+          <div
+            ref={(el) => {
+              thinkingBodyRef.current = el;
+              // StepCard instances persist across status updates (stable slot in the
+              // visibleIds list), so a plain assignment suffices; clear on disposal.
+              onCleanup(() => {
+                if (thinkingBodyRef.current === el) thinkingBodyRef.current = undefined;
+              });
+            }}
+            onWheel={(e) => {
+              if (e.deltaY < 0) thinkingFollowPaused = true;
+            }}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              if (el.scrollHeight - el.scrollTop - el.clientHeight < 50)
+                thinkingFollowPaused = false;
+            }}
+            class="text-[12px] leading-relaxed italic whitespace-pre-wrap break-words text-white/50 px-2 py-1.5 rounded bg-black/[0.12] max-h-[300px] overflow-y-auto"
+          >
             {props.step.thinkingText}
           </div>
         )}

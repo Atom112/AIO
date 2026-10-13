@@ -209,14 +209,16 @@ pub struct AppConfig {
     /// exit) never trip the breaker. 0 = default (6).
     #[serde(default, rename = "toolBreakerThreshold")]
     pub tool_breaker_threshold: u32,
-    /// Auto/Workflow modes only: when a sandboxed command hits an access-denied /
-    /// forwarded-interpreter-not-found signature, auto-apply the recommended expansion
-    /// (session grant for the derived directory when available, otherwise one
-    /// unsandboxed retry) instead of popping the remediation dialog — full-autonomy
-    /// opt-in, risk acknowledged by the user. Custom Deny rules and the
-    /// network-declaration confirmation are NOT affected. Default false.
-    #[serde(default, rename = "autoExpandSandbox")]
-    pub auto_expand_sandbox: bool,
+    /// Full-autonomy opt-in for Auto/Workflow modes ("完全放手", risk acknowledged by
+    /// the user): (1) sandbox-denied commands auto-apply the recommended expansion —
+    /// session grant for the derived directory when available, otherwise one
+    /// unsandboxed retry — instead of popping the remediation dialog; (2)
+    /// network-declaring commands skip the SEC-01 confirmation (the user has accepted
+    /// that injected instructions could also exfiltrate data). Custom Deny rules are
+    /// NOT affected. Explicit risk confirm on enable + persistent indicator. Default
+    /// false.
+    #[serde(default, rename = "fullAutoMode")]
+    pub full_auto_mode: bool,
 }
 
 /// Default value of the Windows command sandbox mode.
@@ -256,7 +258,7 @@ impl Default for AppConfig {
             sandbox_windows: default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
             tool_breaker_threshold: 0,
-            auto_expand_sandbox: false,
+            full_auto_mode: false,
             memory_enabled: false,
             memory_auto_inject: default_true(),
             memory_auto_extract: default_true(),

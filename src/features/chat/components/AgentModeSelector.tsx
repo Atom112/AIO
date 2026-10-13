@@ -77,10 +77,10 @@ const MODE_COLORS: Record<string, string> = {
 const AgentModeSelector: Component = () => {
   const [open, setOpen] = createSignal(false);
   const [showAutoWarning, setShowAutoWarning] = createSignal(false);
-  // Sandbox auto-expansion flag (app config): drives the persistent full-autonomy
+  // Full-autonomy flag (app config): drives the persistent full-autonomy
   // indicator on the mode pill. Best-effort load — the toggle lives in Settings and
   // returning to the chat page remounts this component, so a mount-time read is fresh.
-  const [autoExpandSandbox, setAutoExpandSandbox] = createSignal(false);
+  const [fullAutoMode, setFullAutoMode] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
   let autoModeConfirmed = false; // remembered for the session; after one confirmation the dialog no longer shows
   let pendingMode: AgentMode = 'auto'; // mode currently awaiting confirmation
@@ -88,14 +88,14 @@ const AgentModeSelector: Component = () => {
   const asst = () => datas.assistants.find((a) => a.id === currentAssistantId()) as any;
   const currentMode = (): AgentMode => asst()?.agentMode || 'off';
 
-  /** Full-autonomy state: Auto/Workflow mode + sandbox auto-expansion enabled (indicator must stay visible) */
+  /** Full-autonomy state: Auto/Workflow mode + fullAutoMode enabled (indicator must stay visible) */
   const fullAuto = () =>
-    autoExpandSandbox() && (currentMode() === 'auto' || currentMode() === 'workflow');
+    fullAutoMode() && (currentMode() === 'auto' || currentMode() === 'workflow');
 
   onMount(async () => {
     try {
       const cfg = await loadAppConfig();
-      setAutoExpandSandbox(cfg?.autoExpandSandbox === true);
+      setFullAutoMode(cfg?.fullAutoMode === true);
     } catch (e) {
       console.warn('Failed to load app config for the mode indicator:', e);
     }
@@ -165,7 +165,7 @@ const AgentModeSelector: Component = () => {
         }}
         title={
           (isDisabled() ? t('agent.mode.chooseAssistant') : t(activeOption().descKey)) +
-          (fullAuto() ? ` · ${t('app.autoExpandSandbox.title')}` : '')
+          (fullAuto() ? ` · ${t('app.fullAutoMode.title')}` : '')
         }
         onClick={(e) => {
           if (isDisabled()) return;

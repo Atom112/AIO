@@ -100,6 +100,16 @@ pub(crate) fn effective_max_rounds(v: Option<u32>, guard: u32) -> u32 {
     }
 }
 
+/// Whether the full-autonomy opt-in (`fullAutoMode`) is enabled in the app config;
+/// call sites add the Auto/Workflow mode check. Reads the config file per call —
+/// the callers are rare paths (per blocked / networked command), matching the
+/// existing ac_dirs load pattern.
+pub(crate) fn full_auto_mode_enabled(app: &AppHandle) -> bool {
+    crate::core::config::load_app_config(app)
+        .map(|c| c.full_auto_mode)
+        .unwrap_or(false)
+}
+
 /// Defensive check: scans messages for assistant(tool_calls) vs role:tool pairing,
 /// logging a warning on missing or mismatched entries to aid debugging.
 fn verify_tool_messages(messages: &[serde_json::Value]) {
@@ -459,11 +469,17 @@ pub(crate) async fn execute_builtin_tool(
 
     // SEC-01: network=true was previously auto-allowed in Auto/Workflow (permission
     // Allow) — one prompt injection could exfiltrate any user-readable file
-    // silently. Network-declaring commands now require confirmation in every mode.
+    // silently. Network-declaring commands therefore require confirmation in every
+    // mode — EXCEPT the explicit full-autonomy opt-in (fullAutoMode + Auto/Workflow):
+    // the user has accepted the exfiltration risk in exchange for zero interruptions
+    // (risk confirm on enable + persistent indicator). Deny rules still win above.
+    let full_auto =
+        full_auto_mode_enabled(app) && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow);
     let network_auto = tool_name == tool_names::EXECUTE_COMMAND
         && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
         && arguments["network"].as_bool().unwrap_or(false)
-        && action == PermissionAction::Allow;
+        && action == PermissionAction::Allow
+        && !full_auto;
     let action = if network_auto {
         PermissionAction::Ask
     } else {
@@ -618,18 +634,15 @@ pub(crate) async fn execute_builtin_tool(
             let hint_dir = shell_tools::forward_script_interpreter(&command)
                 .1
                 .map(|p| p.to_string_lossy().into_owned());
-            // Full-autonomy opt-in (autoExpandSandbox + Auto/Workflow mode): skip the
+            // Full-autonomy opt-in (fullAutoMode + Auto/Workflow mode): skip the
             // dialog and apply the recommended decision directly — session grant for
             // the derived directory when one is derivable, else one unsandboxed retry.
-            // Custom Deny rules and the network-declaration confirmation are unaffected.
-            let auto_expand = {
-                let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
-                cfg.auto_expand_sandbox
-                    && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
-            };
+            // Custom Deny rules are unaffected (checked before this point).
+            let auto_expand = full_auto_mode_enabled(app)
+                && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow);
             let decision = if auto_expand {
                 tracing::warn!(
-                    "[sandbox-expand] 自动扩权（autoExpandSandbox + {} 模式）：命令「{}」→ {}",
+                    "[sandbox-expand] 自动扩权（fullAutoMode + {} 模式）：命令「{}」→ {}",
                     if matches!(agent_mode, AgentMode::Workflow) {
                         "Workflow"
                     } else {

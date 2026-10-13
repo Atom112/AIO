@@ -7,7 +7,7 @@
  * the request as a native reasoning-effort parameter for reasoning-capable models
  * (see modelSupportsReasoningEffort) — the popup itself only edits the preference.
  */
-import { Component, For, createSignal, onCleanup, onMount } from 'solid-js';
+import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import {
   reasoningLevel,
   persistReasoningLevel,
@@ -45,12 +45,16 @@ const LEVELS: LevelOption[] = [
   },
 ];
 
-/** Trigger accent per level: off = muted text; active levels = primary. */
+/**
+ * Per-level accent (CSS variables in @theme): off = muted text; each active level
+ * gets its own hue — trigger readout, track fill, thumb glow and the selected stop
+ * label all follow the same color.
+ */
 const LEVEL_COLORS: Record<ReasoningLevel, string> = {
   off: 'rgba(var(--text-base-rgb),0.55)',
-  low: 'var(--color-pri)',
-  medium: 'var(--color-pri)',
-  high: 'var(--color-pri)',
+  low: 'var(--color-reasoning-low)',
+  medium: 'var(--color-reasoning-medium)',
+  high: 'var(--color-reasoning-high)',
 };
 
 const ReasoningButton: Component = () => {
@@ -71,6 +75,26 @@ const ReasoningButton: Component = () => {
 
   /** Stop position as a percentage of the track (evenly spaced stops). */
   const pos = (i: number) => (i / (LEVELS.length - 1)) * 100;
+
+  /** Track fill: level-hue gradient from a translucent head to the full accent. */
+  const fillGradient = () => {
+    const c = LEVEL_COLORS[reasoningLevel()];
+    if (reasoningLevel() === 'off') return 'none';
+    return `linear-gradient(90deg, color-mix(in srgb, ${c} 30%, transparent), ${c})`;
+  };
+
+  /** Thumb halo in the active level color (plain shadow when off). */
+  const thumbGlow = () => {
+    if (reasoningLevel() === 'off') return '0 1px 4px rgba(0, 0, 0, 0.4)';
+    const c = LEVEL_COLORS[reasoningLevel()];
+    return `0 0 0 2px rgba(var(--surface-bg),0.9), 0 0 12px 2px color-mix(in srgb, ${c} 60%, transparent)`;
+  };
+
+  /** Star-field dots layered over the fill (foreground-colored sparkles). */
+  const STAR_DOTS =
+    'radial-gradient(rgba(var(--text-base-rgb),0.95) 0.6px, transparent 1px),' +
+    'radial-gradient(rgba(var(--text-base-rgb),0.55) 0.6px, transparent 1px),' +
+    'radial-gradient(rgba(var(--text-base-rgb),0.75) 0.5px, transparent 1px)';
 
   /** Snap the level to the stop nearest the pointer x position. */
   const applyPointer = (clientX: number) => {
@@ -166,19 +190,48 @@ const ReasoningButton: Component = () => {
         >
           <div
             ref={trackRef}
-            class="absolute left-0 right-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[rgba(var(--text-base-rgb),0.12)]"
+            class="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-[rgba(var(--text-base-rgb),0.12)]"
           >
+            {/* level-hue gradient fill with a twinkling star field (hidden when off) */}
             <div
-              class="absolute left-0 top-0 h-full rounded-full bg-[var(--color-pri)]"
-              style={{ width: `${pos(activeIndex())}%` }}
-            />
+              class="absolute left-0 top-0 h-full overflow-hidden rounded-full"
+              style={{ width: `${pos(activeIndex())}%`, background: fillGradient() }}
+            >
+              <Show when={reasoningLevel() !== 'off'}>
+                <div
+                  class="absolute inset-0"
+                  style={{
+                    'background-image': STAR_DOTS,
+                    'background-size': '11px 11px, 17px 17px, 23px 23px',
+                    'background-position': '0 1px, 5px 6px, 11px 3px',
+                    animation: 'reasoning-twinkle 2.6s ease-in-out infinite',
+                  }}
+                />
+              </Show>
+            </div>
+            {/* stop ticks */}
+            <For each={LEVELS}>
+              {(_, i) => (
+                <span
+                  class="pointer-events-none absolute top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                  style={{
+                    left: `${pos(i())}%`,
+                    background:
+                      reasoningLevel() !== 'off' && i() <= activeIndex()
+                        ? 'rgba(var(--text-base-rgb),0.9)'
+                        : 'rgba(var(--text-base-rgb),0.25)',
+                  }}
+                />
+              )}
+            </For>
           </div>
           <div
-            class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgb(var(--text-base-rgb))] shadow-md"
-            style={{ left: `${pos(activeIndex())}%` }}
+            class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgb(var(--text-base-rgb))] transition-transform duration-150"
+            classList={{ 'scale-125': dragging() }}
+            style={{ left: `${pos(activeIndex())}%`, 'box-shadow': thumbGlow() }}
           />
         </div>
-        {/* stop labels, centered under each stop */}
+        {/* stop labels, centered under each stop; the selected one takes its level hue */}
         <div class="relative mx-3 h-5 pb-1">
           <For each={LEVELS}>
             {(opt, i) => (
@@ -186,10 +239,13 @@ const ReasoningButton: Component = () => {
                 type="button"
                 class="absolute top-0 -translate-x-1/2 rounded px-1 py-0.5 text-[11px] leading-none cursor-pointer border-none bg-transparent transition-colors duration-150"
                 classList={{
-                  'text-[var(--color-pri)] font-semibold': reasoningLevel() === opt.value,
+                  'font-semibold': reasoningLevel() === opt.value,
                   'text-white/45 hover:text-white/75': reasoningLevel() !== opt.value,
                 }}
-                style={{ left: `${pos(i())}%` }}
+                style={{
+                  left: `${pos(i())}%`,
+                  color: reasoningLevel() === opt.value ? LEVEL_COLORS[opt.value] : undefined,
+                }}
                 onClick={() => choose(opt.value)}
               >
                 {t(opt.labelKey)}

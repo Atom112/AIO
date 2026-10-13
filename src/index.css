@@ -31,6 +31,11 @@
   /* ── Warning color ── */
   --color-warn: #facc15;
 
+  /* ── Reasoning-intensity level accents (chat input slider) ── */
+  --color-reasoning-low: #6fd3a0;
+  --color-reasoning-medium: #e8b26a;
+  --color-reasoning-high: #b48ce8;
+
   /* ── Shadows ── */
   --shadow-theme-inner: inset 0 0 20px rgba(0, 0, 0, 0.3);
   --shadow-acrylic: 0 8px 32px rgba(0, 0, 0, 0.25);
@@ -255,6 +260,16 @@
   }
   100% {
     opacity: 1;
+  }
+}
+
+@keyframes reasoning-twinkle {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.85;
   }
 }
 

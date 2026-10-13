@@ -562,54 +562,64 @@ const ChatPage: Component = () => {
     });
 
     // ---- pre-existing initialization logic ----
-    // first entry: load all assistant data from SQLite
-    loadAssistants()
-      .then(async (loaded) => {
-        let finalAssistants = [...loaded];
+    // first entry only: load all assistant data from SQLite. Re-loading on every mount
+    // REPLACED the store with DB state — an in-flight streaming message (persisted only
+    // at the turn's done epilogue) was wiped when the user left the chat page and came
+    // back, making the streaming bubble vanish mid-generation. The 18 stream listeners
+    // are global (CHAT-12, registered from the root Layout) and keep the store current
+    // while away, so after cold start the store IS the live truth; skip the reload.
+    if (isFirstAppLaunch) {
+      loadAssistants()
+        .then(async (loaded) => {
+          let finalAssistants = [...loaded];
 
-        // 1. ensure the default assistant exists
-        let defaultAsst = finalAssistants.find((a) => a.id === DEFAULT_ASST_ID);
-        if (!defaultAsst) {
-          // createAssistant already includes one "default topic"
-          defaultAsst = createAssistant(t('chat.defaultAssistant'), DEFAULT_ASST_ID);
-          finalAssistants = [defaultAsst, ...finalAssistants];
-          setDatas('assistants', finalAssistants);
-          await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
-        } else {
-          setDatas('assistants', finalAssistants);
-        }
-
-        // 2. apply the default selection on app startup (cold start only)
-        if (isFirstAppLaunch) {
-          // try to restore the last project selection; otherwise default to the chat assistant
-          const lastProjectId = getLastAgentProjectId();
-          const lastProjectValid = lastProjectId && projects().find((p) => p.id === lastProjectId);
-          if (lastProjectValid) {
-            void switchToProject(lastProjectId!);
+          // 1. ensure the default assistant exists
+          let defaultAsst = finalAssistants.find((a) => a.id === DEFAULT_ASST_ID);
+          if (!defaultAsst) {
+            // createAssistant already includes one "default topic"
+            defaultAsst = createAssistant(t('chat.defaultAssistant'), DEFAULT_ASST_ID);
+            finalAssistants = [defaultAsst, ...finalAssistants];
+            setDatas('assistants', finalAssistants);
+            await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
           } else {
-            setCurrentAssistantId(DEFAULT_ASST_ID);
-
-            const asst = datas.assistants.find((a) => a.id === DEFAULT_ASST_ID);
-            if (asst && asst.topics.length > 0) {
-              setCurrentTopicId(asst.topics[0].id);
-            } else if (asst) {
-              const newDefaultTopic = createTopic(t('chat.defaultTopic'));
-              setDatas('assistants', (a) => a.id === DEFAULT_ASST_ID, 'topics', [newDefaultTopic]);
-              setCurrentTopicId(newDefaultTopic.id);
-              await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
-            }
+            setDatas('assistants', finalAssistants);
           }
 
-          isFirstAppLaunch = false;
-        }
-        console.log('Data loaded successfully');
-      })
-      .catch((err) => {
-        // backend errors are logged here
-        console.error('Failed to load assistant list:', err);
-        console.error('load_all_assistants failed:', err);
-        alert(t('error.load'));
-      });
+          // 2. apply the default selection on app startup (cold start only)
+          if (isFirstAppLaunch) {
+            // try to restore the last project selection; otherwise default to the chat assistant
+            const lastProjectId = getLastAgentProjectId();
+            const lastProjectValid =
+              lastProjectId && projects().find((p) => p.id === lastProjectId);
+            if (lastProjectValid) {
+              void switchToProject(lastProjectId!);
+            } else {
+              setCurrentAssistantId(DEFAULT_ASST_ID);
+
+              const asst = datas.assistants.find((a) => a.id === DEFAULT_ASST_ID);
+              if (asst && asst.topics.length > 0) {
+                setCurrentTopicId(asst.topics[0].id);
+              } else if (asst) {
+                const newDefaultTopic = createTopic(t('chat.defaultTopic'));
+                setDatas('assistants', (a) => a.id === DEFAULT_ASST_ID, 'topics', [
+                  newDefaultTopic,
+                ]);
+                setCurrentTopicId(newDefaultTopic.id);
+                await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
+              }
+            }
+
+            isFirstAppLaunch = false;
+          }
+          console.log('Data loaded successfully');
+        })
+        .catch((err) => {
+          // backend errors are logged here
+          console.error('Failed to load assistant list:', err);
+          console.error('load_all_assistants failed:', err);
+          alert(t('error.load'));
+        });
+    }
 
     // register the page-scoped UI listeners (drag-and-drop only; CHAT-12: the 18
     // stream listeners now register once from the root Layout via

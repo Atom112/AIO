@@ -83,10 +83,20 @@ impl AgentLimits {
         /// Conservative context budget (tokens)
         const CONTEXT_BUDGET: usize = 45_000;
         Self {
-            max_rounds: cfg.max_tool_rounds.unwrap_or(GUARD_ROUNDS),
+            max_rounds: effective_max_rounds(cfg.max_tool_rounds, GUARD_ROUNDS),
             context_budget: CONTEXT_BUDGET,
             keep_recent_tokens: (CONTEXT_BUDGET / 2).clamp(4_000, 20_000),
         }
+    }
+}
+
+/// Effective max tool-call rounds from the user config: `0` = unlimited
+/// (full-autonomy opt-in — the context budget, compression and the stop button
+/// remain the backstops); `None` falls back to the caller's guard default.
+pub(crate) fn effective_max_rounds(v: Option<u32>, guard: u32) -> u32 {
+    match v {
+        Some(0) => u32::MAX,
+        other => other.unwrap_or(guard),
     }
 }
 
@@ -608,11 +618,40 @@ pub(crate) async fn execute_builtin_tool(
             let hint_dir = shell_tools::forward_script_interpreter(&command)
                 .1
                 .map(|p| p.to_string_lossy().into_owned());
-            match sandbox_expand::request_sandbox_expansion(
-                app, &command, &err_text, hint_dir, token,
-            )
-            .await
-            {
+            // Full-autonomy opt-in (autoExpandSandbox + Auto/Workflow mode): skip the
+            // dialog and apply the recommended decision directly — session grant for
+            // the derived directory when one is derivable, else one unsandboxed retry.
+            // Custom Deny rules and the network-declaration confirmation are unaffected.
+            let auto_expand = {
+                let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
+                cfg.auto_expand_sandbox
+                    && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+            };
+            let decision = if auto_expand {
+                tracing::warn!(
+                    "[sandbox-expand] 自动扩权（autoExpandSandbox + {} 模式）：命令「{}」→ {}",
+                    if matches!(agent_mode, AgentMode::Workflow) {
+                        "Workflow"
+                    } else {
+                        "Auto"
+                    },
+                    command,
+                    if hint_dir.is_some() {
+                        "派生目录会话授权后重试"
+                    } else {
+                        "跳出沙箱重试一次"
+                    }
+                );
+                Ok(if let Some(d) = hint_dir.clone() {
+                    sandbox_expand::ExpansionDecision::GrantSessionRetry { dir: d }
+                } else {
+                    sandbox_expand::ExpansionDecision::RunUnsandboxedOnce
+                })
+            } else {
+                sandbox_expand::request_sandbox_expansion(app, &command, &err_text, hint_dir, token)
+                    .await
+            };
+            match decision {
                 Ok(sandbox_expand::ExpansionDecision::GrantSessionRetry { dir }) => {
                     crate::utils::sandbox::add_session_rx_grant(&dir);
                     run_command(

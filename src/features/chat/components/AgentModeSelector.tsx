@@ -23,6 +23,7 @@ import {
 } from '../../../core/store/store';
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import { t, type TranslationKey } from '../../../core/i18n';
+import { loadAppConfig } from '../../../core/api/config';
 import { btnSecondary } from '../../../shared/components/buttonStyles';
 
 interface ModeOption {
@@ -76,12 +77,29 @@ const MODE_COLORS: Record<string, string> = {
 const AgentModeSelector: Component = () => {
   const [open, setOpen] = createSignal(false);
   const [showAutoWarning, setShowAutoWarning] = createSignal(false);
+  // Sandbox auto-expansion flag (app config): drives the persistent full-autonomy
+  // indicator on the mode pill. Best-effort load — the toggle lives in Settings and
+  // returning to the chat page remounts this component, so a mount-time read is fresh.
+  const [autoExpandSandbox, setAutoExpandSandbox] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
   let autoModeConfirmed = false; // remembered for the session; after one confirmation the dialog no longer shows
   let pendingMode: AgentMode = 'auto'; // mode currently awaiting confirmation
 
   const asst = () => datas.assistants.find((a) => a.id === currentAssistantId()) as any;
   const currentMode = (): AgentMode => asst()?.agentMode || 'off';
+
+  /** Full-autonomy state: Auto/Workflow mode + sandbox auto-expansion enabled (indicator must stay visible) */
+  const fullAuto = () =>
+    autoExpandSandbox() && (currentMode() === 'auto' || currentMode() === 'workflow');
+
+  onMount(async () => {
+    try {
+      const cfg = await loadAppConfig();
+      setAutoExpandSandbox(cfg?.autoExpandSandbox === true);
+    } catch (e) {
+      console.warn('Failed to load app config for the mode indicator:', e);
+    }
+  });
 
   const activeOption = () => MODES.find((m) => m.value === currentMode()) || MODES[0];
 
@@ -145,7 +163,10 @@ const AgentModeSelector: Component = () => {
             currentMode() !== 'off' ? MODE_COLORS[currentMode()] || MODE_COLORS.off : undefined,
           opacity: isDisabled() ? 0.4 : 1,
         }}
-        title={isDisabled() ? t('agent.mode.chooseAssistant') : t(activeOption().descKey)}
+        title={
+          (isDisabled() ? t('agent.mode.chooseAssistant') : t(activeOption().descKey)) +
+          (fullAuto() ? ` · ${t('app.autoExpandSandbox.title')}` : '')
+        }
         onClick={(e) => {
           if (isDisabled()) return;
           e.stopPropagation();
@@ -158,6 +179,10 @@ const AgentModeSelector: Component = () => {
           class="flex items-center justify-center shrink-0"
         />
         <span class="leading-none">{t(activeOption().labelKey)}</span>
+        {/* Persistent full-autonomy indicator: never let this state be invisible */}
+        <Show when={fullAuto()}>
+          <span class="w-1.5 h-1.5 rounded-full bg-red-400/80 shrink-0 animate-pulse" />
+        </Show>
       </button>
 
       {/* Dropdown panel */}

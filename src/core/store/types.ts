@@ -269,6 +269,8 @@ export interface AppConfig {
   subagentIsolationMode?: string;
   /** Main agent built-in tool access: "hybrid" (default: reads direct, mutations via subagents) | "full" (all built-in tools incl. execute_command) | "orchestrator" (strict delegation) */
   mainAgentToolAccess?: string;
+  /** Auto/Workflow modes: sandbox-denied commands auto-apply the recommended expansion instead of asking (full-autonomy opt-in; default false) */
+  autoExpandSandbox?: boolean;
 }
 
 /* Activated model config interface holding connection info for available models */

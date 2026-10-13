@@ -72,6 +72,9 @@ struct AppConfigDisk {
     /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
     #[serde(default, rename = "toolBreakerThreshold")]
     tool_breaker_threshold: u32,
+    /// Auto/Workflow sandbox auto-expansion toggle (full-autonomy opt-in; see AppConfig)
+    #[serde(default, rename = "autoExpandSandbox")]
+    auto_expand_sandbox: bool,
     #[serde(default, rename = "memoryEnabled")]
     memory_enabled: bool,
     #[serde(
@@ -162,6 +165,7 @@ impl AppConfigDisk {
             sandbox_windows: cfg.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: cfg.sandbox_windows_toolchain_dirs.clone(),
             tool_breaker_threshold: cfg.tool_breaker_threshold,
+            auto_expand_sandbox: cfg.auto_expand_sandbox,
             memory_enabled: cfg.memory_enabled,
             memory_auto_inject: cfg.memory_auto_inject,
             memory_auto_extract: cfg.memory_auto_extract,
@@ -208,6 +212,7 @@ impl AppConfigDisk {
             sandbox_windows: self.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: self.sandbox_windows_toolchain_dirs.clone(),
             tool_breaker_threshold: self.tool_breaker_threshold,
+            auto_expand_sandbox: self.auto_expand_sandbox,
             memory_enabled: self.memory_enabled,
             memory_auto_inject: self.memory_auto_inject,
             memory_auto_extract: self.memory_auto_extract,
@@ -244,6 +249,7 @@ impl Default for AppConfigDisk {
             sandbox_windows: crate::core::models::default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
             tool_breaker_threshold: 0,
+            auto_expand_sandbox: false,
             memory_enabled: false,
             memory_auto_inject: crate::core::models::default_true(),
             memory_auto_extract: crate::core::models::default_true(),

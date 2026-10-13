@@ -268,7 +268,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     },
   });
 
-  /** Maps a compaction outcome to user-facing feedback text (compressed / archived fallback / skipped / failed). */
+  /** Maps a compaction outcome to user-facing feedback text (compressed / archived fallback / skipped per reason / failed). */
   const compactOutcomeFeedback = (outcome: CompactOutcome): string => {
     switch (outcome.kind) {
       case 'compressed':
@@ -281,7 +281,18 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
           count: outcome.count,
         })}`;
       case 'skipped':
-        return `✓ /compact — ${t('slash.feedback.compactSkipped')}`;
+        // Manual /compact only skips on an empty conversation or a safety abort;
+        // the generic "too small" text stays for the auto-path guards only.
+        switch (outcome.reason) {
+          case 'nothing-to-compact':
+            return `✓ /compact — ${t('slash.feedback.compactNothing')}`;
+          case 'topic-switched':
+            return `✗ /compact — ${t('slash.feedback.compactTopicSwitched')}`;
+          case 'empty-result':
+            return `✗ /compact — ${t('slash.feedback.compactEmptyResult')}`;
+          default:
+            return `✓ /compact — ${t('slash.feedback.compactSkipped')}`;
+        }
       case 'failed':
         return `✗ /compact — ${t('slash.feedback.compactFailed', { error: outcome.error })}`;
     }

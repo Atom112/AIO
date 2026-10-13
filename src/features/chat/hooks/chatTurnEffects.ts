@@ -264,7 +264,9 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
  * Check and summarize conversation history (token-based).
  * Automatic path (conversation-end event): compress when usage exceeds 75% of the
  * model context window; manual path (/compact, force=true) skips the threshold guard
- * and compresses immediately (mainstream agent behavior).
+ * and compresses immediately — with no arg it compacts the WHOLE history (mainstream
+ * manual semantics: DSH retain-0 / ZCode forced / Claude Code full-summary), with
+ * `/compact <n>` it keeps an n-token recent tail; auto keeps a 20k tail.
  * On summarize failure, falls back to local archiving (snapcompact-style): early
  * context is not lost and can be read back via read_artifact.
  */
@@ -319,23 +321,40 @@ export const checkAndSummarize = async (
     );
   }
 
-  // Token-budget retention: by default keep ~20k tokens accumulated from the tail (at
-  // least the last 4 messages, i.e. one full turn); `/compact <n>` overrides the keep
-  // budget for this run
-  const KEEP_TOKEN_BUDGET =
-    keepBudgetOverride && keepBudgetOverride > 0 ? keepBudgetOverride : 20_000;
+  // Manual /compact (force=true) with NO explicit arg compacts EVERYTHING
+  // (mainstream manual semantics: DSH retainTokens=0, ZCode forced compaction,
+  // Claude Code full-summary — none of them refuse a "too small" conversation).
+  // `/compact <n>` keeps an explicit n-token tail; auto compaction keeps 20k.
+  const fullCompact = (opts?.force ?? false) && !(keepBudgetOverride && keepBudgetOverride > 0);
+  const KEEP_TOKEN_BUDGET = fullCompact
+    ? 0
+    : keepBudgetOverride && keepBudgetOverride > 0
+      ? keepBudgetOverride
+      : 20_000;
+  /** Rough per-message token estimate, CJK-aware: CJK chars ≈ 1 token each
+   * (DeepSeek/GLM tokenizers), other text ≈ 4 chars/token, plus per-message overhead.
+   * The previous chars/4 heuristic under-counted Chinese text ~4x, which made the
+   * keep-zone cover entire conversations and manual /compact report "too small". */
   const estimateMsgTokens = (m: Message): number => {
     const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
-    return Math.ceil(text.length / 4) + 8;
+    let cjk = 0;
+    for (const ch of text) {
+      const c = ch.codePointAt(0) ?? 0;
+      if (c >= 0x2e80 || (c >= 0xac00 && c <= 0xd7af)) cjk += 1;
+    }
+    return cjk + Math.ceil((text.length - cjk) / 4) + 8;
   };
   let keepCount = 0;
-  let acc = 0;
-  for (let i = topic.history.length - 1; i >= 0; i--) {
-    acc += estimateMsgTokens(topic.history[i]);
-    keepCount = topic.history.length - i;
-    if (acc >= KEEP_TOKEN_BUDGET) break;
+  if (!fullCompact) {
+    let acc = 0;
+    for (let i = topic.history.length - 1; i >= 0; i--) {
+      acc += estimateMsgTokens(topic.history[i]);
+      keepCount = topic.history.length - i;
+      if (acc >= KEEP_TOKEN_BUDGET) break;
+    }
+    // At least the last 4 messages, i.e. one full turn, survive every zoned run
+    keepCount = Math.max(keepCount, 4);
   }
-  keepCount = Math.max(keepCount, 4);
   const summarizeCount = topic.history.length - keepCount;
   if (summarizeCount <= 0) return { kind: 'skipped', reason: 'nothing-to-compact' };
   // Overwriting summary: the old summary is injected as input context and replaced
@@ -359,8 +378,10 @@ export const checkAndSummarize = async (
       return { kind: 'skipped', reason: 'topic-switched' } as CompactOutcome;
     }
     const updatedHistory = latestTopic.history.slice(summarizeCount);
-    // CHAT-2 加固：裁剪结果不应清空历史（同话题变短即中止，防数据丢失）
-    if (updatedHistory.length === 0 && latestTopic.history.length > 0) {
+    // CHAT-2 加固：zoned 裁剪结果不应清空历史（同话题变短即中止，防数据丢失）；
+    // full manual compaction intentionally empties the history (the summary carries
+    // the context), so only the zoned path aborts on an empty trim result.
+    if (!fullCompact && updatedHistory.length === 0 && latestTopic.history.length > 0) {
       console.warn(
         '[Context] compression trimmed result empty, discarding persistence (data-loss guard)',
       );

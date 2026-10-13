@@ -343,7 +343,9 @@ const ProviderList: Component = () => {
         </div>
       </Show>
 
-      {/* Enabled custom providers (above the catalog; the count covers enabled only) */}
+      {/* Enabled custom providers (above the catalog; the count covers enabled only).
+          mb-5 = the section seam matching the mt-5 headers below — the catalog group
+          has no header of its own, so without it the two groups merge. */}
       <Show when={sortedCustom().enabled.length > 0}>
         <div class="flex items-center gap-3 mt-5 mb-2">
           <div class="flex-1 h-px bg-white/[0.06]" />
@@ -352,7 +354,7 @@ const ProviderList: Component = () => {
           </span>
           <div class="flex-1 h-px bg-white/[0.06]" />
         </div>
-        <div class="space-y-1.5">
+        <div class="space-y-1.5 mb-5">
           <For each={sortedCustom().enabled}>
             {(cfg, i) => (
               <CustomProviderRow
@@ -442,8 +444,9 @@ const ProviderList: Component = () => {
           </div>
         </Show>
 
-        {/* Divider */}
-        <Show when={sortedCatalog().enabled.length > 0 && sortedCatalog().disabled.length > 0}>
+        {/* Divider — always shown when disabled catalog rows exist (local engines and/or
+            the disabled-custom group always render above; without the divider they merge) */}
+        <Show when={sortedCatalog().disabled.length > 0}>
           <div class="flex items-center gap-3 my-4">
             <div class="flex-1 h-px bg-white/[0.06]" />
             <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">

@@ -668,6 +668,7 @@
   "provider.customDescription": "Connect any OpenAI-compatible LLM endpoint.",
   "provider.customModels": "Custom models ({{count}})",
   "provider.customModelsHint": "Custom providers have no catalog data. Fetch models from the API, then enable the models you need.",
+  "provider.customNotEnabled": "Custom (not enabled)",
   "provider.deleteCustomConfirm": "Delete custom provider “{{name}}”?",
   "provider.displayName": "Display name",
   "provider.docs": "Documentation",

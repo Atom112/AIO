@@ -62,20 +62,18 @@ pub async fn summarize_history(
 
     let locale = locale.unwrap_or_default();
     let is_en = locale == "en-US";
+    // Structured compaction directive (pi sections + DSH verbatim rules); the frontend
+    // sends the conversation already serialized as a single user message
     messages_for_api.push(json!({
         "role": "system",
-        "content": if is_en {
-            "Briefly summarize the core content and user needs of the conversation above, as long-term memory for future exchanges (within 300 words)."
-        } else {
-            "请简要总结以上对话的核心内容和用户需求，作为后续交流的长期记忆（500字以内）。"
-        }
+        "content": crate::commands::llm::summarize_prompt::compaction_instruction(is_en),
     }));
 
     let body = json!({
         "model": model,
         "messages": messages_for_api,
         "stream": false,
-        "max_tokens": 700
+        "max_tokens": 2000
     });
     let (res, is_anthropic) = tokio::time::timeout(
         std::time::Duration::from_secs(45),

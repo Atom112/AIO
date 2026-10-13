@@ -260,15 +260,32 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
   console.log(`Topic auto-renamed: ${latestTopic.name} -> ${newName}`);
 };
 
+/** Rough per-message token estimate, CJK-aware: CJK chars ≈ 1 token each
+ * (DeepSeek/GLM tokenizers), other text ≈ 4 chars/token, plus per-message overhead.
+ * The previous chars/4 heuristic under-counted Chinese text ~4x, which made the
+ * keep-zone cover entire conversations and manual /compact report "too small". */
+export const estimateMsgTokens = (m: Message): number => {
+  const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
+  let cjk = 0;
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c >= 0x2e80 || (c >= 0xac00 && c <= 0xd7af)) cjk += 1;
+  }
+  return cjk + Math.ceil((text.length - cjk) / 4) + 8;
+};
+
 /**
  * Check and summarize conversation history (token-based).
  * Automatic path (conversation-end event): compress when usage exceeds 75% of the
  * model context window; manual path (/compact, force=true) skips the threshold guard
- * and compresses immediately — with no arg it compacts the WHOLE history (mainstream
+ * and compresses immediately — with no arg it compacts the WHOLE context (mainstream
  * manual semantics: DSH retain-0 / ZCode forced / Claude Code full-summary), with
  * `/compact <n>` it keeps an n-token recent tail; auto keeps a 20k tail.
- * On summarize failure, falls back to local archiving (snapcompact-style): early
- * context is not lost and can be read back via read_artifact.
+ * Compaction only moves the CONTEXT boundary (`topic.contextTrimCount`): the summary
+ * replaces history[0..boundary] in LLM requests while the full transcript stays
+ * visible in the message record (mainstream: DSH shadows surface nodes, pi keeps
+ * raw entries). On summarize failure, falls back to local archiving
+ * (snapcompact-style): early context is not lost and can be read back via read_artifact.
  */
 export const checkAndSummarize = async (
   keepBudgetOverride?: number,
@@ -325,67 +342,52 @@ export const checkAndSummarize = async (
   // (mainstream manual semantics: DSH retainTokens=0, ZCode forced compaction,
   // Claude Code full-summary — none of them refuse a "too small" conversation).
   // `/compact <n>` keeps an explicit n-token tail; auto compaction keeps 20k.
+  // The keep-zone lives INSIDE the context zone (history[oldTrim..]): already
+  // summarized messages are never re-kept, only re-merged via the old summary.
   const fullCompact = (opts?.force ?? false) && !(keepBudgetOverride && keepBudgetOverride > 0);
   const KEEP_TOKEN_BUDGET = fullCompact
     ? 0
     : keepBudgetOverride && keepBudgetOverride > 0
       ? keepBudgetOverride
       : 20_000;
-  /** Rough per-message token estimate, CJK-aware: CJK chars ≈ 1 token each
-   * (DeepSeek/GLM tokenizers), other text ≈ 4 chars/token, plus per-message overhead.
-   * The previous chars/4 heuristic under-counted Chinese text ~4x, which made the
-   * keep-zone cover entire conversations and manual /compact report "too small". */
-  const estimateMsgTokens = (m: Message): number => {
-    const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
-    let cjk = 0;
-    for (const ch of text) {
-      const c = ch.codePointAt(0) ?? 0;
-      if (c >= 0x2e80 || (c >= 0xac00 && c <= 0xd7af)) cjk += 1;
-    }
-    return cjk + Math.ceil((text.length - cjk) / 4) + 8;
-  };
+  const oldTrim = topic.contextTrimCount ?? 0;
+  const contextLen = Math.max(0, topic.history.length - oldTrim);
   let keepCount = 0;
   if (!fullCompact) {
     let acc = 0;
-    for (let i = topic.history.length - 1; i >= 0; i--) {
+    for (let i = topic.history.length - 1; i >= oldTrim && i >= 0; i--) {
       acc += estimateMsgTokens(topic.history[i]);
       keepCount = topic.history.length - i;
       if (acc >= KEEP_TOKEN_BUDGET) break;
     }
     // At least the last 4 messages, i.e. one full turn, survive every zoned run
-    keepCount = Math.max(keepCount, 4);
+    keepCount = Math.min(Math.max(keepCount, 4), contextLen);
   }
-  const summarizeCount = topic.history.length - keepCount;
+  const summarizeCount = contextLen - keepCount;
   if (summarizeCount <= 0) return { kind: 'skipped', reason: 'nothing-to-compact' };
   // Overwriting summary: the old summary is injected as input context and replaced
-  // wholesale by the new one, avoiding concatenation bloat
+  // wholesale by the new one, avoiding concatenation bloat (iterative merging, as in
+  // pi's compaction)
+  const spanToSummarize = topic.history.slice(oldTrim, oldTrim + summarizeCount);
   const messagesToSummarize = topic.summary
     ? [
         { role: 'system' as const, content: t('chat.historyBackground') + topic.summary },
-        ...topic.history.slice(0, summarizeCount),
+        ...spanToSummarize,
       ]
-    : topic.history.slice(0, summarizeCount);
+    : spanToSummarize;
+  const newBoundary = oldTrim + summarizeCount;
 
-  // Persist: trim the history and replace topic.summary with the new summary or
-  // archive placeholder
+  // Persist: move the context boundary and replace topic.summary with the new summary
+  // or archive placeholder. The DISPLAYED history is never modified — messages stay
+  // in the message record after compaction (user-visible, like DSH / ZCode / pi).
   const persistCompactedTopic = async (newSummary: string): Promise<CompactOutcome> => {
     const latestTopic = activeTopic();
     if (!latestTopic) return { kind: 'skipped', reason: 'nothing-to-compact' };
-    // CHAT-2: 入口捕获的话题与当前话题必须一致——多秒 summarize await 期间用户
-    // 切换话题后，旧 count 裁新话题历史会把整个更短话题清空并落盘
+    // CHAT-2: 入口捕获的话题与当前话题必须一致——多秒 summarize await 期间切换话题后，
+    // 旧边界落到新话题会错误裁掉其上下文
     if (latestTopic.id !== topic.id) {
       console.warn('[Context] topic switched during compression, discarding persistence');
       return { kind: 'skipped', reason: 'topic-switched' } as CompactOutcome;
-    }
-    const updatedHistory = latestTopic.history.slice(summarizeCount);
-    // CHAT-2 加固：zoned 裁剪结果不应清空历史（同话题变短即中止，防数据丢失）；
-    // full manual compaction intentionally empties the history (the summary carries
-    // the context), so only the zoned path aborts on an empty trim result.
-    if (!fullCompact && updatedHistory.length === 0 && latestTopic.history.length > 0) {
-      console.warn(
-        '[Context] compression trimmed result empty, discarding persistence (data-loss guard)',
-      );
-      return { kind: 'skipped', reason: 'empty-result' } as CompactOutcome;
     }
     setDatas(
       'assistants',
@@ -393,8 +395,8 @@ export const checkAndSummarize = async (
       'topics',
       (tp) => tp.id === latestTopic.id,
       {
-        history: updatedHistory,
         summary: newSummary,
+        contextTrimCount: newBoundary,
       },
     );
     await saveSingleAssistantToBackend(currentAssistantId()!);
@@ -402,7 +404,7 @@ export const checkAndSummarize = async (
     return {
       kind: 'compressed',
       summarizedCount: summarizeCount,
-      keptCount: updatedHistory.length,
+      keptCount: contextLen - summarizeCount,
     };
   };
 

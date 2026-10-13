@@ -322,6 +322,16 @@ export const [pendingRenameRequest, setPendingRenameRequest] = createSignal<{
   topicId: string;
 } | null>(null);
 
+// ====== Context compaction progress ======
+
+/**
+ * Topic ID whose context is being compacted right now (manual /compact or the
+ * conversation-end auto path). Renders an in-record "compacting" pill with a
+ * spinner (mainstream visual feedback, cf. DSH's in-record compaction indicator);
+ * null when idle. Cleared when the run settles.
+ */
+export const [compactingTopicId, setCompactingTopicId] = createSignal<string | null>(null);
+
 /**
  * Trigger regeneration of a topic title (manual entry point).
  * Used by the "Regenerate title" context-menu button.

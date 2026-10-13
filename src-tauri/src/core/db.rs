@@ -271,6 +271,15 @@ fn m_messages_context_tokens(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "context_tokens", "INTEGER")
 }
 
+/// v17: topics.context_trim_count (compaction context boundary). Compaction keeps the
+/// FULL transcript visible in the UI (mainstream: DSH shadows surface nodes, pi keeps
+/// raw entries) while the LLM request starts at this boundary: context = summary +
+/// history[trim..]. Without it, compaction had to delete old rows from topic.history
+/// to bound the context, wiping them from the message record.
+fn m_topics_context_trim(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "topics", "context_trim_count", "INTEGER")
+}
+
 /// Migration table for chat_history.db (strictly increasing; new migrations may only be appended, released entries must never be modified).
 const CHAT_DB_MIGRATIONS: &[Migration] = &[
     Migration {
@@ -352,5 +361,10 @@ const CHAT_DB_MIGRATIONS: &[Migration] = &[
         version: 16,
         name: "messages.context_tokens",
         run: m_messages_context_tokens,
+    },
+    Migration {
+        version: 17,
+        name: "topics.context_trim_count",
+        run: m_topics_context_trim,
     },
 ];

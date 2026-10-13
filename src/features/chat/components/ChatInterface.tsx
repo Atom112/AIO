@@ -22,6 +22,7 @@ import {
   currentProject,
   datas,
   currentAssistantId,
+  compactingTopicId,
   isChatMode,
   gitBranch,
   gitBranches,
@@ -302,6 +303,55 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
     return next?.role === 'assistant' ? next : null;
   });
 
+  // ---- Paged message rendering (segmented): long topics render the most recent
+  // window first; an IntersectionObserver sentinel at the top loads earlier pages
+  // with scroll anchoring, so switching to a huge topic does not mount every
+  // Markdown bubble at once (the cause of the reported switch jank). ----
+  const PAGE_SIZE = 40;
+  const [visibleCount, setVisibleCount] = createSignal(PAGE_SIZE);
+  // Reset the window on every topic switch
+  createEffect(
+    on(
+      () => props.activeTopic?.id,
+      () => setVisibleCount(PAGE_SIZE),
+    ),
+  );
+  /** Absolute index of the first rendered message (the tail window start) */
+  const windowStart = createMemo(() =>
+    Math.max(0, (props.activeTopic?.history?.length ?? 0) - visibleCount()),
+  );
+  let topSentinelRef: HTMLDivElement | undefined;
+  let loadingEarlier = false;
+  const loadEarlier = () => {
+    if (loadingEarlier || windowStart() === 0) return;
+    loadingEarlier = true;
+    const el = scrollContainerRef;
+    const prevHeight = el?.scrollHeight ?? 0;
+    const prevTop = el?.scrollTop ?? 0;
+    // Pre-mark the about-to-reveal messages as animated: history bubbles must not
+    // replay entrance animations when paged in (module-level set, topic-scoped clear)
+    const start = Math.max(0, windowStart() - PAGE_SIZE);
+    for (const m of props.activeTopic?.history?.slice(start, windowStart()) ?? []) {
+      if (m?.id) animatedMessageIds.add(m.id);
+    }
+    setVisibleCount((c) => c + PAGE_SIZE);
+    // Scroll anchoring: keep the viewport on the same content after prepending
+    requestAnimationFrame(() => {
+      if (el) el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+      loadingEarlier = false;
+    });
+  };
+  onMount(() => {
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((en) => en.isIntersecting)) loadEarlier();
+      },
+      { root: scrollContainerRef, rootMargin: '160px' },
+    );
+    if (topSentinelRef) io.observe(topSentinelRef);
+    onCleanup(() => io.disconnect());
+  });
+
   return (
     <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full">
       {/* Top action bar */}
@@ -380,11 +430,25 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
           </Show>
 
           <Show when={props.activeTopic}>
-            <For each={props.activeTopic?.history}>
+            {/* Load-earlier sentinel: always mounted so the IntersectionObserver keeps a
+                stable target; the button is only shown when older pages exist */}
+            <div ref={topSentinelRef} />
+            <Show when={windowStart() > 0}>
+              <div class="flex justify-center py-2">
+                <button
+                  class={btnGhost + ' text-xs'}
+                  onClick={loadEarlier}
+                  title={t('chat.loadEarlierTitle')}
+                >
+                  {t('chat.loadEarlier', { count: formatNumber(windowStart()) })}
+                </button>
+              </div>
+            </Show>
+            <For each={props.activeTopic?.history.slice(windowStart())}>
               {(msg: any, index) => (
                 <MessageBubble
                   msg={msg}
-                  index={index}
+                  index={() => windowStart() + index()}
                   parentTypingIndex={() => props.typingIndex}
                   isThinking={() => props.isThinking}
                   isSelectingMessages={() => props.isSelectingMessages}
@@ -426,6 +490,36 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 />
               )}
             </For>
+
+            {/* Context compaction in progress: in-record pill with a spinner
+                (mainstream visual feedback, cf. DSH's in-record compaction indicator) */}
+            <Show when={props.activeTopic && compactingTopicId() === props.activeTopic.id}>
+              <div class="flex items-center justify-center gap-2 my-3 animate-fade-in">
+                <svg
+                  class="w-4 h-4 animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    stroke="rgba(var(--primary-rgb),0.18)"
+                    stroke-width="2.5"
+                  />
+                  <path
+                    d="M21 12a9 9 0 0 0-9-9"
+                    stroke="rgba(var(--primary-rgb),0.85)"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}>
+                  {t('chat.compacting')}
+                </span>
+              </div>
+            </Show>
 
             {/* /btw overlay Q&A boxes */}
             <Show when={props.btwOverlays.length > 0}>

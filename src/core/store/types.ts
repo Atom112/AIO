@@ -155,6 +155,13 @@ export interface Topic {
   branchedFromMessageId?: string;
   /** Parent topic ID (for the topic tree structure) */
   parentTopicId?: string;
+  /**
+   * Compaction context boundary: the first N messages of `history` are condensed into
+   * `summary` and excluded from LLM requests (context = summary + history.slice(N)),
+   * while the full transcript stays visible in the message record (mainstream harness
+   * behavior: DSH shadows surface nodes, pi keeps raw entries). Absent = 0.
+   */
+  contextTrimCount?: number;
 }
 
 /** Agent execution mode */

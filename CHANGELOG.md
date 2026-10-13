@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
+
+- **Agent 模式阶梯改名（wire 值稳定，assistants DB 无迁移）**：`off`=「只读」、`normal`=「工作区内修改」、`auto`=「完全权限」、`plan`=「计划」不变——
+  - **只读（off + 项目）成为真实智能体档位**：工具集为 think + project_map + web + 并行安全内建集（文件/git/LSP 读取按 `is_parallel_safe` 过滤），权限 Off 臂改为 10 条 allow（priority 90）+ `builtin-readonly-deny-other` Deny `*`（priority 10）——读取放行、其余一律拒绝；无项目时保持纯对话（`isChatMode` 改为项目感知，slash 命令与检查点续跑的 skills 门控同步修复）；`sendMessagePrep` 让 off+项目也注入模式系统提示（只读契约提示：可读不可改、需求改动时建议切换档位）
+  - **工作区内修改（normal）**：`write_file`/`replace_in_file`/`mkdir` 直接允许（沙箱仍限制在项目根内）；`delete_file`/`execute_command`/`git_add`/`git_commit`/其他 MCP 仍逐次确认
+  - **完全权限（auto）自主权内置化**：不再依赖独立开关——沙箱不可用 fail-closed 仅作用于 Auto、网络命令闸（SEC-01）在 Auto 一律放行（进入模式时风险确认文案吸收原「完全放手」的外泄权衡）、沙箱拒绝自动扩权仅按 Auto 判定；`fullAutoMode` 配置字段端到端删除（Rust 结构体/磁盘归一化/patch 命令/TS 类型/API/store/设置页开关/模式胶囊脉冲红点）
+  - 模式选择器重排：只读（眼睛）/工作区内修改（扳手）/完全权限（闪电）/计划（文档），风险确认仅在进入完全权限时弹出（会话内一次）
+- **工作流功能端到端移除**：`create_workflow` 工具与分发臂、`execute_workflow` 引擎、`ToolCallStats` 失败闸、`WORKFLOW_*` 事件（双端注册表同步删）、`WorkflowVisualization` 组件与 4 个监听器、`workflowState` store（任务面板状态独立为 `core/store/task-board.ts`——create_tasks 任务清单功能保留）、`workflowStepMode` 配置、相关 i18n keys 与 docs 章节；`delegate_ctx` 不再携带 stats
+- **权限引擎语义精化（Off/Plan 档位的排序正确性）**：用户/会话 Deny 仍全局优先；内置模式兜底改为按优先级参与——Off 的 allow 阶梯（90）高于其 deny 兜底（10）、Plan 的硬边界 Deny 提到 100（高于会话 always-allow 50 与自定义默认 10，会话授权不再能打开 Plan 的命令执行），并修复 `test_plan_mode_execute_command_denied` 缺失的会话互斥锁；SEC-02 回归测试改用 `delete_file` 探针（Normal 的 write 已 Allow）
+- **设置页两处 UI 收敛**：① 语言选择器改为复用共享 `Dropdown` 新增的 `ghost` 变体（透明底 + border-dim + 小箭头，与原手写样式一致），主代理工具集下拉同款——三种下拉一种组件；② 供应商列表自定义供应商区块移到目录之前（不再滚一大圈）
+- **旋钮跨 0 方向感知**：最大工具调用轮数 / 最大并发子智能体在 0 吸附时按调节方向越过——从 -1 往上调到 1、从 1 往下调（或直接输入 0）到 -1
+- 文档同步（chat-and-agent 模式表、permissions、agent-tools、architecture、app-settings 快捷键循环描述）；`cargo +1.97.1 test` 357 通过、clippy/fmt 绿；`npm run check:frontend` 全绿（i18n 1016 keys、rgba 棘轮 171）
+
 ### 🎨 界面视觉修复五连（本轮用户反馈）
 
 - **流式闪烁根修（消息身份稳定化）**：`flushStreamBatch`（80ms 批处理）此前每次 flush 用 3 次 `setDatas` 路径更新——Store 的路径 setter 会**重建路径上每个对象**（消息引用每 80ms 变一次），`<For>` 按引用比较 → 流式中的消息行每个 flush 重挂载一次 → 气泡入场动画（`animate-stream-fade-in`、ThinkBlock 展开动画）逐 token 重放（用户看到的"闪烁卡顿"）。现流式路径全部消息更新改为 `produce()` 原地变异（solid-js/store）：flushStreamBatch 合并为单次 produce（content+reasoning+agentSteps）、子代理步骤/回合开始/工具调用/工具结果/交接/子代理起止共 8 组监听器同步转换——消息对象引用稳定，细粒度代理仍精确通知；`MessageBubble.fileChanges` 改 `createMemo` 跟踪 `msg.toolCalls`（原地变异下引用比较失效的配套修复）

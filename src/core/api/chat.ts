@@ -83,15 +83,22 @@ export const generateImage = (
   prompt: string,
 ) => invoke<void>('generate_image', { ...creds, assistantId, topicId, prompt });
 
-/** Chat-mode streaming call (no tools). */
+/** Chat-mode streaming call (no tools). `reasoningLevel` (low/medium/high) attaches a native reasoning-effort parameter when the model supports one. */
 export const callLlmStream = (
   creds: LlmCredentials,
   assistantId: string,
   topicId: string,
   messages: Message[],
+  reasoningLevel?: string | null,
 ) => {
   recordStreamKey(assistantId, topicId);
-  return invoke<void>('call_llm_stream', { ...creds, assistantId, topicId, messages });
+  return invoke<void>('call_llm_stream', {
+    ...creds,
+    assistantId,
+    topicId,
+    messages,
+    ...(reasoningLevel ? { reasoningLevel } : {}),
+  });
 };
 
 // ---- CHAT-4: 流归属键 ----
@@ -128,6 +135,8 @@ export interface RunAgentTurnArgs extends LlmCredentials {
   locale: string;
   contextWindow: number;
   skills?: SkillConfig[];
+  /** Reasoning effort applied to the main-model request (low/medium/high); omitted = no native reasoning parameter. */
+  reasoningLevel?: string;
   /** Resume the checkpoint of the given turn (continue after a crash); omitted = a normal new turn */
   resumeTurnId?: string;
 }

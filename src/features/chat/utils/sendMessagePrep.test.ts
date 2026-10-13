@@ -80,6 +80,15 @@ describe('buildOutgoingMessages', () => {
     expect(messagesForAI[3].content).toBe('agent.prompt.reasoningHigh');
   });
 
+  it('suppresses the reasoning prompt nudge when the native effort parameter applies', () => {
+    const { messagesForAI } = buildOutgoingMessages(
+      baseArgs({ reasoningLevel: 'high', reasoningParamApplies: true }),
+    );
+    expect(
+      messagesForAI.some((m) => typeof m.content === 'string' && m.content.includes('reasoning')),
+    ).toBe(false);
+  });
+
   it('includes the web-search prompt only when enabled', () => {
     const { messagesForAI } = buildOutgoingMessages(baseArgs({ webSearchEnabled: true }));
     expect(messagesForAI.some((m) => m.content === 'agent.prompt.web')).toBe(true);

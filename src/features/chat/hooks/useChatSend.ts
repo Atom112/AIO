@@ -11,6 +11,7 @@
 import { runAgentTurn, llmCreds, type RunAgentTurnArgs } from '../../../core/api/chat';
 import { locale as localeSignal } from '../../../core/i18n';
 import { datas, type Assistant } from '../../../core/store/store';
+import { modelSupportsReasoningEffort } from '../../../core/utils/models';
 import type { SkillConfig } from '../../../core/types/skill';
 import { getModelContextWindow } from './chatTurnEffects';
 
@@ -22,6 +23,7 @@ export interface ChatSendDeps {
   currentTopicId: () => string | null;
   currentProjectId: () => string | null;
   webSearchEnabled: () => boolean;
+  reasoningLevel: () => string;
   setIsThinking: (v: boolean) => void;
   setTypingIndex: (v: number | null) => void;
 }
@@ -49,6 +51,7 @@ export function useChatSend(deps: ChatSendDeps) {
     currentTopicId,
     currentProjectId,
     webSearchEnabled,
+    reasoningLevel,
     setIsThinking,
     setTypingIndex,
   } = deps;
@@ -62,6 +65,7 @@ export function useChatSend(deps: ChatSendDeps) {
     const currentAsst = datas.assistants.find((a: Assistant) => a.id === asstId);
     setIsThinking(true);
     try {
+      const level = reasoningLevel();
       await runAgentTurn({
         ...llmCreds(currentMdl),
         assistantId: asstId,
@@ -76,6 +80,11 @@ export function useChatSend(deps: ChatSendDeps) {
         locale: localeSignal(),
         contextWindow: await getModelContextWindow(),
         skills: opts.skills,
+        // Native reasoning-effort parameter only for models that accept one
+        // (catalog capabilities.reasoning or id heuristic); otherwise the
+        // prompt-level nudge in buildOutgoingMessages remains the control.
+        reasoningLevel:
+          level !== 'off' && modelSupportsReasoningEffort(currentMdl.model_id) ? level : undefined,
         ...(opts.resumeTurnId ? { resumeTurnId: opts.resumeTurnId } : {}),
       });
     } catch (err) {

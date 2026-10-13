@@ -16,6 +16,16 @@ use tokio_util::sync::CancellationToken;
 use super::sse_lines;
 use super::subagents::{SubagentDeltaPayload, SubagentStepPayload};
 
+/// Applies the user-selected reasoning effort to an OpenAI-shaped request body.
+///
+/// `reasoning_effort` is the de-facto cross-provider parameter: OpenAI o-series/gpt-5,
+/// Gemini's OpenAI-compat endpoint and OpenRouter accept it; unknown-field-tolerant
+/// servers (Ollama, llama.cpp) ignore it silently. Anthropic requests are translated
+/// separately by `to_anthropic_body` (effort -> thinking budget).
+fn apply_reasoning_effort(body: &mut serde_json::Map<String, serde_json::Value>, effort: &str) {
+    body.insert("reasoning_effort".into(), json!(effort));
+}
+
 /// Accumulated result of one streaming round.
 pub(crate) struct RoundResult {
     /// Assistant text content for this round (with rewritten aio-image markers)
@@ -93,6 +103,10 @@ pub(crate) async fn stream_one_round(
     process_images: bool,
     max_output_tokens: Option<u32>,
     max_retries: u32,
+    // User-selected reasoning effort ("low"/"medium"/"high"); None = no reasoning parameter.
+    // The FE only sends it for models known to be reasoning-capable (catalog flag or id
+    // heuristic), so strict non-reasoning upstreams never receive the field.
+    reasoning_effort: Option<&str>,
 ) -> Result<RoundResult, String> {
     let mut body_map = serde_json::Map::new();
     body_map.insert("model".into(), json!(model));
@@ -113,6 +127,13 @@ pub(crate) async fn stream_one_round(
     // models like o1/o3/gpt-5 need max_completion_tokens; the caller decides per model)
     if let Some(mt) = max_output_tokens {
         body_map.insert("max_tokens".into(), json!(mt));
+    }
+    // Reasoning-effort control: `reasoning_effort` is the de-facto cross-provider
+    // parameter (OpenAI o-series/gpt-5, Gemini's OpenAI-compat endpoint, OpenRouter;
+    // unknown-field-tolerant servers such as Ollama/llama.cpp ignore it). Anthropic
+    // requests are translated by to_anthropic_body (effort -> thinking budget).
+    if let Some(effort) = reasoning_effort {
+        apply_reasoning_effort(&mut body_map, effort);
     }
     let body = serde_json::Value::Object(body_map);
 
@@ -530,4 +551,29 @@ pub(crate) async fn stream_one_round(
         api_content,
         finish_reason,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_reasoning_effort;
+    use serde_json::json;
+
+    #[test]
+    fn reasoning_effort_lands_in_body() {
+        let mut body = serde_json::Map::new();
+        body.insert("model".into(), json!("gpt-5"));
+        apply_reasoning_effort(&mut body, "high");
+        assert_eq!(
+            body.get("reasoning_effort").and_then(|v| v.as_str()),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn no_effort_leaves_body_untouched() {
+        let mut body = serde_json::Map::new();
+        body.insert("model".into(), json!("gpt-4o"));
+        // None is handled by the caller (no insert); the map stays clean
+        assert!(body.get("reasoning_effort").is_none());
+    }
 }

@@ -1307,6 +1307,7 @@ pub(crate) async fn execute_subagent(
             false,
             None, // subagent output capped by the round cap; no extra max_tokens injected
             app_cfg.model_call_retries,
+            None, // subagents do not inherit the main conversation's reasoning-effort knob
         )
         .await;
 

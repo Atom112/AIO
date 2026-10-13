@@ -177,6 +177,8 @@ pub async fn call_llm_stream(
     topic_id: String,             // Topic/session ID
     messages: Vec<Message>,       // History context messages
     tools: Option<Vec<ToolSpec>>, // Tool definitions (MCP tools; None or empty array means not sent)
+    // Reasoning effort for reasoning-capable models ("low"/"medium"/"high"); None/off = no reasoning parameter
+    reasoning_level: Option<String>,
 ) -> Result<(), String> {
     // Diagnostic logging (debug only): prints each message's role and which key fields are present.
     // Must stay at debug level -- production defaults to warn; conversation-content logs must not reach production logs.
@@ -263,6 +265,7 @@ pub async fn call_llm_stream(
             true,
             None,
             crate::core::models::default_model_call_retries(),
+            reasoning_level.as_deref(),
         )
         .await;
 
@@ -866,6 +869,8 @@ pub(crate) struct TurnContext {
     pub mcp_server_ids: Vec<String>,
     /// Checkpoint of the turn to resume (continue after a crash); None = a normal new turn
     pub resume_turn_id: Option<String>,
+    /// Reasoning effort for reasoning-capable models ("low"/"medium"/"high"); None = no reasoning parameter
+    pub reasoning_level: Option<String>,
 }
 
 /// Autonomous agent-loop command (the main entry point of the new frontend flow).
@@ -886,6 +891,8 @@ pub(crate) struct TurnContext {
 ///   untrusted servers still require per-call approval in Auto mode (see mcp::execute_tool_call)
 /// - `_agent_mode`: legacy IPC parameter, accepted for compatibility but IGNORED —
 ///   the mode is derived server-side from the assistant's persisted record (MCP-13)
+/// - `reasoning_level`: reasoning effort for reasoning-capable models ("low"/"medium"/"high");
+///   None/off = no reasoning parameter is attached to the request
 /// - `project_id`: project id (used to resolve project-level permission rules)
 /// - `locale`: optional UI language; falls back to `zh-CN` when missing on legacy calls
 #[tauri::command]
@@ -914,6 +921,8 @@ pub async fn run_agent_turn(
     context_window: Option<u32>,
     skills: Option<Vec<SkillConfig>>,
     resume_turn_id: Option<String>,
+    // Reasoning effort for reasoning-capable models ("low"/"medium"/"high"); None = no reasoning parameter
+    reasoning_level: Option<String>,
 ) -> Result<(), String> {
     let ctx = TurnContext {
         api_url,
@@ -939,6 +948,7 @@ pub async fn run_agent_turn(
         skills,
         mcp_server_ids,
         resume_turn_id,
+        reasoning_level,
     };
     run_agent_turn_inner(app, window, db_state, stream_mgr, ctx).await
 }
@@ -990,6 +1000,7 @@ pub(crate) async fn run_agent_turn_inner(
         skills,
         mcp_server_ids,
         resume_turn_id,
+        reasoning_level,
     } = ctx;
     // Diagnostic log (debug only): print each message's role and whether key fields are present.
     // Keep this at debug level: production defaults to warn, and conversation-content logs must not land in production logs.
@@ -1138,6 +1149,7 @@ pub(crate) async fn run_agent_turn_inner(
         keep_recent_tokens,
         max_output_tokens,
         context_budget,
+        reasoning_level,
     };
     let body_fut = runner.run();
 

@@ -18,6 +18,12 @@
 - 文档同步（chat-and-agent 模式表、permissions、agent-tools、architecture、app-settings 快捷键循环描述）；`cargo +1.97.1 test` 357 通过、clippy/fmt 绿；`npm run check:frontend` 全绿（i18n 1016 keys、rgba 棘轮 171）
 - **模式菜单去描述小字 + 自定义供应商分区重组（PR #133，用户反馈二连）**：① 模式选择菜单每行只留图标 + 名称（介绍性小字移除，说明保留为收起态胶囊的悬停 tooltip；菜单 260→190px、行高收紧单行）；② 供应商列表分区重组——已启用自定义供应商独立小节（标题「已启用（N）」）置于目录之前，未启用自定义供应商单独成组（新标题「自定义（未启用）」）插在「本地推理引擎」与目录「未启用」之间，两份重复的行 JSX 收敛为 `CustomProviderRow` 组件（props 回调，AGENTS.md 禁重复）
 - **分组接缝修复（PR #135）**：已启用自定义区块与下方无标题的目录已启用列表之间此前 0 间距粘连（其他分组间都有 mt-5 标题间距，唯独这个接缝没有任何 margin）——已启用自定义行容器补 `mb-5`，分组节奏与其他分区一致；「未启用」divider 条件同步放宽（只要有未启用目录行即显示，上方恒有本地引擎/未启用自定义区块），消除同类粘连
+- **推理强度真参数化 + GPT 式滑杆（思考强度开关从提示词升级为 API 参数）**：此前的推理档位只注入系统提示词（对推理模型的原生思考预算无实际控制力）——现档位作为真实请求参数下发：
+  - **支持检测**：模型目录 `capabilities.reasoning` 标记为权威来源，目录缺失的自定义模型退回保守 id 启发式（o1/o3/o4/gpt-5/gemini-2.5/grok 等）；不支持的模型维持原提示词注入路径
+  - **参数映射**：OpenAI 兼容端点（含 Gemini OpenAI 兼容层、OpenRouter）发送 `reasoning_effort: low|medium|high`；Anthropic 端点由 `to_anthropic_body` 换算为 `thinking` 思考预算（低 2048 / 中 8192 / 高 16384 tokens，`max_tokens` 不足时自动抬升，thinking 激活时丢弃 temperature 满足 API 约束）；参数仅在主对话生效（子智能体不继承）
+  - **提示词去重**：原生参数生效的回合不再注入推理提示词——参数即权威，对不外露思维链的模型（o 系 / gpt-5）要求可见思考标签只会污染可见答案
+  - **UI 改版**：ReasoningButton 弹层改为 GPT 式滑杆——水平 4 档（关闭/低/中/高）、拖拽/点击吸附最近档位、方向键步进（role=slider）、选中档位主色高亮；触发按钮高亮色统一为主色（移除 3 处硬编码 rgba，棘轮 169→166）；i18n 收敛 5 个不再使用的描述 keys（1017→1012）
+  - 测试：cargo +3（`reasoning_effort_lands_in_body` / `reasoning_effort_maps_to_thinking_budget` 含预算抬升与未知值不注入分支 / FE nudge 抑制断言）；文档 chat-and-agent zh/en 同步
 
 ### 🎨 界面视觉修复五连（本轮用户反馈）
 

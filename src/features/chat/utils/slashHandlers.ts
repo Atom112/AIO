@@ -30,6 +30,7 @@ import {
   type Topic,
 } from '../../../core/store/store';
 import { resolveSlashCommand } from '../../../core/shortcuts';
+import { modelSupportsReasoningEffort } from '../../../core/utils/models';
 import { buildOutgoingMessages } from './sendMessagePrep';
 import type { StartAgentTurnOptions } from '../hooks/useChatSend';
 
@@ -80,6 +81,8 @@ export async function handleSlashPromptMessage(
     outgoingFiles: [],
     userInput: displayText,
     reasoningLevel: reasoningLevel(),
+    reasoningParamApplies:
+      reasoningLevel() !== 'off' && modelSupportsReasoningEffort(currentMdl.model_id),
     webSearchEnabled: webSearchEnabled(),
     isChatMode: agentMode === 'off' && !pid,
     projectInfo:

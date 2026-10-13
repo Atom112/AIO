@@ -142,10 +142,10 @@ const AppSettings: Component = () => {
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
       }
-      if (typeof cfg?.maxToolRounds === 'number' && cfg.maxToolRounds >= 0) {
+      if (typeof cfg?.maxToolRounds === 'number') {
         setMaxToolRounds(cfg.maxToolRounds);
       }
-      if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents >= 0) {
+      if (typeof cfg?.maxConcurrentSubagents === 'number') {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
       }
       if (typeof cfg?.fullAutoMode === 'boolean') {
@@ -669,14 +669,16 @@ const AppSettings: Component = () => {
 
           <NumberInput
             value={maxToolRounds()}
-            min={0}
+            min={-1}
             max={2000}
             fallback={25}
             onInput={(clamped) => {
-              setMaxToolRounds(clamped);
+              // 0 is forbidden: snap it to -1 (unlimited) — the value just below 1
+              const v = clamped === 0 ? -1 : clamped;
+              setMaxToolRounds(v);
               schedulePatch('maxToolRounds', async () => {
                 try {
-                  await patchAppConfig({ maxToolRounds: clamped });
+                  await patchAppConfig({ maxToolRounds: v });
                 } catch (err) {
                   console.warn('Failed to save max-tool-rounds config:', err);
                 }
@@ -725,14 +727,16 @@ const AppSettings: Component = () => {
 
           <NumberInput
             value={maxConcurrentSubagents()}
-            min={0}
+            min={-1}
             max={32}
             fallback={5}
             onInput={(clamped) => {
-              setMaxConcurrentSubagents(clamped);
+              // 0 is forbidden: snap it to -1 (unlimited) — the value just below 1
+              const v = clamped === 0 ? -1 : clamped;
+              setMaxConcurrentSubagents(v);
               schedulePatch('maxConcurrentSubagents', async () => {
                 try {
-                  await patchAppConfig({ maxConcurrentSubagents: clamped });
+                  await patchAppConfig({ maxConcurrentSubagents: v });
                 } catch (err) {
                   console.warn('Failed to save concurrent-subagent cap config:', err);
                 }

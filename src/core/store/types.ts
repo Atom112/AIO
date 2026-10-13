@@ -261,9 +261,9 @@ export interface AppConfig {
   memoryConsolidateBudget: number;
   /** Launch the app at system startup (default off) */
   autoStartEnabled: boolean;
-  /** Max concurrent subagents (undefined = default 5) */
+  /** Max concurrent subagents (-1 = unlimited; 0 forbidden; undefined = default 5) */
   maxConcurrentSubagents?: number;
-  /** Max tool-call rounds per agent run (undefined = default) */
+  /** Max tool-call rounds per agent run (-1 = unlimited; 0 forbidden; undefined = default) */
   maxToolRounds?: number;
   /** Parallel write isolation for subagents: "auto" (worktree on git projects, default) | "worktree" | "off" */
   subagentIsolationMode?: string;

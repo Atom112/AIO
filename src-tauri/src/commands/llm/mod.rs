@@ -90,13 +90,16 @@ impl AgentLimits {
     }
 }
 
-/// Effective max tool-call rounds from the user config: `0` = unlimited
-/// (full-autonomy opt-in — the context budget, compression and the stop button
-/// remain the backstops); `None` falls back to the caller's guard default.
-pub(crate) fn effective_max_rounds(v: Option<u32>, guard: u32) -> u32 {
+/// Effective max tool-call rounds from the user config: `-1` (or any negative) =
+/// unlimited (full-autonomy opt-in — the context budget, compression and the stop
+/// button remain the backstops); `0` is invalid (the UI forbids it) and clamps to
+/// the minimum 1; `None` falls back to the caller's guard default.
+pub(crate) fn effective_max_rounds(v: Option<i32>, guard: u32) -> u32 {
     match v {
-        Some(0) => u32::MAX,
-        other => other.unwrap_or(guard),
+        Some(n) if n < 0 => u32::MAX,
+        Some(0) => 1,
+        Some(n) => (n as u32).max(1),
+        None => guard,
     }
 }
 

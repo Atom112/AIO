@@ -18,12 +18,12 @@ struct AppConfigDisk {
     #[serde(default, rename = "autoStartEnabled")]
     auto_start_enabled: bool,
     #[serde(default = "default_max_tool_rounds", rename = "maxToolRounds")]
-    max_tool_rounds: u32,
+    max_tool_rounds: i32,
     #[serde(
         default = "default_max_concurrent_subagents",
         rename = "maxConcurrentSubagents"
     )]
-    max_concurrent_subagents: u32,
+    max_concurrent_subagents: i32,
     /// Subagent parallel write isolation mode (auto default / off / worktree)
     #[serde(
         default = "crate::core::models::default_subagent_isolation_mode",
@@ -155,7 +155,7 @@ impl AppConfigDisk {
             auto_start_enabled: cfg.auto_start_enabled,
             max_tool_rounds: cfg
                 .max_tool_rounds
-                .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS),
+                .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32),
             max_concurrent_subagents: cfg.max_concurrent_subagents.unwrap_or(5),
             subagent_isolation_mode: cfg.subagent_isolation_mode.clone(),
             workflow_step_mode: cfg.workflow_step_mode.clone(),
@@ -239,7 +239,7 @@ impl Default for AppConfigDisk {
             default_model: String::new(),
             local_model_path: String::new(),
             auto_start_enabled: false,
-            max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
+            max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32,
             max_concurrent_subagents: 5,
             subagent_isolation_mode: crate::core::models::default_subagent_isolation_mode(),
             workflow_step_mode: crate::core::models::default_workflow_step_mode(),
@@ -272,11 +272,11 @@ impl Default for AppConfigDisk {
     }
 }
 
-fn default_max_tool_rounds() -> u32 {
-    crate::core::models::DEFAULT_MAX_TOOL_ROUNDS
+fn default_max_tool_rounds() -> i32 {
+    crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32
 }
 
-fn default_max_concurrent_subagents() -> u32 {
+fn default_max_concurrent_subagents() -> i32 {
     5
 }
 

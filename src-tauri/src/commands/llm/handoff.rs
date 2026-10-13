@@ -3,7 +3,7 @@
 use crate::commands::llm::budget::estimate_message_tokens;
 use crate::core::tool_names;
 use crate::ierr;
-use crate::utils::truncate::truncate_chars_head_tail;
+use crate::utils::truncate::{truncate_chars_head_tail, TOOL_RESULT_MAX_BYTES};
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -86,7 +86,9 @@ pub(crate) fn build_subagent_progress_summary(
 /// writes {app_data}/archives/{uuid}.txt and returns a locale-dependent `[Archive #id]`-style
 /// placeholder (message count / token estimate / tools involved). The archive directory is
 /// shared with read_artifact, so the model can read the full content back by placeholder ID.
-/// Placeholder text follows the locale (en-US English, otherwise Chinese).
+/// Per-message fidelity = TOOL_RESULT_MAX_BYTES (the pipeline's own tool-result cap), so the
+/// archive never loses pipeline-stored content. Placeholder text follows the locale
+/// (en-US English, otherwise Chinese).
 pub(crate) fn archive_early_messages(
     app: &AppHandle,
     early: &[serde_json::Value],
@@ -117,7 +119,11 @@ pub(crate) fn archive_early_messages(
             Some(other) => other.to_string(),
             None => String::new(),
         };
-        let text = &text[..text.floor_char_boundary(text.len().min(2000))];
+        // Per-message budget = TOOL_RESULT_MAX_BYTES (the pipeline's own cap): stored
+        // message content can never exceed it, so the archive is a LOSSLESS copy of
+        // the span at bounded size. The old 2000-char cap silently dropped 90% of a
+        // maxed tool result from the recovery channel.
+        let text = &text[..text.floor_char_boundary(text.len().min(TOOL_RESULT_MAX_BYTES))];
         total_tokens += estimate_message_tokens(model, msg);
         if let Some(name) = msg.get("name").and_then(|v| v.as_str()) {
             tool_names.insert(name.to_string());

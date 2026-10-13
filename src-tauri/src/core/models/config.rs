@@ -158,12 +158,16 @@ pub struct AppConfig {
     /// Auto-start the app at system login. Default off.
     #[serde(default, rename = "autoStartEnabled")]
     pub auto_start_enabled: bool,
-    /// Maximum concurrent subagents (None = use default 5). Caps concurrency of delegate_tasks and multiple delegate_task calls.
+    /// Maximum concurrent subagents (-1 = unlimited; 0 is invalid and clamps to 1 at
+    /// the consumer; None = use default 5). Caps concurrency of delegate_tasks and
+    /// multiple delegate_task calls.
     #[serde(default, rename = "maxConcurrentSubagents")]
-    pub max_concurrent_subagents: Option<u32>,
-    /// Maximum tool-call rounds per agent run (None = use the default). On hitting the cap the run wraps up gracefully instead of being hard-interrupted, to bound API cost.
+    pub max_concurrent_subagents: Option<i32>,
+    /// Maximum tool-call rounds per agent run (-1 = unlimited; 0 is invalid and clamps
+    /// to 1 at the consumer; None = use the default). On hitting the cap the run wraps
+    /// up gracefully instead of being hard-interrupted, to bound API cost.
     #[serde(default, rename = "maxToolRounds")]
-    pub max_tool_rounds: Option<u32>,
+    pub max_tool_rounds: Option<i32>,
     /// Parallel write isolation for subagents: "auto" (default; awaited write-capable tasks get a
     /// per-task git worktree when the project is a git repo, falling back to the shared root),
     /// "off" (always shared root; per-file locks only), "worktree" (require worktrees; fall

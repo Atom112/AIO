@@ -36,8 +36,8 @@ pub async fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PatchAppConfig {
-    max_tool_rounds: Option<u32>,
-    max_concurrent_subagents: Option<u32>,
+    max_tool_rounds: Option<i32>,
+    max_concurrent_subagents: Option<i32>,
     subagent_isolation_mode: Option<String>,
     /// Main agent built-in tool access: "hybrid" (default: reads direct + mutations via
     /// subagents) / "full" (all built-in tools incl. execute_command — simple tasks

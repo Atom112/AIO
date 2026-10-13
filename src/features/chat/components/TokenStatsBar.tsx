@@ -105,10 +105,12 @@ const TokenStatsBar: Component = () => {
     };
   });
 
-  // Cache hit rate = cached input / total input (cumulative for this topic)
-  // input already includes the cached portion: OpenAI/DeepSeek cached_tokens is a subset of prompt_tokens,
-  // while Anthropic input_tokens excludes cache_read_input_tokens, so normalize as (cached + input).
-  const cacheDenom = () => stats().input + stats().cached;
+  // Cache hit rate = cached input / prompt total (cumulative for this topic).
+  // The backend normalizes every provider to OpenAI semantics (PROV-15): input_tokens
+  // IS the full prompt total and cached_tokens is a SUBSET of it — so the denominator
+  // is plain input. The previous (cached + input) denominator double-counted the
+  // cached portion and understated the rate (a true 80% hit displayed as ~44%).
+  const cacheDenom = () => stats().input;
   const cachePct = () => (cacheDenom() > 0 ? Math.round((stats().cached / cacheDenom()) * 100) : 0);
   /** Whether any cache hit data was ever received: always false for models whose backend does not report cached usage */
   const hasCacheStats = () => stats().cached > 0;

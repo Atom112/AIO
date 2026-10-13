@@ -96,9 +96,9 @@ const ModelSelector: Component = () => {
           'opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),
         }}
         style={{
-          background: 'rgba(var(--surface-bg),0.96)',
+          background: 'var(--popup-bg)',
           border: '1px solid var(--border-dim)',
-          'backdrop-filter': 'blur(10px)',
+          'backdrop-filter': 'var(--popup-blur)',
           'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
           'max-height': '340px',
         }}

@@ -69,9 +69,9 @@ const ProjectMcpTrustModal: Component = () => {
         <div
           class="rounded-lg p-6 w-[92%] max-w-[560px] max-h-[80vh] overflow-y-auto flex flex-col gap-4"
           style={{
-            background: 'var(--panel-bg)',
-            'backdrop-filter': 'blur(var(--acrylic-blur))',
-            border: '1px solid var(--acrylic-border)',
+            background: 'var(--dialog-bg)',
+            'backdrop-filter': 'var(--popup-blur)',
+            border: '1px solid var(--border-dim)',
           }}
         >
           <div class="flex justify-between items-center border-b border-[rgba(var(--text-base-rgb),0.27)] pb-3">

@@ -550,11 +550,11 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
         onClick={() => props.onClose()}
       >
         <div
-          class="rounded-lg bg-dark-500 text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
+          class="rounded-lg text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
           style={{
-            background: 'var(--panel-bg)',
-            'backdrop-filter': 'blur(var(--acrylic-blur))',
-            border: '1px solid var(--acrylic-border)',
+            background: 'var(--dialog-bg)',
+            'backdrop-filter': 'var(--popup-blur)',
+            border: '1px solid var(--border-dim)',
           }}
           onClick={(e) => e.stopPropagation()}
         >

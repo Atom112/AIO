@@ -105,8 +105,13 @@
   --acrylic-blur: 40px;
   --acrylic-radius: 12px;
 
-  /* ── Modal/panel background (grey to avoid a pure-black look in dark theme) ── */
-  --panel-bg: #3b3f4a;
+  /* ── Popup surfaces (dropdowns, menus, small popovers) ──
+     Light theme: more translucent so the acrylic backdrop reads through;
+     dark theme: more opaque for contrast against the near-black base. */
+  --popup-bg: rgba(var(--surface-bg), 0.78);
+  --popup-blur: blur(24px) saturate(150%);
+  /* ── Dialog surfaces (modals over a dim overlay) ── */
+  --dialog-bg: rgba(var(--surface-bg), 0.88);
 
   /* ── App background (light/default theme): same as VaporGit (four corner glows + #2f2f2f base) ── */
   --app-bg:
@@ -127,8 +132,8 @@
   --acrylic-bg: rgba(var(--surface-bg), 0.85);
   --acrylic-border: rgba(var(--border-rgb), 0.1);
 
-  /* Modal/panel background (dark theme: grey rather than pure black) */
-  --panel-bg: #2a2e38;
+  --popup-bg: rgba(var(--surface-bg), 0.92);
+  --dialog-bg: rgba(var(--surface-bg), 0.95);
 
   /* Same as VaporGit dark (faint four-corner glows + pure black base) */
   --app-bg:

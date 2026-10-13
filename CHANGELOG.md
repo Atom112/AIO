@@ -26,6 +26,7 @@
   - 测试：cargo +3（`reasoning_effort_lands_in_body` / `reasoning_effort_maps_to_thinking_budget` 含预算抬升与未知值不注入分支 / FE nudge 抑制断言）；文档 chat-and-agent zh/en 同步
 - **推理滑杆视觉升级（每档一色，PR #138）**：低=薄荷绿 / 中=琥珀 / 高=紫罗兰（关闭保持中性灰），档位色经 `@theme` CSS 变量下发（`--color-reasoning-low/medium/high`）——轨道填充变为档位色 `color-mix` 渐变（透明头→全色尾）并叠加前景色星点闪烁层（`reasoning-twinkle` 动画）；档位刻度点亮至当前档位；拇指获得档位色光晕、拖拽时放大；选中档位标签与触发按钮读数同色（rgba 棘轮 166→167，新色全部走变量、hex 门禁 color=0 保持）
 - **滑杆与任务清单过渡动画（PR #139）**：① 推理滑杆档位切换加入过渡——拇指 `left/transform/box-shadow`、轨道填充 `width`、刻度点颜色均 200ms ease-out，点击/拖拽/方向键换档时滑动而非瞬跳；② 状态条任务清单展开收起改为 `grid-template-rows: 0fr↔1fr` 纯 CSS 高度动画（无需测量内容高度，行保持挂载）+ 内容淡入淡出；③ 展开收起箭头由完整箭头（arrow-left 旋转）改为实心三角 SVG（Icon 库新增 `triangle-down`，路径级 fill 覆盖 stroke 风格）
+- **浅色模式弹层亚克力统一（PR #140）**：此前浅色模式下各弹层/弹窗与主面板质感割裂——主面板是 0.72 半透明亚克力（彩色辉光透底），而菜单/弹层是 0.88~0.96 近不透明深色卡片、弹窗是 `--panel-bg` 纯实色灰块或 `--color-dark-700` 主题无关深蓝块。现引入统一弹层 token：`--popup-bg`（菜单类，浅色 0.78 / 深色 0.92）+ `--popup-blur`（blur 24px saturate 150%）+ `--dialog-bg`（模态类，浅色 0.88 / 深色 0.95），15 处组件面统一换用——Dropdown/SlashCommandMenu/CommandPalette/Toast/ReasoningButton/AgentModeSelector（菜单+风险弹窗）/ModelSelector/SubagentMenu/ChatInterface（分支菜单+toast）/ProjectCreateModal/ProjectSettingsModal/MemoryPanel/ProjectMcpTrustModal/ShareModal；`--panel-bg` 死 token 删除；顺带修复 Dropdown 选项 `.selected` 类无样式定义的历史遗留（选中项补主色高亮 + hover 反馈）；SlashCommandMenu 与 ShareModal 两处硬编码颜色消除（rgba 棘轮 167→165）；新增 `scripts/gen-theme-preview.mjs` 主题预览生成器（真实编译 CSS 渲染关键弹层，浅色/深色并排，配合 headless Edge 截图做视觉回归）
 
 ### 🎨 界面视觉修复五连（本轮用户反馈）
 

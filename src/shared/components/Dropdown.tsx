@@ -151,8 +151,8 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
       <div
         class={`absolute z-[100] min-w-full mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top ${props.align === 'right' ? 'right-0' : 'left-0'} top-full`}
         style={{
-          background: 'rgba(var(--surface-bg), 0.88)',
-          'backdrop-filter': 'blur(24px) saturate(150%)',
+          background: 'var(--popup-bg)',
+          'backdrop-filter': 'var(--popup-blur)',
           border: '1px solid var(--border-dim)',
           'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
         }}
@@ -166,10 +166,13 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
         <For each={props.options}>
           {(opt) => (
             <div
-              class={`flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none ${opt.value === props.value ? 'selected' : ''}`}
+              class={`flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none hover:bg-[rgba(var(--text-base-rgb),0.06)] ${opt.value === props.value ? 'selected' : ''}`}
               role="option"
               aria-selected={opt.value === props.value}
-              classList={{ 'opacity-40 pointer-events-none': opt.disabled }}
+              classList={{
+                'opacity-40 pointer-events-none': opt.disabled,
+                '!bg-[rgba(var(--primary-rgb),0.12)]': opt.value === props.value,
+              }}
               onClick={() => {
                 if (opt.disabled) return;
                 props.onChange(opt.value);

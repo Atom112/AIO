@@ -81,9 +81,9 @@ const SubagentMenu: Component<SubagentMenuProps> = (props) => {
             }
             class="absolute bottom-full right-0 mb-2 z-[41] w-[320px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
             style={{
-              background: 'rgba(var(--surface-bg),0.96)',
+              background: 'var(--popup-bg)',
               border: '1px solid var(--border-dim)',
-              'backdrop-filter': 'blur(12px)',
+              'backdrop-filter': 'var(--popup-blur)',
               'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
             }}
             onClick={(e) => e.stopPropagation()}

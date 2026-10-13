@@ -30,9 +30,12 @@ pub(crate) mod messages;
 // 阶段4 第1项（子目标 5/5 首切片）：两循环共享的轮次产物构造（agent_loop 地基）
 pub(crate) mod round_artifacts;
 pub(crate) mod sandbox_expand;
+// Shared compaction-summary directive (pi structure + DSH verbatim rules), used by
+// both the frontend-triggered summarize_history and the in-run compress path
 pub(crate) mod sse_lines;
 pub(crate) mod streaming;
 pub(crate) mod subagents;
+pub(crate) mod summarize_prompt;
 pub(crate) mod tasks;
 pub(crate) mod titles;
 pub(crate) mod tool_dispatch;

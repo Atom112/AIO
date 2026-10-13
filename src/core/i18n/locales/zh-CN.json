@@ -52,7 +52,7 @@
   "agent.prompt.reasoningHigh": "回答前进行深入的多步推理。在 <think> 标签中分析前提、边界情况和备选方案，再给出严谨答案。",
   "agent.prompt.reasoningLow": "回答前先简要思考。用 <think> 标签包裹推理过程，再给出最终答案；简单问题不要过度展开。",
   "agent.prompt.reasoningMedium": "回答前进行中等深度思考。用 <think> 标签分析问题、拆解步骤并比较方案，再给出最终答案。",
-  "agent.prompt.summary": "这是之前对话的摘要，请结合这些上下文回答：\n{{summary}}",
+  "agent.prompt.summary": "这是之前对话的压缩检查点（含目标/决策/进展/关键上下文），请结合这些上下文继续工作。文中 [历史归档 #id] 可在 Agent 模式下用 read_artifact 工具读回原始细节：\n{{summary}}",
   "agent.prompt.web": "你可以联网搜索最新信息。",
   "agent.status.cancelled": "已取消",
   "agent.status.completed": "已完成",

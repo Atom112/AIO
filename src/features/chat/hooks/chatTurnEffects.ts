@@ -25,6 +25,7 @@ import {
   type Topic,
 } from '../../../core/store/store';
 import { locale, t } from '../../../core/i18n';
+import { serializeConversationForSummary } from '../utils/compaction';
 
 /**
  * Get the context window size of the currently selected model (read from the model
@@ -369,13 +370,30 @@ export const checkAndSummarize = async (
   // wholesale by the new one, avoiding concatenation bloat (iterative merging, as in
   // pi's compaction)
   const spanToSummarize = topic.history.slice(oldTrim, oldTrim + summarizeCount);
-  const messagesToSummarize = topic.summary
-    ? [
-        { role: 'system' as const, content: t('chat.historyBackground') + topic.summary },
-        ...spanToSummarize,
-      ]
-    : spanToSummarize;
   const newBoundary = oldTrim + summarizeCount;
+
+  // pi-style serialized summarizer input: plain-text turns with truncated tool
+  // results (the raw JSON form could exceed the summarizer's own context window).
+  // The previous checkpoint summary rides in as a labeled section for iterative merge.
+  const serialized = serializeConversationForSummary(spanToSummarize);
+  const summaryInput = topic.summary
+    ? `${t('chat.historyBackground')}${topic.summary}\n\n---\n\n${serialized}`
+    : serialized;
+
+  // Recovery channel (read_artifact): archive the raw span so the model can read the
+  // compacted original back by placeholder ID — on BOTH the summarize-success and
+  // archive-fallback paths. Prior archive placeholders are carried forward so older
+  // spans stay reachable after iterative re-summarization.
+  const priorArchiveIds = Array.from(
+    topic.summary?.matchAll(/\[(?:历史归档|Archive) #([0-9a-f-]+)\]/g) ?? [],
+  ).map((m) => m[1]);
+  const withArchiveReference = (summaryText: string, placeholder: string): string => {
+    const priorLine = priorArchiveIds
+      .map((id) => (locale() === 'en-US' ? `[Archive #${id}]` : `[历史归档 #${id}]`))
+      .join(' ');
+    const base = summaryText.trim() ? `${summaryText}\n\n${placeholder}` : placeholder;
+    return priorLine ? `${base}\n${priorLine}` : base;
+  };
 
   // Persist: move the context boundary and replace topic.summary with the new summary
   // or archive placeholder. The DISPLAYED history is never modified — messages stay
@@ -411,20 +429,32 @@ export const checkAndSummarize = async (
   try {
     const newSummarySnippet = await summarizeHistory(
       llmCreds(currentMdl),
-      JSON.stringify(messagesToSummarize),
+      JSON.stringify([{ role: 'user', content: summaryInput }]),
       locale(),
     );
-    return await persistCompactedTopic(newSummarySnippet);
+    // Success path: still archive the raw span (best effort) so details dropped by
+    // the summary stay reachable via read_artifact — beyond the mainstream baseline
+    try {
+      const placeholder = await archiveHistory(
+        JSON.stringify(spanToSummarize),
+        currentMdl.model_id,
+        locale(),
+      );
+      return await persistCompactedTopic(withArchiveReference(newSummarySnippet, placeholder));
+    } catch (archiveErr) {
+      console.warn('[Context] span archive failed (summary kept, no read-back):', archiveErr);
+      return await persistCompactedTopic(newSummarySnippet);
+    }
   } catch (e) {
     // summarize failed -> local archive fallback (zero API cost; in Agent mode the
     // read_artifact tool can read the original back via the placeholder ID)
     try {
       const placeholder = await archiveHistory(
-        JSON.stringify(messagesToSummarize),
+        JSON.stringify(spanToSummarize),
         currentMdl.model_id,
         locale(),
       );
-      const outcome = await persistCompactedTopic(placeholder);
+      const outcome = await persistCompactedTopic(withArchiveReference('', placeholder));
       return outcome.kind === 'compressed' ? { kind: 'archived', count: summarizeCount } : outcome;
     } catch (archiveErr) {
       console.error('Failed to generate summary:', e, 'archive also failed:', archiveErr);

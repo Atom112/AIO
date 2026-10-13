@@ -52,7 +52,7 @@
   "agent.prompt.reasoningHigh": "Use deep, multi-step reasoning before answering. In <think> tags, examine assumptions, edge cases, and alternatives before giving a rigorous final answer.",
   "agent.prompt.reasoningLow": "Think briefly before answering. Put the reasoning in <think> tags, then give the final answer. Keep simple questions concise.",
   "agent.prompt.reasoningMedium": "Think at moderate depth before answering. Use <think> tags to analyze the problem, break down steps, and compare approaches before the final answer.",
-  "agent.prompt.summary": "Conversation summary from earlier messages. Use it as context:\n{{summary}}",
+  "agent.prompt.summary": "Compaction checkpoint of the earlier conversation (goals/decisions/progress/critical context). Continue working from it. [Archive #id] markers can be read back via the read_artifact tool in Agent mode:\n{{summary}}",
   "agent.prompt.web": "You can search the web for up-to-date information.",
   "agent.status.cancelled": "Cancelled",
   "agent.status.completed": "Completed",

@@ -79,18 +79,51 @@ pub(crate) async fn compress_context(
 
     let early: Vec<serde_json::Value> = messages.drain(prefix_end..tail_start).collect();
 
-    // 3) Build a bounded summary prompt: first user message (original task) + most recent early messages (~30k chars max, most recent first)
-    let mut blocks: Vec<String> = Vec::new();
-    let mut budget = 30_000usize;
-    for msg in early.iter().rev() {
+    // 3) Build a bounded summary prompt: first user message (original task) + most recent early messages (~30k chars max, most recent first).
+    //    pi-style serialization: assistant tool calls become explicit "[Assistant tool calls]: name(args)"
+    //    lines, tool results get a 2000-char budget (they dominate context size).
+    let block_for = |msg: &serde_json::Value| -> String {
         let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");
         let text = match msg.get("content") {
             Some(serde_json::Value::String(s)) => s.clone(),
             Some(other) => other.to_string(),
             None => String::new(),
         };
-        let text = &text[..text.floor_char_boundary(text.len().min(500))];
-        let block = format!("[{}]: {}\n", role, text);
+        let text = &text[..text.floor_char_boundary(text.len().min(2000))];
+        if role == "assistant" {
+            if let Some(calls) = msg.get("tool_calls").and_then(|v| v.as_array()) {
+                let names = calls
+                    .iter()
+                    .filter_map(|c| {
+                        c.get("function").map(|f| {
+                            let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                            let args = f.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
+                            let args = &args[..args.floor_char_boundary(args.len().min(200))];
+                            format!("{name}({args})")
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                if !names.is_empty() {
+                    return format!("[assistant tool calls]: {names}\n");
+                }
+            }
+        }
+        let label = match role {
+            "user" => "user".to_string(),
+            "assistant" => "assistant".to_string(),
+            "tool" => format!(
+                "tool result ({})",
+                msg.get("name").and_then(|v| v.as_str()).unwrap_or("?")
+            ),
+            other => other.to_string(),
+        };
+        format!("[{label}]: {text}\n")
+    };
+    let mut blocks: Vec<String> = Vec::new();
+    let mut budget = 30_000usize;
+    for msg in early.iter().rev() {
+        let block = block_for(msg);
         if block.len() > budget {
             break;
         }
@@ -109,16 +142,12 @@ pub(crate) async fn compress_context(
                 other => other.to_string(),
             };
             let text = &text[..text.floor_char_boundary(text.len().min(300))];
-            blocks.insert(0, format!("[user]: {}\n", text));
+            blocks.insert(0, format!("[user]: {text}\n"));
         }
     }
 
     let is_en = locale == "en-US";
-    let mut summary_prompt = String::from(if is_en {
-        "Summarize the following AI assistant conversation history. Preserve key decisions, file paths, code changes, and conclusions. Keep it within roughly 1200 words:\n\n"
-    } else {
-        "请总结以下 AI 助手对话的历史，保留关键决策、文件路径、代码变更和结论，控制在 2000 字以内：\n\n"
-    });
+    let mut summary_prompt = String::new();
     for b in &blocks {
         summary_prompt.push_str(b);
     }
@@ -126,15 +155,11 @@ pub(crate) async fn compress_context(
     let body = json!({
         "model": model,
         "messages": [
-            {"role": "system", "content": if is_en {
-                "You are a conversation summarization assistant. Summarize the key points concisely in English."
-            } else {
-                "你是一个对话摘要助手。请用简洁的中文总结对话要点。"
-            }},
+            {"role": "system", "content": crate::commands::llm::summarize_prompt::compaction_instruction(is_en)},
             {"role": "user", "content": summary_prompt}
         ],
         "stream": false,
-        "max_tokens": 1024
+        "max_tokens": 2000
     });
     // Summary generation; on failure (timeout/network/API/empty) fall back to local archiving (snapcompact-style:
     // zero summary API cost, details recoverable via the read_artifact tool), guaranteeing compression never loses early context.

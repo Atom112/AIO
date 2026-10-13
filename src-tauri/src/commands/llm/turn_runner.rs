@@ -27,9 +27,8 @@ use super::checkpoints::finalize_checkpoints;
 use super::client::streaming_http_client;
 use super::handoff::{build_extract_transcript, consume_handoff_doc, write_handoff_doc};
 use super::subagents::{
-    drain_pending_subagent_notices, execute_get_subagent_result, execute_workflow,
-    handle_delegate_task, handle_delegate_tasks, record_subagent_outcome,
-    register_running_subagent,
+    drain_pending_subagent_notices, execute_get_subagent_result, handle_delegate_task,
+    handle_delegate_tasks, record_subagent_outcome, register_running_subagent,
 };
 use super::tasks::{execute_ask_user, execute_task_board_tool};
 use super::tool_dispatch::{
@@ -126,7 +125,7 @@ impl AgentTurnRunner {
 
         // Tool selection: inject a different tool set per agent mode
         // - Plan: research tools only (think + project_map + web)
-        // - Normal/Auto/Workflow: orchestration tools only (delegate_task + create_workflow + think + web + project_map)
+        // - Normal/Auto: orchestration tools only (delegate_task + think + web + project_map)
         // - Chat + web search: web tools only
         // - Pure chat: no tools
         // MCP tool pass-through: in Agent mode, inject connected tools from the assistant's selected servers.
@@ -183,15 +182,13 @@ impl AgentTurnRunner {
         let mut round: u32 = 0;
         let mut final_error: Option<String> = None;
         let mut was_cancelled = false;
-        // Workflow mode: flag whether create_workflow has been called
-        let mut workflow_called = false;
         // Token usage accumulated across rounds (for cost stats)
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
         let mut total_cached_tokens: u32 = 0;
         // Prefix-stability regression check: flag that compression just happened, to record cache hits on the first post-compression round
         let mut compressed_this_run: bool = false;
-        // Unfinished-task tracking (handoff doc): forced stop (round limit / workflow not called) or error
+        // Unfinished-task tracking (handoff doc): forced stop (round limit) or error
         let mut incomplete_stop: bool = false;
         let mut last_finish_reason: Option<String> = None;
         // Peak context tokens: input_tokens of the last API call (for the context-window display)
@@ -203,22 +200,6 @@ impl AgentTurnRunner {
         // retries can burn the whole round budget probing). Threshold is
         // configurable via `toolBreakerThreshold` (0 = default 6).
         let mut tool_breaker = ToolFailureBreaker::new(app_config.tool_breaker_threshold);
-
-        // Workflow mode: inject the mandatory system message before the LLM loop (inside the stable prefix to favor prompt cache and compression protection)
-        if agent_mode == AgentMode::Workflow {
-            messages_for_api.insert(
-                2.min(messages_for_api.len()),
-                serde_json::json!({
-                    "role": "system",
-                    "content": concat!(
-                        "你正处于「工作流模式」。首要任务：分析用户请求 → 调用 `create_workflow` 创建并执行工作流。\n",
-                        "不得直接修改文件、执行命令或调用其他工具。\n",
-                        "典型序列：requirements → coder → reviewer；explorer → coder；debugger → coder；requirements → architect → coder → tester。\n",
-                        "简单请求可用单步工作流。请立即调用 create_workflow 开始。"
-                    )
-                }),
-            );
-        }
 
         // Project memory auto-injection: retrieve once from the first user message and insert at the stable prefix slot (index=1)
         if memory_effective && app_config.memory_auto_inject {
@@ -298,15 +279,12 @@ impl AgentTurnRunner {
         }
         // Context budget tracking: token-level and model-aware (threshold/reserve budgets derived from the window before task start)
         // Configurable max tool-call rounds per turn (LOOP-15: default 50 per
-        // DEFAULT_MAX_TOOL_ROUNDS — the historic comment claimed 25); 0 = unlimited
+        // DEFAULT_MAX_TOOL_ROUNDS — the historic comment claimed 25); -1 = unlimited
         // (full-autonomy opt-in, see AgentLimits::effective_max_rounds)
         let max_rounds = super::effective_max_rounds(
             app_config.max_tool_rounds,
             crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
         );
-        // Max reminders to call create_workflow in Workflow mode (bounded, avoids infinite loops)
-        let max_workflow_reminders: u32 = 2;
-        let mut workflow_reminders: u32 = 0;
         // Max continuation retries when output is truncated (finish_reason="length")
         const MAX_LENGTH_RETRIES: u32 = 2;
         let mut length_retries: u32 = 0;
@@ -503,37 +481,6 @@ impl AgentTurnRunner {
 
             // No tool calls -> task complete, end the whole turn
             if round_result.tool_calls.is_empty() {
-                if agent_mode == AgentMode::Workflow && !workflow_called {
-                    // Workflow mode: reminders are bounded (max_workflow_reminders) to avoid an infinite loop
-                    if workflow_reminders < max_workflow_reminders {
-                        workflow_reminders += 1;
-                        messages_for_api.push(serde_json::json!({
-                            "role": "system",
-                            "content": "【工作流模式强制指令】你尚未调用 create_workflow 工具。请立即分析用户请求并调用 create_workflow 来创建和执行工作流。"
-                        }));
-                        continue;
-                    }
-                    // Model still refuses after bounded reminders -> respect the exit signal and stop gracefully
-                    incomplete_stop = true;
-                    let note = "\n\n⚠️ 模型未按工作流模式调用 create_workflow，已停止。您可以切回普通/自动模式继续。";
-                    accumulated_content.push_str(note);
-                    let _ = window.emit(
-                        ev::LLM_CHUNK,
-                        StreamPayload {
-                            assistant_id: assistant_id_c.clone(),
-                            topic_id: topic_id_c.clone(),
-                            content: note.into(),
-                            done: false,
-                            error: None,
-                            input_tokens: None,
-                            output_tokens: None,
-                            context_tokens: None,
-                            cached_input_tokens: None,
-                            images: None,
-                        },
-                    );
-                    break 'outer;
-                }
                 break 'outer;
             }
 
@@ -628,7 +575,6 @@ impl AgentTurnRunner {
                             mcp_server_ids: mcp_server_ids_c.clone(),
                             semaphore: subagent_semaphore.clone(),
                             locale: locale_c.clone(),
-                            stats: None,
                         };
                         // 后台收尾通知所需的归属信息（move 进 spawn）
                         let assistant_id_clone = assistant_id_c.clone();
@@ -706,7 +652,6 @@ impl AgentTurnRunner {
                             mcp_server_ids: mcp_server_ids_c.clone(),
                             semaphore: subagent_semaphore.clone(),
                             locale: locale_c.clone(),
-                            stats: None,
                         };
 
                         let fut =
@@ -738,7 +683,6 @@ impl AgentTurnRunner {
                         mcp_server_ids: mcp_server_ids_c.clone(),
                         semaphore: subagent_semaphore.clone(),
                         locale: locale_c.clone(),
-                        stats: None,
                     };
 
                     let fut =
@@ -756,108 +700,6 @@ impl AgentTurnRunner {
                         execute_get_subagent_result(&app_clone, &args_val_clone, &token_clone).await
                     });
                     parallel_futures.push((i, fut));
-                } else if server_id.as_deref() == Some(crate::core::ids::BUILTIN_SERVER_ID)
-                    && tc.name == tool_names::CREATE_WORKFLOW
-                {
-                    // Workflow creation: parse arguments and run all steps sequentially
-                    workflow_called = true;
-                    const MAX_WORKFLOW_STEPS: usize = 20;
-                    let title = args_val["title"].as_str().unwrap_or("Workflow").to_string();
-                    let steps_raw = args_val["steps"].as_array();
-                    let tool_result = if let Some(steps_arr) = steps_raw {
-                        // LOOP-12: step count must stay bounded — every step is a full
-                        // subagent turn, so an unbounded workflow silently bypasses the
-                        // main-loop round budget (a 200-step workflow = 200 subagent runs).
-                        if steps_arr.len() > MAX_WORKFLOW_STEPS {
-                            Err(ierr!(
-                                "create_workflow: 步骤数超过上限 {}（当前 {}）。请精简步骤或拆分为多个工作流",
-                                "create_workflow: step count exceeds the cap of {} (got {}). Reduce the steps or split into multiple workflows",
-                                MAX_WORKFLOW_STEPS,
-                                steps_arr.len()
-                            ))
-                        } else if steps_arr.is_empty() {
-                            Err(ierr!(
-                                "create_workflow: 'steps' 数组不能为空",
-                                "create_workflow: 'steps' array must not be empty"
-                            ))
-                        } else {
-                            let mut workflow_steps: Vec<WorkflowStep> = Vec::new();
-                            let mut parse_error: Option<String> = None;
-                            for (idx, step) in steps_arr.iter().enumerate() {
-                                let profile =
-                                    step["profile"].as_str().unwrap_or("general").to_string();
-                                let name = step["name"].as_str().unwrap_or("").to_string();
-                                let task = step["task"].as_str().unwrap_or("").to_string();
-                                let continue_on_error =
-                                    step["continue_on_error"].as_bool().unwrap_or(false);
-                                if task.is_empty() {
-                                    parse_error = Some(ierr!(
-                                        "create_workflow: 步骤 {} 缺少 'task' 字段",
-                                        "create_workflow: step {} is missing the 'task' field",
-                                        idx + 1
-                                    ));
-                                    break;
-                                }
-                                workflow_steps.push(WorkflowStep {
-                                    step_id: format!("step-{}", idx + 1),
-                                    profile_id: profile,
-                                    name,
-                                    task_description: task,
-                                    // Harness round 5: failed steps abort the chain
-                                    // by default; opt-out per step.
-                                    continue_on_error,
-                                    status: WorkflowStepStatus::Pending,
-                                    result: None,
-                                    started_at: None,
-                                    duration: None,
-                                });
-                            }
-                            if let Some(err) = parse_error {
-                                Err(err)
-                            } else {
-                                let workflow = Workflow {
-                                    workflow_id: uuid::Uuid::new_v4().to_string(),
-                                    title,
-                                    steps: workflow_steps,
-                                };
-                                execute_workflow(
-                                    &window,
-                                    &app_c,
-                                    &client,
-                                    &api_url,
-                                    &api_key,
-                                    &model,
-                                    &assistant_id_c,
-                                    &topic_id_c,
-                                    &workflow,
-                                    project_id_c.as_deref(),
-                                    subagent_semaphore.clone(),
-                                    &custom_profiles_c,
-                                    &profile_overrides_c,
-                                    &mcp_server_ids_c,
-                                    &token_inner,
-                                    &locale_c,
-                                    &agent_mode,
-                                )
-                                .await
-                            }
-                        }
-                    } else {
-                        Err(ierr!(
-                            "create_workflow: 缺少 'steps' 数组",
-                            "create_workflow: missing 'steps' array"
-                        ))
-                    };
-
-                    // Shared display-triple conversion (round_artifacts)
-                    let (content_text, result_value, is_error) =
-                        super::round_artifacts::tool_result_display(&tool_result);
-
-                    exec_results[i] = Some(ToolExecResult {
-                        content_text,
-                        result_value,
-                        is_error,
-                    });
                 } else {
                     // Non-delegate tool: execute immediately in order
                     // Extract the file path before tool execution (args_val may be moved into the MCP call)
@@ -1177,7 +1019,7 @@ impl AgentTurnRunner {
         }
 
         // ===== Incomplete task -> handoff document =====
-        // Triggered by: forced stop (round limit / workflow not called), error, or a truncated final response (length)
+        // Triggered by: forced stop (round limit), error, or a truncated final response (length)
         let ended_incomplete = !was_cancelled
             && (incomplete_stop
                 || final_error.is_some()

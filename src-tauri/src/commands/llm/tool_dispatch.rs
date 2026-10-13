@@ -178,46 +178,6 @@ pub(crate) fn classify_outcome(is_error: bool, result_text: &str) -> ToolOutcome
     }
 }
 
-/// Cross-thread tool-call statistics for one subagent run (harness round 5:
-/// workflow failure gating consumes this — a step whose tool calls ALL failed
-/// is a hard environment failure even though the subagent returned a summary).
-#[derive(Default)]
-pub(crate) struct ToolCallStats {
-    total: std::sync::atomic::AtomicUsize,
-    failed: std::sync::atomic::AtomicUsize,
-}
-
-impl ToolCallStats {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Records one tool-call outcome (atomic: the subagent loop's parallel phase
-    /// runs read-only tools concurrently while serial results land interleaved).
-    pub(crate) fn record(&self, is_error: bool) {
-        use std::sync::atomic::Ordering::Relaxed;
-        self.total.fetch_add(1, Relaxed);
-        if is_error {
-            self.failed.fetch_add(1, Relaxed);
-        }
-    }
-
-    pub(crate) fn total(&self) -> usize {
-        self.total.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    pub(crate) fn failed(&self) -> usize {
-        self.failed.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Hard-failure signature: at least one call happened and every single one
-    /// errored (the round-5 explorer step: its only read_file failed, yet the
-    /// step was counted "completed" and the chain continued on garbage).
-    pub(crate) fn all_failed(&self) -> bool {
-        self.total() > 0 && self.failed() == self.total()
-    }
-}
-
 /// Policy for tools coming from the built-in filesystem MCP server (`BUILTIN_FS_SERVER_ID`).
 ///
 /// Why filtering is mandatory: the fs server runs as a separate stdio subprocess rooted
@@ -299,12 +259,13 @@ pub(crate) struct MainToolSet {
 }
 
 /// Assemble the main-loop tool set by agent mode:
+/// - 只读 (Off): read-only set (fs reads/search + git reads + LSP) + think + project_map + web
 /// - Plan: research tools only (think + project_map + web)
-/// - Normal/Auto/Workflow: orchestration tools (delegate_task(s) + create_workflow + think + web + project_map)
+/// - Normal/Auto: orchestration tools (delegate_task(s) + think + web + project_map)
 ///   x builtin tool set (per tool_access: hybrid default = read-only tools direct + mutations
 ///   via subagent; orchestrator = legacy strict orchestrator; full = all builtin tools)
-/// - chat + web search: web tools only
-/// - plain chat: no tools
+/// - chat (Off without a project) + web search: web tools only
+/// - plain chat (Off without a project): no tools
 ///
 /// Injected additionally on demand: MCP tools (servers enabled on the assistant), memory
 /// tools (global default x project-level override), read_skill (when Skills are enabled),
@@ -365,8 +326,67 @@ pub(crate) fn build_main_tool_set(
         }
 
         (plan_tools, plan_map)
+    } else if *agent_mode == AgentMode::Off && project_id.is_some() {
+        // 只读 (Off with a project): read-only agent — the parallel-safe builtin set
+        // (fs reads/search + git reads + LSP) is held directly, plus think /
+        // project_map / web. Mutations are denied by permission rules (Off arm);
+        // no delegation — subagents can write, which would bypass read-only.
+        let mut ro_tools: Vec<ToolSpec> = Vec::new();
+        let mut ro_map: HashMap<String, String> = HashMap::new();
+
+        // think
+        let think_spec = crate::utils::think::tool_spec();
+        ro_map.insert(
+            think_spec.function.name.clone(),
+            crate::core::ids::BUILTIN_SERVER_ID.into(),
+        );
+        ro_tools.push(think_spec);
+
+        // project_map
+        let pm_spec = crate::utils::project_map::tool_spec();
+        ro_map.insert(
+            pm_spec.function.name.clone(),
+            crate::core::ids::BUILTIN_SERVER_ID.into(),
+        );
+        ro_tools.push(pm_spec);
+
+        // web tools
+        for spec in web_tools::get_web_tool_specs() {
+            ro_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
+            ro_tools.push(spec);
+        }
+
+        // Read-only builtin set (same predicate as the hybrid main-agent set)
+        let project_root = file_tools::resolve_project_root(app, project_id).ok();
+        let git_ok = project_root
+            .as_deref()
+            .map(git_tools::is_git_repo)
+            .unwrap_or(false);
+        let builtin_specs: Vec<ToolSpec> = file_tools::get_file_tool_specs()
+            .into_iter()
+            .chain(
+                git_tools::get_git_tool_specs()
+                    .into_iter()
+                    .filter(|_| git_ok),
+            )
+            .chain(lsp_agent_tools::get_all_lsp_tool_specs())
+            .collect();
+        for spec in builtin_specs {
+            if is_parallel_safe(&spec.function.name) {
+                ro_map.insert(
+                    spec.function.name.clone(),
+                    crate::core::ids::BUILTIN_SERVER_ID.into(),
+                );
+                ro_tools.push(spec);
+            }
+        }
+
+        (ro_tools, ro_map)
     } else if is_agent_mode {
-        // Normal/Auto/Workflow: orchestration tools only
+        // Normal/Auto: orchestration tools only
         let mut orch_tools: Vec<ToolSpec> = Vec::new();
         let mut orch_map: HashMap<String, String> = HashMap::new();
 
@@ -393,14 +413,6 @@ pub(crate) fn build_main_tool_set(
             crate::core::ids::BUILTIN_SERVER_ID.into(),
         );
         orch_tools.push(get_result_spec);
-
-        // create_workflow
-        let workflow_spec = subagent::create_workflow_tool_spec();
-        orch_map.insert(
-            workflow_spec.function.name.clone(),
-            crate::core::ids::BUILTIN_SERVER_ID.into(),
-        );
-        orch_tools.push(workflow_spec);
 
         // think
         let think_spec = crate::utils::think::tool_spec();
@@ -496,7 +508,7 @@ pub(crate) fn build_main_tool_set(
     } else {
         (Vec::new(), std::collections::HashMap::new())
     };
-    // MCP tool injection: agent modes (Normal/Auto/Workflow) inject tools from the servers
+    // MCP tool injection: agent modes (Normal/Auto) inject tools from the servers
     // enabled on the assistant; Plan mode keeps a pure research tool set (MCP tool side
     // effects unknown, they fall back to Ask). On a name conflict (taken by a builtin tool
     // or another server) the tool is renamed to mcp__<server>__<tool>, keeping routing deterministic.
@@ -607,7 +619,6 @@ mod tests {
             // orchestration tools: each goes through its own dedicated path
             tool_names::DELEGATE_TASK,
             tool_names::DELEGATE_TASKS,
-            tool_names::CREATE_WORKFLOW,
             tool_names::GET_SUBAGENT_RESULT,
             // unknown tool
             "some_mcp_tool",
@@ -1001,43 +1012,5 @@ mod tests {
         // 6th trips: disables and returns None (the disable message replaces warnings)
         assert!(b.record("t", ToolOutcome::EnvBlocked).is_none());
         assert!(b.is_disabled("t"));
-    }
-
-    // ====== ToolCallStats (harness round 5, workflow failure gating) ======
-
-    /// all_failed is the hard-failure signature: >0 calls and every one errored.
-    #[test]
-    fn stats_all_failed_signature() {
-        let s = ToolCallStats::new();
-        assert!(!s.all_failed(), "无调用不算失败");
-        s.record(true);
-        assert!(
-            s.all_failed(),
-            "唯一调用失败 = 硬失败（round-5 explorer 场景）"
-        );
-        s.record(false);
-        assert!(!s.all_failed(), "有成功调用则不判硬失败");
-        assert_eq!(s.total(), 2);
-        assert_eq!(s.failed(), 1);
-    }
-
-    /// Mixed outcomes across threads (atomicity smoke).
-    #[test]
-    fn stats_concurrent_mixed_outcomes() {
-        let s = std::sync::Arc::new(ToolCallStats::new());
-        let mut joins = Vec::new();
-        for t in 0..4 {
-            let s2 = s.clone();
-            joins.push(std::thread::spawn(move || {
-                for i in 0..100 {
-                    s2.record((t * 100 + i) % 3 == 0);
-                }
-            }));
-        }
-        for j in joins {
-            j.join().unwrap();
-        }
-        assert_eq!(s.total(), 400);
-        assert_eq!(s.failed(), 134); // per thread: 34 of 100 (i%3==0)
     }
 }

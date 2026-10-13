@@ -60,7 +60,6 @@ import {
   profileModelOverrides,
   allAvailableModels,
   customSubagentProfiles,
-  workflowState,
   isChatMode,
   projects,
   setShowProjectCreateModal,
@@ -99,7 +98,6 @@ import TopicSidebar from './components/TopicSidebar';
 import { Portal } from 'solid-js/web';
 import ShareModal from './components/ShareModal';
 import ProblemsPanel from './components/ProblemsPanel';
-import WorkflowVisualization from './components/WorkflowVisualization';
 
 // getModelContextWindow (and the turn-finalization effects checkAndRename /
 // checkAndSummarize) moved to hooks/chatTurnEffects.ts — CHAT-12: the global stream
@@ -761,10 +759,6 @@ const ChatPage: Component = () => {
           when={!activeSubagentView()}
           fallback={<SubagentConversationView topic={activeTopic()} />}
         >
-          <Show when={workflowState()}>
-            <WorkflowVisualization />
-          </Show>
-
           {/* Checkpoint resume entry: banner for crash-orphaned turns */}
           <Show when={activeCheckpoint() && !isThinking()}>
             <button

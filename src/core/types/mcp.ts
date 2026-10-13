@@ -78,7 +78,7 @@ export interface McpServerConfig {
   enabledTools: string[];
   /** Whether to auto-connect at app startup (whether an assistant uses this server is governed by Assistant.mcpServerIds) */
   autoStart: boolean;
-  /** Whether trusted: untrusted server tools require per-call approval even in Auto/Workflow modes */
+  /** Whether trusted: untrusted server tools require per-call approval even in full-permission mode */
   trusted?: boolean;
   hasStoredSecret: boolean;
   fromCatalog?: CatalogRef;

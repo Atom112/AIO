@@ -42,12 +42,6 @@ export const EVENTS = {
   subagentDone: 'subagent-done',
   subagentError: 'subagent-error',
 
-  /** Workflow started / step started / step completed / completed */
-  workflowStart: 'workflow-start',
-  workflowStepStart: 'workflow-step-start',
-  workflowStepComplete: 'workflow-step-complete',
-  workflowComplete: 'workflow-complete',
-
   /** MCP server status change / stderr / tool-list change */
   mcpServerStatus: 'mcp-server-status',
   mcpServerStderr: 'mcp-server-stderr',

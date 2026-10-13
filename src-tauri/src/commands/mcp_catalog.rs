@@ -651,7 +651,7 @@ pub async fn install_mcp_catalog_server(
         enabled_tools: Vec::new(),
         auto_start: true,
         has_stored_secret: !request.secrets.is_empty(),
-        // Catalog-installed servers are untrusted by default: tools require per-call approval in Auto/Workflow mode, marked trusted only after user confirmation
+        // Catalog-installed servers are untrusted by default: tools require per-call approval in Auto (完全权限) mode, marked trusted only after user confirmation
         trusted: false,
         from_catalog: Some(CatalogRef {
             catalog_id: "official-mcp-registry".into(),

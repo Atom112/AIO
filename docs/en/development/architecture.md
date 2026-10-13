@@ -100,14 +100,14 @@ On window destruction, stream tasks are cancelled, local engines are terminated,
 5. Built-in tools or the MCP Server execute and feed results back to the model.
 6. The Agent continues iterating; the frontend displays steps, sub-agents and usage throughout.
 
-Plan mode only researches and outputs a plan; workflow mode splits and auto-executes tasks. Sub-agents use a role-constrained toolset and cannot delegate further.
+Plan mode only researches and outputs a plan; read-only mode keeps just the read/search/web toolset and never modifies anything. Sub-agents use a role-constrained toolset and cannot delegate further.
 
 ### Tool Execution Semantics
 
 - **Parallel dispatch**: read-only built-in tools within the same response block execute concurrently (`FuturesUnordered`); mutating tools and MCP tools run serially in original order; `role:tool` backfill preserves index order. Toggle: `parallelToolExecution`.
 - **Multi-agent write coordination**: mutating file tools all funnel through the single `execute_builtin_tool` choke point — a per-file exclusive lock (`core/file_locks.rs`, 120-second wait timeout reporting the holder; lock keys are case-folded on Windows, long waits are traced) plus last-writer tracking; after another agent modified a file, `replace_in_file` must carry `anchor_hash` and an overwriting `write_file` must carry `expect_hash` (lost updates become recoverable re-read errors); `read_file` returns the digest of the complete file; writes go through an atomic tmp+rename (preserving the target's permission bits, falling back to a direct write with a trace). The built-in filesystem MCP server's tool variants are filtered from agent tool sets per `FsServerPolicy` (mutating ones dropped outright, read ones deduped), so no file write can bypass the choke point; git write operations (`git_add`/`git_commit`/`checkout_branch`) and files written by shell commands still bypass the locks, and a worktree merge refreshes last-writer for every changed file to force re-anchoring on the next write.
 - **Main agent tool set** (`mainAgentToolAccess`): `hybrid` by default — read-only tools called directly, mutating work delegated; `orchestrator` is the legacy strict mode; `full` gives the main agent all built-in tools.
-- **MCP tool injection**: tools from servers enabled for the assistant are injected into the main agent and the `general` subagent (`allow_mcp_tools`); name collisions are rewritten to `mcp__<server>__<tool>`; untrusted servers force per-call approval in Auto/Workflow mode (`trusted` field).
+- **MCP tool injection**: tools from servers enabled for the assistant are injected into the main agent and the `general` subagent (`allow_mcp_tools`); name collisions are rewritten to `mcp__<server>__<tool>`; untrusted servers force per-call approval even in full-permission mode (`trusted` field).
 - **Model call retry**: the POST + status-check phase retries transport errors and 429/5xx with 1s/2s/4s backoff (`modelCallRetries`, default 3); mid-stream errors are not retried.
 - **Background subagents**: `delegate_task(wait=false)` handles and cancellation tokens are registered in `SubagentHandles` and can be stopped individually via the `stop_subagent` command (parent cancel cascades).
 

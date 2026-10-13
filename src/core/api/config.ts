@@ -12,8 +12,6 @@ export interface AppConfigPatch {
   subagentIsolationMode?: string;
   /** Main agent built-in tool access: "hybrid" | "full" | "orchestrator" */
   mainAgentToolAccess?: string;
-  /** Auto/Workflow full-autonomy opt-in (sandbox auto-expansion + network-gate bypass) */
-  fullAutoMode?: boolean;
 }
 
 /**

@@ -23,7 +23,7 @@ The chat input area provides the following controls:
 - **Model**: Select a remote or local model for the current assistant.
 - **Reasoning Intensity**: Off, Low, Medium, High. AIO injects corresponding prompts, and when the Provider returns native `reasoning_content`, it is displayed separately.
 - **Web Search**: Allows the Agent to use `web_search` and `web_fetch`. Normal chat only receives a web search prompt and does not automatically get project tools.
-- **Agent Mode**: Switch between Chat, Normal, Auto, Plan, and Workflow.
+- **Agent Mode**: Switch between Read-only, Workspace edit, Full permission, and Plan.
 
 `Ctrl+Shift+R` cycles through reasoning intensity levels, `Ctrl+Shift+S` toggles web search, and `Esc` stops the current generation. Settings are persisted in the local WebView.
 
@@ -54,24 +54,16 @@ Both sidebars support collapsing to expand the message area:
 
 ## Agent Modes
 
-| Mode     | Reading and Analysis                                                      | Write File / Git Changes                                              | Shell and Other Tools                                                                 |
-| -------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Chat     | No Agent tools available                                                  | Denied                                                                | Denied                                                                                |
-| Normal   | File search, reading, Git status, etc. allowed by default                 | Writing, deletion, `git add`, `git commit`, etc. require confirmation | Tools not explicitly allowed require confirmation                                     |
-| Auto     | Regular read/write, Git changes, and command execution allowed by default | File deletions still require confirmation                             | Still constrained by path sandbox, dangerous command detection, and custom deny rules |
-| Plan     | Read, search, Git status/Diff/Log allowed                                 | Writing, directory creation, deletion, and Git changes denied         | Web tools denied; other MCP tools evaluated per rules                                 |
-| Workflow | Reads and executes by split steps                                         | Regular writes execute automatically, deletions require confirmation  | Suitable for well-defined multi-step tasks with automated verification                |
+| Mode            | Reading and Analysis                         | Write File / Git Changes                                            | Shell and Other Tools                                       |
+| --------------- | -------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Read-only       | File reads, search, Git history, web queries | Denied                                                              | Denied; without a project selected this is pure chat        |
+| Workspace edit  | Allowed by default                           | Writes, edits, directory creation run directly; deletions still ask | Commands, `git add`/`git commit`, etc. require confirmation |
+| Full permission | Allowed by default                           | Allowed by default                                                  | Commands run directly; sandbox denials auto-expand          |
+| Plan            | Read, search, Git status/Diff/Log allowed    | Writing, directory creation, deletion, and Git changes denied       | Web tools allowed; other MCP tools evaluated per rules      |
 
-### Workflow Mode
+### Full-Permission Mode
 
-Workflow mode splits a task into independent steps and executes them serially or in parallel. The interface shows a horizontal pipeline diagram (`WorkflowVisualization` component) displaying step names, status icons (pending -> running -> completed -> failed), and elapsed time. Suitable for well-defined multi-step tasks with automated acceptance criteria.
-
-#### Differences from Plan Mode
-
-- **Plan Mode**: Researches and outputs a plan but does not execute it.
-- **Workflow Mode**: Automatically splits steps and executes them; regular writes execute automatically, deletions require confirmation.
-
-Auto and Workflow modes significantly reduce interactive confirmation but are not a bypass for security boundaries. `deny` rules in `.aio/permissions.json` take precedence over `allow` rules, and file paths remain constrained to the project root directory.
+Entering full-permission mode first shows a risk confirmation: in this mode commands (including network-declaring ones) no longer ask per command, and sandbox-denied commands auto-apply the recommended expansion — suitable for fully trusted automation. `deny` rules in `.aio/permissions.json` still take precedence, and file paths remain constrained to the project root directory.
 
 ![Agent File Diff and Approval](../../assets/screenshots/agent-diff-approval.webp)
 
@@ -82,7 +74,7 @@ Agent mode provides several built-in tools. In addition to file, Git, and search
 ### execute_command
 
 - **Purpose**: Execute system commands in the project directory, returning stdout, stderr, and the exit code.
-- **Permission Model**: Requires approval in `Normal` mode, auto-allowed in `Auto`/`Workflow` mode, denied in `Chat`/`Plan` mode.
+- **Permission Model**: Requires approval in `Workspace edit` mode, auto-allowed in `Full permission` mode, denied in `Read-only`/`Plan` mode.
 - **Security**: Child processes are isolated via a Windows Job Object sandbox (`src-tauri/src/utils/sandbox.rs`); dangerous command detection (`shell_tools::check_dangerous_command`) catches destructive, installation, and network operations.
 - **Dangerous Command Categories**:
   - Destructive: `rm`/`del`/`format`;

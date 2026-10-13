@@ -592,8 +592,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                 normal: t('agent.mode.normal'),
                 auto: t('agent.mode.auto'),
                 plan: t('agent.mode.plan'),
-                workflow: t('agent.mode.workflow'),
-              }[mode as 'normal' | 'auto' | 'plan' | 'workflow'] || mode;
+              }[mode as 'normal' | 'auto' | 'plan'] || mode;
             return (
               <div
                 class="flex flex-col rounded-2xl text-xs"

@@ -30,12 +30,6 @@ struct AppConfigDisk {
         rename = "subagentIsolationMode"
     )]
     subagent_isolation_mode: String,
-    /// Workflow step permission mode ("inherit" default / "auto" legacy behavior)
-    #[serde(
-        default = "crate::core::models::default_workflow_step_mode",
-        rename = "workflowStepMode"
-    )]
-    workflow_step_mode: String,
     /// Whether read-only tools within the same response block run concurrently
     #[serde(
         default = "crate::core::models::default_true",
@@ -72,10 +66,6 @@ struct AppConfigDisk {
     /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
     #[serde(default, rename = "toolBreakerThreshold")]
     tool_breaker_threshold: u32,
-    /// Auto/Workflow full-autonomy opt-in (sandbox auto-expansion + network-gate
-    /// bypass; see AppConfig.full_auto_mode)
-    #[serde(default, rename = "fullAutoMode")]
-    full_auto_mode: bool,
     #[serde(default, rename = "memoryEnabled")]
     memory_enabled: bool,
     #[serde(
@@ -158,7 +148,6 @@ impl AppConfigDisk {
                 .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32),
             max_concurrent_subagents: cfg.max_concurrent_subagents.unwrap_or(5),
             subagent_isolation_mode: cfg.subagent_isolation_mode.clone(),
-            workflow_step_mode: cfg.workflow_step_mode.clone(),
             parallel_tool_execution: cfg.parallel_tool_execution,
             main_agent_tool_access: cfg.main_agent_tool_access.clone(),
             model_call_retries: cfg.model_call_retries,
@@ -166,7 +155,6 @@ impl AppConfigDisk {
             sandbox_windows: cfg.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: cfg.sandbox_windows_toolchain_dirs.clone(),
             tool_breaker_threshold: cfg.tool_breaker_threshold,
-            full_auto_mode: cfg.full_auto_mode,
             memory_enabled: cfg.memory_enabled,
             memory_auto_inject: cfg.memory_auto_inject,
             memory_auto_extract: cfg.memory_auto_extract,
@@ -215,7 +203,6 @@ impl AppConfigDisk {
                 n => n,
             }),
             subagent_isolation_mode: self.subagent_isolation_mode.clone(),
-            workflow_step_mode: self.workflow_step_mode,
             parallel_tool_execution: self.parallel_tool_execution,
             main_agent_tool_access: self.main_agent_tool_access,
             model_call_retries: self.model_call_retries,
@@ -223,7 +210,6 @@ impl AppConfigDisk {
             sandbox_windows: self.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: self.sandbox_windows_toolchain_dirs.clone(),
             tool_breaker_threshold: self.tool_breaker_threshold,
-            full_auto_mode: self.full_auto_mode,
             memory_enabled: self.memory_enabled,
             memory_auto_inject: self.memory_auto_inject,
             memory_auto_extract: self.memory_auto_extract,
@@ -252,7 +238,6 @@ impl Default for AppConfigDisk {
             max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32,
             max_concurrent_subagents: 5,
             subagent_isolation_mode: crate::core::models::default_subagent_isolation_mode(),
-            workflow_step_mode: crate::core::models::default_workflow_step_mode(),
             parallel_tool_execution: crate::core::models::default_true(),
             main_agent_tool_access: crate::core::models::default_main_agent_tool_access(),
             model_call_retries: crate::core::models::default_model_call_retries(),
@@ -260,7 +245,6 @@ impl Default for AppConfigDisk {
             sandbox_windows: crate::core::models::default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
             tool_breaker_threshold: 0,
-            full_auto_mode: false,
             memory_enabled: false,
             memory_auto_inject: crate::core::models::default_true(),
             memory_auto_extract: crate::core::models::default_true(),

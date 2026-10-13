@@ -77,9 +77,11 @@ pub struct PermissionsFile {
     pub updated_at: String,
     /// Custom rule list (overrides the built-in default rules).
     ///
-    /// Effective semantics: Deny wins globally (regardless of priority); other actions rank by priority high -> low,
-    /// with custom rules winning ties. Path rules (path_pattern) support path / basePath /
-    /// file_path / filePath / url plus files / paths array arguments (see path_matches).
+    /// Effective semantics: a user/session Deny wins globally (regardless of priority);
+    /// everything else — built-in and custom Allow/Ask, and built-in mode fallbacks —
+    /// ranks by priority high -> low, with custom rules winning ties. Path rules
+    /// (path_pattern) support path / basePath / file_path / filePath / url plus
+    /// files / paths array arguments (see path_matches).
     #[serde(default)]
     pub rules: Vec<PermissionRule>,
 }
@@ -143,15 +145,111 @@ fn rf(
 pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
     match mode {
         AgentMode::Off => vec![
-            // Off mode must not issue tool calls: deny everything.
+            // 只读 (read-only) mode: reads/search/web/think allowed, everything else
+            // denied. Allows sit ABOVE the deny fallback (priority 90 vs 10) so
+            // deliberate custom Allow rules can still opt a specific tool in and
+            // user/session Deny rules still win globally.
             rf(
-                "builtin-off-deny-all",
+                "builtin-readonly-allow-read",
+                tool_names::READ_FILE,
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-list",
+                tool_names::LIST_DIRECTORY,
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-glob",
+                "glob",
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-search",
+                "search_*",
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-git-read",
+                "git_status",
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-git-diff",
+                "git_diff",
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-git-log",
+                "git_log",
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-web",
+                "web_*",
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-think",
+                tool_names::THINK,
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            rf(
+                "builtin-readonly-allow-project-map",
+                tool_names::PROJECT_MAP,
+                &[AgentMode::Off],
+                PermissionAction::Allow,
+                None,
+                None,
+                90,
+            ),
+            // Everything else (writes / deletes / commands / MCP / memory writes):
+            // denied. Priority 10 = the bottom tier; custom Allow rules at priority 10
+            // win ties (custom first), user/session Deny wins globally.
+            rf(
+                "builtin-readonly-deny-other",
                 "*",
                 &[AgentMode::Off],
                 PermissionAction::Deny,
                 None,
                 None,
-                100,
+                10,
             ),
         ],
 
@@ -175,18 +273,25 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
-            // Write operations: require confirmation.
+            // Write operations: allowed without confirmation (工作区内修改 — the
+            // sandbox still confines paths to the project root).
             r(
-                "builtin-normal-ask-write",
+                "builtin-normal-allow-write",
                 tool_names::WRITE_FILE,
                 &[AgentMode::Normal],
-                PermissionAction::Ask,
+                PermissionAction::Allow,
             ),
             r(
-                "builtin-normal-ask-replace",
+                "builtin-normal-allow-replace",
                 tool_names::REPLACE_IN_FILE,
                 &[AgentMode::Normal],
-                PermissionAction::Ask,
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-allow-mkdir",
+                tool_names::MAKE_DIRECTORY,
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
             ),
             // Git read operations: auto-allowed.
             r(
@@ -207,7 +312,8 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
-            // Git write operations: require confirmation.
+            // Git write operations: require confirmation (history rewriting is beyond
+            // "edit the workspace").
             r(
                 "builtin-normal-ask-git-add",
                 "git_add",
@@ -220,13 +326,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Ask,
             ),
-            r(
-                "builtin-normal-ask-mkdir",
-                tool_names::MAKE_DIRECTORY,
-                &[AgentMode::Normal],
-                PermissionAction::Ask,
-            ),
-            // Delete operations: require confirmation.
+            // Delete operations: require confirmation (destructive — beyond "edit").
             r(
                 "builtin-normal-ask-delete",
                 tool_names::DELETE_FILE,
@@ -345,7 +445,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Auto],
                 PermissionAction::Allow,
             ),
-            // Delete: auto-allowed in Auto/Workflow. Consistency: execute_command
+            // Delete: auto-allowed in 完全权限 (Auto). Consistency: execute_command
             // (a strict superset of destructive capability — `del`/`rm` are just
             // commands) is already Allow here, and delete_file stays confined to the
             // project sandbox. Normal mode keeps Ask (it confirms every mutation).
@@ -375,76 +475,6 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
         ],
 
-        AgentMode::Workflow => vec![
-            // Identical to the Auto mode rules: fully automatic, except file deletion which still asks.
-            r(
-                "builtin-workflow-allow-fs-read",
-                tool_names::READ_FILE,
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            r(
-                "builtin-workflow-allow-fs-list",
-                tool_names::LIST_DIRECTORY,
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            r(
-                "builtin-workflow-allow-fs-write",
-                tool_names::WRITE_FILE,
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            r(
-                "builtin-workflow-allow-fs-edit",
-                tool_names::REPLACE_IN_FILE,
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            r(
-                "builtin-workflow-allow-fs-glob",
-                "glob",
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            r(
-                "builtin-workflow-allow-fs-search",
-                "search_*",
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            r(
-                "builtin-workflow-allow-fs-mkdir",
-                tool_names::MAKE_DIRECTORY,
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            // Delete: auto-allowed (same reasoning as Auto mode — execute_command is
-            // already Allow and is strictly more capable).
-            r(
-                "builtin-workflow-allow-delete",
-                tool_names::DELETE_FILE,
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            // Command execution: auto-allowed.
-            r(
-                "builtin-workflow-allow-command",
-                tool_names::EXECUTE_COMMAND,
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-            ),
-            // Other MCP tools: auto-allowed.
-            rf(
-                "builtin-workflow-allow-other-tools",
-                "*",
-                &[AgentMode::Workflow],
-                PermissionAction::Allow,
-                None,
-                None,
-                0,
-            ),
-        ],
         AgentMode::Plan => vec![
             // Plan mode is read-only: all write/delete operations denied.
             r(
@@ -473,7 +503,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             rf(
                 "builtin-plan-deny-replace",
@@ -482,7 +512,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             rf(
                 "builtin-plan-deny-mkdir",
@@ -491,7 +521,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             rf(
                 "builtin-plan-deny-delete",
@@ -500,7 +530,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             // Web tools: read-only research, consistent with Plan mode's goal
             // (SEC-13: the Plan tool set assembles web_fetch/web_search and the
@@ -545,7 +575,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             rf(
                 "builtin-plan-deny-git-commit",
@@ -554,7 +584,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             // Memory tools: reads allowed, writes denied.
             r(
@@ -576,7 +606,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             rf(
                 "builtin-plan-deny-memory-update",
@@ -585,7 +615,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             rf(
                 "builtin-plan-deny-memory-forget",
@@ -594,7 +624,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             // Command execution has side effects, conflicting with Plan mode's research-only goal -> explicitly denied.
             rf(
@@ -604,7 +634,7 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 PermissionAction::Deny,
                 None,
                 None,
-                20,
+                100,
             ),
             // Other MCP tools require confirmation.
             rf(
@@ -834,9 +864,12 @@ pub fn check_permission(
         )
     });
 
-    // 3. Check for any Deny (Deny always beats Allow and Ask, regardless of priority).
-    for (rule, _) in &all_candidates {
-        if rule.action == PermissionAction::Deny {
+    // 3. Check for a user/session Deny (Deny always beats Allow and Ask, regardless of
+    //    priority). Built-in mode fallbacks (只读 deny-other / Plan deny) do NOT win
+    //    globally — they are just the lowest tier of the ladder, so the mode's own
+    //    allow rules (and deliberate custom opt-ins) rank above them.
+    for (rule, is_custom) in &all_candidates {
+        if *is_custom && rule.action == PermissionAction::Deny {
             return PermissionAction::Deny;
         }
     }
@@ -948,7 +981,8 @@ mod tests {
     }
 
     #[test]
-    fn test_normal_mode_write_asks() {
+    fn test_normal_mode_write_allowed() {
+        // 工作区内修改 (Normal) tier: workspace file writes/edits run without confirmation
         let args = serde_json::json!({"path": "src/main.rs", "content": "fn main() {}"});
         let result = check_permission_defaults(
             tool_names::WRITE_FILE,
@@ -956,7 +990,7 @@ mod tests {
             &args,
             &AgentMode::Normal,
         );
-        assert_eq!(result, PermissionAction::Ask);
+        assert_eq!(result, PermissionAction::Allow);
     }
 
     #[test]
@@ -1173,13 +1207,15 @@ mod tests {
 
     /// Regression (SEC-02): session file-tool rules allow only the SAME file —
     /// the historic parent + "/**" glob turned one approval into a whole-project write pass.
+    /// Probed with delete_file (built-in action stays Ask in Normal), since 工作区内修改
+    /// now allows write_file by default.
     #[test]
     fn session_write_rule_scopes_to_single_file() {
         let _guard = SESSION_TEST_LOCK.lock();
         clear_session_rules();
         add_session_rule(PermissionRule {
             id: "test-session-write-sec02".into(),
-            tool_pattern: tool_names::WRITE_FILE.into(),
+            tool_pattern: tool_names::DELETE_FILE.into(),
             server_id: None,
             modes: Vec::new(),
             action: PermissionAction::Allow,
@@ -1189,11 +1225,11 @@ mod tests {
             priority: 50,
         });
         let server = crate::core::ids::BUILTIN_FS_SERVER_ID;
-        let args_for = |path: &str| serde_json::json!({"path": path, "content": "x"});
-        // Same file -> session rule allows (built-in Normal for write_file is Ask)
+        let args_for = |path: &str| serde_json::json!({"path": path});
+        // Same file -> session rule allows (built-in Normal for delete_file is Ask)
         assert_eq!(
             check_permission_defaults(
-                tool_names::WRITE_FILE,
+                tool_names::DELETE_FILE,
                 server,
                 &args_for("/proj/src/main.rs"),
                 &AgentMode::Normal
@@ -1203,7 +1239,7 @@ mod tests {
         // Sibling file / other directory -> back to built-in Ask
         assert_eq!(
             check_permission_defaults(
-                tool_names::WRITE_FILE,
+                tool_names::DELETE_FILE,
                 server,
                 &args_for("/proj/src/other.rs"),
                 &AgentMode::Normal
@@ -1212,7 +1248,7 @@ mod tests {
         );
         assert_eq!(
             check_permission_defaults(
-                tool_names::WRITE_FILE,
+                tool_names::DELETE_FILE,
                 server,
                 &args_for("/proj/README.md"),
                 &AgentMode::Normal
@@ -1249,29 +1285,24 @@ mod tests {
         assert_eq!(result, PermissionAction::Allow);
     }
 
-    /// Same consistency fix for Workflow mode (execute_command already Allow).
+    /// 只读 (Off) mode: reads allowed, writes denied.
     #[test]
-    fn test_workflow_mode_delete_allowed() {
+    fn test_off_mode_read_only() {
         let args = serde_json::json!({"path": "src/main.rs"});
-        let result = check_permission_defaults(
-            tool_names::DELETE_FILE,
-            crate::core::ids::BUILTIN_FS_SERVER_ID,
-            &args,
-            &AgentMode::Workflow,
-        );
-        assert_eq!(result, PermissionAction::Allow);
-    }
-
-    #[test]
-    fn test_off_mode_denies_all() {
-        let args = serde_json::json!({"path": "src/main.rs"});
-        let result = check_permission_defaults(
+        let read = check_permission_defaults(
             tool_names::READ_FILE,
             crate::core::ids::BUILTIN_FS_SERVER_ID,
             &args,
             &AgentMode::Off,
         );
-        assert_eq!(result, PermissionAction::Deny);
+        assert_eq!(read, PermissionAction::Allow);
+        let write = check_permission_defaults(
+            tool_names::WRITE_FILE,
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            &args,
+            &AgentMode::Off,
+        );
+        assert_eq!(write, PermissionAction::Deny);
     }
 
     #[test]

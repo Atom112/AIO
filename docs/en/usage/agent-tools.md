@@ -10,7 +10,7 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 >
 > **Subject scope**: the table and permission matrix above describe the **main agent**. Subagent tool sets are assembled per role (`SubagentProfile.allowed_tools/denied_tools`) and differ from the main agent — e.g. the read-only roles explorer/architect explicitly deny `git_*` (9 read-only tools, no Git tools); only coder/general and similar hold Git reads. A subagent calling a tool that was not injected gets a fail-closed "tool not available" error.
 >
-> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in Auto/Workflow mode (the "Trusted" toggle in MCP settings).
+> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in full-permission mode (the "Trusted" toggle in MCP settings).
 
 | Tool Name         | Category      | Normal Default | Auto Default | Plan Default |
 | ----------------- | ------------- | -------------- | ------------ | ------------ |
@@ -39,7 +39,6 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 | `project_map`     | Orchestration | Allow          | Allow        | Allow        |
 | `delegate_task`   | Orchestration | Ask            | Allow        | Ask          |
 | `delegate_tasks`  | Orchestration | Ask            | Allow        | Ask          |
-| `create_workflow` | Orchestration | Ask            | Allow        | Ask          |
 | `create_tasks`    | Orchestration | Allow          | Allow        | Allow        |
 | `update_task`     | Orchestration | Allow          | Allow        | Allow        |
 | `list_tasks`      | Orchestration | Allow          | Allow        | Allow        |
@@ -360,17 +359,6 @@ Batch create multiple sub-agents to execute in parallel.
 | **Return**      | Work summary for each sub-agent (with per-task merge outcome notes when worktree-isolated)                                                                                                                                                                                           |
 | **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                                                                                                                                     |
 
-### `create_workflow`
-
-Create a sequentially-executing sub-agent workflow.
-
-| Item            | Value                                                                                                                                    |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Create a sequentially-executing sub-agent workflow. Each step's output is automatically passed to the next. Requires at least 2 steps.   |
-| **Parameters**  | `title` (string, required) -- workflow title; `steps` (array, required, >=2 items) -- list of steps, each with `profile`, `name`, `task` |
-| **Return**      | Work summary for each step                                                                                                               |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                         |
-
 ### `create_tasks`
 
 Create the agent task list (main-agent task tracking).
@@ -425,7 +413,7 @@ When multiple agents modify files concurrently, AIO combines two layers of prote
   - **Shared root (locks only)**: all subtasks write the project root directly.
 - **Merging**: Auto mode merges automatically; Normal mode asks one batch approval (listing branches, changed files and diff summaries). On a **conflict** the merge aborts safely, the worktree is kept, and the result reports the conflicted files — redo that task serially on the latest code or resolve manually.
 - **Shared-mode protection**: `write_file` / `replace_in_file` / `delete_file` / `make_directory` take a per-file exclusive lock (120-second wait timeout reporting the holder); after another agent modified a file, `replace_in_file` must carry `anchor_hash` and an overwriting `write_file` must carry `expect_hash` — a mismatch errors out and requires a re-read, turning lost updates into recoverable re-read errors.
-- **Scope**: `wait=false` background subagents and workflow steps always run shared (file locks still apply). Worktrees are based on the main checkout's HEAD and do NOT include its uncommitted changes — pass `isolation: "shared"` when a task must build on uncommitted work.
+- **Scope**: `wait=false` background subagents always run shared (file locks still apply). Worktrees are based on the main checkout's HEAD and do NOT include its uncommitted changes — pass `isolation: "shared"` when a task must build on uncommitted work.
 - **Recommendations**: partition parallel write tasks by file set; files written by shell commands and git write operations (`git_add` / `git_commit` / `checkout_branch`) bypass the file locks (consistent with the industry) — prefer file tools for critical files; avoid switching branches in the main checkout while worktree tasks run — the task merges land on whatever branch is current at merge time.
 
 ### `read_skill`

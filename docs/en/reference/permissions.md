@@ -56,19 +56,7 @@ Overview of the default rules for each Agent mode:
 - Web tools &rarr; Deny
 - Other tools &rarr; Ask
 
-### Workflow Mode
-
-- Regular file operations (read, write, replace, search, make directory) &rarr; Allow
-- Git operations &rarr; Allow
-- Command execution &rarr; Allow
-- Delete operations &rarr; Allow
-- Other tools &rarr; Allow
-
 > The full rule list can be found in the source at `permission.rs:default_rules_for_mode`.
-
-### Workflow Step Permission Mode
-
-Workflow (`create_workflow`) steps **inherit the Agent mode they were started with** by default: a workflow started in Normal mode still prompts for each write operation inside its steps. Set `workflowStepMode` to `"auto"` in the app config to restore the legacy behavior (steps auto-approved, for fully trusted automation).
 
 ## Command Sandbox and Network Egress
 
@@ -81,7 +69,7 @@ Workflow (`create_workflow`) steps **inherit the Agent mode they were started wi
 | Windows  | AppContainer (per-project profile; disable via `sandboxWindows=off`) | project root + private temp dir + configured toolchain dirs (R+X) | blocked (no capability)       |
 
 - Commands needing network (dependency downloads, API calls, localhost services) must declare `network: true` explicitly (Windows injects the internetClient capability; the approval dialog is annotated).
-- **Fail-closed**: when the sandbox is unavailable on Linux/macOS, Auto/Workflow mode refuses execution (`sandboxRequired` defaults on); Normal mode annotates the approval dialog with a sandbox-unavailable warning.
+- **Fail-closed**: when the sandbox is unavailable on Linux/macOS, full-permission (Auto) mode refuses execution (`sandboxRequired` defaults on); other modes annotate the approval dialog with a sandbox-unavailable warning.
 - Windows toolchain dirs (cargo/scoop user paths) are granted R+X via `sandboxWindowsToolchainDirs`; system dirs rely on built-in ALL APPLICATION PACKAGES ACEs.
 - **Script-interpreter forwarding**: bare names of `python`/`python3`/`py`/`pip`/`node`/`npm`/`npx`/`git`/`cargo` (`.exe` suffix included) — as the first command token or inside a `cmd /c` wrapper — are rewritten to the host-PATH-resolved absolute path (PATH-only lookup; the project cwd is never consulted); inside the sandboxed shell these names otherwise always exit 9009. The Windows sandbox additionally grants the executable's install dir R+X on a best-effort basis. Command output is decoded UTF-8-first with an ANSI-code-page (GBK) fallback, so localized error text no longer arrives as mojibake.
 - **Sandbox expansion request**: when a command is denied inside the Windows sandbox (WinError 5, "Access is denied"), or a forwarded interpreter reports "not recognized"/9009 inside it, a choice dialog pops — "Grant the interpreter directory and retry (this session)", "Grant and remember permanently (written to `sandboxWindowsToolchainDirs`)", "Run without sandbox (this once)", or "Ignore"; a free-form directory path can also be typed. At most one request per **operation** (`cmd /c X` and bare `X` share one key) per 30 minutes; no response within 60 seconds degrades to "Ignore" (unattended runs fall back to the original error and never stall the turn).

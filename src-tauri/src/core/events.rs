@@ -47,12 +47,6 @@ pub const SUBAGENT_DONE: &str = "subagent-done";
 /// Subagent error
 pub const SUBAGENT_ERROR: &str = "subagent-error";
 
-/// Workflow started / step started / step completed / finished
-pub const WORKFLOW_START: &str = "workflow-start";
-pub const WORKFLOW_STEP_START: &str = "workflow-step-start";
-pub const WORKFLOW_STEP_COMPLETE: &str = "workflow-step-complete";
-pub const WORKFLOW_COMPLETE: &str = "workflow-complete";
-
 /// MCP server status change
 pub const MCP_SERVER_STATUS: &str = "mcp-server-status";
 /// MCP server stderr output
@@ -115,10 +109,6 @@ mod tests {
             SUBAGENT_REASONING,
             SUBAGENT_DONE,
             SUBAGENT_ERROR,
-            WORKFLOW_START,
-            WORKFLOW_STEP_START,
-            WORKFLOW_STEP_COMPLETE,
-            WORKFLOW_COMPLETE,
             MCP_SERVER_STATUS,
             MCP_SERVER_STDERR,
             MCP_TOOLS_CHANGED,

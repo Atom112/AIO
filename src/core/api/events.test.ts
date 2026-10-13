@@ -12,11 +12,10 @@ describe('EVENTS', () => {
       expect(value, key).toMatch(/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/);
     }
   });
-  it('包含主循环事件与 MCP/工作流事件', () => {
+  it('包含主循环事件与 MCP 事件', () => {
     expect(EVENTS.llmChunk).toBe('llm-chunk');
     expect(EVENTS.subagentStart).toBe('subagent-start');
     expect(EVENTS.mcpServerStatus).toBe('mcp-server-status');
-    expect(EVENTS.workflowComplete).toBe('workflow-complete');
     expect(EVENTS.btwChunk).toBe('btw-chunk');
   });
 });

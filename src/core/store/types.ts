@@ -2,7 +2,7 @@
 
 import type { MemoryEmbeddingConfig, MemoryRerankConfig } from '../types/memory';
 
-/** Agent workflow timeline step */
+/** Agent step-timeline entry (one per tool call / round in chronological order) */
 export interface AgentStep {
   id: string;
   type: 'thinking' | 'tool_call' | 'content' | 'subagent';
@@ -68,7 +68,7 @@ export interface Message {
   toolCalls?: ToolCallDisplay[]; // Tool calls issued by the model on role="assistant" messages (with frontend UI state/result/error)
   agentStartTime?: number; // Agent turn start timestamp (ms), used to compute working time
   interimContent?: string; // Accumulated interim-round summary text across multi-round agent runs
-  agentSteps?: AgentStep[]; // Agent workflow timeline, one entry per step in chronological order
+  agentSteps?: AgentStep[]; // Agent step timeline, one entry per step in chronological order
   inputTokens?: number; // Input token usage for this turn/message (accumulated across turns, for cost stats)
   outputTokens?: number; // Output token usage for this turn/message (accumulated across turns, for cost stats)
   contextTokens?: number; // Peak context tokens (input_tokens of the last API call), used for the context window progress bar
@@ -164,8 +164,12 @@ export interface Topic {
   contextTrimCount?: number;
 }
 
-/** Agent execution mode */
-export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
+/**
+ * Agent execution mode (wire values stable — persisted per assistant; the ladder):
+ * off = 只读 (read-only) · normal = 工作区内修改 (workspace edits) ·
+ * auto = 完全权限 (full autonomy inherent) · plan = 计划
+ */
+export type AgentMode = 'off' | 'normal' | 'auto' | 'plan';
 
 /**
  * Context compaction outcome (/compact or auto-triggered), so the UI can report accurately.
@@ -269,8 +273,6 @@ export interface AppConfig {
   subagentIsolationMode?: string;
   /** Main agent built-in tool access: "hybrid" (default: reads direct, mutations via subagents) | "full" (all built-in tools incl. execute_command) | "orchestrator" (strict delegation) */
   mainAgentToolAccess?: string;
-  /** Auto/Workflow full-autonomy opt-in: sandbox-denied commands auto-apply the recommended expansion AND network-declaring commands skip the SEC-01 confirmation (risk acknowledged; default false) */
-  fullAutoMode?: boolean;
 }
 
 /* Activated model config interface holding connection info for available models */

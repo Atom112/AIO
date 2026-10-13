@@ -3,11 +3,10 @@
 //! `handle_delegate_task` / `handle_delegate_tasks` 此前各持 17 个独立参数，其中
 //! 15 个是主循环逐个克隆再按位传的"继承执行上下文"——主循环三处调用点（后台
 //! 委派 / 单任务委派 / 批量委派）各自维护一份 17 行克隆瀑布 + 参数瀑布，每加
-//! 一个上下文字段要同步改 2 处函数签名 + 3 处调用点 + 1 处 workflow 转发。
+//! 一个上下文字段要同步改 2 处函数签名 + 3 处调用点。
 //! 本结构把继承上下文打包为单一值：主循环构造一次 `DelegateContext`，调用
 //! 签名收敛为 `(ctx, arguments)`；新增上下文字段只改一个结构体定义。
 
-use crate::commands::llm::tool_dispatch::ToolCallStats;
 use crate::core::models::{AgentMode, CustomSubagentProfile, ProfileModelOverride};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -33,8 +32,4 @@ pub(crate) struct DelegateContext {
     pub mcp_server_ids: Vec<String>,
     pub semaphore: Arc<Semaphore>,
     pub locale: String,
-    /// Tool-call statistics collector for THIS delegation (harness round 5:
-    /// workflow failure gating reads it after the step finishes; None = the
-    /// caller doesn't need gating stats).
-    pub stats: Option<Arc<ToolCallStats>>,
 }

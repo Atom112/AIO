@@ -81,7 +81,7 @@ export async function handleSlashPromptMessage(
     userInput: displayText,
     reasoningLevel: reasoningLevel(),
     webSearchEnabled: webSearchEnabled(),
-    isChatMode: agentMode === 'off',
+    isChatMode: agentMode === 'off' && !pid,
     projectInfo:
       pid && currentProject()
         ? { path: currentProject()!.path, name: currentProject()!.name }
@@ -111,7 +111,7 @@ export async function handleSlashPromptMessage(
   await deps.startAgentTurn({
     messages: messagesForAI,
     agentMode,
-    skills: agentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
+    skills: agentMode === 'off' && !pid ? [] : resolveAssistantSkills(currentAsst),
   });
 }
 

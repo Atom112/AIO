@@ -9,7 +9,7 @@
 //! - `reviewer`: code reviewer, read-only security audit and code quality assessment
 //! - `writer`: documentation writer, can read and write files to produce documentation
 //! - `tester`: test engineer, can run tests and write test files
-//! - `requirements`: requirements analyst, read-only analysis that decomposes user requests into structured workflow plans
+//! - `requirements`: requirements analyst, read-only analysis that decomposes user requests into structured subtask plans
 //! - `vision`: vision analyst, toolless; auto-invoked to describe user images when the main model lacks vision
 //!
 //! Sub-agents are created via the main agent's `delegate_task` tool; each sub-agent
@@ -327,7 +327,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
                 "  - reviewer：代码审查，检查质量和安全\n",
                 "  - tester：测试执行，验证功能\n",
                 "输出格式：清晰地列出分析结果和建议的子任务划分，每个子任务包含目标、推荐角色和预期产出。\n",
-                "不要调用 create_workflow 工具，你只负责分析需求。主 Agent 会根据你的分析结果决定是否创建工 作流。"
+                "你只负责分析需求；主 Agent 会根据你的分析结果决定后续的委派与执行。"
             )
             .into(),
             model_override: None,
@@ -520,70 +520,6 @@ pub fn get_subagent_result_tool_spec() -> ToolSpec {
                     }
                 },
                 "required": ["subagent_id"]
-            }),
-        },
-    }
-}
-
-/// Build the ToolSpec for the `create_workflow` tool.
-/// Lets the LLM create a sub-agent workflow that executes sequentially.
-/// Use case: complex tasks requiring multiple sub-agents to cooperate in order.
-pub fn create_workflow_tool_spec() -> ToolSpec {
-    ToolSpec {
-        kind: "function".into(),
-        function: super::models::ToolFunctionSpec {
-            name: tool_names::CREATE_WORKFLOW.into(),
-            description: concat!(
-                "创建一个按顺序执行的子智能体工作流。\n\n",
-                "适用于复杂任务，需要多个子智能体分工协作、按序完成的场景。\n",
-                "调用此工具后，系统会按步骤顺序依次执行，每个步骤的输出会自动传递到下一步作为上下文。\n\n",
-                "典型工作流序列示例：\n",
-                "- requirements → architect → coder → reviewer → tester（全流程开发）\n",
-                "- explorer → coder（探索 + 实现）\n",
-                "- debugger → coder（诊断 + 修复）\n",
-                "- explorer → writer（探索 + 文档化）\n\n",
-                "注意：每个步骤是**顺序执行**的（非并行），前一步完成后下一步才开始；",
-                "步骤数上限 20，超出会被拒绝，复杂任务请拆分为多个工作流。\n",
-                "失败语义：某步骤失败（子智能体错误，或其全部工具调用失败）会**中止后续步骤**（标记为跳过），",
-                "除非该步骤显式设置 continue_on_error=true（适合可选/尽力而为的步骤）。"
-            )
-            .into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "工作流的标题/目的简述"
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "profile": {
-                                    "type": "string",
-                                    "description": "子智能体类型：explorer、coder、general、architect、debugger、reviewer、writer、tester、requirements、vision，或任意自定义角色 ID"
-                                },
-                                "name": {
-                                    "type": "string",
-                                    "description": "步骤的简要名称（如\"代码探索\"、\"实现登录模块\"）"
-                                },
-                                "task": {
-                                    "type": "string",
-                                    "description": "分配给该子智能体执行的任务描述。应包含具体目标、预期产出和必要上下文。"
-                                },
-                                "continue_on_error": {
-                                    "type": "boolean",
-                                    "description": "该步骤失败后是否继续执行后续步骤。默认 false（失败即中止链，后续步骤标记跳过）。仅当该步骤是可选的/尽力而为的（如格式化、可选检查）才设为 true。"
-                                }
-                            },
-                            "required": ["profile", "name", "task"]
-                        },
-                        "description": "工作流步骤列表（按顺序执行）",
-                        "minItems": 2
-                    }
-                },
-                "required": ["title", "steps"]
             }),
         },
     }

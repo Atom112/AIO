@@ -1,7 +1,7 @@
 // Event listener registration set for the chat UI.
 //
 // CHAT-12: the STREAM listeners (llm-chunk / reasoning / tool events / subagents /
-// workflow / approvals …) register from the root Layout for the whole app lifetime —
+// approvals …) register from the root Layout for the whole app lifetime —
 // they used to live in ChatPage, so leaving the page mid-generation destroyed them
 // while the backend kept streaming: chunks never reached the store, the `done`
 // handler (which persists the assistant) never ran, and the turn was lost.
@@ -41,7 +41,6 @@ import {
   setPendingQuestions,
   setIsThinking,
   setTypingIndex,
-  setWorkflowState,
   type AgentStep,
   type AgentTaskState,
   type DatasState,
@@ -49,7 +48,6 @@ import {
   type SubagentStep,
   type Topic,
   type ToolCallDisplay,
-  type WorkflowState,
 } from '../../../core/store/store';
 import { checkAndRename, checkAndSummarize, estimateMsgTokens } from './chatTurnEffects';
 import { TOOL_INTERRUPTED } from '../constants';
@@ -937,50 +935,6 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           msg.agentSteps = steps;
         }),
       );
-    }),
-    // ---- Workflow events ----
-    listen<WorkflowState>(EVENTS.workflowStart, (e) => {
-      setWorkflowState({
-        workflowId: e.payload.workflowId,
-        title: e.payload.title,
-        steps: e.payload.steps.map((s) => ({ ...s, status: 'pending' as const })),
-        active: true,
-      });
-    }),
-    listen<{ stepId: string }>(EVENTS.workflowStepStart, (e) => {
-      setWorkflowState((prev) =>
-        prev
-          ? {
-              ...prev,
-              steps: prev.steps.map((s) =>
-                s.stepId === e.payload.stepId
-                  ? { ...s, status: 'running' as const, startedAt: Date.now() }
-                  : s,
-              ),
-            }
-          : null,
-      );
-    }),
-    listen<{ stepId: string; status: 'completed' | 'failed' | 'skipped'; duration?: number }>(
-      EVENTS.workflowStepComplete,
-      (e) => {
-        setWorkflowState((prev) =>
-          prev
-            ? {
-                ...prev,
-                steps: prev.steps.map((s) =>
-                  s.stepId === e.payload.stepId
-                    ? { ...s, status: e.payload.status, duration: e.payload.duration }
-                    : s,
-                ),
-              }
-            : null,
-        );
-      },
-    ),
-    listen<{ workflowId: string }>(EVENTS.workflowComplete, () => {
-      setWorkflowState((prev) => (prev ? { ...prev, active: false } : null));
-      setTimeout(() => setWorkflowState(null), 5000);
     }),
     // ---- Compression failure (LOOP-3): the backend now restores the early region and
     // carries on, so this is a non-fatal notice; log it so failures are never invisible.

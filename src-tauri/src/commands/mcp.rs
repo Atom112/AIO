@@ -753,9 +753,9 @@ pub(crate) async fn execute_tool_call(
             &custom_rules,
         );
 
-        // Force approval for untrusted-server tools under Auto/Workflow: autonomous mode must
+        // Force approval for untrusted-server tools under Auto (完全权限): autonomous mode must
         // not blanket-allow unknown external tools (auto-allow only once the server is trusted in settings).
-        let untrusted_auto = matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+        let untrusted_auto = matches!(agent_mode, AgentMode::Auto)
             && action == PermissionAction::Allow
             && !cfg.trusted;
         let action = if untrusted_auto {
@@ -767,8 +767,8 @@ pub(crate) async fn execute_tool_call(
         match action {
             PermissionAction::Deny => {
                 return Err(ierr!(
-                    "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
-                    "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo run it, switch to auto mode or add an allow rule in project permission settings.",
+                    "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到完全权限模式或在项目权限设置中添加 allow 规则。",
+                    "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo run it, switch to full-permission mode or add an allow rule in project permission settings.",
                     tool_name
                 ));
             }

@@ -42,7 +42,19 @@ const NumberInput: Component<{
         max={props.max}
         step={1}
         value={props.value}
-        onInput={(e) => props.onInput(clamp(Number(e.currentTarget.value)))}
+        onInput={(e) => {
+          const raw = e.currentTarget.value;
+          // Cleared field -> fallback (Number('') is 0, which would otherwise masquerade as a real value)
+          if (raw.trim() === '') {
+            props.onInput(props.fallback ?? props.min);
+            return;
+          }
+          const n = Number(raw);
+          // Partial numeric input (e.g. a lone "-"): ignore the keystroke so the
+          // user can finish typing a negative value without the field resetting
+          if (!Number.isFinite(n)) return;
+          props.onInput(Math.min(props.max, Math.max(props.min, Math.round(n))));
+        }}
       />
       <div class="absolute right-1.5 top-1/2 -translate-y-1/2 flex flex-col">
         <button

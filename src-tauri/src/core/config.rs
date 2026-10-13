@@ -202,8 +202,18 @@ impl AppConfigDisk {
             auto_retry_count: self.auto_retry_count,
             auto_retry_delay_ms: self.auto_retry_delay_ms,
             auto_start_enabled: self.auto_start_enabled,
-            max_concurrent_subagents: Some(self.max_concurrent_subagents),
-            max_tool_rounds: Some(self.max_tool_rounds),
+            // Normalize hand-edited values into the valid domain: -1 (unlimited) is the
+            // floor, 0 is invalid -> minimum 1 (the consumers re-clamp defensively too)
+            max_concurrent_subagents: Some(match self.max_concurrent_subagents {
+                n if n < -1 => -1,
+                0 => 1,
+                n => n,
+            }),
+            max_tool_rounds: Some(match self.max_tool_rounds {
+                n if n < -1 => -1,
+                0 => 1,
+                n => n,
+            }),
             subagent_isolation_mode: self.subagent_isolation_mode.clone(),
             workflow_step_mode: self.workflow_step_mode,
             parallel_tool_execution: self.parallel_tool_execution,

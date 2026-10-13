@@ -271,7 +271,6 @@ const defaultAppConfig = (): AppConfig => ({
   maxConcurrentSubagents: undefined,
   maxToolRounds: undefined,
   subagentIsolationMode: 'auto',
-  fullAutoMode: false,
 });
 
 const initialConfig: AppConfig = (() => {

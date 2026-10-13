@@ -2,7 +2,7 @@
  * Agent mode quick selector
  *
  * Sits between the model selector and the reasoning button in the chat input; opens a pull-up menu to choose the working mode.
- * Modes: chat (tool calls off), normal (write confirmation), auto (autonomous execution), plan (plan first).
+ * Modes: 只读 (read-only), 工作区内修改 (workspace edits), 完全权限 (full autonomy inherent), 计划 (plan first).
  * Switching to an Agent mode auto-restores the last working directory; if none exists, a "choose directory" button lets the user pick or create one.
  */
 import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
@@ -23,7 +23,6 @@ import {
 } from '../../../core/store/store';
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import { t, type TranslationKey } from '../../../core/i18n';
-import { loadAppConfig } from '../../../core/api/config';
 import { btnSecondary } from '../../../shared/components/buttonStyles';
 
 interface ModeOption {
@@ -38,31 +37,25 @@ const MODES: ModeOption[] = [
     value: 'off',
     labelKey: 'agent.mode.chat',
     descKey: 'agent.mode.chatDescription',
-    icon: 'chat',
+    icon: 'eye',
   },
   {
     value: 'normal',
     labelKey: 'agent.mode.normal',
     descKey: 'agent.mode.normalDescription',
-    icon: 'check-circle',
+    icon: 'wrench',
   },
   {
     value: 'auto',
     labelKey: 'agent.mode.auto',
     descKey: 'agent.mode.autoDescription',
-    icon: 'refresh',
+    icon: 'zap',
   },
   {
     value: 'plan',
     labelKey: 'agent.mode.plan',
     descKey: 'agent.mode.planDescription',
     icon: 'document',
-  },
-  {
-    value: 'workflow',
-    labelKey: 'agent.mode.workflow',
-    descKey: 'agent.mode.workflowDescription',
-    icon: 'layers',
   },
 ];
 
@@ -71,35 +64,17 @@ const MODE_COLORS: Record<string, string> = {
   normal: 'rgba(124,217,160,0.7)',
   auto: 'rgba(224,192,96,0.7)',
   plan: 'rgba(160,124,217,0.7)',
-  workflow: 'rgba(255,183,77,0.7)',
 };
 
 const AgentModeSelector: Component = () => {
   const [open, setOpen] = createSignal(false);
   const [showAutoWarning, setShowAutoWarning] = createSignal(false);
-  // Full-autonomy flag (app config): drives the persistent full-autonomy
-  // indicator on the mode pill. Best-effort load — the toggle lives in Settings and
-  // returning to the chat page remounts this component, so a mount-time read is fresh.
-  const [fullAutoMode, setFullAutoMode] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
   let autoModeConfirmed = false; // remembered for the session; after one confirmation the dialog no longer shows
   let pendingMode: AgentMode = 'auto'; // mode currently awaiting confirmation
 
   const asst = () => datas.assistants.find((a) => a.id === currentAssistantId()) as any;
   const currentMode = (): AgentMode => asst()?.agentMode || 'off';
-
-  /** Full-autonomy state: Auto/Workflow mode + fullAutoMode enabled (indicator must stay visible) */
-  const fullAuto = () =>
-    fullAutoMode() && (currentMode() === 'auto' || currentMode() === 'workflow');
-
-  onMount(async () => {
-    try {
-      const cfg = await loadAppConfig();
-      setFullAutoMode(cfg?.fullAutoMode === true);
-    } catch (e) {
-      console.warn('Failed to load app config for the mode indicator:', e);
-    }
-  });
 
   const activeOption = () => MODES.find((m) => m.value === currentMode()) || MODES[0];
 
@@ -114,8 +89,8 @@ const AgentModeSelector: Component = () => {
   onMount(() => document.addEventListener('mousedown', onDocClick));
   onCleanup(() => document.removeEventListener('mousedown', onDocClick));
   const choose = async (mode: AgentMode) => {
-    // When switching to auto or workflow mode, show the risk warning dialog first
-    if ((mode === 'auto' || mode === 'workflow') && !autoModeConfirmed) {
+    // Switching to 完全权限 (auto = full autonomy inherent) shows the risk dialog first
+    if (mode === 'auto' && !autoModeConfirmed) {
       pendingMode = mode;
       setOpen(false);
       setShowAutoWarning(true);
@@ -163,10 +138,7 @@ const AgentModeSelector: Component = () => {
             currentMode() !== 'off' ? MODE_COLORS[currentMode()] || MODE_COLORS.off : undefined,
           opacity: isDisabled() ? 0.4 : 1,
         }}
-        title={
-          (isDisabled() ? t('agent.mode.chooseAssistant') : t(activeOption().descKey)) +
-          (fullAuto() ? ` · ${t('app.fullAutoMode.title')}` : '')
-        }
+        title={isDisabled() ? t('agent.mode.chooseAssistant') : t(activeOption().descKey)}
         onClick={(e) => {
           if (isDisabled()) return;
           e.stopPropagation();
@@ -179,10 +151,6 @@ const AgentModeSelector: Component = () => {
           class="flex items-center justify-center shrink-0"
         />
         <span class="leading-none">{t(activeOption().labelKey)}</span>
-        {/* Persistent full-autonomy indicator: never let this state be invisible */}
-        <Show when={fullAuto()}>
-          <span class="w-1.5 h-1.5 rounded-full bg-red-400/80 shrink-0 animate-pulse" />
-        </Show>
       </button>
 
       {/* Dropdown panel */}
@@ -320,13 +288,7 @@ const AgentModeSelector: Component = () => {
                   await choose(pendingMode);
                 }}
               >
-                {t('agent.mode.warningConfirm', {
-                  mode: t(
-                    (pendingMode as AgentMode) === 'workflow'
-                      ? 'agent.mode.workflow'
-                      : 'agent.mode.auto',
-                  ),
-                })}
+                {t('agent.mode.warningConfirm', { mode: t('agent.mode.auto') })}
               </button>
             </div>
           </div>

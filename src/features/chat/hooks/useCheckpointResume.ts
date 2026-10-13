@@ -55,7 +55,11 @@ export function useCheckpointResume(deps: CheckpointResumeDeps) {
     await deps.startAgentTurn({
       messages: [],
       agentMode: resumeAgentMode,
-      skills: resumeAgentMode === 'off' ? [] : resolveAssistantSkills(currentAsst),
+      // 只读 (off) with a project is an agent tier now — skills load like other tiers
+      skills:
+        resumeAgentMode === 'off' && !currentAsst?.projectId
+          ? []
+          : resolveAssistantSkills(currentAsst),
       resumeTurnId: cp.turnId,
     });
   };

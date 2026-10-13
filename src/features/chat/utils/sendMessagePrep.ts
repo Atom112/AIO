@@ -137,15 +137,17 @@ export function buildOutgoingMessages(args: BuildOutgoingMessagesArgs): Outgoing
   };
 
   const agentMode = currentAsst?.agentMode || 'off';
-  const agentPromptContent =
-    agentMode !== 'off' && projectInfo
-      ? buildAgentSystemPrompt(
-          agentMode as Parameters<typeof buildAgentSystemPrompt>[0],
-          projectInfo,
-          undefined,
-          mainAgentToolAccess || 'hybrid',
-        )
-      : null;
+  // 只读 (off) with a project selected is a real agent tier now — it gets the mode
+  // system prompt like the other tiers (its toolset is the read-only set); pure chat
+  // (off without a project) injects no agent prompt.
+  const agentPromptContent = projectInfo
+    ? buildAgentSystemPrompt(
+        agentMode as Parameters<typeof buildAgentSystemPrompt>[0],
+        projectInfo,
+        undefined,
+        mainAgentToolAccess || 'hybrid',
+      )
+    : null;
   const agentSystemPrompt = agentPromptContent
     ? [{ role: 'system' as const, content: agentPromptContent }]
     : [];

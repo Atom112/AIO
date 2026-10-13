@@ -1029,11 +1029,11 @@ pub fn execute_command(
     }
 
     // Dangerous-command detection: Critical findings (system destruction / privilege
-    // escalation / fork bomb) are **rejected in every agent mode** - in Auto/Workflow
-    // mode the execute_command permission is Allow and skips the approval prompt, so
-    // without this interception there would be no protection at all. High/Medium
-    // findings only log a warning (in Ask mode the approval prompt shows the risk
-    // description to the user).
+    // escalation / fork bomb) are **rejected in every agent mode** - in Auto
+    // (完全权限) mode the execute_command permission is Allow and skips the approval
+    // prompt, so without this interception there would be no protection at all.
+    // High/Medium findings only log a warning (in Ask mode the approval prompt shows
+    // the risk description to the user).
     if let Some(danger) = check_dangerous_command(command) {
         if danger.category == DangerCategory::Critical {
             return tool_err(&format!("已拒绝执行高危命令: {}", danger.risk));
@@ -1392,7 +1392,7 @@ mod tests {
 
     /// Critical-level dangerous commands must be rejected directly inside
     /// execute_command, without relying on the approval prompt. Covers the
-    /// protection gap of Auto/Workflow mode (execute_command permission is
+    /// protection gap of Auto (完全权限) mode (execute_command permission is
     /// Allow, no Ask prompt). Note: these samples are all lexically matched -
     /// detection returns before anything actually runs.
     #[test]

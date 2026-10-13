@@ -177,10 +177,6 @@ pub struct AppConfig {
         rename = "subagentIsolationMode"
     )]
     pub subagent_isolation_mode: String,
-    /// Permission mode for workflow steps: "inherit" inherits the parent turn's mode (default; write actions
-    /// still require per-action approval under Normal), "auto" forces Auto mode (legacy behavior: step tools are auto-approved).
-    #[serde(default = "default_workflow_step_mode", rename = "workflowStepMode")]
-    pub workflow_step_mode: String,
     /// Whether read-only tools in the same response block execute concurrently (default true). Off falls back to fully serial execution.
     #[serde(default = "default_true", rename = "parallelToolExecution")]
     pub parallel_tool_execution: bool,
@@ -213,16 +209,6 @@ pub struct AppConfig {
     /// exit) never trip the breaker. 0 = default (6).
     #[serde(default, rename = "toolBreakerThreshold")]
     pub tool_breaker_threshold: u32,
-    /// Full-autonomy opt-in for Auto/Workflow modes ("完全放手", risk acknowledged by
-    /// the user): (1) sandbox-denied commands auto-apply the recommended expansion —
-    /// session grant for the derived directory when available, otherwise one
-    /// unsandboxed retry — instead of popping the remediation dialog; (2)
-    /// network-declaring commands skip the SEC-01 confirmation (the user has accepted
-    /// that injected instructions could also exfiltrate data). Custom Deny rules are
-    /// NOT affected. Explicit risk confirm on enable + persistent indicator. Default
-    /// false.
-    #[serde(default, rename = "fullAutoMode")]
-    pub full_auto_mode: bool,
 }
 
 /// Default value of the Windows command sandbox mode.
@@ -254,7 +240,6 @@ impl Default for AppConfig {
             max_concurrent_subagents: None,
             max_tool_rounds: None,
             subagent_isolation_mode: default_subagent_isolation_mode(),
-            workflow_step_mode: default_workflow_step_mode(),
             parallel_tool_execution: default_true(),
             main_agent_tool_access: default_main_agent_tool_access(),
             model_call_retries: default_model_call_retries(),
@@ -262,7 +247,6 @@ impl Default for AppConfig {
             sandbox_windows: default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
             tool_breaker_threshold: 0,
-            full_auto_mode: false,
             memory_enabled: false,
             memory_auto_inject: default_true(),
             memory_auto_extract: default_true(),
@@ -283,11 +267,6 @@ impl Default for AppConfig {
 
 /// Default maximum tool-call rounds per agent run.
 pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 50;
-
-/// Default value of the workflow step permission mode: inherit the parent turn's mode.
-pub(crate) fn default_workflow_step_mode() -> String {
-    "inherit".into()
-}
 
 /// Default value of the subagent parallel write isolation mode: auto (worktree when git repo).
 pub fn default_subagent_isolation_mode() -> String {

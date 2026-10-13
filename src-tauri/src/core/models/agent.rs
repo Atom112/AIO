@@ -1,78 +1,32 @@
-//! Agent domain models: Agent mode enum, workflows, and custom subagent profiles.
+//! Agent domain models: Agent mode enum and custom subagent profiles.
 
 use serde::{Deserialize, Serialize};
 
 /// Agent execution mode.
+///
+/// The three-tier ladder (wire values are stable — they are persisted in the
+/// assistants table; only the user-facing labels/semantics changed):
+/// - `off`   → 「只读」: read-only agent (reads/search/web/think; mutations denied)
+/// - `normal`→ 「工作区内修改」: workspace edits without confirmation; deletes/commands still ask
+/// - `auto`  → 「完全权限」: full autonomy inherent (sandbox auto-expansion + network
+///   gate bypass + everything auto-allowed); risk confirmed on mode entry
+/// - `plan`  → 「计划」: research + plan only
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum AgentMode {
-    /// Chat mode (no agent features)
+    /// Read-only mode (formerly "chat"): reads/search/web allowed, mutations denied;
+    /// without a project it degrades to pure chat (no tools)
     #[default]
     Off,
-    /// Normal mode: file write/delete requires user confirmation
+    /// Workspace-edit mode (formerly "normal"): file writes/edits/mkdir in the
+    /// workspace run without confirmation; deletes / commands / git writes still ask
     Normal,
-    /// Auto mode: skips confirmation, executes autonomously
+    /// Full-permission mode (formerly "auto"): everything auto-allowed — sandbox
+    /// auto-expansion and the network-declaration bypass are inherent, no opt-in
     Auto,
     /// Plan mode: presents a plan first, executes after user confirmation
     Plan,
-    /// Workflow mode: forces task decomposition into a workflow and auto-executes it
-    Workflow,
-}
-
-/// Workflow step status
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub enum WorkflowStepStatus {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    /// Harness round 5 (failure gating): never started because an earlier step
-    /// failed and aborted the chain (step-level continueOnError escapes this).
-    Skipped,
-}
-
-/// One step of a workflow
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowStep {
-    /// Step identifier ("step-1", "step-2", ...)
-    pub step_id: String,
-    /// Subagent profile ID
-    pub profile_id: String,
-    /// Step display name
-    pub name: String,
-    /// Task description (input to the subagent)
-    pub task_description: String,
-    /// Whether this step keeps the chain running when IT fails (escape hatch for
-    /// intentionally best-effort steps; a failed step still aborts later steps
-    /// unless this is true)
-    #[serde(default)]
-    pub continue_on_error: bool,
-    /// Current status
-    pub status: WorkflowStepStatus,
-    /// Step execution result
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<String>,
-    /// Start timestamp (ms)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<u64>,
-    /// Duration (ms)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration: Option<u64>,
-}
-
-/// Complete workflow definition
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct Workflow {
-    /// UUID
-    pub workflow_id: String,
-    /// Workflow title
-    pub title: String,
-    /// Step list (linear order)
-    pub steps: Vec<WorkflowStep>,
 }
 
 // ====== Custom Subagent Profiles ======

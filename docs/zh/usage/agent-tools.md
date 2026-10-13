@@ -10,7 +10,7 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 >
 > **主体口径**：上表与权限矩阵描述的是**主代理**。子智能体的工具集按角色白名单装配（`SubagentProfile.allowed_tools/denied_tools`），与主代理不同——例如 explorer/architect 等只读角色明确拒绝 `git_*`（9 个只读工具，无 Git 工具），只有 coder/general 等持有 Git 读取。子智能体对未注入工具的调用会得到「工具不存在/不允许」的 fail-closed 错误。
 >
-> **MCP 工具**：助手勾选的 MCP server 工具会注入 Agent 循环（general 子代理角色亦可用）；与其他工具重名时自动重命名为 `mcp__<server>__<tool>`。未信任 server 的工具在 Auto/Workflow 模式下仍逐次审批（MCP 设置中的「受信任」开关）。
+> **MCP 工具**：助手勾选的 MCP server 工具会注入 Agent 循环（general 子代理角色亦可用）；与其他工具重名时自动重命名为 `mcp__<server>__<tool>`。未信任 server 的工具在完全权限模式下仍逐次审批（MCP 设置中的「受信任」开关）。
 
 | 工具名            | 类别 | Normal 默认 | Auto 默认 | Plan 默认 |
 | ----------------- | ---- | ----------- | --------- | --------- |
@@ -39,7 +39,6 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 | `project_map`     | 编排 | Allow       | Allow     | Allow     |
 | `delegate_task`   | 编排 | Ask         | Allow     | Ask       |
 | `delegate_tasks`  | 编排 | Ask         | Allow     | Ask       |
-| `create_workflow` | 编排 | Ask         | Allow     | Ask       |
 | `create_tasks`    | 编排 | Allow       | Allow     | Allow     |
 | `update_task`     | 编排 | Allow       | Allow     | Allow     |
 | `list_tasks`      | 编排 | Allow       | Allow     | Allow     |
@@ -360,17 +359,6 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 | **返回值** | 各子智能体工作总结（worktree 隔离时附带各自合并结果说明）                                                                                                                                 |
 | **权限**   | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                                          |
 
-### `create_workflow`
-
-创建按序执行的子智能体工作流。
-
-| 项目       | 值                                                                                                             |
-| ---------- | -------------------------------------------------------------------------------------------------------------- |
-| **描述**   | 创建按顺序执行的子智能体工作流。每步的输出自动传递到下一步。至少需要 2 个步骤。                                |
-| **参数**   | `title` (string, 必填) — 工作流标题；`steps` (array, 必填, ≥2 项) — 步骤列表，每项含 `profile`、`name`、`task` |
-| **返回值** | 各步骤工作总结                                                                                                 |
-| **权限**   | Normal/Ask, Auto/Allow, Plan/Ask                                                                               |
-
 ### `create_tasks`
 
 创建任务清单（主 Agent 任务跟踪）。
@@ -425,7 +413,7 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
   - **共享目录（仅文件锁）**：所有子任务直接写项目根目录。
 - **合并**：Auto 模式自动合并；Normal 模式整批一次审批（列出分支、变更文件与 diff 摘要）。**冲突**时合并安全中止、工作区保留，结果报告冲突文件清单，应基于最新代码串行重做该任务或手动解决。
 - **共享模式保护**：`write_file` / `replace_in_file` / `delete_file` / `make_directory` 按文件获取互斥锁（等待 120 秒超时报持有者）；文件被其他智能体修改过之后，`replace_in_file` 必须携带 `anchor_hash`、覆盖性 `write_file` 必须携带 `expect_hash`，不匹配会报错并要求重新读取——丢失更新被转换为可恢复的重读错误。
-- **范围**：`wait=false` 后台子智能体与工作流步骤固定共享模式（文件锁仍生效）；worktree 基于主检出 HEAD，不包含主目录未提交的改动，需要基于未提交改动工作时请在任务上传 `isolation: "shared"`。
+- **范围**：`wait=false` 后台子智能体固定共享模式（文件锁仍生效）；worktree 基于主检出 HEAD，不包含主目录未提交的改动，需要基于未提交改动工作时请在任务上传 `isolation: "shared"`。
 - **建议**：并行写入任务尽量按文件集分工；shell 命令与 git 写操作（`git_add` / `git_commit` / `checkout_branch`）写文件不经文件锁（与业界一致），关键文件优先让智能体用文件工具直接修改；worktree 任务运行期间避免在主检出切换分支——子任务合并时合入的是当时的当前分支。
 
 ### `read_skill`

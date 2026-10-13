@@ -66,10 +66,6 @@ AIO 的权限系统基于三态决策模型：
 
 > 具体规则列表可在源码 `permission.rs:default_rules_for_mode` 查看。
 
-### 工作流步骤的权限模式
-
-工作流（`create_workflow`）的步骤默认**继承启动时的 Agent 模式**：从 Normal 模式启动的工作流，其步骤内的写操作仍会逐次弹出审批。可在应用配置中设置 `workflowStepMode` 为 `"auto"` 恢复旧行为（步骤自动放行，适合完全信任的自动化场景）。
-
 ## 命令沙箱与网络出口
 
 `execute_command` 在 OS 级沙箱内执行，**默认无网络**：
@@ -81,7 +77,7 @@ AIO 的权限系统基于三态决策模型：
 | Windows | AppContainer（每项目 profile；`sandboxWindows=off` 可关闭） | 仅项目根 + 专用临时目录 + 配置的工具链 R+X 目录 | 无 capability = 阻断   |
 
 - 命令需要联网（下载依赖、API 调用、访问 localhost 服务）时，模型须显式声明 `network: true`（Windows 注入 internetClient capability；审批弹窗标注"需要网络访问"）。
-- **fail-closed**：Linux/macOS 沙箱不可用时，Auto/Workflow 模式直接拒绝执行（`sandboxRequired` 默认开）；Normal 模式审批弹窗附带沙箱不可用警示。
+- **fail-closed**：Linux/macOS 沙箱不可用时，完全权限（Auto）模式直接拒绝执行（`sandboxRequired` 默认开）；其他模式审批弹窗附带沙箱不可用警示。
 - Windows 工具链目录（cargo/scoop 等用户安装路径）经 `sandboxWindowsToolchainDirs` 配置追加 R+X；系统目录依赖内置 ALL APPLICATION PACKAGES ACE。
 - **脚本解释器转发**：`python`/`python3`/`py`/`pip`/`node`/`npm`/`npx`/`git`/`cargo`（含 `.exe` 后缀）作为首命令或 `cmd /c` 包裹内的裸名出现时，自动改写为宿主 PATH 解析的绝对路径（仅 PATH 查找，不查项目目录）——沙箱 shell 内这些名字原本一律 9009；Windows 沙箱同时对其安装目录做尽力 R+X 授权。命令输出按「UTF-8 优先、系统 ANSI 代码页（GBK）回退」解码，中文错误信息不再乱码。
 - **沙箱扩权请求**：命令在 Windows 沙箱内被拒绝（WinError 5「拒绝访问 / Access is denied」），或转发目标解释器在沙箱内「不是内部或外部命令 / 9009」时，弹出选择对话框——「授权解释器目录并重试（本次会话）」「授权并永久记住（写入 `sandboxWindowsToolchainDirs`）」「跳出沙箱执行（仅本次）」「忽略」，也支持直接输入任意目录路径授权。**同一操作**（`cmd /c X` 与裸 `X` 视为同一操作）30 分钟内最多询问一次；60 秒无响应按「忽略」处理（无人值守自动降级为原始错误，不会卡住回合）。

@@ -40,8 +40,6 @@ pub const SEARCH_MEMORY: &str = "search_memory";
 pub const DELEGATE_TASK: &str = "delegate_task";
 /// Batch-parallel delegation variant.
 pub const DELEGATE_TASKS: &str = "delegate_tasks";
-/// Define a multi-step workflow.
-pub const CREATE_WORKFLOW: &str = "create_workflow";
 /// Wait/poll a background subagent's result.
 pub const GET_SUBAGENT_RESULT: &str = "get_subagent_result";
 /// Create the agent task board.

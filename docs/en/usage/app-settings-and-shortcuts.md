@@ -86,7 +86,7 @@ On macOS, shortcuts are displayed using `^`, `⌥`, `⇧`, `⌘` symbols; on Win
 | Previous / Next assistant   | `Ctrl+[` / `Ctrl+]`             |
 | Previous / Next topic       | `Ctrl+Shift+[` / `Ctrl+Shift+]` |
 
-"Toggle Agent Mode" cycles through "Chat -> Normal -> Auto -> Plan" and does not enter Workflow mode; Workflow must be explicitly selected from the mode picker.
+"Toggle Agent Mode" cycles through "Read-only -> Workspace edit -> Full permission -> Plan"; entering Full permission first shows a risk confirmation.
 
 "New Assistant" and "New Project" currently share the same default key combination; which one executes depends on the command registered by the current page. If this default behavior causes issues, you can set a dedicated key combination for either action.
 

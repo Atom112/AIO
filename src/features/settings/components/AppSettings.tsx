@@ -73,7 +73,6 @@ const AppSettings: Component = () => {
   const [autoStart, setAutoStart] = createSignal(false);
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (0 = unlimited; default 25)
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (0 = unlimited; default 5)
-  const [fullAutoMode, setFullAutoMode] = createSignal(false); // Auto/Workflow full-autonomy opt-in (sandbox auto-expand + network-gate bypass)
   const [subagentIsolation, setSubagentIsolation] = createSignal('auto'); // Parallel write isolation (auto default)
   const [mainAgentToolAccess, setMainAgentToolAccess] = createSignal('hybrid'); // Main agent tool access (hybrid default)
   const [version, setVersion] = createSignal(''); // App version
@@ -88,8 +87,6 @@ const AppSettings: Component = () => {
     conflictActionId: string;
   } | null>(null); // Conflict confirmation dialog state
   const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // Reset-all confirmation state
-  const [langOpen, setLangOpen] = createSignal(false); // Language dropdown open state
-  let langRef: HTMLDivElement | undefined; // Language dropdown container
   const [isoOpen, setIsoOpen] = createSignal(false); // Isolation dropdown open state
   let isoRef: HTMLDivElement | undefined; // Isolation dropdown container
 
@@ -113,7 +110,6 @@ const AppSettings: Component = () => {
 
   onMount(() => {
     const onDocMouse = (e: MouseEvent) => {
-      if (langOpen() && langRef && !langRef.contains(e.target as Node)) setLangOpen(false);
       if (isoOpen() && isoRef && !isoRef.contains(e.target as Node)) setIsoOpen(false);
     };
     document.addEventListener('mousedown', onDocMouse);
@@ -147,9 +143,6 @@ const AppSettings: Component = () => {
       }
       if (typeof cfg?.maxConcurrentSubagents === 'number') {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
-      }
-      if (typeof cfg?.fullAutoMode === 'boolean') {
-        setFullAutoMode(cfg.fullAutoMode);
       }
       if (typeof cfg?.subagentIsolationMode === 'string' && cfg.subagentIsolationMode) {
         setSubagentIsolation(cfg.subagentIsolationMode);
@@ -549,60 +542,13 @@ const AppSettings: Component = () => {
               {t('app.language.description')} {t('app.language.system')}
             </p>
           </div>
-          <div class="relative min-w-[150px]" ref={langRef}>
-            <button
-              type="button"
-              class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-xs text-left cursor-pointer outline-none border border-[var(--border-dim)] transition-all duration-150"
-              onClick={() => setLangOpen(!langOpen())}
-              aria-haspopup="listbox"
-              aria-expanded={langOpen()}
-            >
-              <span class="truncate text-white/80">
-                {locale() === 'zh-CN' ? t('app.language.zhCN') : t('app.language.enUS')}
-              </span>
-              <span class="text-white/30 text-[10px]">&#9662;</span>
-            </button>
-            <div
-              class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top"
-              style={{
-                background: 'rgba(var(--surface-bg), 0.92)',
-                'backdrop-filter': 'blur(24px) saturate(150%)',
-                border: '1px solid var(--border-dim)',
-                'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
-              }}
-              classList={{
-                'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !langOpen(),
-                'visible opacity-100 scale-100 translate-y-0': langOpen(),
-              }}
-              role="listbox"
-            >
-              <For each={langOptions()}>
-                {(opt) => {
-                  const sel = () => locale() === opt.value;
-                  return (
-                    <div
-                      class="flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none"
-                      classList={{
-                        'text-white bg-pri-10': sel(),
-                        'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
-                      }}
-                      role="option"
-                      aria-selected={sel()}
-                      onClick={() => {
-                        setLocale(opt.value);
-                        setLangOpen(false);
-                      }}
-                    >
-                      <span class="grow truncate">{opt.label}</span>
-                      <Show when={sel()}>
-                        <Icon name="check" size={12} class="text-pri" />
-                      </Show>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </div>
+          <Dropdown
+            variant="ghost"
+            class="min-w-[150px]"
+            value={locale()}
+            onChange={(v) => setLocale(v)}
+            options={langOptions()}
+          />
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
@@ -673,8 +619,9 @@ const AppSettings: Component = () => {
             max={2000}
             fallback={25}
             onInput={(clamped) => {
-              // 0 is forbidden: snap it to -1 (unlimited) — the value just below 1
-              const v = clamped === 0 ? -1 : clamped;
+              // 0 is forbidden: snap it PAST in the direction of travel — stepping up
+              // from -1 lands on 1, stepping down from 1 (or typing 0) lands on -1
+              const v = clamped === 0 ? (maxToolRounds() < 0 ? 1 : -1) : clamped;
               setMaxToolRounds(v);
               schedulePatch('maxToolRounds', async () => {
                 try {
@@ -684,36 +631,6 @@ const AppSettings: Component = () => {
                 }
               });
             }}
-          />
-        </div>
-
-        <div class="flex justify-between items-center py-3 border-b border-white/5">
-          <div>
-            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
-              {t('app.fullAutoMode.title')}
-            </span>
-            <p class="text-xs text-white/35 mt-1 max-w-[420px]">
-              {t('app.fullAutoMode.description')}
-            </p>
-          </div>
-
-          <Switch
-            checked={fullAutoMode()}
-            onChange={(val) => {
-              // Risk acknowledgment on enable (full-autonomy opt-in, self-responsibility)
-              if (val && !window.confirm(t('app.fullAutoMode.confirm'))) return;
-              setFullAutoMode(val);
-              schedulePatch('fullAutoMode', async () => {
-                try {
-                  await patchAppConfig({ fullAutoMode: val });
-                } catch (err) {
-                  console.warn('Failed to save full-auto-mode config:', err);
-                  setFullAutoMode(!val); // Roll back
-                }
-              });
-            }}
-            variant="glow"
-            label={t('app.fullAutoMode.title')}
           />
         </div>
 
@@ -731,8 +648,9 @@ const AppSettings: Component = () => {
             max={32}
             fallback={5}
             onInput={(clamped) => {
-              // 0 is forbidden: snap it to -1 (unlimited) — the value just below 1
-              const v = clamped === 0 ? -1 : clamped;
+              // 0 is forbidden: snap it PAST in the direction of travel — stepping up
+              // from -1 lands on 1, stepping down from 1 (or typing 0) lands on -1
+              const v = clamped === 0 ? (maxConcurrentSubagents() < 0 ? 1 : -1) : clamped;
               setMaxConcurrentSubagents(v);
               schedulePatch('maxConcurrentSubagents', async () => {
                 try {
@@ -832,6 +750,8 @@ const AppSettings: Component = () => {
           </div>
 
           <Dropdown
+            variant="ghost"
+            class="min-w-[150px]"
             value={mainAgentToolAccess() as 'hybrid' | 'full' | 'orchestrator'}
             onChange={(v) => {
               setMainAgentToolAccess(v);

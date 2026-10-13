@@ -91,9 +91,10 @@ impl AgentLimits {
 }
 
 /// Effective max tool-call rounds from the user config: `-1` (or any negative) =
-/// unlimited (full-autonomy opt-in — the context budget, compression and the stop
-/// button remain the backstops); `0` is invalid (the UI forbids it) and clamps to
-/// the minimum 1; `None` falls back to the caller's guard default.
+/// unlimited (完全权限 mode is inherently full-autonomy — the context budget,
+/// compression and the stop button remain the backstops); `0` is invalid (the UI
+/// forbids it) and clamps to the minimum 1; `None` falls back to the caller's guard
+/// default.
 pub(crate) fn effective_max_rounds(v: Option<i32>, guard: u32) -> u32 {
     match v {
         Some(n) if n < 0 => u32::MAX,
@@ -101,16 +102,6 @@ pub(crate) fn effective_max_rounds(v: Option<i32>, guard: u32) -> u32 {
         Some(n) => (n as u32).max(1),
         None => guard,
     }
-}
-
-/// Whether the full-autonomy opt-in (`fullAutoMode`) is enabled in the app config;
-/// call sites add the Auto/Workflow mode check. Reads the config file per call —
-/// the callers are rare paths (per blocked / networked command), matching the
-/// existing ac_dirs load pattern.
-pub(crate) fn full_auto_mode_enabled(app: &AppHandle) -> bool {
-    crate::core::config::load_app_config(app)
-        .map(|c| c.full_auto_mode)
-        .unwrap_or(false)
 }
 
 /// Defensive check: scans messages for assistant(tool_calls) vs role:tool pairing,
@@ -435,11 +426,12 @@ pub(crate) async fn execute_builtin_tool(
         .map(|s| s.to_string())
         .unwrap_or_else(|| project_root.clone());
 
-    // Fail-closed: when the sandbox is unavailable (no bwrap/sandbox-exec), autonomous modes
-    // refuse command execution per config. Normal/Plan modes still go through permission
-    // approval (Ask), whose reason carries a sandbox-unavailable warning (see the Ask branch below).
+    // Fail-closed: when the sandbox is unavailable (no bwrap/sandbox-exec), the
+    // fully-autonomous mode (完全权限) refuses command execution per config.
+    // Normal/Plan/只读 modes still go through permission approval (Ask / Deny),
+    // whose reason carries a sandbox-unavailable warning (see the Ask branch below).
     if tool_name == tool_names::EXECUTE_COMMAND
-        && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+        && matches!(agent_mode, AgentMode::Auto)
         && !crate::utils::sandbox::sandbox_available()
         && crate::core::config::load_app_config(app)
             .unwrap_or_default()
@@ -452,15 +444,8 @@ pub(crate) async fn execute_builtin_tool(
     }
 
     // Permission check (matches execute_tool_call; server_id keeps crate::core::ids::BUILTIN_FS_SERVER_ID for compatibility with existing rules).
-    // SEC-19: Off（聊天模式）此前直接跳过整个权限检查（结构性 fail-open——
-    // 伪造/缺省模式即零审批放行），现在 fail-closed。
-    if matches!(agent_mode, AgentMode::Off) {
-        return Err(ierr!(
-            "工具 '{}' 在 Off（聊天）模式下不可用",
-            "Tool '{}' is unavailable in Off (chat) mode",
-            tool_name
-        ));
-    }
+    // 只读 (Off) mode goes through the same rule engine: its builtin arm allows reads
+    // and denies everything else (fail-closed), so no structural bypass here.
     let custom_rules = permission::load_permissions(Some(&project_root)).rules;
     let action = permission::check_permission(
         tool_name,
@@ -470,19 +455,17 @@ pub(crate) async fn execute_builtin_tool(
         &custom_rules,
     );
 
-    // SEC-01: network=true was previously auto-allowed in Auto/Workflow (permission
-    // Allow) — one prompt injection could exfiltrate any user-readable file
-    // silently. Network-declaring commands therefore require confirmation in every
-    // mode — EXCEPT the explicit full-autonomy opt-in (fullAutoMode + Auto/Workflow):
-    // the user has accepted the exfiltration risk in exchange for zero interruptions
-    // (risk confirm on enable + persistent indicator). Deny rules still win above.
-    let full_auto =
-        full_auto_mode_enabled(app) && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow);
+    // SEC-01: network=true was previously auto-allowed in Auto (permission Allow) —
+    // one prompt injection could exfiltrate any user-readable file silently, so
+    // network-declaring commands got a dedicated confirmation gate. Since 完全权限
+    // (Auto) became the inherent full-autonomy tier (risk confirmed on mode entry,
+    // exfiltration trade-off stated there), the gate no longer applies in Auto:
+    // zero interruptions is the mode's contract. Other tiers keep the gate via their
+    // own Ask actions. Deny rules still win above.
     let network_auto = tool_name == tool_names::EXECUTE_COMMAND
-        && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow)
+        && !matches!(agent_mode, AgentMode::Auto)
         && arguments["network"].as_bool().unwrap_or(false)
-        && action == PermissionAction::Allow
-        && !full_auto;
+        && action == PermissionAction::Allow;
     let action = if network_auto {
         PermissionAction::Ask
     } else {
@@ -492,8 +475,8 @@ pub(crate) async fn execute_builtin_tool(
     match action {
         PermissionAction::Deny => {
             return Err(ierr!(
-                    "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到自动模式或在项目权限设置中添加 allow 规则。",
-                    "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo allow it, switch to auto mode or add an allow rule in project permission settings.",
+                    "工具 '{}' 已在当前模式下被安全策略禁止执行（Deny）。\n如需执行，请切换到完全权限模式或在项目权限设置中添加 allow 规则。",
+                    "Tool '{}' is blocked by the security policy in the current mode (Deny).\nTo allow it, switch to full-permission mode or add an allow rule in project permission settings.",
                     tool_name
                 ));
         }
@@ -637,20 +620,15 @@ pub(crate) async fn execute_builtin_tool(
             let hint_dir = shell_tools::forward_script_interpreter(&command)
                 .1
                 .map(|p| p.to_string_lossy().into_owned());
-            // Full-autonomy opt-in (fullAutoMode + Auto/Workflow mode): skip the
-            // dialog and apply the recommended decision directly — session grant for
-            // the derived directory when one is derivable, else one unsandboxed retry.
-            // Custom Deny rules are unaffected (checked before this point).
-            let auto_expand = full_auto_mode_enabled(app)
-                && matches!(agent_mode, AgentMode::Auto | AgentMode::Workflow);
+            // 完全权限 (Auto) is inherently full-autonomy: skip the dialog and apply
+            // the recommended decision directly — session grant for the derived
+            // directory when one is derivable, else one unsandboxed retry. Custom
+            // Deny rules are unaffected (checked before this point). Other tiers keep
+            // the remediation dialog.
+            let auto_expand = matches!(agent_mode, AgentMode::Auto);
             let decision = if auto_expand {
                 tracing::warn!(
-                    "[sandbox-expand] 自动扩权（fullAutoMode + {} 模式）：命令「{}」→ {}",
-                    if matches!(agent_mode, AgentMode::Workflow) {
-                        "Workflow"
-                    } else {
-                        "Auto"
-                    },
+                    "[sandbox-expand] 自动扩权（完全权限模式）：命令「{}」→ {}",
                     command,
                     if hint_dir.is_some() {
                         "派生目录会话授权后重试"
@@ -905,7 +883,7 @@ pub(crate) struct TurnContext {
 /// - `messages`: initial message list (including this turn's user message); the frontend prebuilds system/history/user
 /// - `mcp_server_ids`: MCP server ids opted in by the assistant. In Agent mode, tools of connected
 ///   servers are injected; conflicting tool names are renamed to mcp__<server>__<tool>; tools from
-///   untrusted servers still require per-call approval in Auto/Workflow mode (see mcp::execute_tool_call)
+///   untrusted servers still require per-call approval in Auto mode (see mcp::execute_tool_call)
 /// - `_agent_mode`: legacy IPC parameter, accepted for compatibility but IGNORED —
 ///   the mode is derived server-side from the assistant's persisted record (MCP-13)
 /// - `project_id`: project id (used to resolve project-level permission rules)

@@ -1,11 +1,10 @@
-//! Subagent and workflow orchestration: delegate_task(s), execute_workflow, execute_subagent and their helpers.
+//! Subagent orchestration: delegate_task(s), execute_subagent and their helpers.
 
 // 阶段4 第1项（消 glob）：原 `use crate::commands::llm::*;` 同时吸入 mod.rs 的
 // 14 个子模块 glob 与其工具 use 头——替换为下述显式 use（符号 → 真实来源）。
 use crate::commands::llm::handoff::build_subagent_progress_summary;
 use crate::commands::llm::tool_dispatch::{
-    classify_outcome, is_parallel_safe, merge_mcp_tools, FsServerPolicy, ToolCallStats,
-    ToolFailureBreaker,
+    classify_outcome, is_parallel_safe, merge_mcp_tools, FsServerPolicy, ToolFailureBreaker,
 };
 use crate::core::events as ev;
 use crate::core::models::*;
@@ -29,9 +28,7 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::json;
-use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Window};
-use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 /// Builds the subagent message list (system prompt + task description + context hints)
 pub(crate) fn build_subagent_messages(
@@ -231,7 +228,6 @@ pub(crate) async fn handle_delegate_task(
     let custom_profiles = ctx.custom_profiles.as_slice();
     let mcp_server_ids = ctx.mcp_server_ids.as_slice();
     let locale = ctx.locale.as_str();
-    let stats_ctx = ctx.stats.clone();
     let semaphore = ctx.semaphore.clone();
     // Single/background delegate_task is also bound by the global concurrency cap (shares the same semaphore as batch delegate_tasks).
     // LOOP-5: waiting for a permit must honor cancellation — a queued delegation
@@ -342,7 +338,6 @@ pub(crate) async fn handle_delegate_task(
         locale,
         isolation_hint,
         !is_background,
-        stats_ctx.as_deref(),
     )
     .await?;
 
@@ -668,7 +663,6 @@ pub(crate) async fn execute_single_delegate(
     locale: &str,
     isolation_hint: Option<&str>,
     allow_worktree: bool,
-    stats: Option<&ToolCallStats>,
 ) -> Result<DelegateOutcome, String> {
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
@@ -729,7 +723,6 @@ pub(crate) async fn execute_single_delegate(
         token,
         mcp_server_ids,
         locale,
-        stats,
     )
     .await;
 
@@ -1031,7 +1024,6 @@ pub(crate) async fn handle_delegate_tasks(
                 &locale_clone,
                 isolation_hint.as_deref(),
                 true, // awaited batch delegation supports worktree isolation
-                None, // batch delegations feed no workflow failure gate
             )
             .await;
             (task_idx, outcome)
@@ -1130,287 +1122,6 @@ pub(crate) async fn handle_delegate_tasks(
         is_error: false,
     })
 }
-/// Resolves the permission mode for a workflow step: config "auto" -> Auto (legacy
-/// behavior); everything else (incl. "inherit" and unknown values) -> inherit the parent
-/// turn's mode (fail-safe; writes still approved per-action in Normal mode).
-fn resolve_workflow_step_mode(cfg_val: &str, parent: &AgentMode) -> AgentMode {
-    if cfg_val.eq_ignore_ascii_case("auto") {
-        AgentMode::Auto
-    } else {
-        parent.clone()
-    }
-}
-
-/// Executes a workflow (runs each step's subagent sequentially).
-///
-/// Each step calls `handle_delegate_task` independently; the previous step's output is appended to
-/// the next step's task as context. Progress goes to the frontend via Tauri events (workflow-start /
-/// workflow-step-start / workflow-step-complete / workflow-complete).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "workflow orchestration keeps inherited execution context explicit"
-)]
-pub(crate) async fn execute_workflow(
-    window: &Window,
-    app: &AppHandle,
-    client: &reqwest::Client,
-    api_url: &str,
-    api_key: &str,
-    model: &str,
-    parent_assistant_id: &str,
-    parent_topic_id: &str,
-    workflow: &Workflow,
-    project_id: Option<&str>,
-    semaphore: Arc<Semaphore>,
-    custom_profiles: &[CustomSubagentProfile],
-    profile_model_overrides: &[ProfileModelOverride],
-    mcp_server_ids: &[String],
-    token: &CancellationToken,
-    locale: &str,
-    parent_mode: &AgentMode,
-) -> Result<ToolResult, String> {
-    let total_steps = workflow.steps.len();
-
-    // Workflow step permission mode: inherits the parent turn by default (steps are not
-    // silently forced to Auto); config "auto" keeps the legacy Auto behavior.
-    let step_mode = resolve_workflow_step_mode(
-        &crate::core::config::load_app_config(app)
-            .map(|c| c.workflow_step_mode)
-            .unwrap_or_default(),
-        parent_mode,
-    );
-
-    // Emit the workflow-start event
-    let _ = window.emit(
-        ev::WORKFLOW_START,
-        serde_json::json!({
-            "workflowId": workflow.workflow_id,
-            "title": workflow.title,
-            "steps": workflow.steps.iter().map(|s| serde_json::json!({
-                "stepId": s.step_id,
-                "profileId": s.profile_id,
-                "name": s.name,
-                "status": "pending",
-            })).collect::<Vec<_>>(),
-        }),
-    );
-
-    let mut context = String::new();
-    let mut all_results: Vec<String> = Vec::new();
-    // Harness round 5 (failure gating): a failed step ABORTS the chain by default
-    // (step-level continue_on_error keeps intentionally best-effort steps running);
-    // later steps are marked skipped, and the summary reports honest counts
-    // instead of the old "执行完成（N/N 步骤）" over every-failure.
-    let mut failed_steps = 0usize;
-    let mut skipped_steps = 0usize;
-    let mut abort_reason: Option<String> = None;
-
-    for (idx, step) in workflow.steps.iter().enumerate() {
-        if token.is_cancelled() {
-            let _ = window.emit(
-                ev::WORKFLOW_COMPLETE,
-                serde_json::json!({ "workflowId": workflow.workflow_id }),
-            );
-            return Err(ierr!("工作流被用户取消", "Workflow cancelled by the user"));
-        }
-
-        // Gated: an earlier step failed and aborted the chain — mark skipped.
-        if let Some(reason) = &abort_reason {
-            all_results.push(format!(
-                "步骤 {} ({}): [跳过] {}",
-                idx + 1,
-                step.name,
-                reason
-            ));
-            skipped_steps += 1;
-            let _ = window.emit(
-                ev::WORKFLOW_STEP_COMPLETE,
-                serde_json::json!({
-                    "stepId": step.step_id,
-                    "status": "skipped",
-                }),
-            );
-            continue;
-        }
-
-        // Emit the workflow-step-start event
-        let _ = window.emit(
-            ev::WORKFLOW_STEP_START,
-            serde_json::json!({ "stepId": step.step_id }),
-        );
-
-        let start = std::time::Instant::now();
-
-        // Build the task description: base task + context
-        let mut task_desc = step.task_description.clone();
-        if !context.is_empty() {
-            task_desc.push_str("\n\n== 前期工作上下文 ==\n");
-            task_desc.push_str(&context);
-        }
-
-        // Build the arguments JSON (same format as delegate_task). Workflow steps are
-        // sequential by definition, so they always run shared (per-file locks apply);
-        // worktree isolation would also hide the user's uncommitted main-tree changes.
-        let arguments = serde_json::json!({
-            "profile": step.profile_id,
-            "task": task_desc,
-            "isolation": "shared",
-        });
-
-        // Call handle_delegate_task to run this step.
-        // 阶段4 第1项（子目标 3/5）：步骤转发也走打包上下文（借用→owned 一次性克隆）。
-        // stats feeds the round-5 failure gate: a step whose tool calls ALL failed
-        // is a hard environment failure even though the subagent returned a summary.
-        let stats = std::sync::Arc::new(ToolCallStats::new());
-        let step_ctx = super::delegate_ctx::DelegateContext {
-            window: window.clone(),
-            app: app.clone(),
-            client: client.clone(),
-            api_url: api_url.to_string(),
-            api_key: api_key.to_string(),
-            model: model.to_string(),
-            parent_assistant_id: parent_assistant_id.to_string(),
-            parent_topic_id: parent_topic_id.to_string(),
-            project_id: project_id.map(|s| s.to_string()),
-            agent_mode: step_mode.clone(), // step permission mode: inherits the parent turn by default (see resolve_workflow_step_mode)
-            token: token.clone(),
-            profile_model_overrides: profile_model_overrides.to_vec(),
-            custom_profiles: custom_profiles.to_vec(),
-            mcp_server_ids: mcp_server_ids.to_vec(),
-            semaphore: semaphore.clone(),
-            locale: locale.to_string(),
-            stats: Some(stats.clone()),
-        };
-        let result = handle_delegate_task(&step_ctx, &arguments).await;
-
-        let duration_ms = start.elapsed().as_millis() as u64;
-
-        match result {
-            Ok(tr) => {
-                let step_result_text = tr
-                    .content
-                    .iter()
-                    .find(|c| c.kind == "text")
-                    .and_then(|c| c.data.get("text"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("(done)")
-                    .to_string();
-
-                // Round-5 gate: every tool call errored = the step produced nothing
-                // usable (e.g. its only read_file failed) — count as failed even
-                // though the subagent returned an honest failure summary.
-                let all_tools_failed = stats.all_failed();
-                let marker = if all_tools_failed {
-                    "[工具全部失败] "
-                } else {
-                    ""
-                };
-
-                // Append to the context (head+tail truncation prevents unbounded growth across steps)
-                context.push_str(&format!(
-                    "\n## 步骤 {} ({}): {}{}",
-                    idx + 1,
-                    step.name,
-                    step.profile_id,
-                    truncate_chars_head_tail(&step_result_text, 1200)
-                ));
-                all_results.push(format!(
-                    "步骤 {} ({}): {}{}",
-                    idx + 1,
-                    step.name,
-                    marker,
-                    step_result_text
-                ));
-
-                // Emit the workflow-step-complete event
-                let _ = window.emit(
-                    ev::WORKFLOW_STEP_COMPLETE,
-                    serde_json::json!({
-                        "stepId": step.step_id,
-                        "status": if all_tools_failed { "failed" } else { "completed" },
-                        "duration": duration_ms,
-                    }),
-                );
-
-                if all_tools_failed {
-                    failed_steps += 1;
-                    if !step.continue_on_error {
-                        abort_reason = Some(format!(
-                            "步骤 {}（{}）的 {} 次工具调用全部失败（环境或路径不可用）",
-                            idx + 1,
-                            step.name,
-                            stats.total()
-                        ));
-                    }
-                }
-            }
-            Err(e) => {
-                if e == "cancelled" {
-                    let _ = window.emit(
-                        ev::WORKFLOW_COMPLETE,
-                        serde_json::json!({ "workflowId": workflow.workflow_id }),
-                    );
-                    return Err("cancelled".into());
-                }
-                context.push_str(&format!(
-                    "\n## 步骤 {} ({}): [失败] {}",
-                    idx + 1,
-                    step.name,
-                    e
-                ));
-                all_results.push(format!("步骤 {} ({}): [失败] {}", idx + 1, step.name, e));
-
-                // Emit the workflow-step-complete event (failed)
-                let _ = window.emit(
-                    ev::WORKFLOW_STEP_COMPLETE,
-                    serde_json::json!({
-                        "stepId": step.step_id,
-                        "status": "failed",
-                        "duration": duration_ms,
-                    }),
-                );
-                failed_steps += 1;
-
-                // Harness round 5: a failed step ABORTS the chain unless the step
-                // opts out via continue_on_error (the old behavior fed the error to
-                // later steps as plain text and reported N/N completed regardless).
-                if !step.continue_on_error {
-                    abort_reason = Some(format!("步骤 {}（{}）执行失败", idx + 1, step.name));
-                }
-            }
-        }
-    }
-
-    // Emit the workflow-complete event
-    let _ = window.emit(
-        ev::WORKFLOW_COMPLETE,
-        serde_json::json!({ "workflowId": workflow.workflow_id }),
-    );
-
-    // Build the final result: honest per-outcome counts (round 5: the summary used
-    // to claim "执行完成（N/N）" even when every step failed).
-    let completed_steps = total_steps - failed_steps - skipped_steps;
-    let headline = if failed_steps == 0 && skipped_steps == 0 {
-        format!(
-            "工作流 '{}' 执行完成（{}/{} 步骤）",
-            workflow.title, completed_steps, total_steps
-        )
-    } else {
-        format!(
-            "工作流 '{}' 执行结束：成功 {}/{} 步骤，失败 {}，跳过 {}",
-            workflow.title, completed_steps, total_steps, failed_steps, skipped_steps
-        )
-    };
-    let summary = format!("{headline}\n\n{}", all_results.join("\n\n"));
-
-    Ok(ToolResult {
-        content: vec![ToolResultContent {
-            kind: "text".into(),
-            data: serde_json::json!({ "text": summary }),
-        }],
-        is_error: failed_steps > 0,
-    })
-}
 
 /// Runs the subagent loop (invoked from the main agent's tool execution loop).
 ///
@@ -1440,7 +1151,6 @@ pub(crate) async fn execute_subagent(
     token: &CancellationToken,
     mcp_server_ids: &[String],
     locale: &str,
-    stats: Option<&ToolCallStats>,
 ) -> Result<ToolResult, String> {
     let subagent_id = uuid::Uuid::new_v4().to_string();
     let model_to_use = profile.model_override.as_deref().unwrap_or(model);
@@ -1783,10 +1493,6 @@ pub(crate) async fn execute_subagent(
                     if let Some(n) = tool_breaker.record(&tc.name, outcome) {
                         content_text.push_str(&tool_breaker.warn_message(&tc.name, n));
                     }
-                    // Workflow failure gating stats (harness round 5)
-                    if let Some(st) = stats {
-                        st.record(tool_is_error);
-                    }
                     let _ = window.emit(
                         ev::SUBAGENT_STEP,
                         SubagentStepPayload {
@@ -1823,10 +1529,6 @@ pub(crate) async fn execute_subagent(
                         if let Some(n) = tool_breaker.record(&rr.tool_calls[i].name, outcome) {
                             content_text
                                 .push_str(&tool_breaker.warn_message(&rr.tool_calls[i].name, n));
-                        }
-                        // Workflow failure gating stats (harness round 5)
-                        if let Some(st) = stats {
-                            st.record(tool_is_error);
                         }
                         let tc = &rr.tool_calls[i];
                         let _ = window.emit(
@@ -2408,36 +2110,6 @@ mod tests {
         assert!(en.contains("[Background subagent notice]"));
         assert!(en.contains("[Background subagent completed]"));
         assert!(en.contains("explorer"));
-    }
-
-    #[test]
-    fn workflow_step_mode_inherits_by_default() {
-        // Default ("inherit"), empty string, and unknown values all fall back to the parent turn's mode (fail-safe)
-        assert_eq!(
-            resolve_workflow_step_mode("inherit", &AgentMode::Normal),
-            AgentMode::Normal
-        );
-        assert_eq!(
-            resolve_workflow_step_mode("", &AgentMode::Normal),
-            AgentMode::Normal
-        );
-        assert_eq!(
-            resolve_workflow_step_mode("whatever", &AgentMode::Plan),
-            AgentMode::Plan
-        );
-    }
-
-    #[test]
-    fn workflow_step_mode_auto_opt_in() {
-        // Only an explicit "auto" config (case-insensitive) keeps the legacy behavior
-        assert_eq!(
-            resolve_workflow_step_mode("auto", &AgentMode::Normal),
-            AgentMode::Auto
-        );
-        assert_eq!(
-            resolve_workflow_step_mode("Auto", &AgentMode::Workflow),
-            AgentMode::Auto
-        );
     }
 }
 

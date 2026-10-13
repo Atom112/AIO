@@ -71,8 +71,9 @@ const AppSettings: Component = () => {
   const [s, setS] = createSignal(0); // Saturation (0-100%)
   const [l, setL] = createSignal(0); // Lightness (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
-  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (default 25)
+  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (0 = unlimited; default 25)
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
+  const [autoExpandSandbox, setAutoExpandSandbox] = createSignal(false); // Auto/Workflow sandbox auto-expansion (full-autonomy opt-in)
   const [subagentIsolation, setSubagentIsolation] = createSignal('auto'); // Parallel write isolation (auto default)
   const [mainAgentToolAccess, setMainAgentToolAccess] = createSignal('hybrid'); // Main agent tool access (hybrid default)
   const [version, setVersion] = createSignal(''); // App version
@@ -141,11 +142,14 @@ const AppSettings: Component = () => {
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
       }
-      if (typeof cfg?.maxToolRounds === 'number' && cfg.maxToolRounds > 0) {
+      if (typeof cfg?.maxToolRounds === 'number' && cfg.maxToolRounds >= 0) {
         setMaxToolRounds(cfg.maxToolRounds);
       }
       if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents > 0) {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
+      }
+      if (typeof cfg?.autoExpandSandbox === 'boolean') {
+        setAutoExpandSandbox(cfg.autoExpandSandbox);
       }
       if (typeof cfg?.subagentIsolationMode === 'string' && cfg.subagentIsolationMode) {
         setSubagentIsolation(cfg.subagentIsolationMode);
@@ -665,8 +669,8 @@ const AppSettings: Component = () => {
 
           <NumberInput
             value={maxToolRounds()}
-            min={1}
-            max={200}
+            min={0}
+            max={2000}
             fallback={25}
             onInput={(clamped) => {
               setMaxToolRounds(clamped);
@@ -678,6 +682,36 @@ const AppSettings: Component = () => {
                 }
               });
             }}
+          />
+        </div>
+
+        <div class="flex justify-between items-center py-3 border-b border-white/5">
+          <div>
+            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
+              {t('app.autoExpandSandbox.title')}
+            </span>
+            <p class="text-xs text-white/35 mt-1 max-w-[420px]">
+              {t('app.autoExpandSandbox.description')}
+            </p>
+          </div>
+
+          <Switch
+            checked={autoExpandSandbox()}
+            onChange={(val) => {
+              // Risk acknowledgment on enable (full-autonomy opt-in, self-responsibility)
+              if (val && !window.confirm(t('app.autoExpandSandbox.confirm'))) return;
+              setAutoExpandSandbox(val);
+              schedulePatch('autoExpandSandbox', async () => {
+                try {
+                  await patchAppConfig({ autoExpandSandbox: val });
+                } catch (err) {
+                  console.warn('Failed to save sandbox auto-expansion config:', err);
+                  setAutoExpandSandbox(!val); // Roll back
+                }
+              });
+            }}
+            variant="glow"
+            label={t('app.autoExpandSandbox.title')}
           />
         </div>
 

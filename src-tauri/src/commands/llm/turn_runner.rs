@@ -292,11 +292,12 @@ impl AgentTurnRunner {
         }
         // Context budget tracking: token-level and model-aware (threshold/reserve budgets derived from the window before task start)
         // Configurable max tool-call rounds per turn (LOOP-15: default 50 per
-        // DEFAULT_MAX_TOOL_ROUNDS — the historic comment claimed 25), min 1
-        let max_rounds = app_config
-            .max_tool_rounds
-            .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS)
-            .max(1);
+        // DEFAULT_MAX_TOOL_ROUNDS — the historic comment claimed 25); 0 = unlimited
+        // (full-autonomy opt-in, see AgentLimits::effective_max_rounds)
+        let max_rounds = super::effective_max_rounds(
+            app_config.max_tool_rounds,
+            crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
+        );
         // Max reminders to call create_workflow in Workflow mode (bounded, avoids infinite loops)
         let max_workflow_reminders: u32 = 2;
         let mut workflow_reminders: u32 = 0;

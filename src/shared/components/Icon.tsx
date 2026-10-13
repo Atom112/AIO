@@ -61,7 +61,8 @@ export type IconName =
   | 'chevron-up'
   | 'chevron-down'
   | 'caret-up'
-  | 'caret-down';
+  | 'caret-down'
+  | 'triangle-down';
 
 /**
  * Icon path factory table.
@@ -291,6 +292,9 @@ const PATHS: Record<IconName, () => JSX.Element> = {
   'chevron-down': () => <path d="m6 10 6 6 6-6" />,
   'caret-up': () => <path d="m6 15 6-6 6 6" />,
   'caret-down': () => <path d="m6 9 6 6 6-6" />,
+  // Filled triangle (solid caret): overrides the library's stroke styling — used by
+  // disclosure toggles (task list expand/collapse) where a solid triangle reads better.
+  'triangle-down': () => <path d="M5.5 8.5h13L12 17.5z" fill="currentColor" stroke="none" />,
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

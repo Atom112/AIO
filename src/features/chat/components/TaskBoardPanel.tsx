@@ -55,77 +55,86 @@ const TaskBoardPanel: Component<TaskBoardPanelProps> = (props) => {
             })}
           </span>
           <Icon
-            name="arrow-left"
+            name="triangle-down"
             size={11}
             class="shrink-0 ml-auto transition-transform duration-200"
-            classList={{ '-rotate-90': collapsed(), 'rotate-90': !collapsed() }}
+            classList={{ '-rotate-90': collapsed() }}
             style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
           />
         </button>
 
-        {/* Detailed task rows */}
-        <Show when={!collapsed()}>
-          <div class="px-2 pb-2 space-y-1 max-h-[200px] overflow-y-auto scrollbar-thin">
-            <For each={board()!.tasks}>
-              {(task) => (
-                <div
-                  class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] select-none"
-                  style={{
-                    background: 'rgba(var(--text-base-rgb),0.03)',
-                    'border-left': `2px solid ${
-                      task.status === 'in_progress'
-                        ? 'rgba(var(--primary-rgb),0.55)'
-                        : 'transparent'
-                    }`,
-                  }}
-                  classList={{ 'opacity-55': task.status === 'pending' }}
-                >
-                  {/* Status mark */}
-                  <Show
-                    when={task.status === 'completed'}
-                    fallback={
-                      <span
-                        class="w-2 h-2 rounded-full shrink-0"
-                        classList={{
-                          'animate-pulse': task.status === 'in_progress',
-                        }}
-                        style={{
-                          background:
-                            task.status === 'in_progress'
-                              ? 'rgba(var(--primary-rgb),0.8)'
-                              : 'transparent',
-                          border:
-                            task.status === 'pending'
-                              ? '1px solid rgba(var(--text-base-rgb),0.35)'
-                              : 'none',
-                        }}
-                      />
-                    }
-                  >
-                    <Icon
-                      name="check"
-                      size={12}
-                      class="shrink-0"
-                      style={{ color: 'var(--color-success)' }}
-                    />
-                  </Show>
-                  <span
-                    class="truncate"
-                    classList={{ 'line-through': task.status === 'completed' }}
+        {/* Detailed task rows: grid-template-rows animation (0fr <-> 1fr) — pure-CSS
+            height transition without measuring the content; rows stay mounted. */}
+        <div
+          class="grid transition-[grid-template-rows] duration-200 ease-out"
+          classList={{ 'grid-rows-[0fr]': collapsed(), 'grid-rows-[1fr]': !collapsed() }}
+        >
+          <div class="overflow-hidden min-h-0">
+            <div
+              class="px-2 pb-2 space-y-1 max-h-[200px] overflow-y-auto scrollbar-thin transition-opacity duration-200"
+              classList={{ 'opacity-0': collapsed(), 'opacity-100': !collapsed() }}
+            >
+              <For each={board()!.tasks}>
+                {(task) => (
+                  <div
+                    class="flex items-center gap-2 rounded-md px-2 py-1 text-[11px] select-none"
                     style={{
-                      color:
-                        task.status === 'completed'
-                          ? 'rgba(var(--text-base-rgb),0.35)'
-                          : 'rgba(var(--text-base-rgb),0.75)',
+                      background: 'rgba(var(--text-base-rgb),0.03)',
+                      'border-left': `2px solid ${
+                        task.status === 'in_progress'
+                          ? 'rgba(var(--primary-rgb),0.55)'
+                          : 'transparent'
+                      }`,
                     }}
+                    classList={{ 'opacity-55': task.status === 'pending' }}
                   >
-                    {task.title}
-                  </span>
-                </div>
-              )}
-            </For>
+                    {/* Status mark */}
+                    <Show
+                      when={task.status === 'completed'}
+                      fallback={
+                        <span
+                          class="w-2 h-2 rounded-full shrink-0"
+                          classList={{
+                            'animate-pulse': task.status === 'in_progress',
+                          }}
+                          style={{
+                            background:
+                              task.status === 'in_progress'
+                                ? 'rgba(var(--primary-rgb),0.8)'
+                                : 'transparent',
+                            border:
+                              task.status === 'pending'
+                                ? '1px solid rgba(var(--text-base-rgb),0.35)'
+                                : 'none',
+                          }}
+                        />
+                      }
+                    >
+                      <Icon
+                        name="check"
+                        size={12}
+                        class="shrink-0"
+                        style={{ color: 'var(--color-success)' }}
+                      />
+                    </Show>
+                    <span
+                      class="truncate"
+                      classList={{ 'line-through': task.status === 'completed' }}
+                      style={{
+                        color:
+                          task.status === 'completed'
+                            ? 'rgba(var(--text-base-rgb),0.35)'
+                            : 'rgba(var(--text-base-rgb),0.75)',
+                      }}
+                    >
+                      {task.title}
+                    </span>
+                  </div>
+                )}
+              </For>
+            </div>
           </div>
-        </Show>
+        </div>
       </div>
     </Show>
   );

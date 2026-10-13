@@ -194,7 +194,7 @@ const ReasoningButton: Component = () => {
           >
             {/* level-hue gradient fill with a twinkling star field (hidden when off) */}
             <div
-              class="absolute left-0 top-0 h-full overflow-hidden rounded-full"
+              class="absolute left-0 top-0 h-full overflow-hidden rounded-full transition-[width] duration-200 ease-out"
               style={{ width: `${pos(activeIndex())}%`, background: fillGradient() }}
             >
               <Show when={reasoningLevel() !== 'off'}>
@@ -213,7 +213,7 @@ const ReasoningButton: Component = () => {
             <For each={LEVELS}>
               {(_, i) => (
                 <span
-                  class="pointer-events-none absolute top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                  class="pointer-events-none absolute top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-200"
                   style={{
                     left: `${pos(i())}%`,
                     background:
@@ -226,7 +226,7 @@ const ReasoningButton: Component = () => {
             </For>
           </div>
           <div
-            class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgb(var(--text-base-rgb))] transition-transform duration-150"
+            class="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgb(var(--text-base-rgb))] transition-[left,transform,box-shadow] duration-200 ease-out"
             classList={{ 'scale-125': dragging() }}
             style={{ left: `${pos(activeIndex())}%`, 'box-shadow': thumbGlow() }}
           />

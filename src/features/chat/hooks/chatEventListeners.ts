@@ -447,6 +447,33 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         }, 500);
         return;
       }
+      // Round-level usage ping (agent loop emits one per completed round, no content):
+      // update the running message's token stats in place so the context bar tracks the
+      // growing prompt across a multi-round turn (mainstream: per-API-call updates).
+      // produce() keeps message identity stable — no row remount, no animation replay.
+      if (input_tokens != null || context_tokens != null) {
+        const asstPing = datas.assistants.find((a) => a.id === assistant_id);
+        const topicPing = asstPing?.topics.find((t: Topic) => t.id === topic_id);
+        const lastIdxPing = (topicPing?.history.length ?? 0) - 1;
+        if (lastIdxPing >= 0) {
+          setDatas(
+            'assistants',
+            (a) => a.id === assistant_id,
+            'topics',
+            (t) => t.id === topic_id,
+            'history',
+            lastIdxPing,
+            produce((m) => {
+              const msg = m as Message;
+              if (input_tokens != null) msg.inputTokens = input_tokens;
+              if (output_tokens != null) msg.outputTokens = output_tokens;
+              if (context_tokens != null) msg.contextTokens = context_tokens;
+              if (cached_input_tokens != null) msg.cachedInputTokens = cached_input_tokens;
+            }),
+          );
+        }
+        return; // usage-only ping: nothing to append to the content stream
+      }
 
       // Streaming append: batched per stream (CHAT-7) and applied via rAF-like windows
       // (CHAT-9: one setDatas per flush instead of per chunk)

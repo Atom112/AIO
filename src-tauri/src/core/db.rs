@@ -263,6 +263,14 @@ fn m_messages_cached_tokens(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "cached_input_tokens", "INTEGER")
 }
 
+/// v16: messages.context_tokens (peak context = last API call's input_tokens; the
+/// frontend context-window bar must survive restarts — without this column the bar
+/// fell back to input_tokens, which for agent turns is the SUM over all rounds and
+/// wildly overstates the real context size).
+fn m_messages_context_tokens(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "context_tokens", "INTEGER")
+}
+
 /// Migration table for chat_history.db (strictly increasing; new migrations may only be appended, released entries must never be modified).
 const CHAT_DB_MIGRATIONS: &[Migration] = &[
     Migration {
@@ -339,5 +347,10 @@ const CHAT_DB_MIGRATIONS: &[Migration] = &[
         version: 15,
         name: "messages.cached_input_tokens",
         run: m_messages_cached_tokens,
+    },
+    Migration {
+        version: 16,
+        name: "messages.context_tokens",
+        run: m_messages_context_tokens,
     },
 ];

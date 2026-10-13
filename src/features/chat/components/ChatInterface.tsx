@@ -502,7 +502,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               }[mode as 'normal' | 'auto' | 'plan' | 'workflow'] || mode;
             return (
               <div
-                class="flex flex-col rounded-2xl text-xs overflow-hidden"
+                class="flex flex-col rounded-2xl text-xs"
                 style={{
                   background: 'rgba(var(--surface-bg), 0.5)',
                   border: '1px solid rgba(var(--border-rgb), 0.15)',

@@ -155,7 +155,7 @@ const AgentModeSelector: Component = () => {
 
       {/* Dropdown panel */}
       <div
-        class="absolute bottom-full left-0 mb-2 z-[41] w-[260px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
+        class="absolute bottom-full left-0 mb-2 z-[41] w-[190px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
         style={{
           background: 'rgba(var(--surface-bg),0.96)',
           border: '1px solid var(--border-dim)',
@@ -183,7 +183,7 @@ const AgentModeSelector: Component = () => {
             {(opt) => (
               <button
                 type="button"
-                class="w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer border-none"
+                class="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors cursor-pointer border-none"
                 style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
                 classList={{ '!bg-[rgba(var(--primary-rgb),0.12)]': currentMode() === opt.value }}
                 onClick={() => choose(opt.value)}
@@ -198,18 +198,10 @@ const AgentModeSelector: Component = () => {
                 <Icon
                   name={opt.icon}
                   size={14}
-                  class="mt-0.5 shrink-0"
+                  class="shrink-0"
                   style={{ color: MODE_COLORS[opt.value] }}
                 />
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium">{t(opt.labelKey)}</div>
-                  <div
-                    class="text-[11px] mt-0.5"
-                    style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
-                  >
-                    {t(opt.descKey)}
-                  </div>
-                </div>
+                <div class="flex-1 min-w-0 text-sm font-medium">{t(opt.labelKey)}</div>
                 <Show when={currentMode() === opt.value}>
                   <Icon
                     name="check"

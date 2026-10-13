@@ -666,6 +666,7 @@
   "provider.customDescription": "通过 OpenAI-compatible 端点接入任意 LLM 服务。",
   "provider.customModels": "自定义模型（{{count}}）",
   "provider.customModelsHint": "自定义 Provider 没有目录数据，请先从 API 拉取模型，再启用需要的模型。",
+  "provider.customNotEnabled": "自定义（未启用）",
   "provider.deleteCustomConfirm": "确认删除自定义 Provider“{{name}}”？",
   "provider.displayName": "显示名称",
   "provider.docs": "文档",

@@ -88,6 +88,14 @@ export interface BuildOutgoingMessagesArgs {
   /** The raw user input (drives the displayed bubble text). */
   userInput: string;
   reasoningLevel: string;
+  /**
+   * Whether the native reasoning-effort parameter applies to this turn's model
+   * (reasoning-capable per catalog/heuristic + level != off). When true the
+   * reasoning prompt nudge is suppressed - the API parameter is authoritative,
+   * and asking for visible thinking tags only pollutes the answer on models that
+   * keep their chain-of-thought internal (o-series / gpt-5).
+   */
+  reasoningParamApplies?: boolean;
   webSearchEnabled: boolean;
   isChatMode: boolean;
   /** Active project (agent system prompt); null in global mode / chat mode. */
@@ -152,7 +160,9 @@ export function buildOutgoingMessages(args: BuildOutgoingMessagesArgs): Outgoing
     ? [{ role: 'system' as const, content: agentPromptContent }]
     : [];
 
-  const reasoningPrompt = getReasoningPrompt(reasoningLevel);
+  // Native reasoning-effort parameter applies -> the API controls thinking depth;
+  // otherwise the prompt nudge is the soft control for models without a param.
+  const reasoningPrompt = args.reasoningParamApplies ? null : getReasoningPrompt(reasoningLevel);
 
   let messagesForAI: Message[] = [
     { role: 'system', content: currentAsst.prompt },

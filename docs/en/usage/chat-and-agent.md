@@ -21,7 +21,7 @@ The `ProjectSettingsModal` supports changing the project name, binding a preferr
 The chat input area provides the following controls:
 
 - **Model**: Select a remote or local model for the current assistant.
-- **Reasoning Intensity**: Off, Low, Medium, High. AIO injects corresponding prompts, and when the Provider returns native `reasoning_content`, it is displayed separately.
+- **Reasoning Intensity**: Off, Low, Medium, High (slider control). For models that accept a native reasoning parameter (detected via the model catalog's reasoning capability flag), the level is sent as a real request parameter — `reasoning_effort` on OpenAI-compatible endpoints, a converted `thinking` budget on Anthropic endpoints; unsupported models fall back to injected prompts. When the Provider returns native `reasoning_content`, it is displayed separately.
 - **Web Search**: Allows the Agent to use `web_search` and `web_fetch`. Normal chat only receives a web search prompt and does not automatically get project tools.
 - **Agent Mode**: Switch between Read-only, Workspace edit, Full permission, and Plan.
 

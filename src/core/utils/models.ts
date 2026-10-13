@@ -200,6 +200,37 @@ export async function updateModelsCatalog(url?: string): Promise<UpdateResult> {
   return result;
 }
 
+/**
+ * Model-id families that accept the OpenAI-compatible `reasoning_effort` parameter.
+ * Only used as a fallback when the model is missing from the bundled catalog
+ * (custom models); the catalog's `capabilities.reasoning` flag is the primary source.
+ */
+const REASONING_EFFORT_ID_HINTS: readonly string[] = [
+  'o1',
+  'o3',
+  'o4',
+  'gpt-5',
+  'gemini-2.5',
+  'grok-4',
+  'grok-3-mini',
+];
+
+/**
+ * Whether the model accepts a native reasoning-effort API parameter
+ * (OpenAI-compat `reasoning_effort` / Anthropic `thinking`). The bundled catalog
+ * (`capabilities.reasoning`) is authoritative; models absent from the catalog fall
+ * back to a conservative id heuristic. Drives how the reasoning level is applied:
+ * true = real request parameter (the prompt nudge is suppressed), false = prompt
+ * nudge only.
+ */
+export function modelSupportsReasoningEffort(modelId: string): boolean {
+  const id = (modelId || '').toLowerCase();
+  if (!id) return false;
+  const meta = getCachedCatalog()?.models?.find((m: ModelMeta) => m.id.toLowerCase() === id);
+  if (meta) return meta.capabilities?.reasoning === true;
+  return REASONING_EFFORT_ID_HINTS.some((h) => id.includes(h));
+}
+
 export function findModel(catalog: Catalog, provider: string, id: string): ModelMeta | null {
   const prov = (provider || '').toLowerCase();
   const target = (id || '').toLowerCase();

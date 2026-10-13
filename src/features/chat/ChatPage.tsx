@@ -88,7 +88,7 @@ import {
 import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { t } from '../../core/i18n';
 import Icon from '../../shared/components/Icon';
-import { isImageGenModel } from '../../core/utils/models';
+import { isImageGenModel, modelSupportsReasoningEffort } from '../../core/utils/models';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
 import ProjectMcpTrustModal from './components/ProjectMcpTrustModal';
@@ -257,6 +257,7 @@ const ChatPage: Component = () => {
     currentTopicId,
     currentProjectId,
     webSearchEnabled,
+    reasoningLevel,
     setIsThinking,
     setTypingIndex,
   });
@@ -382,6 +383,10 @@ const ChatPage: Component = () => {
       outgoingFiles,
       userInput,
       reasoningLevel: reasoningLevel(),
+      // reasoning-capable model + level != off: the API parameter controls thinking
+      // depth this turn, so the prompt-level nudge is suppressed
+      reasoningParamApplies:
+        reasoningLevel() !== 'off' && modelSupportsReasoningEffort(currentMdl.model_id),
       webSearchEnabled: webSearchEnabled(),
       isChatMode: isChatMode(),
       projectInfo:
@@ -465,7 +470,14 @@ const ChatPage: Component = () => {
         // dedicated endpoints (dall-e-2/3 etc.): non-streaming generation, the result comes back via llm-chunk(done)
         await generateImage(llmCreds(currentMdl), asstId, topicId, userInput);
       } else if (isChatMode()) {
-        await callLlmStream(llmCreds(currentMdl), asstId, topicId, messagesForAI);
+        const level = reasoningLevel();
+        await callLlmStream(
+          llmCreds(currentMdl),
+          asstId,
+          topicId,
+          messagesForAI,
+          level !== 'off' && modelSupportsReasoningEffort(currentMdl.model_id) ? level : null,
+        );
       } else {
         // resolve per-profile model overrides (only needed in agent mode)
         const resolvedOverrides: Array<{

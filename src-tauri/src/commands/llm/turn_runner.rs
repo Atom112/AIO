@@ -71,6 +71,8 @@ pub(crate) struct AgentTurnRunner {
     pub(crate) keep_recent_tokens: usize,
     pub(crate) max_output_tokens: Option<u32>,
     pub(crate) context_budget: usize,
+    /// Reasoning effort for reasoning-capable models ("low"/"medium"/"high"); None = no reasoning parameter
+    pub(crate) reasoning_level: Option<String>,
 }
 
 impl AgentTurnRunner {
@@ -103,6 +105,7 @@ impl AgentTurnRunner {
             keep_recent_tokens,
             max_output_tokens,
             context_budget,
+            reasoning_level,
         } = self;
 
         // Unwrap Skills (the frontend passes them only in Agent mode; empty in chat mode)
@@ -369,6 +372,7 @@ impl AgentTurnRunner {
                 true,
                 max_output_tokens,
                 app_config.model_call_retries,
+                reasoning_level.as_deref(),
             )
             .await;
 

@@ -288,6 +288,31 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
     if let Some(p) = openai.get("top_p").and_then(|v| v.as_f64()) {
         body.insert("top_p".into(), json!(p));
     }
+    // Reasoning effort -> extended thinking budget (low 2048 / medium 8192 / high 16384
+    // tokens; the API floor is 1024). Anthropic requires max_tokens > budget_tokens, so
+    // the cap is raised when needed, and temperature is dropped (thinking pins it to 1).
+    if let Some(effort) = openai.get("reasoning_effort").and_then(|v| v.as_str()) {
+        let budget: u64 = match effort {
+            "low" => 2048,
+            "medium" => 8192,
+            "high" => 16384,
+            _ => 0,
+        };
+        if budget > 0 {
+            body.insert(
+                "thinking".into(),
+                json!({"type": "enabled", "budget_tokens": budget}),
+            );
+            let max_tokens = body
+                .get("max_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(8192);
+            if max_tokens <= budget {
+                body.insert("max_tokens".into(), json!(budget + 8192));
+            }
+            body.remove("temperature");
+        }
+    }
     // tool_choice: auto (default) omitted; none -> {type:"none"}; a specific function -> {type:"tool", name}
     if let Some(tc) = openai.get("tool_choice") {
         let tc_str = tc.as_str().unwrap_or("");
@@ -800,6 +825,43 @@ mod tests {
         .unwrap();
         assert!(body2.get("temperature").is_none());
         assert!(body2.get("top_p").is_none());
+    }
+
+    /// Reasoning effort maps to an extended-thinking budget; the max_tokens cap is
+    /// raised above the budget (API requirement) and temperature is dropped.
+    #[test]
+    fn reasoning_effort_maps_to_thinking_budget() {
+        // low: budget 2048, default max_tokens 8192 already above it -> untouched
+        let low = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "low",
+            "temperature": 0.2
+        }))
+        .unwrap();
+        assert_eq!(low["thinking"]["type"], "enabled");
+        assert_eq!(low["thinking"]["budget_tokens"], 2048);
+        assert_eq!(low["max_tokens"], 8192);
+        assert!(low.get("temperature").is_none());
+
+        // high: budget 16384 > default max_tokens 8192 -> cap raised above the budget
+        let high = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "high"
+        }))
+        .unwrap();
+        assert_eq!(high["thinking"]["budget_tokens"], 16384);
+        assert!(high["max_tokens"].as_u64().unwrap() > 16384);
+
+        // unknown effort value: no thinking block
+        let none = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "minimal"
+        }))
+        .unwrap();
+        assert!(none.get("thinking").is_none());
     }
 
     /// PROV-15: the unified input_tokens must follow OpenAI prompt_tokens

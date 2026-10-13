@@ -17,6 +17,7 @@
 - **上下文窗口 token 口径修复（对齐主流 harness）**：① 短对话显示 500k+ 的根因不是思维链——思维链从不回传 API（`append_assistant_message` 无 reasoning 字段），显示值本就是 API 报告的末次 prompt 真实大小；真正的根因是 `context_tokens` 不落库，重启/重载后回退到 `inputTokens`（agent 回合 = 各轮 input 之和，成本口径）→ 数值虚高数倍。现 `messages.context_tokens` 列（迁移 v16）贯通 append/persist/branch/load 全路径，回退逻辑移除（向前扫描最近已知值，legacy 数据显示 0=未知）；② 发送下一条消息后归零的根因是新的空助手消息成了"最后一条"——现保持显示最近一次测量值，且 agent 循环每轮完成后发无内容用量 ping（`produce` 原地应用，无行重挂载），上下文条按 API 调用逐轮增长（Claude Code / Codex 行为）
 - **缓存命中率分母修复**：后端 PROV-15 已将所有供应商归一化为「input_tokens = prompt 总量、cached_tokens 为其子集」，但前端命中率分母仍用 (input + cached) 双重计入缓存部分——真实 80% 命中显示为 ~44%（即用户看到的"一直四十几"）。分母改回纯 input 后显示真实命中率
 - **手动 /compact 对齐主流 harness**：调研 DSH（`dsh-compaction-basic`：手动 compactNow 保留区=0）、pi/oh-my-pi（compaction.md：切点回退 + 保留区 20k）、ZCode（`core/src/compact/manual.ts`：强制立即压缩 + provider_usage 优先的 token 口径）与 Claude Code（全量摘要）后对齐——① 手动 `/compact` 缺省压缩全部历史，不再出现"上下文很小，无需压缩"（唯一跳过是空对话）；`/compact <n>` 保留 n token 尾部（至少 4 条）；自动压缩仍保持 20k 尾部；② 保留区 token 估算改为 CJK 感知（汉字 ≈1 token，其余 ≈4 字符/token）——原 chars/4 对中文低估约 4 倍，是"明明很大却提示很小"的元凶；③ 跳过反馈按原因区分（空对话/压缩中切话题/数据保护中止），替换笼统文案
+- **压缩体验三连修**：① 压缩过程视觉反馈——消息记录内嵌"正在压缩上下文"胶囊 + SVG 圆弧动效（参照 DSH 的记录内压缩指示），手动 /compact 与回合结束自动压缩均生效；② 压缩不再删除消息记录——引入 `topics.context_trim_count`（迁移 v17）作为上下文边界：LLM 请求只发 摘要 + `history.slice(边界)`（主请求 / btw 侧问 / 运行中压缩事件全路径），完整对话记录始终可见（对齐 DSH 表面遮蔽 / pi 原始条目保留）；③ 消息记录分段渲染——切话题先只挂载最近 40 条，顶部哨兵 IntersectionObserver 滚到顶自动增量加载更早分页（滚动锚定 + 预标动画跳过，绝对索引保持 resend/typing 逻辑不变），修复长对话切换卡顿
 - exe 已重建（dist 重嵌）；`npm run check:frontend` 全绿（rgba 棘轮持平 173）
 
 ### ✅ 第十一轮复测：三项目标全部确认（全绿轮）

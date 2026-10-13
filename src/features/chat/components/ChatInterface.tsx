@@ -527,14 +527,15 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                         />
                       )}
                     </For>
-                    <For each={props.pendingQuestions}>
-                      {(question) => (
-                        <AgentQuestionBubble
-                          question={question}
-                          onResolved={props.onResolveQuestion}
-                        />
-                      )}
-                    </For>
+                    {/* ask_user: one question at a time — show only the first pending
+                        request; resolving it reveals the next (a request carrying
+                        several questions steps through them inside the bubble) */}
+                    <Show when={props.pendingQuestions.length > 0}>
+                      <AgentQuestionBubble
+                        question={props.pendingQuestions[0]}
+                        onResolved={props.onResolveQuestion}
+                      />
+                    </Show>
                   </div>
                 </Show>
 

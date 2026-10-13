@@ -14,6 +14,7 @@
 - **输入框高度响应式修复**：textarea 高度此前只在 onInput 手动设置、只在 Enter 键分支重置——按钮发送（或任何清空输入的路径）后高度不回落，需再按一次回车才恢复。现高度由 `createEffect` 从 `props.inputMessage` 信号驱动：任何路径（输入、发送清空、/命令填充）都即时重算（空→40px，长文→min(scrollHeight, 200)）
 - **ask_user 提问改为逐题引导 + 问题卡占满状态条**：一次请求携带多个问题时按步展示——作答当前题后点「下一题」才显示下一题（可「上一题」回改，头部显示进度「第 N / M 题」，单次提交协议不变）；状态条内同时只显示第一个待答请求，应答后自动出下一个；问题卡去掉 420px 宽度上限、占满状态条宽度
 - **上拉菜单越界修复**：任务清单并入状态条时引入的容器 `overflow-hidden` 曾把子智能体上拉菜单与 git 分支下拉裁剪在状态条内——移除裁剪（摘要行自带顶部圆角补偿），两菜单恢复完整越界展开
+- **上下文窗口 token 口径修复（对齐主流 harness）**：① 短对话显示 500k+ 的根因不是思维链——思维链从不回传 API（`append_assistant_message` 无 reasoning 字段），显示值本就是 API 报告的末次 prompt 真实大小；真正的根因是 `context_tokens` 不落库，重启/重载后回退到 `inputTokens`（agent 回合 = 各轮 input 之和，成本口径）→ 数值虚高数倍。现 `messages.context_tokens` 列（迁移 v16）贯通 append/persist/branch/load 全路径，回退逻辑移除（向前扫描最近已知值，legacy 数据显示 0=未知）；② 发送下一条消息后归零的根因是新的空助手消息成了"最后一条"——现保持显示最近一次测量值，且 agent 循环每轮完成后发无内容用量 ping（`produce` 原地应用，无行重挂载），上下文条按 API 调用逐轮增长（Claude Code / Codex 行为）
 - exe 已重建（dist 重嵌）；`npm run check:frontend` 全绿（rgba 棘轮持平 173）
 
 ### ✅ 第十一轮复测：三项目标全部确认（全绿轮）

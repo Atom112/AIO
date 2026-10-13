@@ -679,9 +679,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                           }
                           class="absolute bottom-full left-0 mb-2 z-[41] w-[200px] rounded-xl overflow-hidden opacity-0 scale-95 transition-all duration-200 ease-out origin-bottom"
                           style={{
-                            background: 'rgba(var(--surface-bg),0.96)',
+                            background: 'var(--popup-bg)',
                             border: '1px solid var(--border-dim)',
-                            'backdrop-filter': 'blur(12px)',
+                            'backdrop-filter': 'var(--popup-blur)',
                             'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
                           }}
                           onClick={(e) => e.stopPropagation()}
@@ -986,9 +986,9 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             class="fixed bottom-5 left-5 z-[9999] max-w-[25vw] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] select-none cursor-pointer"
             style={{
               color: 'var(--color-danger)',
-              background: 'rgba(var(--surface-bg), 0.92)',
+              background: 'var(--popup-bg)',
               border: '1px solid rgba(248,113,113,0.2)',
-              'backdrop-filter': 'blur(30px) saturate(180%)',
+              'backdrop-filter': 'var(--popup-blur)',
               animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
             }}
             onClick={() => setBranchToast(null)}

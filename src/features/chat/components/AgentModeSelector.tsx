@@ -157,9 +157,9 @@ const AgentModeSelector: Component = () => {
       <div
         class="absolute bottom-full left-0 mb-2 z-[41] w-[190px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
         style={{
-          background: 'rgba(var(--surface-bg),0.96)',
+          background: 'var(--popup-bg)',
           border: '1px solid var(--border-dim)',
-          'backdrop-filter': 'blur(10px)',
+          'backdrop-filter': 'var(--popup-blur)',
           'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
         }}
         classList={{
@@ -224,11 +224,11 @@ const AgentModeSelector: Component = () => {
           onClick={() => setShowAutoWarning(false)}
         >
           <div
-            class="bg-dark-500 p-6 rounded-lg max-w-[420px] w-full"
+            class="p-6 rounded-lg max-w-[420px] w-full"
             style={{
-              background: 'rgba(var(--surface-bg),0.96)',
+              background: 'var(--dialog-bg)',
               border: '1px solid var(--border-dim)',
-              'backdrop-filter': 'blur(12px)',
+              'backdrop-filter': 'var(--popup-blur)',
               'box-shadow': '0 8px 32px rgba(0,0,0,0.5)',
               animation: 'modalPanelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both',
             }}

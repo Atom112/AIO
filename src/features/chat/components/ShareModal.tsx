@@ -487,9 +487,9 @@ const ShareModal: Component<ShareModalProps> = (props) => {
             }}
             class="flex flex-col w-[92%] max-w-[760px] h-[88vh] max-h-[94vh] rounded-xl overflow-hidden transition-all duration-500 ease-out transform"
             style={{
-              background: 'rgba(34, 38, 54, 0.82)',
-              'backdrop-filter': 'blur(var(--acrylic-blur))',
-              border: '1px solid var(--acrylic-border)',
+              background: 'var(--dialog-bg)',
+              'backdrop-filter': 'var(--popup-blur)',
+              border: '1px solid var(--border-dim)',
             }}
           >
             {/* Title bar */}

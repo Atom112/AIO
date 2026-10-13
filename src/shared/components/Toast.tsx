@@ -51,8 +51,8 @@ export const ToastBubble: Component<{ toast: ToastState | null }> = (props) => (
         'text-red-300': !props.toast!.ok,
       }}
       style={{
-        background: 'rgba(var(--surface-bg), 0.88)',
-        'backdrop-filter': 'blur(20px) saturate(150%)',
+        background: 'var(--popup-bg)',
+        'backdrop-filter': 'var(--popup-blur)',
         animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
       }}
     >

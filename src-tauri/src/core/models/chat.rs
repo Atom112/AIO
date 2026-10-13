@@ -326,6 +326,11 @@ pub struct Topic {
         rename = "parentTopicId"
     )]
     pub parent_topic_id: Option<String>,
+    /// Compaction context boundary: the first `context_trim_count` messages of
+    /// `history` are condensed into `summary` and excluded from LLM requests
+    /// (context = summary + history[trim..]) while staying visible in the UI.
+    #[serde(default, rename = "contextTrimCount")]
+    pub context_trim_count: i64,
 }
 
 /// AI assistant preset with a system prompt and its conversation topics.

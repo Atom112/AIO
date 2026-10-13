@@ -35,6 +35,7 @@ import {
   saveSingleAssistantToBackend,
   selectedModel,
   setAgentTaskBoard,
+  setCompactingTopicId,
   setDatas,
   setPendingApprovals,
   setPendingQuestions,
@@ -50,7 +51,7 @@ import {
   type ToolCallDisplay,
   type WorkflowState,
 } from '../../../core/store/store';
-import { checkAndRename, checkAndSummarize } from './chatTurnEffects';
+import { checkAndRename, checkAndSummarize, estimateMsgTokens } from './chatTurnEffects';
 import { TOOL_INTERRUPTED } from '../constants';
 
 /**
@@ -443,7 +444,13 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         // Sequential: first try auto-rename (first exchange in a non-default topic), then trigger history compaction
         setTimeout(async () => {
           await checkAndRename(assistant_id, topic_id);
-          await checkAndSummarize();
+          // In-record "compacting" pill for the auto path as well (mainstream feedback)
+          setCompactingTopicId(topic_id);
+          try {
+            await checkAndSummarize();
+          } finally {
+            setCompactingTopicId(null);
+          }
         }, 500);
         return;
       }
@@ -609,7 +616,8 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       );
     }),
     // In-run context compaction event: only main-agent compaction updates conversation memory —
-    // topic.summary is overwritten and history trimmed to the token budget so later rounds stop resending the compacted part
+    // topic.summary is overwritten and the context boundary moves so later turns stop
+    // resending the compacted part; the displayed transcript is never modified
     listen<LlmCompressionPayload>(EVENTS.llmCompression, (e) => {
       const { assistant_id, topic_id, source, summary } = e.payload;
       if (!assistant_id || !topic_id) return;
@@ -618,29 +626,27 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       const asst = datas.assistants.find((a) => a.id === assistant_id);
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (!topic) return;
-      // Aligned with the backend keep_recent_tokens: accumulate ~20k tokens from the tail, keeping at least the last 4 messages (one full exchange)
+      // Aligned with the backend keep_recent_tokens: accumulate ~20k tokens from the tail,
+      // keeping at least the last 4 messages (one full exchange), inside the context zone
       const KEEP_TOKEN_BUDGET = 20_000;
-      const estTokens = (m: Message): number => {
-        const text = typeof m.content === 'string' ? m.content : (m.displayText ?? '');
-        return Math.ceil(text.length / 4) + 8;
-      };
+      const oldTrim = topic.contextTrimCount ?? 0;
       let keepCount = 0;
       let acc = 0;
       const hist = topic.history;
-      for (let i = hist.length - 1; i >= 0; i--) {
-        acc += estTokens(hist[i]);
+      for (let i = hist.length - 1; i >= oldTrim && i >= 0; i--) {
+        acc += estimateMsgTokens(hist[i]);
         keepCount = hist.length - i;
         if (acc >= KEEP_TOKEN_BUDGET) break;
       }
-      keepCount = Math.max(keepCount, 4);
-      const trimmed = keepCount < hist.length ? hist.slice(hist.length - keepCount) : hist;
-      if (trimmed.length === hist.length && topic.summary === summary) return;
+      keepCount = Math.min(Math.max(keepCount, 4), hist.length - oldTrim);
+      const newTrim = hist.length - keepCount;
+      if (newTrim === oldTrim && topic.summary === summary) return;
       setDatas(
         'assistants',
         (a) => a.id === assistant_id,
         'topics',
         (t: Topic) => t.id === topic_id,
-        { history: trimmed, summary },
+        { summary, contextTrimCount: newTrim },
       );
       saveSingleAssistantToBackend(assistant_id);
     }),

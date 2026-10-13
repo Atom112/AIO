@@ -146,7 +146,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
         // 2. Load topics for each assistant
         let mut t_stmt = conn
-            .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id FROM topics WHERE assistant_id = ?")
+            .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count FROM topics WHERE assistant_id = ?")
             .map_err(|e| e.to_string())?;
         let topic_iter = t_stmt
             .query_map([&asst.id], |row| {
@@ -158,6 +158,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     renamed: row.get::<_, i64>(3)? != 0,
                     branched_from_message_id: row.get(4)?,
                     parent_topic_id: row.get(5)?,
+                    context_trim_count: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
                     history: vec![],
                 })
             })
@@ -315,9 +316,9 @@ fn persist_assistant_inner(
     // 3. Incrementally sync each topic
     for topic in &assistant.topics {
         conn.execute(
-            "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7",
-            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id],
+            "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7, context_trim_count=?8",
+            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id, topic.context_trim_count],
         )
         .map_err(|e| e.to_string())?;
 
@@ -1133,12 +1134,15 @@ pub async fn branch_topic(
         renamed: false,
         branched_from_message_id: Some(source_message_id.clone()),
         parent_topic_id: Some(source_topic_id.clone()),
+        // Branch starts a fresh context: copied messages are all sent (the source's
+        // compaction boundary does not carry over — its summary stays with the source)
+        context_trim_count: 0,
     };
 
     // 4. Insert the new topic
     conn.execute(
-        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             new_topic_id,
             assistant_id,
@@ -1147,6 +1151,7 @@ pub async fn branch_topic(
             new_topic.renamed as i64,
             new_topic.branched_from_message_id,
             new_topic.parent_topic_id,
+            new_topic.context_trim_count,
         ],
     )
     .map_err(|e| ierr!("创建分支话题失败: {}", "Failed to create branch topic: {}", e))?;

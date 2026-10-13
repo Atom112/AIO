@@ -84,7 +84,10 @@ ${asstObj.prompt}`;
 
       const messagesForAI: Record<string, unknown>[] = [
         { role: 'system', content: btwSystemPrompt },
-        ...topicObj.history.flatMap((m: any) => buildApiMessages(m)),
+        // Respect the compaction context boundary (same as the main request path)
+        ...topicObj.history
+          .slice(topicObj.contextTrimCount ?? 0)
+          .flatMap((m: any) => buildApiMessages(m)),
         { role: 'user', content: question },
       ];
 

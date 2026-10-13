@@ -168,7 +168,12 @@ export function buildOutgoingMessages(args: BuildOutgoingMessagesArgs): Outgoing
           },
         ]
       : []),
-    ...currentTopic.history.flatMap((m) => buildApiMessages(m)),
+    ...currentTopic.history
+      // Compaction context boundary: messages before it are condensed into
+      // topic.summary (injected above) and excluded from LLM requests, while the
+      // full transcript stays visible in the message record
+      .slice(currentTopic.contextTrimCount ?? 0)
+      .flatMap((m) => buildApiMessages(m)),
     { role: 'user', content: newUserMsg.content, displayFiles: newUserMsg.displayFiles },
   ];
   // safety net: ensure every assistant(tool_calls) has matching role:tool messages

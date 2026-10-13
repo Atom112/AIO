@@ -14,6 +14,7 @@ import { savePanelCollapsed } from '../../../core/store/layout';
 import { persistReasoningLevel, persistWebSearch } from '../../../core/store/ui-prefs';
 import {
   setDatas as storeSetDatas,
+  setCompactingTopicId,
   type AgentMode,
   type Assistant,
   type CompactOutcome,
@@ -261,8 +262,11 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
         (a: any) => a.id === asstId,
         'topics',
         (t: any) => t.id === topicId,
-        'history',
-        [],
+        {
+          history: [],
+          // fresh session: the old context boundary is meaningless on an empty history
+          contextTrimCount: 0,
+        },
       );
       saveSingleAssistantToBackend(asstId);
     },
@@ -301,15 +305,20 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
   const cmdSlashCompact = registerCommand({
     id: 'slash-compact',
     handler: async (args?: string) => {
-      // Optional arg: kept token budget (`/compact 10000`), default 20k;
-      // manual execution skips the auto-compaction 75% threshold guard and compacts immediately (matches mainstream agent behavior)
+      // Optional arg: kept token budget (`/compact 10000`); no arg compacts the WHOLE
+      // context (mainstream manual semantics). Manual execution skips the
+      // auto-compaction 75% threshold guard and compacts immediately.
       const budgetArg = args ? Number(args.trim()) : NaN;
       const budget = Number.isFinite(budgetArg) && budgetArg > 0 ? budgetArg : undefined;
+      const topicId = currentTopicId();
       setIsThinking(true);
+      // In-record "compacting" pill (mainstream visual feedback, cf. DSH)
+      if (topicId) setCompactingTopicId(topicId);
       try {
         const outcome = await checkAndSummarize(budget, { force: true });
         return compactOutcomeFeedback(outcome);
       } finally {
+        setCompactingTopicId(null);
         setIsThinking(false);
       }
     },

@@ -32,10 +32,12 @@ const TaskBoardPanel: Component<TaskBoardPanelProps> = (props) => {
   return (
     <Show when={board()}>
       <div class="border-b" style={{ 'border-color': 'rgba(var(--border-rgb), 0.15)' }}>
-        {/* Summary / toggle row: collapsed state shows only this line */}
+        {/* Summary / toggle row: collapsed state shows only this line.
+            rounded-t matches the strip's rounded-2xl so the hover background
+            follows the frame corner (the strip does not clip children). */}
         <button
           type="button"
-          class="flex items-center gap-2 w-full px-3 py-1.5 text-left cursor-pointer bg-transparent border-none hover:bg-[rgba(var(--text-base-rgb),0.04)] transition-colors"
+          class="flex items-center gap-2 w-full px-3 py-1.5 text-left cursor-pointer rounded-t-2xl bg-transparent border-none hover:bg-[rgba(var(--text-base-rgb),0.04)] transition-colors"
           onClick={() => setCollapsed((p) => !p)}
           title={collapsed() ? t('agent.tasks.expand') : t('agent.tasks.collapse')}
         >

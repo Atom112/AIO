@@ -22,8 +22,9 @@
   - **支持检测**：模型目录 `capabilities.reasoning` 标记为权威来源，目录缺失的自定义模型退回保守 id 启发式（o1/o3/o4/gpt-5/gemini-2.5/grok 等）；不支持的模型维持原提示词注入路径
   - **参数映射**：OpenAI 兼容端点（含 Gemini OpenAI 兼容层、OpenRouter）发送 `reasoning_effort: low|medium|high`；Anthropic 端点由 `to_anthropic_body` 换算为 `thinking` 思考预算（低 2048 / 中 8192 / 高 16384 tokens，`max_tokens` 不足时自动抬升，thinking 激活时丢弃 temperature 满足 API 约束）；参数仅在主对话生效（子智能体不继承）
   - **提示词去重**：原生参数生效的回合不再注入推理提示词——参数即权威，对不外露思维链的模型（o 系 / gpt-5）要求可见思考标签只会污染可见答案
-  - **UI 改版**：ReasoningButton 弹层改为 GPT 式滑杆——水平 4 档（关闭/低/中/高）、拖拽/点击吸附最近档位、方向键步进（role=slider）、选中档位主色高亮；触发按钮高亮色统一为主色（移除 3 处硬编码 rgba，棘轮 169→166）；i18n 收敛 5 个不再使用的描述 keys（1017→1012）
+  - **UI 改版**：ReasoningButton 弹层改为 GPT 式滑杆——水平 4 档（关闭/低/中/高）、拖拽/点击吸附最近档位、方向键步进（role=slider）、选中档位高亮；触发按钮高亮色统一为主色（移除 3 处硬编码 rgba，棘轮 169→166）；i18n 收敛 5 个不再使用的描述 keys（1017→1012）
   - 测试：cargo +3（`reasoning_effort_lands_in_body` / `reasoning_effort_maps_to_thinking_budget` 含预算抬升与未知值不注入分支 / FE nudge 抑制断言）；文档 chat-and-agent zh/en 同步
+- **推理滑杆视觉升级（每档一色，PR #138）**：低=薄荷绿 / 中=琥珀 / 高=紫罗兰（关闭保持中性灰），档位色经 `@theme` CSS 变量下发（`--color-reasoning-low/medium/high`）——轨道填充变为档位色 `color-mix` 渐变（透明头→全色尾）并叠加前景色星点闪烁层（`reasoning-twinkle` 动画）；档位刻度点亮至当前档位；拇指获得档位色光晕、拖拽时放大；选中档位标签与触发按钮读数同色（rgba 棘轮 166→167，新色全部走变量、hex 门禁 color=0 保持）
 
 ### 🎨 界面视觉修复五连（本轮用户反馈）
 

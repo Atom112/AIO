@@ -101,7 +101,7 @@
   "app.language.system": "The first launch follows your system language.",
   "app.language.title": "Language",
   "app.language.zhCN": "简体中文",
-  "app.maxConcurrentSubagents.description": "Max number of subagents that can run at once.",
+  "app.maxConcurrentSubagents.description": "Max number of subagents that can run at once. Set 0 for no cap (per-subagent round/context budgets and the stop button still apply).",
   "app.maxConcurrentSubagents.title": "Max concurrent subagents",
   "app.subagentIsolation.title": "Parallel write isolation",
   "app.subagentIsolation.description": "How parallel write-capable subagents are isolated when modifying files.",

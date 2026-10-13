@@ -72,7 +72,7 @@ const AppSettings: Component = () => {
   const [l, setL] = createSignal(0); // Lightness (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (0 = unlimited; default 25)
-  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
+  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (0 = unlimited; default 5)
   const [fullAutoMode, setFullAutoMode] = createSignal(false); // Auto/Workflow full-autonomy opt-in (sandbox auto-expand + network-gate bypass)
   const [subagentIsolation, setSubagentIsolation] = createSignal('auto'); // Parallel write isolation (auto default)
   const [mainAgentToolAccess, setMainAgentToolAccess] = createSignal('hybrid'); // Main agent tool access (hybrid default)
@@ -145,7 +145,7 @@ const AppSettings: Component = () => {
       if (typeof cfg?.maxToolRounds === 'number' && cfg.maxToolRounds >= 0) {
         setMaxToolRounds(cfg.maxToolRounds);
       }
-      if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents > 0) {
+      if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents >= 0) {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
       }
       if (typeof cfg?.fullAutoMode === 'boolean') {
@@ -725,7 +725,7 @@ const AppSettings: Component = () => {
 
           <NumberInput
             value={maxConcurrentSubagents()}
-            min={1}
+            min={0}
             max={32}
             fallback={5}
             onInput={(clamped) => {

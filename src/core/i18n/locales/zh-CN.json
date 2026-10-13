@@ -101,7 +101,7 @@
   "app.language.system": "首次启动会跟随系统语言。",
   "app.language.title": "语言",
   "app.language.zhCN": "简体中文",
-  "app.maxConcurrentSubagents.description": "同时运行的最大子智能体数量。",
+  "app.maxConcurrentSubagents.description": "同时运行的最大子智能体数量。设为 0 表示不限制（每个子智能体的轮数/上下文预算与停止按钮仍是后盾）。",
   "app.maxConcurrentSubagents.title": "最大并发子智能体数",
   "app.subagentIsolation.title": "并行写入隔离",
   "app.subagentIsolation.description": "多个写入类子任务并行修改文件时的隔离方式。",

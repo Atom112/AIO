@@ -25,6 +25,7 @@
   - **UI 改版**：ReasoningButton 弹层改为 GPT 式滑杆——水平 4 档（关闭/低/中/高）、拖拽/点击吸附最近档位、方向键步进（role=slider）、选中档位高亮；触发按钮高亮色统一为主色（移除 3 处硬编码 rgba，棘轮 169→166）；i18n 收敛 5 个不再使用的描述 keys（1017→1012）
   - 测试：cargo +3（`reasoning_effort_lands_in_body` / `reasoning_effort_maps_to_thinking_budget` 含预算抬升与未知值不注入分支 / FE nudge 抑制断言）；文档 chat-and-agent zh/en 同步
 - **推理滑杆视觉升级（每档一色，PR #138）**：低=薄荷绿 / 中=琥珀 / 高=紫罗兰（关闭保持中性灰），档位色经 `@theme` CSS 变量下发（`--color-reasoning-low/medium/high`）——轨道填充变为档位色 `color-mix` 渐变（透明头→全色尾）并叠加前景色星点闪烁层（`reasoning-twinkle` 动画）；档位刻度点亮至当前档位；拇指获得档位色光晕、拖拽时放大；选中档位标签与触发按钮读数同色（rgba 棘轮 166→167，新色全部走变量、hex 门禁 color=0 保持）
+- **滑杆与任务清单过渡动画（PR #139）**：① 推理滑杆档位切换加入过渡——拇指 `left/transform/box-shadow`、轨道填充 `width`、刻度点颜色均 200ms ease-out，点击/拖拽/方向键换档时滑动而非瞬跳；② 状态条任务清单展开收起改为 `grid-template-rows: 0fr↔1fr` 纯 CSS 高度动画（无需测量内容高度，行保持挂载）+ 内容淡入淡出；③ 展开收起箭头由完整箭头（arrow-left 旋转）改为实心三角 SVG（Icon 库新增 `triangle-down`，路径级 fill 覆盖 stroke 风格）
 
 ### 🎨 界面视觉修复五连（本轮用户反馈）
 

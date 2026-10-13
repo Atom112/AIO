@@ -57,11 +57,25 @@ pub struct PatchAppConfig {
 pub async fn patch_app_config(app: AppHandle, patch: PatchAppConfig) -> Result<AppConfig, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut cfg = crate::core::config::load_app_config(&app)?;
+        // Clamp both knobs into their valid domain: -1 (unlimited) is the FLOOR, 0 is
+        // invalid (clamps to the minimum 1) — nothing below -1 may persist
         if let Some(v) = patch.max_tool_rounds {
-            cfg.max_tool_rounds = Some(v);
+            cfg.max_tool_rounds = Some(if v < -1 {
+                -1
+            } else if v == 0 {
+                1
+            } else {
+                v
+            });
         }
         if let Some(v) = patch.max_concurrent_subagents {
-            cfg.max_concurrent_subagents = Some(v);
+            cfg.max_concurrent_subagents = Some(if v < -1 {
+                -1
+            } else if v == 0 {
+                1
+            } else {
+                v
+            });
         }
         if let Some(v) = patch.subagent_isolation_mode {
             cfg.subagent_isolation_mode = v;
